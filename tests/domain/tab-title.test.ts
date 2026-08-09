@@ -1,5 +1,32 @@
 import { describe, it, expect } from "vitest";
-import { disambiguateTabTitles, gitTabDisplay } from "../../src/lib/domain/tab-title";
+import {
+  disambiguateTabTitles,
+  formatWindowTitle,
+  gitTabDisplay,
+} from "../../src/lib/domain/tab-title";
+
+describe("formatWindowTitle", () => {
+  it.each([
+    ["/home/user/projects/tauri-explorer", "/home/user", "tauri-explorer - Tauri Explorer"],
+    ["/", "/home/user", "/ - Tauri Explorer"],
+    ["/home/user", "/home/user", "~ - Tauri Explorer"],
+    ["/home/user/", "/home/user", "~ - Tauri Explorer"],
+    ["", "/home/user", "Tauri Explorer"],
+    [
+      "/an/extremely/deep/directory/tree/whose/full/path/must/not/fill/the/window/switcher/leaf",
+      "/home/user",
+      "leaf - Tauri Explorer",
+    ],
+  ])("formats %j as the observable OS title", (path, home, expected) => {
+    expect(formatWindowTitle(path, home)).toBe(expected);
+  });
+
+  it("recognizes Windows home paths independent of separator and case", () => {
+    expect(formatWindowTitle("C:\\Users\\Alice\\", "c:/users/alice")).toBe(
+      "~ - Tauri Explorer",
+    );
+  });
+});
 
 describe("disambiguateTabTitles", () => {
   it("uses the bare folder name when basenames are unique", () => {

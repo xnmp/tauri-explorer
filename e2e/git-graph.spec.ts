@@ -170,6 +170,51 @@ test.describe("Git graph tab", () => {
     await expect(page.locator('[data-testid="git-graph-detail"]')).toBeVisible();
   });
 
+  test("opens a failed CI check log inline from its PR badge (#521)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    // The experiment PR has a failed check. Its badge is the entry point; the
+    // log must remain in the graph instead of opening GitHub in a browser.
+    const failedPrRow = page.locator(".commit-row", { hasText: "Try alternative parser" });
+    await failedPrRow.locator(".ref-pr").click();
+    const detail = page.locator('[data-testid="git-graph-pr-detail"]');
+    await expect(detail).toBeVisible();
+
+    await detail.getByRole("button", { name: "Unit tests" }).click();
+    const log = page.locator('[data-testid="git-graph-ci-check-log"]');
+    await expect(log).toBeVisible();
+    await expect(log).toContainText("Unit tests");
+    await expect(log).toContainText("AssertionError: expected true to be false");
+    await page.screenshot({ path: "evidence/ac-1-failed-ci-check-log.png" });
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .toBeNull();
+
+    await log.getByRole("button", { name: "Close CI check log" }).click();
+    await expect(log).toHaveCount(0);
+    await expect(detail).toBeVisible();
+  });
+
+  test("clears a failed CI log when switching PR badges (#521)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const failedPrRow = page.locator(".commit-row", { hasText: "Try alternative parser" });
+    const pendingPrRow = page.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+    await failedPrRow.locator(".ref-pr").click();
+    const detail = page.locator('[data-testid="git-graph-pr-detail"]');
+    await detail.getByRole("button", { name: "Unit tests" }).click();
+    await expect(detail.locator('[data-testid="git-graph-ci-check-log"]')).toBeVisible();
+
+    // Switching badges must not show PR #12's failure beneath the pending PR.
+    await pendingPrRow.locator(".ref-pr").click();
+    await expect(detail).toContainText("Hotfix login redirect");
+    await expect(detail.locator('[data-testid="git-graph-ci-check-log"]')).toHaveCount(0);
+  });
+
   test("branch filter shows only the selected branch's history (#342)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
@@ -474,6 +519,91 @@ test("mutes merge commits and shows compact relative dates (#458)", async ({ pag
   await expect(normalRow).not.toHaveClass(/is-merge/);
 });
 
+test("traces a hovered or selected branch lineage and can restore the undimmed graph", async ({
+  page,
+}) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  const feature = view.locator(".commit-row", { hasText: "Add tests for feature X" });
+  const featureParent = view.locator(".commit-row", { hasText: "Implement feature X" });
+  const sharedAncestor = view.locator(".commit-row", { hasText: "Refactor config loader" });
+  const unrelated = view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+
+  await feature.hover();
+  await expect(feature).toHaveAttribute("data-trace", "lit");
+  await expect(featureParent).toHaveAttribute("data-trace", "lit");
+  await expect(sharedAncestor).toHaveAttribute("data-trace", "lit");
+  await expect(unrelated).toHaveAttribute("data-trace", "dim");
+  await expect(view.locator('.graph-underlay path[data-trace="lit"]').first()).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await expect(view.locator('.graph-underlay path[data-trace="dim"]').first()).toHaveCSS(
+    "opacity",
+    "0.16",
+  );
+  await page.screenshot({ path: "evidence/ac-1-hover-lineage.png" });
+
+  await feature.click();
+  await view.locator(".graph-header").hover();
+  await expect(feature).toHaveAttribute("data-trace", "lit");
+  await expect(unrelated).toHaveAttribute("data-trace", "dim");
+  await page.screenshot({ path: "evidence/ac-2-selected-lineage.png" });
+
+  const experiment = view.locator(".commit-row", { hasText: "Try alternative parser" });
+  await experiment.click();
+  await view.locator(".graph-header").hover();
+  await expect(experiment).toHaveAttribute("data-trace", "lit");
+  await expect(feature).toHaveAttribute("data-trace", "dim");
+
+  await page.locator(".graph-header").click({ button: "right" });
+  const toggle = page.locator('[data-testid="toggle-branch-tracing"]');
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await toggle.click();
+  await page.keyboard.press("Escape");
+  await expect(view.locator("[data-trace]")).toHaveCount(0);
+  await page.locator(".graph-header").click({ button: "right" });
+  await expect(page.locator('[data-testid="toggle-branch-tracing"]')).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  await page.screenshot({ path: "evidence/ac-3-trace-disabled.png" });
+  await page.keyboard.press("Escape");
+  await feature.hover();
+  await expect(view.locator("[data-trace]")).toHaveCount(0);
+});
+
+test("traces hover in a two-lane branchy graph", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  await page.locator('[data-testid="branch-filter-btn"]').click();
+  const popover = page.locator('[data-testid="branch-popover"]');
+  await popover.locator('[data-testid="bf-select-all"]').click();
+  for (const name of ["feature", "hotfix"]) {
+    await popover
+      .locator("label.bf-row:not(.bf-author-row):not(.bf-all):not(.bf-local-only)")
+      .filter({ has: page.getByText(name, { exact: true }) })
+      .locator("input")
+      .click();
+  }
+  await page.keyboard.press("Escape");
+  await expect(view).toHaveAttribute("data-lane-count", "2");
+  const feature = view.locator(".commit-row", { hasText: "Add tests for feature X" });
+  const ancestor = view.locator(".commit-row", { hasText: "Implement feature X" });
+  const unrelated = view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+
+  await feature.hover();
+  await expect(feature).toHaveAttribute("data-trace", "lit");
+  await expect(ancestor).toHaveAttribute("data-trace", "lit");
+  await expect(unrelated).toHaveAttribute("data-trace", "dim");
+});
+
 test("parent is a viewable column, off by default (#402)", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);
@@ -689,6 +819,7 @@ test.describe("Git graph commit context actions", () => {
     // HEAD chip now decorates the feature commit, not the old tip.
     await expect(featureRow).toHaveClass(/is-head/);
     await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+    await page.screenshot({ path: "evidence/ac-1-checked-out-branch-lane.png" });
   });
 
   test("copy commit hash writes the full OID to the clipboard", async ({ page, context, browserName }) => {
@@ -807,8 +938,8 @@ test.describe("Git graph commit context actions", () => {
     await expect(modal).toBeVisible();
     await expect(modal).toContainText("Delete branch 'hotfix'");
     await expect(modal).toContainText("Force delete");
-    // Confirm the safe delete: the modal closes and the action reports done
-    // (the mock's git_delete_branch is a no-op, so the chip itself persists).
+    // Confirm the safe delete: the modal closes and the action reports done.
+    // The dedicated undo spec asserts the mock's visible ref removal/restoration.
     await modal.getByText("Delete", { exact: true }).click();
     await expect(modal).toHaveCount(0);
     await expect(page.locator(".toast", { hasText: "Delete branch 'hotfix' done" })).toBeVisible();
@@ -925,5 +1056,6 @@ test.describe("Git graph commit context actions", () => {
       view.locator(".commit-row").filter({ hasText: "Add core module" }),
     ).toHaveClass(/is-head/);
     await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+    await page.screenshot({ path: "evidence/ac-2-detached-head-lane.png" });
   });
 });

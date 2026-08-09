@@ -31,25 +31,95 @@
 
 const DEBOUNCE_MS = 150;
 const MIN_INTERVAL_MS = 2000;
+const SLOW_LISTING_MULTIPLIER = 3;
+const MAX_INTERVAL_MS = 8000;
 
-type RefreshCallback = (opts: { silent: boolean }) => void;
+type RefreshCallback = (opts: { silent: boolean }) => void | Promise<void>;
 
 interface PendingRefresh {
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
   callbacks: Map<unknown, { cb: RefreshCallback; silent: boolean }>;
+  requestedAt: number;
 }
 
 const pendingRefreshes = new Map<string, PendingRefresh>();
 const lastRefreshAt = new Map<string, number>();
+const inFlightRefreshes = new Map<string, number>();
+const listingBaselines = new Map<string, number>();
+const refreshIntervals = new Map<string, number>();
+let refreshGeneration = 0;
+
+function intervalFor(dirPath: string): number {
+  return refreshIntervals.get(dirPath) ?? MIN_INTERVAL_MS;
+}
+
+function schedule(dirPath: string, pending: PendingRefresh): void {
+  if (pending.timer) clearTimeout(pending.timer);
+  const now = Date.now();
+  const last = lastRefreshAt.get(dirPath);
+  const sinceLastRefresh = last == null ? Infinity : now - last;
+  const sinceLastRequest = now - pending.requestedAt;
+  const delay = Math.max(
+    0,
+    DEBOUNCE_MS - sinceLastRequest,
+    intervalFor(dirPath) - sinceLastRefresh,
+  );
+  pending.timer = setTimeout(() => flush(dirPath), delay);
+}
+
+function recordListingDuration(dirPath: string, duration: number): void {
+  // A synchronous test callback has no listing wall-clock to learn from.
+  if (duration <= 0) return;
+
+  const baseline = listingBaselines.get(dirPath);
+  if (baseline != null && duration > baseline * SLOW_LISTING_MULTIPLIER) {
+    refreshIntervals.set(
+      dirPath,
+      Math.min(MAX_INTERVAL_MS, Math.max(MIN_INTERVAL_MS, MIN_INTERVAL_MS * Math.ceil(duration / baseline))),
+    );
+    return;
+  }
+
+  // Normal observations slowly follow real storage performance. A degraded
+  // observation deliberately does not raise the baseline, so a healthy listing
+  // immediately restores the normal watcher cadence.
+  listingBaselines.set(dirPath, baseline == null ? duration : Math.round(baseline * 0.75 + duration * 0.25));
+  refreshIntervals.set(dirPath, MIN_INTERVAL_MS);
+}
+
+function finishRefresh(dirPath: string, startedAt: number, generation: number): void {
+  // Teardown may have cleared this manager while a listing was still in flight.
+  // That old completion must not schedule work for a newly created watcher.
+  if (generation !== refreshGeneration) return;
+  inFlightRefreshes.delete(dirPath);
+  recordListingDuration(dirPath, Date.now() - startedAt);
+  const pending = pendingRefreshes.get(dirPath);
+  if (pending) schedule(dirPath, pending);
+}
 
 function flush(dirPath: string): void {
   const pending = pendingRefreshes.get(dirPath);
   if (!pending) return;
   pendingRefreshes.delete(dirPath);
-  lastRefreshAt.set(dirPath, Date.now());
+  const startedAt = Date.now();
+  const generation = refreshGeneration;
+  lastRefreshAt.set(dirPath, startedAt);
+  inFlightRefreshes.set(dirPath, startedAt);
+  const completions: Promise<void>[] = [];
   for (const { cb, silent } of pending.callbacks.values()) {
-    cb({ silent });
+    try {
+      const result = cb({ silent });
+      if (result) completions.push(Promise.resolve(result).catch(() => undefined));
+    } catch {
+      // A refresh failure is already handled at the pane boundary. Keep the
+      // scheduler alive so a later watcher event can retry it.
+    }
   }
+  if (completions.length === 0) {
+    finishRefresh(dirPath, startedAt, generation);
+    return;
+  }
+  void Promise.all(completions).then(() => finishRefresh(dirPath, startedAt, generation));
 }
 
 export function requestRefresh(
@@ -59,27 +129,38 @@ export function requestRefresh(
   /** Identity used to collapse repeated requests from the same subscriber.
    *  Defaults to the callback itself. */
   subscriberKey: unknown = explorerRefresh,
+  /** Time the underlying change was observed. A delayed watcher notification
+   *  observed before the current listing began is already covered by it. */
+  observedAt: number = Date.now(),
 ): void {
-  const last = lastRefreshAt.get(dirPath);
-  const elapsed = last != null ? Date.now() - last : Infinity;
-  const delay = Math.max(DEBOUNCE_MS, MIN_INTERVAL_MS - elapsed);
+  const inFlightStartedAt = inFlightRefreshes.get(dirPath);
+  if (inFlightStartedAt != null && observedAt < inFlightStartedAt) return;
 
   const existing = pendingRefreshes.get(dirPath);
   if (existing) {
-    clearTimeout(existing.timer);
     existing.callbacks.set(subscriberKey, { cb: explorerRefresh, silent });
-    existing.timer = setTimeout(() => flush(dirPath), delay);
+    existing.requestedAt = Date.now();
+    if (!inFlightRefreshes.has(dirPath)) schedule(dirPath, existing);
     return;
   }
 
-  pendingRefreshes.set(dirPath, {
+  const pending: PendingRefresh = {
     callbacks: new Map([[subscriberKey, { cb: explorerRefresh, silent }]]),
-    timer: setTimeout(() => flush(dirPath), delay),
-  });
+    requestedAt: Date.now(),
+    timer: null,
+  };
+  pendingRefreshes.set(dirPath, pending);
+  if (!inFlightRefreshes.has(dirPath)) schedule(dirPath, pending);
 }
 
 export function cancelPendingRefreshes(): void {
-  for (const pending of pendingRefreshes.values()) clearTimeout(pending.timer);
+  refreshGeneration += 1;
+  for (const pending of pendingRefreshes.values()) {
+    if (pending.timer) clearTimeout(pending.timer);
+  }
   pendingRefreshes.clear();
   lastRefreshAt.clear();
+  inFlightRefreshes.clear();
+  listingBaselines.clear();
+  refreshIntervals.clear();
 }

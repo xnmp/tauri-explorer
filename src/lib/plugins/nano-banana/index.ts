@@ -62,7 +62,7 @@ async function migrateLegacyApiKey(ctx: PluginContext): Promise<void> {
       // Remove the migrated secret from settings.json so it can't linger
       // (or be re-imported by a future migration run).
       delete parsed.geminiApiKey;
-      await writeConfigQueued("settings.json", JSON.stringify(parsed, null, 2));
+      await writeConfigQueued("settings.json", JSON.stringify(parsed, null, 2), PLUGIN_ID);
     }
   } catch {
     // Corrupt settings file — nothing to migrate.
@@ -118,6 +118,7 @@ export const nanoBananaPlugin: Plugin = {
     ctx.registerContextMenuItem({
       id: "nano-banana.edit",
       label: "Edit with Nano Banana",
+      group: "ai",
       icon: "M12 2L14 4L5 13H3V11L12 2Z",
       when: (entries) => selectedImage(entries) !== null,
       handler: (entries) => {

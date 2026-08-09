@@ -11,6 +11,7 @@
   import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
   import { openFile } from "$lib/api/open";
   import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
   import type { FileEntry } from "$lib/domain/file";
@@ -27,8 +28,10 @@
   let { explorer }: Props = $props();
 
   // Plugin-contributed context-menu items whose `when` predicate passes for the
-  // current selection. Rendered in a divider-separated section below.
+  // current selection. AI contributions are grouped into their own submenu.
   const pluginMenuItems = $derived(contextMenuItems.itemsFor(explorer.getSelectedEntries()));
+  const aiPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group === "ai"));
+  const ungroupedPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group !== "ai"));
 
   function runPluginItem(item: (typeof pluginMenuItems)[number]): void {
     void item.handler(explorer.getSelectedEntries());
@@ -113,6 +116,20 @@
       explorer.copyToClipboard(selected);
     }
     contextMenuStore.close();
+  }
+
+  async function handleCopyPath(): Promise<void> {
+    const [entry] = explorer.getSelectedEntries();
+    contextMenuStore.close();
+    if (!entry) return;
+
+    recordActioned();
+    try {
+      await navigator.clipboard.writeText(entry.path);
+      toastStore.clipboard("Copied path", false);
+    } catch {
+      toastStore.error("Could not copy path");
+    }
   }
 
   async function handlePaste(): Promise<void> {
@@ -235,6 +252,13 @@
   let menuEl: HTMLDivElement | undefined = $state();
   let listSubmenuOpen = $state(false);
   let tilesSubmenuOpen = $state(false);
+  let aiSubmenuOpen = $state(false);
+
+  // ContextMenu stays mounted while the global menu is closed. Reset this
+  // local state so a fresh right-click always starts with AI collapsed.
+  $effect(() => {
+    if (!contextMenuStore.isOpen) aiSubmenuOpen = false;
+  });
 
   const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large", xlarge: "Extra Large" };
 
@@ -255,7 +279,7 @@
     const vh = clientToFixed(window.innerHeight);
     const menuW = menuEl.offsetWidth;
     const menuH = menuEl.offsetHeight;
-    const submenuW = 140; // generous estimate for submenu width
+    const submenuW = 200; // AI minimum width plus padding and borders
     const submenuH = 280; // generous estimate for tallest submenu (List: 8 items)
     return {
       flipLeft: clampedX + menuW + submenuW > vw - 8,
@@ -391,6 +415,16 @@
         <span>Copy</span>
         <span class="shortcut">Ctrl+C</span>
       </button>
+
+      {#if explorer.getSelectedEntries().length === 1}
+        <button class="menu-item" onclick={handleCopyPath} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M6 3H3V13H11V10M7 3H13V9H7V3Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            <path d="M9 6H11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          </svg>
+          <span>Copy Path</span>
+        </button>
+      {/if}
 
       <div class="menu-divider"></div>
 
@@ -661,7 +695,51 @@
 
     {#if pluginMenuItems.length > 0}
       <div class="menu-divider"></div>
-      {#each pluginMenuItems as item (item.id)}
+      {#if aiPluginMenuItems.length > 0}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="submenu-wrapper"
+          class:flip-left={submenuFlip.flipLeft}
+          class:flip-up={submenuFlip.flipUp}
+          onmouseenter={() => aiSubmenuOpen = true}
+          onmouseleave={() => aiSubmenuOpen = false}
+        >
+          <button
+            class="menu-item"
+            onclick={() => aiSubmenuOpen = true}
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={aiSubmenuOpen}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 2.5L9.5 5.5L12.5 7L9.5 8.5L8 11.5L6.5 8.5L3.5 7L6.5 5.5L8 2.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            </svg>
+            <span>AI</span>
+            <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none" aria-hidden="true">
+              <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          {#if aiSubmenuOpen}
+            <div class="submenu ai-submenu" role="menu" aria-label="AI actions">
+              {#each aiPluginMenuItems as item (item.id)}
+                <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
+                  {#if item.icon}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d={item.icon} stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+                    </svg>
+                  {:else}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.25"/>
+                    </svg>
+                  {/if}
+                  <span>{item.label}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+      {#each ungroupedPluginMenuItems as item (item.id)}
         <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
           {#if item.icon}
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -805,6 +883,10 @@
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
     animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
+  }
+
+  .ai-submenu {
+    min-width: 180px;
   }
 
   /* Flip submenu to the left when it would overflow the viewport */

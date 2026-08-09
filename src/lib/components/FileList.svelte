@@ -26,9 +26,11 @@
 
   interface Props {
     explorer: ExplorerInstance;
+    /** Scroll a selected entry into view; bound by ExplorerPane's keyboard navigation. */
+    scrollToEntry?: (entry: FileEntry) => void;
   }
 
-  let { explorer }: Props = $props();
+  let { explorer, scrollToEntry = $bindable() }: Props = $props();
 
 
   // Drop target state for dropping files into current directory
@@ -103,6 +105,11 @@
       });
     });
   }
+
+  // ExplorerPane owns window-level keyboard navigation, while this component
+  // owns each view's virtual scroller. Expose the existing type-ahead seam so
+  // keyboard jumps can reveal an entry that is not currently mounted.
+  scrollToEntry = scrollToSelected;
 
   // ===================
   // Shared item callbacks (passed to view components)

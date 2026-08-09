@@ -26,6 +26,8 @@ use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
 use crate::git_common::{open_repo, to_app_err, workdir_key};
+#[cfg(windows)]
+use crate::process_ext::output_cancellable;
 use crate::task_registry::TaskRegistry;
 
 static GIT_TASKS: TaskRegistry = TaskRegistry::new();
@@ -110,6 +112,16 @@ pub struct GitDiscardOptions {
 pub struct GitDiffOptions {
     #[serde(default)]
     pub staged: bool,
+}
+
+/// The three safe directions in which an exact unified patch may be applied.
+/// Patch text is always supplied over stdin, never interpreted as an argument.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPatchAction {
+    Stage,
+    Unstage,
+    Discard,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -766,7 +778,12 @@ fn wsl_repo_root(distro: &str, linux_path: &str) -> WslRepoRoot {
 /// path (`root`, its canonical UNC form). Returns `None` (caller falls back to
 /// libgit2) when `wsl.exe`/git fails to run or exits non-zero.
 #[cfg(windows)]
-fn wsl_status(distro: &str, linux_path: &str, root: &str) -> Option<GitStatusSummary> {
+fn wsl_status(
+    distro: &str,
+    linux_path: &str,
+    root: &str,
+    cancelled: &AtomicBool,
+) -> Result<Option<GitStatusSummary>, AppError> {
     use crate::process_ext::NoConsole;
 
     let start = Instant::now();
@@ -775,30 +792,32 @@ fn wsl_status(distro: &str, linux_path: &str, root: &str) -> Option<GitStatusSum
     // override — native Linux git already reports modes correctly (#398, #392).
     // `--exec` passes literal argv (a login shell would mangle a path with
     // spaces / metacharacters, #423).
-    let output = std::process::Command::new("wsl.exe")
-        .no_console()
-        .args([
-            "-d",
-            distro,
-            "--exec",
-            "git",
-            "-C",
-            linux_path,
-            "status",
-            "--porcelain=v2",
-            "--branch",
-            "-z",
-            "-uall",
-        ])
-        .output();
+    let mut command = std::process::Command::new("wsl.exe");
+    command.no_console().args([
+        "-d",
+        distro,
+        "--exec",
+        "git",
+        "-C",
+        linux_path,
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "-z",
+        "-uall",
+    ]);
+    let output = output_cancellable(&mut command, cancelled, "git status cancelled");
     let elapsed_ms = start.elapsed().as_millis();
 
     let output = match output {
         Ok(o) => o,
         Err(e) => {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(e);
+            }
             log::warn!("gitstat: wsl_status spawn failed for {distro}:{linux_path}: {e}");
             log::warn!("gitstat: falling back to libgit2 over 9P for {root}");
-            return None;
+            return Ok(None);
         }
     };
     if !output.status.success() {
@@ -808,16 +827,16 @@ fn wsl_status(distro: &str, linux_path: &str, root: &str) -> Option<GitStatusSum
             truncate_stderr(&output.stderr)
         );
         log::warn!("gitstat: falling back to libgit2 over 9P for {root}");
-        return None;
+        return Ok(None);
     }
 
     log::info!("gitstat: wsl_status delegated to {distro} for {linux_path}: ok in {elapsed_ms}ms");
     let parsed = parse_status_v2(&output.stdout);
-    Some(summary_from_v2(
+    Ok(Some(summary_from_v2(
         parsed,
         root.to_string(),
         wsl_op_state(root).to_string(),
-    ))
+    )))
 }
 
 /// Delegate `git diff [--cached] -- <path>` to the distro's native git when
@@ -903,6 +922,21 @@ where
     result.map_err(|e| AppError::Other(format!("git task join: {e}")))?
 }
 
+async fn run_blocking_with_id<T, F>(task_id: Option<u64>, f: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
+{
+    let (id, cancelled) = match task_id {
+        Some(id) => (id, GIT_TASKS.start_with_id(id)),
+        None => GIT_TASKS.start(),
+    };
+    let handle = tokio::task::spawn_blocking(move || f(cancelled));
+    let result = handle.await;
+    GIT_TASKS.cleanup(id);
+    result.map_err(|e| AppError::Other(format!("git task join: {e}")))?
+}
+
 /// Initialize a new git repository at `path`. No-op if one already exists.
 /// Returns the new (or existing) repo root.
 #[tauri::command]
@@ -925,33 +959,157 @@ pub async fn git_init(path: String) -> Result<String, AppError> {
 /// Append `entry` to `.gitignore` at the repo root, creating the file if
 /// missing. Idempotent — does nothing if the entry is already present.
 /// Returns the relative path that was written.
+fn add_to_gitignore(root: &Path, entry: &str) -> Result<String, AppError> {
+    let normalized = entry
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_string();
+    if normalized.is_empty() {
+        return Err(AppError::Other("ignore entry is empty".into()));
+    }
+    let gitignore_path = root.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let already_present = existing.lines().map(|l| l.trim()).any(|l| l == normalized);
+    if already_present {
+        return Ok(normalized);
+    }
+    let needs_leading_newline = !existing.is_empty() && !existing.ends_with('\n');
+    let mut next = existing;
+    if needs_leading_newline {
+        next.push('\n');
+    }
+    next.push_str(&normalized);
+    next.push('\n');
+    std::fs::write(&gitignore_path, next.as_bytes())
+        .map_err(|e| AppError::Other(format!("failed to write .gitignore: {}", e)))?;
+    Ok(normalized)
+}
+
 #[tauri::command]
 pub async fn git_add_to_gitignore(repo_root: String, entry: String) -> Result<String, AppError> {
+    run_blocking(move |_cancel| add_to_gitignore(Path::new(&repo_root), &entry)).await
+}
+
+/// Validate that every requested path is a repo-relative, currently-untracked
+/// working-tree entry. SCM archive/trash actions only ever act on this set.
+fn untracked_worktree_paths(
+    repo: &Repository,
+    paths: &[String],
+) -> Result<(PathBuf, Vec<PathBuf>), AppError> {
+    if paths.is_empty() {
+        return Err(AppError::Other("no untracked paths were selected".into()));
+    }
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?
+        .to_path_buf();
+    let mut relative_paths = Vec::with_capacity(paths.len());
+    let mut seen = HashSet::with_capacity(paths.len());
+    for path in paths {
+        let relative = Path::new(path);
+        if relative.as_os_str().is_empty()
+            || relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(AppError::InvalidPath(format!(
+                "expected a repo-relative path: {path}"
+            )));
+        }
+        let status = repo.status_file(relative).map_err(to_app_err)?;
+        if !status.contains(Status::WT_NEW) {
+            return Err(AppError::Other(format!(
+                "refusing to operate on non-untracked path: {path}"
+            )));
+        }
+        let relative = relative.to_path_buf();
+        if !seen.insert(relative.clone()) {
+            return Err(AppError::InvalidPath(format!(
+                "path was selected more than once: {path}"
+            )));
+        }
+        relative_paths.push(relative);
+    }
+    Ok((workdir, relative_paths))
+}
+
+/// Move selected untracked files into `.archive`, preserving their paths below
+/// the repository root so same-named files from different folders do not clash.
+#[tauri::command]
+pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let root = PathBuf::from(&repo_root);
-        let normalized = entry
-            .trim_start_matches("./")
-            .trim_start_matches('/')
-            .to_string();
-        if normalized.is_empty() {
-            return Err(AppError::Other("ignore entry is empty".into()));
+        let repo = open_repo(Path::new(&repo_path))?;
+        let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+        if relative_paths
+            .iter()
+            .any(|path| path == Path::new(".gitignore"))
+        {
+            return Err(AppError::Other(
+                "refusing to archive .gitignore because .archive must remain ignored".into(),
+            ));
         }
-        let gitignore_path = root.join(".gitignore");
-        let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
-        let already_present = existing.lines().map(|l| l.trim()).any(|l| l == normalized);
-        if already_present {
-            return Ok(normalized);
+        let archive_root = workdir.join(".archive");
+        for relative in &relative_paths {
+            let destination = archive_root.join(relative);
+            if destination.exists() {
+                return Err(AppError::AlreadyExists(destination.display().to_string()));
+            }
         }
-        let needs_leading_newline = !existing.is_empty() && !existing.ends_with('\n');
-        let mut next = existing;
-        if needs_leading_newline {
-            next.push('\n');
+        let mut moved = Vec::with_capacity(relative_paths.len());
+        for relative in relative_paths {
+            let source = workdir.join(&relative);
+            let destination = archive_root.join(&relative);
+            let parent = destination
+                .parent()
+                .expect("archive destination has a parent");
+            if let Err(error) = std::fs::create_dir_all(parent)
+                .and_then(|()| std::fs::rename(&source, &destination))
+            {
+                for (moved_source, moved_destination) in moved.iter().rev() {
+                    let _ = std::fs::rename(moved_destination, moved_source);
+                }
+                return Err(AppError::Io(error));
+            }
+            moved.push((source, destination));
         }
-        next.push_str(&normalized);
-        next.push('\n');
-        std::fs::write(&gitignore_path, next.as_bytes())
-            .map_err(|e| AppError::Other(format!("failed to write .gitignore: {}", e)))?;
-        Ok(normalized)
+        if let Err(error) = add_to_gitignore(&workdir, ".archive") {
+            for (source, destination) in moved.iter().rev() {
+                let _ = std::fs::rename(destination, source);
+            }
+            return Err(error);
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Move selected untracked files to the operating system trash/recycle bin.
+#[tauri::command]
+pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+        let mut failures = Vec::new();
+        for relative in relative_paths {
+            let path = workdir.join(relative);
+            if let Err(error) = crate::system::trash_or_remove(&path) {
+                failures.push(format!("{} ({error})", path.display()));
+            }
+        }
+        if !failures.is_empty() {
+            return Err(AppError::Other(format!(
+                "failed to move {} selected item(s) to trash: {}",
+                failures.len(),
+                failures.join(", ")
+            )));
+        }
+        Ok(())
     })
     .await
 }
@@ -981,8 +1139,11 @@ pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
 }
 
 #[tauri::command]
-pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError> {
-    run_blocking(move |_cancel| {
+pub async fn git_status(
+    repo_path: String,
+    task_id: Option<u64>,
+) -> Result<GitStatusSummary, AppError> {
+    run_blocking_with_id(task_id, move |cancelled| {
         let start = Instant::now();
         // A repo under \\wsl.localhost\… hashes its whole tree over 9P on every
         // libgit2 status pass (157s on a big repo), and `open_repo` is itself a
@@ -991,7 +1152,7 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
         #[cfg(windows)]
         if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&repo_path) {
             let root = normalize_root(&repo_path);
-            if let Some(summary) = wsl_status(&distro, &linux_path, &root) {
+            if let Some(summary) = wsl_status(&distro, &linux_path, &root, &cancelled)? {
                 log::info!(
                     "gitstat: git_status for {repo_path} served by wsl-delegated in {}ms",
                     start.elapsed().as_millis()
@@ -999,11 +1160,17 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
                 return Ok(summary);
             }
         }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other("git status cancelled".into()));
+        }
         let p = PathBuf::from(&repo_path);
         let result = match open_repo(&p) {
             Ok(repo) => collect_status(&repo),
             Err(_) => map_non_repo(&p),
         };
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other("git status cancelled".into()));
+        }
         log::info!(
             "gitstat: git_status for {repo_path} served by libgit2 in {}ms",
             start.elapsed().as_millis()
@@ -1011,6 +1178,15 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
         result
     })
     .await
+}
+
+/// Cancel one caller-identified SCM status request. Other Git operations use
+/// different registry IDs and are unaffected.
+#[tauri::command]
+pub async fn cancel_git_status(task_id: u64) -> Result<(), AppError> {
+    log::info!("gitstat: cancelling SCM status task {task_id}: final consumer released");
+    GIT_TASKS.cancel(task_id);
+    Ok(())
 }
 
 fn stage_paths_inner(repo: &Repository, paths: &[String]) -> Result<(), AppError> {
@@ -1063,6 +1239,77 @@ pub async fn git_unstage(repo_path: String, paths: Vec<String>) -> Result<(), Ap
         }
     })
     .await
+}
+
+fn apply_patch_inner(repo_path: &str, patch: &str, action: GitPatchAction) -> Result<(), AppError> {
+    // Open first so this has the same non-repository and bare-repository
+    // boundary as the other SCM mutations; the workdir is the only safe cwd
+    // for a repo-relative patch.
+    let repo = open_repo(Path::new(repo_path))?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
+    let args: &[&str] = match action {
+        GitPatchAction::Stage => &["apply", "--cached", "--whitespace=nowarn", "-"],
+        GitPatchAction::Unstage => &["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"],
+        GitPatchAction::Discard => &["apply", "--reverse", "--whitespace=nowarn", "-"],
+    };
+
+    use crate::process_ext::NoConsole;
+    let mut command = {
+        #[cfg(windows)]
+        {
+            if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(repo_path) {
+                let mut command = std::process::Command::new("wsl.exe");
+                command
+                    .no_console()
+                    .args(["-d", &distro, "--exec", "git", "-C", &linux_path])
+                    .args(args);
+                command
+            } else {
+                let mut command = std::process::Command::new("git");
+                command.no_console().current_dir(workdir).args(args);
+                command
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let mut command = std::process::Command::new("git");
+            command.no_console().current_dir(workdir).args(args);
+            command
+        }
+    };
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| AppError::Other(format!("failed to start git apply: {err}")))?;
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| AppError::Other("failed to open git apply stdin".into()))?
+        .write_all(patch.as_bytes())
+        .map_err(|err| AppError::Other(format!("failed to send patch to git: {err}")))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|err| AppError::Other(format!("failed to wait for git apply: {err}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(AppError::Other(format!("could not apply hunk: {message}")))
+    }
+}
+
+/// Apply exactly one unified-diff hunk to the index or working tree.
+#[tauri::command]
+pub async fn git_apply_patch(
+    repo_path: String,
+    patch: String,
+    action: GitPatchAction,
+) -> Result<(), AppError> {
+    run_blocking(move |_cancel| apply_patch_inner(&repo_path, &patch, action)).await
 }
 
 fn has_staged_changes_for(repo: &Repository, path: &str) -> Result<bool, AppError> {
@@ -1545,6 +1792,46 @@ mod tests {
             .unwrap();
     }
 
+    fn git_patch(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// Match the frontend's `extractDiffHunks`: repeat the complete file
+    /// preamble and retain exactly one 3-context @@ block per patch.
+    fn production_shaped_hunks(patch: &str) -> Vec<String> {
+        let lines: Vec<&str> = patch.lines().collect();
+        let starts: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| line.starts_with("@@ ").then_some(index))
+            .collect();
+        if starts.is_empty() {
+            return Vec::new();
+        }
+        let preamble = &lines[..starts[0]];
+        starts
+            .iter()
+            .enumerate()
+            .map(|(index, start)| {
+                preamble
+                    .iter()
+                    .chain(
+                        lines[*start..starts.get(index + 1).copied().unwrap_or(lines.len())].iter(),
+                    )
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n"
+            })
+            .collect()
+    }
+
     /// A mode-only change (chmod +x) is what Windows manufactures for every
     /// 0755 file in a Linux-created repo, and it renders as a change with an
     /// empty diff (#392). With the hide-empty-diffs policy on, it must not
@@ -1729,6 +2016,77 @@ mod tests {
         assert_eq!(s.untracked.len(), 1);
         assert_eq!(s.untracked[0].path, "new.txt");
         assert!(matches!(s.untracked[0].status, GitStatusCode::Untracked));
+    }
+
+    #[test]
+    fn archive_untracked_moves_files_below_archive_and_removes_them_from_status() {
+        let dir = init_repo();
+        write(dir.path(), ".gitignore", "");
+        commit_all(dir.path(), "ignore file");
+        write(dir.path(), "src/generated.ts", "export {};\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_archive_untracked(path, vec!["src/generated.ts".into()])).unwrap();
+
+        assert!(!dir.path().join("src/generated.ts").exists());
+        assert!(dir.path().join(".archive/src/generated.ts").exists());
+        assert!(std::fs::read_to_string(dir.path().join(".gitignore"))
+            .unwrap()
+            .lines()
+            .any(|line| line == ".archive"));
+        assert!(sync_status(dir.path()).untracked.is_empty());
+    }
+
+    #[test]
+    fn archive_untracked_rejects_duplicate_or_gitignore_paths_without_moving_them() {
+        let dir = init_repo();
+        write(dir.path(), "scratch.txt", "keep me\n");
+        write(dir.path(), ".gitignore", "other\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let duplicate = tokio_test_block(git_archive_untracked(
+            path.clone(),
+            vec!["scratch.txt".into(), "scratch.txt".into()],
+        ));
+        assert!(matches!(duplicate, Err(AppError::InvalidPath(_))));
+        assert!(dir.path().join("scratch.txt").exists());
+
+        let gitignore = tokio_test_block(git_archive_untracked(path, vec![".gitignore".into()]));
+        assert!(
+            matches!(gitignore, Err(AppError::Other(message)) if message.contains(".gitignore"))
+        );
+        assert!(dir.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn trash_untracked_moves_file_to_system_trash_and_leaves_worktree_clean() {
+        let dir = init_repo();
+        write(dir.path(), "scratch.txt", "discard me\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_trash_untracked(path, vec!["scratch.txt".into()])).unwrap();
+
+        assert!(!dir.path().join("scratch.txt").exists());
+        assert!(sync_status(dir.path()).untracked.is_empty());
+    }
+
+    #[test]
+    fn trash_untracked_validates_the_whole_batch_before_moving_any_file() {
+        let dir = init_repo();
+        write(dir.path(), "tracked.txt", "tracked\n");
+        commit_all(dir.path(), "tracked");
+        write(dir.path(), "scratch.txt", "keep me\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let result = tokio_test_block(git_trash_untracked(
+            path,
+            vec!["scratch.txt".into(), "tracked.txt".into()],
+        ));
+
+        assert!(
+            matches!(result, Err(AppError::Other(message)) if message.contains("non-untracked"))
+        );
+        assert!(dir.path().join("scratch.txt").exists());
     }
 
     #[test]
@@ -1946,6 +2304,88 @@ mod tests {
     }
 
     #[test]
+    fn hunk_patch_actions_only_change_the_selected_hunk() {
+        let dir = init_repo();
+        let original = (1..=12).map(|n| format!("line-{n}\n")).collect::<String>();
+        write(dir.path(), "a.txt", &original);
+        commit_all(dir.path(), "init");
+
+        let changed = original
+            .replace("line-1\n", "first change\n")
+            .replace("line-12\n", "last change\n");
+        write(dir.path(), "a.txt", &changed);
+
+        let initial_patch = git_patch(dir.path(), &["diff", "--", "a.txt"]);
+        let hunks = production_shaped_hunks(&initial_patch);
+        assert_eq!(hunks.len(), 2);
+        let first_hunk = hunks[0].clone();
+        let last_hunk = hunks[1].clone();
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_apply_patch(
+            path.clone(),
+            first_hunk.clone(),
+            GitPatchAction::Stage,
+        ))
+        .unwrap();
+        let staged = git_patch(dir.path(), &["diff", "--cached", "--", "a.txt"]);
+        let unstaged = git_patch(dir.path(), &["diff", "--", "a.txt"]);
+        assert!(staged.contains("first change"));
+        assert!(!staged.contains("last change"));
+        assert!(unstaged.contains("last change"));
+        assert!(!unstaged.contains("first change"));
+
+        // Stage both, then unstage only the first. The second must remain in
+        // the index; this is the isolation guarantee a whole-file reset lacks.
+        tokio_test_block(git_apply_patch(
+            path.clone(),
+            last_hunk,
+            GitPatchAction::Stage,
+        ))
+        .unwrap();
+        tokio_test_block(git_apply_patch(
+            path.clone(),
+            first_hunk.clone(),
+            GitPatchAction::Unstage,
+        ))
+        .unwrap();
+        let staged_after_unstage = git_patch(dir.path(), &["diff", "--cached", "--", "a.txt"]);
+        assert!(!staged_after_unstage.contains("first change"));
+        assert!(staged_after_unstage.contains("last change"));
+
+        tokio_test_block(git_apply_patch(path, first_hunk, GitPatchAction::Discard)).unwrap();
+        let remaining = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert!(remaining.contains("line-1"));
+        assert!(remaining.contains("last change"));
+    }
+
+    #[test]
+    fn stale_first_hunk_patch_is_rejected_instead_of_applying_at_an_offset() {
+        let dir = init_repo();
+        let original = (1..=12).map(|n| format!("line-{n}\n")).collect::<String>();
+        write(dir.path(), "a.txt", &original);
+        commit_all(dir.path(), "init");
+
+        let changed = original.replace("line-1\n", "first change\n");
+        write(dir.path(), "a.txt", &changed);
+        let patch = git_patch(dir.path(), &["diff", "--", "a.txt"]);
+
+        let shifted = format!("preface-a\npreface-b\npreface-c\n{changed}");
+        write(dir.path(), "a.txt", &shifted);
+        let path = dir.path().to_str().unwrap().to_string();
+        let result = tokio_test_block(git_apply_patch(path, patch, GitPatchAction::Discard));
+
+        assert!(
+            result.is_err(),
+            "a stale line-1 hunk must not apply at a shifted offset"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            shifted
+        );
+    }
+
+    #[test]
     fn discard_reverts_worktree_changes() {
         let dir = init_repo();
         write(dir.path(), "a.txt", "original\n");
@@ -2095,16 +2535,17 @@ mod tests {
             .expect("WSL_GIT_DIAG_PATH must be a \\\\wsl.localhost\\… path");
         let root = normalize_root(&path);
         let start = Instant::now();
-        let delegated = wsl_status(&distro, &linux_path, &root);
+        let delegated = wsl_status(&distro, &linux_path, &root, &AtomicBool::new(false));
         let elapsed = start.elapsed();
         match &delegated {
-            Some(summary) => println!(
+            Ok(Some(summary)) => println!(
                 "wsl_diag_scm_status: WSL delegation OK in {elapsed:?}: staged={} changes={} untracked={}",
                 summary.staged.len(),
                 summary.changes.len(),
                 summary.untracked.len()
             ),
-            None => println!("wsl_diag_scm_status: WSL delegation declined/failed in {elapsed:?}"),
+            Ok(None) => println!("wsl_diag_scm_status: WSL delegation declined/failed in {elapsed:?}"),
+            Err(error) => println!("wsl_diag_scm_status: WSL delegation errored in {elapsed:?}: {error}"),
         }
 
         // For comparison, time the libgit2 open + fallback too.

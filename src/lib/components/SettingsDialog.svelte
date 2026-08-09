@@ -164,6 +164,7 @@
     showManuallyHidden: ["Show Manually Hidden Items", "Reveal items hidden via the right-click Hide action (shown dimmed)"],
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
+    recycleBin: ["Recycle Bin in Sidebar", "Show a shortcut to the system recycle bin below Bookmarks"],
     quickOpenDebug: ["QuickOpen Debug Scores", "Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"],
     warmWindow: ["Pre-warm New Windows", "Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.", "performance", "speed"],
     confirmDelete: ["Confirm before deleting", "Show confirmation dialog when moving files to trash"],
@@ -177,6 +178,7 @@
     f5SyncsLocalBranches: ["F5 Syncs Local Branches", "In the git graph, F5 also fetches and fast-forwards any local branch that is strictly behind its upstream. Diverged branches are never touched — they're reported in a toast.", "git graph", "fetch", "fast-forward", "sync"],
     explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
+    showPreviewInfo: ["Preview Info", "Show the file name, type badge, size and modified date in the preview pane (off = content only)", "preview", "metadata", "auxiliary", "minimal"],
     ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
     keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
   };
@@ -191,9 +193,9 @@
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.defaultPaneLayout, rows.showManuallyHidden,
-    rows.gitStatus, rows.f5SyncsLocalBranches, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
+    rows.gitStatus, rows.f5SyncsLocalBranches, rows.recentItems, rows.recycleBin, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
-    rows.previewFontSize, rows.ffmpegPath,
+    rows.previewFontSize, rows.showPreviewInfo, rows.ffmpegPath,
   ];
   const terminalRows = [rows.terminalFollowsExplorer, rows.explorerFollowsTerminal];
 
@@ -702,6 +704,22 @@
             />
           </div>
 
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.recycleBin)}>
+            <div class="setting-info">
+              <span class="setting-label">Recycle Bin in Sidebar</span>
+              <span class="setting-description">Show a shortcut to the system recycle bin below Bookmarks</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                data-testid="setting-show-recycle-bin"
+                checked={settingsStore.showRecycleBin}
+                onchange={() => settingsStore.toggleRecycleBin()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
           <div class="setting-row" class:hidden={!matchesSearch(...rows.quickOpenDebug)}>
             <div class="setting-info">
               <span class="setting-label">QuickOpen Debug Scores</span>
@@ -816,6 +834,22 @@
               value={settingsStore.previewFontSize}
               oninput={(e) => settingsStore.setPreviewFontSize(Number(e.currentTarget.value))}
             />
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.showPreviewInfo)}>
+            <div class="setting-info">
+              <span class="setting-label">Preview Info</span>
+              <span class="setting-description">Show the file name, type badge, size and modified date in the preview pane (off = content only)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                data-testid="setting-show-preview-info"
+                checked={settingsStore.showPreviewInfo}
+                onchange={() => settingsStore.togglePreviewInfo()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           <div class="setting-row" class:hidden={!matchesSearch(...rows.ffmpegPath)}>
@@ -1218,6 +1252,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
   }
 
   .setting-label {
@@ -1341,7 +1376,7 @@
   .toggle {
     position: relative;
     display: inline-block;
-    width: 44px;
+    flex: 0 0 44px;
     height: 24px;
     cursor: pointer;
   }

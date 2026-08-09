@@ -112,11 +112,20 @@ pub struct GitLogOptions {
     /// every branch. Names that don't resolve are ignored; if none resolve
     /// the page is empty. `None` = no filter (#342).
     pub branches: Option<Vec<String>>,
+    /// Branch shorthands to drop from the seed set, whichever way it was
+    /// built (#515). Unlike `branches` this is subtractive, so "every branch
+    /// except these" keeps HEAD seeded and keeps honouring `local_only` —
+    /// spelling the same thing as an explicit `branches` list would silently
+    /// lose both. `None` / empty = drop nothing.
+    pub exclude_branches: Option<Vec<String>>,
     /// Seed the walk from HEAD + LOCAL branch tips only, hiding history that
     /// is reachable solely from remote-tracking branches (#381). Ignored when
     /// `branches` is set (an explicit selection wins).
     #[serde(default)]
     pub local_only: bool,
+    /// Repository-relative path whose touching commits should be returned.
+    /// `None` / blank = no path filter (#529).
+    pub file_path: Option<String>,
     /// Resume hint (#431): OID of the last real commit of the previous page
     /// (the previous page's `next_cursor`). When set, the walk seeds from the
     /// same tips but discards every commit up to *and including* this OID, then
@@ -145,11 +154,21 @@ pub struct GitLogPage {
     /// when detached / unborn. Lets the graph highlight *only* the checked-out
     /// branch chip when several branches sit on the HEAD commit (#433).
     pub head_branch: Option<String>,
+    /// True while HEAD points straight at a commit instead of a branch (#524).
+    /// Reported separately from `head_branch` because that is also None on an
+    /// unborn branch — the graph's standing detached badge must not fire there.
+    pub detached: bool,
+}
+
+/// True while HEAD points at a commit rather than a branch. An unborn branch
+/// (no commits yet) is attached, not detached.
+fn head_detached_in(repo: &Repository) -> bool {
+    repo.head_detached().unwrap_or(false)
 }
 
 /// Shorthand of the branch HEAD points at, or None when detached / unborn.
 fn head_branch_of(repo: &Repository) -> Option<String> {
-    if repo.head_detached().unwrap_or(false) {
+    if head_detached_in(repo) {
         return None;
     }
     repo.head()
@@ -161,6 +180,24 @@ fn short_oid(oid: Oid) -> String {
     // 7 hex chars matches git's default abbreviation.
     let s = oid.to_string();
     s.chars().take(7).collect()
+}
+
+/// Whether `commit` changed the exact repository-relative path compared with
+/// its first parent. Root commits compare against an empty tree, matching the
+/// changed-files detail seam used by the graph.
+fn commit_touches_path(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+    file_path: &str,
+) -> Result<bool, AppError> {
+    let tree = commit.tree().map_err(to_app_err)?;
+    let parent_tree = commit.parent(0).ok().and_then(|parent| parent.tree().ok());
+    let mut options = git2::DiffOptions::new();
+    options.pathspec(file_path).disable_pathspec_match(true);
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut options))
+        .map_err(to_app_err)?;
+    Ok(diff.deltas().next().is_some())
 }
 
 /// Build the OID → decorations map for the whole repo. Cheap relative to the
@@ -284,8 +321,19 @@ fn build_log(
     // back gracefully on an empty / unborn repo (push_head errors → no
     // commits).
     let mut seeded = false;
+    // Subtractive filter (#515): applies to both seeding paths, so hiding
+    // remote-only branches never turns "everything" into an explicit list.
+    let excluded: std::collections::HashSet<&str> = opts
+        .exclude_branches
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
     if let Some(names) = &opts.branches {
         for name in names {
+            if excluded.contains(name.as_str()) {
+                continue;
+            }
             let branch = repo
                 .find_branch(name, git2::BranchType::Local)
                 .or_else(|_| repo.find_branch(name, git2::BranchType::Remote));
@@ -309,6 +357,9 @@ fn build_log(
         };
         if let Ok(branches) = repo.branches(branch_type) {
             for b in branches.flatten() {
+                if matches!(b.0.name(), Ok(Some(n)) if excluded.contains(n)) {
+                    continue;
+                }
                 if let Some(oid) = b.0.get().target() {
                     if walk.push(oid).is_ok() {
                         seeded = true;
@@ -324,6 +375,7 @@ fn build_log(
             has_more: false,
             next_cursor: None,
             head_branch: head_branch_of(repo),
+            detached: head_detached_in(repo),
         });
     }
 
@@ -337,6 +389,11 @@ fn build_log(
     // is treated as "no cursor" (fall back to skip) rather than erroring.
     let cursor_oid = opts.cursor.as_deref().and_then(|s| Oid::from_str(s).ok());
     let mut passed_cursor = cursor_oid.is_none();
+    let file_path = opts
+        .file_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
 
     for (i, step) in walk.enumerate() {
         // Cooperative cancellation — check periodically to avoid overhead.
@@ -353,17 +410,23 @@ fn build_log(
                 }
                 continue;
             }
-        } else if skipped < opts.skip {
+        }
+
+        let commit = repo.find_commit(oid).map_err(to_app_err)?;
+        if let Some(path) = file_path {
+            if !commit_touches_path(repo, &commit, path)? {
+                continue;
+            }
+        }
+        if cursor_oid.is_none() && skipped < opts.skip {
             skipped += 1;
             continue;
         }
         if commits.len() == limit {
-            // One extra step proves there is a next page without fetching it.
+            // One extra matching step proves there is a next page.
             has_more = true;
             break;
         }
-
-        let commit = repo.find_commit(oid).map_err(to_app_err)?;
         let author = commit.author();
         commits.push(CommitInfo {
             oid: oid.to_string(),
@@ -378,6 +441,19 @@ fn build_log(
     }
 
     let next_cursor = commits.last().map(|c| c.oid.clone());
+    let stashes = if let Some(path) = file_path {
+        stashes
+            .into_iter()
+            .filter(|(_, _, oid)| {
+                repo.find_commit(*oid)
+                    .ok()
+                    .and_then(|commit| commit_touches_path(repo, &commit, path).ok())
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        stashes
+    };
     weave_stashes(&mut commits, stashes, repo);
     let refs = collect_decorations(repo)?;
 
@@ -387,6 +463,7 @@ fn build_log(
         has_more,
         next_cursor,
         head_branch: head_branch_of(repo),
+        detached: head_detached_in(repo),
     })
 }
 
@@ -612,7 +689,7 @@ fn collect_refs(repo: &Repository) -> Result<GitRefs, AppError> {
 
     match repo.head() {
         Ok(head) => {
-            out.detached = repo.head_detached().unwrap_or(false);
+            out.detached = head_detached_in(repo);
             if head.is_branch() && !out.detached {
                 out.head_branch = head.shorthand().map(|s| s.to_string());
             }
@@ -677,23 +754,16 @@ pub struct CommitFile {
     pub status: String,
 }
 
-/// Files changed by `oid` relative to its first parent (root commits diff
-/// against the empty tree). Powers the graph's commit-detail panel (#58).
-#[tauri::command]
-pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<CommitFile>, AppError> {
-    run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
-        let commit = repo
-            .find_commit(Oid::from_str(&oid).map_err(|e| AppError::Other(e.to_string()))?)
-            .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
-        let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
-        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
-        let diff = repo
-            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
-            .map_err(|e| AppError::Other(e.to_string()))?;
+fn commit_tree<'repo>(repo: &'repo Repository, oid: &str) -> Result<git2::Tree<'repo>, AppError> {
+    let commit = repo
+        .find_commit(Oid::from_str(oid).map_err(|e| AppError::Other(e.to_string()))?)
+        .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
+    commit.tree().map_err(|e| AppError::Other(e.to_string()))
+}
 
-        let mut files = Vec::new();
-        for delta in diff.deltas() {
+fn diff_files(diff: &git2::Diff<'_>) -> Vec<CommitFile> {
+    diff.deltas()
+        .map(|delta| {
             let status = match delta.status() {
                 git2::Delta::Added => "A",
                 git2::Delta::Deleted => "D",
@@ -709,12 +779,58 @@ pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<Comm
                 .or_else(|| delta.old_file().path())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            files.push(CommitFile {
+            CommitFile {
                 path,
                 status: status.to_string(),
-            });
-        }
-        Ok(files)
+            }
+        })
+        .collect()
+}
+
+/// Files changed by `oid` relative to its first parent (root commits diff
+/// against the empty tree). Powers the graph's commit-detail panel (#58).
+#[tauri::command]
+pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<CommitFile>, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        let commit = repo
+            .find_commit(Oid::from_str(&oid).map_err(|e| AppError::Other(e.to_string()))?)
+            .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
+        let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
+        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+            .map_err(|e| AppError::Other(e.to_string()))?;
+
+        Ok(diff_files(&diff))
+    })
+    .await
+}
+
+/// Files changed from `base_oid`'s tree to `target_oid`'s tree. Unlike the
+/// single-commit detail endpoint, the commits need not be related.
+fn commit_comparison_files(
+    repo: &Repository,
+    base_oid: &str,
+    target_oid: &str,
+) -> Result<Vec<CommitFile>, AppError> {
+    let base = commit_tree(repo, base_oid)?;
+    let target = commit_tree(repo, target_oid)?;
+    let diff = repo
+        .diff_tree_to_tree(Some(&base), Some(&target), None)
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    Ok(diff_files(&diff))
+}
+
+#[tauri::command]
+pub async fn git_compare_commit_files(
+    repo_path: String,
+    base_oid: String,
+    target_oid: String,
+) -> Result<Vec<CommitFile>, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        commit_comparison_files(&repo, &base_oid, &target_oid)
     })
     .await
 }
@@ -753,6 +869,36 @@ fn commit_file_diff(repo: &Repository, oid: &str, file_path: &str) -> Result<Str
     Ok(out)
 }
 
+fn commit_comparison_file_diff(
+    repo: &Repository,
+    base_oid: &str,
+    target_oid: &str,
+    file_path: &str,
+) -> Result<String, AppError> {
+    let base = commit_tree(repo, base_oid)?;
+    let target = commit_tree(repo, target_oid)?;
+    let mut opts = git2::DiffOptions::new();
+    opts.pathspec(file_path);
+    let diff = repo
+        .diff_tree_to_tree(Some(&base), Some(&target), Some(&mut opts))
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let mut out = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        let prefix = match line.origin_value() {
+            git2::DiffLineType::Addition => "+",
+            git2::DiffLineType::Deletion => "-",
+            git2::DiffLineType::Context => " ",
+            _ => "",
+        };
+        out.push_str(prefix);
+        out.push_str(&String::from_utf8_lossy(line.content()));
+        true
+    })
+    .map_err(to_app_err)?;
+    Ok(out)
+}
+
 #[tauri::command]
 pub async fn git_commit_file_diff(
     repo_path: String,
@@ -762,6 +908,20 @@ pub async fn git_commit_file_diff(
     run_blocking(move |_cancel| {
         let repo = open_repo(Path::new(&repo_path))?;
         commit_file_diff(&repo, &oid, &file_path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_compare_commit_file_diff(
+    repo_path: String,
+    base_oid: String,
+    target_oid: String,
+    file_path: String,
+) -> Result<String, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        commit_comparison_file_diff(&repo, &base_oid, &target_oid, &file_path)
     })
     .await
 }
@@ -828,6 +988,39 @@ mod tests {
         assert!(commit_file_diff(&repo, "0000", "a.txt").is_err());
         let none = commit_file_diff(&repo, &c2.to_string(), "missing.txt").unwrap();
         assert!(none.trim().is_empty());
+    }
+
+    #[test]
+    fn commit_comparison_diffs_any_two_trees_in_the_requested_direction() {
+        let (dir, repo) = init_repo();
+        fs::write(dir.path().join("shared.txt"), "root value\n").unwrap();
+        let root = commit(&repo, "root", &[]);
+        fs::write(dir.path().join("shared.txt"), "older value\n").unwrap();
+        let older = commit(&repo, "older sibling", &[root]);
+        // `commit` updates HEAD, so rewind its reference to the fork point
+        // before creating the other sibling with the same parent.
+        repo.set_head_detached(root).unwrap();
+        fs::write(dir.path().join("shared.txt"), "newer value\n").unwrap();
+        fs::write(dir.path().join("introduced.txt"), "introduced\n").unwrap();
+        let newer = commit(&repo, "newer sibling", &[root]);
+
+        let files = commit_comparison_files(&repo, &older.to_string(), &newer.to_string()).unwrap();
+        assert!(files
+            .iter()
+            .any(|file| file.path == "shared.txt" && file.status == "M"));
+        assert!(files
+            .iter()
+            .any(|file| file.path == "introduced.txt" && file.status == "A"));
+
+        let diff = commit_comparison_file_diff(
+            &repo,
+            &older.to_string(),
+            &newer.to_string(),
+            "shared.txt",
+        )
+        .unwrap();
+        assert!(diff.contains("-older value"), "missing older tree: {diff}");
+        assert!(diff.contains("+newer value"), "missing newer tree: {diff}");
     }
 
     #[test]
@@ -942,6 +1135,77 @@ mod tests {
         };
         let empty = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
         assert!(empty.commits.is_empty());
+    }
+
+    #[test]
+    fn git_log_file_path_filter_returns_only_commits_that_touch_the_path() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "tracked.txt", "one");
+        let first = commit(&repo, "add tracked file", &[]);
+        write(&p, "other.txt", "unrelated");
+        let second = commit(&repo, "change another file", &[first]);
+        write(&p, "tracked.txt", "two");
+        let third = commit(&repo, "update tracked file", &[second]);
+
+        let filtered = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("tracked.txt".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        let summaries: Vec<_> = filtered
+            .commits
+            .iter()
+            .map(|commit| commit.summary.as_str())
+            .collect();
+        assert_eq!(summaries, vec!["update tracked file", "add tracked file"]);
+
+        // A stash attached to a matching base is not itself a match when its
+        // own first-parent diff only changes another path.
+        write(&p, "other.txt", "stashed change");
+        let unrelated_stash = commit(&repo, "unrelated stash", &[third]);
+        repo.find_reference("refs/heads/main")
+            .unwrap()
+            .set_target(third, "restore branch after synthetic stash")
+            .unwrap();
+        let filtered_with_stash = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("tracked.txt".into()),
+                ..Default::default()
+            },
+            vec![(0, "unrelated stash".into(), unrelated_stash)],
+            &no_cancel(),
+        )
+        .unwrap();
+        assert!(
+            filtered_with_stash
+                .commits
+                .iter()
+                .all(|commit| commit.stash.is_none()),
+            "a stash that did not touch the path leaked into filtered history"
+        );
+
+        let cleared = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("  ".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(
+            cleared.commits.len(),
+            3,
+            "blank path must restore all commits"
+        );
     }
 
     #[test]
@@ -1155,6 +1419,88 @@ mod tests {
             vec!["c2", "c1", "c0"],
             "cursor resume drops no real commit at the stash boundary",
         );
+    }
+
+    #[test]
+    fn exclude_branches_drops_a_tip_without_unseeding_head_or_local_only() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let base = commit(&repo, "base", &[]);
+        write(&p, "a.txt", "two");
+        let _tip = commit(&repo, "main tip", &[base]);
+
+        // origin/legacy: a remote-only branch with a commit of its own.
+        // origin/main: a remote that local `main` tracks, ALSO ahead by one —
+        // local_only is what hides that, and it must keep working.
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        let base_commit = repo.find_commit(base).unwrap();
+        let tree = base_commit.tree().unwrap();
+        let legacy_tip = repo
+            .commit(None, &sig, &sig, "remote only", &tree, &[&base_commit])
+            .unwrap();
+        repo.reference("refs/remotes/origin/legacy", legacy_tip, true, "sim")
+            .unwrap();
+        let ahead = repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "origin/main ahead",
+                &tree,
+                &[&base_commit],
+            )
+            .unwrap();
+        repo.reference("refs/remotes/origin/main", ahead, true, "sim")
+            .unwrap();
+
+        let summaries = |o: &GitLogOptions| -> Vec<String> {
+            build_log(&repo, o, Vec::new(), &no_cancel())
+                .unwrap()
+                .commits
+                .into_iter()
+                .map(|c| c.summary)
+                .collect()
+        };
+
+        // Subtracting the remote-only tip hides its commit and nothing else:
+        // HEAD's history and the tracked remote's are still walked.
+        let excluded = GitLogOptions {
+            exclude_branches: Some(vec!["origin/legacy".into()]),
+            ..Default::default()
+        };
+        let sums = summaries(&excluded);
+        assert!(!sums.contains(&"remote only".to_string()), "{sums:?}");
+        assert!(sums.contains(&"main tip".to_string()), "{sums:?}");
+        assert!(sums.contains(&"origin/main ahead".to_string()), "{sums:?}");
+
+        // Composes with local_only instead of overriding it: an explicit
+        // `branches` list would have made "origin/main ahead" reappear.
+        let both = GitLogOptions {
+            exclude_branches: Some(vec!["origin/legacy".into()]),
+            local_only: true,
+            ..Default::default()
+        };
+        let sums = summaries(&both);
+        assert!(!sums.contains(&"remote only".to_string()), "{sums:?}");
+        assert!(!sums.contains(&"origin/main ahead".to_string()), "{sums:?}");
+        assert!(sums.contains(&"main tip".to_string()), "{sums:?}");
+
+        // Subtracts from an explicit selection too (#342 + #515 composed):
+        // selecting only the excluded branch walks nothing.
+        let selected = GitLogOptions {
+            branches: Some(vec!["origin/legacy".into()]),
+            exclude_branches: Some(vec!["origin/legacy".into()]),
+            ..Default::default()
+        };
+        assert!(summaries(&selected).is_empty());
+
+        // Excluding an unknown name changes nothing.
+        let noop = GitLogOptions {
+            exclude_branches: Some(vec!["does/not/exist".into()]),
+            ..Default::default()
+        };
+        assert_eq!(summaries(&noop), summaries(&GitLogOptions::default()));
     }
 
     #[test]
@@ -2005,5 +2351,46 @@ mod tests {
             .map(|c| c.oid.clone())
             .collect();
         assert_eq!(seen, full_order, "cursor page order != full-walk order");
+    }
+
+    /// #524: the log page reports detached HEAD as its own fact. The standing
+    /// indicator can't infer it from `head_branch == None`, which is also the
+    /// answer on an unborn branch.
+    #[test]
+    fn log_page_reports_detached_head() {
+        let (dir, repo) = init_repo();
+        write(dir.path(), "a.txt", "one\n");
+        let c1 = commit(&repo, "first", &[]);
+        write(dir.path(), "a.txt", "two\n");
+        let c2 = commit(&repo, "second", &[c1]);
+
+        let attached =
+            build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(!attached.detached, "on a branch, HEAD is not detached");
+        assert_eq!(attached.head_branch.as_deref(), Some("main"));
+
+        // Detach onto the older commit, exactly as `git checkout <oid>` does.
+        repo.set_head_detached(c1).unwrap();
+        let detached =
+            build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(detached.detached, "checked out an oid → detached HEAD");
+        assert_eq!(detached.head_branch, None);
+
+        // Reattaching clears it again (the badge must not stick).
+        repo.set_head("refs/heads/main").unwrap();
+        let reattached =
+            build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(!reattached.detached);
+        assert_eq!(reattached.head_branch.as_deref(), Some("main"));
+        assert!(reattached.commits.iter().any(|c| c.oid == c2.to_string()));
+    }
+
+    /// An unborn branch is NOT detached, even though it has no head commit.
+    #[test]
+    fn unborn_branch_is_not_detached() {
+        let (_dir, repo) = init_repo();
+        let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(page.commits.is_empty());
+        assert!(!page.detached);
     }
 }

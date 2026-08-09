@@ -1,12 +1,10 @@
 /**
  * Key-ownership rules for the embedded terminal (#249, #260).
  *
- * When the terminal is focused, the shell and the app compete for keyboard
- * shortcuts. The split follows VS Code's model: plain typing stays with the
- * shell; Alt/Meta combos, Ctrl+Shift combos and chord suffixes belong to the
- * app; and a Ctrl-only combo goes to the APP when the app has a binding for
- * it (Ctrl+P quick open, Ctrl+T new tab, …) — except a small shell-critical
- * set (interrupt, EOF, paste, …) that the shell always keeps, binding or not.
+ * When the terminal is focused, its application owns keyboard input. Explorer
+ * keeps only a small, explicit navigation allowlist: Quick Open, Command
+ * Palette, and previous/next tab. Every other key reaches the terminal so
+ * full-screen terminal apps can use their own bindings.
  */
 
 type KeyEventLike = Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "metaKey" | "shiftKey"> &
@@ -18,21 +16,51 @@ type KeyEventLike = Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "metaKey"
  * Ctrl+X (emacs prefix), Ctrl+A (line start). The app's clipboard/select-all
  * bindings on these keys make no sense while a shell prompt has focus.
  */
-export const SHELL_CRITICAL_CTRL_KEYS: ReadonlySet<string> = new Set([
-  "c",
-  "d",
-  "v",
-  "x",
-  "z",
-  "a",
-]);
-
 export interface ShellKeyContext {
-  /** The event matches a registered app keybinding or hardcoded app shortcut. */
+  /**
+   * Retained for callers that previously supplied generic Explorer binding
+   * availability. Terminal ownership now deliberately ignores that broad
+   * signal in favour of the explicit core-command allowlist below.
+   */
   appBound?: boolean;
-  /** macOS: the primary clipboard modifier is ⌘, so Cmd+C/V/… must stay with
-   *  the terminal (#403) instead of falling into "Meta = app territory". */
-  isMac?: boolean;
+  /** The event matches its specific available core-navigation command. */
+  coreCommandAvailable?: boolean;
+  /** The event starts the configured terminal-toggle chord. */
+  terminalToggleChordPrefix?: boolean;
+  /** The terminal-toggle chord has already started outside xterm. */
+  terminalToggleChordActive?: boolean;
+}
+
+export type AlwaysActiveTerminalCommandId =
+  | "general.openQuickOpen"
+  | "general.openCommandPalette"
+  | "tabs.prevTabAlt"
+  | "tabs.nextTabAlt";
+
+/**
+ * The only Explorer shortcuts that may claim keyboard input from a focused
+ * terminal. Keep this list intentionally small: terminal applications own all
+ * other app-level bindings, including custom bindings and chords, apart from
+ * the terminal-toggle chord that controls the terminal surface itself.
+ */
+export function getAlwaysActiveTerminalCommandId(
+  event: KeyEventLike,
+): AlwaysActiveTerminalCommandId | undefined {
+  const hasExactlyOnePrimaryModifier = event.ctrlKey !== event.metaKey;
+  if (!hasExactlyOnePrimaryModifier || event.altKey) return undefined;
+
+  const key = event.key.toLowerCase();
+  if (key === "p") {
+    return event.shiftKey ? "general.openCommandPalette" : "general.openQuickOpen";
+  }
+  if (event.shiftKey) return undefined;
+  if (event.key === "PageUp") return "tabs.prevTabAlt";
+  if (event.key === "PageDown") return "tabs.nextTabAlt";
+  return undefined;
+}
+
+export function isAlwaysActiveTerminalShortcut(event: KeyEventLike): boolean {
+  return getAlwaysActiveTerminalCommandId(event) !== undefined;
 }
 
 /**
@@ -40,34 +68,11 @@ export interface ShellKeyContext {
  * shortcut handling may claim it.
  */
 export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContext): boolean {
-  // Function keys (F1–F12) are never text: a modifier-less F5 can only be an
-  // app binding (graph refresh, #432), so it must fall through to the
-  // `appBound` check below rather than being swallowed as shell typing.
-  const isFunctionKey = /^F([1-9]|1[0-2])$/.test(event.key);
-  // Plain keys and Shift+key are typing — except function keys.
-  if (!event.ctrlKey && !event.altKey && !event.metaKey && !isFunctionKey) return true;
-  // On mac, ⌘-only clipboard/process combos belong to the terminal (#403):
-  // Cmd+C copies the terminal selection, Cmd+V pastes into the shell — the
-  // explorer's file clipboard must never fire while a prompt has focus.
-  if (
-    context?.isMac &&
-    event.metaKey &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.shiftKey &&
-    SHELL_CRITICAL_CTRL_KEYS.has(event.key.toLowerCase())
-  ) {
-    return true;
-  }
-  // Alt/Meta combos are app shortcut territory (Alt+M chords, Super bindings).
-  if (event.altKey || event.metaKey) return false;
-  // Ctrl+Shift goes to the app.
-  if (event.shiftKey) return false;
-  // Ctrl-only: process-control keys stay with the shell unconditionally…
-  if (SHELL_CRITICAL_CTRL_KEYS.has(event.key.toLowerCase())) return true;
-  // …anything the app has bound goes to the app (#260); unbound Ctrl combos
-  // remain readline territory.
-  return !context?.appBound;
+  return !(
+    (context?.coreCommandAvailable && isAlwaysActiveTerminalShortcut(event)) ||
+    context?.terminalToggleChordPrefix ||
+    context?.terminalToggleChordActive
+  );
 }
 
 // ─── Configurable line-editing shortcuts (#375) ─────────────────────────────
@@ -137,21 +142,4 @@ export function resolveTerminalShortcut(
     if (matchesShortcutString(event, binding)) return action.sequence;
   }
   return null;
-}
-
-/**
- * App shortcuts hardcoded in +page.svelte outside the keybindings registry
- * (Ctrl+J jobs, Ctrl+, settings, Ctrl+\ dual pane). The terminal gates need
- * to treat these as app-bound too, or they'd never fire while the terminal
- * is focused.
- */
-export function isHardcodedAppShortcut(event: KeyEventLike): boolean {
-  if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
-  return (
-    event.key === "j" ||
-    event.key === "," ||
-    event.key === "\\" ||
-    event.key === "|" ||
-    event.code === "Backslash"
-  );
 }

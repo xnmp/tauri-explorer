@@ -17,6 +17,8 @@ function getNextPaneExplorer(): ExplorerInstance | undefined {
 }
 
 const activeTabIsExplorer = () => windowTabsManager.activeTab?.kind === "explorer";
+/** Focus can only move between panes when the tab has more than one. */
+const activeTabIsSplit = () => windowTabsManager.dualPaneEnabled;
 
 /** Pane layout and focus commands */
 export const paneCommands: Command[] = [
@@ -78,6 +80,42 @@ export const paneCommands: Command[] = [
     shortcut: "Cmd+Alt+;",
     handler: () => windowTabsManager.splitPane("down"),
     when: activeTabIsExplorer,
+  },
+  // Directional focus movement on the same home-row cluster, minus the
+  // Cmd/Super modifier (#501): Cmd+Alt+<key> creates a pane on that side,
+  // plain Alt+<key> moves focus to the pane already there. Guarded on a split
+  // tab so a single-pane window leaves Alt+L/;/'/P alone.
+  {
+    id: "pane.focusLeft",
+    label: "Focus Pane Left",
+    category: "view",
+    shortcut: "Alt+L",
+    handler: () => windowTabsManager.focusPaneInDirection("left"),
+    when: activeTabIsSplit,
+  },
+  {
+    id: "pane.focusRight",
+    label: "Focus Pane Right",
+    category: "view",
+    shortcut: "Alt+'",
+    handler: () => windowTabsManager.focusPaneInDirection("right"),
+    when: activeTabIsSplit,
+  },
+  {
+    id: "pane.focusUp",
+    label: "Focus Pane Up",
+    category: "view",
+    shortcut: "Alt+P",
+    handler: () => windowTabsManager.focusPaneInDirection("up"),
+    when: activeTabIsSplit,
+  },
+  {
+    id: "pane.focusDown",
+    label: "Focus Pane Down",
+    category: "view",
+    shortcut: "Alt+;",
+    handler: () => windowTabsManager.focusPaneInDirection("down"),
+    when: activeTabIsSplit,
   },
   {
     // Palette-only: Ctrl+W (Close Surface) covers the common case; this

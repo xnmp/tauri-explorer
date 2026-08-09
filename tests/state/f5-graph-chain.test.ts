@@ -79,7 +79,7 @@ function setPlainExplorerActive(paneId: string): void {
   };
 }
 
-describe("#432 F5 full chain: terminal gate + keybinding resolution + bus", () => {
+describe("#432 F5 command resolution + bus", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", {
       getItem: vi.fn(() => null),
@@ -100,11 +100,10 @@ describe("#432 F5 full chain: terminal gate + keybinding resolution + bus", () =
     tabState.activePaneId = "";
   });
 
-  it("terminal gate: F5 is app-bound so it falls through, not swallowed as shell typing", () => {
-    // This is what +page.svelte computes: matchesAnyBinding drives appBound.
+  it("terminal gate: F5 remains available to terminal-hosted applications", () => {
     const appBound = keybindingsStore.matchesAnyBinding(f5());
     expect(appBound).toBe(true);
-    expect(isShellReservedKey(f5(), { appBound, isMac: false })).toBe(false);
+    expect(isShellReservedKey(f5(), { appBound })).toBe(true);
   });
 
   it("resolves F5 to gitGraph.refresh when a graph pane is active", () => {
@@ -113,12 +112,11 @@ describe("#432 F5 full chain: terminal gate + keybinding resolution + bus", () =
     expect(id).toBe("gitGraph.refresh");
   });
 
-  it("edge: F5 with terminal focused but NO graph pane resolves to navigation.refresh (not swallowed)", () => {
+  it("resolves F5 to navigation.refresh when a plain explorer pane is active", () => {
     setPlainExplorerActive("p1");
-    // Terminal still lets it through …
     const appBound = keybindingsStore.matchesAnyBinding(f5());
-    expect(isShellReservedKey(f5(), { appBound, isMac: false })).toBe(false);
-    // … and it maps to the explorer refresh, never the graph.
+    expect(isShellReservedKey(f5(), { appBound })).toBe(true);
+    // Outside terminal focus it maps to the explorer refresh, never the graph.
     const id = keybindingsStore.findMatchingCommand(f5(), availability);
     expect(id).toBe("navigation.refresh");
   });

@@ -42,8 +42,8 @@ export async function navigateTo(dir: string): Promise<void> {
   // waiting for the listing. localStorage is shared across every tauri-driver
   // session (same origin), so a spec that left the graph open would relaunch
   // this one into graph mode and `.file-list` would never render (#447). The
-  // pane's onMount registers the hook, so re-dispatch on every poll until the
-  // listing appears — a single early dispatch can race listener registration.
+  // pane's onMount registers the hook. Wait for its DOM readiness marker before
+  // dispatching so exactly one real navigation/listing is queued.
   await browser.waitUntil(
     async () => {
       await browser.execute(() => {
@@ -53,14 +53,30 @@ export async function navigateTo(dir: string): Promise<void> {
     },
     { timeout: 15_000, timeoutMsg: "file listing never rendered (graph stuck open?)" },
   );
-  // Re-dispatch on every poll: a single dispatch can race listener
-  // registration in onMount and then nothing would ever navigate.
+  await browser.waitUntil(
+    async () =>
+      await browser.execute(
+        () => document.documentElement.dataset.e2eHooksReady === "true",
+      ),
+    { timeout: 15_000, timeoutMsg: "dev e2e hooks never became ready" },
+  );
+
+  const token = `${Date.now()}-${Math.random()}`;
+  await browser.execute((target: string, navigationToken: string) => {
+    delete document.documentElement.dataset.e2eNavigationComplete;
+    window.dispatchEvent(
+      new CustomEvent("e2e-navigate", {
+        detail: { path: target, token: navigationToken },
+      }),
+    );
+  }, dir, token);
+
   await browser.waitUntil(
     async () => {
-      await browser.execute((target: string) => {
-        window.dispatchEvent(new CustomEvent("e2e-navigate", { detail: target }));
-      }, dir);
-      return (await $(".status-path").getAttribute("title")) === dir;
+      const completedToken = await browser.execute(
+        () => document.documentElement.dataset.e2eNavigationComplete,
+      );
+      return completedToken === token && (await $(".status-path").getAttribute("title")) === dir;
     },
     { timeoutMsg: `status bar never showed ${dir}` },
   );

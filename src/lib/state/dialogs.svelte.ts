@@ -43,6 +43,7 @@ function createDialogStore() {
   let themePickerOpen = $state(false);
   let shortcutsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
+  let userReportOpen = $state(false);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
@@ -116,6 +117,9 @@ function createDialogStore() {
     get pickerConfig() {
       return pickerConfig;
     },
+    get isUserReportOpen() {
+      return userReportOpen;
+    },
 
     // File operation actions
     startRename(entry: FileEntry): void {
@@ -141,7 +145,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen;
     },
 
     // Overlay dialog actions
@@ -227,6 +231,15 @@ function createDialogStore() {
       pickerConfig = null;
     },
 
+    openUserReport(): void {
+      commandPaletteOpen = false;
+      userReportOpen = true;
+    },
+
+    closeUserReport(): void {
+      userReportOpen = false;
+    },
+
     closeAll(): void {
       activeDialog = null;
       targetEntry = null;
@@ -241,6 +254,7 @@ function createDialogStore() {
       jobsPanelOpen = false;
       themePickerOpen = false;
       pickerConfig = null;
+      userReportOpen = false;
     },
   };
 }

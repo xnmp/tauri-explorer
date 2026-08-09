@@ -5,14 +5,16 @@
 <script lang="ts">
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
-  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
-  import { isMac } from "$lib/domain/platform";
+  import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
+  import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
   import { themeStore } from "$lib/state/theme.svelte";
+  import { startConfigWatch } from "$lib/state/config-watch";
   import { settingsStore } from "$lib/state/settings.svelte";
 import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { resolveLaunchHomePath, startWindowTitleSync } from "$lib/state/window-title.svelte";
   import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
   import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -22,6 +24,8 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { createDialogCrashHandler, loadDialogComponent, type LazyDialogRequest } from "$lib/domain/lazy-dialog";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
@@ -53,6 +57,8 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   markStartup("bundle-exec");
 
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
+  const launchHomePath = resolveLaunchHomePath();
+
   // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
   // backdrop, and the platform-independent Floating Islands setting all drive
   // the same [data-vibrancy] island CSS. The derived now lives on settingsStore
@@ -94,40 +100,55 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   let ConflictDialog = $state<Component<any> | null>(null);
   let JobsPanel = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
   let OptionPicker = $state<Component<any> | null>(null);
+  let UserReportDialog = $state<Component<any> | null>(null);
+
+  // A failed chunk load must roll back the dialog's open-state (otherwise
+  // dialogStore.hasModalOpen soft-locks every shortcut with nothing visible
+  // to close — #584) and tell the user. loadDialogComponent enforces both.
+  const loadDialog = <T,>(request: LazyDialogRequest<T>): void => void loadDialogComponent(request, (message) => toastStore.error(message));
+  // Same rollback contract for the failure loadDialog can't see: a dialog
+  // that throws while mounting (e.g. #585's duplicate theme id crashing the
+  // picker's keyed each). Used as <svelte:boundary onerror>.
+  const dialogCrash = (label: string, rollback?: () => void) => createDialogCrashHandler(label, rollback, (message) => toastStore.error(message));
 
   $effect(() => {
     if (dialogStore.isThemePickerOpen && !ThemePicker) {
-      void import("$lib/components/ThemePicker.svelte").then((m) => (ThemePicker = m.default));
+      loadDialog({ label: "Theme Picker", load: () => import("$lib/components/ThemePicker.svelte"), onLoaded: (c) => (ThemePicker = c), onFailure: () => dialogStore.closeThemePicker() });
     }
     if (dialogStore.isSettingsOpen && !SettingsDialog) {
-      void import("$lib/components/SettingsDialog.svelte").then((m) => (SettingsDialog = m.default));
+      loadDialog({ label: "Settings", load: () => import("$lib/components/SettingsDialog.svelte"), onLoaded: (c) => (SettingsDialog = c), onFailure: () => dialogStore.closeSettings() });
     }
     if (dialogStore.isWorkspaceOpen && !WorkspaceDialog) {
-      void import("$lib/components/WorkspaceDialog.svelte").then((m) => (WorkspaceDialog = m.default));
+      loadDialog({ label: "Workspaces", load: () => import("$lib/components/WorkspaceDialog.svelte"), onLoaded: (c) => (WorkspaceDialog = c), onFailure: () => dialogStore.closeWorkspace() });
     }
     if (dialogStore.isBulkRenameOpen && !BulkRenameDialog) {
-      void import("$lib/components/BulkRenameDialog.svelte").then((m) => (BulkRenameDialog = m.default));
+      loadDialog({ label: "Bulk Rename", load: () => import("$lib/components/BulkRenameDialog.svelte"), onLoaded: (c) => (BulkRenameDialog = c), onFailure: () => dialogStore.closeBulkRename() });
     }
     if (dialogStore.isQuickOpenOpen && !QuickOpen) {
-      void import("$lib/components/QuickOpen.svelte").then((m) => (QuickOpen = m.default));
+      loadDialog({ label: "Quick Open", load: () => import("$lib/components/QuickOpen.svelte"), onLoaded: (c) => (QuickOpen = c), onFailure: () => dialogStore.closeQuickOpen() });
     }
     if (dialogStore.isCommandPaletteOpen && !CommandPalette) {
-      void import("$lib/components/CommandPalette.svelte").then((m) => (CommandPalette = m.default));
+      loadDialog({ label: "Command Palette", load: () => import("$lib/components/CommandPalette.svelte"), onLoaded: (c) => (CommandPalette = c), onFailure: () => dialogStore.closeCommandPalette() });
     }
     if (dialogStore.isContentSearchOpen && !ContentSearchDialog) {
-      void import("$lib/components/ContentSearchDialog.svelte").then((m) => (ContentSearchDialog = m.default));
+      loadDialog({ label: "Content Search", load: () => import("$lib/components/ContentSearchDialog.svelte"), onLoaded: (c) => (ContentSearchDialog = c), onFailure: () => dialogStore.closeContentSearch() });
     }
     if (pickerInfo && !FilePicker) {
-      void import("$lib/components/FilePicker.svelte").then((m) => (FilePicker = m.default));
+      // Portal picker windows render nothing but FilePicker; there is no
+      // open-flag to roll back — the toast is the only recovery available.
+      loadDialog({ label: "File Picker", load: () => import("$lib/components/FilePicker.svelte"), onLoaded: (c) => (FilePicker = c) });
     }
     if (conflictResolver.isActive && !ConflictDialog) {
-      void import("$lib/components/ConflictDialog.svelte").then((m) => (ConflictDialog = m.default));
+      loadDialog({ label: "Conflict dialog", load: () => import("$lib/components/ConflictDialog.svelte"), onLoaded: (c) => (ConflictDialog = c), onFailure: () => conflictResolver.resolve("cancel", true) });
     }
     if (dialogStore.isJobsPanelOpen && !JobsPanel) {
-      void import("$lib/components/JobsPanel.svelte").then((m) => (JobsPanel = m.default));
+      loadDialog({ label: "Jobs Panel", load: () => import("$lib/components/JobsPanel.svelte"), onLoaded: (c) => (JobsPanel = c), onFailure: () => dialogStore.closeJobsPanel() });
     }
     if (dialogStore.isPickerOpen && !OptionPicker) {
-      void import("$lib/components/OptionPicker.svelte").then((m) => (OptionPicker = m.default));
+      loadDialog({ label: "Option Picker", load: () => import("$lib/components/OptionPicker.svelte"), onLoaded: (c) => (OptionPicker = c), onFailure: () => dialogStore.closePicker() });
+    }
+    if (dialogStore.isUserReportOpen && !UserReportDialog) {
+      loadDialog({ label: "Report dialog", load: () => import("$lib/components/UserReportDialog.svelte"), onLoaded: (c) => (UserReportDialog = c), onFailure: () => dialogStore.closeUserReport() });
     }
   });
 
@@ -150,6 +171,53 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // Skip if focus is in an input field (except for special cases)
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+
+    // Ctrl+` owns the terminal surface itself, rather than being an Explorer
+    // app-level shortcut. Keep it ahead of terminal key ownership so it can
+    // hide a focused terminal while leaving every terminal-app binding alone.
+    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
+      if (!settingsStore.enableTerminal) return; // feature flag (#175)
+      event.preventDefault();
+      terminalPanelStore.toggle();
+      return;
+    }
+
+    // A terminal-hosted application owns every key except the small,
+    // availability-aware core-navigation allowlist in isShellReservedKey.
+    // This must run before every page-level app shortcut (including Ctrl+F
+    // and Escape) so a new global shortcut cannot accidentally steal input
+    // from a focused terminal application.
+    if (isTerminalFocus) {
+      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
+      const coreCommandAvailable =
+        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
+          if (id !== coreCommandId) return false;
+          const cmd = getCommand(id);
+          return !cmd?.when || cmd.when();
+        });
+      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
+        event,
+        "general.openTerminal",
+      );
+      const terminalToggleChordActive = keybindingsStore.isChordActiveForCommand(
+        event,
+        "general.openTerminal",
+      );
+      if (
+        isShellReservedKey(event, {
+          coreCommandAvailable,
+          terminalToggleChordPrefix,
+          terminalToggleChordActive,
+        })
+      ) {
+        // A terminal-owned key still consumes any pending Explorer chord,
+        // just as findMatchingCommand does for a non-matching suffix. Without
+        // this, a later terminal key could complete the stale chord (#608).
+        if (keybindingsStore.isChordActive) keybindingsStore.cancelChord();
+        return;
+      }
+    }
 
     // Escape closes any open modal dialog
     if (event.key === "Escape" && dialogStore.hasModalOpen) {
@@ -187,34 +255,12 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       }
     }
 
-    // Ctrl+`: toggle the embedded terminal. Handled before the input-field
-    // early-return so it also closes the panel while the terminal (a
-    // <textarea> under the hood) has focus — mirroring VS Code.
-    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
-      if (!settingsStore.enableTerminal) return; // feature flag (#175)
-      event.preventDefault();
-      terminalPanelStore.toggle();
-      return;
-    }
-
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
-    // rename input must not open the jobs panel. The embedded terminal is an
-    // exception: xterm focuses a hidden textarea, but app shortcuts must keep
-    // working there (#249) — the shell keeps its own keys via the
-    // isShellReservedKey gate below.
-    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+    // rename input must not open the jobs panel. Terminal focus has already
+    // been filtered through the ownership gate above.
     if ((isInputField && !isTerminalFocus) || dialogStore.hasModalOpen) {
       return;
-    }
-
-    // While the terminal is focused the shell owns typing, shell-critical
-    // Ctrl combos (Ctrl+C interrupt…) and UNBOUND Ctrl combos (readline);
-    // combos the app has bound — plus Alt/Meta/Ctrl+Shift combos and pending
-    // chord suffixes — fall through to command matching (#249, #260).
-    if (isTerminalFocus && !keybindingsStore.isChordActive) {
-      const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
-      if (isShellReservedKey(event, { appBound, isMac })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)
@@ -401,7 +447,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     const urlPath = searchParams.get("path");
     const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
 
-    const homePath = launchData?.home ?? "/home";
+    const homePath = launchHomePath ?? "/home";
     const launchCwd = launchData?.cwd ?? null;
 
     // Child windows (spawned via Ctrl+N) have a ?path= param — skip
@@ -415,6 +461,13 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
     const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
     const tab = windowTabsManager.init(defaultPath, isChildWindow, overridePath);
+    // Start only after tab initialization: creation paths already seed the
+    // correct native title, and an eager empty-path write causes a visible
+    // "Tauri Explorer" flash before the first explorer exists.
+    const stopWindowTitleSync = startWindowTitleSync(
+      () => windowTabsManager.getActiveExplorer()?.currentPath,
+      homePath,
+    );
     // Apply inherited view mode from parent window
     if (urlViewMode && tab) {
       const explorer = windowTabsManager.getActiveExplorer();
@@ -438,15 +491,27 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // tab dragged out of this one.
     const stopTabTransfer = initTabTransferListener();
 
-    // Dev-only e2e hooks: the tauri-driver suite runs against the vite dev
-    // server under Xvfb with no window manager, where autofocused inline
-    // inputs (address bar, new-folder, rename) blur — and cancel — the
-    // instant they open. These hooks drive the SAME real backend operations
-    // (navigate / create_directory / rename_entry / trash) the UI flows do,
-    // just without the headless-only focus race. Absent from production.
-    if (import.meta.env.DEV) {
-      window.addEventListener("e2e-navigate", ((e: CustomEvent<string>) => {
-        windowTabsManager.getActiveExplorer()?.navigateTo(e.detail);
+    // Apply edits made to settings.json / user themes outside the app (#599).
+    const stopConfigWatch = startConfigWatch();
+
+    // E2E hooks: the tauri-driver suite runs under Xvfb with no window
+    // manager, where autofocused inline inputs (address bar, new-folder,
+    // rename) blur — and cancel — the instant they open. These hooks drive
+    // the SAME real backend operations (navigate / create_directory /
+    // rename_entry / trash) the UI flows do, just without the headless-only
+    // focus race. Compiled out of production builds (see E2E_HOOKS_ENABLED).
+    if (E2E_HOOKS_ENABLED) {
+      window.addEventListener("e2e-navigate", ((
+        e: CustomEvent<string | { path: string; token?: string }>,
+      ) => {
+        const path = typeof e.detail === "string" ? e.detail : e.detail.path;
+        const token = typeof e.detail === "string" ? undefined : e.detail.token;
+        const navigation = windowTabsManager.getActiveExplorer()?.navigateTo(path);
+        if (navigation && token) {
+          void navigation.then(() => {
+            document.documentElement.dataset.e2eNavigationComplete = token;
+          });
+        }
       }) as EventListener);
 
       // Restore the active pane to its file listing by closing any open commit
@@ -479,6 +544,13 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
           void explorer.confirmDelete([entry]);
         }
       }) as EventListener);
+
+      // WebKitWebDriver can execute injected scripts before these listeners
+      // exist. Publish readiness through the DOM (visible across WebKit's
+      // isolated JS worlds) so the driver can dispatch each navigation once
+      // and wait for its matching completion token. Repeated polling dispatches
+      // queue duplicate real listings and contaminate watcher timing probes.
+      document.documentElement.dataset.e2eHooksReady = "true";
     }
 
     // Register all commands for the command palette (deferred to next tick)
@@ -528,7 +600,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();
+      stopWindowTitleSync();
       stopTabTransfer();
+      stopConfigWatch();
     };
   });
 </script>
@@ -544,7 +618,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 
 {#if pickerInfo}
   {#if FilePicker}
-    <FilePicker info={pickerInfo} />
+    <svelte:boundary onerror={dialogCrash("File Picker")}>
+      <FilePicker info={pickerInfo} />
+    </svelte:boundary>
   {/if}
 {:else}
 <main class="explorer">
@@ -595,50 +671,80 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 <UpdateNotice />
 <ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
 {#if QuickOpen}
-  <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
+  <svelte:boundary onerror={dialogCrash("Quick Open", () => dialogStore.closeQuickOpen())}>
+    <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
+  </svelte:boundary>
 {/if}
 {#if CommandPalette}
-  <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+  <svelte:boundary onerror={dialogCrash("Command Palette", () => dialogStore.closeCommandPalette())}>
+    <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+  </svelte:boundary>
 {/if}
 {#if ThemePicker}
-  <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+  <svelte:boundary onerror={dialogCrash("Theme Picker", () => dialogStore.closeThemePicker())}>
+    <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+  </svelte:boundary>
 {/if}
 {#if OptionPicker}
-  <OptionPicker />
+  <svelte:boundary onerror={dialogCrash("Option Picker", () => dialogStore.closePicker())}>
+    <OptionPicker />
+  </svelte:boundary>
+{/if}
+{#if UserReportDialog}
+  <svelte:boundary onerror={dialogCrash("Report dialog", () => dialogStore.closeUserReport())}>
+    <UserReportDialog
+      open={dialogStore.isUserReportOpen}
+      onClose={() => dialogStore.closeUserReport()}
+    />
+  </svelte:boundary>
 {/if}
 {#if ContentSearchDialog}
-  <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+  <svelte:boundary onerror={dialogCrash("Content Search", () => dialogStore.closeContentSearch())}>
+    <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+  </svelte:boundary>
 {/if}
 {#if SettingsDialog}
-  <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+  <svelte:boundary onerror={dialogCrash("Settings", () => dialogStore.closeSettings())}>
+    <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+  </svelte:boundary>
 {/if}
 {#if WorkspaceDialog}
-  <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
+  <svelte:boundary onerror={dialogCrash("Workspaces", () => dialogStore.closeWorkspace())}>
+    <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
+  </svelte:boundary>
 {/if}
 {#if BulkRenameDialog}
-  <BulkRenameDialog
-    open={dialogStore.isBulkRenameOpen}
-    entries={dialogStore.bulkRenameEntries}
-    onClose={() => dialogStore.closeBulkRename()}
-    onComplete={() => refreshAllPanes()}
-  />
+  <svelte:boundary onerror={dialogCrash("Bulk Rename", () => dialogStore.closeBulkRename())}>
+    <BulkRenameDialog
+      open={dialogStore.isBulkRenameOpen}
+      entries={dialogStore.bulkRenameEntries}
+      onClose={() => dialogStore.closeBulkRename()}
+      onComplete={() => refreshAllPanes()}
+    />
+  </svelte:boundary>
 {/if}
 {#each dialogRegistry.openDialogs as d (d.id)}
   {@const DialogComponent = d.component}
-  <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+  <svelte:boundary onerror={dialogCrash(d.id, () => dialogRegistry.close(d.id))}>
+    <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+  </svelte:boundary>
 {/each}
 {#if JobsPanel}
-  <JobsPanel
-    open={dialogStore.isJobsPanelOpen}
-    onClose={() => dialogStore.closeJobsPanel()}
-  />
+  <svelte:boundary onerror={dialogCrash("Jobs Panel", () => dialogStore.closeJobsPanel())}>
+    <JobsPanel
+      open={dialogStore.isJobsPanelOpen}
+      onClose={() => dialogStore.closeJobsPanel()}
+    />
+  </svelte:boundary>
 {/if}
 <ProgressDialog />
 <!-- Toasts live at the app root (#417): mounted per-FileList they vanished in
      any pane mode without a file list (git graph), silently eating feedback. -->
 <ToastOverlay />
 {#if ConflictDialog}
-  <ConflictDialog />
+  <svelte:boundary onerror={dialogCrash("Conflict dialog", () => conflictResolver.resolve("cancel", true))}>
+    <ConflictDialog />
+  </svelte:boundary>
 {/if}
 {/if}
 

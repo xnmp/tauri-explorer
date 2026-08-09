@@ -6,6 +6,9 @@ import type { Command } from "../commands.svelte";
 import { writeTextFile, clipboardPasteImage } from "$lib/api/files";
 import { dialogStore } from "../dialogs.svelte";
 import { getActiveExplorer } from "./shared";
+import { windowTabsManager } from "../window-tabs.svelte";
+import { requestGraphUndo } from "../git-graph-undo";
+import { activePaneIsGraph } from "./active-pane";
 
 /** File operation commands */
 export const fileCommands: Command[] = [
@@ -150,6 +153,17 @@ export const editCommands: Command[] = [
     handler: async () => {
       await getActiveExplorer()?.undo();
     },
+    when: () => !activePaneIsGraph(),
+  },
+  {
+    id: "gitGraph.undo",
+    label: "Git Graph: Undo Last Operation",
+    category: "edit",
+    shortcut: "Ctrl+Z",
+    handler: () => {
+      requestGraphUndo(windowTabsManager.activeTab?.activePaneId);
+    },
+    when: () => activePaneIsGraph(),
   },
   {
     id: "edit.redo",
@@ -159,6 +173,7 @@ export const editCommands: Command[] = [
     handler: async () => {
       await getActiveExplorer()?.redo();
     },
+    when: () => !activePaneIsGraph(),
   },
   {
     id: "edit.redo2",
@@ -168,6 +183,7 @@ export const editCommands: Command[] = [
     handler: async () => {
       await getActiveExplorer()?.redo();
     },
+    when: () => !activePaneIsGraph(),
   },
   {
     id: "edit.pasteAsTextFile",

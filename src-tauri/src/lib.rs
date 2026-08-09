@@ -6,6 +6,7 @@ mod ai_rename;
 mod archive;
 mod clipboard;
 mod config;
+pub mod config_watch;
 mod content_search;
 mod crash_report;
 pub mod error;
@@ -28,6 +29,7 @@ mod process_ext;
 mod progress;
 mod update_check;
 mod upscale;
+mod user_report;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -49,9 +51,28 @@ mod wsl;
 
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
-    read_log_tail, restore_from_trash, set_window_theme, LaunchCwd,
+    open_recycle_bin, restore_from_trash, set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
+
+// Keep this pre-webview seed aligned with the domain source of truth:
+// src/lib/domain/tab-title.ts::formatWindowTitle.
+fn window_title(path: &std::path::Path, home: &std::path::Path) -> String {
+    if path.as_os_str().is_empty() {
+        return "Tauri Explorer".to_string();
+    }
+    let display = if path == home {
+        "~".to_string()
+    } else if path.parent().is_none() || path == std::path::Path::new("/") {
+        path.to_string_lossy().to_string()
+    } else {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| path.to_string_lossy().to_string())
+    };
+    format!("{display} - Tauri Explorer")
+}
 
 /// Minimal stdout logger for `#[ignore]`d diagnostic tests (git_status.rs,
 /// git.rs) run manually against a live WSL distro: `cargo test` normally has
@@ -91,6 +112,10 @@ pub fn run(launch_dir: Option<String>) {
         .to_string_lossy()
         .to_string();
     let launch_cwd = launch_dir.unwrap_or_else(|| home_dir.clone());
+    let initial_window_title = window_title(
+        std::path::Path::new(&launch_cwd),
+        std::path::Path::new(&home_dir),
+    );
 
     // Inject launch data into the webview as a synchronous JS global,
     // so the frontend can read it immediately without IPC roundtrips.
@@ -141,8 +166,8 @@ pub fn run(launch_dir: Option<String>) {
             // Launch info
             get_launch_cwd,
             get_log_dir,
-            read_log_tail,
             system::get_app_info,
+            user_report::submit_user_report,
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::record_frontend_crash,
@@ -154,6 +179,7 @@ pub fn run(launch_dir: Option<String>) {
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,
+            open_recycle_bin,
             restore_from_trash,
             // File operations — directory listing
             files::dir_listing::list_directory,
@@ -199,6 +225,7 @@ pub fn run(launch_dir: Option<String>) {
             clipboard::clipboard_read_files,
             clipboard::clipboard_write_files,
             clipboard::clipboard_has_image,
+            clipboard::clipboard_read_report_image,
             clipboard::clipboard_paste_image,
             // Thumbnails
             thumbnails::get_thumbnail,
@@ -222,13 +249,18 @@ pub fn run(launch_dir: Option<String>) {
             config::list_user_themes,
             // Git status (legacy: per-file indicators for file list)
             files::git_status::get_git_status,
+            files::git_status::cancel_get_git_status,
             // Git source-control backend (#53, #54)
             git::git_init,
             git::git_repo_root,
             git::git_add_to_gitignore,
+            git::git_archive_untracked,
+            git::git_trash_untracked,
             git::git_status,
+            git::cancel_git_status,
             git::git_stage,
             git::git_unstage,
+            git::git_apply_patch,
             git::git_discard,
             git::git_diff,
             git::git_commit,
@@ -238,6 +270,8 @@ pub fn run(launch_dir: Option<String>) {
             git_log::git_refs,
             git_log::git_commit_files,
             git_log::git_commit_file_diff,
+            git_log::git_compare_commit_files,
+            git_log::git_compare_commit_file_diff,
             git_actions::git_checkout,
             git_actions::git_create_branch,
             git_actions::git_create_tag,
@@ -245,6 +279,8 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_revert,
             git_actions::git_merge,
             git_actions::git_rebase,
+            git_actions::git_stash_apply,
+            git_actions::git_stash_pop,
             git_actions::git_reset,
             git_actions::git_merge_abort,
             git_actions::git_rebase_abort,
@@ -256,8 +292,13 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
             github::git_open_prs,
+            github::git_failed_ci_checks,
+            github::git_failed_ci_check_log,
             git_actions::git_delete_branch,
+            git_actions::git_delete_tag,
+            git_actions::git_rename_branch,
             git_actions::git_delete_remote_branch,
+            git_actions::git_undo,
             git_actions::git_checkout_tracking,
             git_actions::git_sync_local_branches,
             // Drives / volumes
@@ -309,6 +350,11 @@ pub fn run(launch_dir: Option<String>) {
                 return Ok(());
             }
 
+            // Apply external edits to settings.json / user themes live (#599).
+            // After the portal branch: picker windows never start the frontend
+            // listener, so a watcher there would be a thread with no audience.
+            config_watch::init_config_watcher(app.handle());
+
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
             // `mut` is used by the macOS (title bar / vibrancy) and Windows
@@ -320,7 +366,7 @@ pub fn run(launch_dir: Option<String>) {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("tauri-explorer")
+            .title(initial_window_title)
             .inner_size(1200.0, 800.0)
             .decorations(cfg!(target_os = "macos"))
             .accept_first_mouse(true)
@@ -463,4 +509,22 @@ pub fn run(launch_dir: Option<String>) {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod window_title_tests {
+    use super::window_title;
+    use std::path::Path;
+
+    #[test]
+    fn window_title_formats_initial_cwd_without_a_generic_flash() {
+        let home = Path::new("/home/alice");
+        assert_eq!(
+            window_title(Path::new("/work/tauri-explorer"), home),
+            "tauri-explorer - Tauri Explorer"
+        );
+        assert_eq!(window_title(home, home), "~ - Tauri Explorer");
+        assert_eq!(window_title(Path::new("/"), home), "/ - Tauri Explorer");
+        assert_eq!(window_title(Path::new(""), home), "Tauri Explorer");
+    }
 }

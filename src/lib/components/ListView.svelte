@@ -122,7 +122,6 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    transition: background var(--transition-fast);
   }
 
   .list-view :global(.list-item:focus) {

@@ -8,6 +8,7 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import {
   invoke,
   extractError,
@@ -16,6 +17,60 @@ import {
   type ApiResult,
 } from "./common";
 import { providerFor } from "$lib/plugins/fs-providers";
+import { logFrontendDiagnostic } from "./frontend-log";
+
+interface DirectoryListingE2EProbe {
+  targetPath: string;
+  delays: number[];
+  calls: number;
+  completed: number;
+  starts: number[];
+}
+
+let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
+
+function publishReadyDirectoryWatch(path: string): void {
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
+  const encoded = document.documentElement.dataset.e2eReadyDirectoryWatches;
+  const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
+  if (!readyPaths.includes(path)) readyPaths.push(path);
+  document.documentElement.dataset.e2eReadyDirectoryWatches = JSON.stringify(readyPaths);
+}
+
+function publishDirectoryListingE2EProbe(): void {
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
+  if (directoryListingE2EProbe) {
+    document.documentElement.dataset.e2eDirectoryListingProbe = JSON.stringify({
+      calls: directoryListingE2EProbe.calls,
+      completed: directoryListingE2EProbe.completed,
+      starts: directoryListingE2EProbe.starts,
+    });
+  } else {
+    delete document.documentElement.dataset.e2eDirectoryListingProbe;
+  }
+}
+
+// WebKitWebDriver evaluates injected scripts in an isolated JavaScript world,
+// so replacing window.__TAURI_INTERNALS__.invoke there cannot instrument the
+// application's Tauri calls. This dev-only DOM event crosses that boundary and
+// configures deterministic timing around the real backend listing invocation.
+if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
+  window.addEventListener("e2e-directory-listing-probe", ((
+    event: CustomEvent<{ targetPath?: string; delays?: number[] }>,
+  ) => {
+    const targetPath = event.detail?.targetPath;
+    directoryListingE2EProbe = targetPath
+      ? {
+          targetPath,
+          delays: event.detail.delays ?? [],
+          calls: 0,
+          completed: 0,
+          starts: [],
+        }
+      : null;
+    publishDirectoryListingE2EProbe();
+  }) as EventListener);
+}
 
 /**
  * Fetch directory listing from Tauri backend.
@@ -289,11 +344,31 @@ export async function writeTextFile(path: string, content: string): Promise<ApiR
 export async function readTextFile(path: string, maxBytes?: number): Promise<ApiResult<string>> {
   const guard = virtualPathGuard(path);
   if (guard) return guard;
+  const startedAt = Date.now();
   try {
     const content = await invoke<string>("read_text_file", { path, maxBytes: maxBytes ?? null });
+    console.debug("[preview] read_text_file completed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      bytes: content.length,
+      elapsedMs: Date.now() - startedAt,
+    });
     return { ok: true, data: content };
   } catch (err) {
-    return { ok: false, error: extractError(err) };
+    const error = extractError(err);
+    console.warn("[preview] read_text_file failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("preview read_text_file failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return { ok: false, error };
   }
 }
 
@@ -313,14 +388,34 @@ export async function readImageAsBlobUrl(
   path: string,
   maxBytes?: number
 ): Promise<ApiResult<string>> {
+  const startedAt = Date.now();
   try {
     const dataUri = await invoke<string>("read_image_data_url", {
       path,
       maxBytes: maxBytes ?? null,
     });
+    console.debug("[preview] read_image_data_url completed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      dataUriBytes: dataUri.length,
+      elapsedMs: Date.now() - startedAt,
+    });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
-    return { ok: false, error: extractError(err) };
+    const error = extractError(err);
+    console.warn("[preview] read_image_data_url failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("preview read_image_data_url failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return { ok: false, error };
   }
 }
 
@@ -441,22 +536,77 @@ export interface DirectoryEntriesEvent {
 export async function startStreamingDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
+  const startedAt = Date.now();
+  console.debug("[navigation] start_streaming_directory requested", { path });
   // Virtual paths never stream: the provider returns the full listing inline
   // (listing_id null), which the caller treats as a non-streaming result.
   const provider = providerFor(path);
   if (provider) {
     try {
       const data = await provider.list(path);
+      console.debug("[navigation] virtual directory listing completed", {
+        path,
+        entries: data.entries.length,
+        elapsedMs: Date.now() - startedAt,
+      });
       return { ok: true, data: { ...data, listing_id: null } };
     } catch (err) {
-      return { ok: false, error: extractError(err) };
+      const error = extractError(err);
+      console.warn("[navigation] virtual directory listing failed", {
+        path,
+        error,
+        elapsedMs: Date.now() - startedAt,
+      });
+      logFrontendDiagnostic("navigation virtual directory listing failed", {
+        path,
+        error,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return { ok: false, error };
     }
   }
+
+  const e2eProbe =
+    E2E_HOOKS_ENABLED && directoryListingE2EProbe?.targetPath === path
+      ? directoryListingE2EProbe
+      : null;
+  const e2eCallIndex = e2eProbe?.calls ?? -1;
+  if (e2eProbe) {
+    e2eProbe.calls += 1;
+    e2eProbe.starts.push(Date.now());
+    publishDirectoryListingE2EProbe();
+  }
+
   try {
     const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
+    if (e2eProbe) {
+      const delay = e2eProbe.delays[e2eCallIndex] ?? 0;
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      e2eProbe.completed += 1;
+      publishDirectoryListingE2EProbe();
+    }
+    console.debug("[navigation] start_streaming_directory completed", {
+      path,
+      listingId: data.listing_id,
+      entries: data.entries.length,
+      elapsedMs: Date.now() - startedAt,
+    });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: extractError(err) };
+    const error = extractError(err);
+    console.warn("[navigation] start_streaming_directory failed", {
+      path,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("navigation start_streaming_directory failed", {
+      path,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return { ok: false, error };
   }
 }
 
@@ -487,6 +637,7 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
 export async function watchDirectory(path: string): Promise<void> {
   try {
     await invoke("watch_directory", { path });
+    publishReadyDirectoryWatch(path);
   } catch {
     // Non-critical: watcher failure shouldn't block navigation
   }
@@ -710,13 +861,19 @@ export {
 
 export {
   getGitStatus,
+  cancelGetGitStatus,
   type GitFileStatus,
   gitInit,
   gitRepoRoot,
   gitAddToGitignore,
+  gitArchiveUntracked,
+  gitTrashUntracked,
   gitSummary,
+  cancelGitStatus,
   gitStage,
   gitUnstage,
+  gitApplyPatch,
+  type GitPatchAction,
   gitDiscard,
   gitDiff,
   gitCommit,

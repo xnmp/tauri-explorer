@@ -14,10 +14,10 @@
 
 import {
   gitCommit,
+  gitApplyPatch,
   gitDiscard,
   gitRepoRoot,
   gitStage,
-  gitSummary,
   gitUnstage,
   gitUnwatchRepo,
   gitWatchRepo,
@@ -28,10 +28,14 @@ import {
   gitRevertAbort,
   type GitFileEntry,
   type GitStatusSummary,
+  type GitPatchAction,
 } from "$lib/api/files";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
-import { fetchGitSummary } from "./git-summary-cache";
+import {
+  fetchGitSummary,
+  releaseGitSummaryConsumer,
+} from "./git-summary-cache";
 import { filterEntriesToDir } from "$lib/domain/scm-tree";
 
 function emptySummary(): GitStatusSummary {
@@ -73,23 +77,37 @@ async function detectRepo(path: string): Promise<string | null> {
  * setActivePath flow. No-op if the repo is already cached or a warm for it
  * is in flight; failures are swallowed (best-effort).
  */
-export async function warmScmSummary(path: string): Promise<void> {
+export async function warmScmSummary(path: string, consumerId?: string): Promise<void> {
   try {
     const root = await detectRepo(path);
-    if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
-    warmInFlight.add(root);
-    try {
-      const result = await gitSummary(root);
-      if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
-    } finally {
-      warmInFlight.delete(root);
-    }
+    if (root) await warmScmSummaryForRoot(root, consumerId);
   } catch {
     /* best-effort warm — ignore failures */
   }
 }
 
-function createScmStore() {
+/**
+ * Warm a root already resolved by the pane warmer. Unlike the path helper,
+ * this registers the summary consumer synchronously before its first await,
+ * so pane cleanup cannot race a second repo-root probe and miss cancellation.
+ */
+export async function warmScmSummaryForRoot(
+  root: string,
+  consumerId?: string,
+): Promise<void> {
+  if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
+  warmInFlight.add(root);
+  try {
+    const result = await fetchGitSummary(root, { consumerId });
+    if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
+  } catch {
+    /* best-effort warm — ignore failures */
+  } finally {
+    warmInFlight.delete(root);
+  }
+}
+
+function createScmStore(consumerId: string) {
   let activePath = $state<string>("");
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
@@ -106,7 +124,7 @@ function createScmStore() {
   let activeDiff = $state<{ path: string; staged: boolean } | null>(null);
   /** A COMMIT file diff routed to the preview pane from the git graph
    *  (#366); mutually exclusive with `activeDiff` (working-tree). */
-  let commitDiff = $state<{ repoPath: string; oid: string; path: string } | null>(null);
+  let commitDiff = $state<{ repoPath: string; oid: string; path: string; baseOid?: string } | null>(null);
   let watcherPath: string | null = null;
   let subscribed = false;
 
@@ -126,7 +144,7 @@ function createScmStore() {
     // Route through the shared cache (#431): change-driven, so `force` bypasses
     // the TTL to observe a post-mutation scan, while still joining any scan
     // already in flight for this repo (e.g. the other pane's store).
-    const result = await fetchGitSummary(root, { force: true });
+    const result = await fetchGitSummary(root, { force: true, consumerId });
     const elapsedMs = Math.round(performance.now() - start);
     if (gen !== refreshGeneration) {
       console.debug(`[scm] discarding stale refreshSummary result for ${root}`);
@@ -153,6 +171,9 @@ function createScmStore() {
 
   async function setActivePath(path: string): Promise<void> {
     if (path === activePath) return;
+    const summaryWasLoading = loading && repoRoot !== null;
+    refreshGeneration++;
+    releaseGitSummaryConsumer(consumerId);
     activePath = path;
     // Repo detection is itself an IPC round-trip; without the flag the view
     // renders "not a git repository" during it (#271, #426). Every exit path
@@ -170,7 +191,14 @@ function createScmStore() {
     }
     detecting = false;
     if (detected === repoRoot) {
-      loading = false;
+      if (summaryWasLoading) {
+        // The old path's owned request was cancelled above. A same-repository
+        // navigation still needs a replacement request; otherwise the store
+        // remains empty/stale until an unrelated watcher event.
+        await refreshSummary();
+      } else {
+        loading = false;
+      }
       return;
     }
 
@@ -199,6 +227,8 @@ function createScmStore() {
    * summaryCache keeps the last summary for an instant repaint.
    */
   async function release(): Promise<void> {
+    refreshGeneration++;
+    releaseGitSummaryConsumer(consumerId);
     activePath = "";
     repoRoot = null;
     detecting = false;
@@ -243,6 +273,13 @@ function createScmStore() {
     if (!repoRoot || paths.length === 0) return;
     await gitUnstage(repoRoot, paths);
     await refresh();
+  }
+
+  async function applyPatch(patch: string, action: GitPatchAction): Promise<{ ok: boolean; error?: string }> {
+    if (!repoRoot || !patch) return { ok: true };
+    const r = await gitApplyPatch(repoRoot, patch, action);
+    await refresh();
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
   }
 
   async function discard(paths: string[], force = false): Promise<{ ok: boolean; error?: string }> {
@@ -340,8 +377,8 @@ function createScmStore() {
     activeDiff = null;
   }
 
-  function openCommitDiff(repoPath: string, oid: string, path: string): void {
-    commitDiff = { repoPath, oid, path };
+  function openCommitDiff(repoPath: string, oid: string, path: string, baseOid?: string): void {
+    commitDiff = { repoPath, oid, path, baseOid };
     activeDiff = null;
   }
 
@@ -395,6 +432,7 @@ function createScmStore() {
     refresh,
     stage,
     unstage,
+    applyPatch,
     discard,
     commit,
     abortOperation,
@@ -423,7 +461,7 @@ const paneScmStores = new Map<string, ScmStore>();
 export function getScmStore(paneId: string): ScmStore {
   let store = paneScmStores.get(paneId);
   if (!store) {
-    store = createScmStore();
+    store = createScmStore(paneId);
     paneScmStores.set(paneId, store);
   }
   return store;

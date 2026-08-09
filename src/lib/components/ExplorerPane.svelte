@@ -49,6 +49,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   const paneScmVisible = $derived(windowTabsManager.getPaneScmVisible(paneId));
 
   let paneRef = $state<HTMLElement | null>(null);
+  let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
 
   // All keyboard navigation is handled at window level so it works regardless
   // of focus state. Only the active pane responds.
@@ -97,11 +98,21 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     const enabled = settingsStore.showGitStatus;
     // Virtual (`scheme://…`) paths aren't real repos — skip git.
     if (path && !isVirtualPath(path)) {
-      if (enabled) untrack(() => gitStatusStore.fetchForDirectory(path));
+      const release = enabled
+        ? untrack(() => {
+            const release = gitStatusStore.trackDirectory(path);
+            void gitStatusStore.fetchForDirectory(path);
+            return release;
+          })
+        : null;
       // After (not blocking) the badge fetch, warm the git-graph + SCM caches
       // in the background (#287). Debounce + per-feature gating live in the
       // warmer; non-git users pay zero extra IPC.
-      untrack(() => gitWarmer.schedule(path));
+      const releaseWarm = untrack(() => gitWarmer.schedule(path, paneId));
+      return () => {
+        release?.();
+        releaseWarm();
+      };
     }
   });
 
@@ -164,6 +175,15 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     windowTabsManager.setActivePane(paneId);
   }
 
+  /** Select an entry and ask FileList's active virtualized view to reveal it. */
+  function selectAndReveal(
+    entry: import("$lib/domain/file").FileEntry,
+    options: { ctrlKey: boolean; shiftKey: boolean },
+  ): void {
+    paneExplorer.selectEntry(entry, options);
+    fileListScrollToEntry?.(entry);
+  }
+
   /** Compute how many indices to jump for an arrow key in the current view.
    *  Returns 0 if the arrow key doesn't apply to this view mode.
    *
@@ -212,6 +232,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     // Don't process keyboard shortcuts when a dialog is open
     if (dialogStore.activeDialog) return;
 
+    // While the pane shows the commit graph the file listing isn't rendered at
+    // all, so none of this navigation has a visible target — but it still ran,
+    // silently drifting the pane's file selection and stealing DOM focus onto
+    // whatever `.selected` matched (the graph's own selected commit row). It
+    // also double-handled Ctrl+Up/Down with the graph's branch-line jump
+    // (#530). The graph owns the keyboard while it is on screen.
+    if (paneGitGraph) return;
+
     // Ignore events from interactive elements (e.g. path input, rename input)
     const tag = (event.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -239,7 +267,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
       // If nothing is selected, any arrow key selects the first item
       if (currentIndex < 0) {
-        paneExplorer.selectEntry(entries[0], { ctrlKey: false, shiftKey: false });
+        selectAndReveal(entries[0], { ctrlKey: false, shiftKey: false });
         tick().then(() => {
           const el = paneRef?.querySelector<HTMLElement>(".selected");
           if (el && el !== document.activeElement) el.focus({ preventScroll: false });
@@ -268,7 +296,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
         if (newIndex < 0) return; // Already at edge
       }
 
-      paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
+      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
 
       // Move DOM focus to the newly selected element so focus-visible
       // tracks selection (avoids stale focus ring on the old item)
@@ -278,6 +306,17 @@ import { nextRemovableRoot } from "$lib/domain/drives";
           el.focus({ preventScroll: false });
         }
       });
+    }
+    // Ctrl+Home/Ctrl+End select the list boundaries instead of letting the
+    // browser scroll the pane without changing the file-list selection.
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+      && (event.key === "Home" || event.key === "End")) {
+      event.preventDefault();
+      const entries = paneExplorer.displayEntries;
+      if (entries.length === 0) return;
+
+      const newIndex = event.key === "Home" ? 0 : entries.length - 1;
+      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: false });
     }
     // PageUp/PageDown: jump by PAGE_STEP items (skip if any modifier held — likely a command shortcut)
     const PAGE_STEP = 8;
@@ -300,7 +339,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
         newIndex = Math.max(currentIndex - PAGE_STEP, 0);
       }
 
-      paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
+      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
       tick().then(() => {
         const el = paneRef?.querySelector<HTMLElement>(".selected");
         if (el && el !== document.activeElement) {
@@ -360,7 +399,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel />
       {/if}
-      <FileList explorer={paneExplorer} />
+      <FileList explorer={paneExplorer} bind:scrollToEntry={fileListScrollToEntry} />
     </div>
     <ContextMenu explorer={paneExplorer} />
     <DeleteDialog explorer={paneExplorer} />

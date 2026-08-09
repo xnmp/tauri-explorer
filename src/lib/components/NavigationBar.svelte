@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { homeDirectory } from "$lib/state/home.svelte";
@@ -140,10 +140,37 @@
 
   // Path editing toggle
   let editingPath = $state(false);
+  let addressBarFocusRequested = $state(false);
 
   function startPathEdit() {
     editingPath = true;
   }
+
+  function requestAddressBarFocus() {
+    addressBarFocusRequested = true;
+  }
+
+  $effect(() => {
+    // Wait for the child window's initial path before mounting the autocomplete
+    // input: BreadcrumbAutocomplete deliberately captures its initial value.
+    if (!addressBarFocusRequested || !settingsStore.showAddressBar || !explorer.currentPath) return;
+    addressBarFocusRequested = false;
+    tick().then(startPathEdit);
+  });
+
+  onMount(() => {
+    // Warm windows are already mounted before they are revealed, so their
+    // activation path asks the existing navigation bar to enter edit mode.
+    window.addEventListener("explorer:focus-address-bar", requestAddressBarFocus);
+    // Fresh child windows carry this one-shot startup request in their URL.
+    const startupFocus = new URLSearchParams(window.location.search).get("focusAddressBar") === "1"
+      ? setTimeout(requestAddressBarFocus)
+      : undefined;
+    return () => {
+      window.removeEventListener("explorer:focus-address-bar", requestAddressBarFocus);
+      clearTimeout(startupFocus);
+    };
+  });
 
   function cancelPathEdit() {
     editingPath = false;

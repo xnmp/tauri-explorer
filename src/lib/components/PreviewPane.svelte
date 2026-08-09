@@ -15,7 +15,8 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import { getScmStore } from "$lib/state/scm.svelte";
-  import { gitCommitFileDiff } from "$lib/api/git-log";
+  import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
+  import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -381,6 +382,23 @@
     }
     scmStore.closeDiff();
   }
+  async function applyHunk(patch: string, action: "stage" | "unstage" | "discard"): Promise<void> {
+    if (!activeDiff) return;
+    if (action === "discard" && !window.confirm("Discard this hunk? This cannot be undone.")) return;
+    const path = activeDiff.path;
+    const r = await scmStore.applyPatch(patch, action);
+    if (!r.ok) {
+      toastStore.error(`${action[0].toUpperCase()}${action.slice(1)} hunk failed: ${r.error}`);
+      return;
+    }
+    const stillStaged = scmStore.summary.staged.some((entry) => entry.path === path);
+    const stillUnstaged = scmStore.summary.changes.some((entry) => entry.path === path);
+    // A partially changed file can exist in both buckets. Only switch the
+    // displayed side when the operation exhausted the current side.
+    if (action === "stage" && !stillUnstaged && stillStaged) scmStore.openDiff(path, true);
+    if (action === "unstage" && !stillStaged && stillUnstaged) scmStore.openDiff(path, false);
+    if (action === "discard" && !stillUnstaged) scmStore.closeDiff();
+  }
   async function openDiffFileInEditor(): Promise<void> {
     if (!activeDiff || !scmStore.repoRoot) return;
     const abs = `${scmStore.repoRoot.replace(/\/$/, "")}/${activeDiff.path}`;
@@ -409,7 +427,7 @@
   });
 
   /** Load a commit file diff for the graph-routed target (#366). */
-  async function loadCommitDiff(cd: { repoPath: string; oid: string; path: string }): Promise<void> {
+  async function loadCommitDiff(cd: { repoPath: string; oid: string; path: string; baseOid?: string }): Promise<void> {
     const gen = ++diffRequestGen;
     // `diffParsed` is about to hold a COMMIT diff — the working-tree render
     // cache must not claim it, or reopening that target would briefly show
@@ -419,7 +437,9 @@
     diffLoading = true;
     diffError = null;
     try {
-      const text = await gitCommitFileDiff(cd.repoPath, cd.oid, cd.path);
+      const text = cd.baseOid
+        ? await gitCompareCommitFileDiff(cd.repoPath, cd.baseOid, cd.oid, cd.path)
+        : await gitCommitFileDiff(cd.repoPath, cd.oid, cd.path);
       if (gen !== diffRequestGen || scmStore.commitDiff !== cd) return;
       diffParsed = parseUnifiedDiff(text);
     } catch (err) {
@@ -605,7 +625,12 @@
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
           previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
-        } catch {
+        } catch (error) {
+          console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
+          logFrontendDiagnostic("preview PDF asset URL creation failed", {
+            path: file.path,
+            error: error instanceof Error ? error.message : String(error),
+          });
           previewError = "Cannot preview PDF";
         }
       } else {
@@ -629,10 +654,20 @@
             await decodeImage(fallback.data);
             if (file.path !== lastPreviewPath) return; // Stale after decode
             previewImageUrl = fallback.data;
-          } catch {
+          } catch (error) {
+            console.warn("[preview] backend image decode failed", { path: file.path, error });
+            logFrontendDiagnostic("preview backend image decode failed", {
+              path: file.path,
+              error: error instanceof Error ? error.message : String(error),
+            });
             previewError = "Cannot preview image";
           }
         } else {
+          console.warn("[preview] backend image read failed", { path: file.path, error: fallback.error });
+          logFrontendDiagnostic("preview backend image read failed", {
+            path: file.path,
+            error: fallback.error,
+          });
           previewError = "Cannot preview image";
         }
       };
@@ -647,7 +682,14 @@
           if (file.path !== lastPreviewPath) return; // Stale after decode
           previewImageUrl = url;
         } catch (assetErr) {
-          console.warn("asset:// image preview failed, falling back to backend read:", assetErr);
+          console.warn("[preview] asset image decode failed; using backend fallback", {
+            path: file.path,
+            error: assetErr,
+          });
+          logFrontendDiagnostic("preview asset image decode failed", {
+            path: file.path,
+            error: assetErr instanceof Error ? assetErr.message : String(assetErr),
+          });
           await loadViaBackend();
         }
       } else {
@@ -721,8 +763,8 @@
     <div class="preview-header">
       <span class="preview-filename" title={diffPath}>{diffPath.split("/").pop()}</span>
       {#if commitDiff}
-        <span class="preview-type-badge diff-commit" title={commitDiff.oid}>
-          commit {commitDiff.oid.slice(0, 7)}
+        <span class="preview-type-badge diff-commit" title={commitDiff.baseOid ? `${commitDiff.baseOid} → ${commitDiff.oid}` : commitDiff.oid}>
+          {commitDiff.baseOid ? `compare ${commitDiff.baseOid.slice(0, 7)} → ${commitDiff.oid.slice(0, 7)}` : `commit ${commitDiff.oid.slice(0, 7)}`}
         </span>
       {:else if activeDiff}
         <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>
@@ -763,7 +805,24 @@
               <span class="diff-gutter old">{line.oldLine ?? ""}</span>
               <span class="diff-gutter new">{line.newLine ?? ""}</span>
               <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
-              {#if line.kind === "hunk" || line.kind === "meta" || line.kind === "header"}
+              {#if line.kind === "hunk"}
+                {@const hunk = diffParsed?.hunks.find((candidate) => candidate.lineIndex === line.index)}
+                <span class="diff-content hunk-content">
+                  <span>{line.text}</span>
+                  {#if activeDiff && hunk}
+                    <span class="hunk-actions">
+                      {#if activeDiff.staged}
+                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "unstage")}>Unstage hunk</button>
+                      {:else}
+                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "stage")}>Stage hunk</button>
+                        {#if !diffParsed?.added}
+                          <button type="button" class="hunk-action danger" onclick={() => applyHunk(hunk.patch, "discard")}>Discard hunk</button>
+                        {/if}
+                      {/if}
+                    </span>
+                  {/if}
+                </span>
+              {:else if line.kind === "meta" || line.kind === "header"}
                 <span class="diff-content">{line.text}</span>
               {:else}
                 <!-- highlightDiffLine output is hljs-generated/escaped HTML — safe sink (#227). -->
@@ -789,10 +848,14 @@
       <span>Select a file to preview</span>
     </div>
   {:else}
-    <div class="preview-header">
-      <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
-      <span class="preview-type-badge">{getFileType(selectedFile)}</span>
-    </div>
+    <!-- Auxiliary metadata (name + type badge, and the size/modified footer
+         below) is opt-out for a minimal, content-only preview (#494). -->
+    {#if settingsStore.showPreviewInfo}
+      <div class="preview-header">
+        <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
+        <span class="preview-type-badge">{getFileType(selectedFile)}</span>
+      </div>
+    {/if}
 
     <div class="preview-content">
       {#if previewLoading}
@@ -880,18 +943,20 @@
       {/if}
     </div>
 
-    <div class="preview-info">
-      {#if selectedFile.kind === "file"}
+    {#if settingsStore.showPreviewInfo}
+      <div class="preview-info">
+        {#if selectedFile.kind === "file"}
+          <div class="info-row">
+            <span class="info-label">Size</span>
+            <span class="info-value">{formatSize(selectedFile.size)}</span>
+          </div>
+        {/if}
         <div class="info-row">
-          <span class="info-label">Size</span>
-          <span class="info-value">{formatSize(selectedFile.size)}</span>
+          <span class="info-label">Modified</span>
+          <span class="info-value">{formatDate(selectedFile.modified)}</span>
         </div>
-      {/if}
-      <div class="info-row">
-        <span class="info-label">Modified</span>
-        <span class="info-value">{formatDate(selectedFile.modified)}</span>
       </div>
-    </div>
+    {/if}
   {/if}
 </div>
 
@@ -934,7 +999,10 @@
     inset: 0;
     zoom: calc(1 / var(--app-zoom, 1));
     width: 100vw !important;
-    height: 100vh;
+    /* Vertical docks set an inline height. It must not constrain the fixed
+       fullscreen surface; the right dock already needs the equivalent width
+       override above. */
+    height: 100vh !important;
     z-index: 1000;
     background: var(--background-solid, var(--background-card-secondary));
     border-left: none;
@@ -1088,6 +1156,10 @@
   .preview-pane.fullscreen .preview-image.zoomed {
     cursor: grab;
     transition: none;
+    /* Pan and wheel-zoom update this transform for every pointer event. Keep
+       the active image on its own compositor layer instead of repainting the
+       preview surface on each update (#635). */
+    will-change: transform;
   }
   .preview-pane.fullscreen .preview-image-container.panning,
   .preview-pane.fullscreen .preview-image-container.panning .preview-image {
@@ -1150,6 +1222,9 @@
     align-items: center;
     justify-content: center;
     flex: 1;
+    /* Let the image shrink to the content area's available height instead of
+       expanding this flex item and forcing the preview pane to scroll. */
+    min-height: 0;
     padding: 20px;
     /* Click toggles front-and-center (#219). */
     cursor: zoom-in;
@@ -1215,7 +1290,7 @@
   .preview-markdown :global(h4),
   .preview-markdown :global(h5),
   .preview-markdown :global(h6) {
-    color: var(--text-primary);
+    color: var(--accent-light);
     font-weight: 600;
     line-height: 1.3;
     margin: 14px 0 6px;
@@ -1522,6 +1597,27 @@
     text-overflow: ellipsis;
     user-select: text;
   }
+
+  .hunk-content, .hunk-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .hunk-content { justify-content: space-between; }
+
+  .hunk-action {
+    padding: 1px 5px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--background-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 10px;
+  }
+
+  .hunk-action.danger { color: var(--system-critical, #dc2626); }
 
   /* Vibrancy: own island, no left border needed */
   :global([data-vibrancy]) .preview-pane {

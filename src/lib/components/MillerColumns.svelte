@@ -23,6 +23,7 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
   import { isCopyModifier, usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { parentDir } from "$lib/domain/path";
+  import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import type { FileEntry } from "$lib/domain/file";
   import { isSystemHidden } from "$lib/domain/file";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -179,25 +180,31 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
     });
   });
 
-  // Listen for filesystem changes to invalidate stale Miller cache entries
+  function invalidateColumn(path: string): void {
+    // Invalidate empty cache for the changed dir and its parent.
+    const next = new Map(emptyCache);
+    next.delete(path);
+    const parent = parentDir(path);
+    if (parent !== path) next.delete(parent);
+    if (next.size !== emptyCache.size) emptyCache = next;
+
+    if (!rawCache.has(path)) return;
+    rawCache.delete(path);
+    if (rawColumns.some((col) => col.path === path)) {
+      void loadColumn(path);
+    }
+  }
+
+  // Filesystem watchers cover external changes; local file operations publish
+  // the same affected directories so this cache does not wait for a watcher.
   onMount(() => {
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
+    const unsubscribeLocalChanges = subscribeToLocalFileChanges((affectedDirs) => {
+      for (const path of affectedDirs) invalidateColumn(path);
+    });
     listen<{ path: string }>("directory-changed", (event) => {
-      const changedPath = event.payload.path;
-      // Invalidate empty cache for the changed dir and its parent
-      const next = new Map(emptyCache);
-      next.delete(changedPath);
-      const parent = parentDir(changedPath);
-      if (parent !== changedPath) next.delete(parent);
-      if (next.size !== emptyCache.size) emptyCache = next;
-      if (rawCache.has(changedPath)) {
-        rawCache.delete(changedPath);
-        const isVisible = rawColumns.some((col) => col.path === changedPath);
-        if (isVisible) {
-          loadColumn(changedPath);
-        }
-      }
+      invalidateColumn(event.payload.path);
     }).then((fn) => {
       // If the component was destroyed before registration resolved,
       // unlisten immediately instead of leaking the listener.
@@ -211,6 +218,7 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
     return () => {
       disposed = true;
       unlisten?.();
+      unsubscribeLocalChanges();
       for (const path of watchedPaths) {
         unwatchDirectory(path);
       }

@@ -27,8 +27,9 @@
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { getAlwaysActiveTerminalCommandId, isShellReservedKey, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
+  import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
@@ -279,15 +280,11 @@
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    // App shortcuts win over the shell for Alt/Meta/Ctrl+Shift combos, chord
-    // suffixes AND any Ctrl combo the app has bound (#249, #260): returning
-    // false makes xterm ignore the key, and the event still bubbles to the
-    // window handler in +page.svelte, which runs the matching command.
-    // Shell-reserved keys (typing, shell-critical Ctrl combos like Ctrl+C,
-    // unbound readline combos) never reach the app handler.
+    // The focused terminal keeps every key except the explicit core-navigation
+    // allowlist. Returning false makes xterm ignore one of those keys so the
+    // window handler in +page.svelte can run its matching Explorer command.
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
-      if (keybindingsStore.isChordActive) return false;
       // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
       // — Cmd+C/V while the terminal is focused must copy/paste terminal
       // text, never fall through to the explorer's file clipboard.
@@ -333,8 +330,32 @@
         event.preventDefault();
         return false;
       }
-      const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
-      return isShellReservedKey(event, { appBound, isMac });
+      // Availability-aware: an unavailable core command does not claim the
+      // key, so the terminal application still receives it.
+      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
+      const coreCommandAvailable =
+        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
+          if (id !== coreCommandId) return false;
+          const cmd = getCommand(id);
+          return !cmd?.when || cmd.when();
+        });
+      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
+        event,
+        "general.openTerminal",
+      );
+      const terminalToggleChordActive = keybindingsStore.isChordActiveForCommand(
+        event,
+        "general.openTerminal",
+      );
+      const shellReserved = isShellReservedKey(event, {
+        coreCommandAvailable,
+        terminalToggleChordPrefix,
+        terminalToggleChordActive,
+      });
+      // xterm keeps terminal-owned keys from reaching the page handler, so
+      // consume a pending Explorer chord here when its suffix did not match.
+      if (shellReserved && keybindingsStore.isChordActive) keybindingsStore.cancelChord();
+      return shellReserved;
     });
 
     term.open(termEl!);

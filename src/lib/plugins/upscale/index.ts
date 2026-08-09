@@ -91,6 +91,7 @@ export const upscalePlugin: Plugin = {
     ctx.registerContextMenuItem({
       id: "upscale.run",
       label: "Upscale Image",
+      group: "ai",
       icon: "M8 3H3V8M3 3L7 7M8 13H13V8M13 13L9 9",
       when: (entries) => selectedImage(entries) !== null,
       handler: (entries) => {

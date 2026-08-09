@@ -48,6 +48,8 @@
 <script lang="ts">
   import {
     gitCommitFileDiff,
+    gitCompareCommitFiles,
+    gitCompareCommitFileDiff,
     gitCheckout,
     gitCreateBranch,
     gitCreateTag,
@@ -55,6 +57,8 @@
     gitRevert,
     gitMerge,
     gitRebase,
+    gitStashApply,
+    gitStashPop,
     gitReset,
     gitRefs,
     gitFetch,
@@ -62,28 +66,54 @@
     gitBranchBehindUpstream,
     gitBranchAuthors,
     gitDeleteBranch,
+    gitDeleteTag,
+    gitRenameBranch,
     gitDeleteRemoteBranch,
+    gitUndo,
     gitCheckoutTracking,
     gitSyncLocalBranches,
     gitLog,
     gitOpenPrs,
+    gitFailedCiChecks,
+    gitFailedCiCheckLog,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
     type ResetMode,
     type OpenPr,
+    type FailedCiCheck,
+    type FailedCiCheckLog,
   } from "$lib/api/git-log";
-  import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import {
+    fetchGitSummary,
+    releaseGitSummaryConsumer,
+  } from "$lib/state/git-summary-cache";
+  import { assignLayout, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
-  import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
+  import {
+    countGraphWalkCommits,
+    createReloader,
+    registerGraphRefresher,
+    shouldReloadGraphForChange,
+  } from "$lib/state/git-graph-refresh";
+  import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
+  import { MAX_GIT_PALETTE_COMMIT_TARGETS, registerGitPaletteTargets } from "$lib/state/git-palette";
+  import { registerGraphFileHistoryHandler } from "$lib/state/git-graph-file-history";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { compactRelativeTimeToday } from "$lib/domain/git";
+  import {
+    acceptsDetailLoad,
+    closeCommitComparison,
+    createCommitComparisonState,
+    exitCommitComparison,
+    selectComparisonCommit,
+    startCommitComparison,
+  } from "$lib/domain/git-graph-comparison";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
-  import { directoryKey } from "$lib/domain/path";
+  import { directoryKey, splitPathForDisplay } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitDiff, gitStage, gitUnstage, gitCommit } from "$lib/api/files";
   import {
@@ -97,19 +127,33 @@
     type StageFile,
   } from "$lib/domain/commit-panel";
   import { getCommitPanelStore } from "$lib/state/commit-panel.svelte";
-  import { untrack } from "svelte";
+  import { onDestroy, untrack, tick } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { getScmStore } from "$lib/state/scm.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import Modal from "./Modal.svelte";
+  import {
+    gitUndoDescription,
+    sameGitUndoAction,
+    type GitUndoAction,
+  } from "$lib/domain/git-graph-undo";
+  import {
+    gitUndoLedger,
+    registerGraphUndoRequester,
+  } from "$lib/state/git-graph-undo";
 
   const { repoPath }: { repoPath: string } = $props();
 
   // This pane's SCM store — the preview pane reads the ACTIVE pane's store,
   // and clicking in the graph focuses its pane, so the two line up (#366).
   const paneId = getPaneIdContext();
+  // The component is keyed on repoPath, so this owner id is intentionally
+  // fixed for its lifetime.
+  const summaryConsumerId = `git-graph:${paneId ?? "default"}:${untrack(() => repoPath)}`;
+  onDestroy(() => releaseGitSummaryConsumer(summaryConsumerId));
   const scmStore = $derived(getScmStore(paneId ?? windowTabsManager.activePaneId ?? "default"));
 
   const ROW_HEIGHT = 28;
@@ -135,7 +179,13 @@
   // row shows at the list bottom during infinite scroll (#433).
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
-  let selected = $state<CommitInfo | null>(null);
+  // The importable domain state machine owns commit/comparison transitions and
+  // request invalidation; this component only performs the resulting IPC.
+  let comparisonState = $state(createCommitComparisonState<CommitInfo>());
+  const selected = $derived(comparisonState.selected);
+  const comparisonFirst = $derived(comparisonState.first);
+  const comparison = $derived(comparisonState.comparison);
+  let hoveredTraceOid = $state<string | null>(null);
   /** File rows in the expanded details. `staged`/`section` are set only for
    *  the synthetic uncommitted row, where they pick the right working-tree
    *  diff and drive the stage/unstage affordances (#466). */
@@ -157,6 +207,28 @@
   let headOid = $state<string | null>(null);
   // Checked-out branch (HEAD's symbolic target); highlights only that chip (#433).
   let headBranch = $state<string | null>(null);
+  // Detached HEAD (#524): a MODE, not an event — surfaced as a standing badge
+  // for as long as it lasts, so it survives the checkout menu closing. Read
+  // from the log payload, never inferred from `headBranch === null` (also null
+  // on an unborn branch).
+  let detached = $state(false);
+  // Graph-wide commit filter (#529). Kept ephemeral: unlike branch curation,
+  // a one-off path lookup should not silently survive reopening the graph.
+  let filePathFilter = $state("");
+  let filePathReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function onFilePathFilterInput(event: Event): void {
+    filePathFilter = (event.target as HTMLInputElement).value;
+    closeDetails();
+    closePrDetail();
+    if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
+    filePathReloadTimer = setTimeout(() => {
+      filePathReloadTimer = null;
+      void reload();
+    }, 200);
+  }
+
+  const detachedIndicator = $derived(detachedHeadIndicator(detached, headOid));
 
   // Branch subset filter (#342): null = all branches. Persisted per repo so a
   // curated view (e.g. just dev + main) survives reopening the graph.
@@ -179,22 +251,42 @@
     savePersisted(LOCAL_ONLY_KEY, localOnly);
   }
 
+  // Bulk hide of remote-only branches (#515): drop every remote ref that no
+  // local branch tracks (`origin/legacy-import` with no local `legacy-import`)
+  // from the walked set in one action. A separate axis from the per-branch /
+  // author selection — like `localOnly` — so toggling it never destroys a
+  // curated selection. Persisted per repo.
+  const HIDE_REMOTE_ONLY_KEY = `git-graph-hide-remote-only:${untrack(() => repoPath)}`;
+  let hideRemoteOnly = $state(loadPersisted<unknown>(HIDE_REMOTE_ONLY_KEY, false) === true);
+
+  function toggleHideRemoteOnly(): void {
+    hideRemoteOnly = !hideRemoteOnly;
+    savePersisted(HIDE_REMOTE_ONLY_KEY, hideRemoteOnly);
+    // The selected commit may not exist in the new subset (mirrors
+    // setBranchFilter).
+    closeDetails();
+    closePrDetail();
+  }
+
   // Paint the last-known graph immediately on remount (#255); the load
   // effect below still refreshes from git in the background. The cache is
   // keyed by repo + filter + local-only (#416), so a filtered remount paints
   // its own filtered snapshot — never another filter's rows (#342, #381).
+  let hasCachedSnapshot = false;
   {
     // untrack: the view is {#key}ed on repoPath, so the initial values are
     // the right ones for this instance's lifetime.
     const cached = getSnapshot(
-      untrack(() => snapshotKey(repoPath, branchFilter, localOnly)),
+      untrack(() => snapshotKey(repoPath, branchFilter, localOnly, hideRemoteOnly)),
     );
     if (cached) {
+      hasCachedSnapshot = true;
       commits = cached.commits;
       refs = cached.refs;
       hasMore = cached.hasMore;
       headOid = cached.headOid;
       headBranch = cached.headBranch;
+      detached = cached.detached === true;
       workingChanges = cached.workingChanges;
       nextCursor = cached.nextCursor;
     }
@@ -214,14 +306,54 @@
   // time, which keeps the RowExpand derivation single-valued.
   let prDetail = $state<{ oid: string; pr: OpenPr } | null>(null);
   let prDetailHeight = $state(0);
+  let failedCiChecks = $state<{ prNumber: number; checks: FailedCiCheck[]; error: string | null } | null>(null);
+  let failedCiChecksLoading = $state(false);
+  let ciCheckLog = $state<{ prNumber: number; check: FailedCiCheck; result: FailedCiCheckLog | null; error: string | null } | null>(null);
+  let ciCheckLogRequest = 0;
+
+  function resetCiDetail(): void {
+    failedCiChecks = null;
+    failedCiChecksLoading = false;
+    ciCheckLogRequest += 1;
+    ciCheckLog = null;
+  }
 
   function closePrDetail(): void {
     prDetail = null;
     prDetailHeight = 0;
+    resetCiDetail();
+  }
+
+  async function loadFailedCiChecks(pr: OpenPr): Promise<void> {
+    failedCiChecksLoading = true;
+    failedCiChecks = null;
+    try {
+      const checks = await gitFailedCiChecks(repoPath, pr.number);
+      if (prDetail?.pr.number === pr.number) failedCiChecks = { prNumber: pr.number, checks, error: null };
+    } catch (error) {
+      if (prDetail?.pr.number === pr.number) {
+        failedCiChecks = { prNumber: pr.number, checks: [], error: error instanceof Error ? error.message : "Could not load failed checks" };
+      }
+    } finally {
+      if (prDetail?.pr.number === pr.number) failedCiChecksLoading = false;
+    }
+  }
+
+  async function openFailedCiCheckLog(pr: OpenPr, check: FailedCiCheck): Promise<void> {
+    const request = ++ciCheckLogRequest;
+    ciCheckLog = { prNumber: pr.number, check, result: null, error: null };
+    try {
+      const result = await gitFailedCiCheckLog(repoPath, check);
+      if (ciCheckLogRequest === request) ciCheckLog = { prNumber: pr.number, check, result, error: null };
+    } catch (error) {
+      if (ciCheckLogRequest === request) {
+        ciCheckLog = { prNumber: pr.number, check, result: null, error: error instanceof Error ? error.message : "Could not load CI check log" };
+      }
+    }
   }
 
   function closeDetails(): void {
-    selected = null;
+    comparisonState = closeCommitComparison(comparisonState).state;
     selectedFiles = [];
     // Ephemeral editor: a fresh open starts blank (mirrors keifu's
     // commit_editor) — but NOT while a commit is in flight, so close+reopen
@@ -236,29 +368,64 @@
     // Opening commit details closes any open PR dropdown — one expansion at a
     // time (#459).
     closePrDetail();
-    if (selected?.oid === commit.oid) {
-      closeDetails();
+    const transition = selectComparisonCommit(comparisonState, commit, UNCOMMITTED);
+    comparisonState = transition.state;
+    if (!transition.clearFiles) return;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+    if (!transition.load) {
+      commitPanelStore.resetIfIdle();
+      detailsHeight = 0;
       return;
     }
-    closeDetails();
-    selected = commit;
     try {
-      if (commit.oid === UNCOMMITTED) {
+      if (transition.load.kind === "comparison") {
+        const files = await gitCompareCommitFiles(repoPath, transition.load.older.oid, transition.load.newer.oid);
+        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
+      } else if (transition.load.commit.oid === UNCOMMITTED) {
         // Working-tree changes: group the SCM summary buckets by stage status
         // (merge / staged / unstaged / untracked), remembering which side of
         // the index each file sits on for the diff and the stage/unstage
         // affordance (#466). Served from the shared summary cache (#431) — the
         // graph's own reload just scanned this, so selecting the row reuses it
         // instead of re-scanning.
-        const res = await fetchGitSummary(repoPath);
+        const res = await fetchGitSummary(repoPath, { consumerId: summaryConsumerId });
         if (!res.ok) throw new Error(res.error);
-        selectedFiles = buildStageFiles(res.data);
+        if (acceptsDetailLoad(comparisonState, transition.load)) {
+          selectedFiles = buildStageFiles(res.data);
+        }
       } else {
         // Cached per OID (#431): re-clicking or re-selecting a commit is instant.
-        selectedFiles = await cachedCommitFiles(repoPath, commit.oid);
+        const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
+        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
       }
     } catch {
-      selectedFiles = [];
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
+    }
+  }
+
+  function beginComparison(): void {
+    const transition = startCommitComparison(comparisonState, UNCOMMITTED);
+    comparisonState = transition.state;
+    if (!transition.clearFiles) return;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+  }
+
+  async function exitComparison(): Promise<void> {
+    const transition = exitCommitComparison(comparisonState, UNCOMMITTED);
+    comparisonState = transition.state;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+    if (!transition.load || transition.load.kind !== "normal") return;
+    try {
+      const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
+    } catch {
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
     }
   }
 
@@ -279,7 +446,12 @@
       } else {
         openDiffPath = null;
         openDiff = null;
-        scmStore.openCommitDiff(repoPath, forPreview.oid, file.path);
+        scmStore.openCommitDiff(
+          repoPath,
+          forPreview.oid,
+          file.path,
+          comparison?.older.oid,
+        );
         return;
       }
     }
@@ -300,7 +472,9 @@
               if (!r.ok) throw new Error(r.error);
               return r.data;
             })
-          : await gitCommitFileDiff(repoPath, forCommit.oid, file.path);
+          : comparison
+            ? await gitCompareCommitFileDiff(repoPath, comparison.older.oid, comparison.newer.oid, file.path)
+            : await gitCommitFileDiff(repoPath, forCommit.oid, file.path);
       // Ignore a late response if the user moved on.
       if (openDiffPath === file.path && selected?.oid === forCommit.oid) {
         openDiff = parseUnifiedDiff(text);
@@ -336,7 +510,10 @@
    *  (after a stage/unstage/commit). Forces past the summary-cache TTL so the
    *  post-mutation state is observed. */
   async function refreshUncommittedFiles(): Promise<void> {
-    const res = await fetchGitSummary(repoPath, { force: true });
+    const res = await fetchGitSummary(repoPath, {
+      force: true,
+      consumerId: summaryConsumerId,
+    });
     selectedFiles = res.ok ? buildStageFiles(res.data) : [];
   }
 
@@ -420,7 +597,7 @@
   /** Rows fed to layout/render: a synthetic uncommitted-changes row on top
    *  (when the working tree is dirty and HEAD is loaded), then the page. */
   const displayCommits: CommitInfo[] = $derived(
-    workingChanges > 0 && headOid
+    workingChanges > 0 && headOid && !filePathFilter.trim()
       ? [
           {
             oid: UNCOMMITTED,
@@ -435,7 +612,7 @@
         ]
       : commits,
   );
-  const layout: GraphLayout = $derived(assignLayout(displayCommits));
+  const layout: GraphLayout = $derived(assignLayout(displayCommits, headOid));
   const graphWidth = $derived(Math.max(2, layout.laneCount) * LANE_WIDTH);
 
   // Column widths (#341): author/date are drag-resizable via header handles
@@ -496,6 +673,37 @@
     muteMerges = !muteMerges;
     savePersisted(MUTE_MERGES_KEY, muteMerges);
   }
+
+  // Base-update merges are a distinct kind of PR-branch housekeeping. Keep
+  // their preference separate from generic merge muting so feature merges can
+  // remain prominent while periodic base syncs recede (#527).
+  const MUTE_BASE_UPDATE_MERGES_KEY = "git-graph-mute-base-update-merges";
+  let muteBaseUpdateMerges = $state(
+    loadPersisted<unknown>(MUTE_BASE_UPDATE_MERGES_KEY, true) !== false,
+  );
+  function toggleMuteBaseUpdateMerges(): void {
+    muteBaseUpdateMerges = !muteBaseUpdateMerges;
+    savePersisted(MUTE_BASE_UPDATE_MERGES_KEY, muteBaseUpdateMerges);
+  }
+  const baseUpdateMerges = $derived(
+    baseUpdateMergeOids(commits, refs, [...prsByBranch.values()]),
+  );
+
+  // Branch tracing follows the hovered row, falling back to the persistent
+  // selection after the pointer leaves. It is on by default; a linear history
+  // naturally stays fully lit because every row belongs to the same lineage.
+  const BRANCH_TRACING_KEY = "git-graph-branch-tracing";
+  let branchTracing = $state(loadPersisted<unknown>(BRANCH_TRACING_KEY, true) !== false);
+  function toggleBranchTracing(): void {
+    branchTracing = !branchTracing;
+    savePersisted(BRANCH_TRACING_KEY, branchTracing);
+  }
+  const traceOid = $derived(branchTracing ? (hoveredTraceOid ?? selected?.oid ?? null) : null);
+  const graphTrace = $derived.by(() => {
+    if (traceOid === null) return null;
+    const row = displayCommits.findIndex((commit) => commit.oid === traceOid);
+    return row < 0 ? null : traceGraphLineage(displayCommits, layout, row);
+  });
 
   function openColumnMenu(event: MouseEvent): void {
     event.preventDefault();
@@ -566,6 +774,47 @@
     return index * ROW_HEIGHT + (rowExpand && index > rowExpand.afterRow ? rowExpand.extra : 0);
   }
 
+  /** The scroll viewport, so a jumped-to row can be brought into view — it may
+   *  be outside the render window entirely (#530). */
+  let scrollerEl = $state<HTMLElement | null>(null);
+
+  /** Scroll the minimum distance that puts `index` fully in the viewport. */
+  function scrollRowIntoView(index: number): void {
+    const el = scrollerEl;
+    if (!el) return;
+    el.scrollTop = scrollTopToReveal(rowY(index), ROW_HEIGHT, el.scrollTop, el.clientHeight);
+  }
+
+  /** Move the selection one commit along its branch line (#530). The row math
+   *  is the pure `stepOnBranchLine`; this only maps rows back onto the
+   *  selection. No selection means nothing to move — the shortcut moves the
+   *  selection, it never creates one. */
+  async function stepSelectionOnBranchLine(direction: BranchLineDirection): Promise<void> {
+    const current = selected;
+    if (!current) return;
+    const fromRow = displayCommits.findIndex((c) => c.oid === current.oid);
+    const targetRow = stepOnBranchLine(displayCommits, fromRow, direction);
+    if (targetRow < 0) return;
+    const target = displayCommits[targetRow];
+    await selectCommit(target);
+    // The inline details block reflows the rows below it, so wait for the
+    // derived offsets to settle before measuring where the target landed.
+    await tick();
+    // Key repeat can land a newer jump while this one is still awaiting; only
+    // the invocation that still owns the selection gets to scroll.
+    if (selected?.oid !== target.oid) return;
+    scrollRowIntoView(displayCommits.findIndex((c) => c.oid === target.oid));
+  }
+
+  /** Select and reveal a fuzzy commit target supplied to the command palette. */
+  async function jumpToCommit(oid: string): Promise<void> {
+    const index = displayCommits.findIndex((commit) => commit.oid === oid);
+    if (index < 0) return;
+    await selectCommit(displayCommits[index]);
+    await tick();
+    if (selected?.oid === oid) scrollRowIntoView(index);
+  }
+
   const startRow = $derived(Math.max(0, rowAtY(scrollTop) - OVERSCAN));
   const endRow = $derived(
     Math.min(displayCommits.length - 1, rowAtY(scrollTop + viewportHeight) + OVERSCAN),
@@ -581,6 +830,13 @@
         line === uncommittedBranch ? line : sliceBranchLine(line, startRow - 2, endRow + 2),
       )
       .filter((line): line is BranchLine => line !== null),
+  );
+  const visibleTraceSegments = $derived(
+    graphTrace === null
+      ? []
+      : graphTrace.segments
+          .map((line) => sliceBranchLine(line, startRow - 2, endRow + 2))
+          .filter((line): line is BranchLine => line !== null),
   );
   const visibleVertices = $derived(
     layout.vertices
@@ -603,10 +859,8 @@
   // silently dropped — the structural cause of "pull completes but the graph
   // doesn't update". Now a generation counter discards stale results and a
   // dirty flag re-runs a request that arrived while a load was in flight, so a
-  // refresh is never lost. Mirrors scm.svelte.ts's refreshGeneration pattern.
-  let reloadGeneration = 0;
-  let reloading = false;
-  let reloadDirty = false;
+  // refresh is never lost. The state-layer reloader owns the generation and
+  // dirty-flag machine so its concurrency contract is directly testable.
 
   /** PR badges (#448): fetched alongside every reload, never blocking the
    *  commit-list paint. `repo` is captured by the caller so a repoPath
@@ -622,25 +876,30 @@
     }
   }
 
-  async function reload(): Promise<void> {
-    // A request while a load is in flight isn't dropped — it re-runs on
-    // completion (dirty flag), picking up the latest filter/local-only.
-    if (reloading) {
-      reloadDirty = true;
-      return;
-    }
-    reloading = true;
-    reloadDirty = false;
-    const gen = ++reloadGeneration;
+  const reloader = createReloader(async ({ isCurrent }) => {
     // Captured once so a mid-flight filter change can't mix pages. Every
     // page-0 load is cached under its own repo+filter key (#416), so
     // re-entering the same view — filtered or not — paints instantly.
-    const filter = untrack(() => branchFilter);
+    const selection = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
-    const cacheKey = snapshotKey(repoPath, filter, local);
+    const hideRemotes = untrack(() => hideRemoteOnly);
+    const filePath = untrack(() => filePathFilter.trim());
+    // Cache under the RAW selection + toggles: the excluded set below depends
+    // on the lazily-loaded branch list, so keying on it would let a pre-load
+    // remount paint the unfiltered variant's rows (#416).
+    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes, filePath);
     loading = true;
     error = null;
     void loadPrs(repoPath);
+    // Which refs are remote-only is only knowable from the branch list, which
+    // the popover loads lazily — refresh it here so a persisted toggle applies
+    // on the first paint too, and stays right after refs move (#515).
+    if (hideRemotes) await loadBranchList();
+    const { branches: filter, excludeBranches } = branchWalkQuery(
+      untrack(() => branchList),
+      selection,
+      hideRemotes,
+    );
     try {
       // Same page-0 fetch used by the background warm (#287). The commit list
       // paints as soon as the log arrives; the working-changes count (a full
@@ -648,16 +907,17 @@
       // write is guarded on `gen` so a stale in-flight load can't clobber a
       // newer one's results.
       const snapshot = await fetchPage0Snapshot(repoPath, filter, (partial) => {
-        if (gen !== reloadGeneration) return;
+        if (!isCurrent()) return;
         commits = partial.commits;
         refs = partial.refs;
         hasMore = partial.hasMore;
         headOid = partial.headOid;
         headBranch = partial.headBranch;
+        detached = partial.detached === true;
         nextCursor = partial.nextCursor;
         loading = false;
-      }, local);
-      if (gen !== reloadGeneration) return;
+      }, local, excludeBranches, filePath, summaryConsumerId);
+      if (!isCurrent()) return;
       workingChanges = snapshot.workingChanges;
       cacheSnapshot(cacheKey, snapshot);
       // Branch list / author map may be stale after a reload (refs moved on a
@@ -665,14 +925,31 @@
       // refetches lazily (#431); keep the current values visible until then.
       branchDataLoaded = false;
     } catch (err) {
-      if (gen === reloadGeneration) error = err instanceof Error ? err.message : String(err);
+      if (isCurrent()) error = err instanceof Error ? err.message : String(err);
     } finally {
-      if (gen === reloadGeneration) loading = false;
-      reloading = false;
-      // A refresh that arrived mid-flight re-runs now — never dropped.
-      if (reloadDirty) void reload();
+      if (isCurrent()) loading = false;
     }
+  });
+
+  const reload = reloader.reload;
+
+  /** Apply a file-history request from the SCM panel. Keeping the filter
+   *  component-local preserves #529's ephemeral graph-search behaviour. */
+  function showFileHistory(filePath: string): void {
+    if (filePathReloadTimer !== null) {
+      clearTimeout(filePathReloadTimer);
+      filePathReloadTimer = null;
+    }
+    closeDetails();
+    closePrDetail();
+    filePathFilter = filePath;
+    void reload();
   }
+
+  $effect(() => {
+    if (!paneId) return;
+    return registerGraphFileHistoryHandler(paneId, showFileHistory);
+  });
 
   /** Append the next page of history (incremental scroll). Distinct from
    *  `reload()`: it never resets the head of the list, so it doesn't race the
@@ -688,9 +965,24 @@
   }
 
   async function loadMore(): Promise<void> {
-    const filter = untrack(() => branchFilter);
+    const selection = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
-    const cacheKey = snapshotKey(repoPath, filter, local);
+    const hideRemotes = untrack(() => hideRemoteOnly);
+    const filePath = untrack(() => filePathFilter.trim());
+    const generation = reloader.generation;
+    const queryIsCurrent = (): boolean =>
+      generation === reloader.generation &&
+      selection === untrack(() => branchFilter) &&
+      local === untrack(() => localOnly) &&
+      hideRemotes === untrack(() => hideRemoteOnly) &&
+      filePath === untrack(() => filePathFilter.trim());
+    // `reload()` refreshed `branchList` already when the toggle is on.
+    const { branches: filter, excludeBranches } = branchWalkQuery(
+      untrack(() => branchList),
+      selection,
+      hideRemotes,
+    );
+    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes, filePath);
     loading = true;
     loadingMore = true;
     error = null;
@@ -700,15 +992,24 @@
       // Filtered queries keep the numeric skip (real-commit count) path — the
       // cursor is keyed to the unfiltered walk. Skip by the number of REAL
       // commits, never commits.length (woven stash rows aren't walk steps).
-      const useCursor = filter === null && nextCursor !== null;
+      // An exclusion changes the walk just like a selection does, so it also
+      // rules out the cursor (which is keyed to the unfiltered walk) (#515).
+      const useCursor =
+        filter === null && excludeBranches === null && !filePath && nextCursor !== null;
       const page = await gitLog(repoPath, {
         limit: PAGE_SIZE,
         ...(useCursor
           ? { cursor: nextCursor as string }
-          : { skip: commits.filter((c) => !c.stash).length }),
+          : { skip: countGraphWalkCommits(commits) }),
         ...(filter ? { branches: filter } : {}),
+        ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
         ...(local ? { local_only: true } : {}),
+        ...(filePath ? { file_path: filePath } : {}),
       });
+      // A path/branch query can change while a deeper page is in flight. The
+      // page belongs to the captured walk and must never append into the new
+      // result set (or overwrite its cache) after that change.
+      if (!queryIsCurrent()) return;
       commits = [...commits, ...page.commits];
       refs = { ...refs, ...page.refs };
       hasMore = page.has_more;
@@ -723,13 +1024,14 @@
         hasMore: hasMore || commits.length > PAGE_SIZE,
         headOid,
         headBranch,
+        detached,
         workingChanges,
         nextCursor: cursorForSlice(slice),
       });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
-      loading = false;
+      if (queryIsCurrent()) loading = false;
       loadingMore = false;
     }
   }
@@ -741,6 +1043,16 @@
     void repoPath;
     void branchFilter;
     void localOnly;
+    void hideRemoteOnly;
+    // PaneContainer remounts the graph whenever a tab becomes active. A
+    // snapshot has already supplied the current observable graph, and the
+    // watcher invalidates it before a remount when git changes externally, so
+    // do not immediately start the same full history walk again.
+    if (hasCachedSnapshot) {
+      hasCachedSnapshot = false;
+      void loadPrs(repoPath);
+      return;
+    }
     untrack(() => void reload());
   });
 
@@ -758,7 +1070,7 @@
     let unsub: (() => void) | undefined;
     void gitWatchRepo(repo);
     void subscribeGitChanges((change) => {
-      if (change.source === "local") return;
+      if (!shouldReloadGraphForChange(change)) return;
       if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
@@ -775,6 +1087,7 @@
       refreshTimer = null;
       unsub?.();
       void gitUnwatchRepo(repo);
+      if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
     };
   });
 
@@ -785,6 +1098,44 @@
   $effect(() => {
     const id = paneId ?? windowTabsManager.activePaneId ?? "default";
     return registerGraphRefresher(id, () => void refreshWithFetch());
+  });
+
+  // Ctrl+Up/Down branch-line jumps (#530): same per-pane bus shape as F5, for
+  // the same reason — a window listener here would be unrebindable and would
+  // fire for every mounted graph tab, active or not.
+  $effect(() => {
+    const id = paneId ?? windowTabsManager.activePaneId ?? "default";
+    return registerGraphSelectionStepper(id, (dir) => void stepSelectionOnBranchLine(dir));
+  });
+
+  // The palette is window-global but its Git targets belong to this pane.
+  // Keep registration in the state-layer bridge so only the active graph pane
+  // can expose or execute its branch/commit actions (#520).
+  $effect(() => {
+    const id = paneId ?? windowTabsManager.activePaneId ?? "default";
+    const branches = Object.values(refs)
+      .flat()
+      .filter((ref) => ref.kind === "LocalBranch")
+      .map((ref) => ref.name);
+    return registerGitPaletteTargets(id, {
+      branches,
+      commits: commits
+        .slice(0, MAX_GIT_PALETTE_COMMIT_TARGETS)
+        .filter((commit) => !commit.stash)
+        .map((commit) => ({ oid: commit.oid, shortOid: commit.short_oid, summary: commit.summary })),
+      stashes: commits.flatMap((commit) => (
+        commit.stash ? [{ selector: commit.stash, summary: commit.summary }] : []
+      )),
+      actions: {
+        checkout: (target) => runAction("Checkout", () => gitCheckout(repoPath, target)),
+        cherryPick: (oid) => runAction("Cherry-pick", () => gitCherryPick(repoPath, oid)),
+        rebase: (oid) => runAction("Rebase", () => gitRebase(repoPath, oid)),
+        merge: (branch) => runAction("Merge", () => gitMerge(repoPath, branch)),
+        stashApply: (stash) => runAction("Apply stash", () => gitStashApply(repoPath, stash)),
+        stashPop: (stash) => runAction("Pop stash", () => gitStashPop(repoPath, stash)),
+        jumpToCommit,
+      },
+    });
   });
 
   // ----- Branch filter popover (#342) -----
@@ -802,19 +1153,28 @@
   let branchAuthors = $state<Record<string, string>>({});
   let branchDataLoaded = false;
 
+  /** Refresh the popover's branch list. Also driven by `reload()` while the
+   *  hide-remote-only toggle is on — that filter is computed from this list,
+   *  so it can't wait for the popover to be opened (#515). */
+  async function loadBranchList(): Promise<void> {
+    try {
+      const r = await gitRefs(repoPath);
+      branchList = [
+        ...r.local_branches.map((b) => ({ name: b.name, remote: false })),
+        ...r.remote_branches.map((b) => ({ name: b.name, remote: true })),
+      ];
+    } catch {
+      // Keep the last known list. Blanking it would make the hide toggle
+      // subtract nothing while still reading as on — and cache those
+      // unexcluded rows under the toggle's snapshot key (#416).
+    }
+  }
+
   async function toggleBranchPopover(): Promise<void> {
     branchPopoverOpen = !branchPopoverOpen;
     if (branchPopoverOpen && !branchDataLoaded) {
       branchDataLoaded = true;
-      try {
-        const r = await gitRefs(repoPath);
-        branchList = [
-          ...r.local_branches.map((b) => ({ name: b.name, remote: false })),
-          ...r.remote_branches.map((b) => ({ name: b.name, remote: true })),
-        ];
-      } catch {
-        branchList = [];
-      }
+      await loadBranchList();
       try {
         const authors = await gitBranchAuthors(repoPath);
         branchAuthors = Object.fromEntries(authors.map((a) => [a.name, a.author]));
@@ -842,7 +1202,15 @@
     closePrDetail();
   }
 
+  /** Remote refs no local branch tracks — the set the bulk toggle hides. */
+  const remoteOnlySet = $derived(new Set(remoteOnlyBranchNames(branchList as BranchListEntry[])));
+
+  function isHiddenAsRemoteOnly(name: string): boolean {
+    return hideRemoteOnly && remoteOnlySet.has(name);
+  }
+
   function isBranchShown(name: string): boolean {
+    if (isHiddenAsRemoteOnly(name)) return false;
     return branchFilter === null || branchFilter.includes(name);
   }
 
@@ -863,8 +1231,13 @@
 
   // ----- Author checkboxes (#411, #412): batch-toggle an author's branches -----
 
+  /** Branches the author checkbox governs. Branches the bulk remote-only
+   *  toggle is hiding (#515) are out of play on the per-branch axis, so they
+   *  neither uncheck their author nor get (de)selected by clicking them. */
   function branchesByAuthor(author: string): string[] {
-    return branchList.filter((b) => branchAuthors[b.name] === author).map((b) => b.name);
+    return branchList
+      .filter((b) => branchAuthors[b.name] === author && !isHiddenAsRemoteOnly(b.name))
+      .map((b) => b.name);
   }
 
   /** An author reads as checked when every branch they created is shown. */
@@ -958,8 +1331,12 @@
       return;
     }
     closeDetails();
+    // Switching directly from one badge to another must not attach the prior
+    // PR's checks or log to this expansion while either request is in flight.
+    resetCiDetail();
     prDetailHeight = 0;
     prDetail = { oid: commit.oid, pr };
+    if (pr.ciStatus === "failure") void loadFailedCiChecks(pr);
   }
 
   /** Whether `pr` under `commit` is the currently open dropdown. */
@@ -987,16 +1364,21 @@
     /** Set when opened from a remote-only branch chip (#432): the menu offers
      *  a tracking checkout (`git checkout -b <branch> --track <remote>/<branch>`). */
     remote: RemoteRefChip | null;
+    /** Set when opened directly from a tag chip. */
+    scopedTag: string | null;
   }
   let menu = $state<Menu | null>(null);
   // Inline name prompt for Create Branch / Create Tag.
   let prompt = $state<{ kind: "branch" | "tag"; oid: string; value: string } | null>(null);
+  let renamePrompt = $state<{ oldName: string; value: string } | null>(null);
   // Suboption dialogs (#406): reset modes and delete-branch variants open as
   // a modal instead of a cascading submenu.
   type ActionModal =
     | { kind: "reset"; oid: string; summary: string }
-    | { kind: "deleteBranch"; name: string; remotes: string[] };
+    | { kind: "deleteBranch"; name: string; remotes: string[] }
+    | { kind: "deleteTag"; name: string };
   let actionModal = $state<ActionModal | null>(null);
+  let undoConfirmation = $state<GitUndoAction | null>(null);
 
   function localBranchAt(oid: string): string | null {
     const ref = (refs[oid] ?? []).find((r) => r.kind === "LocalBranch");
@@ -1027,6 +1409,7 @@
     commit: CommitInfo,
     scopedBranch: string | null = null,
     remote: RemoteRefChip | null = null,
+    scopedTag: string | null = null,
   ): void {
     event.preventDefault();
     prompt = null;
@@ -1040,6 +1423,7 @@
       checkoutBranch: scopedBranch ?? localBranchAt(commit.oid),
       scopedBranch,
       remote,
+      scopedTag,
     };
   }
 
@@ -1099,10 +1483,14 @@
 
   /** Run a mutating action, then reload the graph and refresh the SCM panel
    *  (always — a conflicting op still mutates the repo). */
-  async function runAction(label: string, fn: () => Promise<void>): Promise<void> {
+  async function runAction(
+    label: string,
+    fn: () => Promise<void | GitUndoAction | null>,
+  ): Promise<void> {
     closeMenu();
     try {
-      await fn();
+      const undoAction = await fn();
+      if (undoAction) gitUndoLedger.record(repoPath, undoAction);
       toastStore.success(`${label} done`);
     } catch (err) {
       toastStore.error(err instanceof Error ? err.message : String(err));
@@ -1170,11 +1558,35 @@
    *  checked out) surface as the toast. */
   function deleteBranch(name: string, force: boolean, remotes: string[]): void {
     void runAction(`Delete branch '${name}'`, async () => {
-      await gitDeleteBranch(repoPath, name, force);
+      const undoAction = await gitDeleteBranch(repoPath, name, force);
+      // Record the completed local mutation before touching remotes: a remote
+      // push failure must not strand the already-deleted local branch.
+      gitUndoLedger.record(repoPath, undoAction);
       for (const remote of remotes) {
         await gitDeleteRemoteBranch(repoPath, remote, name);
       }
+      return null;
     });
+  }
+
+  function deleteTag(name: string): void {
+    void runAction(`Delete tag '${name}'`, () => gitDeleteTag(repoPath, name));
+  }
+
+  function startRenameBranch(name: string): void {
+    renamePrompt = { oldName: name, value: name };
+    menu = null;
+  }
+
+  function confirmRenameBranch(): void {
+    if (!renamePrompt) return;
+    const { oldName } = renamePrompt;
+    const newName = renamePrompt.value.trim();
+    renamePrompt = null;
+    if (!newName || newName === oldName) return;
+    void runAction(`Rename branch '${oldName}' to '${newName}'`, () =>
+      gitRenameBranch(repoPath, oldName, newName),
+    );
   }
 
   /** Delete a remote-only branch chip like "origin/feat/x" (#371). */
@@ -1202,6 +1614,46 @@
     } else {
       void runAction("Create tag", () => gitCreateTag(repoPath, name, oid));
     }
+  }
+
+  function requestUndo(): void {
+    closeMenu();
+    const entry = gitUndoLedger.peek(repoPath);
+    if (!entry) {
+      toastStore.show("Nothing to undo in this git graph", "info");
+      return;
+    }
+    undoConfirmation = entry.action;
+  }
+
+  async function confirmUndo(): Promise<void> {
+    const pending = undoConfirmation;
+    undoConfirmation = null;
+    if (!pending) return;
+    // Remove before invoking: a stale/refused action must not repeatedly offer
+    // a now-impossible inverse. Cancellation never reaches this path.
+    const latest = gitUndoLedger.peek(repoPath);
+    if (!latest || !sameGitUndoAction(latest.action, pending)) {
+      toastStore.error("Git undo history changed while confirmation was open");
+      return;
+    }
+    const entry = gitUndoLedger.take(repoPath);
+    if (!entry) return;
+    const description = gitUndoDescription(entry.action);
+    try {
+      await gitUndo(repoPath, entry.action);
+      toastStore.show(`Undo: ${description}`, "info");
+    } catch (err) {
+      toastStore.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      await reload();
+      notifyLocalGitChange(repoPath);
+    }
+  }
+
+  if (paneId) {
+    const unregisterUndoRequester = registerGraphUndoRequester(paneId, requestUndo);
+    onDestroy(unregisterUndoRequester);
   }
 
   async function copyToClipboard(text: string, what: string): Promise<void> {
@@ -1307,15 +1759,28 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<div class="git-graph-view" data-testid="git-graph-view">
+<div class="git-graph-view" data-testid="git-graph-view" data-lane-count={layout.laneCount}>
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}
+    {#if detachedIndicator}
+      <!-- Standing detached-HEAD banner (#524): outside the header row so it
+           never disturbs column layout, and outside every menu so it lasts as
+           long as the state does. -->
+      <div
+        class="detached-banner"
+        data-testid="git-graph-detached-badge"
+        role="status"
+        title={detachedIndicator.title}
+      >
+        {detachedIndicator.label}
+      </div>
+    {/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- right-click opens the column-visibility menu; not reachable by keyboard by design (parity with the row context menu) -->
     <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
       <button
         class="branch-filter-btn"
-        class:filtered={branchFilter !== null || localOnly}
+        class:filtered={branchFilter !== null || localOnly || hideRemoteOnly || !!filePathFilter.trim()}
         onclick={() => void toggleBranchPopover()}
         title="Filter branches"
         aria-label="Filter branches"
@@ -1336,6 +1801,16 @@
           onclick={() => (branchPopoverOpen = false)}
         ></button>
         <div class="branch-popover" data-testid="branch-popover">
+          <div class="bf-heading">Commits</div>
+          <input
+            class="bf-path-search"
+            placeholder="Filter commits by file path…"
+            aria-label="Filter commits by file path"
+            data-testid="git-graph-file-path-filter"
+            value={filePathFilter}
+            oninput={onFilePathFilterInput}
+          />
+          <div class="bf-heading">Branches</div>
           <!-- svelte-ignore a11y_autofocus -- opened by explicit user action; focus goes where they're about to type -->
           <input
             class="bf-search"
@@ -1347,6 +1822,17 @@
             <label class="bf-row bf-local-only" title="Hide history reachable only from remote-tracking branches">
               <input type="checkbox" checked={localOnly} onchange={toggleLocalOnly} />
               <span class="bf-name">Local branches only</span>
+            </label>
+            <!-- Bulk hide of remote refs no local branch tracks (#515). Not a
+                 `.bf-row`: the branch-row selectors below (and in e2e) address
+                 real branches only. -->
+            <label
+              class="bf-opt"
+              title="Hide every remote branch that has no local counterpart"
+              data-testid="bf-hide-remote-only"
+            >
+              <input type="checkbox" checked={hideRemoteOnly} onchange={toggleHideRemoteOnly} />
+              <span class="bf-name">Hide remote-only branches</span>
             </label>
             <!-- Select/deselect all (#413). -->
             <label class="bf-row bf-all" title="Select or deselect every branch">
@@ -1378,10 +1864,17 @@
               <div class="bf-heading">Branches</div>
             {/if}
             {#each filteredBranchList as b (b.name)}
-              <label class="bf-row" title="Show or hide {b.name}">
+              <label
+                class="bf-row"
+                class:bf-bulk-hidden={isHiddenAsRemoteOnly(b.name)}
+                title={isHiddenAsRemoteOnly(b.name)
+                  ? `${b.name} is hidden by "Hide remote-only branches"`
+                  : `Show or hide ${b.name}`}
+              >
                 <input
                   type="checkbox"
                   checked={isBranchShown(b.name)}
+                  disabled={isHiddenAsRemoteOnly(b.name)}
                   onchange={() => toggleBranch(b.name)}
                 />
                 <span class="bf-name">{b.name}</span>
@@ -1389,6 +1882,7 @@
                 <button
                   class="bf-only"
                   title="Show only {b.name}"
+                  disabled={isHiddenAsRemoteOnly(b.name)}
                   onclick={(e) => {
                     e.preventDefault();
                     setBranchFilter([b.name]);
@@ -1414,7 +1908,9 @@
         aria-label="Resize graph column"
         data-testid="handle-graph"
       ></span>
-      <span class="gh-message">Message</span>
+      <span class="gh-message" title={filePathFilter.trim() || "Message"}>
+        {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
+      </span>
       {#if shownColumns.author}
         <span class="gh-author" style:width="{authorCol.width}px">
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -1497,6 +1993,26 @@
           <span class="col-check">{muteMerges ? "✓" : ""}</span>
           Mute merge commits
         </button>
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
+          aria-checked={muteBaseUpdateMerges}
+          onclick={toggleMuteBaseUpdateMerges}
+          data-testid="toggle-mute-base-update-merges"
+        >
+          <span class="col-check">{muteBaseUpdateMerges ? "✓" : ""}</span>
+          Mute base-update merges
+        </button>
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
+          aria-checked={branchTracing}
+          onclick={toggleBranchTracing}
+          data-testid="toggle-branch-tracing"
+        >
+          <span class="col-check">{branchTracing ? "✓" : ""}</span>
+          Trace branches
+        </button>
       </div>
     {/if}
     {#if commits.length === 0 && loading}
@@ -1504,7 +2020,7 @@
     {:else if commits.length === 0}
       <div class="graph-status">No commits.</div>
     {:else}
-    <div class="graph-scroller" onscroll={handleScroll} bind:clientHeight={viewportHeight}>
+    <div class="graph-scroller" onscroll={handleScroll} bind:this={scrollerEl} bind:clientHeight={viewportHeight}>
       <div class="graph-body" style:height="{graphHeight}px">
         <!-- Clip window for the lane SVG: when the user narrows the graph
              column below the lane-derived width, overflow is cut (#341). -->
@@ -1518,8 +2034,9 @@
           {#each visibleBranches as line, li (li)}
             {#if line === uncommittedBranch}
               {@const parts = splitUncommitted(line)}
-              <path class="branch-halo" d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
+              <path class="branch-halo" data-trace={graphTrace ? "dim" : undefined} d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
               <path
+                data-trace={graphTrace ? "dim" : undefined}
                 d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                 stroke="#808080"
                 stroke-dasharray="4 3"
@@ -1527,8 +2044,9 @@
                 fill="none"
               />
               {#if parts.rest.points.length > 1}
-                <path class="branch-halo" d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
+                <path class="branch-halo" data-trace={graphTrace ? "dim" : undefined} d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
                 <path
+                  data-trace={graphTrace ? "dim" : undefined}
                   d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                   stroke={colorOf(line.colorIndex)}
                   stroke-width="2"
@@ -1536,8 +2054,9 @@
                 />
               {/if}
             {:else}
-              <path class="branch-halo" d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
+              <path class="branch-halo" data-trace={graphTrace ? "dim" : undefined} d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
               <path
+                data-trace={graphTrace ? "dim" : undefined}
                 d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                 stroke={colorOf(line.colorIndex)}
                 stroke-width="2"
@@ -1545,18 +2064,33 @@
               />
             {/if}
           {/each}
+          {#each visibleTraceSegments as line, li (`trace-${li}`)}
+            <path
+              class="branch-halo trace-lit"
+              data-trace="lit"
+              d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
+            />
+            <path
+              class="trace-lit"
+              data-trace="lit"
+              d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
+              stroke={colorOf(line.colorIndex)}
+              stroke-width="2"
+              fill="none"
+            />
+          {/each}
           {#each visibleVertices as { vertex, vi } (vi)}
             {@const cx = vertex.lane * LANE_WIDTH + LANE_WIDTH / 2}
             {@const cy = vi * ROW_HEIGHT + ROW_HEIGHT / 2 + (rowExpand && vi > rowExpand.afterRow ? rowExpand.extra : 0)}
             {#if displayCommits[vi]?.oid === UNCOMMITTED}
               <!-- Open circle at the uncommitted-changes row (reference default). -->
-              <circle {cx} {cy} r="4" fill="var(--background-card)" stroke="#808080" stroke-width="2" />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="4" fill="var(--background-card)" stroke="#808080" stroke-width="2" />
             {:else if displayCommits[vi]?.stash}
               <!-- Stash: ring marker. -->
-              <circle {cx} {cy} r="4.5" fill="none" stroke={colorOf(vertex.colorIndex)} stroke-width="2" />
-              <circle {cx} {cy} r="2" fill={colorOf(vertex.colorIndex)} />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="4.5" fill="none" stroke={colorOf(vertex.colorIndex)} stroke-width="2" />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="2" fill={colorOf(vertex.colorIndex)} />
             {:else}
-              <circle {cx} {cy} r="4" fill={colorOf(vertex.colorIndex)} />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="4" fill={colorOf(vertex.colorIndex)} />
             {/if}
           {/each}
         </svg>
@@ -1593,13 +2127,17 @@
             class:selected={selected?.oid === commit.oid}
             class:is-head={chips.isHead}
             class:is-merge={muteMerges && !synthetic && commit.parents.length >= 2}
+            class:is-base-update-merge={!synthetic && shouldMuteBaseUpdateMerge(commit.oid, baseUpdateMerges, muteBaseUpdateMerges)}
             class:uncommitted={synthetic}
             style:padding-left="{effectiveGraphWidth + 20}px"
             style:top="{rowY(index)}px"
             data-oid={commit.short_oid}
+            data-trace={graphTrace ? (graphTrace.rows.has(index) ? "lit" : "dim") : undefined}
             role="button"
             tabindex="0"
             onclick={() => void selectCommit(commit)}
+            onpointerenter={() => { hoveredTraceOid = commit.oid; }}
+            onpointerleave={() => { if (hoveredTraceOid === commit.oid) hoveredTraceOid = null; }}
             onkeydown={(e) => { if (e.key === "Enter") void selectCommit(commit); }}
             oncontextmenu={(e) => { if (!synthetic) openMenu(e, commit); else e.preventDefault(); }}
           >
@@ -1647,7 +2185,11 @@
                 {/if}
               {/each}
               {#each chips.tags as tag (tag)}
-                <span class="ref ref-tag">{tag}</span>
+                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes tag actions to this ref -->
+                <span
+                  class="ref ref-tag"
+                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, null, null, tag); }}
+                >{tag}</span>
               {/each}
               <span class="summary" title={commit.summary}>{commit.summary}</span>
               {#if shownColumns.author}<span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>{/if}
@@ -1682,6 +2224,21 @@
                       <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
                     {/if}
                     <p class="detail-message">{commit.summary.trimStart()}</p>
+                    {#if comparisonFirst}
+                      <p class="compare-status">Select another commit to compare with {comparisonFirst.short_oid}.</p>
+                      <button type="button" class="compare-action" onclick={() => void exitComparison()}>
+                        Cancel comparison
+                      </button>
+                    {:else if comparison}
+                      <p class="compare-status">Comparing {comparison.older.short_oid} → {comparison.newer.short_oid}</p>
+                      <button type="button" class="compare-action" onclick={() => void exitComparison()}>
+                        Exit comparison
+                      </button>
+                    {:else}
+                      <button type="button" class="compare-action" onclick={beginComparison}>
+                        Compare this commit
+                      </button>
+                    {/if}
                   </div>
                 {:else}
                   <!-- Uncommitted node (#466): the message area becomes an
@@ -1724,6 +2281,14 @@
                         <path d="M3.5 8h9" />
                       {/if}
                     </svg>
+                  {/snippet}
+                  <!-- One-line path label (#500). The two halves are emitted with
+                       NO whitespace between the tags on purpose: the row's text
+                       content has to stay byte-identical to the path, since that
+                       is what the user reads and what other specs match on. -->
+                  {#snippet filePathLabel(path: string)}
+                    {@const parts = splitPathForDisplay(path)}
+                    <span class="file-path" title={path}><span class="file-dir">{parts.dir}</span><span class="file-name">{parts.name}</span></span>
                   {/snippet}
                   {#snippet fileDiff(file: DetailFile)}
                     {#if openDiffPath === file.path}
@@ -1793,7 +2358,7 @@
                                     title="Show diff"
                                   >
                                     <span class="file-status s-{file.status}">{file.status}</span>
-                                    <span class="file-path">{file.path}</span>
+                                    {@render filePathLabel(file.path)}
                                   </button>
                                   {#if group.section === "staged"}
                                     <button
@@ -1832,7 +2397,7 @@
                             title="Show diff"
                           >
                             <span class="file-status s-{file.status}">{file.status}</span>
-                            <span class="file-path">{file.path}</span>
+                            {@render filePathLabel(file.path)}
                           </button>
                           {@render fileDiff(file)}
                         </li>
@@ -1880,6 +2445,34 @@
                     <span class="pr-detail-ci ci-{pr.ciStatus}">{ciLine}</span>
                   </div>
                 {/if}
+                {#if pr.ciStatus === "failure"}
+                  {#if failedCiChecksLoading}
+                    <div class="pr-detail-line">Loading failed checks…</div>
+                  {:else if failedCiChecks?.prNumber === pr.number && failedCiChecks.error}
+                    <div class="pr-detail-error">Could not load failed checks: {failedCiChecks.error}</div>
+                  {:else if failedCiChecks?.prNumber === pr.number && failedCiChecks.checks.length > 0}
+                    <div class="pr-detail-ci-checks" aria-label="Failed CI checks">
+                      {#each failedCiChecks.checks as check (check.jobId)}
+                        <button type="button" class="pr-detail-ci-check" onclick={() => void openFailedCiCheckLog(pr, check)}>{check.name}</button>
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
+                {#if ciCheckLog?.prNumber === pr.number}
+                  <div class="pr-detail-ci-log" data-testid="git-graph-ci-check-log">
+                    <div class="pr-detail-ci-log-head">
+                      <strong>{ciCheckLog.check.name}</strong>
+                      <button type="button" class="detail-close" onclick={() => { ciCheckLogRequest += 1; ciCheckLog = null; }} aria-label="Close CI check log">✕</button>
+                    </div>
+                    {#if ciCheckLog.error}
+                      <div class="pr-detail-error">Could not load CI check log: {ciCheckLog.error}</div>
+                    {:else if ciCheckLog.result}
+                      <pre>{ciCheckLog.result.log}</pre>
+                    {:else}
+                      <div class="pr-detail-line">Loading failed check log…</div>
+                    {/if}
+                  </div>
+                {/if}
                 {#if reviewLine}
                   <div class="pr-detail-line"><span class="pr-detail-label">Review:</span> {reviewLine}</div>
                 {/if}
@@ -1900,6 +2493,35 @@
                     <span class="pr-detail-label">Comments:</span> {pr.commentCount}
                   </div>
                 {/if}
+                <section class="pr-detail-threads" data-testid="git-graph-pr-review-threads">
+                  <div class="pr-detail-label">Review threads</div>
+                  {#if pr.reviewThreads == null}
+                    <div class="pr-detail-line">Sign in to GitHub to view review threads.</div>
+                  {:else if pr.reviewThreads.length === 0}
+                    <div class="pr-detail-line">No review threads.</div>
+                  {:else}
+                    <ul class="pr-detail-comments pr-detail-thread-list">
+                      {#each pr.reviewThreads as thread, index (`${thread.resolved}-${index}`)}
+                        <li class="pr-detail-comment pr-detail-thread">
+                          <div class:resolved={thread.resolved} class="pr-detail-thread-state">
+                            {thread.resolved ? "Resolved" : "Open"}
+                          </div>
+                          {#each thread.comments as comment, commentIndex (`${comment.createdAt}-${commentIndex}`)}
+                            <div class="pr-detail-thread-comment">
+                              <div class="pr-detail-comment-meta">
+                                <span class="pr-detail-comment-author">{comment.author ?? "(unknown)"}</span>
+                                {#if comment.path}
+                                  <span class="pr-detail-thread-anchor">{comment.path}{comment.line == null ? "" : `:${comment.line}`}</span>
+                                {/if}
+                              </div>
+                              <div class="pr-detail-comment-body">{comment.body}</div>
+                            </div>
+                          {/each}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </section>
               </div>
             </div>
           {/if}
@@ -1984,7 +2606,12 @@
       >
         Reset current branch to this Commit…
       </button>
-      {#if deletableHeads.length > 0 || menuChips.remotes.length > 0}
+      {#if m.scopedBranch}
+        <button class="menu-item" role="menuitem" onclick={() => startRenameBranch(m.scopedBranch!)}>
+          Rename Branch '{m.scopedBranch}'…
+        </button>
+      {/if}
+      {#if deletableHeads.length > 0 || menuChips.remotes.length > 0 || m.scopedTag}
         <div class="menu-sep"></div>
         {#each deletableHeads as head (head.name)}
           <button
@@ -2000,6 +2627,15 @@
             Delete Remote Branch '{remoteChip.name}'
           </button>
         {/each}
+        {#if m.scopedTag}
+          <button
+            class="menu-item"
+            role="menuitem"
+            onclick={() => openActionModal({ kind: "deleteTag", name: m.scopedTag! })}
+          >
+            Delete Tag '{m.scopedTag}'…
+          </button>
+        {/if}
       {/if}
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.oid, "commit hash")}>
@@ -2008,6 +2644,31 @@
       <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.summary, "commit subject")}>
         Copy Commit Subject
       </button>
+    </div>
+  {/if}
+
+  {#if renamePrompt}
+    <button
+      class="menu-backdrop"
+      aria-label="Cancel rename"
+      onclick={() => (renamePrompt = null)}
+      oncontextmenu={(e) => { e.preventDefault(); renamePrompt = null; }}
+    ></button>
+    <div class="name-prompt" data-testid="git-graph-rename-prompt" role="dialog" aria-label="Rename branch">
+      <label class="prompt-label" for="git-graph-rename-input">Rename branch '{renamePrompt.oldName}'</label>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        id="git-graph-rename-input"
+        class="prompt-input"
+        type="text"
+        autofocus
+        bind:value={renamePrompt.value}
+        onkeydown={(e) => { if (e.key === "Enter") confirmRenameBranch(); }}
+      />
+      <div class="prompt-actions">
+        <button class="prompt-btn" onclick={() => (renamePrompt = null)}>Cancel</button>
+        <button class="prompt-btn primary" onclick={confirmRenameBranch}>Rename</button>
+      </div>
     </div>
   {/if}
 
@@ -2087,7 +2748,7 @@
           <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
         </div>
       </div>
-    {:else}
+    {:else if actionModal.kind === "deleteBranch"}
       {@const modal = actionModal}
       <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Delete branch">
         <span class="prompt-label">Delete branch '{modal.name}'</span>
@@ -2108,8 +2769,40 @@
           <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
         </div>
       </div>
+    {:else}
+      {@const modal = actionModal}
+      <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Delete tag">
+        <span class="prompt-label">Delete tag '{modal.name}'?</span>
+        <p class="modal-warning">The tag can be restored with Ctrl+Z while this session remains open.</p>
+        <div class="prompt-actions">
+          <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
+          <button class="prompt-btn danger" onclick={() => confirmModalAction(() => deleteTag(modal.name))}>Delete</button>
+        </div>
+      </div>
     {/if}
   {/if}
+
+  <Modal
+    open={undoConfirmation !== null}
+    onClose={() => (undoConfirmation = null)}
+    role="alertdialog"
+    label="Undo git graph operation"
+    overlayClass="git-graph-undo-overlay"
+  >
+    {#if undoConfirmation}
+      <div class="name-prompt action-modal undo-card" data-testid="git-graph-undo-modal">
+        <span class="prompt-label">Undo {gitUndoDescription(undoConfirmation)}?</span>
+        <p class="modal-warning">
+          The repository will be checked again before anything changes. Undo is refused if refs,
+          HEAD, or the working tree no longer match the completed operation.
+        </p>
+        <div class="prompt-actions">
+          <button class="prompt-btn" data-autofocus onclick={() => (undoConfirmation = null)}>Cancel</button>
+          <button class="prompt-btn primary" onclick={() => void confirmUndo()}>Undo</button>
+        </div>
+      </div>
+    {/if}
+  </Modal>
 </div>
 
 <style>
@@ -2136,6 +2829,30 @@
     color: var(--danger, #ef4444);
   }
 
+  /* Standing detached-HEAD banner (#524). Deliberately louder than the rest of
+     the graph chrome (white on a deep red, like the reference tool's permanent
+     status treatment): this is a MODE the user must not forget they are in,
+     and it is the only element here that outlives every menu. */
+  .detached-banner {
+    flex-shrink: 0;
+    /* Not flex: `text-overflow` needs a block box to elide the label in a
+       narrow pane. */
+    height: 20px;
+    line-height: 20px;
+    padding: 0 10px;
+    /* Deliberately not themed: a warning that changes contrast per theme is a
+       warning that can disappear. This pair is fixed at ~6:1. */
+    background: #b3261e;
+    color: #fff;
+    font-size: var(--font-size-caption);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: none;
+  }
+
   .commit-row {
     /* Windowed rendering (#256): rows sit at their absolute grid offset so
        the visible slice needs no sibling flow. */
@@ -2157,6 +2874,11 @@
 
   .commit-row {
     cursor: pointer;
+    transition: opacity 100ms ease;
+  }
+
+  .commit-row[data-trace="dim"] {
+    opacity: 0.2;
   }
 
   .commit-row.selected {
@@ -2179,6 +2901,16 @@
   .commit-row.is-merge .date,
   .commit-row.is-merge .oid {
     opacity: 0.5;
+  }
+
+  /* Base-branch sync merges are housekeeping, not the PR's own work (#527).
+     When generic merge muting is off, keep their dedicated treatment visibly
+     quieter without hiding their graph topology. */
+  .commit-row.is-base-update-merge .summary,
+  .commit-row.is-base-update-merge .author,
+  .commit-row.is-base-update-merge .date,
+  .commit-row.is-base-update-merge .oid {
+    opacity: 0.32;
   }
 
   /* Inline details block, expanded directly below the selected row (#221).
@@ -2248,6 +2980,26 @@
     min-width: 0;
   }
 
+  .compare-status {
+    margin: 6px 0;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .compare-action {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 3px 7px;
+  }
+
+  .compare-action:hover {
+    background: var(--bg-hover);
+  }
+
   .detail-close {
     position: absolute;
     top: 8px;
@@ -2259,13 +3011,18 @@
     font-size: var(--font-size-caption);
   }
 
-    .detail-files {
+  /* A large commit must not make its inline detail panel taller than the
+     graph. Keep the list itself as the scrolling region so the commit message
+     and close button stay put while every changed file remains reachable. */
+  .detail-files {
     list-style: none;
     margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
     gap: 3px;
+    max-height: 320px;
+    overflow-y: auto;
   }
 
   .detail-files li {
@@ -2468,10 +3225,18 @@
     min-width: 0;
   }
 
+  /* Changed-files rows use the regular app font (#499). These declared
+     var(--font-mono, monospace), but --font-mono is defined nowhere, so they
+     always resolved to the generic monospace family and stood out against the
+     rest of the UI. Named explicitly (rather than `inherit` off the enclosing
+     `.detail-file { font: inherit }`) so the intent is legible here and a unit
+     test can resolve it against the :root token table. The fixed-width status
+     column keeps the file names aligned without needing a mono face. */
   .file-status {
+    flex: none;
     width: 14px;
     font-weight: 700;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family);
   }
 
   .s-A { color: #22c55e; }
@@ -2480,10 +3245,48 @@
   .s-R, .s-C { color: #60a5fa; }
   .s-T { color: #a78bfa; }
 
+  /* One line, always (#500). This used to be `word-break: break-all` with
+     nothing stopping it wrapping, so a long path reflowed mid-word — two lines
+     at a 1280px window, six at 700px — inflating the inline commit panel and
+     pushing the graph rows below it down. Every other column in the graph
+     truncates instead, so this one does too.
+
+     The path is split into an elidable directory prefix and its final segment
+     so the half that identifies the file is the half that survives.
+
+     The priority is expressed with `flex-shrink: 0` + `max-width: 100%` on the
+     name rather than by giving the two halves different shrink factors. Shrink
+     factors are *proportional*: however lopsided the weights, the name still
+     gives up its share of any deficit, so it would ellipsise a couple of pixels
+     early while the directory still had room left to yield. `flex-shrink: 0`
+     makes the directory absorb the whole deficit before the name loses
+     anything, and `max-width: 100%` is what still bounds the name to the row
+     when the name alone is wider than the column — there it ellipsises, which
+     is the only sane outcome. */
   .file-path {
-    font-family: var(--font-mono, monospace);
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-family);
     color: var(--text-secondary);
-    word-break: break-all;
+  }
+
+  .file-dir,
+  .file-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .file-dir {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: var(--text-tertiary);
+  }
+
+  .file-name {
+    flex: 0 0 auto;
+    max-width: 100%;
   }
 
   .file-empty {
@@ -2612,7 +3415,8 @@
     font-weight: 400;
   }
 
-  .bf-search {
+  .bf-search,
+  .bf-path-search {
     margin: 6px;
     padding: 4px 8px;
     border: 1px solid var(--divider);
@@ -2636,7 +3440,10 @@
     padding: 0 4px 6px;
   }
 
-  .bf-row {
+  .bf-row,
+  /* Bulk option rows (#515) share the row styling but are deliberately not
+     `.bf-row` — that class addresses real branches. */
+  .bf-opt {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2648,8 +3455,16 @@
     cursor: pointer;
   }
 
-  .bf-row:hover {
+  .bf-row:hover,
+  .bf-opt:hover {
     background: var(--subtle-fill-secondary);
+  }
+
+  /* A branch the bulk toggle is hiding: still listed (so it's clear what the
+     toggle covers), but visibly out of play and not individually selectable. */
+  .bf-bulk-hidden {
+    color: var(--text-tertiary);
+    cursor: default;
   }
 
   .bf-all {
@@ -2748,6 +3563,18 @@
     top: 0;
     left: 0;
     pointer-events: none;
+  }
+
+  .graph-underlay [data-trace] {
+    transition: opacity 100ms ease;
+  }
+
+  .graph-underlay [data-trace="dim"] {
+    opacity: 0.16;
+  }
+
+  .graph-underlay .trace-lit {
+    opacity: 1;
   }
 
   /* Subtle halo under each line so crossings stay legible (reference uses a
@@ -2944,6 +3771,44 @@
   .pr-detail-line {
     color: var(--text-secondary);
   }
+  .pr-detail-ci-checks {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .pr-detail-ci-check {
+    font: inherit;
+    color: var(--system-critical);
+    background: color-mix(in srgb, var(--system-critical) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--system-critical) 35%, transparent);
+    border-radius: 5px;
+    cursor: pointer;
+    padding: 2px 7px;
+  }
+  .pr-detail-ci-check:hover { background: color-mix(in srgb, var(--system-critical) 22%, transparent); }
+  .pr-detail-ci-log {
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .pr-detail-ci-log-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    color: var(--text-primary);
+    background: var(--background-card);
+  }
+  .pr-detail-ci-log pre {
+    margin: 0;
+    max-height: 300px;
+    overflow: auto;
+    padding: 8px;
+    white-space: pre-wrap;
+    color: var(--text-secondary);
+    background: var(--background-base);
+  }
+  .pr-detail-error { color: var(--system-critical); }
   .pr-detail-label {
     color: var(--text-tertiary);
     margin-right: 2px;
@@ -2998,6 +3863,37 @@
     gap: 8px;
     max-height: 220px;
     overflow-y: auto;
+  }
+  .pr-detail-threads {
+    margin-top: 10px;
+  }
+  .pr-detail-thread-list {
+    max-height: 280px;
+  }
+  .pr-detail-thread {
+    border-left-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  .pr-detail-thread-state {
+    display: inline-block;
+    margin-bottom: 5px;
+    padding: 1px 6px;
+    border: 1px solid color-mix(in srgb, #f59e0b 55%, transparent);
+    border-radius: 999px;
+    color: #f59e0b;
+    font-size: var(--font-size-caption);
+    font-weight: 700;
+  }
+  .pr-detail-thread-state.resolved {
+    border-color: color-mix(in srgb, #22c55e 55%, transparent);
+    color: #22c55e;
+  }
+  .pr-detail-thread-comment + .pr-detail-thread-comment {
+    margin-top: 7px;
+  }
+  .pr-detail-thread-anchor {
+    color: var(--text-tertiary);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-size-caption);
   }
   .pr-detail-comment {
     border-left: 2px solid color-mix(in srgb, #a371f7 40%, transparent);
@@ -3165,6 +4061,24 @@
   .prompt-label {
     font-size: var(--font-size-body);
     color: var(--text-secondary);
+  }
+
+  .modal-warning {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-caption);
+    line-height: 1.4;
+  }
+
+  .undo-card {
+    position: static;
+    transform: none;
+    width: 460px;
+  }
+
+  .undo-card .prompt-label {
+    color: var(--text-primary);
+    font-weight: 600;
   }
 
   .prompt-input {

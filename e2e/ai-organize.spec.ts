@@ -24,7 +24,41 @@ async function setApiKey(page: Page, key: string) {
   await expect(dialog).toBeHidden();
 }
 
+async function chooseAiMenuItem(page: Page, label: string) {
+  const aiGroup = page.locator(".context-menu > .submenu-wrapper").filter({ hasText: "AI" });
+  await aiGroup.hover();
+  await aiGroup.locator(`.submenu .menu-item:has-text("${label}")`).click();
+}
+
 test.describe("AI destination suggestions", () => {
+  test("groups file AI actions in an AI submenu", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents");
+    await waitForEntries(page);
+
+    const entry = page.locator(".entry-item").filter({ hasText: "notes.md" }).first();
+    await entry.click();
+    await entry.click({ button: "right" });
+    const menu = page.locator(".context-menu");
+    await menu.waitFor({ state: "visible", timeout: 3000 });
+
+    for (const action of ["Suggest destination", "Suggest rename"]) {
+      await expect(menu.locator(`:scope > .menu-item:has-text("${action}")`)).toHaveCount(0);
+    }
+
+    const aiGroup = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
+    await expect(aiGroup.getByRole("menuitem", { name: "AI", exact: true })).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-1-ai-submenu-entry.png" });
+    await aiGroup.hover();
+
+    const aiActions = aiGroup.locator(".submenu .menu-item");
+    await expect(aiActions.filter({ hasText: "Suggest destination" })).toBeVisible();
+    await expect(aiActions.filter({ hasText: "Suggest rename" })).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-2-ai-actions.png" });
+    await aiActions.filter({ hasText: "Suggest destination" }).click();
+    await expect(page.locator('[aria-labelledby="ai-organize-title"]')).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-3-suggest-destination-dialog.png" });
+  });
+
   test("suggests candidate folders and moves the file on accept", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);
@@ -35,7 +69,7 @@ test.describe("AI destination suggestions", () => {
     await entry.click();
     await entry.click({ button: "right" });
     await page.locator(".context-menu").waitFor({ state: "visible", timeout: 3000 });
-    await page.locator('.context-menu .menu-item:has-text("Suggest destination")').click();
+    await chooseAiMenuItem(page, "Suggest destination");
 
     // The picker shows ranked destinations (mock returns the first
     // candidates: Documents' subfolder `project` leads the list).
@@ -70,7 +104,7 @@ test.describe("AI destination suggestions", () => {
     await entry.click();
     await entry.click({ button: "right" });
     await page.locator(".context-menu").waitFor({ state: "visible", timeout: 3000 });
-    await page.locator('.context-menu .menu-item:has-text("Suggest destination")').click();
+    await chooseAiMenuItem(page, "Suggest destination");
 
     const dialog = page.locator('[aria-labelledby="ai-organize-title"]');
     await expect(dialog).toBeVisible();

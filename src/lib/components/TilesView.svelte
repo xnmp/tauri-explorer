@@ -14,6 +14,8 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { autoFillColumns } from "$lib/domain/virtual-layout";
   import { getFileIconColor, isImageFile, isVideoFile } from "$lib/domain/file-types";
+  import { createScrollJankMonitor } from "$lib/domain/scroll-jank-monitor";
+  import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
@@ -91,10 +93,48 @@
     next.add(path);
     unavailableThumbs = next;
   }
+
+  // Scroll-jank diagnostics (#593): sample rAF gaps while the tiles scroller
+  // is scrolling and report janky windows into the native app log, alongside
+  // the backend's `thumb:` timing lines.
+  let rootEl: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (!rootEl) return;
+    const monitor = createScrollJankMonitor();
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function onScroll() {
+      monitor.start();
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        const report = monitor.stop();
+        if (report && report.longFrames > 0) {
+          logFrontendDiagnostic("tiles-scroll-jank", {
+            entries: explorer.displayEntries.length,
+            thumbnailSize: effectiveThumbnailSize,
+            frames: report.frames,
+            longFrames: report.longFrames,
+            worstFrameMs: Math.round(report.worstFrameMs),
+            durationMs: Math.round(report.durationMs),
+          });
+        }
+      }, 400);
+    }
+
+    // Scroll doesn't bubble, but capture-phase listeners on an ancestor still
+    // see descendant scrolls — the VirtualList scroller lives inside rootEl.
+    rootEl.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      rootEl?.removeEventListener("scroll", onScroll, { capture: true });
+      clearTimeout(idleTimer);
+      monitor.stop();
+    };
+  });
 </script>
 
 <div
   class="tiles-view"
+  bind:this={rootEl}
   data-columns={tileColumns}
   style:--tile-icon-size="{tileConfig.displaySize}px"
   style:--tile-min-col="{tileConfig.gridMinWidth}px"
@@ -192,7 +232,6 @@
 
   .tiles-view :global(.tile-item:hover) {
     background: var(--subtle-fill-secondary);
-    transition: background 120ms ease;
   }
 
   .tiles-view :global(.tile-item:active) {

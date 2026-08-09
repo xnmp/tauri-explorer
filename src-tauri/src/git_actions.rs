@@ -23,6 +23,42 @@ use std::process::Command;
 use crate::error::AppError;
 use crate::process_ext::NoConsole;
 
+/// A successful graph mutation's immutable inverse + expected post-state.
+///
+/// `git_undo` treats every captured field as a precondition. The frontend
+/// stores these values only for the current session; it never manufactures
+/// them from display state.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GitUndoAction {
+    BranchDelete {
+        name: String,
+        target: String,
+    },
+    TagDelete {
+        name: String,
+        target: String,
+    },
+    BranchRename {
+        old_name: String,
+        new_name: String,
+        target: String,
+    },
+    HeadMove {
+        operation: HeadMoveOperation,
+        branch: Option<String>,
+        before_oid: String,
+        after_oid: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadMoveOperation {
+    Merge,
+    Pull,
+}
+
 /// Reject a ref/name/oid that would be parsed by git as an option (leading
 /// `-`) or is empty. Prevents an argument like `--force` from being smuggled in
 /// as a "branch name". Not a shell-injection guard (we never invoke a shell),
@@ -99,6 +135,202 @@ async fn run_git_env_async(
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
 }
 
+fn ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String, AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let reference = repo
+        .find_reference(ref_name)
+        .map_err(|_| AppError::Other(format!("{label} does not exist")))?;
+    let object = reference
+        .peel(git2::ObjectType::Commit)
+        .map_err(crate::git_common::to_app_err)?;
+    Ok(object.id().to_string())
+}
+
+fn raw_ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String, AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let reference = repo
+        .find_reference(ref_name)
+        .map_err(|_| AppError::Other(format!("{label} does not exist")))?;
+    reference
+        .target()
+        .map(|oid| oid.to_string())
+        .ok_or_else(|| AppError::Other(format!("{label} has no direct target")))
+}
+
+fn head_snapshot(repo_path: &str) -> Result<(String, Option<String>), AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let head = repo.head().map_err(crate::git_common::to_app_err)?;
+    let oid = head
+        .target()
+        .ok_or_else(|| AppError::Other("HEAD has no target commit".into()))?;
+    let branch = if head.is_branch() {
+        head.shorthand().map(str::to_owned)
+    } else {
+        None
+    };
+    Ok((oid.to_string(), branch))
+}
+
+fn working_tree_is_clean(repo_path: &str) -> Result<bool, AppError> {
+    let status = Command::new("git")
+        .no_console()
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(AppError::from)?;
+    if !status.status.success() {
+        return Err(AppError::Other("could not inspect working tree".into()));
+    }
+    Ok(status.stdout.is_empty())
+}
+
+fn working_tree_matches_commit(repo_path: &str, oid: &str) -> Result<bool, AppError> {
+    let diff = Command::new("git")
+        .no_console()
+        .args(["diff", "--quiet", oid, "--"])
+        .current_dir(repo_path)
+        .status()
+        .map_err(AppError::from)?;
+    if !matches!(diff.code(), Some(0 | 1)) {
+        return Err(AppError::Other("could not compare working tree".into()));
+    }
+    let untracked = Command::new("git")
+        .no_console()
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(AppError::from)?;
+    if !untracked.status.success() {
+        return Err(AppError::Other(
+            "could not inspect untracked working-tree files".into(),
+        ));
+    }
+    Ok(diff.success() && untracked.stdout.is_empty())
+}
+
+fn update_ref_cas(
+    repo_path: &str,
+    ref_name: &str,
+    new_oid: &str,
+    expected_old_oid: &str,
+) -> Result<(), AppError> {
+    run_git(
+        repo_path,
+        &["update-ref", ref_name, new_oid, expected_old_oid],
+    )
+}
+
+fn undo_head_move(
+    repo_path: &str,
+    branch: Option<&str>,
+    before_oid: &str,
+    after_oid: &str,
+    after_ref_move: impl FnOnce(),
+) -> Result<(), AppError> {
+    let (actual_oid, actual_branch) = head_snapshot(repo_path)?;
+    if actual_oid != after_oid || actual_branch.as_deref() != branch {
+        return Err(AppError::Other(
+            "HEAD moved since the operation; undo is no longer safe".into(),
+        ));
+    }
+    if !working_tree_is_clean(repo_path)? {
+        return Err(AppError::Other(
+            "working tree is not clean; undo was refused".into(),
+        ));
+    }
+
+    // Move the checked-out ref with an expected-old compare-and-swap. A
+    // concurrent commit between the snapshot and this point makes update-ref
+    // fail instead of rewinding that commit.
+    let head_ref = match branch {
+        Some(name) => {
+            validate_arg("branch name", name)?;
+            format!("refs/heads/{name}")
+        }
+        None => "HEAD".to_string(),
+    };
+    update_ref_cas(repo_path, &head_ref, before_oid, after_oid).map_err(|_| {
+        AppError::Other("HEAD moved since the safety check; undo was refused".into())
+    })?;
+    after_ref_move();
+
+    // Catch worktree changes that landed while the ref CAS ran. HEAD now
+    // names `before_oid`, so compare the index/worktree directly with the
+    // captured post-operation tree instead of `git status`. Every exit after
+    // the CAS first tries an expected-old rollback, including inspection
+    // errors, so a failed undo cannot leave HEAD partially rewound.
+    match working_tree_matches_commit(repo_path, after_oid) {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = update_ref_cas(repo_path, &head_ref, after_oid, before_oid);
+            return Err(AppError::Other(
+                "working tree changed during undo; undo was refused".into(),
+            ));
+        }
+        Err(error) => {
+            let rollback = update_ref_cas(repo_path, &head_ref, after_oid, before_oid);
+            return match rollback {
+                Ok(()) => Err(AppError::Other(format!(
+                    "could not verify the working tree; undo was rolled back: {error}"
+                ))),
+                Err(rollback_error) => Err(AppError::Other(format!(
+                    "could not verify the working tree and the ref changed concurrently: {error}; {rollback_error}"
+                ))),
+            };
+        }
+    }
+
+    // Two-tree read-tree is the worktree/index counterpart to the ref CAS: it
+    // transitions only paths matching the old tree and refuses to overwrite
+    // a racing local edit. It does not move HEAD.
+    if let Err(error) = run_git(repo_path, &["read-tree", "-u", "-m", after_oid, before_oid]) {
+        let rollback = update_ref_cas(repo_path, &head_ref, after_oid, before_oid);
+        return match rollback {
+            Ok(()) => Err(AppError::Other(format!(
+                "working tree changed during undo; undo was rolled back: {error}"
+            ))),
+            Err(rollback_error) => Err(AppError::Other(format!(
+                "undo could not update the worktree and the ref changed concurrently: {error}; {rollback_error}"
+            ))),
+        };
+    }
+    let (final_oid, final_branch) = head_snapshot(repo_path)?;
+    if final_oid != before_oid || final_branch.as_deref() != branch {
+        return Err(AppError::Other(
+            "HEAD changed concurrently while finishing undo".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn run_head_move(
+    repo_path: String,
+    operation: HeadMoveOperation,
+    args: Vec<String>,
+) -> Result<Option<GitUndoAction>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let (before_oid, branch) = head_snapshot(&repo_path)?;
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git(&repo_path, &refs)?;
+        let (after_oid, after_branch) = head_snapshot(&repo_path)?;
+        if branch != after_branch {
+            return Err(AppError::Other(
+                "git operation unexpectedly changed the checked-out branch".into(),
+            ));
+        }
+        Ok(
+            (before_oid != after_oid).then_some(GitUndoAction::HeadMove {
+                operation,
+                branch,
+                before_oid,
+                after_oid,
+            }),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
 /// Checkout a branch (attached HEAD) or a commit OID (detached HEAD).
 #[tauri::command]
 pub async fn git_checkout(repo_path: String, target: String) -> Result<(), AppError> {
@@ -148,9 +380,17 @@ pub async fn git_revert(repo_path: String, oid: String) -> Result<(), AppError> 
 
 /// Merge `target` (branch or OID) into the current branch (no editor).
 #[tauri::command]
-pub async fn git_merge(repo_path: String, target: String) -> Result<(), AppError> {
+pub async fn git_merge(
+    repo_path: String,
+    target: String,
+) -> Result<Option<GitUndoAction>, AppError> {
     validate_arg("target", &target)?;
-    run_git_async(repo_path, vec!["merge".into(), "--no-edit".into(), target]).await
+    run_head_move(
+        repo_path,
+        HeadMoveOperation::Merge,
+        vec!["merge".into(), "--no-edit".into(), target],
+    )
+    .await
 }
 
 /// Rebase the current branch onto `oid`.
@@ -158,6 +398,20 @@ pub async fn git_merge(repo_path: String, target: String) -> Result<(), AppError
 pub async fn git_rebase(repo_path: String, oid: String) -> Result<(), AppError> {
     validate_arg("commit", &oid)?;
     run_git_async(repo_path, vec!["rebase".into(), oid]).await
+}
+
+/// Apply a named stash without dropping it from the stash list.
+#[tauri::command]
+pub async fn git_stash_apply(repo_path: String, stash: String) -> Result<(), AppError> {
+    validate_arg("stash", &stash)?;
+    run_git_async(repo_path, vec!["stash".into(), "apply".into(), stash]).await
+}
+
+/// Apply a named stash and remove it only after a successful apply.
+#[tauri::command]
+pub async fn git_stash_pop(repo_path: String, stash: String) -> Result<(), AppError> {
+    validate_arg("stash", &stash)?;
+    run_git_async(repo_path, vec!["stash".into(), "pop".into(), stash]).await
 }
 
 /// Reset the current branch to `oid`. `mode` is `soft` | `mixed` | `hard`.
@@ -230,8 +484,13 @@ pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
 /// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged
 /// branch errors (surfaced verbatim) instead of creating a surprise merge.
 #[tauri::command]
-pub async fn git_pull(repo_path: String) -> Result<(), AppError> {
-    run_git_async(repo_path, vec!["pull".into(), "--ff-only".into()]).await
+pub async fn git_pull(repo_path: String) -> Result<Option<GitUndoAction>, AppError> {
+    run_head_move(
+        repo_path,
+        HeadMoveOperation::Pull,
+        vec!["pull".into(), "--ff-only".into()],
+    )
+    .await
 }
 
 /// How many commits `name`'s upstream has that the local branch lacks
@@ -270,10 +529,155 @@ pub async fn git_delete_branch(
     repo_path: String,
     name: String,
     force: bool,
-) -> Result<(), AppError> {
+) -> Result<GitUndoAction, AppError> {
     validate_arg("branch name", &name)?;
     let flag = if force { "-D" } else { "-d" };
-    run_git_async(repo_path, vec!["branch".into(), flag.into(), name]).await
+    tokio::task::spawn_blocking(move || {
+        let target = ref_target(
+            &repo_path,
+            &format!("refs/heads/{name}"),
+            &format!("branch '{name}'"),
+        )?;
+        run_git(&repo_path, &["branch", flag, &name])?;
+        Ok(GitUndoAction::BranchDelete { name, target })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Delete a local tag and return the exact commit needed to recreate it.
+#[tauri::command]
+pub async fn git_delete_tag(repo_path: String, name: String) -> Result<GitUndoAction, AppError> {
+    validate_arg("tag name", &name)?;
+    tokio::task::spawn_blocking(move || {
+        // Keep the raw tag-object OID rather than peeling to its commit so an
+        // annotated tag is restored byte-for-byte, not downgraded to a
+        // lightweight tag.
+        let target = raw_ref_target(
+            &repo_path,
+            &format!("refs/tags/{name}"),
+            &format!("tag '{name}'"),
+        )?;
+        run_git(&repo_path, &["tag", "-d", &name])?;
+        Ok(GitUndoAction::TagDelete { name, target })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Rename a local branch and capture the ref state required to rename it back.
+#[tauri::command]
+pub async fn git_rename_branch(
+    repo_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<GitUndoAction, AppError> {
+    validate_arg("old branch name", &old_name)?;
+    validate_arg("new branch name", &new_name)?;
+    tokio::task::spawn_blocking(move || {
+        let target = ref_target(
+            &repo_path,
+            &format!("refs/heads/{old_name}"),
+            &format!("branch '{old_name}'"),
+        )?;
+        run_git(&repo_path, &["branch", "-m", &old_name, &new_name])?;
+        Ok(GitUndoAction::BranchRename {
+            old_name,
+            new_name,
+            target,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Re-verify a recorded mutation and apply its inverse as one backend action.
+///
+/// The checks happen immediately before the inverse in the same blocking task,
+/// closing the frontend check-to-command race. A stale action is refused
+/// without changing the repository.
+#[tauri::command]
+pub async fn git_undo(repo_path: String, action: GitUndoAction) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || match action {
+        GitUndoAction::BranchDelete { name, target } => {
+            validate_arg("branch name", &name)?;
+            validate_arg("commit", &target)?;
+            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            if repo.find_reference(&format!("refs/heads/{name}")).is_ok() {
+                return Err(AppError::Other(format!(
+                    "branch '{name}' already exists; undo is no longer safe"
+                )));
+            }
+            run_git(&repo_path, &["branch", &name, &target])
+        }
+        GitUndoAction::TagDelete { name, target } => {
+            validate_arg("tag name", &name)?;
+            validate_arg("commit", &target)?;
+            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            if repo.find_reference(&format!("refs/tags/{name}")).is_ok() {
+                return Err(AppError::Other(format!(
+                    "tag '{name}' already exists; undo is no longer safe"
+                )));
+            }
+            let ref_name = format!("refs/tags/{name}");
+            run_git(
+                &repo_path,
+                &[
+                    "update-ref",
+                    &ref_name,
+                    &target,
+                    "0000000000000000000000000000000000000000",
+                ],
+            )
+        }
+        GitUndoAction::BranchRename {
+            old_name,
+            new_name,
+            target,
+        } => {
+            validate_arg("old branch name", &old_name)?;
+            validate_arg("new branch name", &new_name)?;
+            validate_arg("commit", &target)?;
+            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            if repo
+                .find_reference(&format!("refs/heads/{old_name}"))
+                .is_ok()
+            {
+                return Err(AppError::Other(format!(
+                    "branch '{old_name}' already exists; undo is no longer safe"
+                )));
+            }
+            let actual = ref_target(
+                &repo_path,
+                &format!("refs/heads/{new_name}"),
+                &format!("branch '{new_name}'"),
+            )?;
+            if actual != target {
+                return Err(AppError::Other(format!(
+                    "branch '{new_name}' moved; undo is no longer safe"
+                )));
+            }
+            run_git(&repo_path, &["branch", "-m", &new_name, &old_name])
+        }
+        GitUndoAction::HeadMove {
+            operation: _,
+            branch,
+            before_oid,
+            after_oid,
+        } => {
+            validate_arg("previous commit", &before_oid)?;
+            validate_arg("current commit", &after_oid)?;
+            undo_head_move(
+                &repo_path,
+                branch.as_deref(),
+                &before_oid,
+                &after_oid,
+                || {},
+            )
+        }
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
 }
 
 /// Delete a branch on a remote (#371): `git push <remote> --delete <name>`.
@@ -475,6 +879,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let p = dir.path();
         git(p, &["init", "-b", "main"]);
+        // Application commands run in separate subprocesses from this test
+        // helper, so identity must live in the temporary repository rather
+        // than only in `git`'s per-command environment.
+        git(p, &["config", "user.name", "Test"]);
+        git(p, &["config", "user.email", "t@x"]);
         git(p, &["config", "commit.gpgsign", "false"]);
         write(p, "a.txt", "1\n");
         git(p, &["add", "."]);
@@ -544,6 +953,181 @@ mod tests {
     }
 
     #[test]
+    fn git_undo_recreates_deleted_branch_at_exact_tip_and_refuses_recreation() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["branch", "topic", &cs[0]]);
+        let action = tokio_test_block(git_delete_branch(rp.clone(), "topic".into(), true)).unwrap();
+        assert!(git_out(dir.path(), &["branch", "--list", "topic"]).is_empty());
+
+        tokio_test_block(git_undo(rp.clone(), action.clone())).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "topic"]), cs[0]);
+
+        git(dir.path(), &["branch", "-D", "topic"]);
+        git(dir.path(), &["branch", "topic", &cs[1]]);
+        let before = git_out(dir.path(), &["rev-parse", "topic"]);
+        let error = tokio_test_block(git_undo(rp, action)).unwrap_err();
+        assert!(error.to_string().contains("branch 'topic' already exists"));
+        assert_eq!(git_out(dir.path(), &["rev-parse", "topic"]), before);
+    }
+
+    #[test]
+    fn git_undo_restores_deleted_tag_and_renamed_branch() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["tag", "v1", &cs[0]]);
+        let tag_action = tokio_test_block(git_delete_tag(rp.clone(), "v1".into())).unwrap();
+        tokio_test_block(git_undo(rp.clone(), tag_action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "v1"]), cs[0]);
+
+        git(dir.path(), &["branch", "before", &cs[0]]);
+        let rename_action = tokio_test_block(git_rename_branch(
+            rp.clone(),
+            "before".into(),
+            "after".into(),
+        ))
+        .unwrap();
+        assert!(git_out(dir.path(), &["branch", "--list", "before"]).is_empty());
+        tokio_test_block(git_undo(rp, rename_action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "before"]), cs[0]);
+        assert!(git_out(dir.path(), &["branch", "--list", "after"]).is_empty());
+    }
+
+    #[test]
+    fn git_undo_restores_the_exact_annotated_tag_object() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["config", "user.name", "Test"]);
+        git(dir.path(), &["config", "user.email", "t@x"]);
+        git(
+            dir.path(),
+            &["tag", "-a", "release", "-m", "release", &cs[0]],
+        );
+        let tag_object = git_out(dir.path(), &["rev-parse", "refs/tags/release"]);
+
+        let action = tokio_test_block(git_delete_tag(rp.clone(), "release".into())).unwrap();
+        tokio_test_block(git_undo(rp, action)).unwrap();
+
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/tags/release"]),
+            tag_object
+        );
+        assert_eq!(
+            git_out(dir.path(), &["cat-file", "-t", "refs/tags/release"]),
+            "tag"
+        );
+    }
+
+    #[test]
+    fn git_undo_head_move_requires_unchanged_head_and_clean_tree() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["branch", "topic", &cs[0]]);
+        git(dir.path(), &["checkout", "topic"]);
+        let action = GitUndoAction::HeadMove {
+            operation: HeadMoveOperation::Merge,
+            branch: Some("topic".into()),
+            before_oid: cs[0].clone(),
+            after_oid: cs[0].clone(),
+        };
+
+        write(dir.path(), "dirty.txt", "do not lose\n");
+        let error = tokio_test_block(git_undo(rp.clone(), action.clone())).unwrap_err();
+        assert!(error.to_string().contains("working tree is not clean"));
+        assert!(dir.path().join("dirty.txt").exists());
+        fs::remove_file(dir.path().join("dirty.txt")).unwrap();
+
+        git(dir.path(), &["checkout", "main"]);
+        let error = tokio_test_block(git_undo(rp, action)).unwrap_err();
+        assert!(error.to_string().contains("HEAD moved"));
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
+    fn git_undo_head_transition_refuses_concurrent_ref_and_file_changes() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        write(dir.path(), "newer.txt", "newer\n");
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "newer"]);
+        let newer = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        let stale_ref = undo_head_move(&rp, Some("main"), &cs[0], &cs[1], || {});
+        assert!(stale_ref.is_err(), "composed undo must reject a newer HEAD");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), newer);
+
+        // Rewind the fixture to the captured post-operation commit. Inject a
+        // write at the transaction seam immediately after its ref CAS: the
+        // composed undo must refuse, restore HEAD, and preserve the racing edit.
+        git(dir.path(), &["reset", "--hard", &cs[1]]);
+        let transition = undo_head_move(&rp, Some("main"), &cs[0], &cs[1], || {
+            write(dir.path(), "a.txt", "racing local edit\n");
+        });
+        assert!(
+            transition.is_err(),
+            "composed undo must refuse a racing worktree edit"
+        );
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "racing local edit\n"
+        );
+    }
+
+    #[test]
+    fn git_undo_merge_restores_the_pre_merge_head() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["branch", "feature", &cs[0]]);
+        git(dir.path(), &["checkout", "feature"]);
+        write(dir.path(), "feature.txt", "feature\n");
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "feature"]);
+        git(dir.path(), &["checkout", "main"]);
+        let before = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        let action = tokio_test_block(git_merge(rp.clone(), "feature".into()))
+            .unwrap()
+            .expect("merge should move HEAD");
+        assert_ne!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
+        tokio_test_block(git_undo(rp, action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
+    }
+
+    #[test]
+    fn git_undo_pull_restores_the_pre_pull_head() {
+        let (dir, _cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let remote = TempDir::new().unwrap();
+        git(remote.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "-u", "origin", "main"]);
+        git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        let before = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        let other = TempDir::new().unwrap();
+        git(
+            other.path(),
+            &["clone", remote.path().to_str().unwrap(), "."],
+        );
+        write(other.path(), "remote.txt", "remote\n");
+        git(other.path(), &["add", "."]);
+        git(other.path(), &["commit", "-m", "remote advance"]);
+        git(other.path(), &["push", "origin", "main"]);
+        let remote_tip = git_out(other.path(), &["rev-parse", "HEAD"]);
+
+        let action = tokio_test_block(git_pull(rp.clone()))
+            .unwrap()
+            .expect("pull should move HEAD");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
+        tokio_test_block(git_undo(rp, action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
+    }
+
+    #[test]
     fn delete_remote_branch_via_push() {
         // "Remote" is a local bare repo; push --delete must remove the ref there.
         let (dir, _cs) = linear_repo();
@@ -600,6 +1184,33 @@ mod tests {
         // Back to the branch tip.
         run_git(&path, &["checkout", "main"]).unwrap();
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
+    fn stash_apply_keeps_entry_pop_restores_and_drops_it() {
+        let (dir, _cs) = linear_repo();
+        let rp = repo_path(&dir);
+        write(dir.path(), "a.txt", "stashed work\n");
+        git(dir.path(), &["stash", "push", "-m", "palette test"]);
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "2\n");
+        assert!(git_out(dir.path(), &["stash", "list"]).contains("palette test"));
+
+        tokio_test_block(git_stash_apply(rp.clone(), "stash@{0}".into())).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "stashed work\n"
+        );
+        assert!(git_out(dir.path(), &["stash", "list"]).contains("palette test"));
+
+        git(dir.path(), &["reset", "--hard"]);
+        tokio_test_block(git_stash_pop(rp.clone(), "stash@{0}".into())).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "stashed work\n"
+        );
+        assert!(git_out(dir.path(), &["stash", "list"]).is_empty());
+
+        assert!(tokio_test_block(git_stash_apply(rp, "stash@{99}".into())).is_err());
     }
 
     #[test]

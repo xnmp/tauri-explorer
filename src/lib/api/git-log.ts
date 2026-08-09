@@ -9,6 +9,7 @@
  */
 
 import { invoke } from "./files";
+import type { GitUndoAction } from "$lib/domain/git-graph-undo";
 
 export type RefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
 
@@ -48,6 +49,10 @@ export interface GitLogPage {
    *  detached / unborn. Lets the graph highlight only the checked-out branch
    *  chip when several branches decorate the HEAD commit (#433). */
   head_branch: string | null;
+  /** True while HEAD points straight at a commit rather than a branch (#524).
+   *  Distinct from `head_branch === null`, which is also true on an unborn
+   *  branch — the standing detached indicator must not fire on a fresh repo. */
+  detached: boolean;
 }
 
 export interface GitLogOptions {
@@ -59,9 +64,15 @@ export interface GitLogOptions {
    *  `main` or remote like `origin/main`). Omitted = all branches + HEAD.
    *  Unresolvable names are ignored; none resolving → empty page (#342). */
   branches?: string[];
+  /** Branch shorthands subtracted from whichever seed set is used — "every
+   *  branch except these" (#515). Unlike `branches` this keeps HEAD seeded
+   *  and keeps `local_only` in force. */
+  exclude_branches?: string[];
   /** Seed from HEAD + local branches only, hiding history reachable solely
    *  from remote-tracking branches (#381). Ignored when `branches` is set. */
   local_only?: boolean;
+  /** Repository-relative path whose touching commits should be returned. */
+  file_path?: string;
 }
 
 export interface GitRef {
@@ -109,6 +120,15 @@ export async function gitCommitFiles(repoPath: string, oid: string): Promise<Com
   return invoke<CommitFile[]>("git_commit_files", { repoPath, oid });
 }
 
+/** Files changed from `baseOid` to `targetOid`, whether or not they share a parent. */
+export async function gitCompareCommitFiles(
+  repoPath: string,
+  baseOid: string,
+  targetOid: string,
+): Promise<CommitFile[]> {
+  return invoke<CommitFile[]>("git_compare_commit_files", { repoPath, baseOid, targetOid });
+}
+
 /** Unified diff of one file in `oid` relative to its first parent (#221). */
 export async function gitCommitFileDiff(
   repoPath: string,
@@ -116,6 +136,16 @@ export async function gitCommitFileDiff(
   filePath: string,
 ): Promise<string> {
   return invoke<string>("git_commit_file_diff", { repoPath, oid, filePath });
+}
+
+/** Unified file diff from `baseOid` to `targetOid`. */
+export async function gitCompareCommitFileDiff(
+  repoPath: string,
+  baseOid: string,
+  targetOid: string,
+  filePath: string,
+): Promise<string> {
+  return invoke<string>("git_compare_commit_file_diff", { repoPath, baseOid, targetOid, filePath });
 }
 
 // ----- Mutating actions: VSCode "Git Graph"-parity commit context menu -----
@@ -158,13 +188,23 @@ export async function gitRevert(repoPath: string, oid: string): Promise<void> {
 }
 
 /** Merge `target` (branch or OID) into the current branch. */
-export async function gitMerge(repoPath: string, target: string): Promise<void> {
-  await invoke("git_merge", { repoPath, target });
+export async function gitMerge(repoPath: string, target: string): Promise<GitUndoAction | null> {
+  return invoke<GitUndoAction | null>("git_merge", { repoPath, target });
 }
 
 /** Rebase the current branch onto `oid`. */
 export async function gitRebase(repoPath: string, oid: string): Promise<void> {
   await invoke("git_rebase", { repoPath, oid });
+}
+
+/** Apply a stash while keeping it in the stash list. */
+export async function gitStashApply(repoPath: string, stash: string): Promise<void> {
+  await invoke("git_stash_apply", { repoPath, stash });
+}
+
+/** Apply a stash and remove it from the stash list after success. */
+export async function gitStashPop(repoPath: string, stash: string): Promise<void> {
+  await invoke("git_stash_pop", { repoPath, stash });
 }
 
 /** Reset the current branch to `oid` with the given mode. */
@@ -191,8 +231,8 @@ export async function gitFetch(repoPath: string): Promise<void> {
 }
 
 /** Fast-forward pull on the current branch (#377). */
-export async function gitPull(repoPath: string): Promise<void> {
-  await invoke("git_pull", { repoPath });
+export async function gitPull(repoPath: string): Promise<GitUndoAction | null> {
+  return invoke<GitUndoAction | null>("git_pull", { repoPath });
 }
 
 /** Commits `name`'s upstream has that the local branch lacks; null when no
@@ -209,8 +249,27 @@ export async function gitDeleteBranch(
   repoPath: string,
   name: string,
   force: boolean,
-): Promise<void> {
-  await invoke("git_delete_branch", { repoPath, name, force });
+): Promise<GitUndoAction> {
+  return invoke<GitUndoAction>("git_delete_branch", { repoPath, name, force });
+}
+
+/** Delete a local tag and capture the commit needed to recreate it. */
+export async function gitDeleteTag(repoPath: string, name: string): Promise<GitUndoAction> {
+  return invoke<GitUndoAction>("git_delete_tag", { repoPath, name });
+}
+
+/** Rename a local branch and capture the state required to rename it back. */
+export async function gitRenameBranch(
+  repoPath: string,
+  oldName: string,
+  newName: string,
+): Promise<GitUndoAction> {
+  return invoke<GitUndoAction>("git_rename_branch", { repoPath, oldName, newName });
+}
+
+/** Authoritatively recheck and reverse one recorded graph operation. */
+export async function gitUndo(repoPath: string, action: GitUndoAction): Promise<void> {
+  await invoke("git_undo", { repoPath, action });
 }
 
 /** Delete `name` on `remote` (git push <remote> --delete <name>) (#371). */
@@ -257,6 +316,12 @@ export interface OpenPr {
   number: number;
   title: string;
   headRef: string;
+  /** Branch the PR targets; used to distinguish base-update merges from other
+   * merges on its head branch (#527). */
+  baseRef: string;
+  /** Remote selected for the GitHub PR fetch; lets graph classification prefer
+   * its current remote-tracking base ref over a stale local branch (#527). */
+  baseRemote?: string | null;
   htmlUrl: string;
   draft: boolean;
   /** CI rollup for the PR's head commit; `null` when no checks / no token. */
@@ -271,6 +336,9 @@ export interface OpenPr {
   /** Most-recent PR issue comments (capped backend-side). Empty on the
    *  tokenless REST path, which can't fetch comment bodies. */
   comments?: PrComment[];
+  /** `null` when GitHub GraphQL data is unavailable (for example, the
+   * tokenless REST fallback); otherwise every review thread and its comments. */
+  reviewThreads?: PrReviewThread[] | null;
 }
 
 /** A single PR issue comment surfaced in the details dropdown. */
@@ -283,9 +351,47 @@ export interface PrComment {
   body: string;
 }
 
+/** A code-review conversation associated with a pull request. */
+export interface PrReviewThread {
+  resolved: boolean;
+  comments: PrReviewComment[];
+}
+
+/** One comment in a review thread, with its optional diff location. */
+export interface PrReviewComment extends PrComment {
+  path: string | null;
+  line: number | null;
+}
+
 /** Open PRs for the repo's GitHub remote. Degrades to `[]` — never
  *  rejects — for repos without a GitHub remote, offline machines, and
  *  rate-limit errors; the backend caches per-repo results briefly. */
 export async function gitOpenPrs(repoPath: string): Promise<OpenPr[]> {
   return invoke<OpenPr[]>("git_open_prs", { repoRoot: repoPath });
+}
+
+/** A failed GitHub Actions check that has an inline log available. */
+export interface FailedCiCheck {
+  name: string;
+  runId: number;
+  jobId: number;
+}
+
+/** Fetch failed Actions checks for an open PR through the desktop backend. */
+export async function gitFailedCiChecks(repoPath: string, prNumber: number): Promise<FailedCiCheck[]> {
+  return invoke<FailedCiCheck[]>("git_failed_ci_checks", { repoRoot: repoPath, prNumber });
+}
+
+/** The failed output for one selected GitHub Actions check. */
+export interface FailedCiCheckLog {
+  checkName: string;
+  log: string;
+}
+
+/** Fetch a selected failed Actions job's log through `gh run view --log-failed`. */
+export async function gitFailedCiCheckLog(
+  repoPath: string,
+  check: FailedCiCheck,
+): Promise<FailedCiCheckLog> {
+  return invoke<FailedCiCheckLog>("git_failed_ci_check_log", { repoRoot: repoPath, check });
 }

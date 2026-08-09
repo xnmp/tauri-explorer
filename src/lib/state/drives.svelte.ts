@@ -11,6 +11,11 @@ const LINUX_MOUNT_BASES = (user: string) => [
   `/run/media/${user}`,
   `/media/${user}`,
   "/media",
+  ...(
+    typeof process !== "undefined" && process.env?.XDG_RUNTIME_DIR
+      ? [`${process.env.XDG_RUNTIME_DIR}/gvfs`]
+      : []
+  ),
 ];
 
 function detectMountBases(): string[] {

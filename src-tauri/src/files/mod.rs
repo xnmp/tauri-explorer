@@ -43,11 +43,9 @@ pub struct FileEntry {
     pub symlink_target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_empty: Option<bool>,
-    /// True when this directory entry is a git repo root: it contains a
-    /// `.git` entry (a directory for a normal repo, or a *file* for a
-    /// worktree/submodule gitlink). Always `false` for non-directory
-    /// entries. `#[serde(default)]` keeps older callers/fixtures that omit
-    /// the field compatible.
+    /// True when this directory entry is a valid git repo root. Always
+    /// `false` for non-directory entries. `#[serde(default)]` keeps older
+    /// callers/fixtures that omit the field compatible.
     #[serde(default)]
     pub is_git_repo: bool,
 }
@@ -77,6 +75,16 @@ pub struct DirectoryListing {
 /// `fs::metadata` (stat) only for actual symlinks to get the resolved target info.
 /// This avoids redundant syscalls for the common case (non-symlink entries).
 pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEntry {
+    metadata_to_entry_with_git_repo_probe(path, sym_meta, true)
+}
+
+/// Convert metadata to a file entry, optionally skipping the per-directory
+/// `.git` probe used only for folder-icon decoration.
+pub(crate) fn metadata_to_entry_with_git_repo_probe(
+    path: &Path,
+    sym_meta: &fs::Metadata,
+    probe_git_repo: bool,
+) -> FileEntry {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -106,12 +114,14 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         FileKind::File
     };
 
-    // One extra `exists()` stat per *directory* entry — not the `read_dir`
-    // per-subdirectory cost that `is_empty` deliberately avoids (see
-    // `fill_is_empty` below). `.git` is checked as either a directory (a
-    // normal repo) or a file (worktrees/submodules use a `.git` gitlink
-    // file), so both cases are detected. Never probed for file entries.
-    let is_git_repo = matches!(kind, FileKind::Directory) && path.join(".git").exists();
+    // First check for a `.git` entry so plain folders avoid opening libgit2.
+    // Git then validates that entry; a stray or malformed marker must not
+    // decorate a normal folder as a repository. Listings on slow mounts skip
+    // this optional decoration probe to avoid a network round-trip per child.
+    let is_git_repo = probe_git_repo
+        && matches!(kind, FileKind::Directory)
+        && path.join(".git").exists()
+        && git2::Repository::open(path).is_ok();
 
     let size = if effective.is_dir() {
         0

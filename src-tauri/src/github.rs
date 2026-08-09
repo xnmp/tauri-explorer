@@ -6,11 +6,14 @@
 //! nice-to-have decoration, not something that should ever block or error
 //! the graph.
 //!
-//! `git_open_prs` is the only Tauri command here; `parse_github_remote` is
-//! pure and unit-tested directly (no network in tests, per project policy).
+//! `git_open_prs` decorates graph badges, while `git_failed_ci_checks` and
+//! `git_failed_ci_check_log` retrieve a selected failed Actions job via `gh`.
+//! `parse_github_remote` and the `gh` response mappings are pure and tested
+//! directly (no network in tests, per project policy).
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::git_common::open_repo;
+use crate::process_ext::NoConsole;
 
 /// One open pull request, as surfaced to the frontend. camelCase over IPC
 /// for the multi-word fields, matching the codebase's existing IPC structs.
@@ -31,6 +35,13 @@ pub struct PrInfo {
     pub title: String,
     #[serde(rename = "headRef")]
     pub head_ref: String,
+    #[serde(rename = "baseRef")]
+    pub base_ref: String,
+    /// Name of the GitHub remote selected for this fetch. The frontend uses
+    /// its tracking ref before a stale local base branch when classifying
+    /// base-update merges (#527).
+    #[serde(rename = "baseRemote", default)]
+    pub base_remote: Option<String>,
     #[serde(rename = "htmlUrl")]
     pub html_url: String,
     pub draft: bool,
@@ -59,6 +70,11 @@ pub struct PrInfo {
     /// consistent with the module's best-effort philosophy).
     #[serde(default)]
     pub comments: Vec<PrComment>,
+    /// Review threads from GraphQL, including their resolution state and
+    /// per-line discussion. `None` means the REST fallback could not obtain
+    /// this token-only data; an empty vector means GraphQL found no threads.
+    #[serde(rename = "reviewThreads", default)]
+    pub review_threads: Option<Vec<PrReviewThread>>,
 }
 
 /// A single issue comment on a PR, as surfaced to the frontend.
@@ -75,9 +91,71 @@ pub struct PrComment {
     pub body: String,
 }
 
+/// A GitHub pull-request review thread, as rendered in the inline PR detail.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrReviewThread {
+    pub resolved: bool,
+    pub comments: Vec<PrReviewComment>,
+}
+
+/// A single comment belonging to a review thread.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrReviewComment {
+    pub author: Option<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<u64>,
+}
+
+/// A failed GitHub Actions job associated with an open PR. The opaque IDs are
+/// produced by `gh pr checks`; callers only pass them back to retrieve the
+/// corresponding log, never construct shell arguments from free-form text.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FailedCiCheck {
+    pub name: String,
+    #[serde(rename = "runId")]
+    pub run_id: u64,
+    #[serde(rename = "jobId")]
+    pub job_id: u64,
+}
+
+/// The selected failed check and the text emitted by `gh run view --log-failed`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FailedCiCheckLog {
+    #[serde(rename = "checkName")]
+    pub check_name: String,
+    pub log: String,
+}
+
 /// How many trailing comments the single GraphQL query fetches per PR. Kept
 /// small so the one-request design stays cheap; older comments are truncated.
 const COMMENT_FETCH_CAP: usize = 20;
+/// The review-thread query fans out beneath every open PR. These caps keep the
+/// worst case (100 PRs × 50 threads × 50 comments, plus PR comments) below
+/// GitHub GraphQL's 500,000-node validation limit.
+const OPEN_PR_FETCH_CAP: usize = 100;
+const REVIEW_THREAD_FETCH_CAP: usize = 50;
+const REVIEW_COMMENT_FETCH_CAP: usize = 50;
+const _: () =
+    assert!(OPEN_PR_FETCH_CAP * REVIEW_THREAD_FETCH_CAP * REVIEW_COMMENT_FETCH_CAP < 500_000);
+
+/// Build the bounded GraphQL request from the same caps guarded above. Keeping
+/// the query text coupled to these constants prevents a query-only fan-out
+/// increase from bypassing the compile-time node-budget assertion.
+fn open_prs_query() -> String {
+    format!(
+        "query($owner:String!,$name:String!){{\
+repository(owner:$owner,name:$name){{\
+pullRequests(states:OPEN,first:{OPEN_PR_FETCH_CAP}){{nodes{{\
+number title url isDraft headRefName baseRefName reviewDecision bodyText \
+comments(last:{COMMENT_FETCH_CAP}){{totalCount nodes{{author{{login}} createdAt bodyText}}}} \
+reviewThreads(first:{REVIEW_THREAD_FETCH_CAP}){{nodes{{isResolved comments(first:{REVIEW_COMMENT_FETCH_CAP}){{nodes{{author{{login}} createdAt bodyText path line}}}}}}}} \
+commits(last:1){{nodes{{commit{{statusCheckRollup{{state}}}}}}}}\
+}}}}}}"
+    )
+}
 
 /// Extract `(owner, repo)` from a GitHub remote URL. Only github.com hosts
 /// are recognized (SSH scp-like syntax, `ssh://`, and `https://`); anything
@@ -163,9 +241,11 @@ struct GhPull {
     #[serde(default)]
     body: Option<String>,
     head: GhHead,
+    #[serde(default)]
+    base: GhHead,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct GhHead {
     #[serde(rename = "ref")]
     ref_name: String,
@@ -177,6 +257,8 @@ impl From<GhPull> for PrInfo {
             number: p.number,
             title: p.title,
             head_ref: p.head.ref_name,
+            base_ref: p.base.ref_name,
+            base_remote: None,
             html_url: p.html_url,
             draft: p.draft,
             // The REST list endpoint carries none of the status fields; a
@@ -188,6 +270,7 @@ impl From<GhPull> for PrInfo {
             // separate endpoint), so comments degrade to empty here.
             body: p.body.filter(|b| !b.is_empty()),
             comments: Vec::new(),
+            review_threads: None,
         }
     }
 }
@@ -244,15 +327,8 @@ fn fetch_open_prs_rest(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
 /// last commit's `statusCheckRollup` gives the CI state; `reviewDecision` and
 /// `comments.totalCount` come for free on the same node.
 fn fetch_open_prs_graphql(owner: &str, repo: &str, token: &str) -> Result<Vec<PrInfo>, String> {
-    const QUERY: &str = "query($owner:String!,$name:String!){\
-repository(owner:$owner,name:$name){\
-pullRequests(states:OPEN,first:100){nodes{\
-number title url isDraft headRefName reviewDecision bodyText \
-comments(last:20){totalCount nodes{author{login} createdAt bodyText}} \
-commits(last:1){nodes{commit{statusCheckRollup{state}}}}\
-}}}}";
     let body = serde_json::json!({
-        "query": QUERY,
+        "query": open_prs_query(),
         "variables": { "owner": owner, "name": repo },
     });
     let resp: GqlResponse = ureq::post("https://api.github.com/graphql")
@@ -336,12 +412,17 @@ struct GqlPrNode {
     is_draft: bool,
     #[serde(rename = "headRefName")]
     head_ref_name: String,
+    #[serde(rename = "baseRefName")]
+    #[serde(default)]
+    base_ref_name: String,
     #[serde(rename = "reviewDecision", default)]
     review_decision: Option<String>,
     #[serde(rename = "bodyText", default)]
     body_text: String,
     #[serde(default)]
     comments: GqlComments,
+    #[serde(rename = "reviewThreads", default)]
+    review_threads: GqlReviewThreads,
     #[serde(default)]
     commits: GqlCommits,
 }
@@ -363,6 +444,40 @@ struct GqlCommentNode {
     created_at: String,
     #[serde(rename = "bodyText", default)]
     body_text: String,
+}
+
+#[derive(Deserialize, Default)]
+struct GqlReviewThreads {
+    #[serde(default)]
+    nodes: Vec<GqlReviewThreadNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlReviewThreadNode {
+    #[serde(rename = "isResolved", default)]
+    is_resolved: bool,
+    #[serde(default)]
+    comments: GqlReviewComments,
+}
+
+#[derive(Deserialize, Default)]
+struct GqlReviewComments {
+    #[serde(default)]
+    nodes: Vec<GqlReviewCommentNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlReviewCommentNode {
+    #[serde(default)]
+    author: Option<GqlAuthor>,
+    #[serde(rename = "createdAt", default)]
+    created_at: String,
+    #[serde(rename = "bodyText", default)]
+    body_text: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    line: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -419,10 +534,42 @@ impl From<GqlPrNode> for PrInfo {
                 body: c.body_text,
             })
             .collect();
+        let mut review_thread_nodes = n.review_threads.nodes;
+        if review_thread_nodes.len() > REVIEW_THREAD_FETCH_CAP {
+            review_thread_nodes.drain(0..review_thread_nodes.len() - REVIEW_THREAD_FETCH_CAP);
+        }
+        let review_threads = review_thread_nodes
+            .into_iter()
+            .map(|mut thread| {
+                if thread.comments.nodes.len() > REVIEW_COMMENT_FETCH_CAP {
+                    thread
+                        .comments
+                        .nodes
+                        .drain(0..thread.comments.nodes.len() - REVIEW_COMMENT_FETCH_CAP);
+                }
+                PrReviewThread {
+                    resolved: thread.is_resolved,
+                    comments: thread
+                        .comments
+                        .nodes
+                        .into_iter()
+                        .map(|comment| PrReviewComment {
+                            author: comment.author.map(|author| author.login),
+                            created_at: comment.created_at,
+                            body: comment.body_text,
+                            path: comment.path,
+                            line: comment.line,
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
         PrInfo {
             number: n.number,
             title: n.title,
             head_ref: n.head_ref_name,
+            base_ref: n.base_ref_name,
+            base_remote: None,
             html_url: n.url,
             draft: n.is_draft,
             ci_status,
@@ -433,6 +580,7 @@ impl From<GqlPrNode> for PrInfo {
             // Empty description reads as "no body"; normalize to None.
             body: Some(n.body_text).filter(|b| !b.is_empty()),
             comments,
+            review_threads: Some(review_threads),
         }
     }
 }
@@ -440,7 +588,7 @@ impl From<GqlPrNode> for PrInfo {
 /// The repo's `origin` remote URL, falling back to the first configured
 /// remote when there is no `origin`. `None` when the repo has no remotes at
 /// all, or the resolved remote has no URL (e.g. a purely local remote).
-fn remote_url(repo: &git2::Repository) -> Option<String> {
+fn selected_remote(repo: &git2::Repository) -> Option<(String, String)> {
     let names = repo.remotes().ok()?;
     let names: Vec<&str> = names.iter().flatten().collect();
     let chosen = if names.contains(&"origin") {
@@ -448,7 +596,177 @@ fn remote_url(repo: &git2::Repository) -> Option<String> {
     } else {
         names.first()?
     };
-    repo.find_remote(chosen).ok()?.url().map(|u| u.to_string())
+    repo.find_remote(chosen)
+        .ok()?
+        .url()
+        .map(|url| (chosen.to_string(), url.to_string()))
+}
+
+fn remote_url(repo: &git2::Repository) -> Option<String> {
+    selected_remote(repo).map(|(_, url)| url)
+}
+
+#[derive(Deserialize)]
+struct GhPrCheck {
+    name: String,
+    state: String,
+    link: String,
+}
+
+/// Extract Actions run/job IDs from the URL `gh pr checks` returns. External
+/// check providers do not expose an Actions job log, so they are deliberately
+/// omitted rather than presenting a button that cannot fulfil its promise.
+fn actions_job_ids(link: &str) -> Option<(u64, u64)> {
+    let (_, suffix) = link.split_once("/actions/runs/")?;
+    let (run, job) = suffix.split_once("/job/")?;
+    Some((
+        run.parse().ok()?,
+        job.split(['/', '?', '#']).next()?.parse().ok()?,
+    ))
+}
+
+fn failed_actions_checks(json: &str) -> Result<Vec<FailedCiCheck>, AppError> {
+    let checks: Vec<GhPrCheck> = serde_json::from_str(json)
+        .map_err(|e| AppError::Other(format!("Could not read GitHub check list: {e}")))?;
+    Ok(checks
+        .into_iter()
+        .filter(|check| {
+            matches!(
+                check.state.as_str(),
+                "FAILURE" | "ERROR" | "failure" | "error"
+            )
+        })
+        .filter_map(|check| {
+            let (run_id, job_id) = actions_job_ids(&check.link)?;
+            Some(FailedCiCheck {
+                name: check.name,
+                run_id,
+                job_id,
+            })
+        })
+        .collect())
+}
+
+fn gh_command_error(error: std::io::Error) -> AppError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        AppError::Other("GitHub CLI (`gh`) is not installed".to_string())
+    } else {
+        AppError::from(error)
+    }
+}
+
+fn run_gh_with_accepted_exit(
+    repo_root: &str,
+    args: &[String],
+    accepts_exit: fn(bool, Option<i32>) -> bool,
+    fallback_error: &str,
+) -> Result<String, AppError> {
+    let mut command = Command::new("gh");
+    command.no_console().args(args).current_dir(repo_root);
+    let output = command.output().map_err(gh_command_error)?;
+    if accepts_exit(output.status.success(), output.status.code()) {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Other(if stderr.is_empty() {
+        fallback_error.to_string()
+    } else {
+        stderr
+    }))
+}
+
+fn accepts_success(success: bool, _code: Option<i32>) -> bool {
+    success
+}
+
+fn run_gh(repo_root: &str, args: &[String]) -> Result<String, AppError> {
+    run_gh_with_accepted_exit(
+        repo_root,
+        args,
+        accepts_success,
+        "GitHub CLI could not retrieve the CI check log",
+    )
+}
+
+/// `gh pr checks` uses exit code 8 to say that some checks are still pending,
+/// while still writing the complete JSON check list to stdout. A failed PR can
+/// legitimately have both a failed job and a pending job, so that output must
+/// remain usable for the failed-check viewer.
+fn gh_pr_checks_output(repo_root: &str, args: &[String]) -> Result<String, AppError> {
+    run_gh_with_accepted_exit(
+        repo_root,
+        args,
+        accepts_gh_pr_checks_exit,
+        "GitHub CLI could not list CI checks",
+    )
+}
+
+fn accepts_gh_pr_checks_exit(success: bool, code: Option<i32>) -> bool {
+    success || code == Some(8)
+}
+
+fn github_repo_slug(repo_root: &str) -> Result<String, AppError> {
+    let repo = open_repo(Path::new(repo_root))?;
+    let url = remote_url(&repo)
+        .ok_or_else(|| AppError::Other("This repository has no GitHub remote".to_string()))?;
+    let (owner, name) = parse_github_remote(&url).ok_or_else(|| {
+        AppError::Other("This repository remote is not hosted on github.com".to_string())
+    })?;
+    Ok(format!("{owner}/{name}"))
+}
+
+/// List failed GitHub Actions checks on an open PR with `gh`. The `link`
+/// metadata identifies each Actions job, allowing the next command to request
+/// exactly that job's failed output rather than opening a browser.
+#[tauri::command]
+pub async fn git_failed_ci_checks(
+    repo_root: String,
+    pr_number: u64,
+) -> Result<Vec<FailedCiCheck>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let slug = github_repo_slug(&repo_root)?;
+        let args = vec![
+            "pr".to_string(),
+            "checks".to_string(),
+            pr_number.to_string(),
+            "--repo".to_string(),
+            slug,
+            "--json".to_string(),
+            "name,state,link".to_string(),
+        ];
+        failed_actions_checks(&gh_pr_checks_output(&repo_root, &args)?)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
+/// Return the failed output for one Actions job via the GitHub CLI. IDs were
+/// originally emitted by `git_failed_ci_checks`; their numeric type prevents
+/// option injection at this IPC boundary.
+#[tauri::command]
+pub async fn git_failed_ci_check_log(
+    repo_root: String,
+    check: FailedCiCheck,
+) -> Result<FailedCiCheckLog, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let slug = github_repo_slug(&repo_root)?;
+        let args = vec![
+            "run".to_string(),
+            "view".to_string(),
+            check.run_id.to_string(),
+            "--repo".to_string(),
+            slug,
+            "--job".to_string(),
+            check.job_id.to_string(),
+            "--log-failed".to_string(),
+        ];
+        Ok(FailedCiCheckLog {
+            check_name: check.name,
+            log: run_gh(&repo_root, &args)?,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
 }
 
 /// Open PRs for the repo at `repo_root`, decorated for the git graph's ref
@@ -461,18 +779,24 @@ fn remote_url(repo: &git2::Repository) -> Option<String> {
 pub async fn git_open_prs(repo_root: String) -> Result<Vec<PrInfo>, AppError> {
     tokio::task::spawn_blocking(move || {
         let repo = open_repo(Path::new(&repo_root))?;
-        let Some(url) = remote_url(&repo) else {
+        let Some((remote, url)) = selected_remote(&repo) else {
             return Ok(Vec::new());
         };
         let Some((owner, name)) = parse_github_remote(&url) else {
             return Ok(Vec::new());
         };
         let key = format!("{owner}/{name}");
-        if let Some(cached) = cache_get(&key) {
+        if let Some(mut cached) = cache_get(&key) {
+            for pr in &mut cached {
+                pr.base_remote = Some(remote.clone());
+            }
             return Ok(cached);
         }
         match fetch_open_prs(&owner, &name) {
-            Ok(prs) => {
+            Ok(mut prs) => {
+                for pr in &mut prs {
+                    pr.base_remote = Some(remote.clone());
+                }
                 cache_put(key, CacheState::Hit(prs.clone()));
                 Ok(prs)
             }
@@ -533,6 +857,30 @@ mod tests {
             let expected = expected.map(|(o, r)| (o.to_string(), r.to_string()));
             assert_eq!(actual, expected, "input: {input:?}");
         }
+    }
+
+    #[test]
+    fn keeps_only_failed_github_actions_jobs_from_gh_checks() {
+        let checks = failed_actions_checks(
+            r#"[
+                {"name":"Unit tests","state":"FAILURE","link":"https://github.com/o/r/actions/runs/12/job/34"},
+                {"name":"Lint","state":"SUCCESS","link":"https://github.com/o/r/actions/runs/12/job/35"},
+                {"name":"Deploy preview","state":"PENDING","link":"https://github.com/o/r/actions/runs/13/job/36"},
+                {"name":"External CI","state":"ERROR","link":"https://ci.example.test/build/7"}
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "Unit tests");
+        assert_eq!(checks[0].run_id, 12);
+        assert_eq!(checks[0].job_id, 34);
+    }
+
+    #[test]
+    fn accepts_gh_pending_checks_exit_code_with_json_output() {
+        assert!(accepts_gh_pr_checks_exit(false, Some(8)));
+        assert!(accepts_gh_pr_checks_exit(true, Some(0)));
+        assert!(!accepts_gh_pr_checks_exit(false, Some(1)));
     }
 
     // ----- GraphQL response → PrInfo mapping (#459) -----
@@ -645,10 +993,11 @@ mod tests {
     fn draft_flag_and_comment_count_flow_through() {
         let pr = parse_one(
             r#"{ "number": 12, "title": "wip", "url": "u", "isDraft": true,
-                 "headRefName": "experiment", "reviewDecision": "CHANGES_REQUESTED",
+                 "headRefName": "experiment", "baseRefName": "main", "reviewDecision": "CHANGES_REQUESTED",
                  "comments": { "totalCount": 0 }, "commits": { "nodes": [] } }"#,
         );
         assert!(pr.draft);
+        assert_eq!(pr.base_ref, "main");
         assert_eq!(pr.comment_count, Some(0));
         assert_eq!(pr.review_decision.as_deref(), Some("changes_requested"));
     }
@@ -697,6 +1046,8 @@ mod tests {
             number: 1,
             title: "t".to_string(),
             head_ref: "b".to_string(),
+            base_ref: "main".to_string(),
+            base_remote: None,
             html_url: "u".to_string(),
             draft: false,
             ci_status: None,
@@ -704,6 +1055,7 @@ mod tests {
             comment_count: None,
             body: None,
             comments: Vec::new(),
+            review_threads: None,
         };
         let v = serde_json::to_value(&pr).unwrap();
         assert!(v.get("ciStatus").unwrap().is_null());
@@ -740,6 +1092,57 @@ mod tests {
         assert_eq!(pr.comments[0].created_at, "2024-01-01T10:00:00Z");
         assert_eq!(pr.comments[0].body, "Looks good");
         assert_eq!(pr.comments[1].author.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn maps_review_threads() {
+        let pr = parse_one(
+            r#"{
+                "number": 7, "title": "Add feature", "url": "u",
+                "isDraft": false, "headRefName": "feature", "reviewDecision": null,
+                "reviewThreads": { "nodes": [
+                    { "isResolved": true, "comments": { "nodes": [
+                        { "author": { "login": "alice" }, "createdAt": "2024-01-01T10:00:00Z", "bodyText": "Fixed", "path": "src/lib/parser.ts", "line": 42 }
+                    ] } },
+                    { "isResolved": false, "comments": { "nodes": [
+                        { "author": null, "createdAt": "2024-01-02T10:00:00Z", "bodyText": "Please revisit", "path": null, "line": null }
+                    ] } }
+                ] },
+                "commits": { "nodes": [] }
+            }"#,
+        );
+        let threads = pr
+            .review_threads
+            .expect("GraphQL supplies review-thread data");
+        assert_eq!(threads.len(), 2);
+        assert!(threads[0].resolved);
+        assert_eq!(
+            threads[0].comments[0].path.as_deref(),
+            Some("src/lib/parser.ts")
+        );
+        assert_eq!(threads[0].comments[0].line, Some(42));
+        assert!(!threads[1].resolved);
+        assert_eq!(threads[1].comments[0].author, None);
+    }
+
+    #[test]
+    fn open_pr_query_requests_bounded_review_thread_fields() {
+        let query = open_prs_query();
+        assert!(query.contains(&format!(
+            "pullRequests(states:OPEN,first:{OPEN_PR_FETCH_CAP})"
+        )));
+        assert!(query.contains(&format!("reviewThreads(first:{REVIEW_THREAD_FETCH_CAP})")));
+        assert!(query.contains(&format!("comments(first:{REVIEW_COMMENT_FETCH_CAP})")));
+        for field in [
+            "baseRefName",
+            "isResolved",
+            "createdAt",
+            "bodyText",
+            "path",
+            "line",
+        ] {
+            assert!(query.contains(field), "query should request {field}");
+        }
     }
 
     #[test]

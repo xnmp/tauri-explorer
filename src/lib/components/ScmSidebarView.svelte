@@ -12,15 +12,22 @@
   import { getScmStore } from "$lib/state/scm.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { gitInit, gitAddToGitignore } from "$lib/api/files";
+  import { gitInit, gitAddToGitignore, gitArchiveUntracked, gitTrashUntracked } from "$lib/api/files";
   import { toastStore } from "$lib/state/toast.svelte";
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { showFileHistoryInPane } from "$lib/state/git-graph-file-history";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
   import { gitOpStateLabel } from "$lib/domain/git";
   import Modal from "./Modal.svelte";
 
   import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
+  import {
+    filterScmSummary,
+    isScmFilterActive,
+    scmEmptyState,
+    showScmFilterInput,
+  } from "$lib/domain/scm-filter";
 
   // Per-pane store (#334): this view tracks the pane it is mounted in, so a
   // second pane on another repo gets its own independent SCM panel. Falls
@@ -28,13 +35,27 @@
   const paneId = getPaneIdContext() ?? "default";
   const scmStore = getScmStore(paneId);
 
+  // Fuzzy filter over the pending files (#517). Only the query text lives
+  // here; the narrowing rules are pure in $lib/domain/scm-filter.
+  let filterQuery = $state("");
+  const filterActive = $derived(isScmFilterActive(filterQuery));
+  let filterInputEl: HTMLInputElement | undefined = $state();
+
   // Collapsed folder sets, keyed per repo root so toggling between repos
-  // doesn't mix collapse state.
+  // doesn't mix collapse state. While a filter is active every folder is
+  // treated as expanded — a match hidden inside a collapsed folder would
+  // look like the filter had dropped it.
   let collapsedByRepo = $state(new Map<string, Set<string>>());
   const collapsedFolders = $derived(
-    collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
+    filterActive
+      ? new Set<string>()
+      : collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
   );
   function toggleFolder(dir: string): void {
+    // While filtering, every folder renders expanded — accepting a toggle
+    // here would rewrite the collapse state the user set beforehand, with no
+    // visible effect until they clear the query.
+    if (filterActive) return;
     const repo = scmStore.repoRoot ?? "";
     const next = new Set(collapsedByRepo.get(repo) ?? []);
     if (next.has(dir)) next.delete(dir); else next.add(dir);
@@ -170,6 +191,17 @@
     requestDiscard([row.path], isUntracked);
   }
 
+  /** Open this pane's graph and hand its repository-relative SCM path to the
+   *  graph filter. The handoff is buffered until the view mounts (#518). */
+  function onShowFileHistory(path: string): void {
+    const repoRoot = scmStore.repoRoot;
+    if (!repoRoot || !path.trim()) return;
+    showFileHistoryInPane(paneId, repoRoot, path, {
+      currentRepoPath: windowTabsManager.getPaneGitGraph(paneId),
+      showGraph: (root) => windowTabsManager.showGitGraphInPane(paneId, root),
+    });
+  }
+
   async function onIgnore(path: string): Promise<void> {
     if (!scmStore.repoRoot) return;
     const r = await gitAddToGitignore(scmStore.repoRoot, path);
@@ -178,6 +210,29 @@
       return;
     }
     toastStore.success(`Added ${r.data} to .gitignore`);
+    await scmStore.refresh();
+  }
+
+  async function onArchive(paths: string[]): Promise<void> {
+    if (!scmStore.repoRoot) return;
+    const r = await gitArchiveUntracked(scmStore.repoRoot, paths);
+    if (!r.ok) {
+      toastStore.error(`Archive failed: ${r.error}`);
+      return;
+    }
+    toastStore.success(`Archived ${paths.length} item${paths.length === 1 ? "" : "s"} to .archive`);
+    await scmStore.refresh();
+  }
+
+  async function onTrash(paths: string[]): Promise<void> {
+    if (!scmStore.repoRoot) return;
+    const r = await gitTrashUntracked(scmStore.repoRoot, paths);
+    if (!r.ok) {
+      await scmStore.refresh();
+      toastStore.error(`Move to Trash failed: ${r.error}`);
+      return;
+    }
+    toastStore.success(`Moved ${paths.length} item${paths.length === 1 ? "" : "s"} to Trash`);
     await scmStore.refresh();
   }
 
@@ -238,14 +293,53 @@
     }
   }
 
-  const summary = $derived(scmStore.filteredSummary);
+  /** Rows the user sees: dir-scoped by the store (#380), then narrowed by the
+   *  sidebar's own fuzzy query (#517). Counts and keyboard navigation follow
+   *  it; commit actions deliberately do not (they use `fullSummary`). */
+  /** Dir-scoped rows, read once: `filteredSummary` is a plain getter that
+   *  re-filters on every access, and both derivations below need it. */
+  const dirScoped = $derived(scmStore.filteredSummary);
+  const summary = $derived(filterScmSummary(dirScoped, filterQuery));
   const fullSummary = $derived(scmStore.summary);
+
+  /** Pending rows before the text filter — decides whether there is anything
+   *  to filter at all (no input on a clean tree). */
+  const dirPendingCount = $derived(
+    dirScoped.staged.length +
+      dirScoped.changes.length +
+      dirScoped.untracked.length +
+      dirScoped.merge.length
+  );
+
+  function clearFilter(): void {
+    filterQuery = "";
+    filterInputEl?.focus();
+  }
+
+  function onFilterKeydown(e: KeyboardEvent): void {
+    // Esc clears the query first; an already-empty filter lets the key bubble
+    // so the surrounding UI keeps its own Esc behaviour.
+    if (e.key === "Escape" && filterActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      clearFilter();
+    }
+  }
   const isRepo = $derived(fullSummary.is_repo);
 
   const stagedCount = $derived(summary.staged.length);
   const changesCount = $derived(summary.changes.length);
   const untrackedCount = $derived(summary.untracked.length);
   const mergeCount = $derived(summary.merge.length);
+
+  /** Empty-list message: none / clean tree / filtered away (#517). */
+  const emptyState = $derived(
+    scmEmptyState(
+      dirPendingCount,
+      stagedCount + changesCount + untrackedCount + mergeCount,
+      filterQuery
+    )
+  );
 
   const fullStagedCount = $derived(fullSummary.staged.length);
   const fullMergeCount = $derived(fullSummary.merge.length);
@@ -414,6 +508,39 @@
       </div>
     </div>
 
+    {#if showScmFilterInput(dirPendingCount, filterQuery)}
+      <div class="scm-filter">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" class="scm-filter-icon" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <input
+          type="text"
+          class="scm-filter-input"
+          placeholder="Filter files"
+          aria-label="Filter files"
+          bind:this={filterInputEl}
+          value={filterQuery}
+          oninput={(e) => (filterQuery = (e.target as HTMLInputElement).value)}
+          onkeydown={onFilterKeydown}
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="scm-filter-nofill"
+        />
+        {#if filterActive}
+          <button
+            type="button"
+            class="scm-filter-clear"
+            title="Clear filter (Esc)"
+            aria-label="Clear filter"
+            onclick={clearFilter}
+          >×</button>
+        {/if}
+      </div>
+    {/if}
+
     {#if mergeCount > 0}
       {@render section({
         id: "merge",
@@ -456,7 +583,11 @@
       kind: "untracked",
     })}
 
-    {#if stagedCount + changesCount + untrackedCount + mergeCount === 0}
+    <!-- A filtered-to-nothing list is not a clean tree, and a clean tree under
+         a stale query is not a filter miss — scmEmptyState tells them apart. -->
+    {#if emptyState === "no-match"}
+      <div class="scm-no-match" role="status">No files match “{filterQuery.trim()}”</div>
+    {:else if emptyState === "clean"}
       <div class="clean-state">Working tree clean</div>
     {/if}
   {/if}
@@ -540,6 +671,15 @@
               <span class="file-dir">{parts.dir}</span>
             {/if}
             <span class="row-actions">
+              {#if opts.kind !== "untracked"}
+                <button
+                  type="button"
+                  class="row-btn"
+                  title="Show history for this file"
+                  aria-label="Show history for {row.path}"
+                  onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}
+                >{@render actionIcon("history")}</button>
+              {/if}
               {#if opts.kind === "staged"}
                 <button
                   type="button"
@@ -565,6 +705,10 @@
                   onclick={(e) => { e.stopPropagation(); onDiscard(row, opts.kind === "untracked"); }}
                 >{@render actionIcon("discard")}</button>
                 {#if opts.kind === "untracked"}
+                  <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {row.path} to .archive"
+                    onclick={(e) => { e.stopPropagation(); onArchive([row.path]); }}>{@render actionIcon("archive")}</button>
+                  <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {row.path} to Trash"
+                    onclick={(e) => { e.stopPropagation(); onTrash([row.path]); }}>{@render actionIcon("trash")}</button>
                   <button
                     type="button"
                     class="row-btn"
@@ -596,7 +740,7 @@
 <!-- Row action icons as SVGs: the previous text glyphs (− + ↺ ⊘) rendered at
      inconsistent sizes because their font metrics differ wildly at the same
      font-size — ↺ in particular drew visibly larger than the rest (#270). -->
-{#snippet actionIcon(kind: "stage" | "unstage" | "discard" | "ignore")}
+{#snippet actionIcon(kind: "stage" | "unstage" | "discard" | "ignore" | "archive" | "trash" | "history")}
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     {#if kind === "stage"}
       <path d="M8 3.5v9M3.5 8h9" />
@@ -605,6 +749,14 @@
     {:else if kind === "discard"}
       <path d="M6.5 3.5L3.5 6l3 2.5" />
       <path d="M3.5 6h5a3.25 3.25 0 0 1 0 6.5H6.5" />
+    {:else if kind === "archive"}
+      <path d="M2.5 5.5h11v7h-11zM4 3.5h8v2H4z" />
+      <path d="M6.25 8.5h3.5" />
+    {:else if kind === "trash"}
+      <path d="M3.5 5h9M6 5V3.5h4V5M5 5l.5 8h5l.5-8M7 7.5v3M9 7.5v3" />
+    {:else if kind === "history"}
+      <circle cx="8" cy="8" r="5" />
+      <path d="M8 5v3l2 1.5" />
     {:else}
       <circle cx="8" cy="8" r="5" />
       <path d="M4.7 4.7l6.6 6.6" />
@@ -626,6 +778,7 @@
         role="treeitem"
         aria-expanded={!collapsed}
         aria-selected="false"
+        aria-disabled={filterActive}
       >
         {#each { length: depth } as _, i}
           <span class="depth-guide" style="left: {i * 12 + 10}px"></span>
@@ -647,6 +800,10 @@
               aria-label={kind === "untracked" ? `Remove ${child.name}` : `Discard ${child.name}`}
               onclick={(e) => { e.stopPropagation(); requestDiscard(folderPaths, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
             {#if kind === "untracked"}
+              <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {child.name} to .archive"
+                onclick={(e) => { e.stopPropagation(); onArchive(folderPaths); }}>{@render actionIcon("archive")}</button>
+              <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {child.name} to Trash"
+                onclick={(e) => { e.stopPropagation(); onTrash(folderPaths); }}>{@render actionIcon("trash")}</button>
               <button type="button" class="row-btn" title="Add folder to .gitignore" aria-label="Ignore {child.name}"
                 onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>{@render actionIcon("ignore")}</button>
             {/if}
@@ -680,6 +837,10 @@
         {/each}
         <span class="file-name">{fileName}</span>
         <span class="row-actions">
+          {#if kind !== "untracked"}
+            <button type="button" class="row-btn" title="Show history for this file" aria-label="Show history for {row.path}"
+              onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}>{@render actionIcon("history")}</button>
+          {/if}
           {#if kind === "staged"}
             <button type="button" class="row-btn" title="Unstage" aria-label="Unstage {row.path}"
               onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}>{@render actionIcon("unstage")}</button>
@@ -692,6 +853,10 @@
               aria-label={kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
               onclick={(e) => { e.stopPropagation(); onDiscard(row, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
             {#if kind === "untracked"}
+              <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {row.path} to .archive"
+                onclick={(e) => { e.stopPropagation(); onArchive([row.path]); }}>{@render actionIcon("archive")}</button>
+              <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {row.path} to Trash"
+                onclick={(e) => { e.stopPropagation(); onTrash([row.path]); }}>{@render actionIcon("trash")}</button>
               <button type="button" class="row-btn" title="Add to .gitignore" aria-label="Ignore {row.path}"
                 onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>{@render actionIcon("ignore")}</button>
             {/if}
@@ -761,6 +926,81 @@
     gap: 6px;
     padding: 8px;
     border-bottom: 1px solid var(--divider);
+  }
+
+  /* Fuzzy filter over the pending files (#517). Sits between the commit panel
+     and the sections, matching the address-bar filter treatment. */
+  .scm-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    margin: 8px 8px 4px;
+    padding: 0 8px;
+    height: 26px;
+    background: var(--control-fill-secondary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+  }
+
+  .scm-filter:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .scm-filter-icon {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+  }
+
+  .scm-filter-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+  }
+
+  .scm-filter-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .scm-filter-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .scm-filter-clear:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  /* Collapsing is disabled while filtering (every folder renders expanded),
+     so the row should not advertise a click that does nothing. */
+  .row.tree-folder[aria-disabled="true"] {
+    cursor: default;
+  }
+
+  .scm-no-match {
+    padding: 16px 12px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    text-align: center;
   }
 
   .branch-line {

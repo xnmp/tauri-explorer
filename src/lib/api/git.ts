@@ -21,12 +21,25 @@ export interface GitStatusResponse {
 /**
  * Get git status for files in a directory.
  */
-export async function getGitStatus(path: string): Promise<ApiResult<GitStatusResponse>> {
+export async function getGitStatus(
+  path: string,
+  taskId?: number,
+): Promise<ApiResult<GitStatusResponse>> {
   try {
-    const data = await invoke<GitStatusResponse>("get_git_status", { path });
+    const data = await invoke<GitStatusResponse>("get_git_status", { path, taskId });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function cancelGetGitStatus(taskId: number): Promise<void> {
+  try {
+    await invoke<void>("cancel_get_git_status", { taskId });
+  } catch (err) {
+    console.debug(
+      `[git-status] badge cancellation for task ${taskId} did not reach an active request: ${extractError(err)}`,
+    );
   }
 }
 
@@ -82,12 +95,51 @@ export async function gitAddToGitignore(
   }
 }
 
-export async function gitSummary(repoPath: string): Promise<ApiResult<GitStatusSummary>> {
+/** Move untracked working-tree paths into the repository's `.archive` folder. */
+export async function gitArchiveUntracked(
+  repoPath: string,
+  paths: string[],
+): Promise<ApiResult<void>> {
   try {
-    const data = await invoke<GitStatusSummary>("git_status", { repoPath });
+    await invoke<void>("git_archive_untracked", { repoPath, paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Move untracked working-tree paths to the operating system trash. */
+export async function gitTrashUntracked(
+  repoPath: string,
+  paths: string[],
+): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_trash_untracked", { repoPath, paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitSummary(
+  repoPath: string,
+  taskId?: number,
+): Promise<ApiResult<GitStatusSummary>> {
+  try {
+    const data = await invoke<GitStatusSummary>("git_status", { repoPath, taskId });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function cancelGitStatus(taskId: number): Promise<void> {
+  try {
+    await invoke<void>("cancel_git_status", { taskId });
+  } catch (err) {
+    console.debug(
+      `[git-status] SCM cancellation for task ${taskId} did not reach an active request: ${extractError(err)}`,
+    );
   }
 }
 
@@ -103,6 +155,22 @@ export async function gitStage(repoPath: string, paths: string[]): Promise<ApiRe
 export async function gitUnstage(repoPath: string, paths: string[]): Promise<ApiResult<void>> {
   try {
     await invoke<void>("git_unstage", { repoPath, paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/** The index/worktree target to which a unified patch is applied. */
+export type GitPatchAction = "stage" | "unstage" | "discard";
+
+export async function gitApplyPatch(
+  repoPath: string,
+  patch: string,
+  action: GitPatchAction,
+): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_apply_patch", { repoPath, patch, action });
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: extractError(err) };

@@ -664,7 +664,25 @@ fn perform_move(
 /// Read a text file's contents with a size limit (default 1MB).
 #[tauri::command]
 pub async fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
-    run_blocking(move || read_text_file_impl(path, max_bytes)).await
+    let started_at = std::time::Instant::now();
+    let log_path = path.clone();
+    match run_blocking(move || read_text_file_impl(path, max_bytes)).await {
+        Ok(content) => {
+            log::debug!(
+                "preview read_text_file completed: path={log_path:?}, bytes={}, elapsed={:?}",
+                content.len(),
+                started_at.elapsed()
+            );
+            Ok(content)
+        }
+        Err(error) => {
+            log::warn!(
+                "preview read_text_file failed: path={log_path:?}, max_bytes={max_bytes:?}, elapsed={:?}, error={error}",
+                started_at.elapsed()
+            );
+            Err(error)
+        }
+    }
 }
 
 fn read_text_file_impl(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
@@ -728,7 +746,25 @@ fn read_text_file_impl(path: String, max_bytes: Option<u64>) -> Result<String, A
 /// 32 MB) so we don't base64 an enormous file into memory.
 #[tauri::command]
 pub async fn read_image_data_url(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
-    run_blocking(move || read_image_data_url_impl(path, max_bytes)).await
+    let started_at = std::time::Instant::now();
+    let log_path = path.clone();
+    match run_blocking(move || read_image_data_url_impl(path, max_bytes)).await {
+        Ok(data_url) => {
+            log::debug!(
+                "preview read_image_data_url completed: path={log_path:?}, data_url_bytes={}, elapsed={:?}",
+                data_url.len(),
+                started_at.elapsed()
+            );
+            Ok(data_url)
+        }
+        Err(error) => {
+            log::warn!(
+                "preview read_image_data_url failed: path={log_path:?}, max_bytes={max_bytes:?}, elapsed={:?}, error={error}",
+                started_at.elapsed()
+            );
+            Err(error)
+        }
+    }
 }
 
 fn read_image_data_url_impl(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {

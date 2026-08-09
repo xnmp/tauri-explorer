@@ -6,23 +6,30 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ---
 
+## Root installers — platform-specific source install entry points.
+
+- `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0003-windows-installer-trust-boundary.md`.
+- `tests/windows-install-script.test.ts` — README and Windows-only invocation seam for `windows_install.ps1`; mocks prerequisite, source-build, clone, and MSI outcomes (including reboot-required `3010`) without installing software.
+
 ## src/routes/ — SPA entry
+
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
+
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
-- `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails.
+- `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
 - `VirtualList.svelte` — variable-height windowed scroller used by views. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `ItemButton.svelte` — shared entry button wrapper wiring drag-drop + interaction handlers.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
-- `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. Hot.
+- `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
@@ -37,7 +44,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
-- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`).
+- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), and branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513).
 - `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
@@ -46,6 +53,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `OptionPicker.svelte` — generic secondary list picker.
 - `ContextMenu.svelte` — right-click menu renderer (items from context-menu stores).
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
+- `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — settings dialog shell (toggles, sections, plugin sections).
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -64,6 +72,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
+
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
@@ -77,8 +86,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
 - `pane-refresh.ts` / `pane-watch.ts` (above); `refresh-manager.ts` owns policy layering.
 - `git-refresh.ts` — single `git-status-changed` listener; fans out to badge + SCM subscribers.
-- `git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane (#432).
-- `git-graph-cache.ts` — per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7).
+- `git-graph-refresh.ts` — F5 refresh bus plus importable graph refresh machinery: `createReloader` serializes fetches with generation/dirty guards, `shouldReloadGraphForChange` filters local-action echoes, and `countGraphWalkCommits` excludes woven stash rows from numeric paging (#432, #444). GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane.
+- `git-graph-nav.ts` — branch-line jump bus: GitGraphView registers its selection stepper per pane id; the `gitGraph.selectOlderOnLine`/`selectNewerOnLine` commands (Ctrl+Down/Up) dispatch to the active pane (#530). Same shape as `git-graph-refresh.ts`, same reason.
+- `git-palette.ts` — pane-scoped Git Graph branch, commit, and stash targets registered in the window-global command palette; commands are available only for the active graph pane (#520).
+- `git-graph-undo.ts` — bounded session ledger + active-pane request bus for confirmed graph-operation undo (#513); entries are repository-scoped and contain backend-produced expected-state snapshots.
+- `git-graph-file-history.ts` — per-pane SCM-to-graph handoff: buffers a repository-relative file path through a keyed graph remount, delivers directly to an already matching graph, and drops closed-pane requests (#518).
+- `git-graph-cache.ts` — bounded per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; retains the supported 12-tab fan-out. GitGraphView skips its redundant initial reload for a valid cache hit, while external watcher changes evict a repo's snapshots before remount (#433, #505, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
@@ -101,6 +114,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/shared.ts` — shared helpers for command modules.
 - `commands/file-commands.ts` — file ops commands (new/rename/delete/copy...).
 - `commands/navigation-commands.ts` — navigation commands (back/fwd/up/goto).
+- `commands/active-pane.ts` — shared active-git-graph predicate that makes duplicate shortcuts such as F5 and Ctrl+Z mutually exclusive between file and graph commands.
 - `commands/pane-commands.ts` — split/close/focus pane commands.
 - `commands/view-commands.ts` — view-mode/sort/show-hidden toggle commands. Hot.
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
@@ -113,6 +127,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
 - `warm-window.ts` — pre-warmed hidden window pool logic (fast Ctrl+N).
 - `window-appearance.ts` — shared window creation options (parity across code paths).
+- `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
@@ -124,27 +139,30 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `folder-views.svelte.ts` — per-folder view overrides (e.g. thumbnail size, #8762).
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
-- `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags.
+- `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
+- `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J).
 - `toast.svelte.ts` — toast notification store.
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
-- `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards).
+- `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards); serialized config-file writer plus `isConfigWritePending`/`lastWrittenConfig`, the echo-suppression facts config autoreload reads (#599).
 - `startup-timing.ts` — cold-start boot milestone instrumentation.
 - `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
 - `git-warm.ts` — wires the pure git-warm scheduler to the repo-root probe + git-graph/SCM cache warmers.
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
+
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
+- `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
 - `git.ts` — git status decoration + SCM (stage/commit/diff) IPC.
-- `git-log.ts` — git history / commit-graph IPC (#57).
+- `git-log.ts` — git history / commit-graph IPC (#57), including mutation snapshots and authoritative graph undo (#513).
 - `thumbnails.ts` — image/video thumbnail, folder preview, palette-extract IPC.
 - `archive.ts` — zip compress/extract/preview IPC.
 - `config.ts` — JSON config persistence + user theme CSS file IPC.
@@ -154,12 +172,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai-organize.ts` — AI "where does this file belong" IPC (#158).
 - `ai-rename.ts` — AI rename suggestion IPC (#145).
 - `crash.ts` — crash-report capture bridge (#184).
+- `user-report.ts` — typed `submit_user_report` IPC wrapper.
 - `update.ts` — GitHub-release update check (once/day throttle, #185).
 - `warm-pool.ts` — warm-window pool IPC wrappers.
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
 - `system.ts` — OS/window-shell plumbing: picker response, native window theme, ffmpeg path. Not filesystem.
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
+
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
@@ -181,14 +201,19 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
+
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
+- `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
 - `path.ts` — path normalization/join/parent/relative helpers.
 - `platform.ts` — isMac/isWindows/isLinux detection.
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
+- `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
+- `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
+- `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
 - `word-boundary.ts` — word-boundary helpers (fuzzy/rename).
 - `autocomplete.ts` — address-bar path autocomplete logic.
 - `breadcrumb-truncation.ts` — breadcrumb width/truncation math.
@@ -197,14 +222,20 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybinding-parser.ts` — parse/format keybinding chords.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
+- `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
+- `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
 - `diff.ts` — unified-diff parser (#55).
+- `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `undo-operations.ts` — pure undo/redo execution logic.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.
+- `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
+- `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `folder-preview.ts` — folder preview image selection (#146).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
@@ -212,19 +243,23 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `markdown.ts` — safe markdown render for preview.
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
+- `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
 - `theme-from-palette.ts` — build theme from extracted image palette (#203).
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
+- `e2e-hooks.ts` — `E2E_HOOKS_ENABLED` flag gating the `e2e-*` test hooks/probes; folds to `false` and tree-shakes out unless `VITE_E2E_HOOKS=1`, which only the smoke workflow sets (#457).
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
 - `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
+- `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
 - `available-filename.ts` — collision-free output filename (`photo_upscaled_2.png`) for plugin dialogs writing beside the original.
 
 ## src/lib/plugins/ — plugin system + built-in plugins.
+
 - `api.ts` — plugin API surface exposed to plugins.
 - `registry.svelte.ts` — built-in plugin registry + lifecycle.
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
@@ -239,26 +274,31 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin-dialog.css` — shared `.plugin-dialog` chrome (header/body/inputs/buttons) reused by the nano-banana / ai-rename / upscale dialogs.
 
 ## src/lib/background-animations/ — canvas backgrounds (registry-driven).
+
 - `registry.ts` — name→render-fn map + AnimationColors.
 - `index.ts` — public re-exports (register/get/theme animation).
 - `particles.ts` — floating dots + connection lines.
 - `starfield.ts` — twinkling stars + constellation lines.
 
 ## src/lib/themes/ — CSS theme files. Edit for theming/colors.
+
 - `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
 
 ## src/lib/types/
+
 - `pretext.d.ts` — ambient TS type declarations.
 
 ## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
+
 - `main.rs` — binary entry (console-window guard).
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
+- `config_watch.rs` — watches the config dir and emits `config-file-changed` for `settings.json` / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist.
 - `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
-- `thumbnails.rs` — image/video thumbnail generation + cache. Hot.
+- `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593). Hot.
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
 - `archive.rs` — zip compress/extract.
@@ -267,6 +307,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
 - `system.rs` — system commands: trash, launch context, window theme, log paths.
+- `user_report.rs` — typed async report relay command, environment/log-tail body assembly, and ureq transport.
 - `process_ext.rs` — suppress console-window flash for spawned children.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
@@ -281,11 +322,19 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
-- `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).
+- `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
 
+## website/ — static Vercel site and serverless functions.
+
+- `package.json` — website-project runtime dependencies, including Vercel Blob hosting for report images.
+- `api/report.js` — POST-only user-report relay, public Blob storage adapter, and GitHub Issues client.
+- `api/report-core.js` — pure validation, attachment delivery/cleanup, issue shaping, honeypot, and atomic burst/hour/day limit logic.
+- `vercel.json` — response cache policy; API routes are explicitly `no-store`.
+
 ### src-tauri/src/files/ — file operations module.
+
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.

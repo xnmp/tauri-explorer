@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatDate,
+  formatAbsoluteDate,
   getExtension,
   isZipFile,
   getFileType,
@@ -29,11 +30,13 @@ const entry = (
 });
 
 describe("formatDate", () => {
-  it("formats a valid ISO timestamp", () => {
-    const out = formatDate("2024-03-15T14:30:00Z");
-    expect(out).not.toBe("");
-    expect(out).not.toContain("Invalid");
-    expect(out).toContain("2024");
+  it("delegates valid timestamps to the compact relative formatter", () => {
+    const now = new Date("2024-06-15T12:00:00Z");
+    expect(formatDate("2024-06-10T12:00:00Z", now)).toBe("5d");
+  });
+
+  it("formats a valid ISO timestamp as a compact elapsed interval", () => {
+    expect(formatDate("2024-03-15T14:30:00Z", new Date("2024-03-15T15:30:00Z"))).toBe("1h");
   });
 
   it("returns empty string for malformed input instead of 'Invalid Date'", () => {
@@ -42,10 +45,14 @@ describe("formatDate", () => {
     expect(formatDate("2024-99-99T99:99:99Z")).toBe("");
   });
 
+  it("retains the absolute timestamp for date-cell tooltips", () => {
+    expect(formatAbsoluteDate("2024-03-15T14:30:00Z")).toContain("2024");
+    expect(formatAbsoluteDate("not-a-date")).toBe("");
+  });
+
   it("handles extreme but valid timestamps", () => {
     expect(formatDate("1970-01-01T00:00:00Z")).not.toContain("Invalid");
-    // Mid-year noon UTC stays in 2999 in every timezone.
-    expect(formatDate("2999-06-15T12:00:00Z")).toContain("2999");
+    expect(formatDate("2999-06-15T12:00:00Z")).toBe("now");
   });
 });
 

@@ -6,13 +6,22 @@
  * timers and visibility flags for temporary notifications.
  */
 
-export type ToastType = "info" | "success" | "error" | "clipboard";
+/**
+ * `progress` is for work that is still running and whose outcome arrives as a
+ * separate toast later. It exists as its own type because `show` replaces the
+ * existing toast of the SAME type: an in-flight indicator sharing "info" with
+ * ordinary chatter ("Refreshed", a copy finishing in another window via
+ * `broadcast`) gets silently deleted mid-operation, leaving the user with no
+ * sign the work is still happening (#596).
+ */
+export type ToastType = "info" | "success" | "error" | "clipboard" | "progress";
 
 export interface Toast {
   id: number;
   message: string;
   type: ToastType;
   isCut?: boolean; // for clipboard toasts
+  link?: { url: string; label: string };
 }
 
 const DEFAULT_DURATIONS: Record<ToastType, number> = {
@@ -20,6 +29,9 @@ const DEFAULT_DURATIONS: Record<ToastType, number> = {
   success: 1500,
   error: 3000,
   clipboard: 3000,
+  // Retired explicitly when the work finishes; this is only the backstop for
+  // an operation that never settles, so it outlasts a slow round-trip.
+  progress: 30000,
 };
 
 const TOAST_CHANNEL = "explorer-toasts";
@@ -37,9 +49,9 @@ function createToastStore() {
     };
   }
 
-  function show(message: string, type: ToastType = "info", options?: { isCut?: boolean; duration?: number }): number {
+  function show(message: string, type: ToastType = "info", options?: { isCut?: boolean; duration?: number; link?: { url: string; label: string } }): number {
     const id = nextId++;
-    const toast: Toast = { id, message, type, isCut: options?.isCut };
+    const toast: Toast = { id, message, type, isCut: options?.isCut, link: options?.link };
 
     // Replace existing toast of the same type (only one clipboard toast at a time, etc.)
     toasts = [...toasts.filter((t) => t.type !== type), toast];

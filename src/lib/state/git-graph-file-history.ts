@@ -1,0 +1,73 @@
+/**
+ * Per-pane handoff from SCM file rows to Git Graph's path filter (#518).
+ *
+ * The SCM panel can request history before GitGraphView mounts. Retaining one
+ * request per pane makes opening the graph and applying the path one atomic
+ * user action without persisting a one-off filter in tab state.
+ */
+
+type FileHistoryHandler = (filePath: string) => void;
+
+interface GraphPaneTarget {
+  currentRepoPath: string | undefined;
+  showGraph(repoPath: string): void;
+}
+
+const pendingPaths = new Map<string, string>();
+const handlers = new Map<string, FileHistoryHandler>();
+
+/** Queue a request for the graph instance that next mounts in `paneId`. */
+export function queueGraphFileHistory(paneId: string, filePath: string): void {
+  if (filePath.trim()) pendingPaths.set(paneId, filePath);
+}
+
+/** Open a pane's graph at a file's history. A graph for another repository is
+ * still registered until Svelte completes its keyed remount, so queue before
+ * replacing it; an already-correct graph receives the path immediately. */
+export function showFileHistoryInPane(
+  paneId: string,
+  repoPath: string,
+  filePath: string,
+  target: GraphPaneTarget,
+): void {
+  if (!repoPath || !filePath.trim()) return;
+  if (target.currentRepoPath !== repoPath) {
+    queueGraphFileHistory(paneId, filePath);
+    target.showGraph(repoPath);
+    return;
+  }
+  requestGraphFileHistory(paneId, filePath);
+}
+
+/** Request a graph view limited to `filePath` for a pane. */
+export function requestGraphFileHistory(paneId: string, filePath: string): void {
+  if (!filePath.trim()) return;
+  const handler = handlers.get(paneId);
+  if (handler) {
+    handler(filePath);
+    return;
+  }
+  queueGraphFileHistory(paneId, filePath);
+}
+
+/** Register the mounted graph's path-filter handler for one pane. */
+export function registerGraphFileHistoryHandler(
+  paneId: string,
+  handler: FileHistoryHandler,
+): () => void {
+  handlers.set(paneId, handler);
+  const pending = pendingPaths.get(paneId);
+  if (pending !== undefined) {
+    pendingPaths.delete(paneId);
+    handler(pending);
+  }
+  return () => {
+    if (handlers.get(paneId) === handler) handlers.delete(paneId);
+  };
+}
+
+/** Drop a closed pane's pending request and mounted handler. */
+export function dropGraphFileHistory(paneId: string): void {
+  pendingPaths.delete(paneId);
+  handlers.delete(paneId);
+}

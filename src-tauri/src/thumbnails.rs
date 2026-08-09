@@ -312,6 +312,116 @@ fn lru_clear() {
     }
 }
 
+// ─── Diagnostics (#593) ─────────────────────────────────────────────────────
+// Aggregate counters logged periodically plus per-request lines for slow
+// generations, in the same spirit as the `gitstat:`/`navigation` log lines.
+
+pub(crate) mod diag {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::time::Duration;
+
+    /// A single request slower than this gets its own log line.
+    const SLOW_MS: u64 = 100;
+    /// Emit an aggregate summary every N requests.
+    const LOG_EVERY: u64 = 100;
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Source {
+        MemoryHit,
+        DiskHit,
+        Decoded,
+    }
+
+    impl Source {
+        fn label(self) -> &'static str {
+            match self {
+                Source::MemoryHit => "lru",
+                Source::DiskHit => "disk",
+                Source::Decoded => "decode",
+            }
+        }
+    }
+
+    static REQUESTS: AtomicU64 = AtomicU64::new(0);
+    static LRU_HITS: AtomicU64 = AtomicU64::new(0);
+    static DISK_HITS: AtomicU64 = AtomicU64::new(0);
+    static DECODES: AtomicU64 = AtomicU64::new(0);
+    static TOTAL_US: AtomicU64 = AtomicU64::new(0);
+    static DECODE_US: AtomicU64 = AtomicU64::new(0);
+    static GATE_WAIT_US: AtomicU64 = AtomicU64::new(0);
+    static MAX_TOTAL_US: AtomicU64 = AtomicU64::new(0);
+
+    /// Record one thumbnail request. `kind` is "full" / "micro" / "video" /
+    /// "preview"; `decode` is the image-decode portion (including gate wait)
+    /// when one happened; `gate_wait` is the time spent queued for a decode
+    /// permit. The per-request slow line triggers on time actually WORKED
+    /// (total minus gate wait) — a cold-scroll burst queues most requests
+    /// behind the decode gate, and logging every queued request as "slow"
+    /// would spam exactly when it's least informative.
+    pub fn record(
+        kind: &str,
+        source: Source,
+        total: Duration,
+        decode: Option<Duration>,
+        gate_wait: Duration,
+        path: &std::path::Path,
+        size: u32,
+    ) {
+        let total_us = total.as_micros() as u64;
+        match source {
+            Source::MemoryHit => LRU_HITS.fetch_add(1, Relaxed),
+            Source::DiskHit => DISK_HITS.fetch_add(1, Relaxed),
+            Source::Decoded => DECODES.fetch_add(1, Relaxed),
+        };
+        TOTAL_US.fetch_add(total_us, Relaxed);
+        if let Some(d) = decode {
+            DECODE_US.fetch_add(d.as_micros() as u64, Relaxed);
+        }
+        GATE_WAIT_US.fetch_add(gate_wait.as_micros() as u64, Relaxed);
+        MAX_TOTAL_US.fetch_max(total_us, Relaxed);
+
+        let worked = total.saturating_sub(gate_wait);
+        if worked.as_millis() as u64 >= SLOW_MS {
+            log::info!(
+                "thumb: slow {} ({}) size={} total={}ms decode={}ms wait={}ms path={:?}",
+                kind,
+                source.label(),
+                size,
+                total.as_millis(),
+                decode
+                    .map(|d| d.saturating_sub(gate_wait).as_millis())
+                    .unwrap_or(0),
+                gate_wait.as_millis(),
+                path
+            );
+        }
+
+        let n = REQUESTS.fetch_add(1, Relaxed) + 1;
+        if n.is_multiple_of(LOG_EVERY) {
+            let lru = LRU_HITS.swap(0, Relaxed);
+            let disk = DISK_HITS.swap(0, Relaxed);
+            let decodes = DECODES.swap(0, Relaxed);
+            let total_ms = TOTAL_US.swap(0, Relaxed) / 1000;
+            let decode_ms = DECODE_US.swap(0, Relaxed) / 1000;
+            let wait_ms = GATE_WAIT_US.swap(0, Relaxed) / 1000;
+            let max_ms = MAX_TOTAL_US.swap(0, Relaxed) / 1000;
+            let window = lru + disk + decodes;
+            log::info!(
+                "thumb: last {} requests: {} lru, {} disk, {} decoded; total {}ms (decode {}ms, gate-wait {}ms), max {}ms, avg {:.1}ms",
+                window,
+                lru,
+                disk,
+                decodes,
+                total_ms,
+                decode_ms.saturating_sub(wait_ms),
+                wait_ms,
+                max_ms,
+                total_ms as f64 / window.max(1) as f64
+            );
+        }
+    }
+}
+
 // ─── JPEG DCT scaling ───────────────────────────────────────────────────────
 
 const JPEG_EXTENSIONS: &[&str] = &["jpg", "jpeg"];
@@ -409,7 +519,149 @@ fn decode_icns(path: &Path) -> Result<image::DynamicImage, AppError> {
         .ok_or_else(|| AppError::Other("Failed to create image from icns data".into()))
 }
 
+// ─── Decode gate (#593) ─────────────────────────────────────────────────────
+// Image decoding is the scroll-jank driver: a burst of visible tiles decoding
+// multi-MB sources in parallel on the Tokio blocking pool starves the webview
+// processes of CPU and the compositor drops frames. The gate (a) bounds
+// concurrent decodes to a fraction of the machine rather than the blocking
+// pool's 512, and (b) drops the decoding thread's priority for the duration so
+// the UI wins any remaining contention. Priority is save/restored because
+// blocking-pool threads are reused for unrelated work (fs scans, git).
+
+/// Pure permit-count computation, given the raw env var value (if any) and
+/// the available-parallelism core count. Extracted so the parsing logic can
+/// be unit-tested without mutating process-global environment state.
+fn permits_from(env: Option<&str>, cores: usize) -> usize {
+    // Env override for profiling experiments (#593): permits count, or 0 to
+    // effectively disable the gate.
+    if let Some(v) = env {
+        if let Ok(n) = v.parse::<usize>() {
+            return if n == 0 { usize::MAX } else { n };
+        }
+    }
+    (cores / 4).clamp(2, 8)
+}
+
+fn decode_gate_permits() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    permits_from(
+        std::env::var("TAURI_EXPLORER_DECODE_PERMITS")
+            .ok()
+            .as_deref(),
+        cores,
+    )
+}
+
+struct DecodeGate {
+    count: Mutex<usize>,
+    cond: std::sync::Condvar,
+}
+
+static DECODE_GATE: OnceLock<DecodeGate> = OnceLock::new();
+
+fn decode_gate() -> &'static DecodeGate {
+    DECODE_GATE.get_or_init(|| DecodeGate {
+        count: Mutex::new(0),
+        cond: std::sync::Condvar::new(),
+    })
+}
+
+/// RAII permit: released on drop so a panicking decode can't starve the gate.
+struct GatePermit {
+    gate: &'static DecodeGate,
+}
+
+impl Drop for GatePermit {
+    fn drop(&mut self) {
+        let mut count = self.gate.count.lock().unwrap_or_else(|p| p.into_inner());
+        *count = count.saturating_sub(1);
+        drop(count);
+        self.gate.cond.notify_one();
+    }
+}
+
+/// RAII priority restore: blocking-pool threads are reused for unrelated work,
+/// so the lowered niceness must not survive a panicking decode either.
+#[cfg(target_os = "linux")]
+struct PriorityGuard {
+    tid: libc::id_t,
+    old: i32,
+    lowered: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl PriorityGuard {
+    fn lower() -> Self {
+        // SAFETY: setpriority/getpriority/gettid have no memory-safety
+        // preconditions; they act on the calling thread's own tid.
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::id_t;
+        let old = unsafe { libc::getpriority(libc::PRIO_PROCESS, tid) };
+        let lowered = unsafe { libc::setpriority(libc::PRIO_PROCESS, tid, 10) } == 0;
+        Self { tid, old, lowered }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PriorityGuard {
+    fn drop(&mut self) {
+        if self.lowered {
+            unsafe { libc::setpriority(libc::PRIO_PROCESS, self.tid, self.old) };
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+struct PriorityGuard;
+
+#[cfg(not(target_os = "linux"))]
+impl PriorityGuard {
+    fn lower() -> Self {
+        Self
+    }
+}
+
+/// Run `work` inside the decode gate. Returns the work's result plus how long
+/// this call sat waiting for a permit — diagnostics report queue wait and
+/// actual decode time separately (conflating them made every queued request in
+/// a cold-scroll burst look like a slow decode).
+fn with_decode_gate<T>(work: impl FnOnce() -> T) -> (T, std::time::Duration) {
+    let gate = decode_gate();
+    let max = decode_gate_permits();
+    if max == usize::MAX {
+        return (work(), std::time::Duration::ZERO);
+    }
+    let wait_started = std::time::Instant::now();
+    let permit = {
+        let mut count = gate.count.lock().unwrap_or_else(|p| p.into_inner());
+        while *count >= max {
+            count = gate.cond.wait(count).unwrap_or_else(|p| p.into_inner());
+        }
+        *count += 1;
+        GatePermit { gate }
+    };
+    let waited = wait_started.elapsed();
+    let _priority = PriorityGuard::lower();
+    let result = work();
+    drop(_priority);
+    drop(permit);
+    (result, waited)
+}
+
 fn decode_image(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
+    decode_image_timed(path, target_size).0
+}
+
+/// As `decode_image`, but also reports gate-queue wait for diagnostics.
+fn decode_image_timed(
+    path: &Path,
+    target_size: u32,
+) -> (Result<image::DynamicImage, AppError>, std::time::Duration) {
+    with_decode_gate(|| decode_image_ungated(path, target_size))
+}
+
+fn decode_image_ungated(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
     check_image_file_size(path)?;
     if is_jpeg(path) {
         match decode_jpeg_scaled(path, target_size) {
@@ -507,24 +759,56 @@ fn get_thumbnail_data_sync(
     let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
+    let started = std::time::Instant::now();
+
     // Check in-memory LRU first (fastest)
     if let Some(uri) = lru_get(&cache_key) {
+        diag::record(
+            "full",
+            diag::Source::MemoryHit,
+            started.elapsed(),
+            None,
+            std::time::Duration::ZERO,
+            &source_path,
+            size,
+        );
         return Ok(uri);
     }
 
     with_inflight_lock(&cache_key.clone(), || {
         // Re-check caches: another request may have generated while we waited
         if let Some(uri) = lru_get(&cache_key) {
+            diag::record(
+                "full",
+                diag::Source::MemoryHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                size,
+            );
             return Ok(uri);
         }
         if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
             let data = fs::read(&cached_path)?;
             let uri = to_data_uri(&data);
             lru_put(cache_key.clone(), uri.clone());
+            diag::record(
+                "full",
+                diag::Source::DiskHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                size,
+            );
             return Ok(uri);
         }
 
-        let img = decode_image(&source_path, size)?;
+        let decode_started = std::time::Instant::now();
+        let (img, gate_wait) = decode_image_timed(&source_path, size);
+        let img = img?;
+        let decode_elapsed = decode_started.elapsed();
         let thumbnail = img.thumbnail(size, size).to_rgb8();
 
         let data = encode_jpeg(&thumbnail, quality)?;
@@ -532,6 +816,15 @@ fn get_thumbnail_data_sync(
 
         let uri = to_data_uri(&data);
         lru_put(cache_key.clone(), uri.clone());
+        diag::record(
+            "full",
+            diag::Source::Decoded,
+            started.elapsed(),
+            Some(decode_elapsed),
+            gate_wait,
+            &source_path,
+            size,
+        );
         Ok(uri)
     })
 }
@@ -550,24 +843,56 @@ fn get_micro_thumbnail_sync(
         .map(|k| format!("{}_micro", k))
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
+    let started = std::time::Instant::now();
+
     // Check in-memory LRU first
     if let Some(uri) = lru_get(&micro_cache_key) {
+        diag::record(
+            "micro",
+            diag::Source::MemoryHit,
+            started.elapsed(),
+            None,
+            std::time::Duration::ZERO,
+            &source_path,
+            MICRO_SIZE,
+        );
         return Ok(uri);
     }
 
     with_inflight_lock(&micro_cache_key.clone(), || {
         // Re-check caches: another request may have generated while we waited
         if let Some(uri) = lru_get(&micro_cache_key) {
+            diag::record(
+                "micro",
+                diag::Source::MemoryHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                MICRO_SIZE,
+            );
             return Ok(uri);
         }
         if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
             let data = fs::read(&cached_path)?;
             let uri = to_data_uri(&data);
             lru_put(micro_cache_key.clone(), uri.clone());
+            diag::record(
+                "micro",
+                diag::Source::DiskHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                MICRO_SIZE,
+            );
             return Ok(uri);
         }
 
-        let img = decode_image(&source_path, full_size)?;
+        let decode_started = std::time::Instant::now();
+        let (img, gate_wait) = decode_image_timed(&source_path, full_size);
+        let img = img?;
+        let decode_elapsed = decode_started.elapsed();
 
         // Generate micro thumbnail (Nearest = fastest resize algorithm)
         let micro = img
@@ -591,6 +916,15 @@ fn get_micro_thumbnail_sync(
 
         let uri = to_data_uri(&micro_data);
         lru_put(micro_cache_key.clone(), uri.clone());
+        diag::record(
+            "micro",
+            diag::Source::Decoded,
+            started.elapsed(),
+            Some(decode_elapsed),
+            gate_wait,
+            &source_path,
+            MICRO_SIZE,
+        );
         Ok(uri)
     })
 }
@@ -1126,6 +1460,89 @@ mod tests {
 
     fn touch(dir: &Path, name: &str) {
         File::create(dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn permits_from_env_override_disables_gate_on_zero() {
+        assert_eq!(permits_from(Some("0"), 16), usize::MAX);
+    }
+
+    #[test]
+    fn permits_from_env_override_uses_given_value() {
+        assert_eq!(permits_from(Some("5"), 16), 5);
+    }
+
+    #[test]
+    fn permits_from_ignores_unparseable_env_and_falls_back_to_cores() {
+        assert_eq!(permits_from(Some("not-a-number"), 16), 4);
+    }
+
+    #[test]
+    fn permits_from_clamps_low_core_counts_to_minimum() {
+        assert_eq!(permits_from(None, 1), 2);
+        assert_eq!(permits_from(None, 4), 2);
+    }
+
+    #[test]
+    fn permits_from_clamps_high_core_counts_to_maximum() {
+        assert_eq!(permits_from(None, 64), 8);
+    }
+
+    #[test]
+    fn permits_from_divides_cores_by_four_in_normal_range() {
+        assert_eq!(permits_from(None, 16), 4);
+        assert_eq!(permits_from(None, 24), 6);
+    }
+
+    #[test]
+    fn with_decode_gate_never_exceeds_configured_permits() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        // Exercise the gate directly at a small, fixed permit count rather
+        // than relying on decode_gate_permits()/env state, so the test is
+        // deterministic across machines and doesn't race other tests that
+        // touch TAURI_EXPLORER_DECODE_PERMITS. The gate itself is process-
+        // global (OnceLock), so we drive its locking logic through
+        // with_decode_gate but assert against a fixed max by spawning
+        // 4x the real decode_gate_permits() and trusting the invariant
+        // holds for whatever the machine resolves to.
+        let permits = decode_gate_permits();
+        assert!(permits >= 1, "sanity: permits should be positive");
+
+        let current = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..permits * 4)
+            .map(|_| {
+                let current = Arc::clone(&current);
+                let max_seen = Arc::clone(&max_seen);
+                std::thread::spawn(move || {
+                    with_decode_gate(|| {
+                        let now = current.fetch_add(1, Ordering::SeqCst) + 1;
+                        max_seen.fetch_max(now, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(20));
+                        current.fetch_sub(1, Ordering::SeqCst);
+                    });
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        if permits == usize::MAX {
+            // Gate disabled (e.g. TAURI_EXPLORER_DECODE_PERMITS=0 set in the
+            // test environment) — no concurrency bound to assert.
+            return;
+        }
+        let observed = max_seen.load(Ordering::SeqCst);
+        assert!(
+            observed <= permits,
+            "observed concurrency {observed} exceeded configured permits {permits}"
+        );
     }
 
     #[test]

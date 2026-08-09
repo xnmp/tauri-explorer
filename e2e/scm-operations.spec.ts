@@ -23,6 +23,7 @@ declare global {
     __mockGitExternalModify?: (path: string) => void;
     __mockGitSetClean?: () => void;
     __mockGitReset?: () => void;
+    __mockGitArchived?: string[];
   }
 }
 
@@ -46,6 +47,10 @@ async function openScmOnRepo(page: Page, opts: { preview?: boolean } = {}): Prom
 
 function badge(page: Page, section: string) {
   return page.locator(`[data-section="${section}"] .count-badge`);
+}
+
+function evidencePath(name: string): string {
+  return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
 }
 
 test.describe("SCM panel operations", () => {
@@ -91,6 +96,33 @@ test.describe("SCM panel operations", () => {
     ).toBeVisible();
     await expect(badge(page, "untracked")).toHaveText("3");
     await expect(badge(page, "staged")).toHaveText("1");
+  });
+
+  test("archiving an untracked file removes it from Files and confirms its .archive destination", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    const untracked = page.locator('[data-section="untracked"] .row', { hasText: "router.tsx" });
+    await untracked.hover();
+    await untracked.locator('.row-btn[title="Archive to .archive"]').click();
+
+    await expect(untracked).toHaveCount(0);
+    await expect(badge(page, "untracked")).toHaveText("2");
+    await expect(page.getByText("Archived 1 item to .archive")).toBeVisible();
+    expect(await page.evaluate(() => window.__mockGitArchived ?? [])).toContain(".archive/src/router.tsx");
+    await page.screenshot({ path: evidencePath("ac-1-untracked-file-archived.png") });
+  });
+
+  test("trashing an untracked file removes it from Files and confirms it was sent to trash", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    const untracked = page.locator('[data-section="untracked"] .row', { hasText: ".env.example" });
+    await untracked.hover();
+    await untracked.locator('.row-btn[title="Move to Trash"]').click();
+
+    await expect(untracked).toHaveCount(0);
+    await expect(badge(page, "untracked")).toHaveText("2");
+    await expect(page.getByText("Moved 1 item to Trash")).toBeVisible();
+    await page.screenshot({ path: evidencePath("ac-2-untracked-file-trashed.png") });
   });
 
   test("commit clears the input, empties Staged, and records the message @smoke", async ({ page }) => {
@@ -261,5 +293,62 @@ test.describe("SCM diff view", () => {
       page.locator('[data-section="changes"] .row', { hasText: "App.tsx" }),
     ).toBeVisible();
     await expect(badge(page, "staged")).toHaveText("0");
+  });
+
+  test("staging one hunk leaves another hunk unstaged", async ({ page }) => {
+    await openScmOnRepo(page, { preview: true });
+    await page.locator('[data-section="changes"] .row', { hasText: "index.css" }).click();
+    const preview = page.locator(".preview-pane");
+
+    await expect(preview.getByRole("button", { name: "Stage hunk" })).toHaveCount(2);
+    await preview.getByRole("button", { name: "Stage hunk" }).first().click();
+
+    // A partial stage keeps this file visible in both sections; it did not
+    // silently turn into the existing whole-file Stage action.
+    await expect(page.locator('[data-section="staged"] .row', { hasText: "index.css" })).toBeVisible();
+    await expect(page.locator('[data-section="changes"] .row', { hasText: "index.css" })).toBeVisible();
+    await expect(preview.getByText("first hunk")).toHaveCount(0);
+    await expect(preview.getByText("FLAG = true")).toBeVisible();
+    await page.screenshot({ path: evidencePath("ac-1-partially-staged-hunks.png") });
+  });
+
+  test("unstaging one hunk leaves another hunk staged", async ({ page }) => {
+    await openScmOnRepo(page, { preview: true });
+    await page.locator('[data-section="changes"] .row', { hasText: "index.css" }).click();
+    const preview = page.locator(".preview-pane");
+
+    // Stage both hunks. Exhausting the unstaged side follows the file to its
+    // staged diff, where both independently actionable hunks are rendered.
+    await preview.getByRole("button", { name: "Stage hunk" }).first().click();
+    await expect(preview.getByRole("button", { name: "Stage hunk" })).toHaveCount(1);
+    await preview.getByRole("button", { name: "Stage hunk" }).click();
+    await expect(preview.locator(".diff-staged")).toBeVisible();
+    await expect(preview.getByRole("button", { name: "Unstage hunk" })).toHaveCount(2);
+
+    await preview.getByRole("button", { name: "Unstage hunk" }).first().click();
+
+    // The selected hunk moved back to Changes while the sibling remains in
+    // the index and visible on the staged side.
+    await expect(page.locator('[data-section="staged"] .row', { hasText: "index.css" })).toBeVisible();
+    await expect(page.locator('[data-section="changes"] .row', { hasText: "index.css" })).toBeVisible();
+    await expect(preview.locator(".diff-staged")).toBeVisible();
+    await expect(preview.getByRole("button", { name: "Unstage hunk" })).toHaveCount(1);
+    await expect(preview.getByText("first hunk")).toHaveCount(0);
+    await expect(preview.getByText("FLAG = true")).toBeVisible();
+    await page.screenshot({ path: evidencePath("ac-2-unstaged-hunk.png") });
+  });
+
+  test("discarding one hunk preserves the unrelated working-tree hunk", async ({ page }) => {
+    await openScmOnRepo(page, { preview: true });
+    await page.locator('[data-section="changes"] .row', { hasText: "index.css" }).click();
+    const preview = page.locator(".preview-pane");
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await preview.getByRole("button", { name: "Discard hunk" }).first().click();
+
+    await expect(preview.getByText("first hunk")).toHaveCount(0);
+    await expect(preview.getByText("FLAG = true")).toBeVisible();
+    await expect(preview.getByRole("button", { name: "Discard hunk" })).toHaveCount(1);
+    await page.screenshot({ path: evidencePath("ac-3-discarded-hunk.png") });
   });
 });

@@ -4,13 +4,13 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
-use super::{metadata_to_entry, DirectoryListing, FileEntry, FileKind};
+use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
 use crate::error::AppError;
 
 // ===================
@@ -76,6 +76,7 @@ pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bo
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
     let t_start = std::time::Instant::now();
+    log::debug!("directory list_directory requested: path={path:?}");
 
     // Check cache first
     {
@@ -85,8 +86,8 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         if let Some(cached) = cache.get(&path) {
             if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
                 log::debug!(
-                    "list_directory: cache hit ({} entries)",
-                    cached.entries.len()
+                    "directory list_directory cache hit: path={path:?}, entries={}",
+                    cached.entries.len(),
                 );
                 return Ok(DirectoryListing {
                     path: path.clone(),
@@ -100,10 +101,12 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     let dir_path = PathBuf::from(&path);
 
     if !dir_path.exists() {
+        log::warn!("directory list_directory failed: path={path:?}, error=not found");
         return Err(AppError::NotFound(path.clone()));
     }
 
     if !dir_path.is_dir() {
+        log::warn!("directory list_directory failed: path={path:?}, error=not a directory");
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
@@ -113,18 +116,30 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     // directories) purely to dim empty-folder icons. The frontend resolves
     // emptiness lazily for visible directories via `is_directory_empty` (#129);
     // Miller columns already do their own on-demand probing.
-    let entries =
-        Arc::new(super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?);
+    let (entries, scan_diagnostics) =
+        super::run_blocking(move || Ok(scan_directory_with_diagnostics(&dir_path))).await?;
+    let entries = Arc::new(entries);
 
     let elapsed = t_start.elapsed();
-    if elapsed.as_millis() > 100 {
+    if scan_diagnostics.error_count > 0 {
         log::warn!(
-            "Slow directory listing: {} entries in {:?}",
+            "directory list_directory completed with scan errors: path={path:?}, entries={}, scan_errors={}, samples={:?}, elapsed={elapsed:?}",
+            entries.len(),
+            scan_diagnostics.error_count,
+            scan_diagnostics.samples,
+        );
+    } else if elapsed.as_millis() > 100 {
+        log::warn!(
+            "directory list_directory slow: path={path:?}, entries={}, elapsed={:?}",
             entries.len(),
             elapsed
         );
     } else {
-        log::debug!("list_directory: {} entries in {:?}", entries.len(), elapsed);
+        log::debug!(
+            "directory list_directory completed: path={path:?}, entries={}, elapsed={:?}",
+            entries.len(),
+            elapsed
+        );
     }
 
     // Update cache
@@ -200,36 +215,111 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 // pub: exercised directly by the `scan_directory_parallel` criterion bench
 // (src-tauri/benches/scan_directory_parallel.rs).
 pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
+    scan_directory_with_diagnostics(dir_path).0
+}
+
+const MAX_SCAN_ERROR_SAMPLES: usize = 3;
+
+#[derive(Default)]
+struct ScanDiagnostics {
+    error_count: usize,
+    samples: Vec<String>,
+}
+
+impl ScanDiagnostics {
+    fn record(&mut self, error: impl std::fmt::Display) {
+        self.error_count += 1;
+        if self.samples.len() < MAX_SCAN_ERROR_SAMPLES {
+            self.samples.push(error.to_string());
+        }
+    }
+
+    fn merge(&mut self, mut other: Self) {
+        self.error_count += other.error_count;
+        let capacity = MAX_SCAN_ERROR_SAMPLES.saturating_sub(self.samples.len());
+        let take = capacity.min(other.samples.len());
+        self.samples.extend(other.samples.drain(..take));
+    }
+}
+
+/// Scan a directory while retaining bounded details for entries that could not
+/// be read or statted. A partial listing remains usable, but callers can log
+/// why it may be incomplete instead of reporting a misleading clean success.
+fn scan_directory_with_diagnostics(dir_path: &PathBuf) -> (Vec<FileEntry>, ScanDiagnostics) {
+    if !dir_path.exists() {
+        let mut diagnostics = ScanDiagnostics::default();
+        diagnostics.record(format!("listing root not found: {}", dir_path.display()));
+        return (Vec::new(), diagnostics);
+    }
+    scan_directory_parallel_for_listing(dir_path, dir_path)
+}
+
+/// Network and WSL UNC paths may turn each file stat into a remote round trip.
+/// `is_git_repo` only decorates folder icons, so listings skip that optional
+/// per-entry probe there while preserving it for local directories.
+fn should_probe_git_repos(dir_path: &Path) -> bool {
+    let path = dir_path.to_string_lossy();
+    !(path.starts_with("\\\\") || path.starts_with("//"))
+}
+
+/// Scan a readable directory using the policy for its user-visible listing
+/// root. Keeping the root separate makes the UNC policy testable without a
+/// live network share while production passes the same path for both values.
+fn scan_directory_parallel_for_listing(
+    dir_path: &PathBuf,
+    listing_root: &Path,
+) -> (Vec<FileEntry>, ScanDiagnostics) {
+    let probe_git_repos = should_probe_git_repos(listing_root);
     use rayon::prelude::*;
+    let mut diagnostics = ScanDiagnostics::default();
 
     // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would
     // otherwise serialize on the consuming thread. Collect the child paths first,
     // then fan the stat + metadata_to_entry work out across rayon's thread pool so
     // a flat 10k-entry dir doesn't stat on a single core.
-    let paths: Vec<PathBuf> = jwalk::WalkDir::new(dir_path)
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for result in jwalk::WalkDir::new(dir_path)
         .max_depth(1)
         .skip_hidden(false)
         .into_iter()
-        .filter_map(|result| {
-            let dir_entry = result.ok()?;
-            // Skip the root directory itself
-            if dir_entry.depth() == 0 {
-                return None;
-            }
-            Some(dir_entry.path())
-        })
-        .collect();
+    {
+        match result {
+            Ok(dir_entry) if dir_entry.depth() != 0 => paths.push(dir_entry.path()),
+            Ok(_) => {}
+            Err(error) => diagnostics.record(format!("walk error: {error}")),
+        }
+    }
 
-    let mut entries: Vec<FileEntry> = paths
+    let (mut entries, diagnostics) = paths
         .into_par_iter()
-        .filter_map(|path| {
-            let metadata = fs::symlink_metadata(&path).ok()?;
-            Some(metadata_to_entry(&path, &metadata))
-        })
-        .collect();
+        .fold(
+            || (Vec::new(), ScanDiagnostics::default()),
+            |(mut entries, mut diagnostics), path| {
+                match fs::symlink_metadata(&path) {
+                    Ok(metadata) => entries.push(metadata_to_entry_with_git_repo_probe(
+                        &path,
+                        &metadata,
+                        probe_git_repos,
+                    )),
+                    Err(error) => {
+                        diagnostics
+                            .record(format!("metadata error for {}: {error}", path.display()));
+                    }
+                }
+                (entries, diagnostics)
+            },
+        )
+        .reduce(
+            || (Vec::new(), ScanDiagnostics::default()),
+            |(mut entries, mut diagnostics), (other_entries, other_diagnostics)| {
+                entries.extend(other_entries);
+                diagnostics.merge(other_diagnostics);
+                (entries, diagnostics)
+            },
+        );
 
     sort_entries(&mut entries);
-    entries
+    (entries, diagnostics)
 }
 
 /// Start streaming directory listing.
@@ -240,21 +330,27 @@ pub async fn start_streaming_directory(
     app: AppHandle,
     path: String,
 ) -> Result<DirectoryListing, AppError> {
+    let started_at = Instant::now();
+    log::info!("navigation start_streaming_directory requested: path={path:?}");
     let dir_path = PathBuf::from(&path);
     let batch_size = 100;
 
     if !dir_path.exists() {
+        log::warn!("navigation start_streaming_directory failed: path={path:?}, error=not found");
         return Err(AppError::NotFound(path));
     }
 
     if !dir_path.is_dir() {
+        log::warn!(
+            "navigation start_streaming_directory failed: path={path:?}, error=not a directory"
+        );
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
     let t_scan_start = std::time::Instant::now();
     // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
-    let mut all_entries =
-        super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?;
+    let (mut all_entries, scan_diagnostics) =
+        super::run_blocking(move || Ok(scan_directory_with_diagnostics(&dir_path))).await?;
     let t_scan_end = std::time::Instant::now();
 
     let total_count = all_entries.len();
@@ -270,7 +366,20 @@ pub async fn start_streaming_directory(
     // subdirectory, so a 10k-dir scan would pay 10k read_dirs. The frontend
     // resolves emptiness lazily for visible directories via `is_directory_empty`
     // (#129), so neither the first batch nor the streamed chunks probe it here.
+    if scan_diagnostics.error_count > 0 {
+        log::warn!(
+            "navigation start_streaming_directory completed with scan errors: path={path:?}, entries={total_count}, scan_errors={}, samples={:?}, elapsed={:?}",
+            scan_diagnostics.error_count,
+            scan_diagnostics.samples,
+            started_at.elapsed()
+        );
+    }
+
     if total_count <= batch_size {
+        log::info!(
+            "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, streaming=false, elapsed={:?}",
+            started_at.elapsed()
+        );
         return Ok(DirectoryListing {
             path,
             entries: Arc::new(all_entries),
@@ -286,13 +395,15 @@ pub async fn start_streaming_directory(
     let path_clone = path.clone();
     std::thread::spawn(move || {
         let mut offset = batch_size;
+        let mut was_cancelled = false;
 
         for chunk in remaining.chunks(batch_size) {
             if cancelled.load(Ordering::Relaxed) {
+                was_cancelled = true;
                 break;
             }
 
-            let _ = app.emit(
+            if let Err(error) = app.emit(
                 "directory-entries",
                 DirectoryEntriesEvent {
                     listing_id,
@@ -301,7 +412,11 @@ pub async fn start_streaming_directory(
                     done: offset + chunk.len() >= total_count,
                     total_count,
                 },
-            );
+            ) {
+                log::warn!(
+                    "navigation directory-entries emit failed: path={path_clone:?}, listing_id={listing_id}, error={error}"
+                );
+            }
 
             offset += chunk.len();
             // Brief pacing so batched emits don't flood the IPC channel. The
@@ -311,8 +426,17 @@ pub async fn start_streaming_directory(
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
+        log::info!(
+            "navigation directory listing stream ended: path={path_clone:?}, listing_id={listing_id}, emitted_entries={}, cancelled={was_cancelled}",
+            offset.saturating_sub(batch_size)
+        );
         LISTINGS.cleanup(listing_id);
     });
+
+    log::info!(
+        "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, listing_id={listing_id}, streaming=true, elapsed={:?}",
+        started_at.elapsed()
+    );
 
     Ok(DirectoryListing {
         path,
@@ -324,6 +448,7 @@ pub async fn start_streaming_directory(
 /// Cancel an active directory listing.
 #[tauri::command]
 pub async fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
+    log::info!("navigation cancel_directory_listing requested: listing_id={listing_id}");
     LISTINGS.cancel(listing_id);
     Ok(())
 }
@@ -348,6 +473,18 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
         assert!(matches!(result.entries[0].kind, FileKind::Directory));
         assert!(matches!(result.entries[1].kind, FileKind::File));
+    }
+
+    #[test]
+    fn scan_records_a_bounded_sample_when_the_listing_root_cannot_be_read() {
+        let missing = tempdir().unwrap().path().join("missing");
+
+        let (entries, diagnostics) = scan_directory_with_diagnostics(&missing);
+
+        assert!(entries.is_empty());
+        assert!(diagnostics.error_count >= 1);
+        assert!(!diagnostics.samples.is_empty());
+        assert!(diagnostics.samples.len() <= MAX_SCAN_ERROR_SAMPLES);
     }
 
     /// The parallel scan never pays the per-subdirectory is_empty probe (its
@@ -409,24 +546,20 @@ mod tests {
         assert!(!full);
     }
 
-    /// Directories are flagged `is_git_repo` when they contain a `.git`
-    /// directory (normal repo) or a `.git` file (worktree/submodule
-    /// gitlink) — plain folders and files are never flagged (#463).
+    /// Directories are flagged `is_git_repo` only when Git can open them as
+    /// repositories. A stray `.git` entry must not decorate an ordinary
+    /// folder as a repository (#609).
     #[test]
-    fn scan_detects_git_repo_dir_and_gitlink_file_but_not_plain_folders() {
+    fn scan_marks_only_valid_git_repositories() {
         let dir = tempdir().unwrap();
 
-        // Normal repo: `.git` is a directory.
+        // A valid normal repository.
         fs::create_dir(dir.path().join("repo-dir")).unwrap();
-        fs::create_dir(dir.path().join("repo-dir/.git")).unwrap();
+        git2::Repository::init(dir.path().join("repo-dir")).unwrap();
 
-        // Worktree/submodule: `.git` is a file (a gitlink pointing elsewhere).
-        fs::create_dir(dir.path().join("repo-file")).unwrap();
-        fs::write(
-            dir.path().join("repo-file/.git"),
-            "gitdir: ../.git/worktrees/repo-file\n",
-        )
-        .unwrap();
+        // An Inbox-like folder with a stray `.git` file is not a repository.
+        fs::create_dir(dir.path().join("Inbox")).unwrap();
+        fs::write(dir.path().join("Inbox/.git"), "not a gitdir file\n").unwrap();
 
         // Plain folder: no `.git` at all.
         fs::create_dir(dir.path().join("plain")).unwrap();
@@ -439,11 +572,11 @@ mod tests {
 
         assert!(
             by_name("repo-dir").is_git_repo,
-            "`.git` dir should flag repo"
+            "a valid repository should be flagged"
         );
         assert!(
-            by_name("repo-file").is_git_repo,
-            "`.git` gitlink file (worktree/submodule) should flag repo"
+            !by_name("Inbox").is_git_repo,
+            "an invalid `.git` entry must not flag Inbox as a repository"
         );
         assert!(
             !by_name("plain").is_git_repo,
@@ -452,6 +585,64 @@ mod tests {
         assert!(
             !by_name("plain.txt").is_git_repo,
             "files are never flagged, even named oddly"
+        );
+    }
+
+    /// A malformed gitdir marker is not enough to apply the repository badge.
+    #[test]
+    fn scan_rejects_malformed_gitdir_file() {
+        let dir = tempdir().unwrap();
+        let inbox = dir.path().join("Inbox");
+        fs::create_dir(&inbox).unwrap();
+        fs::write(inbox.join(".git"), "not a gitdir file\n").unwrap();
+
+        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        let inbox = entries.iter().find(|entry| entry.name == "Inbox").unwrap();
+
+        assert!(
+            !inbox.is_git_repo,
+            "a malformed `.git` marker must not decorate Inbox as a repository"
+        );
+    }
+
+    /// UNC roots cover both Windows network shares and WSL's 9P share. A
+    /// directory listing must not add one `.git` stat per child there (#480).
+    #[test]
+    fn git_repo_detection_policy_skips_unc_listing_roots() {
+        assert!(should_probe_git_repos(&PathBuf::from(
+            "C:\\Users\\me\\repos"
+        )));
+        assert!(!should_probe_git_repos(&PathBuf::from(
+            r"\\server\share\large-directory"
+        )));
+        assert!(!should_probe_git_repos(&PathBuf::from(
+            r"\\wsl.localhost\Ubuntu\home\me\large-directory"
+        )));
+    }
+
+    /// On Unix, backslashes are ordinary filename characters, which lets this
+    /// exercise the public scan entry point with a synthetic UNC root instead
+    /// of depending on a live network share (#480).
+    #[cfg(not(windows))]
+    #[test]
+    fn unc_listing_path_skips_child_git_repo_detection() {
+        let listing_root = PathBuf::from(format!(
+            r"\\server\share\tauri-explorer-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&listing_root).unwrap();
+        fs::create_dir(listing_root.join("repo")).unwrap();
+        fs::create_dir(listing_root.join("repo/.git")).unwrap();
+
+        let entries = scan_directory_parallel(&listing_root);
+        fs::remove_dir_all(&listing_root).unwrap();
+        assert!(
+            !entries
+                .iter()
+                .find(|entry| entry.name == "repo")
+                .unwrap()
+                .is_git_repo,
+            "slow-mount listings must leave is_git_repo false rather than stat each child .git"
         );
     }
 

@@ -6,6 +6,7 @@
  */
 
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { initFileChangeListener, cleanupFileChangeListener } from "$lib/state/file-events";
 import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
@@ -14,6 +15,30 @@ import { gitStatusStore } from "$lib/state/git-status.svelte";
 
 export interface FileWatcherDeps {
   getAllExplorers: () => ExplorerInstance[];
+}
+
+interface WatcherReceipt {
+  count: number;
+  observedAt: number | null;
+}
+
+const watcherReceipts = new Map<string, WatcherReceipt>();
+
+function publishWatcherListenerReady(): void {
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
+  document.documentElement.dataset.e2eDirectoryWatcherListenerReady = "true";
+}
+
+function publishWatcherReceipt(path: string, observedAt: number | undefined): void {
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
+  const previous = watcherReceipts.get(path);
+  watcherReceipts.set(path, {
+    count: (previous?.count ?? 0) + 1,
+    observedAt: observedAt ?? null,
+  });
+  document.documentElement.dataset.e2eDirectoryWatcherReceipts = JSON.stringify(
+    Object.fromEntries(watcherReceipts),
+  );
 }
 
 export function useFileWatchers(deps: FileWatcherDeps) {
@@ -40,8 +65,17 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     // the source tab sees the change without needing to be activated.
     initFileChangeListener((affectedDirs) => {
       for (const exp of deps.getAllExplorers()) {
-        if (affectedDirs.includes(exp.currentPath)) {
-          requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
+        const watchedPath = exp.currentPath;
+        if (affectedDirs.includes(watchedPath)) {
+          requestRefresh(
+            (opts) => {
+              if (exp.currentPath !== watchedPath) return;
+              return exp.refresh(opts);
+            },
+            watchedPath,
+            true,
+            exp,
+          );
         }
       }
     });
@@ -50,11 +84,21 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     // Outside Tauri the event system is unavailable and listen() throws
     // (same guard as state/drives.svelte.ts); refresh still works manually.
     try {
-      listen<{ path: string }>("directory-changed", (event) => {
+      listen<{ path: string; observed_at_ms?: number }>("directory-changed", (event) => {
         const changedPath = event.payload.path;
+        publishWatcherReceipt(changedPath, event.payload.observed_at_ms);
         for (const exp of deps.getAllExplorers()) {
           if (exp.currentPath === changedPath) {
-            requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
+            requestRefresh(
+              (opts) => {
+                if (exp.currentPath !== changedPath) return;
+                return exp.refresh(opts);
+              },
+              changedPath,
+              true,
+              exp,
+              event.payload.observed_at_ms,
+            );
           }
         }
         // Also refresh git status badges for the changed directory
@@ -64,6 +108,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
       }).then(
         track((fn) => {
           unlistenWatcher = fn;
+          publishWatcherListenerReady();
         }),
         () => {},
       );

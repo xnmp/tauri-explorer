@@ -12,7 +12,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 use super::dir_listing::invalidate_dir_cache_sync;
@@ -27,6 +27,16 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 #[derive(Clone, Serialize)]
 struct DirectoryChangedPayload {
     path: String,
+    /// Wall-clock time when notify observed the newest change in this batch.
+    /// The frontend uses this to recognize a delayed notification that is
+    /// already covered by a directory listing which started afterward.
+    observed_at_ms: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PendingChange {
+    last_event: Instant,
+    observed_at_ms: u64,
 }
 
 /// Singleton filesystem watcher with refcounted directory watches.
@@ -40,10 +50,19 @@ static FS_WATCHER: OnceLock<Mutex<FsWatcher>> = OnceLock::new();
 
 /// Directories with pending change events, keyed by the time of the most
 /// recent event. Flushed (emitted) once no new event arrived for DEBOUNCE.
-static PENDING_CHANGES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+static PENDING_CHANGES: OnceLock<Mutex<HashMap<String, PendingChange>>> = OnceLock::new();
 
-fn pending_changes() -> &'static Mutex<HashMap<String, Instant>> {
+fn pending_changes() -> &'static Mutex<HashMap<String, PendingChange>> {
     PENDING_CHANGES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 /// Initialize the filesystem watcher. Call once during app setup.
@@ -80,7 +99,13 @@ pub fn init_watcher(app: &AppHandle) {
             invalidate_dir_cache_sync(&dir);
 
             if let Ok(mut pending) = pending_changes().lock() {
-                pending.insert(dir, Instant::now());
+                pending.insert(
+                    dir,
+                    PendingChange {
+                        last_event: Instant::now(),
+                        observed_at_ms: unix_time_ms(),
+                    },
+                );
             }
         }
     });
@@ -115,26 +140,29 @@ pub fn init_watcher(app: &AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(FLUSH_INTERVAL);
 
-        let ready: Vec<String> = {
+        let ready: Vec<(String, u64)> = {
             let Ok(mut pending) = pending_changes().lock() else {
                 continue;
             };
             let now = Instant::now();
-            let ready: Vec<String> = pending
+            let ready: Vec<(String, u64)> = pending
                 .iter()
-                .filter(|(_, last)| now.duration_since(**last) >= DEBOUNCE)
-                .map(|(dir, _)| dir.clone())
+                .filter(|(_, change)| now.duration_since(change.last_event) >= DEBOUNCE)
+                .map(|(dir, change)| (dir.clone(), change.observed_at_ms))
                 .collect();
-            for dir in &ready {
+            for (dir, _) in &ready {
                 pending.remove(dir);
             }
             ready
         };
 
-        for dir in ready {
+        for (dir, observed_at_ms) in ready {
             if let Err(e) = app_handle.emit(
                 "directory-changed",
-                DirectoryChangedPayload { path: dir.clone() },
+                DirectoryChangedPayload {
+                    path: dir.clone(),
+                    observed_at_ms,
+                },
             ) {
                 log::warn!("Failed to emit directory-changed for {}: {}", dir, e);
             }

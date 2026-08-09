@@ -229,18 +229,16 @@ fn write_clipboard_file_paths(paths: &[String]) -> Result<(), AppError> {
     write_mime("x-special/gnome-copied-files", gnome_data.as_bytes())
 }
 
-/// Read raw image data (PNG) from the OS clipboard.
-/// Returns the raw bytes or None if no image is available.
 #[cfg(all(not(windows), not(target_os = "macos")))]
-fn read_clipboard_image() -> Option<Vec<u8>> {
+fn read_clipboard_image_type(media_type: &str) -> Option<Vec<u8>> {
     let output = if is_wayland() {
         Command::new("wl-paste")
-            .args(["--no-newline", "--type", "image/png"])
+            .args(["--no-newline", "--type", media_type])
             .output()
             .ok()?
     } else {
         Command::new("xclip")
-            .args(["-o", "-selection", "clipboard", "-t", "image/png"])
+            .args(["-o", "-selection", "clipboard", "-t", media_type])
             .output()
             .ok()?
     };
@@ -248,13 +246,32 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
     if !output.status.success() || output.stdout.is_empty() {
         return None;
     }
-
-    // Verify it looks like PNG data (magic bytes)
-    if output.stdout.len() < 8 || &output.stdout[..4] != b"\x89PNG" {
+    if crate::user_report::report_image_media_type(&output.stdout) != Some(media_type) {
         return None;
     }
-
     Some(output.stdout)
+}
+
+/// Read raw PNG image data from the OS clipboard for the existing paste-to-file
+/// command, whose output filename is always `.png`.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    read_clipboard_image_type("image/png")
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn read_clipboard_report_image() -> Option<(Vec<u8>, &'static str)> {
+    for media_type in ["image/png", "image/jpeg"] {
+        if let Some(bytes) = read_clipboard_image_type(media_type) {
+            return Some((bytes, media_type));
+        }
+    }
+    None
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn read_clipboard_report_image() -> Option<(Vec<u8>, &'static str)> {
+    read_clipboard_image().map(|bytes| (bytes, "image/png"))
 }
 
 /// Check if the clipboard contains image data.
@@ -263,6 +280,37 @@ pub async fn clipboard_has_image() -> bool {
     tokio::task::spawn_blocking(clipboard_has_image_sync)
         .await
         .unwrap_or(false)
+}
+
+/// Read a clipboard screenshot for a user report without creating a file in
+/// the current directory.
+#[tauri::command]
+pub async fn clipboard_read_report_image(
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    let (bytes, media_type) = tokio::task::spawn_blocking(read_clipboard_report_image)
+        .await
+        .map_err(|error| {
+            crate::user_report::SubmitReportError::new(
+                "clipboard_unavailable",
+                format!("Clipboard task failed: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            crate::user_report::SubmitReportError::new(
+                "clipboard_unavailable",
+                "No image data in clipboard",
+            )
+        })?;
+    let extension = if media_type == "image/jpeg" {
+        "jpg"
+    } else {
+        "png"
+    };
+    crate::user_report::attachment_from_image_bytes(
+        format!("Clipboard screenshot.{extension}"),
+        media_type,
+        bytes,
+    )
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]

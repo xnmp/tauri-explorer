@@ -53,6 +53,8 @@ import { explorerWindowAppearance } from "./window-appearance";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import type { ViewMode } from "./types";
+import { formatWindowTitle } from "../domain/tab-title";
+import { resolveLaunchHomePath } from "./window-title.svelte";
 
 // Reuse the "explorer-" label prefix so warm windows inherit the same Tauri
 // capability/ACL scope as normal child windows (capabilities/default.json lists
@@ -108,11 +110,10 @@ export async function spawnWarmWindow(): Promise<void> {
   // Park the warm window at the SPAWNER's current path so its boot-time init
   // navigates somewhere valid. Without this it fell back to "/home" (nonexistent
   // on macOS), producing a broken, multi-second list load on activation.
-  const parkPath =
-    windowTabsManager.getActiveExplorer()?.currentPath ||
-    (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ||
-    "/";
+  const homePath = resolveLaunchHomePath();
+  const parkPath = windowTabsManager.getActiveExplorer()?.currentPath || homePath || "/";
   const params = new URLSearchParams({ warm: "1", path: parkPath });
+  if (homePath) params.set("home", homePath);
 
   try {
     const win = new WebviewWindow(label, {
@@ -121,7 +122,7 @@ export async function spawnWarmWindow(): Promise<void> {
       height: 800,
       visible: false,
       skipTaskbar: true,
-      ...explorerWindowAppearance(),
+      ...explorerWindowAppearance(formatWindowTitle(parkPath, homePath)),
     });
     win.once("tauri://error", cancelReservation);
   } catch {
@@ -202,6 +203,7 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     activated = true;
     const tActivate = performance.now();
     const { path, viewMode, x, y, width, height } = event.payload;
+    const homePath = resolveLaunchHomePath();
 
     // The window may have been parked for minutes: re-read settings and theme
     // so the revealed window matches one created fresh right now (there is no
@@ -214,9 +216,10 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     }
 
     const explorer = windowTabsManager.getActiveExplorer();
+    let navigation: Promise<void> | undefined;
     if (explorer) {
       if (viewMode) explorer.setViewMode(viewMode);
-      void explorer.navigateTo(path);
+      navigation = explorer.navigateTo(path);
     }
 
     // Geometry first (positioning after show would visibly jump), but a
@@ -233,6 +236,10 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     } catch {
       // best effort — e.g. Wayland ignores setPosition
     }
+
+    // Set the final title while still hidden; showing first produces a visible
+    // stale-title frame in taskbars/window switchers.
+    await self.setTitle(formatWindowTitle(path, homePath)).catch(() => {});
 
     // The reveal — the one call that must happen.
     try {
@@ -263,6 +270,12 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
       /* unsupported platform */
     }
 
+    // Unlike a fresh child window, this webview was mounted while parked, so
+    // wait for the requested path before mounting BreadcrumbAutocomplete,
+    // which intentionally captures the explorer path only once on mount.
+    await navigation;
+    window.dispatchEvent(new Event("explorer:focus-address-bar"));
+
     // Activation latency telemetry (event received → window shown), durable in
     // the app log next to the Rust `Startup:` line.
     const dt = performance.now() - tActivate;
@@ -271,7 +284,7 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
 
   if (measure) {
     // Measurement probe: self-fire one activation, never join the pool.
-    const home = (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ?? "/";
+    const home = resolveLaunchHomePath() ?? "/";
     await emitTo(self.label, WARM_ACTIVATE_EVENT, {
       path: home,
       x: 100,

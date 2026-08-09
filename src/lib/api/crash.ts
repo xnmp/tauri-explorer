@@ -8,7 +8,7 @@
  */
 
 import { invoke } from "./files";
-import { dedupeFrontendCrash, recentLogsSection } from "$lib/domain/crash-report";
+import { dedupeFrontendCrash } from "$lib/domain/crash-report";
 
 export interface CrashReport {
   fileName: string;
@@ -37,14 +37,6 @@ export function recordFrontendCrash(message: string, stack?: string): Promise<vo
   return invoke<void>("record_frontend_crash", { message, stack: stack ?? null });
 }
 
-/**
- * Read the tail of the rotating log file (~50 lines by default) for embedding
- * in a bug report. Reads a local file only — never transmitted by the app.
- */
-export function readLogTail(maxLines = 50): Promise<string> {
-  return invoke<string>("read_log_tail", { maxLines }).catch(() => "");
-}
-
 /** Build the pre-filled GitHub issue URL for a crash report. */
 export function crashIssueUrl(report: CrashReport): string {
   const firstPanicLine =
@@ -69,51 +61,6 @@ export interface AppInfo {
 
 export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("get_app_info");
-}
-
-/** GitHub rejects very long URLs; keep the whole issue URL comfortably under. */
-const MAX_BUG_REPORT_URL_CHARS = 6000;
-
-/**
- * Pre-filled GitHub issue URL for a user-initiated bug report (#197, #302).
- *
- * When a `logTail` is supplied it is appended as a "Recent logs" section,
- * trimmed oldest-line-first so the whole URL stays under the length cap.
- *
- * Consent/privacy: the logs are placed into the GitHub *new issue form*, which
- * the user reviews and must click "Submit" on before anything is sent. The app
- * itself performs no network call — it only opens the pre-filled form.
- */
-export function bugReportUrl(info: AppInfo, logTail = ""): string {
-  const baseBody = [
-    "## What happened?",
-    "",
-    "<!-- What did you do, what did you expect, what happened instead? -->",
-    "",
-    "## Steps to reproduce",
-    "",
-    "1. ",
-    "",
-    "---",
-    `- Tauri Explorer: v${info.version}`,
-    `- OS: ${info.os} (${info.arch})`,
-    "- Logs: Command Palette → \"Open Logs Folder\" (attach the latest file if relevant)",
-    "",
-  ].join("\n");
-
-  const prefix = `${REPO_ISSUES_URL}?title=${encodeURIComponent("Bug: ")}&body=`;
-  // encodeURIComponent can expand characters up to ~3x, so shrink the log
-  // budget until the *encoded* URL fits rather than guessing an upfront cap.
-  let logBudget = 3500;
-  let url = `${prefix}${encodeURIComponent(baseBody)}`;
-  while (logBudget > 0) {
-    const section = recentLogsSection(logTail, logBudget);
-    const body = section ? `${baseBody}\n${section}` : baseBody;
-    url = `${prefix}${encodeURIComponent(body)}`;
-    if (url.length <= MAX_BUG_REPORT_URL_CHARS || !section) break;
-    logBudget -= 400;
-  }
-  return url;
 }
 
 /** Open an https URL in the system browser. */

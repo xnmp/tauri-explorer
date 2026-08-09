@@ -24,6 +24,11 @@ function nextTimestamp(): string {
   return new Date(TIMESTAMP_BASE + timestampSeq++ * TIMESTAMP_STEP_MS).toISOString();
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+function daysAgo(days: number): string {
+  return new Date(Date.now() - days * DAY_MS).toISOString();
+}
+
 // Helper to create mock file entry
 function file(name: string, path: string, size: number): FileEntry {
   return { name, path, kind: "file", size, modified: nextTimestamp() };
@@ -100,11 +105,11 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
   ],
   "/home/user/Documents": [
-    dir("project", "/home/user/Documents/project"),
-    file("report.pdf", "/home/user/Documents/report.pdf", 102400),
-    file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200),
-    file("presentation.pptx", "/home/user/Documents/presentation.pptx", 204800),
-    file("notes.md", "/home/user/Documents/notes.md", 4096),
+    { ...dir("project", "/home/user/Documents/project"), modified: daysAgo(150) },
+    { ...file("report.pdf", "/home/user/Documents/report.pdf", 102400), modified: daysAgo(35) },
+    { ...file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200), modified: daysAgo(5) },
+    { ...file("presentation.pptx", "/home/user/Documents/presentation.pptx", 204800), modified: daysAgo(1) },
+    { ...file("notes.md", "/home/user/Documents/notes.md", 4096), modified: daysAgo(0) },
   ],
   "/home/user/Downloads": [
     dir("wrapper", "/home/user/Downloads/wrapper", false),
@@ -363,6 +368,88 @@ function generateHugeDir(path: string, count: number): FileEntry[] {
   return entries;
 }
 
+// Synthetic all-image directory for Tiles scroll-jank regression coverage
+// (#593). Reached at `/perf/images` (default 500 entries) or `/perf/images-N`.
+// Every entry is an image file so every tile requests a thumbnail — `/perf/huge`
+// mixes in non-images and is too sparse to stress the thumbnail decode/paint
+// path specifically. Deterministic: realistic names/sizes derived from `i`.
+const IMAGE_EXTS = ["jpg", "jpg", "jpg", "png"]; // mostly jpg, some png
+const IMAGE_NAME_WORDS = ["sunset", "beach", "mountain", "forest", "city", "portrait", "family", "trip", "event", "wedding", "hike", "camp", "garden", "sky", "river"];
+const perfImagesCache = new Map<string, FileEntry[]>();
+function generateImagesDir(path: string, count: number): FileEntry[] {
+  const cached = perfImagesCache.get(path);
+  if (cached) return cached;
+  const entries: FileEntry[] = [];
+  for (let i = 0; i < count; i++) {
+    const idx = String(i).padStart(5, "0");
+    const word = IMAGE_NAME_WORDS[i % IMAGE_NAME_WORDS.length];
+    const ext = IMAGE_EXTS[i % IMAGE_EXTS.length];
+    entries.push({
+      name: `${word}-${idx}.${ext}`,
+      path: `${path}/${word}-${idx}.${ext}`,
+      kind: "file",
+      // Realistic photo sizes: ~800KB-4.5MB.
+      size: 800_000 + ((i * 104_729) % 3_700_000),
+      modified: new Date(TIMESTAMP_BASE + i * 173 * 1000).toISOString(),
+    });
+  }
+  perfImagesCache.set(path, entries);
+  return entries;
+}
+
+// Realistic per-path mock thumbnails (#593). A single hardcoded JPEG for
+// every request let the browser satisfy N tiles from ONE cached decoded
+// bitmap — real scroll jank only appears when N tiles each decode a DISTINCT
+// image, so that mock was structurally blind to the regression it should
+// have caught. Render a small deterministic canvas keyed by (path, size):
+// color + shapes derived from a hash of the path, so directories serve
+// visibly and byte-wise distinct images. Cached per key so repeated requests
+// (micro pre-warm, re-render, remount) don't regenerate. Falls back to the
+// static JPEGs at the call sites when canvas is unavailable (e.g. some test
+// environments lack a working 2D canvas / toDataURL).
+const mockThumbnailCache = new Map<string, string>();
+function hashPath(path: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < path.length; i++) {
+    h ^= path.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function generateMockThumbnail(path: string, size: number, quality: number): string | null {
+  const key = `${path}:${size}`;
+  const cached = mockThumbnailCache.get(key);
+  if (cached) return cached;
+  try {
+    if (typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const h = hashPath(path);
+    const hue = h % 360;
+    const hue2 = (h >>> 8) % 360;
+    ctx.fillStyle = `hsl(${hue}, 55%, 45%)`;
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = `hsl(${hue2}, 65%, 65%)`;
+    const shape = size * 0.4;
+    ctx.beginPath();
+    ctx.arc(size * 0.3, size * 0.3, shape / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsl(${(hue + 180) % 360}, 50%, 30%)`;
+    ctx.fillRect(size * 0.5, size * 0.5, shape, shape);
+    const dataUri = canvas.toDataURL("image/jpeg", Math.min(1, Math.max(0.1, quality / 100)));
+    // A canvas that fails to implement toDataURL (some headless shells)
+    // returns "data:," — treat that as unavailable rather than caching junk.
+    if (!dataUri || dataUri === "data:,") return null;
+    mockThumbnailCache.set(key, dataUri);
+    return dataUri;
+  } catch {
+    return null;
+  }
+}
+
 // ----- Synthetic load-test repositories (high-load stress suite) -----
 //
 // A pool of git-repo folders under Documents that the load E2E suite navigates
@@ -402,11 +489,25 @@ if (loadReposEnabled) {
   }
 }
 
+/** True for `/perf/huge` or `/perf/huge-N` (synthetic large-listing dir). */
+function isPerfHugePath(path: string): boolean {
+  return path === "/perf/huge" || path.startsWith("/perf/huge-");
+}
+
+/** True for `/perf/images` or `/perf/images-N` (synthetic all-image dir). */
+function isPerfImagesPath(path: string): boolean {
+  return path === "/perf/images" || path.startsWith("/perf/images-");
+}
+
 // Get directory entries with default empty array for unknown paths
 function getDirectoryEntries(path: string): FileEntry[] {
-  if (path === "/perf/huge" || path.startsWith("/perf/huge-")) {
+  if (isPerfHugePath(path)) {
     const m = path.match(/^\/perf\/huge-(\d+)$/);
     return generateHugeDir(path, m ? parseInt(m[1], 10) : 5000);
+  }
+  if (isPerfImagesPath(path)) {
+    const m = path.match(/^\/perf\/images-(\d+)$/);
+    return generateImagesDir(path, m ? parseInt(m[1], 10) : 500);
   }
   return mockFiles[path] || [];
 }
@@ -433,6 +534,7 @@ type CommandHandler = (args: Record<string, unknown>) => unknown;
 /** Tracks paths added to .gitignore via the mocked git_add_to_gitignore so
  *  the SCM panel can hide newly-ignored entries on next git_status. */
 const mockGitignored = new Set<string>();
+const mockGitArchived = new Set<string>();
 
 // ----- Stateful in-memory git repo (mirrors src-tauri/src/git.rs contract) -----
 //
@@ -484,6 +586,30 @@ function seedGitState(): MockGitState {
 
 let mockGit: MockGitState = seedGitState();
 
+// Per-file hunk state lets browser tests exercise the same partial staging
+// outcome as the real `git apply` command rather than pretending a hunk is a
+// whole-file operation.
+const mockHunkState = new Map<string, { staged: Set<number>; discarded: Set<number> }>();
+const MOCK_HUNK_STARTS = [1, 10] as const;
+
+function hunkState(path: string): { staged: Set<number>; discarded: Set<number> } {
+  let state = mockHunkState.get(path);
+  if (!state) {
+    // Seeded/whole-file staged entries already live entirely in the index.
+    // Their diff must therefore expose every mock hunk on the staged side,
+    // even before any hunk-level action has initialized this state.
+    const fullyStaged =
+      mockGit.staged.some((entry) => entry.path === path) &&
+      !mockGit.changes.some((entry) => entry.path === path);
+    state = {
+      staged: new Set(fullyStaged ? MOCK_HUNK_STARTS : []),
+      discarded: new Set(),
+    };
+    mockHunkState.set(path, state);
+  }
+  return state;
+}
+
 function removeFrom(list: GitFileEntry[], path: string): GitFileEntry | undefined {
   const idx = list.findIndex((e) => e.path === path);
   if (idx < 0) return undefined;
@@ -499,12 +625,18 @@ function mockStagePath(path: string): void {
   const fromUntracked = removeFrom(mockGit.untracked, path);
   if (fromUntracked) {
     upsert(mockGit.staged, { path, old_path: null, status: "Added" });
+    const state = hunkState(path);
+    state.staged = new Set(MOCK_HUNK_STARTS);
+    state.discarded.clear();
     return;
   }
   const fromMerge = removeFrom(mockGit.merge, path);
   const fromChanges = removeFrom(mockGit.changes, path);
   if (fromChanges || fromMerge) {
     upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+    const state = hunkState(path);
+    state.staged = new Set(MOCK_HUNK_STARTS);
+    state.discarded.clear();
   }
 }
 
@@ -512,6 +644,9 @@ function mockStagePath(path: string): void {
 function mockUnstagePath(path: string): void {
   const staged = removeFrom(mockGit.staged, path);
   if (!staged) return;
+  const state = hunkState(path);
+  state.staged.clear();
+  state.discarded.clear();
   if (staged.status === "Added") {
     upsert(mockGit.untracked, { path, old_path: null, status: "Untracked" });
   } else {
@@ -540,6 +675,8 @@ function mockDiscardPath(path: string, force: boolean): void {
   removeFrom(mockGit.changes, path);
   removeFrom(mockGit.untracked, path);
   removeFrom(mockGit.merge, path);
+  const state = hunkState(path);
+  state.discarded = new Set(MOCK_HUNK_STARTS);
 }
 
 function mockGitSummary(): GitStatusSummary {
@@ -572,15 +709,20 @@ if (typeof window !== "undefined") {
     __mockGitSetClean?: () => void;
     __mockGitStartMergeConflict?: () => void;
     __mockGitState?: () => MockGitState;
+    __mockGitArchived?: string[];
   };
   // Reset the repo to its seed state (mock/browser only).
   w.__mockGitReset = () => {
     mockGit = seedGitState();
+    mockHunkState.clear();
     mockGitCommits.length = 0;
     mockGitignored.clear();
+    mockGitArchived.clear();
+    w.__mockGitArchived = [];
   };
   // Recorded commits, so tests can assert the message that was committed.
   w.__mockGitCommits = mockGitCommits;
+  w.__mockGitArchived = [];
   // Simulate an edit made outside the app (e.g. another process): add a
   // modified file to the working tree and fire the watcher change so the
   // SCM store re-fetches, exactly as the real filesystem watcher would.
@@ -632,7 +774,17 @@ interface MockCommit {
   author_email: string;
   author_time: number;
   summary: string;
+  stash?: string;
 }
+
+/**
+ * A single, unbroken, far-wider-than-the-panel path, used by commit 11's
+ * changed-file list (#500). Deliberately has no separator in its final
+ * segment, so a fix that only relies on breaking at `/` still overflows.
+ */
+export const MOCK_LONG_COMMIT_FILE_PATH =
+  "src/lib/components/experimental/deeply/nested/generated/" +
+  "AnExtremelyLongGeneratedComponentFileNameThatOverflowsThePanel.svelte";
 
 /** Deterministic 40-char hex OID from a small commit number. */
 function fullOid(n: number): string {
@@ -905,9 +1057,46 @@ function mockAddRef(name: string, kind: MockRefKind, oid: string): void {
   (MOCK_GRAPH_REFS[oid] ??= []).push({ name, kind });
 }
 
-/** Point HEAD (and, when checking out a branch, follow it) at `oid`. */
+function mockFindRef(name: string, kind: MockRefKind): string | null {
+  for (const [oid, refs] of Object.entries(MOCK_GRAPH_REFS)) {
+    if (refs.some((ref) => ref.name === name && ref.kind === kind)) return oid;
+  }
+  return null;
+}
+
+function mockRemoveRef(name: string, kind: MockRefKind): string | null {
+  const oid = mockFindRef(name, kind);
+  if (!oid) return null;
+  MOCK_GRAPH_REFS[oid] = MOCK_GRAPH_REFS[oid].filter(
+    (ref) => ref.name !== name || ref.kind !== kind,
+  );
+  if (MOCK_GRAPH_REFS[oid].length === 0) delete MOCK_GRAPH_REFS[oid];
+  return oid;
+}
+
+/** Point HEAD (and, when checking out a branch, follow it) at `oid`. Leaves
+ *  the attached/detached mode alone — committing or resetting while detached
+ *  keeps HEAD detached, exactly like git. */
 function mockMoveHead(oid: string): void {
   mockMoveRef("HEAD", "Head", oid);
+}
+
+/** True while the mock repo's HEAD points straight at a commit rather than a
+ *  branch (#524). Flipped only by the checkout mocks, mirroring git. */
+let mockDetached = false;
+
+/** Check out `oid`. `branch` is the local branch HEAD follows, or null for a
+ *  detached checkout (a raw OID, a tag, or a remote-tracking branch). */
+function mockCheckout(oid: string, branch: string | null): void {
+  mockDetached = branch === null;
+  mockMoveHead(oid);
+}
+
+/** Is `name` a local branch in the mock graph? */
+function mockIsLocalBranch(name: string): boolean {
+  return Object.values(MOCK_GRAPH_REFS).some((list) =>
+    list.some((r) => r.name === name && r.kind === "LocalBranch"),
+  );
 }
 
 /** Append a synthetic commit onto the current HEAD and advance main + HEAD to
@@ -927,8 +1116,11 @@ function mockAppendCommit(summary: string): string {
     summary,
   });
   // Advance whatever local branch HEAD was on (default: main), then HEAD.
-  const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
-  mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+  // While detached, HEAD moves alone — no branch follows it, like git (#524).
+  if (!mockDetached) {
+    const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+    mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+  }
   mockMoveHead(oid);
   return oid;
 }
@@ -1036,17 +1228,28 @@ const mockCommands: Record<string, CommandHandler> = {
     );
     return undefined;
   },
-  // Log tail (#302): fake recent log lines so the bug-report URL carries a
-  // populated "Recent logs" section in e2e.
-  read_log_tail: () =>
-    [
-      "[2024-01-01][12:00:00][INFO] tauri_explorer: started",
-      "[2024-01-01][12:00:01][WARN] tauri_explorer: slow directory listing",
-      "[2024-01-01][12:00:02][ERROR] tauri_explorer::files: permission denied",
-    ].join("\n"),
   open_external_url: (args) => {
+    if (localStorage.getItem("mock-open-url-error") === "1") {
+      throw new Error("Mock browser handoff failed");
+    }
     localStorage.setItem("mock-opened-url", args.url as string);
     return undefined;
+  },
+  submit_user_report: (args) => {
+    localStorage.setItem("mock-submitted-report", JSON.stringify(args));
+    const error = localStorage.getItem("mock-report-error");
+    if (error) {
+      throw {
+        kind: error,
+        message: error === "daily_cap"
+          ? "Reports are temporarily unavailable"
+          : "Unable to submit report",
+      };
+    }
+    return {
+      url: "https://github.com/xnmp/tauri-explorer/issues/5470",
+      number: 5470,
+    };
   },
 
   // Update check (#185): a newer release is simulated when the e2e test
@@ -1068,8 +1271,8 @@ const mockCommands: Record<string, CommandHandler> = {
   list_directory: (args) => {
     const raw = args.path as string;
     const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    const isPerfHuge = path === "/perf/huge" || path.startsWith("/perf/huge-");
-    if (!isPerfHuge && !(path in mockFiles)) {
+    const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
+    if (!isSynthetic && !(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }
     const entries = sortListing(getDirectoryEntries(path));
@@ -1122,8 +1325,8 @@ const mockCommands: Record<string, CommandHandler> = {
   start_streaming_directory: (args) => {
     const raw = args.path as string;
     const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    const isPerfHuge = path === "/perf/huge" || path.startsWith("/perf/huge-");
-    if (!isPerfHuge && !(path in mockFiles)) {
+    const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
+    if (!isSynthetic && !(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }
     const entries = sortListing(getDirectoryEntries(path));
@@ -1307,6 +1510,14 @@ const mockCommands: Record<string, CommandHandler> = {
 
   fuzzy_search: (args) => {
     const query = (args.query as string).toLowerCase();
+    // Browser mode falls back to this complete-result search when Tauri event
+    // streaming is unavailable; record the same Quick Open search boundary as
+    // `start_streaming_search` below.
+    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+      query: string;
+    }>;
+    calls.push({ query: String(args.query ?? "") });
+    localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
     const root = (args.root as string) || "/home/user";
     const limit = args.limit as number || 20;
     const results: Array<{ name: string; path: string; relativePath: string; score: number; kind: "file" | "directory" }> = [];
@@ -1339,7 +1550,15 @@ const mockCommands: Record<string, CommandHandler> = {
     return { results: results.slice(0, limit) };
   },
 
-  start_streaming_search: () => {
+  start_streaming_search: (args) => {
+    // Browser Quick Open regressions can assert the real component's IPC
+    // boundary without replacing its search API. This stays mock-only: the
+    // production backend never reads this diagnostic key.
+    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+      query: string;
+    }>;
+    calls.push({ query: String(args.query ?? "") });
+    localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
     return 1; // Mock search ID
   },
 
@@ -1436,14 +1655,31 @@ const mockCommands: Record<string, CommandHandler> = {
     throw new Error("Thumbnails not available in mock mode");
   },
 
-  get_thumbnail_data: () => {
-    // Real 128px thumbnail from beautiful.jpg for realistic mock
-    return "data:image/jpeg;base64,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";
+  get_thumbnail_data: (args) => {
+    // #593 regression guard: a single hardcoded JPEG for every path let the
+    // browser satisfy N tiles from ONE cached decoded bitmap, hiding scroll
+    // jank that only appears when N distinct images must each be decoded.
+    // Render a per-path canvas instead; fall back to the static JPEG below
+    // when canvas is unavailable.
+    const path = (args.path as string) ?? "";
+    const size = (args.size as number) ?? 128;
+    const quality = (args.quality as number) ?? 90;
+    return (
+      generateMockThumbnail(path, size, quality) ??
+      // Real 128px thumbnail from beautiful.jpg — fallback when canvas is unavailable.
+      "data:image/jpeg;base64,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"
+    );
   },
 
-  get_micro_thumbnail: () => {
-    // Real 16px micro thumbnail for progressive loading preview
-    return "data:image/jpeg;base64,/9j//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgUFBcUFxsbGxsbGyAeICEhISAgICAhISEkJCQqKiokJCQhISQkKCgqKi4vLisrKisvLzIyMjw8OTlGRkhWVmf/xABiAAEBAQAAAAAAAAAAAAAAAAAGAwUBAQAAAAAAAAAAAAAAAAAAAAQQAAIBAwQCAwEAAAAAAAAAAAECAxESACExIgRxYRNBUTIRAQACAwEBAAAAAAAAAAAAAAEhADFBAoED/8AAEQgAEAAQAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AjOYesy3q4rUW2Vq3o4en70YNEis21Ycq+M3WvdI7ecjm0En+PwA/VddsDTjrpGx+UO9RooLbb8mpp4GN4UJZKn6Zjfl//9k=";
+  get_micro_thumbnail: (args) => {
+    const path = (args.path as string) ?? "";
+    const size = (args.prewarmSize as number) ?? 16;
+    const quality = (args.prewarmQuality as number) ?? 50;
+    return (
+      generateMockThumbnail(path, size, quality) ??
+      // Real 16px micro thumbnail — fallback when canvas is unavailable.
+      "data:image/jpeg;base64,/9j//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgUFBcUFxsbGxsbGyAeICEhISAgICAhISEkJCQqKiokJCQhISQkKCgqKi4vLisrKisvLzIyMjw8OTlGRkhWVmf/xABiAAEBAQAAAAAAAAAAAAAAAAAGAwUBAQAAAAAAAAAAAAAAAAAAAAQQAAIBAwQCAwEAAAAAAAAAAAECAxESACExIgRxYRNBUTIRAQACAwEBAAAAAAAAAAAAAAEhADFBAoED/8AAEQgAEAAQAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AjOYesy3q4rUW2Vq3o4en70YNEis21Ycq+M3WvdI7ecjm0En+PwA/VddsDTjrpGx+UO9RooLbb8mpp4GN4UJZKn6Zjfl//9k="
+    );
   },
 
   read_image_data_url: () => {
@@ -1525,6 +1761,7 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     return { is_git_repo: false, statuses: {} };
   },
+  cancel_get_git_status: () => {},
 
   // ----- SCM git backend (#53) mock -----
 
@@ -1547,6 +1784,30 @@ const mockCommands: Record<string, CommandHandler> = {
       mockGitignored.add(entry);
     }
     return entry;
+  },
+
+  git_archive_untracked: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    if (paths.length === 0 || new Set(paths).size !== paths.length || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+      throw new Error("refusing to operate on non-untracked path");
+    }
+    for (const path of paths) {
+      removeFrom(mockGit.untracked, path);
+      mockGitArchived.add(`.archive/${path}`);
+    }
+    if (typeof window !== "undefined") {
+      (window as unknown as { __mockGitArchived?: string[] }).__mockGitArchived = [...mockGitArchived];
+    }
+    return null;
+  },
+
+  git_trash_untracked: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    if (paths.length === 0 || new Set(paths).size !== paths.length || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+      throw new Error("refusing to operate on non-untracked path");
+    }
+    for (const path of paths) removeFrom(mockGit.untracked, path);
+    return null;
   },
 
   git_status: (args: Record<string, unknown>) => {
@@ -1581,6 +1842,7 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     return mockGitSummary();
   },
+  cancel_git_status: () => {},
 
   git_commit_files: (args) => {
     const oid = args.oid as string;
@@ -1593,8 +1855,27 @@ const mockCommands: Record<string, CommandHandler> = {
         { path: "src/index.ts", status: "M" },
       ];
     }
+    // Commit 11 carries a deliberately over-long path so the changed-files
+    // list's overflow behaviour is exercisable end-to-end (#500). No other
+    // spec asserts on this commit's file list.
+    if (n === 11) {
+      return [{ path: MOCK_LONG_COMMIT_FILE_PATH, status: "M" }];
+    }
+    // A deliberately long list for the changed-files overflow contract (#510).
+    // Keep the paths distinct and ordered so browser tests can scroll to the
+    // final row rather than merely asserting an implementation detail.
+    if (n === 10) {
+      return Array.from({ length: 24 }, (_, index) => ({
+        path: `src/generated/many-files/file-${String(index + 1).padStart(2, "0")}.ts`,
+        status: index % 2 === 0 ? "M" : "A",
+      }));
+    }
     return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
   },
+  git_compare_commit_files: () => [
+    { path: "src/compared.ts", status: "M" },
+    { path: "src/introduced-in-comparison.ts", status: "A" },
+  ],
   git_commit_file_diff: (args) => {
     // Deterministic tiny patch so E2E can assert the inline diff (#221).
     const filePath = args.filePath as string;
@@ -1609,6 +1890,20 @@ const mockCommands: Record<string, CommandHandler> = {
       "",
     ].join("\n");
   },
+  git_compare_commit_file_diff: (args) => {
+    const filePath = args.filePath as string;
+    const baseOid = args.baseOid as string;
+    const targetOid = args.targetOid as string;
+    return [
+      `diff --git a/${filePath} b/${filePath}`,
+      `--- a/${filePath}`,
+      `+++ b/${filePath}`,
+      "@@ -1 +1 @@",
+      `-older ${baseOid.slice(0, 7)}`,
+      `+newer ${targetOid.slice(0, 7)}`,
+      "",
+    ].join("\n");
+  },
   git_stage: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
     for (const p of paths) mockStagePath(p);
@@ -1617,6 +1912,30 @@ const mockCommands: Record<string, CommandHandler> = {
   git_unstage: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
     for (const p of paths) mockUnstagePath(p);
+    return null;
+  },
+  git_apply_patch: (args: Record<string, unknown>) => {
+    const patch = String(args.patch ?? "");
+    const action = args.action as "stage" | "unstage" | "discard";
+    const path = patch.match(/^\+\+\+ b\/(.+)$/m)?.[1];
+    if (!path) throw new Error("patch is missing its target path");
+    const hunkMatch = patch.match(/^@@ -(\d+)/m);
+    if (!hunkMatch) throw new Error("patch is missing its hunk header");
+    const hunk = Number(hunkMatch[1]);
+    const state = hunkState(path);
+    if (action === "stage") {
+      state.staged.add(hunk);
+      upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+      // A partially staged file remains in Changes as well as Staged. Once
+      // both mock hunks are staged, its worktree side is exhausted.
+      if (state.staged.size >= 2) removeFrom(mockGit.changes, path);
+    } else if (action === "unstage") {
+      state.staged.delete(hunk);
+      if (state.staged.size === 0) removeFrom(mockGit.staged, path);
+      upsert(mockGit.changes, { path, old_path: null, status: "Modified" });
+    } else {
+      state.discarded.add(hunk);
+    }
     return null;
   },
   git_discard: (args: Record<string, unknown>) => {
@@ -1667,6 +1986,7 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_diff: (args: Record<string, unknown>) => {
     const p = args.path as string;
+    const staged = !!((args.options as { staged?: boolean } | null)?.staged);
     // Binary files show a marker rather than a textual hunk.
     if (/\.(png|jpg|jpeg|gif|webp|ico|bin|exe|zip|pdf)$/i.test(p)) {
       return [
@@ -1676,19 +1996,19 @@ const mockCommands: Record<string, CommandHandler> = {
         "",
       ].join("\n");
     }
-    // Real code lines so diff syntax highlighting is exercised (#246).
-    return [
+    // Two distant hunks make partial stage/unstage/discard observable in the
+    // running browser, matching the real patch command's semantics.
+    const state = hunkState(p);
+    const visible = (hunk: number) => staged ? state.staged.has(hunk) : !state.staged.has(hunk) && !state.discarded.has(hunk);
+    const lines = [
       `diff --git a/${p} b/${p}`,
       "index 1111111..2222222 100644",
       `--- a/${p}`,
       `+++ b/${p}`,
-      "@@ -1,4 +1,4 @@",
-      ' import { useState } from "react";',
-      "-export function App() { return null; }",
-      "+export function App() { return <div>hello</div>; }",
-      ' const VERSION = "1.0";',
-      "",
-    ].join("\n");
+    ];
+    if (visible(1)) lines.push("@@ -1,3 +1,3 @@", " import { useState } from \"react\";", "-export function App() { return null; }", "+export function App() { return <div>first hunk</div>; }");
+    if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
+    return [...lines, ""].join("\n");
   },
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,
@@ -1720,7 +2040,16 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
   git_fetch: () => null,
-  git_pull: () => null,
+  git_pull: () => {
+    const before_oid = mockHeadOid();
+    const branch =
+      mockDetached
+        ? null
+        : (MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
+          null;
+    const after_oid = mockAppendCommit("Pull from upstream");
+    return { kind: "head_move", operation: "pull", branch, before_oid, after_oid };
+  },
   // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
   git_branch_behind_upstream: (args: Record<string, unknown>) =>
     args.name === "hotfix" ? 2 : args.name === "main" ? 0 : null,
@@ -1733,7 +2062,76 @@ const mockCommands: Record<string, CommandHandler> = {
     { name: "origin/hotfix", author: "Alice Coder", remote: true },
     { name: "origin/legacy-import", author: "Bob Dev", remote: true },
   ],
-  git_delete_branch: () => null,
+  git_delete_branch: (args: Record<string, unknown>) => {
+    const name = (args.name as string) ?? "";
+    const target = mockRemoveRef(name, "LocalBranch");
+    if (!target) throw new Error(`branch '${name}' does not exist`);
+    return { kind: "branch_delete", name, target };
+  },
+  git_delete_tag: (args: Record<string, unknown>) => {
+    const name = (args.name as string) ?? "";
+    const target = mockRemoveRef(name, "Tag");
+    if (!target) throw new Error(`tag '${name}' does not exist`);
+    return { kind: "tag_delete", name, target };
+  },
+  git_rename_branch: (args: Record<string, unknown>) => {
+    const old_name = (args.oldName as string) ?? "";
+    const new_name = (args.newName as string) ?? "";
+    const target = mockRemoveRef(old_name, "LocalBranch");
+    if (!target) throw new Error(`branch '${old_name}' does not exist`);
+    if (mockFindRef(new_name, "LocalBranch")) {
+      mockAddRef(old_name, "LocalBranch", target);
+      throw new Error(`branch '${new_name}' already exists`);
+    }
+    mockAddRef(new_name, "LocalBranch", target);
+    return { kind: "branch_rename", old_name, new_name, target };
+  },
+  git_undo: (args: Record<string, unknown>) => {
+    const action = args.action as {
+      kind: string;
+      name?: string;
+      target?: string;
+      old_name?: string;
+      new_name?: string;
+      branch?: string | null;
+      before_oid?: string;
+      after_oid?: string;
+    };
+    if (action.kind === "branch_delete") {
+      if (mockFindRef(action.name!, "LocalBranch")) {
+        throw new Error(`branch '${action.name}' already exists; undo is no longer safe`);
+      }
+      mockAddRef(action.name!, "LocalBranch", action.target!);
+      return null;
+    }
+    if (action.kind === "tag_delete") {
+      if (mockFindRef(action.name!, "Tag")) {
+        throw new Error(`tag '${action.name}' already exists; undo is no longer safe`);
+      }
+      mockAddRef(action.name!, "Tag", action.target!);
+      return null;
+    }
+    if (action.kind === "branch_rename") {
+      if (
+        mockFindRef(action.old_name!, "LocalBranch") ||
+        mockFindRef(action.new_name!, "LocalBranch") !== action.target
+      ) {
+        throw new Error("branch state changed; undo is no longer safe");
+      }
+      mockRemoveRef(action.new_name!, "LocalBranch");
+      mockAddRef(action.old_name!, "LocalBranch", action.target!);
+      return null;
+    }
+    if (action.kind === "head_move") {
+      if (mockHeadOid() !== action.after_oid) {
+        throw new Error("HEAD moved since the operation; undo is no longer safe");
+      }
+      if (action.branch) mockMoveRef(action.branch, "LocalBranch", action.before_oid!);
+      mockMoveHead(action.before_oid!);
+      return null;
+    }
+    throw new Error("unknown git undo action");
+  },
   git_delete_remote_branch: () => null,
 
   // Tracking checkout (#432): create a local branch tracking <remote>/<name>
@@ -1745,13 +2143,13 @@ const mockCommands: Record<string, CommandHandler> = {
     // Already-existing local branch → plain checkout.
     const existing = mockResolveTarget(name);
     if (existing) {
-      mockMoveHead(existing);
+      mockCheckout(existing, name);
       return null;
     }
     const oid = mockResolveTarget(`${remote}/${name}`);
     if (!oid) throw new Error(`no remote branch '${remote}/${name}'`);
     mockAddRef(name, "LocalBranch", oid);
-    mockMoveHead(oid);
+    mockCheckout(oid, name);
     return null;
   },
 
@@ -1790,17 +2188,27 @@ const mockCommands: Record<string, CommandHandler> = {
         has_more: start + limit < all.length,
         next_cursor: page.length > 0 ? page[page.length - 1].oid : null,
         head_branch: "main",
+        detached: false,
       };
     }
     if (!repoPath.startsWith("/home/user/Documents/project")) {
-      return { commits: [], refs: {}, has_more: false, next_cursor: null, head_branch: null };
+      return {
+        commits: [],
+        refs: {},
+        has_more: false,
+        next_cursor: null,
+        head_branch: null,
+        detached: false,
+      };
     }
     const options =
       (args.options as {
         skip?: number;
         limit?: number;
         branches?: string[];
+        exclude_branches?: string[];
         cursor?: string;
+        file_path?: string;
       } | null) ?? {};
     const skip = Math.max(0, options.skip ?? 0);
     const limit = Math.max(1, options.limit ?? 500);
@@ -1810,18 +2218,27 @@ const mockCommands: Record<string, CommandHandler> = {
     // commits reachable from the selected branch tips; stash rows survive
     // only when their base commit does. An EMPTY selection seeds nothing and
     // yields no commits (#413), exactly like the backend.
-    if (options.branches) {
+    //
+    // `exclude_branches` (#515) is subtractive and applies to BOTH seed sets:
+    // with no selection the seeds are HEAD + every branch minus the excluded
+    // ones, so dropping a remote-only branch never unseeds HEAD.
+    const excluded = new Set(options.exclude_branches ?? []);
+    if (options.branches || excluded.size > 0) {
       const tips = new Map<string, string>();
       for (const [oid, refList] of Object.entries(MOCK_GRAPH_REFS)) {
         for (const r of refList) {
           if (r.kind === "LocalBranch" || r.kind === "RemoteBranch") tips.set(r.name, oid);
         }
       }
+      const seeds = options.branches ?? [...tips.keys()];
       const byOid = new Map(all.filter((c) => !("stash" in c)).map((c) => [c.oid, c]));
       const reachable = new Set<string>();
-      const queue = options.branches
+      const queue = seeds
+        .filter((n) => !excluded.has(n))
         .map((n) => tips.get(n))
         .filter((o): o is string => o !== undefined);
+      // HEAD is always seeded when there is no explicit selection.
+      if (!options.branches) queue.push(mockHeadOid());
       while (queue.length > 0) {
         const oid = queue.pop()!;
         if (reachable.has(oid)) continue;
@@ -1832,6 +2249,16 @@ const mockCommands: Record<string, CommandHandler> = {
       all = all.filter((c) =>
         "stash" in c ? reachable.has(c.parents[0]) : reachable.has(c.oid),
       );
+    }
+    if (options.file_path?.trim()) {
+      const path = options.file_path.trim();
+      all = all.filter((commit) => {
+        if ("stash" in commit) return false;
+        const n = parseInt(commit.oid.slice(0, 4), 16);
+        if (n === 12) return path === "src/feature-x.ts" || path === "src/index.ts" || path === "src/index.css";
+        if (n === 11) return path === MOCK_LONG_COMMIT_FILE_PATH;
+        return path === `src/file-${n}.ts`;
+      });
     }
     // Cursor resume (#431): mirror the backend — discard up to and including
     // the cursor OID (a real commit), then take `limit`. Falls back to `skip`
@@ -1854,8 +2281,11 @@ const mockCommands: Record<string, CommandHandler> = {
     // Checked-out branch: the first local branch decorating HEAD's commit —
     // matches the convention used by the mutating mocks (#433 highlight).
     const headOid = mockHeadOid();
-    const headBranch =
-      (MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null;
+    // Detached HEAD has no symbolic target even when branches decorate the
+    // same commit (#524).
+    const headBranch = mockDetached
+      ? null
+      : ((MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null);
     // Test hook (like __MOCK_LATENCY__): force `has_more` so the infinite-
     // scroll loading row (#433) is reachable/observable with a small history.
     const forceHasMore =
@@ -1866,6 +2296,7 @@ const mockCommands: Record<string, CommandHandler> = {
       has_more: hasMore || forceHasMore,
       next_cursor: nextCursor,
       head_branch: headBranch,
+      detached: mockDetached,
     };
   },
 
@@ -1887,26 +2318,28 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     // Tips mirror MOCK_GRAPH_REFS (the git_log decorations) so the branch
     // filter's list and the graph's chips can't drift (#342).
-    const tip = fullOid(16);
+    const local_branches: Array<{ name: string; target: string }> = [];
+    const remote_branches: Array<{ name: string; target: string }> = [];
+    const tags: Array<{ name: string; target: string }> = [];
+    for (const [target, refList] of Object.entries(MOCK_GRAPH_REFS)) {
+      for (const ref of refList) {
+        if (ref.kind === "LocalBranch") local_branches.push({ name: ref.name, target });
+        else if (ref.kind === "RemoteBranch") remote_branches.push({ name: ref.name, target });
+        else if (ref.kind === "Tag") tags.push({ name: ref.name, target });
+      }
+    }
     return {
-      local_branches: [
-        { name: "main", target: tip },
-        { name: "release", target: tip },
-        { name: "hotfix", target: fullOid(13) },
-        { name: "experiment", target: fullOid(14) },
-        { name: "feature", target: fullOid(10) },
-      ],
-      remote_branches: [
-        { name: "origin/main", target: tip },
-        { name: "origin/hotfix", target: fullOid(13) },
-      ],
-      tags: [
-        { name: "v1.0", target: fullOid(5) },
-        { name: "v0.9", target: fullOid(1) },
-      ],
-      head: tip,
-      head_branch: "main",
-      detached: false,
+      local_branches,
+      remote_branches,
+      tags,
+      // HEAD tracks the mutating checkout mocks, so the refs payload agrees
+      // with git_log's about the detached state (#524).
+      head: mockHeadOid(),
+      head_branch: mockDetached
+        ? null
+        : ((MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find((r) => r.kind === "LocalBranch")?.name ??
+          null),
+      detached: mockDetached,
     };
   },
 
@@ -1918,7 +2351,26 @@ const mockCommands: Record<string, CommandHandler> = {
   git_open_prs: (args: Record<string, unknown>) => {
     const repoRoot = (args.repoRoot as string) ?? "";
     if (!repoRoot.startsWith("/home/user/Documents/project")) return [];
+    // Isolated graph fixture for #527's browser regression test. It is opt-in
+    // by URL so the shared default graph keeps its established PR topology.
+    const baseUpdateFixture = new URLSearchParams(window.location.search).has(
+      "gitGraphBaseUpdateFixture",
+    );
     return [
+      ...(baseUpdateFixture
+        ? [{
+            number: 27,
+            title: "Keep release branch current",
+            headRef: "release",
+            baseRef: "hotfix",
+            baseRemote: "origin",
+            htmlUrl: "https://github.com/mock/project/pull/27",
+            draft: false,
+            ciStatus: null,
+            reviewDecision: null,
+            commentCount: null,
+          }]
+        : []),
       {
         number: 7,
         title: "Add feature X",
@@ -1936,18 +2388,44 @@ const mockCommands: Record<string, CommandHandler> = {
         comments: [
           {
             author: "octocat",
-            createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            createdAt: daysAgo(150),
             body: "Nice work! Left a couple of small notes on the diff.",
           },
           {
             author: "reviewer-bot",
-            createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            createdAt: daysAgo(35),
             body: "CI is green. Approving once the naming nit is addressed.",
           },
           {
             author: null,
-            createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+            createdAt: daysAgo(5),
             body: "Thanks for the review — pushed a fixup.",
+          },
+        ],
+        reviewThreads: [
+          {
+            resolved: true,
+            comments: [
+              {
+                author: "octocat",
+                createdAt: daysAgo(120),
+                body: "Please use the shared parser here.",
+                path: "src/lib/parser.ts",
+                line: 42,
+              },
+            ],
+          },
+          {
+            resolved: false,
+            comments: [
+              {
+                author: "reviewer-bot",
+                createdAt: daysAgo(2),
+                body: "Could this retain the previous error context?",
+                path: "src/lib/parser.ts",
+                line: 87,
+              },
+            ],
           },
         ],
       },
@@ -1964,6 +2442,7 @@ const mockCommands: Record<string, CommandHandler> = {
         // empty-body / zero-comment path.
         body: null,
         comments: [],
+        reviewThreads: [],
       },
       {
         number: 15,
@@ -1977,8 +2456,23 @@ const mockCommands: Record<string, CommandHandler> = {
         commentCount: null,
         body: "Restores the post-login redirect that regressed in 2.3.1.",
         comments: [],
+        reviewThreads: null,
       },
     ];
+  },
+
+  git_failed_ci_checks: (args: Record<string, unknown>) => {
+    if (args.prNumber !== 12) return [];
+    return [{ name: "Unit tests", runId: 1201, jobId: 9001 }];
+  },
+
+  git_failed_ci_check_log: (args: Record<string, unknown>) => {
+    const check = args.check as { name?: string; runId?: number; jobId?: number };
+    if (check.runId !== 1201 || check.jobId !== 9001) throw new Error("Unknown CI check");
+    return {
+      checkName: check.name ?? "Unit tests",
+      log: "tests/unit/parser.test.ts > parser rejects invalid input\nAssertionError: expected true to be false",
+    };
   },
 
   // ----- Git graph mutating actions (VSCode Git Graph parity) -----
@@ -1987,7 +2481,9 @@ const mockCommands: Record<string, CommandHandler> = {
     const target = (args.target as string) ?? "";
     const oid = mockResolveTarget(target);
     if (!oid) throw new Error(`pathspec '${target}' did not match any file(s) known to git`);
-    mockMoveHead(oid);
+    // Only a local branch name reattaches HEAD; an OID, a tag or a remote
+    // branch detaches it, like git (#524).
+    mockCheckout(oid, mockIsLocalBranch(target) ? target : null);
     return null;
   },
   git_create_branch: (args: Record<string, unknown>) => {
@@ -1996,7 +2492,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const checkout = Boolean(args.checkout);
     if (name.length === 0) throw new Error("branch name must not be empty");
     mockAddRef(name, "LocalBranch", oid);
-    if (checkout) mockMoveHead(oid);
+    if (checkout) mockCheckout(oid, name);
     return null;
   },
   git_create_tag: (args: Record<string, unknown>) => {
@@ -2020,12 +2516,33 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_merge: (args: Record<string, unknown>) => {
     const target = (args.target as string) ?? "";
-    mockAppendCommit(`Merge ${target} into current branch`);
-    return null;
+    const before_oid = mockHeadOid();
+    const branch =
+      mockDetached
+        ? null
+        : (MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
+          null;
+    const after_oid = mockAppendCommit(`Merge ${target} into current branch`);
+    return { kind: "head_move", operation: "merge", branch, before_oid, after_oid };
   },
   git_rebase: (args: Record<string, unknown>) => {
     const oid = (args.oid as string) ?? "";
     mockAppendCommit(`Rebased onto ${oid.slice(0, 7)}`);
+    return null;
+  },
+  git_stash_apply: (args: Record<string, unknown>) => {
+    const stash = (args.stash as string) ?? "";
+    if (!mockCommitGraph().some((commit) => commit.stash === stash)) {
+      throw new Error(`stash '${stash}' not found`);
+    }
+    return null;
+  },
+  git_stash_pop: (args: Record<string, unknown>) => {
+    const stash = (args.stash as string) ?? "";
+    const graph = mockCommitGraph();
+    const index = graph.findIndex((commit) => commit.stash === stash);
+    if (index < 0) throw new Error(`stash '${stash}' not found`);
+    graph.splice(index, 1);
     return null;
   },
   git_reset: (args: Record<string, unknown>) => {
@@ -2035,9 +2552,12 @@ const mockCommands: Record<string, CommandHandler> = {
       throw new Error(`invalid reset mode: ${mode}`);
     }
     // Move the branch HEAD is on (default main) and HEAD to the target commit.
+    // A detached reset moves HEAD only (#524).
     const head = mockHeadOid();
-    const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
-    mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+    if (!mockDetached) {
+      const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+      mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+    }
     mockMoveHead(oid);
     return null;
   },
@@ -2165,11 +2685,20 @@ const mockCommands: Record<string, CommandHandler> = {
     return true;
   },
 
-  clipboard_has_image: () => false,
+  clipboard_has_image: () =>
+    localStorage.getItem("mock-report-clipboard-image") === "1",
+
+  clipboard_read_report_image: () => ({
+    name: "Clipboard screenshot.png",
+    mediaType: "image/png",
+    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  }),
 
   // ----- Commands that launch external processes (no-op in mock) -----
 
   open_file_with: () => {},
+
+  open_recycle_bin: () => {},
 
   open_in_terminal: () => {},
   list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
@@ -2230,13 +2759,48 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 };
 
-// In-memory config file store for mock mode
-const mockConfigFiles: Record<string, string> = {};
+/**
+ * localStorage key an e2e/unit test can set to pre-seed the mock config store
+ * with `{ [filename]: contents }` before the app boots.
+ *
+ * The mock config store is in-memory and starts empty, so without this there
+ * is no way to present the app with an EXISTING settings.json — every mock
+ * run looks like a fresh install. That blind spot is exactly what hid #506:
+ * a settings migration only runs against the durable store of record, which
+ * the mock could never populate.
+ */
+export const MOCK_CONFIG_SEED_KEY = "mock-config-files";
+
+/** In-memory config file store for mock mode, optionally test-seeded. */
+const mockConfigFiles: Record<string, string> = loadMockConfigSeed();
+
+function loadMockConfigSeed(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(MOCK_CONFIG_SEED_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        ([, v]) => typeof v === "string",
+      ) as [string, string][],
+    );
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Mock invoke function for browser-based testing.
  */
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const testWindow = globalThis as { __mockInvokeCounts?: Record<string, number> };
+  if (typeof window !== "undefined") {
+    testWindow.__mockInvokeCounts ??= {};
+    testWindow.__mockInvokeCounts[cmd] = (testWindow.__mockInvokeCounts[cmd] ?? 0) + 1;
+  }
+
   // Add small delay to simulate async operation
   await new Promise((resolve) => setTimeout(resolve, 10));
 

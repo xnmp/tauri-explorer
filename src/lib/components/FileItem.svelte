@@ -5,7 +5,7 @@
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
-  import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
+  import { getFileType, getFileIconColor, formatDate, formatAbsoluteDate } from "$lib/domain/file-types";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
@@ -63,6 +63,7 @@
   // Formatted column values, memoized per entry so re-renders triggered by
   // unrelated state (selection, clipboard, drop-target) never re-format.
   const dateText = $derived(formatDate(entry.modified));
+  const absoluteDateText = $derived(formatAbsoluteDate(entry.modified));
   const typeText = $derived(getFileType(entry));
   const sizeText = $derived(entry.kind === "file" ? formatSize(entry.size) : "");
 
@@ -137,7 +138,7 @@
 
   <!-- Date modified column -->
   {#if settingsStore.columnVisibility.date}
-  <div class="date-cell">
+  <div class="date-cell" title={absoluteDateText || undefined}>
     {dateText}
   </div>
   {/if}
@@ -177,7 +178,6 @@
     width: 100%;
     font-family: inherit;
     color: var(--text-primary);
-    transition: background var(--transition-fast), opacity var(--transition-fast);
     position: relative;
     box-sizing: border-box;
     height: 32px;

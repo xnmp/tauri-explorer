@@ -33,7 +33,7 @@ import { undoStore } from "./undo.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { toastStore } from "./toast.svelte";
 import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
-import { basename, joinPath, isInsideDir, isUncPath } from "$lib/domain/path";
+import { basename, joinPath, isInsideDir, isUncPath, parentDir } from "$lib/domain/path";
 
 export interface PaneMutationContext {
   coreState: ExplorerCoreState;
@@ -163,6 +163,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       ctx.markLocalMutation();
       dialogStore.cancelDelete();
       await navigateAwayIfNeeded(deletedPaths);
+      broadcastFileChange([...new Set(paths.map(parentDir))]);
       frecencyStore.pruneNonExistent();
       return null;
     }

@@ -4,7 +4,7 @@
  * detection, and binary-file handling.
  */
 import { describe, it, expect } from "vitest";
-import { parseUnifiedDiff } from "$lib/domain/diff";
+import { extractDiffHunks, parseUnifiedDiff } from "$lib/domain/diff";
 
 describe("parseUnifiedDiff", () => {
   it("classifies add, remove, and context lines with line numbers", () => {
@@ -121,6 +121,7 @@ describe("parseUnifiedDiff", () => {
       oldPath: null,
       newPath: null,
       lines: [],
+      hunks: [],
     });
   });
 
@@ -224,5 +225,56 @@ describe("parseUnifiedDiff header parsing inside hunks", () => {
     expect(diff.newPath).toBe("doc.txt");
     const kinds = diff.lines.map((l) => l.kind);
     expect(kinds).toEqual(["header", "meta", "meta", "hunk", "remove", "add"]);
+  });
+});
+
+describe("extractDiffHunks", () => {
+  const patch = [
+    "diff --git a/example.txt b/example.txt",
+    "index 1111111..2222222 100644",
+    "--- a/example.txt",
+    "+++ b/example.txt",
+    "@@ -1,4 +1,4 @@",
+    " alpha",
+    "-old first",
+    "+new first",
+    " omega",
+    "@@ -20,2 +20,2 @@",
+    "-old final",
+    "\\ No newline at end of file",
+    "+new final",
+    "\\ No newline at end of file",
+    "",
+  ].join("\n");
+
+  it("repeats the file preamble and emits one complete trailing-newline patch per hunk", () => {
+    const parsed = parseUnifiedDiff(patch);
+    const hunks = extractDiffHunks(patch, parsed.lines);
+
+    expect(hunks).toHaveLength(2);
+    for (const hunk of hunks) {
+      expect(hunk.patch).toMatch(/^diff --git a\/example\.txt b\/example\.txt\n/);
+      expect(hunk.patch).toContain("--- a/example.txt\n+++ b/example.txt\n");
+      expect(hunk.patch.endsWith("\n")).toBe(true);
+      expect(hunk.patch.match(/^@@ /gm)).toHaveLength(1);
+    }
+    expect(hunks[0].patch).toContain("@@ -1,4 +1,4 @@");
+    expect(hunks[0].patch).not.toContain("@@ -20,2 +20,2 @@");
+    expect(hunks[1].patch).toContain("@@ -20,2 +20,2 @@");
+  });
+
+  it("keeps no-newline markers on the final hunk and aligns patches to rendered headers", () => {
+    const parsed = parseUnifiedDiff(patch);
+    const hunks = extractDiffHunks(patch, parsed.lines);
+    const renderedHunkIndices = parsed.lines
+      .filter((line) => line.kind === "hunk")
+      .map((line) => line.index);
+
+    expect(hunks.map((hunk) => hunk.lineIndex)).toEqual(renderedHunkIndices);
+    expect(hunks[1].patch.match(/\\ No newline at end of file/g)).toHaveLength(2);
+  });
+
+  it("returns no fragments when a diff has no hunk headers", () => {
+    expect(extractDiffHunks("diff --git a/image.png b/image.png\nBinary files differ\n", [])).toEqual([]);
   });
 });

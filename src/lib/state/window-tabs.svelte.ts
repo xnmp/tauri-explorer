@@ -14,8 +14,10 @@ import type { PaneId, WindowTab, ExplorerTab, TabPane } from "./types";
 import {
   type PaneNode,
   type SplitPlacement,
+  type FocusDirection,
   leaf,
   leafIds,
+  leafInDirection,
   countLeaves,
   splitLeaf,
   splitNode,
@@ -26,7 +28,11 @@ import {
   leafSiblingContext,
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
-import { loadPersisted, savePersisted, removePersisted } from "./persisted";
+import {
+  createCoalescedPersister,
+  loadPersisted,
+  removePersisted,
+} from "./persisted";
 import { parentDir } from "$lib/domain/path";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
@@ -52,6 +58,7 @@ import {
 import { createClosedTabsStore } from "./closed-tabs";
 import { disposeScmStore } from "./scm.svelte";
 import { disposeCommitPanelStore } from "./commit-panel.svelte";
+import { dropGraphFileHistory } from "./git-graph-file-history";
 
 // Re-export persistence & migration helpers so existing importers of this
 // module keep working after the extraction (refactor/audit-tier4-splits #212).
@@ -109,9 +116,29 @@ type ExternalSeed = {
   viewMode: string;
 };
 
+type TestManagerRegistry = Set<{ dispose(): Promise<void> }>;
+
+function testManagerRegistry(): TestManagerRegistry | undefined {
+  return (globalThis as typeof globalThis & {
+    __tauriExplorerTestManagerRegistry?: TestManagerRegistry;
+  }).__tauriExplorerTestManagerRegistry;
+}
+
 function createWindowTabsManager() {
   // Explorer instances registry (keyed by explorerId)
   const explorers = new Map<string, ExplorerInstance>();
+  // Initial directory loads are started when a pane is created so the UI can
+  // render immediately. Retain their promises so an explicit manager teardown
+  // can wait for their diagnostics and IPC work before its environment closes.
+  const pendingInitialLoads = new Set<Promise<void>>();
+  // Restore and initialization replace explorers through synchronous public
+  // APIs. Retain their asynchronous cleanup so a later dispose still drains it.
+  const pendingBackgroundDestructions = new Set<Promise<void>>();
+  let disposal: Promise<void> | null = null;
+  // Pane close/collapse removes an explorer from the live registry before its
+  // asynchronous listener cleanup completes. Retain that cleanup separately
+  // so a later manager disposal still owns the in-flight work.
+  const pendingRemovedExplorerCleanups = new Set<Promise<void>>();
 
   // Window-level tab strip
   let tabs = $state<WindowTab[]>([]);
@@ -157,14 +184,44 @@ function createWindowTabsManager() {
     activeTab?.kind === "explorer" ? leafIds(activeTab.layout) : [],
   );
 
-  /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry. */
-  function destroyAllExplorers(): void {
-    for (const explorer of explorers.values()) {
-      explorer.destroy();
-    }
+  /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry.
+   *  Settlement and error propagation are defined by ADR 0002. */
+  async function destroyAllExplorers(): Promise<void> {
+    const destructions = [...explorers.values()].map((explorer) => explorer.destroy());
     explorers.clear();
+    const results = await Promise.allSettled(destructions);
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure) throw failure.reason;
   }
 
+  function destroyRemovedExplorer(explorer: ExplorerInstance | undefined): void {
+    if (!explorer) return;
+    const cleanup = explorer.destroy();
+    pendingRemovedExplorerCleanups.add(cleanup);
+    void cleanup.then(
+      () => pendingRemovedExplorerCleanups.delete(cleanup),
+      (error) => {
+        pendingRemovedExplorerCleanups.delete(cleanup);
+        console.error("Failed to clean up removed explorer:", error);
+      },
+    );
+  }
+
+  // Restore and initialization are synchronous APIs, so retain replacement
+  // cleanup for a later disposal and report its failures at the app boundary.
+  function destroyExplorersInBackground(): void {
+    const destruction = destroyAllExplorers();
+    pendingBackgroundDestructions.add(destruction);
+    void destruction.then(
+      () => pendingBackgroundDestructions.delete(destruction),
+      (error) => {
+        pendingBackgroundDestructions.delete(destruction);
+        console.error("Failed to clean up previous explorers:", error);
+      },
+    );
+  }
   function findTab(tabId: string): WindowTab | null {
     return tabs.find((t) => t.id === tabId) ?? null;
   }
@@ -215,9 +272,31 @@ function createWindowTabsManager() {
     return { version: 3, tabs: tabs.map(persistTab), activeTabId };
   }
 
-  /** Save current tab state to localStorage */
+  /** Tab-state writes are coalesced onto a trailing timer (#481): saveState
+   *  runs on every tab open/close/switch/rename/split/pane-focus, and under
+   *  WebKitGTK each localStorage write can stall the UI thread for a disk
+   *  flush. Every write but the last of a burst is redundant, so hold them
+   *  until the user pauses — 150ms is long enough to swallow a burst of
+   *  Ctrl+T/Ctrl+Tab and short enough that state is durable a beat later. */
+  const SAVE_COALESCE_MS = 150;
+  const tabStatePersister = createCoalescedPersister<PersistedTabState>(
+    STORAGE_KEY,
+    SAVE_COALESCE_MS,
+  );
+
+  /** Queue the current tab state for persistence. Coalesced — see above; the
+   *  write lands shortly after the last of a burst of interactions, or
+   *  immediately if the page is hidden/unloaded before then. */
   function saveState(): void {
-    savePersisted(STORAGE_KEY, captureState());
+    tabStatePersister.schedule(captureState());
+  }
+
+  /** Persist the current tab state right now, superseding any queued write.
+   *  For callers whose whole job is durability — the `beforeunload` handler
+   *  and the periodic safety save in use-window-lifecycle — which must not
+   *  hand back control before the state is stored. */
+  function saveStateNow(): void {
+    tabStatePersister.writeNow(captureState());
   }
 
   /** Load tab state from localStorage (migrating older shapes) */
@@ -282,11 +361,14 @@ function createWindowTabsManager() {
     explorers.set(explorerId, explorer);
     // Seeded/restored panes use a non-tracking initial load so restoring
     // tabs doesn't double-record frecency/recent-files visits.
-    if (seed || !track) {
-      explorer.initialLoad(path);
-    } else {
-      explorer.navigateTo(path);
-    }
+    const initialLoad = seed || !track
+      ? explorer.initialLoad(path)
+      : explorer.navigateTo(path);
+    pendingInitialLoads.add(initialLoad);
+    void initialLoad.then(
+      () => pendingInitialLoads.delete(initialLoad),
+      () => pendingInitialLoads.delete(initialLoad),
+    );
     return { explorerId, explorer };
   }
 
@@ -355,6 +437,18 @@ function createWindowTabsManager() {
       if (!pane.gitGraph) return;
       if (repoPath) pane.gitGraph = repoPath;
       else delete pane.gitGraph;
+      saveState();
+      return;
+    }
+  }
+
+  /** Show the graph for one specific pane. Unlike the active-pane toggle,
+   *  this is idempotent so SCM row actions can safely target their owner. */
+  function showGitGraphInPane(paneId: PaneId, repoPath: string): void {
+    for (const tab of tabs) {
+      const pane = tab.panes[paneId];
+      if (!pane) continue;
+      pane.gitGraph = repoPath;
       saveState();
       return;
     }
@@ -472,7 +566,7 @@ function createWindowTabsManager() {
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    destroyAllExplorers();
+    destroyExplorersInBackground();
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -489,6 +583,7 @@ function createWindowTabsManager() {
    *  @param overridePath - When set, the active tab navigates here instead
    *    of its saved path. Used for CLI cwd so we don't race two navigations. */
   function init(initialPath: string, skipRestore = false, overridePath?: string): WindowTab | null {
+    testManagerRegistry()?.add(manager);
     if (!skipRestore) {
       // Try to restore from localStorage (cold start / app relaunch)
       const savedState = loadState();
@@ -500,7 +595,7 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    destroyAllExplorers();
+    destroyExplorersInBackground();
     tabs = [];
     activeTabId = null;
 
@@ -572,10 +667,11 @@ function createWindowTabsManager() {
   function destroyTabExplorers(tab: WindowTab): void {
     if (tab.kind !== "explorer") return;
     for (const [paneId, pane] of Object.entries(tab.panes)) {
-      explorers.get(pane.explorerId)?.destroy();
+      destroyRemovedExplorer(explorers.get(pane.explorerId));
       explorers.delete(pane.explorerId);
       disposeScmStore(paneId);
       disposeCommitPanelStore(paneId);
+      dropGraphFileHistory(paneId);
     }
   }
 
@@ -822,6 +918,16 @@ function createWindowTabsManager() {
     setActivePane(ids[(idx + 1) % ids.length]);
   }
 
+  /** Move focus to the pane adjacent to the focused one in `direction`
+   *  (#501). Unlike `splitPane`, which creates a pane on that side, this
+   *  only ever moves focus — with no pane there it is a no-op. */
+  function focusPaneInDirection(direction: FocusDirection): void {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+    const target = leafInDirection(tab.layout, tab.activePaneId, direction);
+    if (target !== null) setActivePane(target);
+  }
+
   /** Split the active pane, placing a new pane on the given side.
    *  The new pane opens at `initialPath` (default: the source pane's
    *  directory, seeded with its entries so it renders instantly). */
@@ -890,10 +996,11 @@ function createWindowTabsManager() {
       if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
     }
 
-    explorers.get(pane.explorerId)?.destroy();
+    destroyRemovedExplorer(explorers.get(pane.explorerId));
     explorers.delete(pane.explorerId);
     disposeScmStore(target);
     disposeCommitPanelStore(target);
+    dropGraphFileHistory(target);
 
     const remaining = leafIds(newLayout);
     const oldOrder = leafIds(tab.layout);
@@ -932,10 +1039,11 @@ function createWindowTabsManager() {
       for (const paneId of leafIds(tab.layout)) {
         if (paneId === tab.activePaneId) continue;
         const pane = tab.panes[paneId];
-        explorers.get(pane.explorerId)?.destroy();
+        destroyRemovedExplorer(explorers.get(pane.explorerId));
         explorers.delete(pane.explorerId);
         disposeScmStore(paneId);
         disposeCommitPanelStore(paneId);
+        dropGraphFileHistory(paneId);
       }
       updateActiveExplorerTab((t) => ({
         ...t,
@@ -977,7 +1085,7 @@ function createWindowTabsManager() {
     saveState();
   }
 
-  return {
+  const manager = {
     // Tab state getters
     get tabs() {
       return tabs;
@@ -1015,6 +1123,7 @@ function createWindowTabsManager() {
     createTab,
     getPaneGitGraph,
     setPaneGitGraph,
+    showGitGraphInPane,
     toggleGitGraphInActivePane,
     getPaneScmVisible,
     toggleScmInActivePane,
@@ -1060,6 +1169,7 @@ function createWindowTabsManager() {
     // Pane operations (active tab)
     setActivePane,
     switchPane,
+    focusPaneInDirection,
     splitPane,
     newPane,
     closePane,
@@ -1068,20 +1178,48 @@ function createWindowTabsManager() {
     setSplitRatio,
 
     // Persistence
-    save: saveState,
+    save: saveStateNow,
     captureState,
     restoreFromState,
 
     /** Tear down this manager: remove the window focus listener and destroy
      *  all explorers. The app singleton lives for the whole session, but the
-     *  factory is used in tests where undisposed managers would leak (#439). */
-    dispose() {
+     *  factory is used in tests where undisposed managers would leak (#439).
+     *  Ordering and failure propagation are defined by ADR 0002. */
+    dispose(): Promise<void> {
+      // Test teardown may call dispose after a legacy test has already started
+      // it without awaiting. Share the same promise so every caller drains the
+      // original explorer cleanup rather than observing its cleared registry.
+      if (disposal) return disposal;
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onWindowFocus);
       }
-      destroyAllExplorers();
+      // Flushes a queued write before dropping its page-lifecycle listeners,
+      // so tearing the manager down can't swallow the last interaction.
+      tabStatePersister.dispose();
+      disposal = (async () => {
+        const [destroyed, , removedCleanups] = await Promise.allSettled([
+          destroyAllExplorers(),
+          Promise.allSettled(pendingInitialLoads),
+          Promise.allSettled(pendingRemovedExplorerCleanups),
+          Promise.allSettled(pendingBackgroundDestructions),
+        ]);
+        if (destroyed.status === "rejected") throw destroyed.reason;
+        if (removedCleanups.status === "fulfilled") {
+          const failure = removedCleanups.value.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+          );
+          if (failure) throw failure.reason;
+        }
+      })();
+      void disposal.then(
+        () => testManagerRegistry()?.delete(manager),
+        () => testManagerRegistry()?.delete(manager),
+      );
+      return disposal;
     },
   };
+  return manager;
 }
 
 /** Factory for creating window tabs managers - exported for testing */

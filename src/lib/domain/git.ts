@@ -4,6 +4,8 @@
  * depend on the api/ layer. `api/git.ts` imports and re-exports these so
  * existing `$lib/api/*` import sites keep working.
  */
+import { compactRelativeTime } from "./relative-time";
+
 export type GitStatusCode =
   | "Modified"
   | "Added"
@@ -95,10 +97,5 @@ export function compactRelativeTimeToday(unixSeconds: number, nowMs: number): st
   ) {
     return null;
   }
-  const ageSec = Math.max(0, Math.floor((nowMs - unixSeconds * 1000) / 1000));
-  if (ageSec < 60) return "now";
-  const minutes = Math.floor(ageSec / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h`;
+  return compactRelativeTime(nowMs - unixSeconds * 1000);
 }

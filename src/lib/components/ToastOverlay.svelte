@@ -4,6 +4,12 @@
 -->
 <script lang="ts">
   import { toastStore } from "$lib/state/toast.svelte";
+  import { openExternalUrl } from "$lib/api/crash";
+
+  function openLink(event: MouseEvent, url: string): void {
+    event.preventDefault();
+    void openExternalUrl(url);
+  }
 </script>
 
 {#if toastStore.toasts.length > 0}
@@ -18,12 +24,22 @@
           {:else if toast.type === "error"}
             <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
             <path d="M8 5V8.5M8 11V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          {:else if toast.type === "progress"}
+            <!-- An in-flight indicator must not wear the success checkmark the
+                 default branch draws: a spinning arc reads as "still working". -->
+            <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25" opacity="0.25"/>
+            <path class="spinner-arc" d="M8 1.5A6.5 6.5 0 0 1 14.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           {:else}
             <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
             <path d="M5.5 8L7 9.5L10.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           {/if}
         </svg>
         <span>{toast.message}{#if toast.type === "clipboard"} — Ctrl+V to paste{/if}</span>
+        {#if toast.link}
+          <a href={toast.link.url} onclick={(event) => openLink(event, toast.link!.url)}>
+            {toast.link.label}
+          </a>
+        {/if}
       </div>
     {/each}
   </div>
@@ -46,8 +62,8 @@
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
-    background: var(--background-acrylic);
-    backdrop-filter: blur(20px);
+    /* Notifications must remain legible over any pane or vibrancy backdrop. */
+    background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-pill);
     font-size: var(--font-size-caption);
@@ -71,19 +87,42 @@
     color: var(--accent);
   }
 
+  .toast.progress {
+    color: var(--text-secondary);
+  }
+
+  .spinner-arc {
+    transform-origin: 8px 8px;
+    animation: toastSpin 900ms linear infinite;
+  }
+
+  @keyframes toastSpin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Respect a reduced-motion preference: the arc still reads as "in progress"
+     against the faint full circle without rotating. */
+  @media (prefers-reduced-motion: reduce) {
+    .spinner-arc { animation: none; }
+  }
+
   .toast.clipboard.cut {
     color: var(--system-caution);
   }
 
   .toast.error {
-    background: linear-gradient(135deg, rgba(196, 43, 28, 0.1), rgba(196, 43, 28, 0.05));
     border-color: rgba(196, 43, 28, 0.2);
     color: var(--system-critical);
   }
 
   .toast.success {
-    background: linear-gradient(135deg, rgba(15, 123, 15, 0.1), rgba(15, 123, 15, 0.05));
     border-color: rgba(15, 123, 15, 0.2);
     color: var(--system-success);
+  }
+
+  .toast a {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: underline;
   }
 </style>

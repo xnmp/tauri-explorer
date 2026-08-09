@@ -55,36 +55,97 @@ test.describe("Terminal panel", () => {
     await expect(panel).toBeAttached();
   });
 
-  test("app shortcuts fire while the terminal is focused (#249)", async ({ page }) => {
+  test("Alt+M T toggles the terminal while it is focused (#608)", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 
-    // Focus the shell's hidden textarea explicitly — app chords must still
-    // reach the window handler instead of being swallowed as terminal input.
+    // The terminal-toggle chord remains available even though other terminal
+    // application input retains ownership.
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Alt+m");
     await page.keyboard.press("t");
     await expect(panel).toBeHidden();
     await expect(panel).toBeAttached();
+    await page.screenshot({ path: "evidence/ac-1-terminal-toggle-from-focus.png" });
   });
 
-  test("app-bound Ctrl shortcuts fire while the terminal is focused (#260)", async ({ page }) => {
+  test("an unrelated Alt+M chord does not steal focused-terminal input (#608)", async ({ page }) => {
+    await expect(page.locator(".sidebar")).toBeVisible();
+
+    await page.keyboard.press("Control+`");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await page.locator(".file-list").first().click();
+    // Alt+M B normally toggles the Files sidebar. Starting it outside the
+    // terminal must not let its suffix invoke that command after focus moves
+    // into xterm.
+    await page.keyboard.press("Alt+m");
+
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("b");
+    await expect(page.locator(".sidebar")).toBeVisible();
+
+    // The terminal-owned suffix also ends the pending Explorer chord. A
+    // following T must remain terminal input rather than toggling the panel.
+    await page.keyboard.press("t");
+    await expect(panel).toBeVisible();
+  });
+
+  test("only core navigation shortcuts fire while the terminal is focused (#496)", async ({ page }) => {
+    // Make previous/next tab commands available before focusing the terminal.
+    await page.locator(".new-tab-btn").click();
+    await expect(page.locator(".tab")).toHaveCount(2);
+
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await panel.locator("textarea.xterm-helper-textarea").focus();
 
-    // Ctrl+P (quick open, an app binding) must win over readline history.
+    // Ctrl+P is one of the explicit core-navigation exceptions.
     await page.keyboard.press("Control+p");
     await expect(page.locator(".quick-open-dialog input.search-input")).toBeVisible();
     await page.keyboard.press("Escape");
 
-    // Ctrl+J (hardcoded jobs panel) must fire too.
     await panel.locator("textarea.xterm-helper-textarea").focus();
-    await page.keyboard.press("Control+j");
-    await expect(page.getByRole("heading", { name: "Background Jobs" })).toBeVisible();
+    await page.keyboard.press("Control+Shift+p");
+    await expect(page.locator(".command-palette-dialog input.search-input")).toBeVisible();
     await page.keyboard.press("Escape");
+
+    // Ctrl+PageUp switches to the previous tab while terminal focus is active.
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    const activeTabId = await page.locator(".tab.active").getAttribute("data-tab-id");
+    await page.keyboard.press("Control+PageUp");
+    await expect(page.locator(".tab.active")).not.toHaveAttribute("data-tab-id", activeTabId!);
+
+    // Returning to the tab with the focused terminal makes Ctrl+PageDown
+    // switch forward again.
+    await page.locator(`.tab[data-tab-id="${activeTabId}"]`).click();
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+PageDown");
+    await expect(page.locator(".tab.active")).not.toHaveAttribute("data-tab-id", activeTabId!);
+
+    // Ctrl+Q belongs to the terminal application; it must not invoke an
+    // Explorer action or close the terminal panel.
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+q");
+    await expect(panel).toBeVisible();
+  });
+
+  test("non-core Explorer shortcuts stay with the focused terminal (#496)", async ({ page }) => {
+    await page.keyboard.press("Control+`");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+
+    await page.keyboard.press("Control+f");
+    await expect(page.locator(".filter-bar")).toBeHidden();
+
+    // Ctrl+` is terminal-surface control rather than an Explorer app command:
+    // it must always hide a focused terminal so the user can dismiss it.
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+`");
+    await expect(panel).toBeHidden();
   });
 
   test("shell-critical Ctrl combos stay with the shell while focused (#260)", async ({ page }) => {

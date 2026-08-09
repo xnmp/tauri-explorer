@@ -8,6 +8,8 @@
 
 If you've ever opened your editor just to move files faster than your file manager lets you, this is for you. Fuzzy quick-open with frecency ranking, ripgrep content search, a palette for every action, rebindable keys, tabs and dual panes, a git commit graph, and a UI you can strip down to nothing. Tauri v2 (Rust) + Svelte 5, native on Linux, Windows, and macOS. No telemetry.
 
+> **Status: early alpha.** The author uses it daily as their main file manager, but it hasn't had other users yet — expect rough edges, especially outside Linux. Bug reports are very welcome: Command Palette → "Report Issue" files one from inside the app.
+
 **→ [Try it in your browser](https://tauri-explorer.vercel.app)** — the showcase site is a working copy of the app. Press `Ctrl+P`.
 
 ![Details view with sidebar](screenshots/readme/details-view.png)
@@ -33,6 +35,32 @@ git clone https://github.com/xnmp/tauri-explorer && cd tauri-explorer/packaging/
 ```
 
 Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them — the `xattr` command above clears the quarantine flag (Homebrew removed its `--no-quarantine` option, so this manual step is the only way until the app is notarized).
+
+## Use as system file picker
+
+On Linux, Tauri Explorer provides an `xdg-desktop-portal` FileChooser backend.
+Portal backends are selected by your desktop portal configuration; installing the
+package alone does not replace an existing GTK or desktop-specific file picker.
+
+To select Tauri Explorer for file-picker requests, create
+`~/.config/xdg-desktop-portal/portals.conf` with:
+
+```ini
+[preferred]
+org.freedesktop.impl.portal.FileChooser=tauri-explorer
+```
+
+Restart `xdg-desktop-portal` or sign out and back in after changing the file.
+
+### Windows: build and install from source
+
+In PowerShell, one command downloads, builds, and installs the latest source:
+
+```powershell
+irm https://raw.githubusercontent.com/xnmp/tauri-explorer/main/windows_install.ps1 | Invoke-Expression
+```
+
+The script identifies any missing Git, Rust, Bun, or Visual Studio C++ Build Tools and prints the corresponding `winget` command. To build an existing checkout instead, run `./windows_install.ps1` from its root.
 
 ## Building
 
@@ -67,4 +95,4 @@ bun run start
 
 ## Status
 
-Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report a Bug" (it pre-fills an issue with a local log excerpt — nothing is sent automatically), or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose).
+Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report Issue", or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose). Image attachments require authenticated [GitHub CLI](https://cli.github.com/) plus the optional [`gh-image`](https://github.com/drogers0/gh-image) extension (`gh extension install drogers0/gh-image`); background submission failures save the report draft for retry.

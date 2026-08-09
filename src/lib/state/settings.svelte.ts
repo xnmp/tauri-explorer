@@ -7,7 +7,15 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
-import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import {
+  configWriteActivity,
+  configWriteRaced,
+  lastWrittenConfig,
+  loadPersisted,
+  savePersisted,
+  writeConfigQueued,
+} from "./persisted";
+import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
@@ -18,6 +26,11 @@ import {
   resolveEffectivePreviewPanePosition,
 } from "$lib/domain/preview-pane-position";
 import { windowSizeStore } from "./window-size.svelte";
+import {
+  CURRENT_SETTINGS_VERSION,
+  SETTINGS_VERSION_KEY,
+  migrateSettings,
+} from "$lib/domain/settings-migration";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -86,6 +99,7 @@ export interface Settings {
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
+  showRecycleBin: boolean; // show the native recycle-bin launcher in the sidebar
   millerLayers: number; // 0-3, number of ancestor columns in miller view
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
   millerHideEmpty: boolean; // hide folders containing no visible entries from miller columns
@@ -104,9 +118,11 @@ export interface Settings {
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
   previewFontSize: number; // base font size (px) for text/code/markdown previews
+  showPreviewInfo: boolean; // preview pane chrome: file name, type badge, size and modified rows (off = content only, #494)
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name + git icon in the tab title (default on, #471)
+  settingsVersion: number; // schema stamp on the persisted blob; drives one-shot migrations when a default flips (#506)
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
   explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
@@ -157,6 +173,7 @@ const DEFAULT_SETTINGS: Settings = {
   thumbnailSize: "small",
   showGitStatus: false,
   recentItemsCount: 6,
+  showRecycleBin: true,
   millerLayers: 0,
   millerLayersPreferred: 2,
   millerHideEmpty: false,
@@ -175,6 +192,7 @@ const DEFAULT_SETTINGS: Settings = {
   windowsBackdropOpacity: 65,
   yaziNavigation: true,
   previewFontSize: 12,
+  showPreviewInfo: true,
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
   tabTitleGitRoot: true,
@@ -183,6 +201,7 @@ const DEFAULT_SETTINGS: Settings = {
   explorerFollowsTerminal: true,
   pluginsEnabled: {},
   defaultPaneLayout: "dwindle",
+  settingsVersion: CURRENT_SETTINGS_VERSION,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -204,27 +223,100 @@ function createSettingsStore() {
   /**
    * Load settings from config file, migrating from localStorage if needed.
    * Called once during app initialization.
+   *
+   * settings.json is the durable store of record; localStorage is a
+   * synchronous cache of it that this overwrites on every load. Schema
+   * migrations therefore run HERE and only here — on the authoritative blob,
+   * once, with the result written back to both stores (#506).
    */
-  async function init() {
+  /**
+   * Parse and migrate a settings.json blob. Returns null when the text is not
+   * a usable settings object, so callers can distinguish "nothing to adopt"
+   * from "adopted".
+   */
+  function parseSettingsBlob(
+    raw: string,
+  ): { settings: Settings; migrationChanged: boolean } | null {
     try {
-      const result = await readConfigFile(CONFIG_FILENAME);
-      if (result.ok && result.data) {
-        const loaded = JSON.parse(result.data) as Partial<Settings>;
-        if (loaded && typeof loaded === "object") {
-          settings = { ...DEFAULT_SETTINGS, ...loaded };
-          savePersisted(STORAGE_KEY, settings);
-          return;
-        }
-      }
+      const loaded = JSON.parse(raw) as Partial<Settings>;
+      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) return null;
+      const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS);
+      return { settings: migrated, migrationChanged: changed };
     } catch {
-      // Config file doesn't exist or is invalid - fall through
+      return null;
     }
+  }
 
-    // If config file was empty but localStorage has data, migrate
-    const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
-    if (Object.keys(saved).length > 0) {
+  /** Adopt a parsed blob as the live settings and refresh the localStorage cache. */
+  function adoptSettings(next: Settings, migrationChanged: boolean): void {
+    settings = next;
+    savePersisted(STORAGE_KEY, settings);
+    // Write the migrated blob (and its version stamp) straight back, so
+    // the migration applies once rather than on every launch — that is
+    // what lets a user switch the setting off again afterwards (#506).
+    if (migrationChanged) {
       writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
+  }
+
+  async function init() {
+    const result = await readConfigFile(CONFIG_FILENAME);
+    const loaded = result.ok && result.data ? parseSettingsBlob(result.data) : null;
+    if (loaded) {
+      adoptSettings(loaded.settings, loaded.migrationChanged);
+      return;
+    }
+
+    // settings.json is missing or unreadable, so promote the localStorage
+    // cache into it. This blob has never been through the ledger, but
+    // DEFAULT_SETTINGS supplies the current stamp, so promoting it as-is would
+    // mark a legacy blob as already migrated and disarm the ledger for this
+    // install forever. Reset the stamp on the LIVE object, not just on the
+    // serialized copy: `saveSettings` is the other writer of it, so a
+    // de-stamped write alone would be undone by the first ordinary settings
+    // change in this session. Stamp 0 leaves the value alone on this launch
+    // and lets the next one migrate normally. A cache that carries a real
+    // stamp is NOT a legacy blob, so its own stamp is promoted instead —
+    // otherwise losing settings.json would revive a decoration the user
+    // turned off after the migration had already run (#506).
+    const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
+    if (Object.keys(saved).length > 0) {
+      const cached = (saved as Record<string, unknown>)[SETTINGS_VERSION_KEY];
+      const stamp = typeof cached === "number" && Number.isFinite(cached) ? cached : 0;
+      settings = { ...settings, [SETTINGS_VERSION_KEY]: stamp };
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+    }
+  }
+
+  /**
+   * Re-read settings.json after it changed on disk and adopt the result if it
+   * is a genuine external edit (#599).
+   *
+   * Returns true only when in-memory settings actually moved, so callers can
+   * skip the imperative follow-up work (re-applying the theme) on a no-op.
+   * See `decideConfigReload` for why our own writes must be filtered out here
+   * rather than at the watcher.
+   */
+  async function reloadFromDisk(): Promise<ConfigReloadReason> {
+    // Sampled on both sides of the read: a settings change made while the file
+    // was in flight would otherwise be clobbered by the older disk contents,
+    // and a write that both starts and finishes inside the read window leaves
+    // no trace in a simple "is a write pending" flag.
+    const beforeRead = configWriteActivity(CONFIG_FILENAME);
+    const result = await readConfigFile(CONFIG_FILENAME);
+    if (!result.ok) return "unusable";
+    const raw = result.data;
+    const parsed = parseSettingsBlob(raw);
+    const decision = decideConfigReload({
+      raw,
+      normalized: parsed ? JSON.stringify(parsed.settings) : null,
+      currentNormalized: JSON.stringify(settings),
+      lastWritten: lastWrittenConfig(CONFIG_FILENAME),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead),
+    });
+    if (!decision.apply || !parsed) return decision.reason;
+    adoptSettings(parsed.settings, parsed.migrationChanged);
+    return decision.reason;
   }
 
   function update(partial: Partial<Settings>): void {
@@ -388,6 +480,12 @@ function createSettingsStore() {
     setRecentItemsCount(count: number): void {
       update({ recentItemsCount: Math.max(0, Math.min(20, count)) });
     },
+    get showRecycleBin() {
+      return settings.showRecycleBin;
+    },
+    toggleRecycleBin(): void {
+      update({ showRecycleBin: !settings.showRecycleBin });
+    },
     get millerLayers() {
       return settings.millerLayers;
     },
@@ -482,6 +580,12 @@ function createSettingsStore() {
     },
     get previewFontSize() {
       return settings.previewFontSize;
+    },
+    get showPreviewInfo() {
+      return settings.showPreviewInfo;
+    },
+    togglePreviewInfo(): void {
+      update({ showPreviewInfo: !settings.showPreviewInfo });
     },
     setPreviewFontSize(px: number): void {
       update({ previewFontSize: Math.max(8, Math.min(28, Math.round(px))) });
@@ -590,6 +694,7 @@ function createSettingsStore() {
       });
     },
     init,
+    reloadFromDisk,
     update,
     toggleSidebar,
     toggleHidden,
@@ -635,6 +740,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
       return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
     },
   },
+  { key: "showPreviewInfo", id: "view.togglePreviewInfo", label: "Toggle Preview Info" },
   { key: "showStatusBar", id: "view.toggleStatusBar", label: "Toggle Status Bar", shortcut: "Alt+M U" },
   { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
   { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },
@@ -645,6 +751,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "scmTreeView", id: "view.toggleScmTreeView", label: "Toggle SCM Tree View" },
   { key: "f5SyncsLocalBranches", id: "view.toggleF5SyncsLocalBranches", label: "Toggle Git Graph F5 Syncs Local Branches" },
   { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
+  { key: "showRecycleBin", label: "Toggle Recycle Bin in Sidebar" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
   { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },

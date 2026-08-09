@@ -10,9 +10,11 @@ on:
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
 # WKWebView support (tauri-apps/tauri#7068). Re-add when a stable driver
 # exists or if macOS regressions justify the CrabNebula subscription.
-# The windows-latest leg hung at the job cap on every recorded push run
-# (builds green, smoke suite never completes — see #478), so it only runs on
-# manual dispatch. Windows coverage is a local run on real hardware instead:
+# The windows-latest leg still fails at msedgedriver's WebView2 attach —
+# POST /session times out while the app itself boots fine (#457; refuted so
+# far: tauri-driver release, dev-server cold start, second warm-window
+# WebView2, stdout pipe blocking, log volume). Until that is fixed it runs on
+# manual dispatch only; Windows coverage is a local run on real hardware:
 # pull on the Windows machine and `bun run test:e2e:tauri`.
 jobs:
   smoke:
@@ -21,7 +23,12 @@ jobs:
       matrix:
         os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
+    # no room for a full suite run: a step bound generous enough to let the
+    # specs finish pushed the job past the cap and it was killed as `cancelled`
+    # with no artifacts. Cap the job well above build + suite and let the
+    # per-step bound below be the thing that actually fails a stuck run.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -76,40 +83,25 @@ jobs:
         shell: bash
         run: bun install --frozen-lockfile
 
-      - name: Build frontend
-        run: bun run build
-
-      - name: Build Tauri binary (debug, no bundle)
+      # Build through the Tauri CLI, not `cargo build`. A bare cargo debug
+      # build omits the `tauri/custom-protocol` feature, so the binary serves
+      # `build.devUrl` (localhost:1420) and the suite silently needs a Vite dev
+      # server running alongside it. `tauri build --debug` passes
+      # custom-protocol, so the frontend is embedded and the suite tests the
+      # shipped asset path with no dev server to race. (This did NOT fix the
+      # Windows hang — #457's session timeout reproduces with the dev server
+      # gone — but it removes a real timing dependency and a whole toolchain
+      # from the test environment.)
+      # VITE_E2E_HOOKS compiles in the `e2e-navigate` / `e2e-reset-view` hooks
+      # and the listing/watcher probes the specs drive. They used to ride on
+      # `import.meta.env.DEV`, which is what tied the suite to a dev-mode
+      # binary — and therefore to a dev server — in the first place. Release
+      # builds never set it, so the hooks tree-shake out of shipped binaries.
+      - name: Build Tauri binary (debug, embedded frontend, no bundle)
         shell: bash
-        run: cargo build --manifest-path src-tauri/Cargo.toml
-
-      # Debug-profile tauri binaries embed build.devUrl (localhost:1420)
-      # instead of the bundled frontend — the webview is blank unless the
-      # dev server is up.
-      - name: Start frontend dev server (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          nohup bun run dev > /tmp/vite.log 2>&1 &
-          for i in $(seq 1 60); do
-            curl -sf http://localhost:1420 > /dev/null && exit 0
-            sleep 1
-          done
-          echo "dev server never came up" >&2
-          cat /tmp/vite.log >&2
-          exit 1
-
-      - name: Start frontend dev server (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Start-Process bun -ArgumentList 'run','dev' -WindowStyle Hidden
-          foreach ($i in 1..60) {
-            try {
-              Invoke-WebRequest -UseBasicParsing http://localhost:1420 | Out-Null
-              exit 0
-            } catch { Start-Sleep -Seconds 1 }
-          }
-          Write-Error "dev server never came up"
+        env:
+          VITE_E2E_HOOKS: "1"
+        run: bun run tauri build --debug --no-bundle
 
       - name: Run smoke suite (Linux, under Xvfb)
         if: runner.os == 'Linux'
@@ -129,12 +121,18 @@ jobs:
           Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
           "TAURI_NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\msedgedriver.exe" >> $env:GITHUB_ENV
 
+      # Bounded well below the 25-minute job cap so a regression leaves time for
+      # the artifact upload below instead of being killed by the cap with
+      # nothing to show. Sized for a real run, not for the fast-fail path: the
+      # Linux leg's whole job is ~10 minutes, so anything near the ~1 minute a
+      # session-start failure takes would kill a working suite.
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
+        timeout-minutes: 15
         run: bun run test:e2e:tauri
 
-      - name: Upload WDIO logs on failure
-        if: failure()
+      - name: Upload WDIO logs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: wdio-logs-${{ matrix.os }}

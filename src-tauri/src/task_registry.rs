@@ -5,14 +5,22 @@
 //! cancelled. Used by directory listings, search, and content search to avoid
 //! duplicating the same AtomicU64 + Mutex<HashMap> pattern.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// A registry that tracks active cancellable tasks by ID.
 pub struct TaskRegistry {
     next_id: AtomicU64,
-    active: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
+    state: OnceLock<Mutex<RegistryState>>,
+}
+
+#[derive(Default)]
+struct RegistryState {
+    active: HashMap<u64, Arc<AtomicBool>>,
+    /// Cancellation can race ahead of an async command's registration. Keep
+    /// a bounded tombstone so `start_with_id` observes that ordering.
+    pre_cancelled: HashSet<u64>,
 }
 
 impl Default for TaskRegistry {
@@ -25,12 +33,13 @@ impl TaskRegistry {
     pub const fn new() -> Self {
         Self {
             next_id: AtomicU64::new(1),
-            active: OnceLock::new(),
+            state: OnceLock::new(),
         }
     }
 
-    fn active_map(&self) -> &Mutex<HashMap<u64, Arc<AtomicBool>>> {
-        self.active.get_or_init(|| Mutex::new(HashMap::new()))
+    fn state(&self) -> &Mutex<RegistryState> {
+        self.state
+            .get_or_init(|| Mutex::new(RegistryState::default()))
     }
 
     /// Start a new task. Returns (task_id, cancellation_flag).
@@ -38,12 +47,13 @@ impl TaskRegistry {
     pub fn start(&self) -> (u64, Arc<AtomicBool>) {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let cancelled = Arc::new(AtomicBool::new(false));
-        self.active_map()
+        self.state()
             .lock()
             .unwrap_or_else(|poisoned| {
                 log::error!("task registry lock poisoned on start, recovering");
                 poisoned.into_inner()
             })
+            .active
             .insert(id, cancelled.clone());
         (id, cancelled)
     }
@@ -52,40 +62,59 @@ impl TaskRegistry {
     /// generates the job id itself so it can cancel before the command
     /// returns (e.g. zip compression progress).
     pub fn start_with_id(&self, id: u64) -> Arc<AtomicBool> {
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.active_map()
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                log::error!("task registry lock poisoned on start_with_id, recovering");
-                poisoned.into_inner()
-            })
-            .insert(id, cancelled.clone());
+        let mut state = self.state().lock().unwrap_or_else(|poisoned| {
+            log::error!("task registry lock poisoned on start_with_id, recovering");
+            poisoned.into_inner()
+        });
+        let was_pre_cancelled = state.pre_cancelled.remove(&id);
+        let cancelled = Arc::new(AtomicBool::new(was_pre_cancelled));
+        state.active.insert(id, cancelled.clone());
         cancelled
     }
 
-    /// Cancel a task by ID. No-op if the task doesn't exist or already completed.
+    /// Cancel a task by ID. If registration has not happened yet, preserve a
+    /// bounded tombstone so a racing `start_with_id` begins cancelled.
     pub fn cancel(&self, id: u64) {
-        if let Some(flag) = self
-            .active_map()
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                log::error!("task registry lock poisoned on cancel, recovering");
-                poisoned.into_inner()
-            })
-            .get(&id)
-        {
+        let mut state = self.state().lock().unwrap_or_else(|poisoned| {
+            log::error!("task registry lock poisoned on cancel, recovering");
+            poisoned.into_inner()
+        });
+        if let Some(flag) = state.active.get(&id) {
             flag.store(true, Ordering::Relaxed);
+            return;
         }
+        const MAX_PRE_CANCELLED: usize = 4096;
+        if state.pre_cancelled.len() >= MAX_PRE_CANCELLED {
+            if let Some(stale) = state.pre_cancelled.iter().next().copied() {
+                state.pre_cancelled.remove(&stale);
+            }
+        }
+        state.pre_cancelled.insert(id);
     }
 
     /// Remove a completed task from the registry.
     pub fn cleanup(&self, id: u64) {
-        self.active_map()
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                log::error!("task registry lock poisoned on cleanup, recovering");
-                poisoned.into_inner()
-            })
-            .remove(&id);
+        let mut state = self.state().lock().unwrap_or_else(|poisoned| {
+            log::error!("task registry lock poisoned on cleanup, recovering");
+            poisoned.into_inner()
+        });
+        state.active.remove(&id);
+        state.pre_cancelled.remove(&id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_before_registration_is_observed() {
+        let registry = TaskRegistry::new();
+        registry.cancel(42);
+
+        let cancelled = registry.start_with_id(42);
+
+        assert!(cancelled.load(Ordering::Relaxed));
+        registry.cleanup(42);
     }
 }

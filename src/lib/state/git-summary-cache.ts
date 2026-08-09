@@ -41,7 +41,12 @@
  * through here.
  */
 
-import { gitSummary, type GitStatusSummary, type ApiResult } from "$lib/api/files";
+import {
+  cancelGitStatus,
+  gitSummary,
+  type GitStatusSummary,
+  type ApiResult,
+} from "$lib/api/files";
 
 /** How long a settled scan may be reused by a passive (non-forced) caller. */
 const TTL_MS = 1500;
@@ -53,12 +58,19 @@ interface CacheEntry {
 
 interface FlightEntry {
   promise: Promise<ApiResult<GitStatusSummary>>;
+  taskId: number;
   /** Whether this scan was started by a `force` call (known post-mutation). */
   forced: boolean;
+  consumers: Set<string>;
+  hasUnownedConsumer: boolean;
+  cancelled: boolean;
+  generation: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, FlightEntry>();
+const allFlights = new Map<string, Set<FlightEntry>>();
+const latestGeneration = new Map<string, number>();
 
 /**
  * Fetch a repo's working-tree summary, deduped and short-TTL cached.
@@ -71,7 +83,7 @@ const inFlight = new Map<string, FlightEntry>();
  */
 export async function fetchGitSummary(
   repoPath: string,
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; consumerId?: string },
 ): Promise<ApiResult<GitStatusSummary>> {
   const key = repoPath;
   const force = opts?.force ?? false;
@@ -80,39 +92,103 @@ export async function fetchGitSummary(
   if (force) {
     // Adopt an in-flight scan only if it too is post-mutation (a concurrent
     // force); never adopt a pre-mutation passive scan.
-    if (flight?.forced) return flight.promise;
-    return startScan(key, true);
+    if (flight?.forced) {
+      addConsumer(flight, opts?.consumerId);
+      return flight.promise;
+    }
+    return startScan(key, true, opts?.consumerId);
   }
 
   // Passive caller: any in-flight scan is good enough to share.
-  if (flight) return flight.promise;
+  if (flight) {
+    addConsumer(flight, opts?.consumerId);
+    return flight.promise;
+  }
 
   const cached = cache.get(key);
   if (cached && Date.now() - cached.at < TTL_MS) return cached.result;
 
-  return startScan(key, false);
+  return startScan(key, false, opts?.consumerId);
 }
 
 function startScan(
   key: string,
   forced: boolean,
+  consumerId?: string,
 ): Promise<ApiResult<GitStatusSummary>> {
-  const promise = gitSummary(key)
+  const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+  const generation = (latestGeneration.get(key) ?? 0) + 1;
+  latestGeneration.set(key, generation);
+  const flight = {
+    taskId,
+    forced,
+    consumers: new Set<string>(),
+    hasUnownedConsumer: false,
+    cancelled: false,
+    generation,
+  } as FlightEntry;
+  addConsumer(flight, consumerId);
+  const promise = gitSummary(key, taskId)
     .then((result) => {
-      cache.set(key, { at: Date.now(), result });
+      if (
+        !flight.cancelled
+        && latestGeneration.get(key) === flight.generation
+      ) {
+        cache.set(key, { at: Date.now(), result });
+      }
       return result;
     })
     .finally(() => {
       // Only clear the slot if it is still ours: a force may have replaced a
       // pre-mutation passive scan with a newer forced one.
       if (inFlight.get(key)?.promise === promise) inFlight.delete(key);
+      const flights = allFlights.get(key);
+      flights?.delete(flight);
+      if (flights?.size === 0) allFlights.delete(key);
     });
-  inFlight.set(key, { promise, forced });
+  flight.promise = promise;
+  inFlight.set(key, flight);
+  const flights = allFlights.get(key) ?? new Set<FlightEntry>();
+  flights.add(flight);
+  allFlights.set(key, flights);
   return promise;
+}
+
+function addConsumer(flight: FlightEntry, consumerId?: string): void {
+  if (consumerId) flight.consumers.add(consumerId);
+  else flight.hasUnownedConsumer = true;
+}
+
+/**
+ * Release a pane from every summary scan it joined. A scan shared with
+ * another pane (or an ownerless graph/cache caller) remains alive.
+ */
+export function releaseGitSummaryConsumer(consumerId: string): void {
+  for (const [key, flights] of allFlights) {
+    for (const flight of flights) {
+      flight.consumers.delete(consumerId);
+      if (
+        !flight.cancelled
+        && flight.consumers.size === 0
+        && !flight.hasUnownedConsumer
+      ) {
+        flight.cancelled = true;
+        if (inFlight.get(key) === flight) inFlight.delete(key);
+        void cancelGitStatus(flight.taskId);
+      }
+    }
+  }
 }
 
 /** Drop a repo's cached scan (or all repos when omitted). */
 export function invalidateGitSummary(repoPath?: string): void {
-  if (repoPath) cache.delete(repoPath);
-  else cache.clear();
+  if (repoPath) {
+    cache.delete(repoPath);
+    latestGeneration.set(repoPath, (latestGeneration.get(repoPath) ?? 0) + 1);
+  } else {
+    cache.clear();
+    for (const key of latestGeneration.keys()) {
+      latestGeneration.set(key, (latestGeneration.get(key) ?? 0) + 1);
+    }
+  }
 }

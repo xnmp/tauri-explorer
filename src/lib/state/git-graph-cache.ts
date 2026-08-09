@@ -33,6 +33,12 @@ export interface GraphSnapshot {
   /** Shorthand of the checked-out branch (HEAD's symbolic target), or null
    *  when detached / unborn — highlights only that branch chip (#433). */
   headBranch: string | null;
+  /** True while HEAD is detached (#524). Carried through the snapshot so a
+   *  remount repaints the standing indicator from cache instead of dropping
+   *  it until the background refetch lands. Not derivable from `headBranch`,
+   *  which is also null on an unborn branch. Optional so callers that build a
+   *  snapshot by hand needn't care; absent reads as attached. */
+  detached?: boolean;
   workingChanges: number;
   /** Resume cursor for the commit AFTER this snapshot's page (#431); passed
    *  to the next `gitLog` so deeper pages don't re-walk from the tips. Always
@@ -41,14 +47,26 @@ export interface GraphSnapshot {
 }
 
 const graphCache = new Map<string, GraphSnapshot>();
-const GRAPH_CACHE_MAX = 8;
+// The high-load tab fan-out opens 12 distinct graphs. Keep modest headroom so
+// returning to any of those tabs paints its last snapshot synchronously rather
+// than forcing a fresh git log during the switch.
+const GRAPH_CACHE_MAX = 16;
 
 /** Cache key: filtered views are cached too (#416) — keyed by their filter
  *  so a remount with the same filter paints instantly and can never flash
- *  another filter's rows (#342). The repo path is the segment before the first
- *  `|`, which the eviction pass relies on. */
-export function snapshotKey(repoPath: string, branches: string[] | null, localOnly: boolean): string {
-  return `${repoPath}|${localOnly ? "local" : ""}|${branches ? branches.join("\n") : "*"}`;
+ *  another filter's rows (#342). The local-only (#381) and hide-remote-only
+ *  (#515) toggles change what the walk seeds from, so they are part of the key
+ *  too. The repo path is the segment before the first `|`, which the eviction
+ *  pass relies on. */
+export function snapshotKey(
+  repoPath: string,
+  branches: string[] | null,
+  localOnly: boolean,
+  hideRemoteOnly = false,
+  filePath = "",
+): string {
+  const mode = `${localOnly ? "local" : ""}${hideRemoteOnly ? "-noremoteonly" : ""}`;
+  return `${repoPath}|${mode}|${branches ? branches.join("\n") : "*"}|${filePath.trim()}`;
 }
 
 /** Repo path portion of a snapshot key (segment before the first `|`). */
@@ -93,13 +111,18 @@ export async function fetchPage0Snapshot(
   branches: string[] | null = null,
   onLog?: (partial: Omit<GraphSnapshot, "workingChanges">) => void,
   localOnly = false,
+  excludeBranches: string[] | null = null,
+  filePath = "",
+  consumerId?: string,
 ): Promise<GraphSnapshot> {
-  const summaryPromise = fetchGitSummary(repoPath);
+  const summaryPromise = fetchGitSummary(repoPath, { consumerId });
   const page = await gitLog(repoPath, {
     skip: 0,
     limit: PAGE_SIZE,
     ...(branches ? { branches } : {}),
+    ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
     ...(localOnly ? { local_only: true } : {}),
+    ...(filePath.trim() ? { file_path: filePath.trim() } : {}),
   });
   const headOid =
     Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
@@ -109,6 +132,9 @@ export async function fetchPage0Snapshot(
     hasMore: page.has_more,
     headOid,
     headBranch: page.head_branch,
+    // Normalized so the snapshot always holds a real boolean, even if an
+    // older backend binary omits the field entirely (#524).
+    detached: page.detached === true,
     nextCursor: page.next_cursor,
   };
   onLog?.(partial);
@@ -131,12 +157,12 @@ const warmInFlight = new Set<string>();
  * repo is already in flight; failures are swallowed (the view still loads
  * normally when actually opened).
  */
-export async function warmGraphSnapshot(repoPath: string): Promise<void> {
+export async function warmGraphSnapshot(repoPath: string, consumerId?: string): Promise<void> {
   const key = snapshotKey(repoPath, null, false);
   if (!repoPath || graphCache.has(key) || warmInFlight.has(repoPath)) return;
   warmInFlight.add(repoPath);
   try {
-    cacheSnapshot(key, await fetchPage0Snapshot(repoPath));
+    cacheSnapshot(key, await fetchPage0Snapshot(repoPath, null, undefined, false, null, "", consumerId));
   } catch {
     /* best-effort warm — ignore failures */
   } finally {

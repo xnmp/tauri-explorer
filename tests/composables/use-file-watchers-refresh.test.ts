@@ -88,4 +88,40 @@ describe("useFileWatchers refresh coalescing", () => {
 
     watchers.cleanup();
   });
+
+  it.each([
+    ["Tauri directory watcher", () => tauriHandler?.({ payload: { path: "/old" } })],
+    ["cross-window file watcher", () => broadcastHandler?.(["/old"])],
+  ])("drops a trailing %s refresh after the pane navigates", async (_source, emitEvent) => {
+    let finishOldListing!: () => void;
+    const refresh = vi
+      .fn<ExplorerInstance["refresh"]>()
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishOldListing = resolve;
+        }),
+      )
+      .mockResolvedValue(undefined);
+    let currentPath = "/old";
+    const explorer = {
+      get currentPath() {
+        return currentPath;
+      },
+      refresh,
+    } as unknown as ExplorerInstance;
+    const watchers = useFileWatchers({ getAllExplorers: () => [explorer] });
+    watchers.setup();
+
+    emitEvent();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    emitEvent();
+    currentPath = "/new";
+    finishOldListing();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    watchers.cleanup();
+  });
 });

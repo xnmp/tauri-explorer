@@ -23,3 +23,9 @@ Publish hook readiness before the driver dispatches an operation, dispatch it
 once, and acknowledge completion with a matching DOM token. Re-dispatching a
 navigation on every polling interval queues duplicate directory listings that
 can begin after a watcher timing probe is installed.
+
+A refresh-manager callback can run well after its watcher event. Bind the
+callback to the path captured when the event arrived and re-check the explorer's
+current path before refreshing. Calling `explorer.refresh()` unconditionally
+lets a late event for directory A list directory B after the pane navigates,
+while the manager still attributes its timing and rate limit to A.

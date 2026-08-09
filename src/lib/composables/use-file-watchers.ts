@@ -40,8 +40,17 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     // the source tab sees the change without needing to be activated.
     initFileChangeListener((affectedDirs) => {
       for (const exp of deps.getAllExplorers()) {
-        if (affectedDirs.includes(exp.currentPath)) {
-          requestRefresh((opts) => exp.refresh(opts), exp.currentPath, true, exp);
+        const watchedPath = exp.currentPath;
+        if (affectedDirs.includes(watchedPath)) {
+          requestRefresh(
+            (opts) => {
+              if (exp.currentPath !== watchedPath) return;
+              return exp.refresh(opts);
+            },
+            watchedPath,
+            true,
+            exp,
+          );
         }
       }
     });
@@ -54,7 +63,15 @@ export function useFileWatchers(deps: FileWatcherDeps) {
         const changedPath = event.payload.path;
         for (const exp of deps.getAllExplorers()) {
           if (exp.currentPath === changedPath) {
-            requestRefresh((opts) => exp.refresh(opts), exp.currentPath, true, exp);
+            requestRefresh(
+              (opts) => {
+                if (exp.currentPath !== changedPath) return;
+                return exp.refresh(opts);
+              },
+              changedPath,
+              true,
+              exp,
+            );
           }
         }
         // Also refresh git status badges for the changed directory

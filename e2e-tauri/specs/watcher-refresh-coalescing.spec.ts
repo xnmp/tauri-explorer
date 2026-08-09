@@ -83,9 +83,14 @@ describe("filesystem watcher refresh coalescing", () => {
       fs.writeFileSync(path.join(coalescingDir, `event-${event}.txt`), `${event}\n`);
       await browser.pause(800);
     }
-    expect((await listingProbe()).calls).toBe(1);
 
     await waitForCalls(2, "the trailing watcher listing never started");
+    const trailing = await listingProbe();
+    expect(trailing.calls).toBe(2);
+    // WebKitWebDriver can serialize an executeScript observation behind the
+    // outstanding Tauri listing promise, so assert the recorded app-world
+    // start times rather than assuming the driver can inspect it mid-flight.
+    expect(trailing.starts[1] - trailing.starts[0]).toBeGreaterThanOrEqual(4800);
     await browser.pause(2500);
     expect((await listingProbe()).calls).toBe(2);
   });

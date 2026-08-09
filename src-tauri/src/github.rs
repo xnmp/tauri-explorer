@@ -37,6 +37,11 @@ pub struct PrInfo {
     pub head_ref: String,
     #[serde(rename = "baseRef")]
     pub base_ref: String,
+    /// Name of the GitHub remote selected for this fetch. The frontend uses
+    /// its tracking ref before a stale local base branch when classifying
+    /// base-update merges (#527).
+    #[serde(rename = "baseRemote", default)]
+    pub base_remote: Option<String>,
     #[serde(rename = "htmlUrl")]
     pub html_url: String,
     pub draft: bool,
@@ -253,6 +258,7 @@ impl From<GhPull> for PrInfo {
             title: p.title,
             head_ref: p.head.ref_name,
             base_ref: p.base.ref_name,
+            base_remote: None,
             html_url: p.html_url,
             draft: p.draft,
             // The REST list endpoint carries none of the status fields; a
@@ -563,6 +569,7 @@ impl From<GqlPrNode> for PrInfo {
             title: n.title,
             head_ref: n.head_ref_name,
             base_ref: n.base_ref_name,
+            base_remote: None,
             html_url: n.url,
             draft: n.is_draft,
             ci_status,
@@ -581,7 +588,7 @@ impl From<GqlPrNode> for PrInfo {
 /// The repo's `origin` remote URL, falling back to the first configured
 /// remote when there is no `origin`. `None` when the repo has no remotes at
 /// all, or the resolved remote has no URL (e.g. a purely local remote).
-fn remote_url(repo: &git2::Repository) -> Option<String> {
+fn selected_remote(repo: &git2::Repository) -> Option<(String, String)> {
     let names = repo.remotes().ok()?;
     let names: Vec<&str> = names.iter().flatten().collect();
     let chosen = if names.contains(&"origin") {
@@ -589,7 +596,14 @@ fn remote_url(repo: &git2::Repository) -> Option<String> {
     } else {
         names.first()?
     };
-    repo.find_remote(chosen).ok()?.url().map(|u| u.to_string())
+    repo.find_remote(chosen)
+        .ok()?
+        .url()
+        .map(|url| (chosen.to_string(), url.to_string()))
+}
+
+fn remote_url(repo: &git2::Repository) -> Option<String> {
+    selected_remote(repo).map(|(_, url)| url)
 }
 
 #[derive(Deserialize)]
@@ -765,18 +779,24 @@ pub async fn git_failed_ci_check_log(
 pub async fn git_open_prs(repo_root: String) -> Result<Vec<PrInfo>, AppError> {
     tokio::task::spawn_blocking(move || {
         let repo = open_repo(Path::new(&repo_root))?;
-        let Some(url) = remote_url(&repo) else {
+        let Some((remote, url)) = selected_remote(&repo) else {
             return Ok(Vec::new());
         };
         let Some((owner, name)) = parse_github_remote(&url) else {
             return Ok(Vec::new());
         };
         let key = format!("{owner}/{name}");
-        if let Some(cached) = cache_get(&key) {
+        if let Some(mut cached) = cache_get(&key) {
+            for pr in &mut cached {
+                pr.base_remote = Some(remote.clone());
+            }
             return Ok(cached);
         }
         match fetch_open_prs(&owner, &name) {
-            Ok(prs) => {
+            Ok(mut prs) => {
+                for pr in &mut prs {
+                    pr.base_remote = Some(remote.clone());
+                }
                 cache_put(key, CacheState::Hit(prs.clone()));
                 Ok(prs)
             }
@@ -1027,6 +1047,7 @@ mod tests {
             title: "t".to_string(),
             head_ref: "b".to_string(),
             base_ref: "main".to_string(),
+            base_remote: None,
             html_url: "u".to_string(),
             draft: false,
             ci_status: None,

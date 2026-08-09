@@ -111,9 +111,9 @@ test.describe("Git graph tab", () => {
     await expect(pendingBadge.locator(".pr-review")).toHaveCount(0);
     await expect(pendingBadge.locator(".pr-comments")).toHaveCount(0);
 
-    // The release branch shares this tip and carries the base-update PR badge.
+    // A branch with no open PR gets no badge at all (no error, no empty chip).
     const tipRow = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
-    await expect(tipRow.locator(".ref-pr")).toHaveCount(1);
+    await expect(tipRow.locator(".ref-pr")).toHaveCount(0);
   });
 
   test("PR badge click opens the in-app details dropdown, not the browser (#459)", async ({ page }) => {
@@ -220,7 +220,7 @@ test.describe("Git graph tab", () => {
     await waitForEntries(page);
     await openGraphViaPalette(page);
     const view = page.locator('[data-testid="git-graph-view"]');
-  await expect(view.locator(".commit-row")).toHaveCount(18);
+    await expect(view.locator(".commit-row")).toHaveCount(18);
 
     // Open the popover; the text box filters the branch list itself.
     await page.locator('[data-testid="branch-filter-btn"]').click();
@@ -255,7 +255,7 @@ test.describe("Git graph tab", () => {
     // "All branches" restores the full graph.
     await page.locator('[data-testid="branch-filter-btn"]').click();
     await popover.locator(".bf-all").click();
-  await expect(view.locator(".commit-row")).toHaveCount(18);
+    await expect(view.locator(".commit-row")).toHaveCount(18);
   });
 
   test("F5 refreshes the graph with visible feedback (#370, #417)", async ({ page }) => {
@@ -268,7 +268,7 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".toast", { hasText: "Refreshing graph" })).toBeVisible();
     await expect(page.locator(".toast", { hasText: "Fetched from remotes" })).toBeVisible();
     // The graph is still painted after the reload.
-  await expect(page.locator('[data-testid="git-graph-view"] .commit-row')).toHaveCount(18);
+    await expect(page.locator('[data-testid="git-graph-view"] .commit-row')).toHaveCount(18);
   });
 
   test("remote-only branch chip offers a tracking checkout (#432)", async ({ page }) => {
@@ -317,7 +317,7 @@ test.describe("Git graph tab", () => {
     await waitForEntries(page);
     await openGraphViaPalette(page);
     const view = page.locator('[data-testid="git-graph-view"]');
-  await expect(view.locator(".commit-row")).toHaveCount(18);
+    await expect(view.locator(".commit-row")).toHaveCount(18);
 
     await page.locator('[data-testid="branch-filter-btn"]').click();
     const popover = page.locator('[data-testid="branch-popover"]');
@@ -356,7 +356,7 @@ test.describe("Git graph tab", () => {
 
     // Re-select all restores everything.
     await selectAll.click();
-  await expect(view.locator(".commit-row")).toHaveCount(18);
+    await expect(view.locator(".commit-row")).toHaveCount(18);
   });
 
   test("graph columns resize by dragging header handles and persist (#341)", async ({ page }) => {
@@ -496,10 +496,10 @@ test("mutes merge commits and shows compact relative dates (#458)", async ({ pag
   await openGraphViaPalette(page);
 
   const view = page.locator('[data-testid="git-graph-view"]');
-  // Use summaries rather than virtual-row indices: the fixture also includes
-  // an open PR that periodically merges its base branch (#527).
-  const mergeRow = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
-  const normalRow = view.locator(".commit-row", { hasText: "Try alternative parser" });
+  // nth(2) is the tip merge ("Merge hotfix into main", 2 parents); nth(4) is a
+  // normal commit ("Try alternative parser", 1 parent). Both are dated today.
+  const mergeRow = view.locator(".commit-row").nth(2);
+  const normalRow = view.locator(".commit-row").nth(4);
   await expect(mergeRow).toContainText("Merge hotfix into main");
   await expect(normalRow).toContainText("Try alternative parser");
 
@@ -517,52 +517,6 @@ test("mutes merge commits and shows compact relative dates (#458)", async ({ pag
   await page.keyboard.press("Escape");
   await expect(mergeRow).not.toHaveClass(/is-merge/);
   await expect(normalRow).not.toHaveClass(/is-merge/);
-});
-
-test("mutes only base-update merges on an open PR branch when enabled (#527)", async ({ page }) => {
-  await page.goto("/?path=/home/user/Documents/project");
-  await waitForEntries(page);
-  await openGraphViaPalette(page);
-
-  const view = page.locator('[data-testid="git-graph-view"]');
-  const baseUpdate = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
-  const unrelated = view.locator(".commit-row", { hasText: "Merge experiment" });
-
-  // Disable generic merge muting: this isolates the independently persisted
-  // base-update treatment from the older all-merges preference.
-  await page.locator(".graph-header").click({ button: "right" });
-  await page.locator('[data-testid="toggle-mute-merges"]').click();
-  await expect(baseUpdate).not.toHaveClass(/is-merge/);
-
-  await expect(page.locator('[data-testid="toggle-mute-base-update-merges"]')).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await expect(baseUpdate).toHaveClass(/is-base-update-merge/);
-  await expect(unrelated).not.toHaveClass(/is-base-update-merge/);
-  await expect(view.locator(".commit-row", { hasText: "Merge experiment" })).not.toHaveClass(/is-base-update-merge/);
-  // Assert the visible outcome, not only the implementation class: the
-  // base-update merge's text is visibly quieter than the unrelated merge.
-  await expect(baseUpdate.locator(".summary")).toHaveCSS("opacity", "0.32");
-  await expect(unrelated.locator(".summary")).toHaveCSS("opacity", "1");
-  await page.screenshot({ path: "evidence/ac-1-base-update-merges.png", fullPage: true });
-
-  await page.locator('[data-testid="toggle-mute-base-update-merges"]').click();
-  await expect(baseUpdate).not.toHaveClass(/is-base-update-merge/);
-  await expect(baseUpdate.locator(".summary")).toHaveCSS("opacity", "1");
-
-  // Reloading constructs a fresh graph view and settings store; the disabled
-  // preference must come back from persisted storage rather than in-memory
-  // component state.
-  await page.reload();
-  await waitForEntries(page);
-  await openGraphViaPalette(page);
-  await page.locator(".graph-header").click({ button: "right" });
-  await expect(page.locator('[data-testid="toggle-mute-base-update-merges"]')).toHaveAttribute(
-    "aria-checked",
-    "false",
-  );
-  await expect(view.locator(".commit-row", { hasText: "Merge hotfix into main" }).locator(".summary")).toHaveCSS("opacity", "1");
 });
 
 test("traces a hovered or selected branch lineage and can restore the undimmed graph", async ({

@@ -779,6 +779,8 @@ export interface OpenPrLike {
  * independent from the IPC API layer. */
 export interface OpenPrBaseLike extends OpenPrLike {
   baseRef: string;
+  /** The GitHub remote selected for this PR fetch, when available. */
+  baseRemote?: string | null;
 }
 
 /** Return the merge OIDs on open PR first-parent paths that merge the PR's
@@ -791,15 +793,21 @@ export function baseUpdateMergeOids(
   prs: readonly OpenPrBaseLike[],
 ): Set<string> {
   const commitsByOid = new Map(commits.map((commit) => [commit.oid, commit]));
-  const branchTip = (branch: string): string | null => {
+  const branchTip = (branch: string, preferredRemote?: string | null): string | null => {
+    let localTip: string | null = null;
     let remoteTip: string | null = null;
     for (const [oid, decorations] of Object.entries(refs)) {
       for (const ref of decorations) {
-        if (ref.kind === "LocalBranch" && ref.name === branch) return oid;
+        if (ref.kind === "LocalBranch" && ref.name === branch) localTip = oid;
+        if (
+          ref.kind === "RemoteBranch" &&
+          preferredRemote != null &&
+          ref.name === `${preferredRemote}/${branch}`
+        ) return oid;
         if (ref.kind === "RemoteBranch" && ref.name.endsWith(`/${branch}`)) remoteTip = oid;
       }
     }
-    return remoteTip;
+    return localTip ?? remoteTip;
   };
   const reachableFrom = (tip: string): Set<string> => {
     const reachable = new Set<string>();
@@ -817,7 +825,7 @@ export function baseUpdateMergeOids(
   const baseUpdates = new Set<string>();
   for (const pr of prs) {
     const headTip = branchTip(pr.headRef);
-    const baseTip = branchTip(pr.baseRef);
+    const baseTip = branchTip(pr.baseRef, pr.baseRemote);
     if (!headTip || !baseTip) continue;
     const baseHistory = reachableFrom(baseTip);
     const visited = new Set<string>();

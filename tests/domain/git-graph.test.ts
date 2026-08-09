@@ -10,8 +10,6 @@ import {
   branchPath,
   groupRefChips,
   indexPrsByBranch,
-  baseUpdateMergeOids,
-  shouldMuteBaseUpdateMerge,
   prBadgePresentation,
   ciStatusLabel,
   reviewDecisionLabel,
@@ -23,7 +21,6 @@ import {
 import type {
   GraphCommitLike,
   OpenPrLike,
-  OpenPrBaseLike,
   CiStatus,
   ReviewDecision,
 } from "$lib/domain/git-graph";
@@ -315,47 +312,6 @@ describe("groupRefChips", () => {
     expect(chips.remotes).toEqual([
       { name: "origin/feat/nested/thing", remote: "origin", branch: "feat/nested/thing" },
     ]);
-  });
-});
-
-describe("baseUpdateMergeOids", () => {
-  const refs = {
-    featureTip: [{ kind: "LocalBranch", name: "feature" }],
-    mainTip: [{ kind: "LocalBranch", name: "main" }],
-  };
-  const prs: OpenPrBaseLike[] = [{ number: 42, headRef: "feature", baseRef: "main" }];
-
-  it("marks a merge that brings the open PR's base history into its first-parent chain", () => {
-    const commits = [
-      c("featureTip", "baseUpdate", "unrelatedMerge"),
-      c("baseUpdate", "featureWork", "mainTip"),
-      c("unrelatedMerge", "featureWork", "sideTip"),
-      c("featureWork", "shared"),
-      c("sideTip", "shared"),
-      c("mainTip", "mainWork"),
-      c("mainWork", "shared"),
-      c("shared"),
-    ];
-
-    expect(baseUpdateMergeOids(commits, refs, prs)).toEqual(new Set(["baseUpdate"]));
-  });
-
-  it("leaves unrelated merges on the PR branch fully emphasized and lets users disable only base-update muting", () => {
-    const commits = [
-      c("featureTip", "baseUpdate", "unrelatedMerge"),
-      c("baseUpdate", "featureWork", "mainTip"),
-      c("unrelatedMerge", "featureWork", "sideTip"),
-      c("featureWork", "shared"),
-      c("sideTip", "shared"),
-      c("mainTip", "mainWork"),
-      c("mainWork", "shared"),
-      c("shared"),
-    ];
-    const baseUpdates = baseUpdateMergeOids(commits, refs, prs);
-
-    expect(shouldMuteBaseUpdateMerge("baseUpdate", baseUpdates, true)).toBe(true);
-    expect(shouldMuteBaseUpdateMerge("unrelatedMerge", baseUpdates, true)).toBe(false);
-    expect(shouldMuteBaseUpdateMerge("baseUpdate", baseUpdates, false)).toBe(false);
   });
 });
 

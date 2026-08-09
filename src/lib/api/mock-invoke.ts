@@ -2351,18 +2351,26 @@ const mockCommands: Record<string, CommandHandler> = {
   git_open_prs: (args: Record<string, unknown>) => {
     const repoRoot = (args.repoRoot as string) ?? "";
     if (!repoRoot.startsWith("/home/user/Documents/project")) return [];
+    // Isolated graph fixture for #527's browser regression test. It is opt-in
+    // by URL so the shared default graph keeps its established PR topology.
+    const baseUpdateFixture = new URLSearchParams(window.location.search).has(
+      "gitGraphBaseUpdateFixture",
+    );
     return [
-      {
-        number: 27,
-        title: "Keep release branch current",
-        headRef: "release",
-        baseRef: "hotfix",
-        htmlUrl: "https://github.com/mock/project/pull/27",
-        draft: false,
-        ciStatus: null,
-        reviewDecision: null,
-        commentCount: null,
-      },
+      ...(baseUpdateFixture
+        ? [{
+            number: 27,
+            title: "Keep release branch current",
+            headRef: "release",
+            baseRef: "hotfix",
+            baseRemote: "origin",
+            htmlUrl: "https://github.com/mock/project/pull/27",
+            draft: false,
+            ciStatus: null,
+            reviewDecision: null,
+            commentCount: null,
+          }]
+        : []),
       {
         number: 7,
         title: "Add feature X",

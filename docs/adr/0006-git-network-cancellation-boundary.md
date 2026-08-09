@@ -22,13 +22,15 @@ snapshot from frontend state.
 - Every fetch, pull, and remote-branch deletion receives a client-generated
   task ID and registers it before spawning network work. Cancellation terminates
   the Git process tree and the command remains owned until the child is reaped.
-- Fetch enumerates configured remotes and fetches each one separately with
-  `--prune --atomic`; Git does not allow `--all` and `--atomic` when more than
-  one remote participates. Each completed remote therefore has an internally
-  atomic ref update. Cancellation stops before starting the next remote:
-  completed remotes stay updated and later remotes stay unchanged. Consumers
-  reload repository truth, and a later fetch reconciles the remaining remotes.
-  The worktree and index are not mutated.
+- Fetch enumerates the remotes eligible for `git fetch --all`, preserving the
+  `remote.<name>.skipFetchAll` and legacy `skipDefaultUpdate` opt-outs, and
+  fetches each eligible remote separately with `--prune --atomic`; Git does not
+  allow `--all` and `--atomic` when more than one remote participates. Each
+  completed remote therefore has an internally atomic ref update. Cancellation
+  stops before starting the next remote: completed remotes stay updated and
+  later remotes stay unchanged. Consumers reload repository truth, and a later
+  fetch reconciles the remaining remotes. The worktree and index are not
+  mutated.
 - Pull is two phases: cancellable `git fetch --atomic`, then non-cancellable
   `git merge --ff-only @{upstream}`. The cancellation flag is checked at the
   boundary. Cancellation before the boundary leaves HEAD/index/worktree
@@ -52,9 +54,12 @@ Rust temp-repository tests exercise the real Git CLI at each boundary:
 
 - cancellation after an atomic fetch ref update proves refs remain valid,
   HEAD/index/worktree remain unchanged, no lock remains, and a later fetch works;
-- a two-remote fetch proves both remotes update normally, then cancels between
-  remotes and proves the completed remote is fully updated while the unstarted
-  remote remains at its previous ref set until a later reconciliation fetch;
+- a two-remote fetch proves eligible remotes update normally while opted-out
+  remotes remain untouched, then cancels between remotes and proves the
+  completed remote is fully updated while the unstarted remote remains at its
+  previous ref set until a later reconciliation fetch; a multi-ref remote also
+  proves an in-flight cancellation and a rejected ref transaction cannot expose
+  a partial remote-tracking ref set;
 - cancellation after pull's fetch but before fast-forward proves no HEAD move or
   undo, then proves a later pull and its undo both work;
 - a late cancellation at fast-forward start proves the local mutation completes

@@ -124,16 +124,6 @@ jobs:
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 15
-        env:
-          # A debug build pushes a Stdout log target (lib.rs) and the app crate
-          # logs at Info, so the ~38 `gitstat:` sites added in #424 write to
-          # stdout continuously while the app sits in this git checkout.
-          # msedgedriver spawns the app and does not drain that pipe, so once
-          # the buffer fills the app blocks on write, the WebView2 attach never
-          # completes, and POST /session times out — which is exactly when the
-          # Windows leg started hanging (#457, first red run is #424 itself).
-          # Dropping the app to error-level all but eliminates that traffic.
-          RUST_LOG: error
         run: bun run test:e2e:tauri
 
       - name: Upload WDIO logs

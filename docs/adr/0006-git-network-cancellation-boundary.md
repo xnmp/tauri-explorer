@@ -29,8 +29,11 @@ snapshot from frontend state.
   completed remote therefore has an internally atomic ref update. Cancellation
   stops before starting the next remote: completed remotes stay updated and
   later remotes stay unchanged. Consumers reload repository truth, and a later
-  fetch reconciles the remaining remotes. The worktree and index are not
-  mutated.
+  fetch reconciles the remaining remotes. An ordinary error from one remote is
+  recorded while the remaining eligible remotes are still attempted, matching
+  `fetch --all`; the command returns an aggregate error after the sequence.
+  Cancellation still short-circuits immediately. The worktree and index are
+  not mutated.
 - Pull is two phases: cancellable `git fetch --atomic`, then non-cancellable
   `git merge --ff-only @{upstream}`. The cancellation flag is checked at the
   boundary. Cancellation before the boundary leaves HEAD/index/worktree
@@ -59,7 +62,8 @@ Rust temp-repository tests exercise the real Git CLI at each boundary:
   completed remote is fully updated while the unstarted remote remains at its
   previous ref set until a later reconciliation fetch; a multi-ref remote also
   proves an in-flight cancellation and a rejected ref transaction cannot expose
-  a partial remote-tracking ref set;
+  a partial remote-tracking ref set; a broken first remote proves its error is
+  returned without preventing a later healthy remote from updating;
 - cancellation after pull's fetch but before fast-forward proves no HEAD move or
   undo, then proves a later pull and its undo both work;
 - a late cancellation at fast-forward start proves the local mutation completes

@@ -226,13 +226,18 @@ export async function gitBranchAuthors(repoPath: string): Promise<BranchAuthor[]
 }
 
 /** Fetch from every remote with pruning (#370). */
-export async function gitFetch(repoPath: string): Promise<void> {
-  await invoke("git_fetch", { repoPath });
+export async function gitFetch(repoPath: string, taskId: number): Promise<void> {
+  await invoke("git_fetch", { repoPath, taskId });
 }
 
 /** Fast-forward pull on the current branch (#377). */
-export async function gitPull(repoPath: string): Promise<GitUndoAction | null> {
-  return invoke<GitUndoAction | null>("git_pull", { repoPath });
+export async function gitPull(repoPath: string, taskId: number): Promise<GitUndoAction | null> {
+  return invoke<GitUndoAction | null>("git_pull", { repoPath, taskId });
+}
+
+/** Terminate an in-flight fetch, pull, or remote push. */
+export async function cancelGitNetworkOperation(taskId: number): Promise<void> {
+  await invoke("cancel_git_network_operation", { taskId });
 }
 
 /** Commits `name`'s upstream has that the local branch lacks; null when no
@@ -277,8 +282,9 @@ export async function gitDeleteRemoteBranch(
   repoPath: string,
   remote: string,
   name: string,
+  taskId: number,
 ): Promise<void> {
-  await invoke("git_delete_remote_branch", { repoPath, remote, name });
+  await invoke("git_delete_remote_branch", { repoPath, remote, name, taskId });
 }
 
 /** Checkout a remote-tracking branch (#432): creates a local branch tracking

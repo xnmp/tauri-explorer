@@ -562,9 +562,19 @@ interface MockGitCommit {
 }
 
 const mockGitCommits: MockGitCommit[] = [];
-let pendingGitFetch:
+let pendingGitNetworkOperation:
   | { taskId: number; reject: (reason: Error) => void }
   | undefined;
+
+function holdGitNetworkOperation(
+  command: "git_fetch" | "git_pull" | "git_delete_remote_branch",
+  args: Record<string, unknown>,
+): Promise<never> | null {
+  if (new URLSearchParams(location.search).get("mockGitNetwork") !== command) return null;
+  return new Promise<never>((_resolve, reject) => {
+    pendingGitNetworkOperation = { taskId: Number(args.taskId), reject };
+  });
+}
 
 function seedGitState(): MockGitState {
   return {
@@ -2043,21 +2053,19 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
   git_fetch: (args) => {
-    const pending = new URLSearchParams(location.search).get("mockGitFetch") === "pending";
-    if (!pending) return null;
-    return new Promise<never>((_resolve, reject) => {
-      pendingGitFetch = { taskId: Number(args.taskId), reject };
-    });
+    return holdGitNetworkOperation("git_fetch", args);
   },
   cancel_git_network_operation: (args) => {
-    if (pendingGitFetch?.taskId === Number(args.taskId)) {
-      const operation = pendingGitFetch;
-      pendingGitFetch = undefined;
+    if (pendingGitNetworkOperation?.taskId === Number(args.taskId)) {
+      const operation = pendingGitNetworkOperation;
+      pendingGitNetworkOperation = undefined;
       operation.reject(new Error("git network operation cancelled"));
     }
     return null;
   },
-  git_pull: () => {
+  git_pull: (args) => {
+    const held = holdGitNetworkOperation("git_pull", args);
+    if (held) return held;
     const before_oid = mockHeadOid();
     const branch =
       mockDetached
@@ -2149,7 +2157,8 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     throw new Error("unknown git undo action");
   },
-  git_delete_remote_branch: () => null,
+  git_delete_remote_branch: (args) =>
+    holdGitNetworkOperation("git_delete_remote_branch", args),
 
   // Tracking checkout (#432): create a local branch tracking <remote>/<name>
   // at the remote branch's current tip, then move HEAD onto it.

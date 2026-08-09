@@ -1397,6 +1397,15 @@ mod tests {
             dir.path(),
             &["config", "--unset", "remote.backup.skipFetchAll"],
         );
+        let origin_clone = clones
+            .iter()
+            .find_map(|(name, clone)| (name == "origin").then_some(clone))
+            .unwrap();
+        write(origin_clone.path(), "origin-four.txt", "origin four\n");
+        git(origin_clone.path(), &["add", "."]);
+        git(origin_clone.path(), &["commit", "-m", "origin four"]);
+        git(origin_clone.path(), &["push", "origin", "main"]);
+        let fourth_origin_tip = git_out(origin_clone.path(), &["rev-parse", "HEAD"]);
         git(
             dir.path(),
             &["config", "remote.origin.skipDefaultUpdate", "true"],
@@ -1409,6 +1418,17 @@ mod tests {
         assert_eq!(
             git_out(dir.path(), &["rev-parse", "refs/remotes/backup/main"]),
             third_tips["backup"]
+        );
+        assert_repo_consistent(dir.path());
+
+        git(
+            dir.path(),
+            &["config", "--unset", "remote.origin.skipDefaultUpdate"],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            fourth_origin_tip
         );
         assert_repo_consistent(dir.path());
     }
@@ -1520,27 +1540,33 @@ mod tests {
             &["update-ref", "refs/heads/topic", &remote_tip],
         );
 
-        let marker = dir.path().join(".git/blocking-ssh-started");
-        let script = dir.path().join(".git/blocking-ssh.sh");
+        let marker = dir.path().join(".git/blocking-pack-started");
+        let pack_script = dir.path().join(".git/blocking-pack-objects.sh");
         let marker_for_shell = marker.to_string_lossy().replace('\\', "/");
         write(
             dir.path(),
-            ".git/blocking-ssh.sh",
-            &format!("#!/bin/sh\n: > \"{marker_for_shell}\"\nsleep 30\n"),
+            ".git/blocking-pack-objects.sh",
+            &format!(
+                "#!/bin/sh\n: > \"{marker_for_shell}\"\nsleep 30\nexec git pack-objects \"$@\"\n"
+            ),
         );
-        let script_for_shell = script.to_string_lossy().replace('\\', "/");
+        let pack_script_for_shell = pack_script.to_string_lossy().replace('\\', "/");
+        let upload_pack_wrapper = dir.path().join(".git/blocking-upload-pack.sh");
+        write(
+            dir.path(),
+            ".git/blocking-upload-pack.sh",
+            &format!(
+                "#!/bin/sh\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=uploadpack.packObjectsHook\nexport GIT_CONFIG_VALUE_0='sh \"{pack_script_for_shell}\"'\nexec git-upload-pack \"$@\"\n"
+            ),
+        );
+        let wrapper_for_shell = upload_pack_wrapper.to_string_lossy().replace('\\', "/");
         git(
             dir.path(),
             &[
                 "config",
-                "core.sshCommand",
-                &format!("sh \"{script_for_shell}\""),
+                "remote.origin.uploadpack",
+                &format!("sh \"{wrapper_for_shell}\""),
             ],
-        );
-        git(dir.path(), &["config", "ssh.variant", "simple"]);
-        git(
-            dir.path(),
-            &["remote", "set-url", "origin", "example.invalid:repository"],
         );
 
         let worker_repo = repo.clone();
@@ -1555,7 +1581,7 @@ mod tests {
         if !marker.exists() {
             cancelled.store(true, Ordering::Relaxed);
             let _ = worker.join();
-            panic!("fetch never entered the blocking transport");
+            panic!("fetch never reached remote pack generation after negotiation");
         }
         let cancel_started = Instant::now();
         cancelled.store(true, Ordering::Relaxed);
@@ -1576,7 +1602,10 @@ mod tests {
         assert_repo_consistent(dir.path());
 
         cancelled.store(false, Ordering::Relaxed);
-        git(dir.path(), &["remote", "set-url", "origin", &remote_path]);
+        git(
+            dir.path(),
+            &["config", "--unset", "remote.origin.uploadpack"],
+        );
         fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
         assert_eq!(
             git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),

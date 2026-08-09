@@ -2383,6 +2383,32 @@ const mockCommands: Record<string, CommandHandler> = {
             body: "Thanks for the review — pushed a fixup.",
           },
         ],
+        reviewThreads: [
+          {
+            resolved: true,
+            comments: [
+              {
+                author: "octocat",
+                createdAt: daysAgo(120),
+                body: "Please use the shared parser here.",
+                path: "src/lib/parser.ts",
+                line: 42,
+              },
+            ],
+          },
+          {
+            resolved: false,
+            comments: [
+              {
+                author: "reviewer-bot",
+                createdAt: daysAgo(2),
+                body: "Could this retain the previous error context?",
+                path: "src/lib/parser.ts",
+                line: 87,
+              },
+            ],
+          },
+        ],
       },
       {
         number: 12,
@@ -2397,6 +2423,7 @@ const mockCommands: Record<string, CommandHandler> = {
         // empty-body / zero-comment path.
         body: null,
         comments: [],
+        reviewThreads: [],
       },
       {
         number: 15,
@@ -2410,6 +2437,7 @@ const mockCommands: Record<string, CommandHandler> = {
         commentCount: null,
         body: "Restores the post-login redirect that regressed in 2.3.1.",
         comments: [],
+        reviewThreads: null,
       },
     ];
   },

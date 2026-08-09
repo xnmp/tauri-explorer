@@ -63,6 +63,11 @@ pub struct PrInfo {
     /// consistent with the module's best-effort philosophy).
     #[serde(default)]
     pub comments: Vec<PrComment>,
+    /// Review threads from GraphQL, including their resolution state and
+    /// per-line discussion. `None` means the REST fallback could not obtain
+    /// this token-only data; an empty vector means GraphQL found no threads.
+    #[serde(rename = "reviewThreads", default)]
+    pub review_threads: Option<Vec<PrReviewThread>>,
 }
 
 /// A single issue comment on a PR, as surfaced to the frontend.
@@ -77,6 +82,24 @@ pub struct PrComment {
     pub created_at: String,
     /// Comment text (GraphQL `bodyText` — plain text, no markdown markup).
     pub body: String,
+}
+
+/// A GitHub pull-request review thread, as rendered in the inline PR detail.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrReviewThread {
+    pub resolved: bool,
+    pub comments: Vec<PrReviewComment>,
+}
+
+/// A single comment belonging to a review thread.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrReviewComment {
+    pub author: Option<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<u64>,
 }
 
 /// A failed GitHub Actions job associated with an open PR. The opaque IDs are
@@ -102,6 +125,30 @@ pub struct FailedCiCheckLog {
 /// How many trailing comments the single GraphQL query fetches per PR. Kept
 /// small so the one-request design stays cheap; older comments are truncated.
 const COMMENT_FETCH_CAP: usize = 20;
+/// The review-thread query fans out beneath every open PR. These caps keep the
+/// worst case (100 PRs × 50 threads × 50 comments, plus PR comments) below
+/// GitHub GraphQL's 500,000-node validation limit.
+const OPEN_PR_FETCH_CAP: usize = 100;
+const REVIEW_THREAD_FETCH_CAP: usize = 50;
+const REVIEW_COMMENT_FETCH_CAP: usize = 50;
+const _: () =
+    assert!(OPEN_PR_FETCH_CAP * REVIEW_THREAD_FETCH_CAP * REVIEW_COMMENT_FETCH_CAP < 500_000);
+
+/// Build the bounded GraphQL request from the same caps guarded above. Keeping
+/// the query text coupled to these constants prevents a query-only fan-out
+/// increase from bypassing the compile-time node-budget assertion.
+fn open_prs_query() -> String {
+    format!(
+        "query($owner:String!,$name:String!){{\
+repository(owner:$owner,name:$name){{\
+pullRequests(states:OPEN,first:{OPEN_PR_FETCH_CAP}){{nodes{{\
+number title url isDraft headRefName reviewDecision bodyText \
+comments(last:{COMMENT_FETCH_CAP}){{totalCount nodes{{author{{login}} createdAt bodyText}}}} \
+reviewThreads(first:{REVIEW_THREAD_FETCH_CAP}){{nodes{{isResolved comments(first:{REVIEW_COMMENT_FETCH_CAP}){{nodes{{author{{login}} createdAt bodyText path line}}}}}}}} \
+commits(last:1){{nodes{{commit{{statusCheckRollup{{state}}}}}}}}\
+}}}}}}"
+    )
+}
 
 /// Extract `(owner, repo)` from a GitHub remote URL. Only github.com hosts
 /// are recognized (SSH scp-like syntax, `ssh://`, and `https://`); anything
@@ -212,6 +259,7 @@ impl From<GhPull> for PrInfo {
             // separate endpoint), so comments degrade to empty here.
             body: p.body.filter(|b| !b.is_empty()),
             comments: Vec::new(),
+            review_threads: None,
         }
     }
 }
@@ -268,15 +316,8 @@ fn fetch_open_prs_rest(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
 /// last commit's `statusCheckRollup` gives the CI state; `reviewDecision` and
 /// `comments.totalCount` come for free on the same node.
 fn fetch_open_prs_graphql(owner: &str, repo: &str, token: &str) -> Result<Vec<PrInfo>, String> {
-    const QUERY: &str = "query($owner:String!,$name:String!){\
-repository(owner:$owner,name:$name){\
-pullRequests(states:OPEN,first:100){nodes{\
-number title url isDraft headRefName reviewDecision bodyText \
-comments(last:20){totalCount nodes{author{login} createdAt bodyText}} \
-commits(last:1){nodes{commit{statusCheckRollup{state}}}}\
-}}}}";
     let body = serde_json::json!({
-        "query": QUERY,
+        "query": open_prs_query(),
         "variables": { "owner": owner, "name": repo },
     });
     let resp: GqlResponse = ureq::post("https://api.github.com/graphql")
@@ -366,6 +407,8 @@ struct GqlPrNode {
     body_text: String,
     #[serde(default)]
     comments: GqlComments,
+    #[serde(rename = "reviewThreads", default)]
+    review_threads: GqlReviewThreads,
     #[serde(default)]
     commits: GqlCommits,
 }
@@ -387,6 +430,40 @@ struct GqlCommentNode {
     created_at: String,
     #[serde(rename = "bodyText", default)]
     body_text: String,
+}
+
+#[derive(Deserialize, Default)]
+struct GqlReviewThreads {
+    #[serde(default)]
+    nodes: Vec<GqlReviewThreadNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlReviewThreadNode {
+    #[serde(rename = "isResolved", default)]
+    is_resolved: bool,
+    #[serde(default)]
+    comments: GqlReviewComments,
+}
+
+#[derive(Deserialize, Default)]
+struct GqlReviewComments {
+    #[serde(default)]
+    nodes: Vec<GqlReviewCommentNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlReviewCommentNode {
+    #[serde(default)]
+    author: Option<GqlAuthor>,
+    #[serde(rename = "createdAt", default)]
+    created_at: String,
+    #[serde(rename = "bodyText", default)]
+    body_text: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    line: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -443,6 +520,36 @@ impl From<GqlPrNode> for PrInfo {
                 body: c.body_text,
             })
             .collect();
+        let mut review_thread_nodes = n.review_threads.nodes;
+        if review_thread_nodes.len() > REVIEW_THREAD_FETCH_CAP {
+            review_thread_nodes.drain(0..review_thread_nodes.len() - REVIEW_THREAD_FETCH_CAP);
+        }
+        let review_threads = review_thread_nodes
+            .into_iter()
+            .map(|mut thread| {
+                if thread.comments.nodes.len() > REVIEW_COMMENT_FETCH_CAP {
+                    thread
+                        .comments
+                        .nodes
+                        .drain(0..thread.comments.nodes.len() - REVIEW_COMMENT_FETCH_CAP);
+                }
+                PrReviewThread {
+                    resolved: thread.is_resolved,
+                    comments: thread
+                        .comments
+                        .nodes
+                        .into_iter()
+                        .map(|comment| PrReviewComment {
+                            author: comment.author.map(|author| author.login),
+                            created_at: comment.created_at,
+                            body: comment.body_text,
+                            path: comment.path,
+                            line: comment.line,
+                        })
+                        .collect(),
+                }
+            })
+            .collect();
         PrInfo {
             number: n.number,
             title: n.title,
@@ -457,6 +564,7 @@ impl From<GqlPrNode> for PrInfo {
             // Empty description reads as "no body"; normalize to None.
             body: Some(n.body_text).filter(|b| !b.is_empty()),
             comments,
+            review_threads: Some(review_threads),
         }
     }
 }
@@ -915,6 +1023,7 @@ mod tests {
             comment_count: None,
             body: None,
             comments: Vec::new(),
+            review_threads: None,
         };
         let v = serde_json::to_value(&pr).unwrap();
         assert!(v.get("ciStatus").unwrap().is_null());
@@ -951,6 +1060,50 @@ mod tests {
         assert_eq!(pr.comments[0].created_at, "2024-01-01T10:00:00Z");
         assert_eq!(pr.comments[0].body, "Looks good");
         assert_eq!(pr.comments[1].author.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn maps_review_threads() {
+        let pr = parse_one(
+            r#"{
+                "number": 7, "title": "Add feature", "url": "u",
+                "isDraft": false, "headRefName": "feature", "reviewDecision": null,
+                "reviewThreads": { "nodes": [
+                    { "isResolved": true, "comments": { "nodes": [
+                        { "author": { "login": "alice" }, "createdAt": "2024-01-01T10:00:00Z", "bodyText": "Fixed", "path": "src/lib/parser.ts", "line": 42 }
+                    ] } },
+                    { "isResolved": false, "comments": { "nodes": [
+                        { "author": null, "createdAt": "2024-01-02T10:00:00Z", "bodyText": "Please revisit", "path": null, "line": null }
+                    ] } }
+                ] },
+                "commits": { "nodes": [] }
+            }"#,
+        );
+        let threads = pr
+            .review_threads
+            .expect("GraphQL supplies review-thread data");
+        assert_eq!(threads.len(), 2);
+        assert!(threads[0].resolved);
+        assert_eq!(
+            threads[0].comments[0].path.as_deref(),
+            Some("src/lib/parser.ts")
+        );
+        assert_eq!(threads[0].comments[0].line, Some(42));
+        assert!(!threads[1].resolved);
+        assert_eq!(threads[1].comments[0].author, None);
+    }
+
+    #[test]
+    fn open_pr_query_requests_bounded_review_thread_fields() {
+        let query = open_prs_query();
+        assert!(query.contains(&format!(
+            "pullRequests(states:OPEN,first:{OPEN_PR_FETCH_CAP})"
+        )));
+        assert!(query.contains(&format!("reviewThreads(first:{REVIEW_THREAD_FETCH_CAP})")));
+        assert!(query.contains(&format!("comments(first:{REVIEW_COMMENT_FETCH_CAP})")));
+        for field in ["isResolved", "createdAt", "bodyText", "path", "line"] {
+            assert!(query.contains(field), "query should request {field}");
+        }
     }
 
     #[test]

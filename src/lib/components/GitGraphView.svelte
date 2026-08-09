@@ -2467,6 +2467,35 @@
                     <span class="pr-detail-label">Comments:</span> {pr.commentCount}
                   </div>
                 {/if}
+                <section class="pr-detail-threads" data-testid="git-graph-pr-review-threads">
+                  <div class="pr-detail-label">Review threads</div>
+                  {#if pr.reviewThreads == null}
+                    <div class="pr-detail-line">Sign in to GitHub to view review threads.</div>
+                  {:else if pr.reviewThreads.length === 0}
+                    <div class="pr-detail-line">No review threads.</div>
+                  {:else}
+                    <ul class="pr-detail-comments pr-detail-thread-list">
+                      {#each pr.reviewThreads as thread, index (`${thread.resolved}-${index}`)}
+                        <li class="pr-detail-comment pr-detail-thread">
+                          <div class:resolved={thread.resolved} class="pr-detail-thread-state">
+                            {thread.resolved ? "Resolved" : "Open"}
+                          </div>
+                          {#each thread.comments as comment, commentIndex (`${comment.createdAt}-${commentIndex}`)}
+                            <div class="pr-detail-thread-comment">
+                              <div class="pr-detail-comment-meta">
+                                <span class="pr-detail-comment-author">{comment.author ?? "(unknown)"}</span>
+                                {#if comment.path}
+                                  <span class="pr-detail-thread-anchor">{comment.path}{comment.line == null ? "" : `:${comment.line}`}</span>
+                                {/if}
+                              </div>
+                              <div class="pr-detail-comment-body">{comment.body}</div>
+                            </div>
+                          {/each}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </section>
               </div>
             </div>
           {/if}
@@ -3798,6 +3827,37 @@
     gap: 8px;
     max-height: 220px;
     overflow-y: auto;
+  }
+  .pr-detail-threads {
+    margin-top: 10px;
+  }
+  .pr-detail-thread-list {
+    max-height: 280px;
+  }
+  .pr-detail-thread {
+    border-left-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  }
+  .pr-detail-thread-state {
+    display: inline-block;
+    margin-bottom: 5px;
+    padding: 1px 6px;
+    border: 1px solid color-mix(in srgb, #f59e0b 55%, transparent);
+    border-radius: 999px;
+    color: #f59e0b;
+    font-size: var(--font-size-caption);
+    font-weight: 700;
+  }
+  .pr-detail-thread-state.resolved {
+    border-color: color-mix(in srgb, #22c55e 55%, transparent);
+    color: #22c55e;
+  }
+  .pr-detail-thread-comment + .pr-detail-thread-comment {
+    margin-top: 7px;
+  }
+  .pr-detail-thread-anchor {
+    color: var(--text-tertiary);
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-size-caption);
   }
   .pr-detail-comment {
     border-left: 2px solid color-mix(in srgb, #a371f7 40%, transparent);

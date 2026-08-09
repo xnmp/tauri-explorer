@@ -48,6 +48,8 @@
 <script lang="ts">
   import {
     gitCommitFileDiff,
+    gitCompareCommitFiles,
+    gitCompareCommitFileDiff,
     gitCheckout,
     gitCreateBranch,
     gitCreateTag,
@@ -101,6 +103,14 @@
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { compactRelativeTimeToday } from "$lib/domain/git";
+  import {
+    acceptsDetailLoad,
+    closeCommitComparison,
+    createCommitComparisonState,
+    exitCommitComparison,
+    selectComparisonCommit,
+    startCommitComparison,
+  } from "$lib/domain/git-graph-comparison";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
   import { directoryKey, splitPathForDisplay } from "$lib/domain/path";
@@ -169,7 +179,12 @@
   // row shows at the list bottom during infinite scroll (#433).
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
-  let selected = $state<CommitInfo | null>(null);
+  // The importable domain state machine owns commit/comparison transitions and
+  // request invalidation; this component only performs the resulting IPC.
+  let comparisonState = $state(createCommitComparisonState<CommitInfo>());
+  const selected = $derived(comparisonState.selected);
+  const comparisonFirst = $derived(comparisonState.first);
+  const comparison = $derived(comparisonState.comparison);
   let hoveredTraceOid = $state<string | null>(null);
   /** File rows in the expanded details. `staged`/`section` are set only for
    *  the synthetic uncommitted row, where they pick the right working-tree
@@ -338,7 +353,7 @@
   }
 
   function closeDetails(): void {
-    selected = null;
+    comparisonState = closeCommitComparison(comparisonState).state;
     selectedFiles = [];
     // Ephemeral editor: a fresh open starts blank (mirrors keifu's
     // commit_editor) — but NOT while a commit is in flight, so close+reopen
@@ -353,14 +368,22 @@
     // Opening commit details closes any open PR dropdown — one expansion at a
     // time (#459).
     closePrDetail();
-    if (selected?.oid === commit.oid) {
-      closeDetails();
+    const transition = selectComparisonCommit(comparisonState, commit, UNCOMMITTED);
+    comparisonState = transition.state;
+    if (!transition.clearFiles) return;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+    if (!transition.load) {
+      commitPanelStore.resetIfIdle();
+      detailsHeight = 0;
       return;
     }
-    closeDetails();
-    selected = commit;
     try {
-      if (commit.oid === UNCOMMITTED) {
+      if (transition.load.kind === "comparison") {
+        const files = await gitCompareCommitFiles(repoPath, transition.load.older.oid, transition.load.newer.oid);
+        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
+      } else if (transition.load.commit.oid === UNCOMMITTED) {
         // Working-tree changes: group the SCM summary buckets by stage status
         // (merge / staged / unstaged / untracked), remembering which side of
         // the index each file sits on for the diff and the stage/unstage
@@ -369,13 +392,40 @@
         // instead of re-scanning.
         const res = await fetchGitSummary(repoPath, { consumerId: summaryConsumerId });
         if (!res.ok) throw new Error(res.error);
-        selectedFiles = buildStageFiles(res.data);
+        if (acceptsDetailLoad(comparisonState, transition.load)) {
+          selectedFiles = buildStageFiles(res.data);
+        }
       } else {
         // Cached per OID (#431): re-clicking or re-selecting a commit is instant.
-        selectedFiles = await cachedCommitFiles(repoPath, commit.oid);
+        const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
+        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
       }
     } catch {
-      selectedFiles = [];
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
+    }
+  }
+
+  function beginComparison(): void {
+    const transition = startCommitComparison(comparisonState, UNCOMMITTED);
+    comparisonState = transition.state;
+    if (!transition.clearFiles) return;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+  }
+
+  async function exitComparison(): Promise<void> {
+    const transition = exitCommitComparison(comparisonState, UNCOMMITTED);
+    comparisonState = transition.state;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+    if (!transition.load || transition.load.kind !== "normal") return;
+    try {
+      const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
+    } catch {
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
     }
   }
 
@@ -396,7 +446,12 @@
       } else {
         openDiffPath = null;
         openDiff = null;
-        scmStore.openCommitDiff(repoPath, forPreview.oid, file.path);
+        scmStore.openCommitDiff(
+          repoPath,
+          forPreview.oid,
+          file.path,
+          comparison?.older.oid,
+        );
         return;
       }
     }
@@ -417,7 +472,9 @@
               if (!r.ok) throw new Error(r.error);
               return r.data;
             })
-          : await gitCommitFileDiff(repoPath, forCommit.oid, file.path);
+          : comparison
+            ? await gitCompareCommitFileDiff(repoPath, comparison.older.oid, comparison.newer.oid, file.path)
+            : await gitCommitFileDiff(repoPath, forCommit.oid, file.path);
       // Ignore a late response if the user moved on.
       if (openDiffPath === file.path && selected?.oid === forCommit.oid) {
         openDiff = parseUnifiedDiff(text);
@@ -2141,6 +2198,21 @@
                       <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
                     {/if}
                     <p class="detail-message">{commit.summary.trimStart()}</p>
+                    {#if comparisonFirst}
+                      <p class="compare-status">Select another commit to compare with {comparisonFirst.short_oid}.</p>
+                      <button type="button" class="compare-action" onclick={() => void exitComparison()}>
+                        Cancel comparison
+                      </button>
+                    {:else if comparison}
+                      <p class="compare-status">Comparing {comparison.older.short_oid} → {comparison.newer.short_oid}</p>
+                      <button type="button" class="compare-action" onclick={() => void exitComparison()}>
+                        Exit comparison
+                      </button>
+                    {:else}
+                      <button type="button" class="compare-action" onclick={beginComparison}>
+                        Compare this commit
+                      </button>
+                    {/if}
                   </div>
                 {:else}
                   <!-- Uncommitted node (#466): the message area becomes an
@@ -2841,6 +2913,26 @@
   .detail-files-col {
     flex: 1;
     min-width: 0;
+  }
+
+  .compare-status {
+    margin: 6px 0;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .compare-action {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 3px 7px;
+  }
+
+  .compare-action:hover {
+    background: var(--bg-hover);
   }
 
   .detail-close {

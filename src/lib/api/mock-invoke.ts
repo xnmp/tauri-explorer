@@ -1872,6 +1872,10 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
   },
+  git_compare_commit_files: () => [
+    { path: "src/compared.ts", status: "M" },
+    { path: "src/introduced-in-comparison.ts", status: "A" },
+  ],
   git_commit_file_diff: (args) => {
     // Deterministic tiny patch so E2E can assert the inline diff (#221).
     const filePath = args.filePath as string;
@@ -1883,6 +1887,20 @@ const mockCommands: Record<string, CommandHandler> = {
       " unchanged line",
       "-old line",
       "+new line",
+      "",
+    ].join("\n");
+  },
+  git_compare_commit_file_diff: (args) => {
+    const filePath = args.filePath as string;
+    const baseOid = args.baseOid as string;
+    const targetOid = args.targetOid as string;
+    return [
+      `diff --git a/${filePath} b/${filePath}`,
+      `--- a/${filePath}`,
+      `+++ b/${filePath}`,
+      "@@ -1 +1 @@",
+      `-older ${baseOid.slice(0, 7)}`,
+      `+newer ${targetOid.slice(0, 7)}`,
       "",
     ].join("\n");
   },

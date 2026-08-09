@@ -15,7 +15,7 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import { getScmStore } from "$lib/state/scm.svelte";
-  import { gitCommitFileDiff } from "$lib/api/git-log";
+  import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
@@ -427,7 +427,7 @@
   });
 
   /** Load a commit file diff for the graph-routed target (#366). */
-  async function loadCommitDiff(cd: { repoPath: string; oid: string; path: string }): Promise<void> {
+  async function loadCommitDiff(cd: { repoPath: string; oid: string; path: string; baseOid?: string }): Promise<void> {
     const gen = ++diffRequestGen;
     // `diffParsed` is about to hold a COMMIT diff — the working-tree render
     // cache must not claim it, or reopening that target would briefly show
@@ -437,7 +437,9 @@
     diffLoading = true;
     diffError = null;
     try {
-      const text = await gitCommitFileDiff(cd.repoPath, cd.oid, cd.path);
+      const text = cd.baseOid
+        ? await gitCompareCommitFileDiff(cd.repoPath, cd.baseOid, cd.oid, cd.path)
+        : await gitCommitFileDiff(cd.repoPath, cd.oid, cd.path);
       if (gen !== diffRequestGen || scmStore.commitDiff !== cd) return;
       diffParsed = parseUnifiedDiff(text);
     } catch (err) {
@@ -761,8 +763,8 @@
     <div class="preview-header">
       <span class="preview-filename" title={diffPath}>{diffPath.split("/").pop()}</span>
       {#if commitDiff}
-        <span class="preview-type-badge diff-commit" title={commitDiff.oid}>
-          commit {commitDiff.oid.slice(0, 7)}
+        <span class="preview-type-badge diff-commit" title={commitDiff.baseOid ? `${commitDiff.baseOid} → ${commitDiff.oid}` : commitDiff.oid}>
+          {commitDiff.baseOid ? `compare ${commitDiff.baseOid.slice(0, 7)} → ${commitDiff.oid.slice(0, 7)}` : `commit ${commitDiff.oid.slice(0, 7)}`}
         </span>
       {:else if activeDiff}
         <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>

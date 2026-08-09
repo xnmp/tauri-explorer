@@ -124,7 +124,7 @@ function createScmStore(consumerId: string) {
   let activeDiff = $state<{ path: string; staged: boolean } | null>(null);
   /** A COMMIT file diff routed to the preview pane from the git graph
    *  (#366); mutually exclusive with `activeDiff` (working-tree). */
-  let commitDiff = $state<{ repoPath: string; oid: string; path: string } | null>(null);
+  let commitDiff = $state<{ repoPath: string; oid: string; path: string; baseOid?: string } | null>(null);
   let watcherPath: string | null = null;
   let subscribed = false;
 
@@ -377,8 +377,8 @@ function createScmStore(consumerId: string) {
     activeDiff = null;
   }
 
-  function openCommitDiff(repoPath: string, oid: string, path: string): void {
-    commitDiff = { repoPath, oid, path };
+  function openCommitDiff(repoPath: string, oid: string, path: string, baseOid?: string): void {
+    commitDiff = { repoPath, oid, path, baseOid };
     activeDiff = null;
   }
 

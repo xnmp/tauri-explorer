@@ -120,6 +120,15 @@ export async function gitCommitFiles(repoPath: string, oid: string): Promise<Com
   return invoke<CommitFile[]>("git_commit_files", { repoPath, oid });
 }
 
+/** Files changed from `baseOid` to `targetOid`, whether or not they share a parent. */
+export async function gitCompareCommitFiles(
+  repoPath: string,
+  baseOid: string,
+  targetOid: string,
+): Promise<CommitFile[]> {
+  return invoke<CommitFile[]>("git_compare_commit_files", { repoPath, baseOid, targetOid });
+}
+
 /** Unified diff of one file in `oid` relative to its first parent (#221). */
 export async function gitCommitFileDiff(
   repoPath: string,
@@ -127,6 +136,16 @@ export async function gitCommitFileDiff(
   filePath: string,
 ): Promise<string> {
   return invoke<string>("git_commit_file_diff", { repoPath, oid, filePath });
+}
+
+/** Unified file diff from `baseOid` to `targetOid`. */
+export async function gitCompareCommitFileDiff(
+  repoPath: string,
+  baseOid: string,
+  targetOid: string,
+  filePath: string,
+): Promise<string> {
+  return invoke<string>("git_compare_commit_file_diff", { repoPath, baseOid, targetOid, filePath });
 }
 
 // ----- Mutating actions: VSCode "Git Graph"-parity commit context menu -----

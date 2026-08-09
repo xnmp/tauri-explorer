@@ -12,6 +12,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
+/// One real filesystem mount reported by Linux's mount table.
+///
+/// Fields stay decoded so callers can use the mount path as the sidebar route
+/// and the device source to determine whether the backing media is removable.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinuxMount {
+    path: String,
+    filesystem: String,
+    source: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DriveKind {

@@ -125,6 +125,20 @@ pub struct FailedCiCheckLog {
 /// How many trailing comments the single GraphQL query fetches per PR. Kept
 /// small so the one-request design stays cheap; older comments are truncated.
 const COMMENT_FETCH_CAP: usize = 20;
+/// The review-thread query fans out beneath every open PR. These two caps keep
+/// the worst case (100 PRs × 50 threads × 50 comments, plus PR comments) below
+/// GitHub GraphQL's 500,000-node validation limit.
+const REVIEW_THREAD_FETCH_CAP: usize = 50;
+const REVIEW_COMMENT_FETCH_CAP: usize = 50;
+
+const OPEN_PRS_QUERY: &str = "query($owner:String!,$name:String!){\
+repository(owner:$owner,name:$name){\
+pullRequests(states:OPEN,first:100){nodes{\
+number title url isDraft headRefName reviewDecision bodyText \
+comments(last:20){totalCount nodes{author{login} createdAt bodyText}} \
+reviewThreads(first:50){nodes{isResolved comments(first:50){nodes{author{login} createdAt bodyText path line}}}} \
+commits(last:1){nodes{commit{statusCheckRollup{state}}}}\
+}}}}";
 
 /// Extract `(owner, repo)` from a GitHub remote URL. Only github.com hosts
 /// are recognized (SSH scp-like syntax, `ssh://`, and `https://`); anything
@@ -292,16 +306,8 @@ fn fetch_open_prs_rest(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
 /// last commit's `statusCheckRollup` gives the CI state; `reviewDecision` and
 /// `comments.totalCount` come for free on the same node.
 fn fetch_open_prs_graphql(owner: &str, repo: &str, token: &str) -> Result<Vec<PrInfo>, String> {
-    const QUERY: &str = "query($owner:String!,$name:String!){\
-repository(owner:$owner,name:$name){\
-pullRequests(states:OPEN,first:100){nodes{\
-number title url isDraft headRefName reviewDecision bodyText \
-comments(last:20){totalCount nodes{author{login} createdAt bodyText}} \
-reviewThreads(first:100){nodes{isResolved comments(first:100){nodes{author{login} createdAt bodyText path line}}} } \
-commits(last:1){nodes{commit{statusCheckRollup{state}}}}\
-}}}}";
     let body = serde_json::json!({
-        "query": QUERY,
+        "query": OPEN_PRS_QUERY,
         "variables": { "owner": owner, "name": repo },
     });
     let resp: GqlResponse = ureq::post("https://api.github.com/graphql")
@@ -504,15 +510,23 @@ impl From<GqlPrNode> for PrInfo {
                 body: c.body_text,
             })
             .collect();
-        let review_threads = n
-            .review_threads
-            .nodes
+        let mut review_thread_nodes = n.review_threads.nodes;
+        if review_thread_nodes.len() > REVIEW_THREAD_FETCH_CAP {
+            review_thread_nodes.drain(0..review_thread_nodes.len() - REVIEW_THREAD_FETCH_CAP);
+        }
+        let review_threads = review_thread_nodes
             .into_iter()
-            .map(|thread| PrReviewThread {
-                resolved: thread.is_resolved,
-                comments: thread
-                    .comments
-                    .nodes
+            .map(|mut thread| {
+                if thread.comments.nodes.len() > REVIEW_COMMENT_FETCH_CAP {
+                    thread.comments.nodes.drain(
+                        0..thread.comments.nodes.len() - REVIEW_COMMENT_FETCH_CAP,
+                    );
+                }
+                PrReviewThread {
+                    resolved: thread.is_resolved,
+                    comments: thread
+                        .comments
+                        .nodes
                     .into_iter()
                     .map(|comment| PrReviewComment {
                         author: comment.author.map(|author| author.login),
@@ -522,6 +536,7 @@ impl From<GqlPrNode> for PrInfo {
                         line: comment.line,
                     })
                     .collect(),
+                }
             })
             .collect();
         PrInfo {
@@ -1060,6 +1075,16 @@ mod tests {
         assert_eq!(threads[0].comments[0].line, Some(42));
         assert!(!threads[1].resolved);
         assert_eq!(threads[1].comments[0].author, None);
+    }
+
+    #[test]
+    fn open_pr_query_requests_bounded_review_thread_fields() {
+        assert!(OPEN_PRS_QUERY.contains("reviewThreads(first:50)"));
+        assert!(OPEN_PRS_QUERY.contains("comments(first:50)"));
+        for field in ["isResolved", "createdAt", "bodyText", "path", "line"] {
+            assert!(OPEN_PRS_QUERY.contains(field), "query should request {field}");
+        }
+        assert!(100 * REVIEW_THREAD_FETCH_CAP * REVIEW_COMMENT_FETCH_CAP < 500_000);
     }
 
     #[test]

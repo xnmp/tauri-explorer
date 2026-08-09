@@ -171,6 +171,15 @@ test.describe("Git graph tab", () => {
     await page.keyboard.press("Escape");
     await expect(detail).toHaveCount(0);
 
+    // The tokenless REST fallback cannot obtain GraphQL review-thread state,
+    // but its existing detail remains useful and explains the limitation.
+    const hotfixRow = view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+    await hotfixRow.locator(".ref-pr").click();
+    await expect(detail).toContainText("Hotfix login redirect");
+    await expect(detail).toContainText("Sign in to GitHub to view review threads.");
+    await hotfixRow.locator(".ref-pr").click();
+    await expect(detail).toHaveCount(0);
+
     // Opening commit details closes the PR dropdown (one expansion at a time).
     await prBadge.click();
     await expect(detail).toBeVisible();

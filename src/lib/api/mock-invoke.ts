@@ -1892,13 +1892,15 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_compare_commit_file_diff: (args) => {
     const filePath = args.filePath as string;
+    const baseOid = args.baseOid as string;
+    const targetOid = args.targetOid as string;
     return [
       `diff --git a/${filePath} b/${filePath}`,
       `--- a/${filePath}`,
       `+++ b/${filePath}`,
       "@@ -1 +1 @@",
-      "-older value",
-      "+newer value",
+      `-older ${baseOid.slice(0, 7)}`,
+      `+newer ${targetOid.slice(0, 7)}`,
       "",
     ].join("\n");
   },

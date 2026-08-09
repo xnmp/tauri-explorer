@@ -993,11 +993,16 @@ mod tests {
     #[test]
     fn commit_comparison_diffs_any_two_trees_in_the_requested_direction() {
         let (dir, repo) = init_repo();
+        fs::write(dir.path().join("shared.txt"), "root value\n").unwrap();
+        let root = commit(&repo, "root", &[]);
         fs::write(dir.path().join("shared.txt"), "older value\n").unwrap();
-        let older = commit(&repo, "older", &[]);
+        let older = commit(&repo, "older sibling", &[root]);
+        // `commit` updates HEAD, so rewind its reference to the fork point
+        // before creating the other sibling with the same parent.
+        repo.set_head_detached(root).unwrap();
         fs::write(dir.path().join("shared.txt"), "newer value\n").unwrap();
         fs::write(dir.path().join("introduced.txt"), "introduced\n").unwrap();
-        let newer = commit(&repo, "newer", &[older]);
+        let newer = commit(&repo, "newer sibling", &[root]);
 
         let files = commit_comparison_files(&repo, &older.to_string(), &newer.to_string()).unwrap();
         assert!(files

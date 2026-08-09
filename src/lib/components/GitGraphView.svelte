@@ -177,6 +177,10 @@
    * leaking between repository tabs. */
   let comparisonFirst = $state<CommitInfo | null>(null);
   let comparison = $state<{ older: CommitInfo; newer: CommitInfo } | null>(null);
+  // Every async detail load captures this generation. A selection, close, or
+  // comparison transition supersedes its predecessor so old files cannot land
+  // under a different commit's detail panel.
+  let detailRequestGeneration = 0;
   let hoveredTraceOid = $state<string | null>(null);
   /** File rows in the expanded details. `staged`/`section` are set only for
    *  the synthetic uncommitted row, where they pick the right working-tree
@@ -345,6 +349,7 @@
   }
 
   function closeDetails(): void {
+    detailRequestGeneration++;
     selected = null;
     comparisonFirst = null;
     comparison = null;
@@ -371,10 +376,14 @@
       comparisonFirst = null;
       comparison = { older, newer };
       selected = newer;
+      const request = ++detailRequestGeneration;
       try {
-        selectedFiles = await gitCompareCommitFiles(repoPath, older.oid, newer.oid);
+        const files = await gitCompareCommitFiles(repoPath, older.oid, newer.oid);
+        if (detailRequestGeneration === request && comparison?.older.oid === older.oid && comparison.newer.oid === newer.oid) {
+          selectedFiles = files;
+        }
       } catch {
-        selectedFiles = [];
+        if (detailRequestGeneration === request) selectedFiles = [];
       }
       return;
     }
@@ -384,6 +393,7 @@
     }
     closeDetails();
     selected = commit;
+    const request = ++detailRequestGeneration;
     try {
       if (commit.oid === UNCOMMITTED) {
         // Working-tree changes: group the SCM summary buckets by stage status
@@ -394,13 +404,16 @@
         // instead of re-scanning.
         const res = await fetchGitSummary(repoPath, { consumerId: summaryConsumerId });
         if (!res.ok) throw new Error(res.error);
-        selectedFiles = buildStageFiles(res.data);
+        if (detailRequestGeneration === request && selected?.oid === commit.oid) {
+          selectedFiles = buildStageFiles(res.data);
+        }
       } else {
         // Cached per OID (#431): re-clicking or re-selecting a commit is instant.
-        selectedFiles = await cachedCommitFiles(repoPath, commit.oid);
+        const files = await cachedCommitFiles(repoPath, commit.oid);
+        if (detailRequestGeneration === request && selected?.oid === commit.oid) selectedFiles = files;
       }
     } catch {
-      selectedFiles = [];
+      if (detailRequestGeneration === request) selectedFiles = [];
     }
   }
 
@@ -412,6 +425,7 @@
   function beginComparison(): void {
     if (!selected || selected.oid === UNCOMMITTED) return;
     comparisonFirst = selected;
+    detailRequestGeneration++;
     comparison = null;
     selectedFiles = [];
     openDiffPath = null;
@@ -422,14 +436,16 @@
     const commit = selected;
     comparison = null;
     comparisonFirst = null;
+    const request = ++detailRequestGeneration;
     selectedFiles = [];
     openDiffPath = null;
     openDiff = null;
     if (!commit || commit.oid === UNCOMMITTED) return;
     try {
-      selectedFiles = await cachedCommitFiles(repoPath, commit.oid);
+      const files = await cachedCommitFiles(repoPath, commit.oid);
+      if (detailRequestGeneration === request && selected?.oid === commit.oid && !comparison) selectedFiles = files;
     } catch {
-      selectedFiles = [];
+      if (detailRequestGeneration === request) selectedFiles = [];
     }
   }
 

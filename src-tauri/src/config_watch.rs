@@ -22,8 +22,11 @@
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, OnceLock,
+};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -32,6 +35,9 @@ use tauri::{AppHandle, Emitter};
 const DEBOUNCE: Duration = Duration::from_millis(200);
 /// Poll interval for the debounce flush thread.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(80);
+/// Symlink targets can be retargeted by a dotfile manager while the app runs.
+/// Re-resolve them periodically so their new targets are picked up.
+const WATCH_PLAN_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The settings blob the frontend reloads into its settings store.
 const SETTINGS_FILE: &str = "settings.json";
@@ -47,8 +53,160 @@ struct ConfigChangedPayload {
     filename: String,
 }
 
+/// The filesystem locations that must be watched to observe reloadable config.
+///
+/// `config_dir` is always watched recursively. Symlink targets outside it are
+/// added to `external_roots` by the implementation that resolves this plan.
+/// A resolved view of the config paths a filesystem watcher must observe.
+///
+/// This is public so integration tests and embedding callers can drive the
+/// same watcher mapping as the app rather than duplicating symlink handling.
+struct WatchPlan {
+    config_dir: PathBuf,
+    external_roots: Vec<(PathBuf, RecursiveMode)>,
+    external_files: HashMap<PathBuf, String>,
+    external_themes_dir: Option<PathBuf>,
+}
+
+impl WatchPlan {
+    fn watched_config_name(&self, changed: &Path) -> Option<String> {
+        watched_config_name(&self.config_dir, changed).or_else(|| {
+            let changed = std::fs::canonicalize(changed).ok()?;
+            if let Some(filename) = self.external_files.get(&changed) {
+                return Some(filename.clone());
+            }
+            let theme = changed
+                .strip_prefix(self.external_themes_dir.as_ref()?)
+                .ok()?;
+            match theme.components().collect::<Vec<_>>().as_slice() {
+                [std::path::Component::Normal(name)] if name.to_str()?.ends_with(".css") => {
+                    Some(format!("{THEMES_DIR}/{}", name.to_str()?))
+                }
+                _ => None,
+            }
+        })
+    }
+}
+
+/// Resolve the filesystem roots needed to observe reloadable config files.
+///
+/// The plan includes any external targets reached through config-directory
+/// symlinks, while reported names remain relative to `config_dir`.
+fn config_watch_plan(config_dir: &Path) -> WatchPlan {
+    let mut external_roots = Vec::new();
+    let mut external_files = HashMap::new();
+    for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
+        let configured = config_dir.join(filename);
+        let Ok(target) = std::fs::canonicalize(&configured) else {
+            continue;
+        };
+        if !target.starts_with(config_dir) {
+            if let Some(parent) = target.parent() {
+                external_roots.push((parent.to_path_buf(), RecursiveMode::NonRecursive));
+                external_files.insert(target, filename.to_string());
+            }
+        }
+    }
+
+    let external_themes_dir = std::fs::canonicalize(config_dir.join(THEMES_DIR))
+        .ok()
+        .filter(|target| !target.starts_with(config_dir));
+    if let Some(themes_dir) = &external_themes_dir {
+        external_roots.push((themes_dir.clone(), RecursiveMode::Recursive));
+    }
+
+    external_roots.sort_by(|(left, _), (right, _)| left.cmp(right));
+    external_roots.dedup_by(|(left, _), (right, _)| left == right);
+    WatchPlan {
+        config_dir: config_dir.to_path_buf(),
+        external_roots,
+        external_files,
+        external_themes_dir,
+    }
+}
+
+/// A small real-watcher harness for consumers that need to verify config
+/// autoreload behaviour without constructing a Tauri application.
+pub struct ConfigWatchHarness {
+    active: Arc<AtomicBool>,
+    _watcher: Arc<Mutex<RecommendedWatcher>>,
+}
+
+impl Drop for ConfigWatchHarness {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
+}
+
+/// Watch `config_dir`, including external symlink targets, and report the
+/// frontend-visible filename for every relevant write.
+pub fn watch_config_changes<F>(
+    config_dir: PathBuf,
+    on_change: F,
+) -> notify::Result<ConfigWatchHarness>
+where
+    F: Fn(String) + Send + Sync + 'static,
+{
+    let watch_plan = Arc::new(Mutex::new(config_watch_plan(&config_dir)));
+    let callback_plan = Arc::clone(&watch_plan);
+    let on_change = Arc::new(on_change);
+    let callback = Arc::clone(&on_change);
+    let callback_config_dir = config_dir.clone();
+    let watcher = notify::recommended_watcher(move |result: Result<Event, notify::Error>| {
+        let event = match result {
+            Ok(event) => event,
+            Err(error) => {
+                log::warn!(
+                    "Config autoreload watcher error for {}: {error}",
+                    callback_config_dir.display()
+                );
+                return;
+            }
+        };
+        if matches!(event.kind, EventKind::Access(_)) {
+            return;
+        }
+        let Ok(plan) = callback_plan.lock() else {
+            return;
+        };
+        for path in event.paths {
+            if let Some(name) = plan.watched_config_name(&path) {
+                callback(name);
+            }
+        }
+    })?;
+    let watcher = Arc::new(Mutex::new(watcher));
+    {
+        let mut watcher = watcher.lock().expect("config watcher lock");
+        watcher.watch(&config_dir, RecursiveMode::Recursive)?;
+        for (root, mode) in &watch_plan
+            .lock()
+            .expect("config watch plan lock")
+            .external_roots
+        {
+            watcher.watch(root, *mode)?;
+        }
+    }
+
+    let active = Arc::new(AtomicBool::new(true));
+    let refresh_active = Arc::clone(&active);
+    let refresh_watcher = Arc::clone(&watcher);
+    std::thread::spawn(move || {
+        while refresh_active.load(Ordering::Acquire) {
+            std::thread::sleep(WATCH_PLAN_REFRESH_INTERVAL);
+            if let Ok(mut watcher) = refresh_watcher.lock() {
+                apply_watch_plan_update(&config_dir, &watch_plan, &mut watcher);
+            }
+        }
+    });
+    Ok(ConfigWatchHarness {
+        active,
+        _watcher: watcher,
+    })
+}
+
 /// Keep the watcher alive for the process lifetime; dropping it stops it.
-static CONFIG_WATCHER: OnceLock<Mutex<RecommendedWatcher>> = OnceLock::new();
+static CONFIG_WATCHER: OnceLock<ConfigWatchHarness> = OnceLock::new();
 
 /// Config-relative names with a pending change, keyed by their latest event.
 static PENDING: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
@@ -80,7 +238,19 @@ pub(crate) fn watched_config_name(config_dir: &Path, changed: &Path) -> Option<S
             Some((*name).to_string())
         }
         [THEMES_DIR, theme] if theme.ends_with(".css") => Some(format!("{THEMES_DIR}/{theme}")),
-        _ => None,
+        _ => {
+            let changed = std::fs::canonicalize(changed).ok()?;
+            for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
+                if std::fs::canonicalize(config_dir.join(filename))
+                    .ok()
+                    .as_ref()
+                    == Some(&changed)
+                {
+                    return Some(filename.to_string());
+                }
+            }
+            None
+        }
     }
 }
 
@@ -104,43 +274,18 @@ pub fn init_config_watcher(app: &AppHandle) {
     // config dir is still not covered — see #604.)
     let config_dir = std::fs::canonicalize(&config_dir).unwrap_or(config_dir);
 
-    let watch_root = config_dir.clone();
-    let watcher = notify::recommended_watcher(move |result: Result<Event, notify::Error>| {
-        let event = match result {
-            Ok(event) => event,
-            Err(error) => {
-                log::warn!("config_watch error: {error}");
-                return;
-            }
-        };
-        // Access-only events (reads, opens) never change content.
-        if matches!(event.kind, EventKind::Access(_)) {
-            return;
+    let watcher = match watch_config_changes(config_dir.clone(), |name| {
+        if let Ok(mut map) = pending().lock() {
+            map.insert(name, Instant::now());
         }
-        for path in &event.paths {
-            if let Some(name) = watched_config_name(&watch_root, path) {
-                if let Ok(mut map) = pending().lock() {
-                    map.insert(name, Instant::now());
-                }
-            }
-        }
-    });
-
-    let mut watcher = match watcher {
+    }) {
         Ok(watcher) => watcher,
         Err(error) => {
             log::error!("Config autoreload disabled (watcher unavailable): {error}");
             return;
         }
     };
-
-    // Recursive so `themes/` is covered even when it is created later.
-    if let Err(error) = watcher.watch(&config_dir, RecursiveMode::Recursive) {
-        log::error!("Config autoreload disabled (cannot watch config dir): {error}");
-        return;
-    }
-
-    if CONFIG_WATCHER.set(Mutex::new(watcher)).is_err() {
+    if CONFIG_WATCHER.set(watcher).is_err() {
         log::warn!("Config watcher already initialized");
         return;
     }
@@ -186,6 +331,36 @@ fn spawn_flush_thread(app: AppHandle) {
             }
         }
     });
+}
+
+/// Register newly resolved external roots while holding the plan lock. The
+/// callback takes the same lock before mapping an event, so it cannot see a
+/// new root with the old plan in the small interval after `watch` succeeds.
+fn apply_watch_plan_update(
+    config_dir: &Path,
+    watch_plan: &Arc<Mutex<WatchPlan>>,
+    watcher: &mut RecommendedWatcher,
+) {
+    let replacement = config_watch_plan(config_dir);
+    let Ok(mut current_plan) = watch_plan.lock() else {
+        return;
+    };
+    for (root, mode) in &replacement.external_roots {
+        if current_plan
+            .external_roots
+            .iter()
+            .any(|(current, _)| current == root)
+        {
+            continue;
+        }
+        if let Err(error) = watcher.watch(root, *mode) {
+            log::warn!(
+                "Config autoreload cannot watch updated symlink target {}: {error}",
+                root.display()
+            );
+        }
+    }
+    *current_plan = replacement;
 }
 
 /// Path of the config file the frontend reloads, for tests and diagnostics.

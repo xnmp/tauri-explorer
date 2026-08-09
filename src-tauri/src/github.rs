@@ -518,24 +518,25 @@ impl From<GqlPrNode> for PrInfo {
             .into_iter()
             .map(|mut thread| {
                 if thread.comments.nodes.len() > REVIEW_COMMENT_FETCH_CAP {
-                    thread.comments.nodes.drain(
-                        0..thread.comments.nodes.len() - REVIEW_COMMENT_FETCH_CAP,
-                    );
+                    thread
+                        .comments
+                        .nodes
+                        .drain(0..thread.comments.nodes.len() - REVIEW_COMMENT_FETCH_CAP);
                 }
                 PrReviewThread {
                     resolved: thread.is_resolved,
                     comments: thread
                         .comments
                         .nodes
-                    .into_iter()
-                    .map(|comment| PrReviewComment {
-                        author: comment.author.map(|author| author.login),
-                        created_at: comment.created_at,
-                        body: comment.body_text,
-                        path: comment.path,
-                        line: comment.line,
-                    })
-                    .collect(),
+                        .into_iter()
+                        .map(|comment| PrReviewComment {
+                            author: comment.author.map(|author| author.login),
+                            created_at: comment.created_at,
+                            body: comment.body_text,
+                            path: comment.path,
+                            line: comment.line,
+                        })
+                        .collect(),
                 }
             })
             .collect();
@@ -1068,10 +1069,15 @@ mod tests {
                 "commits": { "nodes": [] }
             }"#,
         );
-        let threads = pr.review_threads.expect("GraphQL supplies review-thread data");
+        let threads = pr
+            .review_threads
+            .expect("GraphQL supplies review-thread data");
         assert_eq!(threads.len(), 2);
         assert!(threads[0].resolved);
-        assert_eq!(threads[0].comments[0].path.as_deref(), Some("src/lib/parser.ts"));
+        assert_eq!(
+            threads[0].comments[0].path.as_deref(),
+            Some("src/lib/parser.ts")
+        );
         assert_eq!(threads[0].comments[0].line, Some(42));
         assert!(!threads[1].resolved);
         assert_eq!(threads[1].comments[0].author, None);
@@ -1082,7 +1088,10 @@ mod tests {
         assert!(OPEN_PRS_QUERY.contains("reviewThreads(first:50)"));
         assert!(OPEN_PRS_QUERY.contains("comments(first:50)"));
         for field in ["isResolved", "createdAt", "bodyText", "path", "line"] {
-            assert!(OPEN_PRS_QUERY.contains(field), "query should request {field}");
+            assert!(
+                OPEN_PRS_QUERY.contains(field),
+                "query should request {field}"
+            );
         }
         assert!(100 * REVIEW_THREAD_FETCH_CAP * REVIEW_COMMENT_FETCH_CAP < 500_000);
     }

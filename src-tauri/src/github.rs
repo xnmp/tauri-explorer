@@ -1133,7 +1133,14 @@ mod tests {
         )));
         assert!(query.contains(&format!("reviewThreads(first:{REVIEW_THREAD_FETCH_CAP})")));
         assert!(query.contains(&format!("comments(first:{REVIEW_COMMENT_FETCH_CAP})")));
-        for field in ["baseRefName", "isResolved", "createdAt", "bodyText", "path", "line"] {
+        for field in [
+            "baseRefName",
+            "isResolved",
+            "createdAt",
+            "bodyText",
+            "path",
+            "line",
+        ] {
             assert!(query.contains(field), "query should request {field}");
         }
     }

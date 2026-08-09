@@ -774,6 +774,13 @@ export interface OpenPrLike {
   headRef: string;
 }
 
+/** Open-PR metadata needed to distinguish a base-branch update from another
+ * merge into the PR branch. Kept structural so graph classification remains
+ * independent from the IPC API layer. */
+export interface OpenPrBaseLike extends OpenPrLike {
+  baseRef: string;
+}
+
 /** CI rollup states surfaced on a PR badge (`null` = unknown / no checks). */
 export type CiStatus = "success" | "failure" | "pending" | null;
 

@@ -754,23 +754,16 @@ pub struct CommitFile {
     pub status: String,
 }
 
-/// Files changed by `oid` relative to its first parent (root commits diff
-/// against the empty tree). Powers the graph's commit-detail panel (#58).
-#[tauri::command]
-pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<CommitFile>, AppError> {
-    run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
-        let commit = repo
-            .find_commit(Oid::from_str(&oid).map_err(|e| AppError::Other(e.to_string()))?)
-            .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
-        let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
-        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
-        let diff = repo
-            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
-            .map_err(|e| AppError::Other(e.to_string()))?;
+fn commit_tree<'repo>(repo: &'repo Repository, oid: &str) -> Result<git2::Tree<'repo>, AppError> {
+    let commit = repo
+        .find_commit(Oid::from_str(oid).map_err(|e| AppError::Other(e.to_string()))?)
+        .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
+    commit.tree().map_err(|e| AppError::Other(e.to_string()))
+}
 
-        let mut files = Vec::new();
-        for delta in diff.deltas() {
+fn diff_files(diff: &git2::Diff<'_>) -> Vec<CommitFile> {
+    diff.deltas()
+        .map(|delta| {
             let status = match delta.status() {
                 git2::Delta::Added => "A",
                 git2::Delta::Deleted => "D",
@@ -786,12 +779,55 @@ pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<Comm
                 .or_else(|| delta.old_file().path())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            files.push(CommitFile {
-                path,
-                status: status.to_string(),
-            });
-        }
-        Ok(files)
+            CommitFile { path, status: status.to_string() }
+        })
+        .collect()
+}
+
+/// Files changed by `oid` relative to its first parent (root commits diff
+/// against the empty tree). Powers the graph's commit-detail panel (#58).
+#[tauri::command]
+pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<CommitFile>, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        let commit = repo
+            .find_commit(Oid::from_str(&oid).map_err(|e| AppError::Other(e.to_string()))?)
+            .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
+        let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
+        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+            .map_err(|e| AppError::Other(e.to_string()))?;
+
+        Ok(diff_files(&diff))
+    })
+    .await
+}
+
+/// Files changed from `base_oid`'s tree to `target_oid`'s tree. Unlike the
+/// single-commit detail endpoint, the commits need not be related.
+fn commit_comparison_files(
+    repo: &Repository,
+    base_oid: &str,
+    target_oid: &str,
+) -> Result<Vec<CommitFile>, AppError> {
+    let base = commit_tree(repo, base_oid)?;
+    let target = commit_tree(repo, target_oid)?;
+    let diff = repo
+        .diff_tree_to_tree(Some(&base), Some(&target), None)
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    Ok(diff_files(&diff))
+}
+
+#[tauri::command]
+pub async fn git_compare_commit_files(
+    repo_path: String,
+    base_oid: String,
+    target_oid: String,
+) -> Result<Vec<CommitFile>, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        commit_comparison_files(&repo, &base_oid, &target_oid)
     })
     .await
 }
@@ -830,6 +866,36 @@ fn commit_file_diff(repo: &Repository, oid: &str, file_path: &str) -> Result<Str
     Ok(out)
 }
 
+fn commit_comparison_file_diff(
+    repo: &Repository,
+    base_oid: &str,
+    target_oid: &str,
+    file_path: &str,
+) -> Result<String, AppError> {
+    let base = commit_tree(repo, base_oid)?;
+    let target = commit_tree(repo, target_oid)?;
+    let mut opts = git2::DiffOptions::new();
+    opts.pathspec(file_path);
+    let diff = repo
+        .diff_tree_to_tree(Some(&base), Some(&target), Some(&mut opts))
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let mut out = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        let prefix = match line.origin_value() {
+            git2::DiffLineType::Addition => "+",
+            git2::DiffLineType::Deletion => "-",
+            git2::DiffLineType::Context => " ",
+            _ => "",
+        };
+        out.push_str(prefix);
+        out.push_str(&String::from_utf8_lossy(line.content()));
+        true
+    })
+    .map_err(to_app_err)?;
+    Ok(out)
+}
+
 #[tauri::command]
 pub async fn git_commit_file_diff(
     repo_path: String,
@@ -839,6 +905,20 @@ pub async fn git_commit_file_diff(
     run_blocking(move |_cancel| {
         let repo = open_repo(Path::new(&repo_path))?;
         commit_file_diff(&repo, &oid, &file_path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_compare_commit_file_diff(
+    repo_path: String,
+    base_oid: String,
+    target_oid: String,
+    file_path: String,
+) -> Result<String, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        commit_comparison_file_diff(&repo, &base_oid, &target_oid, &file_path)
     })
     .await
 }

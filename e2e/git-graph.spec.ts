@@ -684,7 +684,7 @@ test("compares any two commits in chronological order and exits comparison (#512
   // from that older tree to the newer tree selected first.
   await older.click();
   await expect(detail).toContainText(`Comparing ${olderOid} → ${newerOid}`);
-  await expect(detail.locator(".detail-file")).toContainText("src/compared.ts");
+  await expect(detail.locator(".detail-file", { hasText: "src/compared.ts" })).toBeVisible();
 
   await detail.locator(".detail-file", { hasText: "src/compared.ts" }).click();
   const diff = page.locator('[data-testid="git-graph-file-diff"]');

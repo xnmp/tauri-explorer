@@ -44,7 +44,7 @@ interface PendingRefresh {
 
 const pendingRefreshes = new Map<string, PendingRefresh>();
 const lastRefreshAt = new Map<string, number>();
-const inFlightRefreshes = new Set<string>();
+const inFlightRefreshes = new Map<string, number>();
 const listingBaselines = new Map<string, number>();
 const refreshIntervals = new Map<string, number>();
 let refreshGeneration = 0;
@@ -104,7 +104,7 @@ function flush(dirPath: string): void {
   const startedAt = Date.now();
   const generation = refreshGeneration;
   lastRefreshAt.set(dirPath, startedAt);
-  inFlightRefreshes.add(dirPath);
+  inFlightRefreshes.set(dirPath, startedAt);
   const completions: Promise<void>[] = [];
   for (const { cb, silent } of pending.callbacks.values()) {
     try {
@@ -129,7 +129,13 @@ export function requestRefresh(
   /** Identity used to collapse repeated requests from the same subscriber.
    *  Defaults to the callback itself. */
   subscriberKey: unknown = explorerRefresh,
+  /** Time the underlying change was observed. A delayed watcher notification
+   *  observed before the current listing began is already covered by it. */
+  observedAt: number = Date.now(),
 ): void {
+  const inFlightStartedAt = inFlightRefreshes.get(dirPath);
+  if (inFlightStartedAt != null && observedAt < inFlightStartedAt) return;
+
   const existing = pendingRefreshes.get(dirPath);
   if (existing) {
     existing.callbacks.set(subscriberKey, { cb: explorerRefresh, silent });

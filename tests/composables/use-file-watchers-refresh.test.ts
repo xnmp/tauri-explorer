@@ -23,7 +23,7 @@ vi.mock("$lib/state/git-status.svelte", () => ({
 import { useFileWatchers } from "$lib/composables/use-file-watchers";
 import { cancelPendingRefreshes } from "$lib/state/refresh-manager";
 
-type TauriDirectoryEvent = { payload: { path: string } };
+type TauriDirectoryEvent = { payload: { path: string; observed_at_ms?: number } };
 
 describe("useFileWatchers refresh coalescing", () => {
   let broadcastHandler: ((dirs: string[]) => void) | undefined;
@@ -84,6 +84,49 @@ describe("useFileWatchers refresh coalescing", () => {
 
     finishSlowListing();
     await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    watchers.cleanup();
+  });
+
+  it("does not turn a delayed Tauri notification into a third listing", async () => {
+    let finishInitialListing!: () => void;
+    let finishTrailingListing!: () => void;
+    const refresh = vi
+      .fn<ExplorerInstance["refresh"]>()
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishInitialListing = resolve;
+        }),
+      )
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishTrailingListing = resolve;
+        }),
+      );
+    const explorer = {
+      currentPath: "/slow",
+      refresh,
+    } as unknown as ExplorerInstance;
+    const watchers = useFileWatchers({ getAllExplorers: () => [explorer] });
+    const epoch = Date.now();
+    watchers.setup();
+
+    tauriHandler?.({ payload: { path: "/slow", observed_at_ms: epoch } });
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(50);
+    tauriHandler?.({ payload: { path: "/slow", observed_at_ms: epoch + 200 } });
+
+    finishInitialListing();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1949);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    // The backend can deliver another notification for the same old change
+    // after the trailing listing has begun.
+    tauriHandler?.({ payload: { path: "/slow", observed_at_ms: epoch + 200 } });
+    finishTrailingListing();
+    await vi.advanceTimersByTimeAsync(2500);
     expect(refresh).toHaveBeenCalledTimes(2);
 
     watchers.cleanup();

@@ -59,7 +59,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     // Outside Tauri the event system is unavailable and listen() throws
     // (same guard as state/drives.svelte.ts); refresh still works manually.
     try {
-      listen<{ path: string }>("directory-changed", (event) => {
+      listen<{ path: string; observed_at_ms?: number }>("directory-changed", (event) => {
         const changedPath = event.payload.path;
         for (const exp of deps.getAllExplorers()) {
           if (exp.currentPath === changedPath) {
@@ -71,6 +71,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
               changedPath,
               true,
               exp,
+              event.payload.observed_at_ms,
             );
           }
         }

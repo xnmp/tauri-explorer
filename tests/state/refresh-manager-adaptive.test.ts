@@ -70,6 +70,72 @@ describe("adaptive watcher refresh cadence", () => {
     expect(refresh).toHaveBeenCalledTimes(3);
   });
 
+  it("does not cascade when an old watcher notification arrives during the trailing listing", async () => {
+    let finishInitialListing!: () => void;
+    let finishTrailingListing!: () => void;
+    const refresh = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishInitialListing = resolve;
+        }),
+      )
+      .mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishTrailingListing = resolve;
+        }),
+      );
+    const pane = {};
+    const epoch = Date.now();
+    const watcherEvent = (observedAt: number) =>
+      requestRefresh((_opts) => refresh(), "/home/user/docs", true, pane, observedAt);
+
+    watcherEvent(epoch);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // This change happened during the initial listing and requires one trailing listing.
+    watcherEvent(epoch + 200);
+    finishInitialListing();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    // Its backend notification is delivered late, but the trailing listing
+    // started after the change and therefore already contains it.
+    watcherEvent(epoch + 200);
+    finishTrailingListing();
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains changes observed after the trailing listing starts", async () => {
+    let finishListing!: () => void;
+    const refresh = vi.fn<() => Promise<void>>().mockImplementation(
+      () => new Promise<void>((resolve) => {
+        finishListing = resolve;
+      }),
+    );
+    const pane = {};
+    const epoch = Date.now();
+    const watcherEvent = (observedAt: number) =>
+      requestRefresh((_opts) => refresh(), "/home/user/docs", true, pane, observedAt);
+
+    watcherEvent(epoch);
+    await vi.advanceTimersByTimeAsync(150);
+    watcherEvent(epoch + 200);
+    finishListing();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    watcherEvent(epoch + 2200);
+    finishListing();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(refresh).toHaveBeenCalledTimes(3);
+  });
+
   it("returns to the normal cadence after a later listing is healthy", async () => {
     const refresh = vi
       .fn<() => Promise<void>>()

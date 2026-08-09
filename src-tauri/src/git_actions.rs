@@ -838,6 +838,7 @@ pub async fn git_sync_local_branches(
 mod tests {
     use super::*;
     use std::fs;
+    use std::time::{Duration, Instant};
     use tempfile::TempDir;
 
     /// Run a git command in a test repo, asserting success. Sets identity via
@@ -898,6 +899,43 @@ mod tests {
 
     fn repo_path(dir: &TempDir) -> String {
         dir.path().to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn network_operation_cancellation_terminates_registered_child() {
+        let dir = TempDir::new().unwrap();
+        let task_id = 528_001;
+        #[cfg(not(windows))]
+        let (program, args) = ("sh".to_string(), vec!["-c".into(), "sleep 30".into()]);
+        #[cfg(windows)]
+        let (program, args) = (
+            "powershell.exe".to_string(),
+            vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                "Start-Sleep -Seconds 30".into(),
+            ],
+        );
+
+        let started = Instant::now();
+        let error = tokio_test_block(async {
+            let operation = tokio::spawn(run_git_network_with_program(
+                dir.path().to_string_lossy().into_owned(),
+                args,
+                task_id,
+                program,
+            ));
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_git_network_operation(task_id).await.unwrap();
+            operation.await.unwrap()
+        })
+        .expect_err("cancelling the registered operation must reject its command");
+
+        assert!(error.to_string().contains("git network operation cancelled"));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "cancel did not terminate the network child promptly"
+        );
     }
 
     #[test]

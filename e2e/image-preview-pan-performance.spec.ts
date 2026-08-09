@@ -32,6 +32,41 @@ const largeImageDataUrl = `data:image/svg+xml,${encodeURIComponent(`
   </svg>
 `)}`;
 
+async function captureRuntimeCompositorStyle(page: Page): Promise<void> {
+  // This annotation is created by the running browser from the image's actual
+  // computed style. It makes the otherwise non-visual compositor hint legible
+  // in the evidence without adding diagnostic UI to the product.
+  await page.evaluate(() => {
+    const image = document.querySelector<HTMLImageElement>(".preview-image");
+    if (!image) throw new Error("Preview image is missing from compositor evidence");
+    const style = getComputedStyle(image);
+    const diagnostics = document.createElement("aside");
+    diagnostics.id = "preview-compositor-evidence";
+    diagnostics.textContent = [
+      "LIVE RUNTIME IMAGE STYLE",
+      `will-change: ${style.willChange}`,
+      `transform: ${style.transform}`,
+    ].join("\n");
+    Object.assign(diagnostics.style, {
+      position: "fixed",
+      right: "24px",
+      bottom: "72px",
+      zIndex: "2000",
+      padding: "14px 18px",
+      border: "1px solid #67e8f9",
+      borderRadius: "8px",
+      background: "rgba(8, 47, 73, 0.94)",
+      color: "#ecfeff",
+      font: "600 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace",
+      whiteSpace: "pre",
+      boxShadow: "0 8px 24px rgba(0, 0, 0, 0.35)",
+    });
+    document.body.append(diagnostics);
+  });
+  await page.screenshot({ path: "evidence/ac-2-transform-compositor-active.png" });
+  await page.locator("#preview-compositor-evidence").evaluate((element) => element.remove());
+}
+
 async function openZoomedImage(page: Page) {
   await page.goto("/?path=/home/user/Pictures");
   await waitForEntries(page);
@@ -80,9 +115,7 @@ test("a zoomed image preview pans through a compositor-backed transform", async 
   await expect(image).toHaveCSS("will-change", "transform");
 
   await page.screenshot({ path: "evidence/ac-1-large-image-after-drag.png" });
-  // The same running zoomed preview is the visual counterpart to the
-  // computed `will-change: transform` assertion immediately above.
-  await page.screenshot({ path: "evidence/ac-2-transform-compositor-active.png" });
+  await captureRuntimeCompositorStyle(page);
 
   // Wheel from an off-center point. The transformed image must retain that
   // point under the cursor, not zoom around the container's center.

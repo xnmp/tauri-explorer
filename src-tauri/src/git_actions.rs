@@ -197,6 +197,7 @@ where
     joined?
 }
 
+#[cfg(test)]
 async fn run_git_network_with_program(
     repo_path: String,
     args: Vec<String>,

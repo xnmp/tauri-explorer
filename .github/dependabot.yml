@@ -1,19 +1,43 @@
 version: 2
 updates:
+  # Grouping is deliberate. Ungrouped, a quiet week still produced 5-8 separate
+  # PRs (one per crate), each burning a full CI matrix, and the backlog then sat
+  # untouched for weeks — which is worse than not running dependabot at all,
+  # because a stale queue hides the one bump that actually matters.
+  #
+  # Minor/patch bumps land as a single PR per ecosystem. Major bumps stay
+  # ungrouped and arrive individually, because those are the ones that need a
+  # human to decide what evidence is required: `notify` (the watcher crate under
+  # the whole refresh system) cannot be signed off by a green mock suite, and
+  # a TypeScript major reliably needs real work.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "cargo"
     directory: "/src-tauri"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"

@@ -196,7 +196,7 @@ where
 }
 
 /// Keep the watcher alive for the process lifetime; dropping it stops it.
-static CONFIG_WATCHER: OnceLock<Mutex<RecommendedWatcher>> = OnceLock::new();
+static CONFIG_WATCHER: OnceLock<ConfigWatchHarness> = OnceLock::new();
 
 /// Config-relative names with a pending change, keyed by their latest event.
 static PENDING: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
@@ -264,66 +264,23 @@ pub fn init_config_watcher(app: &AppHandle) {
     // config dir is still not covered — see #604.)
     let config_dir = std::fs::canonicalize(&config_dir).unwrap_or(config_dir);
 
-    let watch_plan = Arc::new(Mutex::new(config_watch_plan(&config_dir)));
-    let callback_plan = Arc::clone(&watch_plan);
-    let watcher = notify::recommended_watcher(move |result: Result<Event, notify::Error>| {
-        let event = match result {
-            Ok(event) => event,
-            Err(error) => {
-                log::warn!("config_watch error: {error}");
-                return;
-            }
-        };
-        // Access-only events (reads, opens) never change content.
-        if matches!(event.kind, EventKind::Access(_)) {
-            return;
+    let watcher = match watch_config_changes(config_dir.clone(), |name| {
+        if let Ok(mut map) = pending().lock() {
+            map.insert(name, Instant::now());
         }
-        let Ok(plan) = callback_plan.lock() else {
-            return;
-        };
-        for path in &event.paths {
-            if let Some(name) = plan.watched_config_name(path) {
-                if let Ok(mut map) = pending().lock() {
-                    map.insert(name, Instant::now());
-                }
-            }
-        }
-    });
-
-    let mut watcher = match watcher {
+    }) {
         Ok(watcher) => watcher,
         Err(error) => {
             log::error!("Config autoreload disabled (watcher unavailable): {error}");
             return;
         }
     };
-
-    // Recursive so `themes/` is covered even when it is created later.
-    if let Err(error) = watcher.watch(&config_dir, RecursiveMode::Recursive) {
-        log::error!("Config autoreload disabled (cannot watch config dir): {error}");
-        return;
-    }
-
-    let external_roots = watch_plan
-        .lock()
-        .expect("config watch plan lock")
-        .external_roots
-        .clone();
-    for (root, mode) in &external_roots {
-        if let Err(error) = watcher.watch(root, *mode) {
-            log::warn!(
-                "Config autoreload cannot watch symlink target {}: {error}",
-                root.display()
-            );
-        }
-    }
-
-    if CONFIG_WATCHER.set(Mutex::new(watcher)).is_err() {
+    if CONFIG_WATCHER.set(watcher).is_err() {
         log::warn!("Config watcher already initialized");
         return;
     }
 
-    spawn_flush_thread(app.clone(), config_dir.clone(), watch_plan);
+    spawn_flush_thread(app.clone());
     log::info!(
         "Config autoreload watching {}",
         config_dir.to_string_lossy()
@@ -332,11 +289,9 @@ pub fn init_config_watcher(app: &AppHandle) {
 
 /// Emit `config-file-changed` once a file has been quiet for the debounce
 /// window, so one editor save yields one reload.
-fn spawn_flush_thread(app: AppHandle, config_dir: PathBuf, watch_plan: Arc<Mutex<WatchPlan>>) {
+fn spawn_flush_thread(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(FLUSH_INTERVAL);
-
-        refresh_watch_plan(&config_dir, &watch_plan);
 
         let ready: Vec<String> = {
             let Ok(mut map) = pending().lock() else {
@@ -366,30 +321,6 @@ fn spawn_flush_thread(app: AppHandle, config_dir: PathBuf, watch_plan: Arc<Mutex
             }
         }
     });
-}
-
-/// Re-resolve symlink targets and add watches for newly selected external
-/// roots. Old roots are intentionally left watched: a target can be swapped
-/// while an editor still has it open, and the current plan filters those stale
-/// events without risking a gap during the handover.
-fn refresh_watch_plan(config_dir: &Path, watch_plan: &Arc<Mutex<WatchPlan>>) {
-    static LAST_REFRESH: OnceLock<Mutex<Instant>> = OnceLock::new();
-    let last_refresh = LAST_REFRESH.get_or_init(|| Mutex::new(Instant::now()));
-    let Ok(mut last_refresh) = last_refresh.lock() else {
-        return;
-    };
-    if last_refresh.elapsed() < WATCH_PLAN_REFRESH_INTERVAL {
-        return;
-    }
-    *last_refresh = Instant::now();
-
-    let Some(watcher) = CONFIG_WATCHER.get() else {
-        return;
-    };
-    let Ok(mut watcher) = watcher.lock() else {
-        return;
-    };
-    apply_watch_plan_update(config_dir, watch_plan, &mut watcher);
 }
 
 /// Register newly resolved external roots while holding the plan lock. The

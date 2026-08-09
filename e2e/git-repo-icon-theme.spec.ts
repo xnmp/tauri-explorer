@@ -5,7 +5,7 @@
  * user sees after changing themes.
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries, HOME_URL } from "./helpers";
+import { VIEW_MODES, waitForEntries, HOME_URL, switchViewMode } from "./helpers";
 
 async function setTheme(page: import("@playwright/test").Page, theme: string) {
   await page.keyboard.press("Control+,");
@@ -17,11 +17,13 @@ async function setTheme(page: import("@playwright/test").Page, theme: string) {
   await expect(dialog).toBeHidden();
 }
 
-test("Git repository folder badge follows the active theme", async ({ page }) => {
+for (const viewMode of VIEW_MODES) {
+test(`Git repository folder badge follows the active theme in ${viewMode} view`, async ({ page }) => {
   await page.goto(HOME_URL);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await waitForEntries(page);
+  if (viewMode !== "details") await switchViewMode(page, viewMode);
 
   const repository = page.locator('.entry-item[data-path="/home/user/my-project"]');
   const badge = repository.locator(".git-repo-folder svg > circle");
@@ -32,19 +34,26 @@ test("Git repository folder badge follows the active theme", async ({ page }) =>
   const lightBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
   const lightFolder = await folder.evaluate((element) => getComputedStyle(element).fill);
   expect(lightBadge).not.toBe(lightFolder);
-  await page.screenshot({ path: "evidence/ac-1-light-theme-git-badge.png" });
+  if (viewMode === "tiles") {
+    await page.screenshot({ path: "evidence/ac-1-light-theme-git-badge.png" });
+  }
 
   await setTheme(page, "dark");
   const darkBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
   const darkFolder = await folder.evaluate((element) => getComputedStyle(element).fill);
   expect(darkBadge).not.toBe(darkFolder);
   expect(darkBadge).not.toBe(lightBadge);
-  await page.screenshot({ path: "evidence/ac-2-dark-theme-git-badge.png" });
+  if (viewMode === "tiles") {
+    await page.screenshot({ path: "evidence/ac-2-dark-theme-git-badge.png" });
+  }
 
   await setTheme(page, "hacker");
   const hackerBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
   const hackerFolder = await folder.evaluate((element) => getComputedStyle(element).fill);
   expect(hackerBadge).not.toBe(hackerFolder);
   expect(hackerBadge).not.toBe(darkBadge);
-  await page.screenshot({ path: "evidence/ac-3-theme-change-git-badge.png" });
+  if (viewMode === "tiles") {
+    await page.screenshot({ path: "evidence/ac-3-theme-change-git-badge.png" });
+  }
 });
+}

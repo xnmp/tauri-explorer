@@ -36,7 +36,9 @@ When developing in WSL (e.g. on the `windows` branch), the Windows side builds/t
 Frontend layers (`src/lib/`): `domain/` (pure logic, no framework deps — put business logic here), `state/` (rune stores), `api/` (IPC wrappers; `mock-invoke.ts` fakes the backend outside Tauri, detected via `__TAURI_INTERNALS__`), `composables/`, `components/`, `themes/`. Backend (`src-tauri/src/`): all Tauri commands must be `async fn` (sync blocks the main thread). Entry point `src/routes/+page.svelte` composes the layout and owns global shortcuts.
 
 Rules that bite:
-
+- Repository-folder Git badges read `--icon-git-badge` from each active theme;
+  keep it distinct from `--icon-folder` (the Hacker theme deliberately uses its
+  darker terminal green) and cover every file-list view mode when changing it.
 - Three view modes (Details/List/Tiles) dispatched by `FileList.svelte` — display features must land in all three.
 - Keep high-frequency hover feedback on file entries, sidebar navigation, and tabs immediate. Preserve motion for one-shot structural events (such as tab enter/close), but do not add CSS transition settling to pointer highlights; it reads as input latency even when the main thread is idle (#503).
 - Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.

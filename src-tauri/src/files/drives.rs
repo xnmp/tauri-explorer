@@ -198,14 +198,16 @@ fn is_linux_pseudo_filesystem(filesystem: &str) -> bool {
 }
 
 /// These locations are operating-system roots even when they have a real
-/// block-device backing (for example, a separately mounted `/boot` or `/home`)
-/// and must never be offered as sidebar drives.
+/// block-device backing (for example, a separately mounted `/boot`, its EFI
+/// submount, or `/home`) and must never be offered as sidebar drives.
 #[cfg(target_os = "linux")]
 fn is_linux_system_mount(path: &str) -> bool {
-    matches!(
-        path,
-        "/" | "/boot" | "/home" | "/usr" | "/var" | "/opt" | "/srv" | "/root"
-    )
+    path == "/boot"
+        || path.starts_with("/boot/")
+        || matches!(
+            path,
+            "/" | "/home" | "/usr" | "/var" | "/opt" | "/srv" | "/root"
+        )
 }
 
 #[cfg(target_os = "linux")]

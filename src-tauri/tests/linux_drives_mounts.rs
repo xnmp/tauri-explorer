@@ -31,7 +31,8 @@ fn system_block_mounts_do_not_become_sidebar_drives() {
     let drives = enumerate_linux_drives_for_test(
         concat!(
             "1 0 8:1 / /boot rw - ext4 /dev/taurisystem546p1 rw\n",
-            "2 0 8:1 / /home rw - ext4 /dev/taurisystem546p1 rw\n",
+            "2 0 8:1 / /boot/efi rw - vfat /dev/taurisystem546p1 rw\n",
+            "3 0 8:1 / /home rw - ext4 /dev/taurisystem546p1 rw\n",
         ),
         sys_block.path(),
     );

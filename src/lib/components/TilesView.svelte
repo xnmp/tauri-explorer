@@ -232,7 +232,6 @@
 
   .tiles-view :global(.tile-item:hover) {
     background: var(--subtle-fill-secondary);
-    transition: background 120ms ease;
   }
 
   .tiles-view :global(.tile-item:active) {

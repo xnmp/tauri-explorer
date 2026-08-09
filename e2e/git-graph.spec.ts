@@ -541,10 +541,28 @@ test("mutes only base-update merges on an open PR branch when enabled (#527)", a
   await expect(baseUpdate).toHaveClass(/is-base-update-merge/);
   await expect(unrelated).not.toHaveClass(/is-base-update-merge/);
   await expect(view.locator(".commit-row", { hasText: "Merge experiment" })).not.toHaveClass(/is-base-update-merge/);
+  // Assert the visible outcome, not only the implementation class: the
+  // base-update merge's text is visibly quieter than the unrelated merge.
+  await expect(baseUpdate.locator(".summary")).toHaveCSS("opacity", "0.32");
+  await expect(unrelated.locator(".summary")).toHaveCSS("opacity", "1");
   await page.screenshot({ path: "evidence/ac-1-base-update-merges.png", fullPage: true });
 
   await page.locator('[data-testid="toggle-mute-base-update-merges"]').click();
   await expect(baseUpdate).not.toHaveClass(/is-base-update-merge/);
+  await expect(baseUpdate.locator(".summary")).toHaveCSS("opacity", "1");
+
+  // Reloading constructs a fresh graph view and settings store; the disabled
+  // preference must come back from persisted storage rather than in-memory
+  // component state.
+  await page.reload();
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+  await page.locator(".graph-header").click({ button: "right" });
+  await expect(page.locator('[data-testid="toggle-mute-base-update-merges"]')).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  await expect(view.locator(".commit-row", { hasText: "Merge hotfix into main" }).locator(".summary")).toHaveCSS("opacity", "1");
 });
 
 test("traces a hovered or selected branch lineage and can restore the undimmed graph", async ({

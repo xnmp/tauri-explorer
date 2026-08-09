@@ -58,7 +58,19 @@ describe("directory listing Tauri E2E probe", () => {
   });
 
   it("publishes a directory watch only after the backend accepts it", async () => {
-    await watchDirectory("/watched");
+    let acceptWatch!: () => void;
+    invokeMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          acceptWatch = resolve;
+        }),
+    );
+    const watching = watchDirectory("/watched");
+    await Promise.resolve();
+
+    expect(document.documentElement.dataset.e2eReadyDirectoryWatches).toBeUndefined();
+    acceptWatch();
+    await watching;
 
     expect(invokeMock).toHaveBeenCalledWith("watch_directory", { path: "/watched" });
     expect(

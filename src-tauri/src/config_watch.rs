@@ -151,8 +151,18 @@ where
     let callback_plan = Arc::clone(&watch_plan);
     let on_change = Arc::new(on_change);
     let callback = Arc::clone(&on_change);
+    let callback_config_dir = config_dir.clone();
     let watcher = notify::recommended_watcher(move |result: Result<Event, notify::Error>| {
-        let Ok(event) = result else { return };
+        let event = match result {
+            Ok(event) => event,
+            Err(error) => {
+                log::warn!(
+                    "Config autoreload watcher error for {}: {error}",
+                    callback_config_dir.display()
+                );
+                return;
+            }
+        };
         if matches!(event.kind, EventKind::Access(_)) {
             return;
         }

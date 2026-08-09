@@ -49,6 +49,7 @@ describe("useFileWatchers refresh coalescing", () => {
 
   afterEach(() => {
     cancelPendingRefreshes();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -128,6 +129,24 @@ describe("useFileWatchers refresh coalescing", () => {
     finishTrailingListing();
     await vi.advanceTimersByTimeAsync(2500);
     expect(refresh).toHaveBeenCalledTimes(2);
+
+    watchers.cleanup();
+  });
+
+  it("publishes application-side listener readiness and watcher receipts", async () => {
+    vi.stubGlobal("document", { documentElement: { dataset: {} } });
+    const watchers = useFileWatchers({ getAllExplorers: () => [] });
+    watchers.setup();
+    await Promise.resolve();
+
+    expect(document.documentElement.dataset.e2eDirectoryWatcherListenerReady).toBe("true");
+    tauriHandler?.({
+      payload: { path: "/watched", observed_at_ms: 1234 },
+    });
+    const receipts = JSON.parse(
+      document.documentElement.dataset.e2eDirectoryWatcherReceipts ?? "{}",
+    );
+    expect(receipts["/watched"]).toEqual({ count: 1, observedAt: 1234 });
 
     watchers.cleanup();
   });

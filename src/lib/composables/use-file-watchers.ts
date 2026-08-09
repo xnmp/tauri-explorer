@@ -16,6 +16,30 @@ export interface FileWatcherDeps {
   getAllExplorers: () => ExplorerInstance[];
 }
 
+interface WatcherReceipt {
+  count: number;
+  observedAt: number | null;
+}
+
+const watcherReceipts = new Map<string, WatcherReceipt>();
+
+function publishWatcherListenerReady(): void {
+  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  document.documentElement.dataset.e2eDirectoryWatcherListenerReady = "true";
+}
+
+function publishWatcherReceipt(path: string, observedAt: number | undefined): void {
+  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  const previous = watcherReceipts.get(path);
+  watcherReceipts.set(path, {
+    count: (previous?.count ?? 0) + 1,
+    observedAt: observedAt ?? null,
+  });
+  document.documentElement.dataset.e2eDirectoryWatcherReceipts = JSON.stringify(
+    Object.fromEntries(watcherReceipts),
+  );
+}
+
 export function useFileWatchers(deps: FileWatcherDeps) {
   let unlistenWatcher: UnlistenFn | undefined;
   // Guards against cleanup() racing the async listen() registrations:
@@ -61,6 +85,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     try {
       listen<{ path: string; observed_at_ms?: number }>("directory-changed", (event) => {
         const changedPath = event.payload.path;
+        publishWatcherReceipt(changedPath, event.payload.observed_at_ms);
         for (const exp of deps.getAllExplorers()) {
           if (exp.currentPath === changedPath) {
             requestRefresh(
@@ -82,6 +107,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
       }).then(
         track((fn) => {
           unlistenWatcher = fn;
+          publishWatcherListenerReady();
         }),
         () => {},
       );

@@ -14,13 +14,16 @@ vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
 vi.stubGlobal("window", new EventTarget());
 vi.stubGlobal("document", { documentElement: { dataset: {} } });
 
-const { startStreamingDirectory } = await import("$lib/api/files");
+const { startStreamingDirectory, watchDirectory } = await import("$lib/api/files");
 
 describe("directory listing Tauri E2E probe", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockReset();
     invokeMock.mockResolvedValue({ path: "/probe", entries: [], listing_id: null });
+    for (const key of Object.keys(document.documentElement.dataset)) {
+      delete document.documentElement.dataset[key];
+    }
   });
 
   afterEach(() => {
@@ -52,5 +55,14 @@ describe("directory listing Tauri E2E probe", () => {
     expect(invokeMock).toHaveBeenCalledWith("start_streaming_directory", { path: "/probe" });
     expect(JSON.parse(document.documentElement.dataset.e2eDirectoryListingProbe ?? "null"))
       .toMatchObject({ calls: 1, completed: 1 });
+  });
+
+  it("publishes a directory watch only after the backend accepts it", async () => {
+    await watchDirectory("/watched");
+
+    expect(invokeMock).toHaveBeenCalledWith("watch_directory", { path: "/watched" });
+    expect(
+      JSON.parse(document.documentElement.dataset.e2eReadyDirectoryWatches ?? "[]"),
+    ).toContain("/watched");
   });
 });

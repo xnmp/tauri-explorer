@@ -28,6 +28,14 @@ interface DirectoryListingE2EProbe {
 
 let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
 
+function publishReadyDirectoryWatch(path: string): void {
+  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  const encoded = document.documentElement.dataset.e2eReadyDirectoryWatches;
+  const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
+  if (!readyPaths.includes(path)) readyPaths.push(path);
+  document.documentElement.dataset.e2eReadyDirectoryWatches = JSON.stringify(readyPaths);
+}
+
 function publishDirectoryListingE2EProbe(): void {
   if (!import.meta.env.DEV || typeof document === "undefined") return;
   if (directoryListingE2EProbe) {
@@ -628,6 +636,7 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
 export async function watchDirectory(path: string): Promise<void> {
   try {
     await invoke("watch_directory", { path });
+    publishReadyDirectoryWatch(path);
   } catch {
     // Non-critical: watcher failure shouldn't block navigation
   }

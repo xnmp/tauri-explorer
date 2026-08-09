@@ -8,6 +8,11 @@
 name: "#457 Windows session probe"
 
 on:
+  # Push-triggered because workflow_dispatch requires the file to exist on the
+  # default branch, and this is throwaway diagnostic scaffolding that must not
+  # land on dev. A push trigger runs the workflow from the branch's own file.
+  push:
+    branches: [fix/windows-tauri-smoke-hang]
   workflow_dispatch:
 
 jobs:

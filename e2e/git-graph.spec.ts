@@ -136,6 +136,14 @@ test.describe("Git graph tab", () => {
     await expect(detail).toContainText("Checks passing");
     await expect(detail).toContainText("Approved");
     await expect(detail).toContainText("feature"); // head branch
+    // The full conversation remains inline: issue comments plus both open and
+    // resolved code-review threads are visible without leaving the graph.
+    await expect(detail).toContainText("Nice work! Left a couple of small notes on the diff.");
+    await expect(detail).toContainText("Review threads");
+    await expect(detail).toContainText("Resolved");
+    await expect(detail).toContainText("Open");
+    await expect(detail).toContainText("src/lib/parser.ts:42");
+    await expect(detail).toContainText("Could this retain the previous error context?");
     // No browser navigation happened on the plain badge click.
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))

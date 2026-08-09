@@ -954,6 +954,32 @@ mod tests {
     }
 
     #[test]
+    fn maps_review_threads() {
+        let pr = parse_one(
+            r#"{
+                "number": 7, "title": "Add feature", "url": "u",
+                "isDraft": false, "headRefName": "feature", "reviewDecision": null,
+                "reviewThreads": { "nodes": [
+                    { "isResolved": true, "comments": { "nodes": [
+                        { "author": { "login": "alice" }, "createdAt": "2024-01-01T10:00:00Z", "bodyText": "Fixed", "path": "src/lib/parser.ts", "line": 42 }
+                    ] } },
+                    { "isResolved": false, "comments": { "nodes": [
+                        { "author": null, "createdAt": "2024-01-02T10:00:00Z", "bodyText": "Please revisit", "path": null, "line": null }
+                    ] } }
+                ] },
+                "commits": { "nodes": [] }
+            }"#,
+        );
+        let threads = pr.review_threads.expect("GraphQL supplies review-thread data");
+        assert_eq!(threads.len(), 2);
+        assert!(threads[0].resolved);
+        assert_eq!(threads[0].comments[0].path.as_deref(), Some("src/lib/parser.ts"));
+        assert_eq!(threads[0].comments[0].line, Some(42));
+        assert!(!threads[1].resolved);
+        assert_eq!(threads[1].comments[0].author, None);
+    }
+
+    #[test]
     fn empty_body_maps_to_none_and_no_comments_is_empty_vec() {
         // A closed-description PR (empty bodyText) and zero comments — common
         // for freshly opened PRs.

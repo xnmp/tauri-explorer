@@ -8,6 +8,8 @@
 
 If you've ever opened your editor just to move files faster than your file manager lets you, this is for you. Fuzzy quick-open with frecency ranking, ripgrep content search, a palette for every action, rebindable keys, tabs and dual panes, a git commit graph, and a UI you can strip down to nothing. Tauri v2 (Rust) + Svelte 5, native on Linux, Windows, and macOS. No telemetry.
 
+> **Status: early alpha.** The author uses it daily as their main file manager, but it hasn't had other users yet — expect rough edges, especially outside Linux. Bug reports are very welcome: Command Palette → "Report Issue" files one from inside the app.
+
 **→ [Try it in your browser](https://tauri-explorer.vercel.app)** — the showcase site is a working copy of the app. Press `Ctrl+P`.
 
 ![Details view with sidebar](screenshots/readme/details-view.png)

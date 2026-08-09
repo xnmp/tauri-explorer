@@ -68,5 +68,17 @@ test.describe(`File list Ctrl+Home and Ctrl+End navigation [${viewMode}]`, () =>
     await expect(selectedEntry(page)).toBeInViewport();
     if (viewMode === "details") await page.screenshot({ path: "evidence/ac-4-unselected-ctrl-end.png" });
   });
+
+  test("Ctrl+Home selects the first entry when nothing is selected", async ({ page }) => {
+    await openProject(page);
+    await page.keyboard.press("Escape");
+    await expect(selectedEntry(page)).toHaveCount(0);
+
+    await page.keyboard.press("Control+Home");
+
+    await expect(selectedEntry(page).locator(".entry-name")).toHaveText("assets");
+    await expect(selectedEntry(page)).toBeInViewport();
+    if (viewMode === "details") await page.screenshot({ path: "evidence/ac-4-unselected-ctrl-home.png" });
+  });
 });
 }

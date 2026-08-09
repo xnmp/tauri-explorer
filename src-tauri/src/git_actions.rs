@@ -19,7 +19,7 @@
 
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::error::AppError;
@@ -27,6 +27,9 @@ use crate::process_ext::{output_cancellable, NoConsole};
 use crate::task_registry::TaskRegistry;
 
 static GIT_NETWORK_OPERATIONS: TaskRegistry = TaskRegistry::new();
+const NETWORK_CANCELLED: &str = "git network operation cancelled";
+const REMOTE_DELETE_CANCELLED: &str =
+    "git network operation cancelled; remote branch may already have been deleted";
 
 /// A successful graph mutation's immutable inverse + expected post-state.
 ///
@@ -130,13 +133,38 @@ fn run_git_network_sync(
     cancelled: &AtomicBool,
     program: &str,
 ) -> Result<(), AppError> {
+    run_git_network_sync_after_output(
+        repo_path,
+        args,
+        cancelled,
+        program,
+        NETWORK_CANCELLED,
+        || {},
+    )
+}
+
+fn run_git_network_sync_after_output<F>(
+    repo_path: &str,
+    args: &[&str],
+    cancelled: &AtomicBool,
+    program: &str,
+    cancel_message: &'static str,
+    after_output: F,
+) -> Result<(), AppError>
+where
+    F: FnOnce(),
+{
     let dir = Path::new(repo_path);
     if !dir.is_dir() {
         return Err(AppError::NotFound(repo_path.to_string()));
     }
     let mut command = Command::new(program);
     command.no_console().args(args).current_dir(dir);
-    let output = output_cancellable(&mut command, cancelled, "git network operation cancelled")?;
+    let output = output_cancellable(&mut command, cancelled, cancel_message)?;
+    after_output();
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(AppError::Other(cancel_message.into()));
+    }
     if output.status.success() {
         return Ok(());
     }
@@ -178,8 +206,20 @@ async fn run_git_network(
     repo_path: String,
     args: Vec<String>,
     task_id: u64,
+    cancel_message: &'static str,
 ) -> Result<(), AppError> {
-    run_git_network_with_program(repo_path, args, task_id, "git".into()).await
+    run_git_network_task(task_id, move |cancelled| {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git_network_sync_after_output(
+            &repo_path,
+            &refs,
+            &cancelled,
+            "git",
+            cancel_message,
+            || {},
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -400,30 +440,51 @@ async fn run_head_move(
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
 }
 
-async fn run_network_head_move(
+fn run_pull_sync_with_hooks<AfterFetch, FastForwardStarted>(
+    repo_path: &str,
+    cancelled: &AtomicBool,
+    after_fetch: AfterFetch,
+    fast_forward_started: FastForwardStarted,
+) -> Result<Option<GitUndoAction>, AppError>
+where
+    AfterFetch: FnOnce(&AtomicBool),
+    FastForwardStarted: FnOnce(&AtomicBool),
+{
+    let (before_oid, branch) = head_snapshot(repo_path)?;
+    run_git_network_sync(repo_path, &["fetch", "--atomic"], cancelled, "git")?;
+    after_fetch(cancelled);
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(AppError::Other(NETWORK_CANCELLED.into()));
+    }
+
+    // Cancellation owns only the unbounded network phase. Once this boundary
+    // is crossed, let Git's local fast-forward finish so HEAD/index/worktree
+    // are never exposed to process-tree termination (ADR 0006).
+    fast_forward_started(cancelled);
+    run_git(repo_path, &["merge", "--ff-only", "@{upstream}"])?;
+
+    let (after_oid, after_branch) = head_snapshot(repo_path)?;
+    if branch != after_branch {
+        return Err(AppError::Other(
+            "git operation unexpectedly changed the checked-out branch".into(),
+        ));
+    }
+    Ok(
+        (before_oid != after_oid).then_some(GitUndoAction::HeadMove {
+            operation: HeadMoveOperation::Pull,
+            branch,
+            before_oid,
+            after_oid,
+        }),
+    )
+}
+
+async fn run_network_pull(
     repo_path: String,
-    operation: HeadMoveOperation,
-    args: Vec<String>,
     task_id: u64,
 ) -> Result<Option<GitUndoAction>, AppError> {
     run_git_network_task(task_id, move |cancelled| {
-        let (before_oid, branch) = head_snapshot(&repo_path)?;
-        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        run_git_network_sync(&repo_path, &refs, &cancelled, "git")?;
-        let (after_oid, after_branch) = head_snapshot(&repo_path)?;
-        if branch != after_branch {
-            return Err(AppError::Other(
-                "git operation unexpectedly changed the checked-out branch".into(),
-            ));
-        }
-        Ok(
-            (before_oid != after_oid).then_some(GitUndoAction::HeadMove {
-                operation,
-                branch,
-                before_oid,
-                after_oid,
-            }),
-        )
+        run_pull_sync_with_hooks(&repo_path, &cancelled, |_| {}, |_| {})
     })
     .await
 }
@@ -573,8 +634,14 @@ pub async fn git_revert_abort(repo_path: String) -> Result<(), AppError> {
 pub async fn git_fetch(repo_path: String, task_id: u64) -> Result<(), AppError> {
     run_git_network(
         repo_path,
-        vec!["fetch".into(), "--all".into(), "--prune".into()],
+        vec![
+            "fetch".into(),
+            "--all".into(),
+            "--prune".into(),
+            "--atomic".into(),
+        ],
         task_id,
+        NETWORK_CANCELLED,
     )
     .await
 }
@@ -583,13 +650,7 @@ pub async fn git_fetch(repo_path: String, task_id: u64) -> Result<(), AppError> 
 /// branch errors (surfaced verbatim) instead of creating a surprise merge.
 #[tauri::command]
 pub async fn git_pull(repo_path: String, task_id: u64) -> Result<Option<GitUndoAction>, AppError> {
-    run_network_head_move(
-        repo_path,
-        HeadMoveOperation::Pull,
-        vec!["pull".into(), "--ff-only".into()],
-        task_id,
-    )
-    .await
+    run_network_pull(repo_path, task_id).await
 }
 
 /// How many commits `name`'s upstream has that the local branch lacks
@@ -794,6 +855,7 @@ pub async fn git_delete_remote_branch(
         repo_path,
         vec!["push".into(), remote, "--delete".into(), name],
         task_id,
+        REMOTE_DELETE_CANCELLED,
     )
     .await
 }

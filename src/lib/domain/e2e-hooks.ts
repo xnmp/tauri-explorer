@@ -21,19 +21,3 @@
  */
 export const E2E_HOOKS_ENABLED =
   import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1";
-
-/**
- * Suppress the automatic warm-window priming that runs ~1.5s after boot.
- *
- * msedgedriver's "launch" approach attaches to the *first* WebView2 instance an
- * app creates, and Microsoft documents multi-instance apps as needing the
- * "attach" approach instead. This app parks a hidden warm window shortly after
- * boot (`warmWindow` defaults on), so on Windows a second WebView2 appears in
- * the middle of msedgedriver's attach and `POST /session` never returns (#457).
- *
- * WebKitGTK tolerates it — the Linux leg asserts both handles and passes — so
- * this is set only for the Windows smoke leg, which trades `warm-window.spec`
- * coverage there for a suite that can create a session at all.
- */
-export const E2E_WARM_WINDOW_PRIMING_DISABLED =
-  import.meta.env.VITE_E2E_NO_WARM_PRIME === "1";

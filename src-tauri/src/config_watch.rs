@@ -54,15 +54,19 @@ struct ConfigChangedPayload {
 ///
 /// `config_dir` is always watched recursively. Symlink targets outside it are
 /// added to `external_roots` by the implementation that resolves this plan.
-pub(crate) struct WatchPlan {
+/// A resolved view of the config paths a filesystem watcher must observe.
+///
+/// This is public so integration tests and embedding callers can drive the
+/// same watcher mapping as the app rather than duplicating symlink handling.
+pub struct WatchPlan {
     config_dir: PathBuf,
-    pub(crate) external_roots: Vec<(PathBuf, RecursiveMode)>,
+    pub external_roots: Vec<(PathBuf, RecursiveMode)>,
     external_files: HashMap<PathBuf, String>,
     external_themes_dir: Option<PathBuf>,
 }
 
 impl WatchPlan {
-    pub(crate) fn watched_config_name(&self, changed: &Path) -> Option<String> {
+    pub fn watched_config_name(&self, changed: &Path) -> Option<String> {
         watched_config_name(&self.config_dir, changed).or_else(|| {
             let changed = std::fs::canonicalize(changed).ok()?;
             if let Some(filename) = self.external_files.get(&changed) {
@@ -81,7 +85,11 @@ impl WatchPlan {
     }
 }
 
-pub(crate) fn config_watch_plan(config_dir: &Path) -> WatchPlan {
+/// Resolve the filesystem roots needed to observe reloadable config files.
+///
+/// The plan includes any external targets reached through config-directory
+/// symlinks, while reported names remain relative to `config_dir`.
+pub fn config_watch_plan(config_dir: &Path) -> WatchPlan {
     let mut external_roots = Vec::new();
     let mut external_files = HashMap::new();
     for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
@@ -147,7 +155,15 @@ pub(crate) fn watched_config_name(config_dir: &Path, changed: &Path) -> Option<S
             Some((*name).to_string())
         }
         [THEMES_DIR, theme] if theme.ends_with(".css") => Some(format!("{THEMES_DIR}/{theme}")),
-        _ => None,
+        _ => {
+            let changed = std::fs::canonicalize(changed).ok()?;
+            for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
+                if std::fs::canonicalize(config_dir.join(filename)).ok().as_ref() == Some(&changed) {
+                    return Some(filename.to_string());
+                }
+            }
+            None
+        }
     }
 }
 
@@ -302,7 +318,7 @@ fn refresh_watch_plan(config_dir: &Path, watch_plan: &Arc<Mutex<WatchPlan>>) {
 /// Register newly resolved external roots while holding the plan lock. The
 /// callback takes the same lock before mapping an event, so it cannot see a
 /// new root with the old plan in the small interval after `watch` succeeds.
-pub(crate) fn apply_watch_plan_update(
+pub fn apply_watch_plan_update(
     config_dir: &Path,
     watch_plan: &Arc<Mutex<WatchPlan>>,
     watcher: &mut RecommendedWatcher,
@@ -337,146 +353,11 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_watch_plan_update, config_watch_plan, pending, settings_path, watched_config_name,
-        BOOKMARKS_FILE, FOLDER_VIEWS_FILE,
-    };
+    use super::{pending, settings_path, watched_config_name, BOOKMARKS_FILE, FOLDER_VIEWS_FILE};
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::path::Path;
-    use std::sync::{mpsc, Arc, Mutex};
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
-
-    #[cfg(unix)]
-    fn reported_name_after_external_write(config_dir: &Path, changed: &Path) -> Option<String> {
-        let plan = config_watch_plan(config_dir);
-        let (sent, received) = mpsc::channel();
-        let mut watcher: RecommendedWatcher =
-            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = event {
-                    for path in event.paths {
-                        if let Some(filename) = plan.watched_config_name(&path) {
-                            let _ = sent.send(filename);
-                        }
-                    }
-                }
-            })
-            .expect("watcher");
-        watcher
-            .watch(config_dir, RecursiveMode::Recursive)
-            .expect("watch config directory");
-        for (root, mode) in &config_watch_plan(config_dir).external_roots {
-            watcher.watch(root, *mode).expect("watch external target");
-        }
-
-        std::fs::write(changed, "external edit").expect("write symlink target");
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < deadline {
-            if let Ok(filename) = received.recv_timeout(Duration::from_millis(100)) {
-                return Some(filename);
-            }
-        }
-        None
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn reports_writes_to_symlinked_settings_targets() {
-        let temp = tempfile::tempdir().expect("temporary directory");
-        let config_dir = temp.path().join("config");
-        let external_dir = temp.path().join("dotfiles");
-        std::fs::create_dir_all(&config_dir).expect("config directory");
-        std::fs::create_dir_all(&external_dir).expect("external directory");
-        let target = external_dir.join("settings.json");
-        std::fs::write(&target, "{}").expect("initial settings");
-        std::os::unix::fs::symlink(&target, config_dir.join("settings.json"))
-            .expect("symlinked settings");
-
-        assert_eq!(
-            reported_name_after_external_write(&config_dir, &target),
-            Some("settings.json".to_string())
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn reports_writes_to_symlinked_theme_targets() {
-        let temp = tempfile::tempdir().expect("temporary directory");
-        let config_dir = temp.path().join("config");
-        let external_themes = temp.path().join("dotfiles/themes");
-        std::fs::create_dir_all(&config_dir).expect("config directory");
-        std::fs::create_dir_all(&external_themes).expect("external themes directory");
-        let target = external_themes.join("midnight.css");
-        std::fs::write(&target, "body {}").expect("initial theme");
-        std::os::unix::fs::symlink(&external_themes, config_dir.join("themes"))
-            .expect("symlinked themes directory");
-
-        assert_eq!(
-            reported_name_after_external_write(&config_dir, &target),
-            Some("themes/midnight.css".to_string())
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn reports_writes_after_a_symlink_target_is_replaced() {
-        let temp = tempfile::tempdir().expect("temporary directory");
-        let config_dir = temp.path().join("config");
-        let first_target_dir = temp.path().join("first");
-        let replacement_target_dir = temp.path().join("replacement");
-        std::fs::create_dir_all(&config_dir).expect("config directory");
-        std::fs::create_dir_all(&first_target_dir).expect("first target directory");
-        std::fs::create_dir_all(&replacement_target_dir).expect("replacement target directory");
-
-        let first_settings = first_target_dir.join("settings.json");
-        let replacement_settings = replacement_target_dir.join("settings.json");
-        std::fs::write(&first_settings, "{}").expect("first settings");
-        std::fs::write(&replacement_settings, "{}").expect("replacement settings");
-        std::os::unix::fs::symlink(&first_settings, config_dir.join("settings.json"))
-            .expect("first settings symlink");
-
-        let watch_plan = Arc::new(Mutex::new(config_watch_plan(&config_dir)));
-        let callback_plan = Arc::clone(&watch_plan);
-        let (sent, received) = mpsc::channel();
-        let mut watcher: RecommendedWatcher =
-            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = event {
-                    let Ok(plan) = callback_plan.lock() else {
-                        return;
-                    };
-                    for path in event.paths {
-                        if let Some(filename) = plan.watched_config_name(&path) {
-                            let _ = sent.send(filename);
-                        }
-                    }
-                }
-            })
-            .expect("watcher");
-        watcher
-            .watch(&config_dir, RecursiveMode::Recursive)
-            .expect("watch config directory");
-        for (root, mode) in &watch_plan.lock().expect("watch plan lock").external_roots {
-            watcher.watch(root, *mode).expect("watch first target");
-        }
-
-        std::fs::remove_file(config_dir.join("settings.json")).expect("replace settings symlink");
-        std::os::unix::fs::symlink(&replacement_settings, config_dir.join("settings.json"))
-            .expect("replacement settings symlink");
-        apply_watch_plan_update(&config_dir, &watch_plan, &mut watcher);
-        while received.try_recv().is_ok() {}
-
-        std::fs::write(&replacement_settings, "external edit").expect("write replacement target");
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut reported = None;
-        while Instant::now() < deadline {
-            if let Ok(filename) = received.recv_timeout(Duration::from_millis(100)) {
-                if filename == "settings.json" {
-                    reported = Some(filename);
-                    break;
-                }
-            }
-        }
-        assert_eq!(reported, Some("settings.json".to_string()));
-    }
 
     #[test]
     fn reports_reloadable_json_blobs_and_user_theme_css() {

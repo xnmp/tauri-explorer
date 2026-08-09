@@ -1,8 +1,8 @@
-use crate::config_watch::{apply_watch_plan_update, config_watch_plan};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+use tauri_explorer_lib::config_watch::{apply_watch_plan_update, config_watch_plan};
 
 fn reported_name_after_external_write(config_dir: &Path, changed: &Path) -> Option<String> {
     let plan = config_watch_plan(config_dir);

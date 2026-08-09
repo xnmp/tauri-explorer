@@ -6,9 +6,7 @@ mod ai_rename;
 mod archive;
 mod clipboard;
 mod config;
-mod config_watch;
-#[cfg(test)]
-mod config_watch_symlink_test;
+pub mod config_watch;
 mod content_search;
 mod crash_report;
 pub mod error;

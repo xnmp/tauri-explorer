@@ -36,13 +36,16 @@ snapshot from frontend state.
   not mutated.
 - Pull is two phases: cancellable `git fetch --atomic`, then non-cancellable
   `git merge --ff-only @{upstream}`. The cancellation flag is checked at the
-  boundary. Before the local phase starts, the backend publishes that the task
-  is no longer cancellable. The UI keeps truthful progress visible as
-  `Finishing Git pull…` but removes Cancel, including when a cancellation click
-  races with the phase transition. Cancellation before the boundary leaves
-  HEAD/index/worktree unchanged and creates no undo entry. Once the local
-  fast-forward begins it is allowed to finish; a moved HEAD returns the normal
-  backend-authored undo snapshot even if a late cancellation request arrived.
+  boundary. The caller supplies a per-invocation IPC phase channel before pull
+  starts; before the local phase starts, the backend must successfully send
+  that the task is no longer cancellable. A missing/broken channel fails closed
+  before HEAD/index/worktree can move. The UI keeps truthful progress visible
+  as `Finishing Git pull…` but removes Cancel, including when a cancellation
+  click races with delayed phase delivery. Cancellation before the boundary
+  leaves HEAD/index/worktree unchanged and creates no undo entry. Once the
+  local fast-forward begins it is allowed to finish; a moved HEAD returns the
+  normal backend-authored undo snapshot even if a late cancellation request
+  arrived.
 - Remote deletion is an at-most-once push. Cancellation never retries. If the
   remote accepted deletion before the child was terminated, the command reports
   `git network operation cancelled; remote branch may already have been deleted`.
@@ -72,7 +75,9 @@ Rust temp-repository tests exercise the real Git CLI at each boundary:
 - a late cancellation at fast-forward start proves the local mutation completes
   and returns a valid undo snapshot; browser coverage pauses at the same phase
   boundary and proves Cancel disappears before completion while the resulting
-  pull still records its undo snapshot;
+  pull still records its undo snapshot; a real command-channel test verifies
+  the serialized phase payload and proves channel delivery failure refuses the
+  local fast-forward;
 - cancellation after a bare remote accepted branch deletion proves the explicit
   uncertain-result message, repository/lock consistency, and fetch/prune
   reconciliation.

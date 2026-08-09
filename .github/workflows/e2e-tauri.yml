@@ -82,8 +82,15 @@ jobs:
       # returned — the session POST died with hyper IncompleteMessage on every
       # run. `tauri build --debug` passes custom-protocol, so the frontend is
       # embedded in the binary and there is no dev server to race.
+      # VITE_E2E_HOOKS compiles in the `e2e-navigate` / `e2e-reset-view` hooks
+      # and the listing/watcher probes the specs drive. They used to ride on
+      # `import.meta.env.DEV`, which is what tied the suite to a dev-mode
+      # binary — and therefore to a dev server — in the first place. Release
+      # builds never set it, so the hooks tree-shake out of shipped binaries.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
         shell: bash
+        env:
+          VITE_E2E_HOOKS: "1"
         run: bun run tauri build --debug --no-bundle
 
       - name: Run smoke suite (Linux, under Xvfb)

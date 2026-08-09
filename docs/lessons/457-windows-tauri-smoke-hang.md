@@ -44,7 +44,7 @@ crossed the 60 s line in July.
 The Jul 17 break window pointed at the git-graph _spec_ work, which was a red
 herring: the git-graph _feature_ work in the same window grew the module graph.
 
-## Fix
+## Fix, part 1 — embed the frontend
 
 Build the smoke binary through the Tauri CLI so the frontend is embedded and no
 dev server exists to race:
@@ -57,11 +57,50 @@ Both dev-server steps were deleted from the workflow. This also removes the
 Linux leg's dependency on the same latency, and makes the binary under test
 closer to what actually ships.
 
+## Fix, part 2 — decouple the e2e hooks from DEV
+
+Part 1 alone **traded one failure for another**, and the CI run proved it: the
+Windows session handshake started succeeding, but every spec on _both_ OSes then
+failed with `dev e2e hooks never became ready` and `scratch directory never
+rendered`.
+
+The suite does not drive the app through its real UI. Under Xvfb there is no
+window manager, so autofocused inline inputs blur and cancel the instant they
+open; the specs therefore dispatch `e2e-navigate` / `e2e-reset-view` and poll
+`data-e2e-*` readiness markers instead. Every one of those hooks was gated on
+`import.meta.env.DEV`, which is `false` in a production asset build.
+
+So the hooks were transitively the _reason_ the suite needed a dev-mode binary,
+which is the reason it needed a dev server, which is the reason Windows hung.
+The dev-server dependency was a symptom two levels down from the real coupling.
+
+Hooks now sit behind their own explicit build flag, `src/lib/domain/e2e-hooks.ts`:
+
+```ts
+export const E2E_HOOKS_ENABLED =
+  import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1";
+```
+
+The smoke workflow builds with `VITE_E2E_HOOKS=1`. Both operands are statically
+replaced by Vite, so a normal build folds the constant to `false` and the
+guarded code is tree-shaken out — verified in both directions: `e2eHooksReady`
+and `e2e-navigate` appear **0** times in a normal `bun run build` output and
+once each with the flag set. Release builds are unaffected.
+
+Two `import.meta.env.DEV` gates were deliberately left alone — the startup-timing
+`console.info` and the shortcut-conflict validator are dev diagnostics, not
+testability seams.
+
 ## Transferable lesson
 
 A test harness that needs a dev server alongside the binary has a **timing**
 dependency, not just a setup dependency — it will degrade silently as the app
 grows and then fail as a cliff. Prefer the shipped asset path.
+
+More general: **do not hang testability seams off `import.meta.env.DEV`.** "Is
+this a dev build" and "may the tests drive this app" are different questions,
+and conflating them silently drags a whole dev toolchain into the test
+environment. Give the seam its own flag.
 
 Corollary already recorded elsewhere in this repo, now with a second victim:
 `cargo build [--release]` never yields a production-mode Tauri binary. If you

@@ -7,15 +7,18 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ---
 
 ## Root installers — platform-specific source install entry points.
+
 - `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0003-windows-installer-trust-boundary.md`.
 - `tests/windows-install-script.test.ts` — README and Windows-only invocation seam for `windows_install.ps1`; mocks prerequisite, source-build, clone, and MSI outcomes (including reboot-required `3010`) without installing software.
 
 ## src/routes/ — SPA entry
+
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
+
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
@@ -69,6 +72,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
+
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
@@ -151,6 +155,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
+
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
@@ -174,6 +179,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `system.ts` — OS/window-shell plumbing: picker response, native window theme, ffmpeg path. Not filesystem.
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
+
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
@@ -195,6 +201,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
+
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
@@ -242,6 +249,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
+- `e2e-hooks.ts` — `E2E_HOOKS_ENABLED` flag gating the `e2e-*` test hooks/probes; folds to `false` and tree-shakes out unless `VITE_E2E_HOOKS=1`, which only the smoke workflow sets (#457).
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
@@ -251,6 +259,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `available-filename.ts` — collision-free output filename (`photo_upscaled_2.png`) for plugin dialogs writing beside the original.
 
 ## src/lib/plugins/ — plugin system + built-in plugins.
+
 - `api.ts` — plugin API surface exposed to plugins.
 - `registry.svelte.ts` — built-in plugin registry + lifecycle.
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
@@ -265,18 +274,22 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin-dialog.css` — shared `.plugin-dialog` chrome (header/body/inputs/buttons) reused by the nano-banana / ai-rename / upscale dialogs.
 
 ## src/lib/background-animations/ — canvas backgrounds (registry-driven).
+
 - `registry.ts` — name→render-fn map + AnimationColors.
 - `index.ts` — public re-exports (register/get/theme animation).
 - `particles.ts` — floating dots + connection lines.
 - `starfield.ts` — twinkling stars + constellation lines.
 
 ## src/lib/themes/ — CSS theme files. Edit for theming/colors.
+
 - `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
 
 ## src/lib/types/
+
 - `pretext.d.ts` — ambient TS type declarations.
 
 ## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
+
 - `main.rs` — binary entry (console-window guard).
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
@@ -314,12 +327,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
 
 ## website/ — static Vercel site and serverless functions.
+
 - `package.json` — website-project runtime dependencies, including Vercel Blob hosting for report images.
 - `api/report.js` — POST-only user-report relay, public Blob storage adapter, and GitHub Issues client.
 - `api/report-core.js` — pure validation, attachment delivery/cleanup, issue shaping, honeypot, and atomic burst/hour/day limit logic.
 - `vercel.json` — response cache policy; API routes are explicitly `no-store`.
 
 ### src-tauri/src/files/ — file operations module.
+
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.

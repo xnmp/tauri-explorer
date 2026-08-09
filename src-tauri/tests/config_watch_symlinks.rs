@@ -1,29 +1,14 @@
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use tauri_explorer_lib::config_watch::{apply_watch_plan_update, config_watch_plan};
+use tauri_explorer_lib::config_watch::watch_config_changes;
 
 fn reported_name_after_external_write(config_dir: &Path, changed: &Path) -> Option<String> {
-    let plan = config_watch_plan(config_dir);
     let (sent, received) = mpsc::channel();
-    let mut watcher: RecommendedWatcher =
-        notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = event {
-                for path in event.paths {
-                    if let Some(filename) = plan.watched_config_name(&path) {
-                        let _ = sent.send(filename);
-                    }
-                }
-            }
-        })
-        .expect("watcher");
-    watcher
-        .watch(config_dir, RecursiveMode::Recursive)
-        .expect("watch config directory");
-    for (root, mode) in &config_watch_plan(config_dir).external_roots {
-        watcher.watch(root, *mode).expect("watch external target");
-    }
+    let _watcher = watch_config_changes(config_dir.to_path_buf(), move |filename| {
+        let _ = sent.send(filename);
+    })
+    .expect("watch config directory");
 
     std::fs::write(changed, "external edit").expect("write symlink target");
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -90,35 +75,17 @@ fn reports_writes_after_a_symlink_target_is_replaced() {
     std::os::unix::fs::symlink(&first_settings, config_dir.join("settings.json"))
         .expect("first settings symlink");
 
-    let watch_plan = Arc::new(Mutex::new(config_watch_plan(&config_dir)));
-    let callback_plan = Arc::clone(&watch_plan);
     let (sent, received) = mpsc::channel();
-    let mut watcher: RecommendedWatcher =
-        notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = event {
-                let Ok(plan) = callback_plan.lock() else {
-                    return;
-                };
-                for path in event.paths {
-                    if let Some(filename) = plan.watched_config_name(&path) {
-                        let _ = sent.send(filename);
-                    }
-                }
-            }
-        })
-        .expect("watcher");
-    watcher
-        .watch(&config_dir, RecursiveMode::Recursive)
-        .expect("watch config directory");
-    for (root, mode) in &watch_plan.lock().expect("watch plan lock").external_roots {
-        watcher.watch(root, *mode).expect("watch first target");
-    }
+    let _watcher = watch_config_changes(config_dir.clone(), move |filename| {
+        let _ = sent.send(filename);
+    })
+    .expect("watch config directory");
 
     std::fs::remove_file(config_dir.join("settings.json")).expect("replace settings symlink");
     std::os::unix::fs::symlink(&replacement_settings, config_dir.join("settings.json"))
         .expect("replacement settings symlink");
-    apply_watch_plan_update(&config_dir, &watch_plan, &mut watcher);
     while received.try_recv().is_ok() {}
+    std::thread::sleep(Duration::from_secs(3));
 
     std::fs::write(&replacement_settings, "external edit").expect("write replacement target");
     let deadline = Instant::now() + Duration::from_secs(3);

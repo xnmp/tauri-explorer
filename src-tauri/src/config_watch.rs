@@ -23,7 +23,10 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, OnceLock,
+};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -58,15 +61,15 @@ struct ConfigChangedPayload {
 ///
 /// This is public so integration tests and embedding callers can drive the
 /// same watcher mapping as the app rather than duplicating symlink handling.
-pub struct WatchPlan {
+struct WatchPlan {
     config_dir: PathBuf,
-    pub external_roots: Vec<(PathBuf, RecursiveMode)>,
+    external_roots: Vec<(PathBuf, RecursiveMode)>,
     external_files: HashMap<PathBuf, String>,
     external_themes_dir: Option<PathBuf>,
 }
 
 impl WatchPlan {
-    pub fn watched_config_name(&self, changed: &Path) -> Option<String> {
+    fn watched_config_name(&self, changed: &Path) -> Option<String> {
         watched_config_name(&self.config_dir, changed).or_else(|| {
             let changed = std::fs::canonicalize(changed).ok()?;
             if let Some(filename) = self.external_files.get(&changed) {
@@ -89,7 +92,7 @@ impl WatchPlan {
 ///
 /// The plan includes any external targets reached through config-directory
 /// symlinks, while reported names remain relative to `config_dir`.
-pub fn config_watch_plan(config_dir: &Path) -> WatchPlan {
+fn config_watch_plan(config_dir: &Path) -> WatchPlan {
     let mut external_roots = Vec::new();
     let mut external_files = HashMap::new();
     for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
@@ -120,6 +123,76 @@ pub fn config_watch_plan(config_dir: &Path) -> WatchPlan {
         external_files,
         external_themes_dir,
     }
+}
+
+/// A small real-watcher harness for consumers that need to verify config
+/// autoreload behaviour without constructing a Tauri application.
+pub struct ConfigWatchHarness {
+    active: Arc<AtomicBool>,
+    _watcher: Arc<Mutex<RecommendedWatcher>>,
+}
+
+impl Drop for ConfigWatchHarness {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
+}
+
+/// Watch `config_dir`, including external symlink targets, and report the
+/// frontend-visible filename for every relevant write.
+pub fn watch_config_changes<F>(
+    config_dir: PathBuf,
+    on_change: F,
+) -> notify::Result<ConfigWatchHarness>
+where
+    F: Fn(String) + Send + Sync + 'static,
+{
+    let watch_plan = Arc::new(Mutex::new(config_watch_plan(&config_dir)));
+    let callback_plan = Arc::clone(&watch_plan);
+    let on_change = Arc::new(on_change);
+    let callback = Arc::clone(&on_change);
+    let watcher = notify::recommended_watcher(move |result: Result<Event, notify::Error>| {
+        let Ok(event) = result else { return };
+        if matches!(event.kind, EventKind::Access(_)) {
+            return;
+        }
+        let Ok(plan) = callback_plan.lock() else {
+            return;
+        };
+        for path in event.paths {
+            if let Some(name) = plan.watched_config_name(&path) {
+                callback(name);
+            }
+        }
+    })?;
+    let watcher = Arc::new(Mutex::new(watcher));
+    {
+        let mut watcher = watcher.lock().expect("config watcher lock");
+        watcher.watch(&config_dir, RecursiveMode::Recursive)?;
+        for (root, mode) in &watch_plan
+            .lock()
+            .expect("config watch plan lock")
+            .external_roots
+        {
+            watcher.watch(root, *mode)?;
+        }
+    }
+
+    let active = Arc::new(AtomicBool::new(true));
+    let refresh_active = Arc::clone(&active);
+    let refresh_watcher = Arc::clone(&watcher);
+    std::thread::spawn(move || {
+        while refresh_active.load(Ordering::Acquire) {
+            std::thread::sleep(WATCH_PLAN_REFRESH_INTERVAL);
+            if let Ok(mut watcher) = refresh_watcher.lock() {
+                apply_watch_plan_update(&config_dir, &watch_plan, &mut watcher);
+            }
+        }
+    });
+    Ok(ConfigWatchHarness {
+        active,
+        _watcher: watcher,
+    })
 }
 
 /// Keep the watcher alive for the process lifetime; dropping it stops it.
@@ -322,7 +395,7 @@ fn refresh_watch_plan(config_dir: &Path, watch_plan: &Arc<Mutex<WatchPlan>>) {
 /// Register newly resolved external roots while holding the plan lock. The
 /// callback takes the same lock before mapping an event, so it cannot see a
 /// new root with the old plan in the small interval after `watch` succeeds.
-pub fn apply_watch_plan_update(
+fn apply_watch_plan_update(
     config_dir: &Path,
     watch_plan: &Arc<Mutex<WatchPlan>>,
     watcher: &mut RecommendedWatcher,

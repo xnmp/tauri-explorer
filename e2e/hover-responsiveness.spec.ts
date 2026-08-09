@@ -2,6 +2,9 @@ import { test, expect, type Page } from "./fixtures";
 import { ALL_VIEW_MODES, switchViewMode, waitForEntries } from "./helpers";
 
 const HOME = "/?path=/home/user";
+const PROFILE_ONLY = process.env.HOVER_PROFILE_ONLY === "1";
+const PROFILE_BASE_URL = process.env.HOVER_PROFILE_BASE_URL ?? "";
+const PROFILE_LABEL = process.env.HOVER_PROFILE_LABEL ?? "current-branch";
 
 interface HoverFeedback {
   transitionMs: number;
@@ -55,17 +58,15 @@ function expectImmediateFeedback(feedback: HoverFeedback, label: string) {
 
 test.describe("hover responsiveness (#503)", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(HOME);
+    await page.goto(`${PROFILE_BASE_URL}${HOME}`);
     await waitForEntries(page);
   });
 
   test("file, sidebar, and tab hover feedback has no animated settling delay", async ({ page }) => {
     const profile: Array<{
       surface: string;
-      beforeMs: number;
       feedback: HoverFeedback;
     }> = [];
-    const entryBeforeMs = { details: 80, list: 80, tiles: 120 } as const;
 
     for (const viewMode of ALL_VIEW_MODES) {
       if (viewMode !== "details") await switchViewMode(page, viewMode);
@@ -75,9 +76,11 @@ test.describe("hover responsiveness (#503)", () => {
         "background",
         "backgroundColor",
       );
-      expectImmediateFeedback(feedback, `${viewMode} entry hover`);
-      profile.push({ surface: `${viewMode} entry`, beforeMs: entryBeforeMs[viewMode], feedback });
-      await page.screenshot({ path: `evidence/ac-1-hover-${viewMode}.png` });
+      profile.push({ surface: `${viewMode} entry`, feedback });
+      if (!PROFILE_ONLY) {
+        expectImmediateFeedback(feedback, `${viewMode} entry hover`);
+        await page.screenshot({ path: `evidence/ac-1-hover-${viewMode}.png` });
+      }
     }
 
     const sidebarFeedback = await hoverFeedback(
@@ -86,9 +89,11 @@ test.describe("hover responsiveness (#503)", () => {
       "background",
       "backgroundColor",
     );
-    expectImmediateFeedback(sidebarFeedback, "sidebar hover");
-    profile.push({ surface: "sidebar navigation", beforeMs: 80, feedback: sidebarFeedback });
-    await page.screenshot({ path: "evidence/ac-2-hover-sidebar-navigation.png" });
+    profile.push({ surface: "sidebar navigation", feedback: sidebarFeedback });
+    if (!PROFILE_ONLY) {
+      expectImmediateFeedback(sidebarFeedback, "sidebar hover");
+      await page.screenshot({ path: "evidence/ac-2-hover-sidebar-navigation.png" });
+    }
 
     await page.keyboard.press("Control+t");
     await expect(page.locator(".tab")).toHaveCount(2);
@@ -100,11 +105,13 @@ test.describe("hover responsiveness (#503)", () => {
       "opacity",
       "::before",
     );
-    expectImmediateFeedback(tabFeedback, "inactive tab hover");
-    profile.push({ surface: "inactive tab", beforeMs: 150, feedback: tabFeedback });
-    await page.screenshot({ path: "evidence/ac-2-hover-inactive-tab.png" });
+    profile.push({ surface: "inactive tab", feedback: tabFeedback });
+    if (!PROFILE_ONLY) {
+      expectImmediateFeedback(tabFeedback, "inactive tab hover");
+      await page.screenshot({ path: "evidence/ac-2-hover-inactive-tab.png" });
+    }
 
-    await page.evaluate((results) => {
+    await page.evaluate(({ label, results }) => {
       const output = document.createElement("output");
       output.setAttribute("aria-label", "Hover profiling results");
       output.style.cssText = [
@@ -123,25 +130,29 @@ test.describe("hover responsiveness (#503)", () => {
       ].join(";");
       output.textContent = [
         "Chromium hover profile — issue #503",
-        "Surface                 Before  After  Active  Paint",
+        `Measured revision: ${label}`,
+        "Surface                  Delay  Active  Immediate paint",
         ...results.map(
-          ({ surface, beforeMs, afterMs, activeAnimations, paintMatches }) =>
-            `${surface.padEnd(23)} ${`${beforeMs}ms`.padStart(6)} ${`${afterMs}ms`.padStart(6)} ${String(activeAnimations).padStart(7)}  ${paintMatches ? "final" : "settling"}`,
+          ({ surface, transitionMs, activeAnimations, paintMatches }) =>
+            `${surface.padEnd(23)} ${`${transitionMs}ms`.padStart(6)} ${String(activeAnimations).padStart(7)}  ${paintMatches ? "final" : "settling"}`,
         ),
       ].join("\n");
       document.body.append(output);
-    }, profile.map(({ surface, beforeMs, feedback }) => ({
-      surface,
-      beforeMs,
-      afterMs: feedback.transitionMs,
-      activeAnimations: feedback.activeAnimations,
-      paintMatches: feedback.immediatePaint === feedback.finalPaint,
-    })));
+    }, {
+      label: PROFILE_LABEL,
+      results: profile.map(({ surface, feedback }) => ({
+        surface,
+        transitionMs: feedback.transitionMs,
+        activeAnimations: feedback.activeAnimations,
+        paintMatches: feedback.immediatePaint === feedback.finalPaint,
+      })),
+    });
     await expect(page.getByLabel("Hover profiling results")).toBeVisible();
-    await page.screenshot({ path: "evidence/ac-4-browser-profile-before-after.png" });
+    await page.screenshot({ path: `evidence/ac-4-browser-profile-${PROFILE_LABEL}.png` });
   });
 
   test("hovered entries retain selection, navigation, and context-menu behavior", async ({ page }) => {
+    test.skip(PROFILE_ONLY, "The profiling-only run records transition evidence without assertions");
     const file = page.locator(".entry-item:not(.directory)").first();
     await file.hover();
     await file.click();

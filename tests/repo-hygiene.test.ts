@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -19,8 +20,13 @@ describe("public repository hygiene", () => {
   });
 
   it("keeps committed visual proof eligible for review", () => {
-    const gitignore = readRepositoryFile(".gitignore");
+    const projectRoot = new URL("../", import.meta.url);
+    const result = spawnSync(
+      "git",
+      ["check-ignore", "--quiet", "--no-index", "evidence/ac-proof.png"],
+      { cwd: projectRoot, stdio: "ignore" },
+    );
 
-    expect(gitignore).not.toMatch(/^\/?evidence\/?$/m);
+    expect(result.status).toBe(1);
   });
 });

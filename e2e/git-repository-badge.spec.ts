@@ -6,14 +6,14 @@
  * the same FileIcon output used by the browser's directory views.
  */
 import { test, expect } from "./fixtures";
-import { HOME_URL, VIEW_MODES, waitForEntries, switchViewMode } from "./helpers";
+import { ALL_VIEW_MODES, HOME_URL, waitForEntries, switchViewMode } from "./helpers";
 
 test.describe("Repository folder Git badge", () => {
   test("uses a compact outlined badge across directory views", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
 
-    for (const mode of VIEW_MODES) {
+    for (const mode of ALL_VIEW_MODES) {
       await switchViewMode(page, mode);
 
       const repository = page.locator(".entry-item", { hasText: "my-project" }).first();
@@ -30,6 +30,16 @@ test.describe("Repository folder Git badge", () => {
       const ring = repository.locator(".git-repo-badge-ring");
       await expect(ring).toBeVisible();
       await expect(ring).toHaveAttribute("stroke", "var(--icon-git-badge-glyph, #fff)");
+
+      if (mode === "details") {
+        await page.screenshot({ path: "evidence/ac-1-compact-git-badge.png" });
+      }
+      if (mode === "tiles") {
+        await page.screenshot({ path: "evidence/ac-2-detailed-git-badge.png" });
+      }
     }
+
+    // The decorative treatment must not turn ordinary folders into repos.
+    await expect(page.locator(".entry-item", { hasText: "Documents" }).first().locator(".git-repo-badge")).toHaveCount(0);
   });
 });

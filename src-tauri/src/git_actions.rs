@@ -222,6 +222,52 @@ async fn run_git_network(
     .await
 }
 
+fn configured_remotes(repo_path: &str) -> Result<Vec<String>, AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let remotes = repo.remotes().map_err(crate::git_common::to_app_err)?;
+    remotes
+        .iter()
+        .map(|name| {
+            name.map(str::to_owned)
+                .ok_or_else(|| AppError::Other("git remote name is not valid UTF-8".into()))
+        })
+        .collect()
+}
+
+fn fetch_all_remotes_sync_with_hook<F>(
+    repo_path: &str,
+    cancelled: &AtomicBool,
+    mut after_remote: F,
+) -> Result<(), AppError>
+where
+    F: FnMut(&str, &AtomicBool),
+{
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(AppError::Other(NETWORK_CANCELLED.into()));
+    }
+
+    for remote in configured_remotes(repo_path)? {
+        run_git_network_sync(
+            repo_path,
+            &["fetch", "--prune", "--atomic", &remote],
+            cancelled,
+            "git",
+        )?;
+        after_remote(&remote, cancelled);
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other(NETWORK_CANCELLED.into()));
+        }
+    }
+    Ok(())
+}
+
+async fn run_fetch_all_remotes(repo_path: String, task_id: u64) -> Result<(), AppError> {
+    run_git_network_task(task_id, move |cancelled| {
+        fetch_all_remotes_sync_with_hook(&repo_path, &cancelled, |_, _| {})
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn cancel_git_network_operation(task_id: u64) -> Result<(), AppError> {
     GIT_NETWORK_OPERATIONS.cancel(task_id);
@@ -627,23 +673,13 @@ pub async fn git_revert_abort(repo_path: String) -> Result<(), AppError> {
     run_git_async(repo_path, vec!["revert".into(), "--abort".into()]).await
 }
 
-/// Fetch from every remote, pruning deleted remote branches (#370). Uses the
-/// CLI so the user's credential setup (helpers, ssh agent) applies — libgit2
-/// has no access to those.
+/// Fetch from every remote, pruning deleted remote branches (#370). Each remote
+/// is fetched atomically because Git rejects `--all --atomic` for repositories
+/// with multiple remotes. Uses the CLI so the user's credential setup (helpers,
+/// ssh agent) applies — libgit2 has no access to those.
 #[tauri::command]
 pub async fn git_fetch(repo_path: String, task_id: u64) -> Result<(), AppError> {
-    run_git_network(
-        repo_path,
-        vec![
-            "fetch".into(),
-            "--all".into(),
-            "--prune".into(),
-            "--atomic".into(),
-        ],
-        task_id,
-        NETWORK_CANCELLED,
-    )
-    .await
+    run_fetch_all_remotes(repo_path, task_id).await
 }
 
 /// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged

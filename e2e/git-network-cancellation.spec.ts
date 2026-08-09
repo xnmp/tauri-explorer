@@ -77,11 +77,9 @@ test("a running pull exposes Cancel and restores the graph after cancellation", 
   await cancelOperation(page, "Cancel pull");
 });
 
-test("pull removes Cancel at the local fast-forward boundary and preserves undo", async ({
-  page,
-}) => {
+test("a late pull cancellation reports finishing and preserves undo", async ({ page }) => {
   await page.goto(
-    "/?path=/home/user/Documents/project&mockGitNetwork=git_pull&mockGitPullBoundary=fast_forward",
+    "/?path=/home/user/Documents/project&mockGitNetwork=git_pull&mockGitPullBoundary=late_cancel",
   );
   await waitForEntries(page);
   await openGraph(page);
@@ -94,8 +92,15 @@ test("pull removes Cancel at the local fast-forward boundary and preserves undo"
   await offer.getByText("Pull", { exact: true }).click();
 
   const banner = graph.locator(".network-operation-banner");
+  const cancel = graph.getByRole("button", { name: "Cancel pull" });
+  await expect(cancel).toBeVisible();
+  await cancel.click();
   await expect(banner).toContainText("Finishing Git pull…");
-  await expect(graph.getByRole("button", { name: "Cancel pull" })).toHaveCount(0);
+  await expect(cancel).toHaveCount(0);
+  await page.screenshot({
+    path: "evidence/ac-2-pull-finishing-without-cancel.png",
+    animations: "disabled",
+  });
   await expect
     .poll(() =>
       page.evaluate(
@@ -103,7 +108,8 @@ test("pull removes Cancel at the local fast-forward boundary and preserves undo"
           .__mockInvokeCounts?.cancel_git_network_operation ?? 0,
       ),
     )
-    .toBe(0);
+    .toBe(1);
+  await expect(page.locator(".toast", { hasText: /cancelled/i })).toHaveCount(0);
 
   await page.evaluate(() =>
     window.dispatchEvent(new CustomEvent("tauri-explorer:mock-git-pull-finish")),

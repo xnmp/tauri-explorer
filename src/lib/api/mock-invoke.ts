@@ -583,7 +583,8 @@ function holdGitNetworkOperation(
 function holdGitPullAtFastForwardBoundary(
   args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> | null {
-  if (new URLSearchParams(location.search).get("mockGitPullBoundary") !== "fast_forward") {
+  const boundary = new URLSearchParams(location.search).get("mockGitPullBoundary");
+  if (boundary !== "fast_forward" && boundary !== "late_cancel") {
     return null;
   }
 
@@ -596,11 +597,7 @@ function holdGitPullAtFastForwardBoundary(
 
   return new Promise((resolve, reject) => {
     pendingGitNetworkOperation = { taskId, cancellable: false, reject };
-    window.dispatchEvent(
-      new CustomEvent<GitNetworkPhaseEvent>(GIT_NETWORK_PHASE_DOM_EVENT, {
-        detail: { taskId, cancellable: false },
-      }),
-    );
+    if (boundary === "fast_forward") emitMockGitNetworkPhase(taskId);
     window.addEventListener(
       "tauri-explorer:mock-git-pull-finish",
       () => {
@@ -613,6 +610,14 @@ function holdGitPullAtFastForwardBoundary(
       { once: true },
     );
   });
+}
+
+function emitMockGitNetworkPhase(taskId: number): void {
+  window.dispatchEvent(
+    new CustomEvent<GitNetworkPhaseEvent>(GIT_NETWORK_PHASE_DOM_EVENT, {
+      detail: { taskId, cancellable: false },
+    }),
+  );
 }
 
 function seedGitState(): MockGitState {
@@ -2102,6 +2107,10 @@ const mockCommands: Record<string, CommandHandler> = {
       const operation = pendingGitNetworkOperation;
       pendingGitNetworkOperation = undefined;
       operation.reject(new Error("git network operation cancelled"));
+    } else if (pendingGitNetworkOperation?.taskId === Number(args.taskId)) {
+      // The local fast-forward has already begun. Model delayed phase-event
+      // delivery after a stale Cancel click without rejecting the pull.
+      emitMockGitNetworkPhase(pendingGitNetworkOperation.taskId);
     }
     return null;
   },

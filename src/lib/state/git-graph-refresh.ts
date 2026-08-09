@@ -12,6 +12,13 @@
  * ACTIVE pane's handler only. No component-level global key listener.
  */
 
+import { listen } from "@tauri-apps/api/event";
+import {
+  GIT_NETWORK_PHASE_DOM_EVENT,
+  GIT_NETWORK_PHASE_EVENT,
+  type GitNetworkPhaseEvent,
+} from "$lib/domain/git-network-operation";
+
 type RefreshFn = () => void;
 
 export interface ReloaderContext {
@@ -71,12 +78,41 @@ export interface GitNetworkOperation {
   taskId: number;
   repoPath: string;
   label: string;
+  cancellable: boolean;
   cancelling: boolean;
 }
 
 type GitNetworkOperationListener = (operation: GitNetworkOperation | null) => void;
 const networkOperationListeners = new Set<GitNetworkOperationListener>();
 let activeNetworkOperation: GitNetworkOperation | null = null;
+let phaseListenerReady: Promise<void> | null = null;
+let domPhaseListenerAttached = false;
+
+function applyNetworkPhase(phase: GitNetworkPhaseEvent): void {
+  const operation = activeNetworkOperation;
+  if (!operation || operation.taskId !== phase.taskId) return;
+  activeNetworkOperation = {
+    ...operation,
+    cancellable: phase.cancellable,
+    cancelling: phase.cancellable ? operation.cancelling : false,
+  };
+  publishNetworkOperation();
+}
+
+async function ensureNetworkPhaseListener(): Promise<void> {
+  if (!domPhaseListenerAttached && typeof window !== "undefined") {
+    domPhaseListenerAttached = true;
+    window.addEventListener(GIT_NETWORK_PHASE_DOM_EVENT, (event) => {
+      applyNetworkPhase((event as CustomEvent<GitNetworkPhaseEvent>).detail);
+    });
+  }
+  phaseListenerReady ??= listen<GitNetworkPhaseEvent>(GIT_NETWORK_PHASE_EVENT, (event) => {
+    applyNetworkPhase(event.payload);
+  })
+    .then(() => undefined)
+    .catch(() => undefined);
+  await phaseListenerReady;
+}
 
 function publishNetworkOperation(): void {
   const snapshot = activeNetworkOperation ? { ...activeNetworkOperation } : null;
@@ -96,11 +132,12 @@ export async function runGitNetworkOperation<T>(
   label: string,
   invoke: (taskId: number) => Promise<T>,
 ): Promise<T> {
+  await ensureNetworkPhaseListener();
   if (activeNetworkOperation) {
     throw new Error(`Git ${activeNetworkOperation.label} is already running`);
   }
   const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-  activeNetworkOperation = { taskId, repoPath, label, cancelling: false };
+  activeNetworkOperation = { taskId, repoPath, label, cancellable: true, cancelling: false };
   publishNetworkOperation();
   try {
     return await invoke(taskId);
@@ -117,7 +154,7 @@ export async function cancelActiveGitNetworkOperation(
   cancel: (taskId: number) => Promise<void>,
 ): Promise<void> {
   const operation = activeNetworkOperation;
-  if (!operation || operation.cancelling) return;
+  if (!operation || !operation.cancellable || operation.cancelling) return;
   activeNetworkOperation = { ...operation, cancelling: true };
   publishNetworkOperation();
   await cancel(operation.taskId);

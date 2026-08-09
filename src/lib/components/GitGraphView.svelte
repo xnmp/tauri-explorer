@@ -1810,15 +1810,21 @@
     {/if}
     {#if networkOperation?.repoPath === repoPath}
       <div class="network-operation-banner" role="status">
-        <span>Git {networkOperation.label} in progress…</span>
-        <button
-          type="button"
-          aria-label="Cancel {networkOperation.label}"
-          disabled={networkOperation.cancelling}
-          onclick={() => void cancelNetworkOperation()}
-        >
-          {networkOperation.cancelling ? "Cancelling…" : "Cancel"}
-        </button>
+        <span>
+          {networkOperation.cancellable
+            ? `Git ${networkOperation.label} in progress…`
+            : `Finishing Git ${networkOperation.label}…`}
+        </span>
+        {#if networkOperation.cancellable}
+          <button
+            type="button"
+            aria-label="Cancel {networkOperation.label}"
+            disabled={networkOperation.cancelling}
+            onclick={() => void cancelNetworkOperation()}
+          >
+            {networkOperation.cancelling ? "Cancelling…" : "Cancel"}
+          </button>
+        {/if}
       </div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- right-click opens the column-visibility menu; not reachable by keyboard by design (parity with the row context menu) -->

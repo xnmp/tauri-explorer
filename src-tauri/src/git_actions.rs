@@ -22,6 +22,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use tauri::{AppHandle, Emitter};
+
 use crate::error::AppError;
 use crate::process_ext::{output_cancellable, NoConsole};
 use crate::task_registry::TaskRegistry;
@@ -30,6 +32,14 @@ static GIT_NETWORK_OPERATIONS: TaskRegistry = TaskRegistry::new();
 const NETWORK_CANCELLED: &str = "git network operation cancelled";
 const REMOTE_DELETE_CANCELLED: &str =
     "git network operation cancelled; remote branch may already have been deleted";
+const GIT_NETWORK_PHASE_EVENT: &str = "git-network-operation-phase";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitNetworkPhaseEvent {
+    task_id: u64,
+    cancellable: bool,
+}
 
 /// A successful graph mutation's immutable inverse + expected post-state.
 ///
@@ -552,12 +562,21 @@ where
     )
 }
 
-async fn run_network_pull(
+async fn run_network_pull<FastForwardStarted>(
     repo_path: String,
     task_id: u64,
-) -> Result<Option<GitUndoAction>, AppError> {
+    fast_forward_started: FastForwardStarted,
+) -> Result<Option<GitUndoAction>, AppError>
+where
+    FastForwardStarted: FnOnce() + Send + 'static,
+{
     run_git_network_task(task_id, move |cancelled| {
-        run_pull_sync_with_hooks(&repo_path, &cancelled, |_| {}, |_| {})
+        run_pull_sync_with_hooks(
+            &repo_path,
+            &cancelled,
+            |_| {},
+            move |_| fast_forward_started(),
+        )
     })
     .await
 }
@@ -712,8 +731,21 @@ pub async fn git_fetch(repo_path: String, task_id: u64) -> Result<(), AppError> 
 /// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged
 /// branch errors (surfaced verbatim) instead of creating a surprise merge.
 #[tauri::command]
-pub async fn git_pull(repo_path: String, task_id: u64) -> Result<Option<GitUndoAction>, AppError> {
-    run_network_pull(repo_path, task_id).await
+pub async fn git_pull(
+    app: AppHandle,
+    repo_path: String,
+    task_id: u64,
+) -> Result<Option<GitUndoAction>, AppError> {
+    run_network_pull(repo_path, task_id, move || {
+        let _ = app.emit(
+            GIT_NETWORK_PHASE_EVENT,
+            GitNetworkPhaseEvent {
+                task_id,
+                cancellable: false,
+            },
+        );
+    })
+    .await
 }
 
 /// How many commits `name`'s upstream has that the local branch lacks
@@ -1232,7 +1264,9 @@ mod tests {
                 .contains("git network operation cancelled"));
 
             cancel_git_network_operation(528_011).await.unwrap();
-            let pull = git_pull(repo.clone(), 528_011).await.unwrap_err();
+            let pull = run_network_pull(repo.clone(), 528_011, || {})
+                .await
+                .unwrap_err();
             assert!(pull.to_string().contains("git network operation cancelled"));
 
             cancel_git_network_operation(528_012).await.unwrap();
@@ -1984,9 +2018,14 @@ mod tests {
         git(other.path(), &["push", "origin", "main"]);
         let remote_tip = git_out(other.path(), &["rev-parse", "HEAD"]);
 
-        let action = tokio_test_block(git_pull(rp.clone(), 528_002))
-            .unwrap()
-            .expect("pull should move HEAD");
+        let phase_observed = Arc::new(AtomicBool::new(false));
+        let callback_observed = Arc::clone(&phase_observed);
+        let action = tokio_test_block(run_network_pull(rp.clone(), 528_002, move || {
+            callback_observed.store(true, Ordering::Relaxed);
+        }))
+        .unwrap()
+        .expect("pull should move HEAD");
+        assert!(phase_observed.load(Ordering::Relaxed));
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
         tokio_test_block(git_undo(rp, action)).unwrap();
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);

@@ -222,16 +222,29 @@ async fn run_git_network(
     .await
 }
 
-fn configured_remotes(repo_path: &str) -> Result<Vec<String>, AppError> {
+/// Match `git fetch --all`'s configured-remote eligibility while allowing the
+/// eligible remotes to be fetched in separate atomic transactions (ADR 0006).
+fn fetch_all_eligible_remotes(repo_path: &str) -> Result<Vec<String>, AppError> {
     let repo = crate::git_common::open_repo(Path::new(repo_path))?;
     let remotes = repo.remotes().map_err(crate::git_common::to_app_err)?;
-    remotes
-        .iter()
-        .map(|name| {
-            name.map(str::to_owned)
-                .ok_or_else(|| AppError::Other("git remote name is not valid UTF-8".into()))
-        })
-        .collect()
+    let config = repo.config().map_err(crate::git_common::to_app_err)?;
+    let config_bool = |key: &str| match config.get_bool(key) {
+        Ok(value) => Ok(value),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(false),
+        Err(error) => Err(crate::git_common::to_app_err(error)),
+    };
+
+    let mut eligible = Vec::with_capacity(remotes.len());
+    for name in remotes.iter() {
+        let name =
+            name.ok_or_else(|| AppError::Other("git remote name is not valid UTF-8".into()))?;
+        let skip_fetch_all = config_bool(&format!("remote.{name}.skipFetchAll"))?;
+        let skip_default_update = config_bool(&format!("remote.{name}.skipDefaultUpdate"))?;
+        if !skip_fetch_all && !skip_default_update {
+            eligible.push(name.to_owned());
+        }
+    }
+    Ok(eligible)
 }
 
 fn fetch_all_remotes_sync_with_hook<F>(
@@ -246,7 +259,7 @@ where
         return Err(AppError::Other(NETWORK_CANCELLED.into()));
     }
 
-    for remote in configured_remotes(repo_path)? {
+    for remote in fetch_all_eligible_remotes(repo_path)? {
         run_git_network_sync(
             repo_path,
             &["fetch", "--prune", "--atomic", &remote],
@@ -1544,9 +1557,14 @@ mod tests {
             let _ = worker.join();
             panic!("fetch never entered the blocking transport");
         }
+        let cancel_started = Instant::now();
         cancelled.store(true, Ordering::Relaxed);
         let error = worker.join().unwrap().unwrap_err();
         assert!(error.to_string().contains(NETWORK_CANCELLED));
+        assert!(
+            cancel_started.elapsed() < Duration::from_secs(5),
+            "cancel did not terminate the in-flight multi-ref fetch promptly"
+        );
         assert_eq!(
             git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
             commits[1]

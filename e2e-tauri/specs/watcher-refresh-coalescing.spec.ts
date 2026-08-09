@@ -100,11 +100,22 @@ async function writeAndWaitForReceipt(
   contents: string,
   previousCount: number,
 ): Promise<WatcherReceipt> {
+  const notBefore = Date.now();
   fs.writeFileSync(path.join(targetPath, filename), contents);
-  await browser.waitUntil(async () => (await watcherReceipt(targetPath)).count > previousCount, {
-    timeout: 10_000,
-    timeoutMsg: `the application never received the watcher event for ${filename}`,
-  });
+  await browser.waitUntil(
+    async () => {
+      const receipt = await watcherReceipt(targetPath);
+      return (
+        receipt.count > previousCount &&
+        receipt.observedAt != null &&
+        receipt.observedAt >= notBefore
+      );
+    },
+    {
+      timeout: 10_000,
+      timeoutMsg: `the application never received the watcher event for ${filename}`,
+    },
+  );
   return await watcherReceipt(targetPath);
 }
 

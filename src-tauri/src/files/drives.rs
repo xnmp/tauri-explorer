@@ -672,12 +672,12 @@ mod linux_tests {
     #[test]
     fn exposes_removable_mounts_from_any_mount_path_without_user_environment() {
         let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
-        let disk = sys_block.path().join("sdb");
-        std::fs::create_dir_all(disk.join("sdb1")).expect("partition directory");
+        let disk = sys_block.path().join("tauriusb546");
+        std::fs::create_dir_all(disk.join("tauriusb546p1")).expect("partition directory");
         std::fs::write(disk.join("removable"), "1\n").expect("removable flag");
 
         let drives = parse_linux_block_mounts(
-            "42 35 8:17 / /mnt/USB\\040BACKUP rw,relatime - ext4 /dev/sdb1 rw\n",
+            "42 35 8:17 / /mnt/USB\\040BACKUP rw,relatime - ext4 /dev/tauriusb546p1 rw\n",
             sys_block.path(),
         );
 
@@ -707,16 +707,16 @@ mod linux_tests {
     #[test]
     fn resolves_partition_to_its_backing_disk_removable_flag() {
         let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
-        let disk = sys_block.path().join("mmcblk0");
-        std::fs::create_dir_all(disk.join("mmcblk0p1")).expect("partition directory");
+        let disk = sys_block.path().join("taurimmedia546");
+        std::fs::create_dir_all(disk.join("taurimmedia546p1")).expect("partition directory");
         std::fs::write(disk.join("removable"), "1").expect("removable flag");
 
         assert_eq!(
-            backing_block_device("/dev/mmcblk0p1", sys_block.path()).as_deref(),
-            Some("mmcblk0")
+            backing_block_device("/dev/taurimmedia546p1", sys_block.path()).as_deref(),
+            Some("taurimmedia546")
         );
         assert!(is_removable_block_device(
-            "/dev/mmcblk0p1",
+            "/dev/taurimmedia546p1",
             sys_block.path()
         ));
     }
@@ -724,12 +724,12 @@ mod linux_tests {
     #[test]
     fn keeps_non_removable_block_mounts_out_of_the_removable_sidebar_group() {
         let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
-        let disk = sys_block.path().join("nvme0n1");
-        std::fs::create_dir_all(disk.join("nvme0n1p1")).expect("partition directory");
+        let disk = sys_block.path().join("taurifixed546");
+        std::fs::create_dir_all(disk.join("taurifixed546p1")).expect("partition directory");
         std::fs::write(disk.join("removable"), "0").expect("fixed flag");
 
         let drives = parse_linux_block_mounts(
-            "42 35 259:1 / /mnt/data rw,relatime - ext4 /dev/nvme0n1p1 rw\n",
+            "42 35 259:1 / /mnt/data rw,relatime - ext4 /dev/taurifixed546p1 rw\n",
             sys_block.path(),
         );
 

@@ -1352,6 +1352,223 @@ mod tests {
             );
         }
         assert_repo_consistent(dir.path());
+
+        let mut third_tips = std::collections::HashMap::new();
+        for (name, clone) in &clones {
+            write(
+                clone.path(),
+                &format!("{name}-three.txt"),
+                &format!("{name} three\n"),
+            );
+            git(clone.path(), &["add", "."]);
+            git(clone.path(), &["commit", "-m", &format!("{name} three")]);
+            git(clone.path(), &["push", "origin", "main"]);
+            third_tips.insert(name.clone(), git_out(clone.path(), &["rev-parse", "HEAD"]));
+        }
+
+        git(
+            dir.path(),
+            &["config", "remote.backup.skipFetchAll", "true"],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            third_tips["origin"]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/backup/main"]),
+            second_tips["backup"]
+        );
+
+        git(
+            dir.path(),
+            &["config", "--unset", "remote.backup.skipFetchAll"],
+        );
+        git(
+            dir.path(),
+            &["config", "remote.origin.skipDefaultUpdate", "true"],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            third_tips["origin"]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/backup/main"]),
+            third_tips["backup"]
+        );
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
+    fn network_operation_multi_ref_fetch_rejection_is_atomic() {
+        let (dir, commits) = linear_repo();
+        let repo = repo_path(&dir);
+        git(dir.path(), &["branch", "topic"]);
+
+        let remote = TempDir::new().unwrap();
+        git(remote.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "origin", "main", "topic"]);
+        git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let cancelled = AtomicBool::new(false);
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+
+        let actor = TempDir::new().unwrap();
+        git(
+            actor.path(),
+            &["clone", remote.path().to_str().unwrap(), "."],
+        );
+        git(actor.path(), &["config", "user.name", "Test"]);
+        git(actor.path(), &["config", "user.email", "t@x"]);
+        write(actor.path(), "remote-main.txt", "remote main\n");
+        git(actor.path(), &["add", "."]);
+        git(actor.path(), &["commit", "-m", "advance main"]);
+        git(actor.path(), &["push", "origin", "main"]);
+        let advanced_main = git_out(actor.path(), &["rev-parse", "HEAD"]);
+        git(
+            remote.path(),
+            &["update-ref", "refs/heads/topic", &commits[0]],
+        );
+        git(
+            dir.path(),
+            &[
+                "config",
+                "--replace-all",
+                "remote.origin.fetch",
+                "refs/heads/*:refs/remotes/origin/*",
+            ],
+        );
+
+        let error = fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap_err();
+        assert!(error.to_string().contains("non-fast-forward"));
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            commits[1]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            commits[1]
+        );
+        assert_repo_consistent(dir.path());
+
+        git(
+            dir.path(),
+            &[
+                "config",
+                "--replace-all",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            advanced_main
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            commits[0]
+        );
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
+    fn network_operation_cancels_in_flight_multi_ref_fetch_without_partial_updates() {
+        let (dir, commits) = linear_repo();
+        let repo = repo_path(&dir);
+        git(dir.path(), &["branch", "topic"]);
+
+        let remote = TempDir::new().unwrap();
+        let remote_path = remote.path().to_string_lossy().into_owned();
+        git(remote.path(), &["init", "--bare"]);
+        git(dir.path(), &["remote", "add", "origin", &remote_path]);
+        git(dir.path(), &["push", "origin", "main", "topic"]);
+        git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+
+        let actor = TempDir::new().unwrap();
+        git(actor.path(), &["clone", &remote_path, "."]);
+        git(actor.path(), &["config", "user.name", "Test"]);
+        git(actor.path(), &["config", "user.email", "t@x"]);
+        write(actor.path(), "remote.txt", "remote\n");
+        git(actor.path(), &["add", "."]);
+        git(actor.path(), &["commit", "-m", "advance both refs"]);
+        git(actor.path(), &["push", "origin", "main"]);
+        let remote_tip = git_out(actor.path(), &["rev-parse", "HEAD"]);
+        git(
+            remote.path(),
+            &["update-ref", "refs/heads/topic", &remote_tip],
+        );
+
+        let marker = dir.path().join(".git/blocking-ssh-started");
+        let script = dir.path().join(".git/blocking-ssh.sh");
+        let marker_for_shell = marker.to_string_lossy().replace('\\', "/");
+        write(
+            dir.path(),
+            ".git/blocking-ssh.sh",
+            &format!("#!/bin/sh\n: > \"{marker_for_shell}\"\nsleep 30\n"),
+        );
+        let script_for_shell = script.to_string_lossy().replace('\\', "/");
+        git(
+            dir.path(),
+            &[
+                "config",
+                "core.sshCommand",
+                &format!("sh \"{script_for_shell}\""),
+            ],
+        );
+        git(dir.path(), &["config", "ssh.variant", "simple"]);
+        git(
+            dir.path(),
+            &["remote", "set-url", "origin", "example.invalid:repository"],
+        );
+
+        let worker_repo = repo.clone();
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker = std::thread::spawn(move || {
+            fetch_all_remotes_sync_with_hook(&worker_repo, &worker_cancelled, |_, _| {})
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !marker.exists() {
+            cancelled.store(true, Ordering::Relaxed);
+            let _ = worker.join();
+            panic!("fetch never entered the blocking transport");
+        }
+        cancelled.store(true, Ordering::Relaxed);
+        let error = worker.join().unwrap().unwrap_err();
+        assert!(error.to_string().contains(NETWORK_CANCELLED));
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            commits[1]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            commits[1]
+        );
+        assert_repo_consistent(dir.path());
+
+        cancelled.store(false, Ordering::Relaxed);
+        git(dir.path(), &["remote", "set-url", "origin", &remote_path]);
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            remote_tip
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            remote_tip
+        );
+        assert_repo_consistent(dir.path());
     }
 
     #[test]

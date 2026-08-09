@@ -1998,7 +1998,7 @@ mod tests {
     }
 
     #[test]
-    fn git_undo_pull_restores_the_pre_pull_head() {
+    fn network_operation_pull_channel_fails_closed_and_preserves_undo() {
         let (dir, _cs) = linear_repo();
         let rp = repo_path(&dir);
         let remote = TempDir::new().unwrap();

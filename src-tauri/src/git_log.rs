@@ -779,7 +779,10 @@ fn diff_files(diff: &git2::Diff<'_>) -> Vec<CommitFile> {
                 .or_else(|| delta.old_file().path())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            CommitFile { path, status: status.to_string() }
+            CommitFile {
+                path,
+                status: status.to_string(),
+            }
         })
         .collect()
 }
@@ -997,8 +1000,12 @@ mod tests {
         let newer = commit(&repo, "newer", &[older]);
 
         let files = commit_comparison_files(&repo, &older.to_string(), &newer.to_string()).unwrap();
-        assert!(files.iter().any(|file| file.path == "shared.txt" && file.status == "M"));
-        assert!(files.iter().any(|file| file.path == "introduced.txt" && file.status == "A"));
+        assert!(files
+            .iter()
+            .any(|file| file.path == "shared.txt" && file.status == "M"));
+        assert!(files
+            .iter()
+            .any(|file| file.path == "introduced.txt" && file.status == "A"));
 
         let diff = commit_comparison_file_diff(
             &repo,

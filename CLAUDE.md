@@ -51,6 +51,9 @@ Rules that bite:
   `assignLayout`, never a lane number or color: paths can curve between lanes
   and color slots are recycled. Compute trace/jump semantics in the domain
   layer, then pass the classified rows and path segments to the renderer.
+- Git-graph commit comparison is a tree-to-tree operation, not a first-parent
+  diff: normalize the chosen commits to older → newer before requesting both
+  the changed-file list and every per-file patch, including preview-pane routes.
 - Git-graph undo snapshots come from the Rust mutation command, stay session/repository-scoped in `state/git-graph-undo.ts`, and are re-verified by `git_undo` before the inverse. Merge/pull undo requires unchanged HEAD + a clean tree; tag deletion records the raw tag-object OID so annotated tags restore exactly (#513).
 - Git-graph tabs remount on activation; their snapshot cache must retain the supported 12-tab load fan-out so switching back can paint cached history instead of starting a new git-log request. External watcher changes evict the snapshot; valid cached remounts skip the redundant graph reload (#505).
 - User-report images are hosted as public Vercel Blobs before the relay creates

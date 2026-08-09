@@ -17,6 +17,13 @@ async function setTheme(page: import("@playwright/test").Page, theme: string) {
   await expect(dialog).toBeHidden();
 }
 
+async function renderedFolderColour(folder: import("@playwright/test").Locator) {
+  return folder.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    return styles.stroke !== "none" ? styles.stroke : styles.fill;
+  });
+}
+
 for (const viewMode of VIEW_MODES) {
 test(`Git repository folder badge follows the active theme in ${viewMode} view`, async ({ page }) => {
   await page.goto(HOME_URL);
@@ -32,7 +39,7 @@ test(`Git repository folder badge follows the active theme in ${viewMode} view`,
 
   await setTheme(page, "light");
   const lightBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
-  const lightFolder = await folder.evaluate((element) => getComputedStyle(element).fill);
+  const lightFolder = await renderedFolderColour(folder);
   expect(lightBadge).not.toBe(lightFolder);
   if (viewMode === "tiles") {
     await page.screenshot({ path: "evidence/ac-1-light-theme-git-badge.png" });
@@ -40,16 +47,22 @@ test(`Git repository folder badge follows the active theme in ${viewMode} view`,
 
   await setTheme(page, "dark");
   const darkBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
-  const darkFolder = await folder.evaluate((element) => getComputedStyle(element).fill);
+  const darkFolder = await renderedFolderColour(folder);
   expect(darkBadge).not.toBe(darkFolder);
   expect(darkBadge).not.toBe(lightBadge);
   if (viewMode === "tiles") {
     await page.screenshot({ path: "evidence/ac-2-dark-theme-git-badge.png" });
   }
 
+  await setTheme(page, "aurora");
+  const auroraBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
+  const auroraFolder = await renderedFolderColour(folder);
+  expect(auroraBadge).not.toBe(auroraFolder);
+  expect(auroraBadge).not.toBe(darkBadge);
+
   await setTheme(page, "hacker");
   const hackerBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
-  const hackerFolder = await folder.evaluate((element) => getComputedStyle(element).fill);
+  const hackerFolder = await renderedFolderColour(folder);
   expect(hackerBadge).not.toBe(hackerFolder);
   expect(hackerBadge).not.toBe(darkBadge);
   if (viewMode === "tiles") {

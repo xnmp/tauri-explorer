@@ -36,6 +36,10 @@ test("a cancelled graph fetch skips local sync and leaves the graph usable", asy
   const graph = page.locator('[data-testid="git-graph-view"]');
   const cancel = graph.getByRole("button", { name: "Cancel fetch" });
   await expect(cancel).toBeVisible();
+  await page.screenshot({
+    path: "evidence/ac-1-network-operation-running.png",
+    animations: "disabled",
+  });
   await cancel.click();
 
   await expect(page.locator(".toast", { hasText: "Git fetch cancelled" })).toBeVisible();

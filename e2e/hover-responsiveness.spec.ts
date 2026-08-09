@@ -60,36 +60,85 @@ test.describe("hover responsiveness (#503)", () => {
   });
 
   test("file, sidebar, and tab hover feedback has no animated settling delay", async ({ page }) => {
+    const profile: Array<{
+      surface: string;
+      beforeMs: number;
+      feedback: HoverFeedback;
+    }> = [];
+    const entryBeforeMs = { details: 80, list: 80, tiles: 120 } as const;
+
     for (const viewMode of ALL_VIEW_MODES) {
       if (viewMode !== "details") await switchViewMode(page, viewMode);
-      expectImmediateFeedback(
-        await hoverFeedback(
-          page,
-          ".entry-item:not(.selected)",
-          "background",
-          "backgroundColor",
-        ),
-        `${viewMode} entry hover`,
-      );
-    }
-
-    expectImmediateFeedback(
-      await hoverFeedback(
+      const feedback = await hoverFeedback(
         page,
-        ".sidebar-view.files-view .nav-item",
+        ".entry-item:not(.selected)",
         "background",
         "backgroundColor",
-      ),
-      "sidebar hover",
+      );
+      expectImmediateFeedback(feedback, `${viewMode} entry hover`);
+      profile.push({ surface: `${viewMode} entry`, beforeMs: entryBeforeMs[viewMode], feedback });
+      await page.screenshot({ path: `evidence/ac-1-hover-${viewMode}.png` });
+    }
+
+    const sidebarFeedback = await hoverFeedback(
+      page,
+      ".sidebar-view.files-view .nav-item",
+      "background",
+      "backgroundColor",
     );
+    expectImmediateFeedback(sidebarFeedback, "sidebar hover");
+    profile.push({ surface: "sidebar navigation", beforeMs: 80, feedback: sidebarFeedback });
+    await page.screenshot({ path: "evidence/ac-2-hover-sidebar-navigation.png" });
 
     await page.keyboard.press("Control+t");
     await expect(page.locator(".tab")).toHaveCount(2);
     await page.waitForTimeout(300); // Let the one-shot tab entrance animation finish.
-    expectImmediateFeedback(
-      await hoverFeedback(page, ".tab:not(.active)", "opacity", "opacity", "::before"),
-      "inactive tab hover",
+    const tabFeedback = await hoverFeedback(
+      page,
+      ".tab:not(.active)",
+      "opacity",
+      "opacity",
+      "::before",
     );
+    expectImmediateFeedback(tabFeedback, "inactive tab hover");
+    profile.push({ surface: "inactive tab", beforeMs: 150, feedback: tabFeedback });
+    await page.screenshot({ path: "evidence/ac-2-hover-inactive-tab.png" });
+
+    await page.evaluate((results) => {
+      const output = document.createElement("output");
+      output.setAttribute("aria-label", "Hover profiling results");
+      output.style.cssText = [
+        "position:fixed",
+        "top:44px",
+        "right:16px",
+        "z-index:2147483647",
+        "padding:14px 16px",
+        "border:1px solid rgba(255,255,255,.22)",
+        "border-radius:8px",
+        "background:rgba(16,18,24,.96)",
+        "box-shadow:0 8px 28px rgba(0,0,0,.4)",
+        "color:#f5f7ff",
+        "font:12px/1.55 ui-monospace,monospace",
+        "white-space:pre",
+      ].join(";");
+      output.textContent = [
+        "Chromium hover profile — issue #503",
+        "Surface                 Before  After  Active  Paint",
+        ...results.map(
+          ({ surface, beforeMs, afterMs, activeAnimations, paintMatches }) =>
+            `${surface.padEnd(23)} ${`${beforeMs}ms`.padStart(6)} ${`${afterMs}ms`.padStart(6)} ${String(activeAnimations).padStart(7)}  ${paintMatches ? "final" : "settling"}`,
+        ),
+      ].join("\n");
+      document.body.append(output);
+    }, profile.map(({ surface, beforeMs, feedback }) => ({
+      surface,
+      beforeMs,
+      afterMs: feedback.transitionMs,
+      activeAnimations: feedback.activeAnimations,
+      paintMatches: feedback.immediatePaint === feedback.finalPaint,
+    })));
+    await expect(page.getByLabel("Hover profiling results")).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-4-browser-profile-before-after.png" });
   });
 
   test("hovered entries retain selection, navigation, and context-menu behavior", async ({ page }) => {
@@ -100,6 +149,7 @@ test.describe("hover responsiveness (#503)", () => {
 
     await file.click({ button: "right" });
     await expect(page.locator(".context-menu")).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-3-hover-context-menu.png" });
     await page.keyboard.press("Escape");
 
     const folder = page.locator(".entry-item.directory").first();

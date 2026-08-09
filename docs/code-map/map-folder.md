@@ -15,6 +15,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
 - `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
 
+## src/lib/ — shared frontend modules.
+- `src/lib/e2e-mode.ts` — build-time gate for test-only hooks: enabled in Vite dev or
+  the explicitly opted-in embedded Tauri smoke build, never a normal production build.
+
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).

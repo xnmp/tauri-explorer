@@ -48,6 +48,8 @@ backend for E2E/browser).
 - `composables/use-file-watchers.ts` — subscribes to `directory-changed` + cross-window channel
 - `state/file-events.ts` — BroadcastChannel `explorer-file-changes` between windows
 - `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `listDirectory`, `startStreamingDirectory`
+- `src/lib/e2e-mode.ts` — enables the real-binary suite's DOM probes in the explicitly
+  opted-in embedded smoke build without exposing them in ordinary production builds
 - `src-tauri/src/files/fs_watcher.rs` — notify watcher → emits event; `files/dir_listing.rs` — listing + streaming
 - FLOW: `directory-changed` (fs_watcher.rs → use-file-watchers.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
 

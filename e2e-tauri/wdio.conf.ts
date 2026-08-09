@@ -1,7 +1,12 @@
+/// <reference types="@wdio/types" />
+
 import { spawn, type ChildProcess } from "node:child_process";
+import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+
+// ADR 0006: Tauri E2E driver lifecycle.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
@@ -34,8 +39,26 @@ const nativeDriver =
 const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
 
 let tauriDriver: ChildProcess | undefined;
+let driverLog: WriteStream | undefined;
 
-export const config: WebdriverIO.Config = {
+type TauriE2eConfig = WebdriverIO.Config & {
+  autoCompileOpts: {
+    autoCompile: boolean;
+    tsNodeOpts: { project: string; transpileOnly: boolean };
+  };
+};
+
+function recordDriverOutput(
+  stream: NodeJS.ReadableStream,
+  destination: NodeJS.WriteStream,
+) {
+  stream.on("data", (chunk: Buffer) => {
+    destination.write(chunk);
+    driverLog?.write(chunk);
+  });
+}
+
+export const config: TauriE2eConfig = {
   runner: "local",
   specs: ["./specs/**/*.spec.ts"],
   maxInstances: 1,
@@ -49,8 +72,12 @@ export const config: WebdriverIO.Config = {
       "tauri:options": { application },
     } as WebdriverIO.Capabilities,
   ],
+  // Keep the normal suite exhaustive. The Windows diagnostic run sets this to
+  // stop after the first session-start failure, which makes the real timeout
+  // and the driver transcript available instead of consuming the job cap.
+  bail: process.env.TAURI_E2E_DIAGNOSTIC === "1" ? 1 : 0,
   logLevel: "info",
-  bail: 0,
+  outputDir: "./e2e-tauri/logs",
   waitforTimeout: 15_000,
   connectionRetryTimeout: 60_000,
   connectionRetryCount: 3,
@@ -65,12 +92,33 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession: () => {
+    mkdirSync(path.join(here, "logs"), { recursive: true });
+    driverLog = createWriteStream(
+      path.join(here, "logs", `driver-${process.pid}.log`),
+    );
+    console.info(`[tauri-e2e] spawning driver for ${application}`);
     tauriDriver = spawn(tauriDriverBin, tauriDriverArgs, {
-      stdio: [null, process.stdout, process.stderr],
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (tauriDriver.stdout)
+      recordDriverOutput(tauriDriver.stdout, process.stdout);
+    if (tauriDriver.stderr)
+      recordDriverOutput(tauriDriver.stderr, process.stderr);
+    tauriDriver.once("error", (error) => {
+      console.error(`[tauri-e2e] driver spawn failed: ${error.message}`);
+      driverLog?.write(
+        `[tauri-e2e] driver spawn failed: ${error.stack ?? error.message}\n`,
+      );
+    });
+    tauriDriver.once("close", (code, signal) => {
+      const message = `[tauri-e2e] driver exited code=${code} signal=${signal}\n`;
+      console.info(message.trim());
+      driverLog?.end(message);
     });
   },
 
   afterSession: () => {
+    console.info("[tauri-e2e] stopping driver after session teardown");
     tauriDriver?.kill();
   },
 };

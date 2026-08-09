@@ -17,6 +17,7 @@ import {
 } from "./common";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { logFrontendDiagnostic } from "./frontend-log";
+import { e2eMode } from "$lib/e2e-mode";
 
 interface DirectoryListingE2EProbe {
   targetPath: string;
@@ -29,7 +30,7 @@ interface DirectoryListingE2EProbe {
 let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
 
 function publishReadyDirectoryWatch(path: string): void {
-  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  if (!e2eMode || typeof document === "undefined") return;
   const encoded = document.documentElement.dataset.e2eReadyDirectoryWatches;
   const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
   if (!readyPaths.includes(path)) readyPaths.push(path);
@@ -37,7 +38,7 @@ function publishReadyDirectoryWatch(path: string): void {
 }
 
 function publishDirectoryListingE2EProbe(): void {
-  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  if (!e2eMode || typeof document === "undefined") return;
   if (directoryListingE2EProbe) {
     document.documentElement.dataset.e2eDirectoryListingProbe = JSON.stringify({
       calls: directoryListingE2EProbe.calls,
@@ -51,9 +52,9 @@ function publishDirectoryListingE2EProbe(): void {
 
 // WebKitWebDriver evaluates injected scripts in an isolated JavaScript world,
 // so replacing window.__TAURI_INTERNALS__.invoke there cannot instrument the
-// application's Tauri calls. This dev-only DOM event crosses that boundary and
+// application's Tauri calls. This E2E-only DOM event crosses that boundary and
 // configures deterministic timing around the real backend listing invocation.
-if (import.meta.env.DEV && typeof window !== "undefined") {
+if (e2eMode && typeof window !== "undefined") {
   window.addEventListener("e2e-directory-listing-probe", ((
     event: CustomEvent<{ targetPath?: string; delays?: number[] }>,
   ) => {
@@ -566,7 +567,7 @@ export async function startStreamingDirectory(
   }
 
   const e2eProbe =
-    import.meta.env.DEV && directoryListingE2EProbe?.targetPath === path
+    e2eMode && directoryListingE2EProbe?.targetPath === path
       ? directoryListingE2EProbe
       : null;
   const e2eCallIndex = e2eProbe?.calls ?? -1;

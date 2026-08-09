@@ -4,11 +4,11 @@ A smoke suite that launches the built Tauri binary and drives it via WebDriver. 
 
 ## Platform support
 
-| OS | Supported | Notes |
-|---|---|---|
-| Linux | yes | Uses WebKitGTK via `webkit2gtk-driver` |
-| Windows | yes | Uses WebView2 via `msedgedriver` (matched to installed Edge) |
-| macOS | **no** | `tauri-driver` has no WKWebView driver. See project issue tracker. |
+| OS      | Supported | Notes                                                              |
+| ------- | --------- | ------------------------------------------------------------------ |
+| Linux   | yes       | Uses WebKitGTK via `webkit2gtk-driver`                             |
+| Windows | yes       | Uses WebView2 via `msedgedriver` (matched to installed Edge)       |
+| macOS   | **no**    | `tauri-driver` has no WKWebView driver. See project issue tracker. |
 
 ## One-time setup
 
@@ -25,13 +25,21 @@ sudo apt-get install -y webkit2gtk-driver
 ## Running locally
 
 ```bash
-# 1. Build frontend + Tauri debug binary
-bun run build
-cargo build --manifest-path src-tauri/Cargo.toml
+# 1. Build the Tauri debug binary with the frontend embedded
+bun run tauri build --debug --no-bundle
 
 # 2. Run the smoke suite
 bun run test:e2e:tauri
 ```
+
+Build through the Tauri CLI, **not** `cargo build`. A bare cargo debug build
+omits the `tauri/custom-protocol` feature, so the binary serves `build.devUrl`
+(localhost:1420) and the suite silently depends on a Vite dev server running
+alongside it. That coupling is what made the Windows CI leg hang for a month
+(#457): the webview's first paint blocks on a cold dev server transforming the
+whole module graph, and msedgedriver's `POST /session` waits for that load. Once
+the graph outgrew WDIO's 60s `connectionRetryTimeout` the handshake never
+returned. `--debug` embeds the frontend, so there is no dev server to race.
 
 ## CI
 

@@ -109,9 +109,10 @@ jobs:
 
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
-        # Keep the outer 25-minute job cap as a safeguard, but leave time for
-        # the always() artifact step when the driver/session handshake stalls.
-        timeout-minutes: 3
+        # A passing serial smoke suite needs most of the previous 25-minute
+        # budget. Stop a true stall at 15 minutes so the outer job still has
+        # ten minutes to run the always() artifact upload.
+        timeout-minutes: 15
         env:
           # The diagnostic run exits after the first session failure; a later
           # green change removes this guard once the real handshake is fixed.

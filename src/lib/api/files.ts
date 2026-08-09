@@ -8,6 +8,7 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import {
   invoke,
   extractError,
@@ -29,7 +30,7 @@ interface DirectoryListingE2EProbe {
 let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
 
 function publishReadyDirectoryWatch(path: string): void {
-  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
   const encoded = document.documentElement.dataset.e2eReadyDirectoryWatches;
   const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
   if (!readyPaths.includes(path)) readyPaths.push(path);
@@ -37,7 +38,7 @@ function publishReadyDirectoryWatch(path: string): void {
 }
 
 function publishDirectoryListingE2EProbe(): void {
-  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
   if (directoryListingE2EProbe) {
     document.documentElement.dataset.e2eDirectoryListingProbe = JSON.stringify({
       calls: directoryListingE2EProbe.calls,
@@ -53,7 +54,7 @@ function publishDirectoryListingE2EProbe(): void {
 // so replacing window.__TAURI_INTERNALS__.invoke there cannot instrument the
 // application's Tauri calls. This dev-only DOM event crosses that boundary and
 // configures deterministic timing around the real backend listing invocation.
-if (import.meta.env.DEV && typeof window !== "undefined") {
+if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
   window.addEventListener("e2e-directory-listing-probe", ((
     event: CustomEvent<{ targetPath?: string; delays?: number[] }>,
   ) => {
@@ -566,7 +567,7 @@ export async function startStreamingDirectory(
   }
 
   const e2eProbe =
-    import.meta.env.DEV && directoryListingE2EProbe?.targetPath === path
+    E2E_HOOKS_ENABLED && directoryListingE2EProbe?.targetPath === path
       ? directoryListingE2EProbe
       : null;
   const e2eCallIndex = e2eProbe?.calls ?? -1;

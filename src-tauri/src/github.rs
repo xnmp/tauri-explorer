@@ -125,11 +125,14 @@ pub struct FailedCiCheckLog {
 /// How many trailing comments the single GraphQL query fetches per PR. Kept
 /// small so the one-request design stays cheap; older comments are truncated.
 const COMMENT_FETCH_CAP: usize = 20;
-/// The review-thread query fans out beneath every open PR. These two caps keep
-/// the worst case (100 PRs × 50 threads × 50 comments, plus PR comments) below
+/// The review-thread query fans out beneath every open PR. These caps keep the
+/// worst case (100 PRs × 50 threads × 50 comments, plus PR comments) below
 /// GitHub GraphQL's 500,000-node validation limit.
+const OPEN_PR_FETCH_CAP: usize = 100;
 const REVIEW_THREAD_FETCH_CAP: usize = 50;
 const REVIEW_COMMENT_FETCH_CAP: usize = 50;
+const _: () =
+    assert!(OPEN_PR_FETCH_CAP * REVIEW_THREAD_FETCH_CAP * REVIEW_COMMENT_FETCH_CAP < 500_000);
 
 const OPEN_PRS_QUERY: &str = "query($owner:String!,$name:String!){\
 repository(owner:$owner,name:$name){\
@@ -1093,7 +1096,6 @@ mod tests {
                 "query should request {field}"
             );
         }
-        assert!(100 * REVIEW_THREAD_FETCH_CAP * REVIEW_COMMENT_FETCH_CAP < 500_000);
     }
 
     #[test]

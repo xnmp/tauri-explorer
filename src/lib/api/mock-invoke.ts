@@ -6,10 +6,7 @@
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
-import {
-  GIT_NETWORK_PHASE_DOM_EVENT,
-  type GitNetworkPhaseEvent,
-} from "$lib/domain/git-network-operation";
+import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
 
@@ -567,7 +564,12 @@ interface MockGitCommit {
 
 const mockGitCommits: MockGitCommit[] = [];
 let pendingGitNetworkOperation:
-  | { taskId: number; cancellable: boolean; reject: (reason: Error) => void }
+  | {
+      taskId: number;
+      cancellable: boolean;
+      reject: (reason: Error) => void;
+      onPhase?: (phase: GitNetworkPhaseEvent) => void;
+    }
   | undefined;
 
 function holdGitNetworkOperation(
@@ -589,6 +591,7 @@ function holdGitPullAtFastForwardBoundary(
   }
 
   const taskId = Number(args.taskId);
+  const onPhase = args.onPhase as ((phase: GitNetworkPhaseEvent) => void) | undefined;
   const before_oid = mockHeadOid();
   const branch = mockDetached
     ? null
@@ -596,8 +599,8 @@ function holdGitPullAtFastForwardBoundary(
       null);
 
   return new Promise((resolve, reject) => {
-    pendingGitNetworkOperation = { taskId, cancellable: false, reject };
-    if (boundary === "fast_forward") emitMockGitNetworkPhase(taskId);
+    pendingGitNetworkOperation = { taskId, cancellable: false, reject, onPhase };
+    if (boundary === "fast_forward") onPhase?.({ taskId, cancellable: false });
     window.addEventListener(
       "tauri-explorer:mock-git-pull-finish",
       () => {
@@ -610,14 +613,6 @@ function holdGitPullAtFastForwardBoundary(
       { once: true },
     );
   });
-}
-
-function emitMockGitNetworkPhase(taskId: number): void {
-  window.dispatchEvent(
-    new CustomEvent<GitNetworkPhaseEvent>(GIT_NETWORK_PHASE_DOM_EVENT, {
-      detail: { taskId, cancellable: false },
-    }),
-  );
 }
 
 function seedGitState(): MockGitState {
@@ -2110,7 +2105,10 @@ const mockCommands: Record<string, CommandHandler> = {
     } else if (pendingGitNetworkOperation?.taskId === Number(args.taskId)) {
       // The local fast-forward has already begun. Model delayed phase-event
       // delivery after a stale Cancel click without rejecting the pull.
-      emitMockGitNetworkPhase(pendingGitNetworkOperation.taskId);
+      pendingGitNetworkOperation.onPhase?.({
+        taskId: pendingGitNetworkOperation.taskId,
+        cancellable: false,
+      });
     }
     return null;
   },

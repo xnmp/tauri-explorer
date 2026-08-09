@@ -77,6 +77,31 @@ test("a running pull exposes Cancel and restores the graph after cancellation", 
   await cancelOperation(page, "Cancel pull");
 });
 
+test("pull removes Cancel when the fast-forward phase is delivered", async ({ page }) => {
+  await page.goto(
+    "/?path=/home/user/Documents/project&mockGitNetwork=git_pull&mockGitPullBoundary=fast_forward",
+  );
+  await waitForEntries(page);
+  await openGraph(page);
+
+  const graph = page.locator('[data-testid="git-graph-view"]');
+  await graph.locator(".ref-branch", { hasText: "hotfix" }).first().click({ button: "right" });
+  await page.locator('[data-testid="git-graph-menu"]').getByText("Checkout hotfix").click();
+  const offer = page.locator('[data-testid="git-graph-pull-offer"]');
+  await expect(offer).toBeVisible();
+  await offer.getByText("Pull", { exact: true }).click();
+
+  const banner = graph.locator(".network-operation-banner");
+  await expect(banner).toContainText("Finishing Git pull…");
+  await expect(graph.getByRole("button", { name: "Cancel pull" })).toHaveCount(0);
+
+  await page.evaluate(() =>
+    window.dispatchEvent(new CustomEvent("tauri-explorer:mock-git-pull-finish")),
+  );
+  await expect(page.locator(".toast", { hasText: "Pull done" })).toBeVisible();
+  await expect(banner).toHaveCount(0);
+});
+
 test("a late pull cancellation reports finishing and preserves undo", async ({ page }) => {
   await page.goto(
     "/?path=/home/user/Documents/project&mockGitNetwork=git_pull&mockGitPullBoundary=late_cancel",

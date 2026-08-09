@@ -22,7 +22,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter};
+use tauri::ipc::Channel;
 
 use crate::error::AppError;
 use crate::process_ext::{output_cancellable, NoConsole};
@@ -32,11 +32,9 @@ static GIT_NETWORK_OPERATIONS: TaskRegistry = TaskRegistry::new();
 const NETWORK_CANCELLED: &str = "git network operation cancelled";
 const REMOTE_DELETE_CANCELLED: &str =
     "git network operation cancelled; remote branch may already have been deleted";
-const GIT_NETWORK_PHASE_EVENT: &str = "git-network-operation-phase";
-
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GitNetworkPhaseEvent {
+pub struct GitNetworkPhaseEvent {
     task_id: u64,
     cancellable: bool,
 }
@@ -531,7 +529,7 @@ fn run_pull_sync_with_hooks<AfterFetch, FastForwardStarted>(
 ) -> Result<Option<GitUndoAction>, AppError>
 where
     AfterFetch: FnOnce(&AtomicBool),
-    FastForwardStarted: FnOnce(&AtomicBool),
+    FastForwardStarted: FnOnce(&AtomicBool) -> Result<(), AppError>,
 {
     let (before_oid, branch) = head_snapshot(repo_path)?;
     run_git_network_sync(repo_path, &["fetch", "--atomic"], cancelled, "git")?;
@@ -543,7 +541,7 @@ where
     // Cancellation owns only the unbounded network phase. Once this boundary
     // is crossed, let Git's local fast-forward finish so HEAD/index/worktree
     // are never exposed to process-tree termination (ADR 0006).
-    fast_forward_started(cancelled);
+    fast_forward_started(cancelled)?;
     run_git(repo_path, &["merge", "--ff-only", "@{upstream}"])?;
 
     let (after_oid, after_branch) = head_snapshot(repo_path)?;
@@ -568,7 +566,7 @@ async fn run_network_pull<FastForwardStarted>(
     fast_forward_started: FastForwardStarted,
 ) -> Result<Option<GitUndoAction>, AppError>
 where
-    FastForwardStarted: FnOnce() + Send + 'static,
+    FastForwardStarted: FnOnce() -> Result<(), AppError> + Send + 'static,
 {
     run_git_network_task(task_id, move |cancelled| {
         run_pull_sync_with_hooks(
@@ -732,18 +730,21 @@ pub async fn git_fetch(repo_path: String, task_id: u64) -> Result<(), AppError> 
 /// branch errors (surfaced verbatim) instead of creating a surprise merge.
 #[tauri::command]
 pub async fn git_pull(
-    app: AppHandle,
     repo_path: String,
     task_id: u64,
+    on_phase: Channel<GitNetworkPhaseEvent>,
 ) -> Result<Option<GitUndoAction>, AppError> {
     run_network_pull(repo_path, task_id, move || {
-        let _ = app.emit(
-            GIT_NETWORK_PHASE_EVENT,
-            GitNetworkPhaseEvent {
+        on_phase
+            .send(GitNetworkPhaseEvent {
                 task_id,
                 cancellable: false,
-            },
-        );
+            })
+            .map_err(|error| {
+                AppError::Other(format!(
+                    "pull stopped before fast-forward because its UI phase could not be delivered: {error}"
+                ))
+            })
     })
     .await
 }
@@ -1264,7 +1265,7 @@ mod tests {
                 .contains("git network operation cancelled"));
 
             cancel_git_network_operation(528_011).await.unwrap();
-            let pull = run_network_pull(repo.clone(), 528_011, || {})
+            let pull = run_network_pull(repo.clone(), 528_011, || Ok(()))
                 .await
                 .unwrap_err();
             assert!(pull.to_string().contains("git network operation cancelled"));
@@ -1732,7 +1733,7 @@ mod tests {
             &repo,
             &cancelled,
             |flag| flag.store(true, Ordering::Relaxed),
-            |_| {},
+            |_| Ok(()),
         )
         .unwrap_err();
         assert!(error.to_string().contains(NETWORK_CANCELLED));
@@ -1744,7 +1745,7 @@ mod tests {
         assert_repo_consistent(dir.path());
 
         cancelled.store(false, Ordering::Relaxed);
-        let action = run_pull_sync_with_hooks(&repo, &cancelled, |_| {}, |_| {})
+        let action = run_pull_sync_with_hooks(&repo, &cancelled, |_| {}, |_| Ok(()))
             .unwrap()
             .expect("a later pull must return an undo snapshot");
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
@@ -1756,7 +1757,10 @@ mod tests {
             &repo,
             &cancelled,
             |_| {},
-            |flag| flag.store(true, Ordering::Relaxed),
+            |flag| {
+                flag.store(true, Ordering::Relaxed);
+                Ok(())
+            },
         )
         .unwrap()
         .expect("late cancellation must let fast-forward finish with undo");
@@ -2018,14 +2022,31 @@ mod tests {
         git(other.path(), &["push", "origin", "main"]);
         let remote_tip = git_out(other.path(), &["rev-parse", "HEAD"]);
 
-        let phase_observed = Arc::new(AtomicBool::new(false));
-        let callback_observed = Arc::clone(&phase_observed);
-        let action = tokio_test_block(run_network_pull(rp.clone(), 528_002, move || {
-            callback_observed.store(true, Ordering::Relaxed);
-        }))
-        .unwrap()
-        .expect("pull should move HEAD");
-        assert!(phase_observed.load(Ordering::Relaxed));
+        let broken_channel: Channel<GitNetworkPhaseEvent> = Channel::new(|_| {
+            Err(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "phase receiver unavailable")
+                    .into(),
+            )
+        });
+        let error = tokio_test_block(git_pull(rp.clone(), 528_002, broken_channel)).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("UI phase could not be delivered"));
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
+
+        let phase_payload: Arc<std::sync::Mutex<Option<GitNetworkPhaseEvent>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let received_payload = Arc::clone(&phase_payload);
+        let phase_channel: Channel<GitNetworkPhaseEvent> = Channel::new(move |body| {
+            *received_payload.lock().unwrap() = Some(body.deserialize()?);
+            Ok(())
+        });
+        let action = tokio_test_block(git_pull(rp.clone(), 528_003, phase_channel))
+            .unwrap()
+            .expect("pull should move HEAD");
+        let phase = phase_payload.lock().unwrap().clone().unwrap();
+        assert_eq!(phase.task_id, 528_003);
+        assert!(!phase.cancellable);
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
         tokio_test_block(git_undo(rp, action)).unwrap();
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);

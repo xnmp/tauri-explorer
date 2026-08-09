@@ -1546,7 +1546,9 @@
   function confirmPull(): void {
     pullOffer = null;
     void runAction("Pull", () =>
-      runGitNetworkOperation(repoPath, "pull", (taskId) => gitPull(repoPath, taskId)),
+      runGitNetworkOperation(repoPath, "pull", (taskId, onPhase) =>
+        gitPull(repoPath, taskId, onPhase),
+      ),
     );
   }
   function cherryPick(oid: string): void {

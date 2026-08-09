@@ -8,8 +8,11 @@
  * commit's `parents` array — the backend only supplies the edges.
  */
 
+import { Channel } from "@tauri-apps/api/core";
 import { invoke } from "./files";
+import { isTauri } from "./mock-invoke";
 import type { GitUndoAction } from "$lib/domain/git-graph-undo";
+import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 
 export type RefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
 
@@ -231,8 +234,13 @@ export async function gitFetch(repoPath: string, taskId: number): Promise<void> 
 }
 
 /** Fast-forward pull on the current branch (#377). */
-export async function gitPull(repoPath: string, taskId: number): Promise<GitUndoAction | null> {
-  return invoke<GitUndoAction | null>("git_pull", { repoPath, taskId });
+export async function gitPull(
+  repoPath: string,
+  taskId: number,
+  onPhase: (phase: GitNetworkPhaseEvent) => void,
+): Promise<GitUndoAction | null> {
+  const phaseChannel = isTauri() ? new Channel<GitNetworkPhaseEvent>(onPhase) : onPhase;
+  return invoke<GitUndoAction | null>("git_pull", { repoPath, taskId, onPhase: phaseChannel });
 }
 
 /** Terminate an in-flight fetch, pull, or remote push. */

@@ -18,6 +18,59 @@ import {
 import { providerFor } from "$lib/plugins/fs-providers";
 import { logFrontendDiagnostic } from "./frontend-log";
 
+interface DirectoryListingE2EProbe {
+  targetPath: string;
+  delays: number[];
+  calls: number;
+  completed: number;
+  starts: number[];
+}
+
+let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
+
+function publishReadyDirectoryWatch(path: string): void {
+  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  const encoded = document.documentElement.dataset.e2eReadyDirectoryWatches;
+  const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
+  if (!readyPaths.includes(path)) readyPaths.push(path);
+  document.documentElement.dataset.e2eReadyDirectoryWatches = JSON.stringify(readyPaths);
+}
+
+function publishDirectoryListingE2EProbe(): void {
+  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  if (directoryListingE2EProbe) {
+    document.documentElement.dataset.e2eDirectoryListingProbe = JSON.stringify({
+      calls: directoryListingE2EProbe.calls,
+      completed: directoryListingE2EProbe.completed,
+      starts: directoryListingE2EProbe.starts,
+    });
+  } else {
+    delete document.documentElement.dataset.e2eDirectoryListingProbe;
+  }
+}
+
+// WebKitWebDriver evaluates injected scripts in an isolated JavaScript world,
+// so replacing window.__TAURI_INTERNALS__.invoke there cannot instrument the
+// application's Tauri calls. This dev-only DOM event crosses that boundary and
+// configures deterministic timing around the real backend listing invocation.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  window.addEventListener("e2e-directory-listing-probe", ((
+    event: CustomEvent<{ targetPath?: string; delays?: number[] }>,
+  ) => {
+    const targetPath = event.detail?.targetPath;
+    directoryListingE2EProbe = targetPath
+      ? {
+          targetPath,
+          delays: event.detail.delays ?? [],
+          calls: 0,
+          completed: 0,
+          starts: [],
+        }
+      : null;
+    publishDirectoryListingE2EProbe();
+  }) as EventListener);
+}
+
 /**
  * Fetch directory listing from Tauri backend.
  *
@@ -511,8 +564,28 @@ export async function startStreamingDirectory(
       return { ok: false, error };
     }
   }
+
+  const e2eProbe =
+    import.meta.env.DEV && directoryListingE2EProbe?.targetPath === path
+      ? directoryListingE2EProbe
+      : null;
+  const e2eCallIndex = e2eProbe?.calls ?? -1;
+  if (e2eProbe) {
+    e2eProbe.calls += 1;
+    e2eProbe.starts.push(Date.now());
+    publishDirectoryListingE2EProbe();
+  }
+
   try {
     const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
+    if (e2eProbe) {
+      const delay = e2eProbe.delays[e2eCallIndex] ?? 0;
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      e2eProbe.completed += 1;
+      publishDirectoryListingE2EProbe();
+    }
     console.debug("[navigation] start_streaming_directory completed", {
       path,
       listingId: data.listing_id,
@@ -563,6 +636,7 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
 export async function watchDirectory(path: string): Promise<void> {
   try {
     await invoke("watch_directory", { path });
+    publishReadyDirectoryWatch(path);
   } catch {
     // Non-critical: watcher failure shouldn't block navigation
   }

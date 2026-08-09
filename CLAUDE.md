@@ -38,6 +38,7 @@ Frontend layers (`src/lib/`): `domain/` (pure logic, no framework deps — put b
 Rules that bite:
 - Three view modes (Details/List/Tiles) dispatched by `FileList.svelte` — display features must land in all three.
 - Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.
+- Watcher callbacks are delayed work: capture the explorer path when queuing a refresh and drop the callback if that explorer navigates before it runs. Preserve the backend observation time too: notify delivery can lag behind a trailing listing, and treating an already-covered change as new work creates a third refresh. Otherwise an event attributed to the old directory refreshes the new one and corrupts both directories' cadence.
 - Pane focus is **state, not DOM focus**: `ExplorerPane` gates its window-level keydown listener on `windowTabsManager.activePaneId === paneId`, so moving focus between panes is `setActivePane` alone — calling `.focus()` on the pane element is neither necessary nor sufficient. Assert on `.explorer-pane.active`, not on `document.activeElement`.
 - Native window titles have two phases: every creation path (Rust main, fresh child, parked warm window) must seed the requested title before visibility, then the page's reactive `window-title` sync follows the active explorer path across navigation/tab/pane changes.
 - New-window address-bar focus likewise has fresh and warm paths: fresh children request it through their launch URL, while activated warm windows dispatch the request only after the requested navigation and native focus. Wait for the explorer's initial path before mounting `BreadcrumbAutocomplete`, because it captures that path only on mount.
@@ -80,6 +81,20 @@ The three test tiers see different things; pick by what could actually break:
 1. **Vitest (`tests/`)** — domain logic and store behavior. The default home for every fix's regression test.
 2. **Browser Playwright (`e2e/`)** — UI behavior against `mock-invoke.ts` on :1420. Good for interaction/focus/layout. **Structurally blind to backend timing** (watchers, git, IPC latency), and **circular for new backend features**: if you wrote the mock, the test proves the UI agrees with your own assumption, not with the backend.
 3. **Tauri-binary E2E (`e2e-tauri/`)** — WebdriverIO + tauri-driver against the real binary: real Rust, real fs watchers, real git (see `e2e-tauri/README.md`; keep this suite small and reserve it for what genuinely needs the real backend).
+
+WebKitWebDriver may evaluate `browser.execute` in an isolated JavaScript world.
+Use DOM events/state to communicate with dev-only application probes; mutating
+application globals such as `window.__TAURI_INTERNALS__` from the injected
+script can remain invisible to the app even when later injected scripts read
+the mutation back. Publish hook readiness and acknowledge each operation with a
+unique DOM token before polling its result; repeatedly dispatching an operation
+while waiting can queue duplicate real backend work that outlives the poll.
+Real-watcher timing tests must also wait for the backend watch and frontend
+listener to be ready, then acknowledge every filesystem write at the
+application-side watcher callback before attributing listing counts to it. A
+receipt-count increase alone is insufficient: require its backend observation
+time to be at or after that specific write began so an older delayed event
+cannot advance the protocol.
 
 Anything whose failure mode involves races, watcher timing, git state, or cache staleness needs tier 3 or a Rust temp-repo test in `src-tauri` — a green mock E2E is not evidence for those.
 

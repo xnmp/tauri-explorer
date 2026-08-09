@@ -72,40 +72,19 @@ jobs:
         shell: bash
         run: bun install --frozen-lockfile
 
-      - name: Build frontend
-        run: bun run build
-
-      - name: Build Tauri binary (debug, no bundle)
+      # Build through the Tauri CLI, not `cargo build`. A bare cargo debug
+      # build omits the `tauri/custom-protocol` feature, so the binary serves
+      # `build.devUrl` (localhost:1420) and the suite needs a Vite dev server
+      # alongside it. That coupling is what broke Windows (#457): the webview's
+      # first paint blocks on a cold dev server transforming the whole module
+      # graph, msedgedriver's new-session waits for that load, and once the
+      # graph outgrew the 60s connectionRetryTimeout the handshake never
+      # returned — the session POST died with hyper IncompleteMessage on every
+      # run. `tauri build --debug` passes custom-protocol, so the frontend is
+      # embedded in the binary and there is no dev server to race.
+      - name: Build Tauri binary (debug, embedded frontend, no bundle)
         shell: bash
-        run: cargo build --manifest-path src-tauri/Cargo.toml
-
-      # Debug-profile tauri binaries embed build.devUrl (localhost:1420)
-      # instead of the bundled frontend — the webview is blank unless the
-      # dev server is up.
-      - name: Start frontend dev server (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          nohup bun run dev > /tmp/vite.log 2>&1 &
-          for i in $(seq 1 60); do
-            curl -sf http://localhost:1420 > /dev/null && exit 0
-            sleep 1
-          done
-          echo "dev server never came up" >&2
-          cat /tmp/vite.log >&2
-          exit 1
-
-      - name: Start frontend dev server (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Start-Process bun -ArgumentList 'run','dev' -WindowStyle Hidden -RedirectStandardOutput "$env:RUNNER_TEMP\vite.log" -RedirectStandardError "$env:RUNNER_TEMP\vite-error.log"
-          foreach ($i in 1..60) {
-            try {
-              Invoke-WebRequest -UseBasicParsing http://localhost:1420 | Out-Null
-              exit 0
-            } catch { Start-Sleep -Seconds 1 }
-          }
-          Write-Error "dev server never came up"
+        run: bun run tauri build --debug --no-bundle
 
       - name: Run smoke suite (Linux, under Xvfb)
         if: runner.os == 'Linux'
@@ -141,6 +120,4 @@ jobs:
           path: |
             logs/
             e2e-tauri/logs/
-            ${{ runner.temp }}/vite.log
-            ${{ runner.temp }}/vite-error.log
           if-no-files-found: ignore

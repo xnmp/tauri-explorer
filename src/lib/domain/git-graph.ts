@@ -774,6 +774,86 @@ export interface OpenPrLike {
   headRef: string;
 }
 
+/** Open-PR metadata needed to distinguish a base-branch update from another
+ * merge into the PR branch. Kept structural so graph classification remains
+ * independent from the IPC API layer. */
+export interface OpenPrBaseLike extends OpenPrLike {
+  baseRef: string;
+  /** The GitHub remote selected for this PR fetch, when available. */
+  baseRemote?: string | null;
+}
+
+/** Return the merge OIDs on open PR first-parent paths that merge the PR's
+ * configured base history back into the branch. A ref must be present for both
+ * ends of the relationship; a partially loaded graph deliberately produces no
+ * guess rather than dimming an unrelated merge. */
+export function baseUpdateMergeOids(
+  commits: readonly GraphCommitLike[],
+  refs: Readonly<Record<string, readonly RefDecorationLike[]>>,
+  prs: readonly OpenPrBaseLike[],
+): Set<string> {
+  const commitsByOid = new Map(commits.map((commit) => [commit.oid, commit]));
+  const branchTip = (branch: string, preferredRemote?: string | null): string | null => {
+    let localTip: string | null = null;
+    let remoteTip: string | null = null;
+    for (const [oid, decorations] of Object.entries(refs)) {
+      for (const ref of decorations) {
+        if (ref.kind === "LocalBranch" && ref.name === branch) localTip = oid;
+        if (
+          ref.kind === "RemoteBranch" &&
+          preferredRemote != null &&
+          ref.name === `${preferredRemote}/${branch}`
+        ) return oid;
+        if (ref.kind === "RemoteBranch" && ref.name.endsWith(`/${branch}`)) remoteTip = oid;
+      }
+    }
+    return localTip ?? remoteTip;
+  };
+  const reachableFrom = (tip: string): Set<string> => {
+    const reachable = new Set<string>();
+    const pending = [tip];
+    while (pending.length > 0) {
+      const oid = pending.pop()!;
+      if (reachable.has(oid)) continue;
+      reachable.add(oid);
+      const commit = commitsByOid.get(oid);
+      if (commit) pending.push(...commit.parents);
+    }
+    return reachable;
+  };
+
+  const baseUpdates = new Set<string>();
+  for (const pr of prs) {
+    const headTip = branchTip(pr.headRef);
+    const baseTip = branchTip(pr.baseRef, pr.baseRemote);
+    if (!headTip || !baseTip) continue;
+    const baseHistory = reachableFrom(baseTip);
+    const visited = new Set<string>();
+    let oid: string | undefined = headTip;
+    while (oid && !visited.has(oid)) {
+      visited.add(oid);
+      const commit = commitsByOid.get(oid);
+      if (!commit) break;
+      if (commit.parents.slice(1).some((parent) => baseHistory.has(parent))) {
+        baseUpdates.add(oid);
+      }
+      oid = commit.parents[0];
+    }
+  }
+  return baseUpdates;
+}
+
+/** Whether the independently persisted base-update preference applies to an
+ * already-classified row. Keeping this decision in the domain makes the view
+ * a direct presentation of the toggle rather than a second classifier. */
+export function shouldMuteBaseUpdateMerge(
+  oid: string,
+  baseUpdateOids: ReadonlySet<string>,
+  enabled: boolean,
+): boolean {
+  return enabled && baseUpdateOids.has(oid);
+}
+
 /** CI rollup states surfaced on a PR badge (`null` = unknown / no checks). */
 export type CiStatus = "success" | "failure" | "pending" | null;
 

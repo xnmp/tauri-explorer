@@ -56,6 +56,11 @@ Rules that bite:
   `assignLayout`, never a lane number or color: paths can curve between lanes
   and color slots are recycled. Compute trace/jump semantics in the domain
   layer, then pass the classified rows and path segments to the renderer.
+- Base-update merge muting follows an open PR's first-parent chain and checks
+  each non-first parent against the configured base ref's reachable history.
+  Keep both the base ref and selected GitHub remote in the PR IPC shape so a
+  current remote-tracking base wins over a stale local base; a merge merely
+  adjacent to a PR ref is not enough to classify it as housekeeping (#527).
 - Git-graph commit comparison is a tree-to-tree operation, not a first-parent
   diff: normalize the chosen commits to older → newer before requesting both
   the changed-file list and every per-file patch, including preview-pane routes.

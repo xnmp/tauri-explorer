@@ -316,6 +316,12 @@ export interface OpenPr {
   number: number;
   title: string;
   headRef: string;
+  /** Branch the PR targets; used to distinguish base-update merges from other
+   * merges on its head branch (#527). */
+  baseRef: string;
+  /** Remote selected for the GitHub PR fetch; lets graph classification prefer
+   * its current remote-tracking base ref over a stale local branch (#527). */
+  baseRemote?: string | null;
   htmlUrl: string;
   draft: boolean;
   /** CI rollup for the PR's head commit; `null` when no checks / no token. */

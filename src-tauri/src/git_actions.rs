@@ -1209,6 +1209,116 @@ mod tests {
     }
 
     #[test]
+    fn network_operation_fetches_multiple_remotes_atomically_and_cancels_between_them() {
+        let (dir, _commits) = linear_repo();
+        let repo = repo_path(&dir);
+        let mut remotes = Vec::new();
+        let mut clones = Vec::new();
+        let mut first_tips = std::collections::HashMap::new();
+
+        for name in ["origin", "backup"] {
+            let remote = TempDir::new().unwrap();
+            git(remote.path(), &["init", "--bare"]);
+            git(
+                dir.path(),
+                &["remote", "add", name, remote.path().to_str().unwrap()],
+            );
+            git(dir.path(), &["push", name, "main"]);
+            git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+            let clone = TempDir::new().unwrap();
+            git(
+                clone.path(),
+                &["clone", remote.path().to_str().unwrap(), "."],
+            );
+            git(clone.path(), &["config", "user.name", "Test"]);
+            git(clone.path(), &["config", "user.email", "t@x"]);
+            write(
+                clone.path(),
+                &format!("{name}-one.txt"),
+                &format!("{name} one\n"),
+            );
+            git(clone.path(), &["add", "."]);
+            git(clone.path(), &["commit", "-m", &format!("{name} one")]);
+            git(clone.path(), &["push", "origin", "main"]);
+            first_tips.insert(
+                name.to_string(),
+                git_out(clone.path(), &["rev-parse", "HEAD"]),
+            );
+            remotes.push(remote);
+            clones.push((name.to_string(), clone));
+        }
+
+        let cancelled = AtomicBool::new(false);
+        let mut completed = Vec::new();
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |name, _| {
+            completed.push(name.to_string());
+        })
+        .unwrap();
+        assert_eq!(completed.len(), 2);
+        for name in ["origin", "backup"] {
+            assert_eq!(
+                git_out(
+                    dir.path(),
+                    &["rev-parse", &format!("refs/remotes/{name}/main")],
+                ),
+                first_tips[name]
+            );
+        }
+
+        let mut second_tips = std::collections::HashMap::new();
+        for (name, clone) in &clones {
+            write(
+                clone.path(),
+                &format!("{name}-two.txt"),
+                &format!("{name} two\n"),
+            );
+            git(clone.path(), &["add", "."]);
+            git(clone.path(), &["commit", "-m", &format!("{name} two")]);
+            git(clone.path(), &["push", "origin", "main"]);
+            second_tips.insert(name.clone(), git_out(clone.path(), &["rev-parse", "HEAD"]));
+        }
+
+        completed.clear();
+        let error = fetch_all_remotes_sync_with_hook(&repo, &cancelled, |name, flag| {
+            completed.push(name.to_string());
+            if completed.len() == 1 {
+                flag.store(true, Ordering::Relaxed);
+            }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains(NETWORK_CANCELLED));
+        assert_eq!(completed.len(), 1);
+
+        for name in ["origin", "backup"] {
+            let actual = git_out(
+                dir.path(),
+                &["rev-parse", &format!("refs/remotes/{name}/main")],
+            );
+            let expected = if completed[0] == name {
+                &second_tips[name]
+            } else {
+                &first_tips[name]
+            };
+            assert_eq!(&actual, expected);
+        }
+        assert_repo_consistent(dir.path());
+
+        cancelled.store(false, Ordering::Relaxed);
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        for name in ["origin", "backup"] {
+            assert_eq!(
+                git_out(
+                    dir.path(),
+                    &["rev-parse", &format!("refs/remotes/{name}/main")],
+                ),
+                second_tips[name]
+            );
+        }
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
     fn network_operation_pull_cancel_boundary_preserves_head_or_returns_undo() {
         let (dir, _commits) = linear_repo();
         let (_remote, _other, remote_tip) = advance_bare_remote(&dir);

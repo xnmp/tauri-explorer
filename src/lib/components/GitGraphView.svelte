@@ -88,7 +88,7 @@
     fetchGitSummary,
     releaseGitSummaryConsumer,
   } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import {
     countGraphWalkCommits,
@@ -673,6 +673,21 @@
     muteMerges = !muteMerges;
     savePersisted(MUTE_MERGES_KEY, muteMerges);
   }
+
+  // Base-update merges are a distinct kind of PR-branch housekeeping. Keep
+  // their preference separate from generic merge muting so feature merges can
+  // remain prominent while periodic base syncs recede (#527).
+  const MUTE_BASE_UPDATE_MERGES_KEY = "git-graph-mute-base-update-merges";
+  let muteBaseUpdateMerges = $state(
+    loadPersisted<unknown>(MUTE_BASE_UPDATE_MERGES_KEY, true) !== false,
+  );
+  function toggleMuteBaseUpdateMerges(): void {
+    muteBaseUpdateMerges = !muteBaseUpdateMerges;
+    savePersisted(MUTE_BASE_UPDATE_MERGES_KEY, muteBaseUpdateMerges);
+  }
+  const baseUpdateMerges = $derived(
+    baseUpdateMergeOids(commits, refs, [...prsByBranch.values()]),
+  );
 
   // Branch tracing follows the hovered row, falling back to the persistent
   // selection after the pointer leaves. It is on by default; a linear history
@@ -1981,6 +1996,16 @@
         <button
           class="menu-item"
           role="menuitemcheckbox"
+          aria-checked={muteBaseUpdateMerges}
+          onclick={toggleMuteBaseUpdateMerges}
+          data-testid="toggle-mute-base-update-merges"
+        >
+          <span class="col-check">{muteBaseUpdateMerges ? "✓" : ""}</span>
+          Mute base-update merges
+        </button>
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
           aria-checked={branchTracing}
           onclick={toggleBranchTracing}
           data-testid="toggle-branch-tracing"
@@ -2102,6 +2127,7 @@
             class:selected={selected?.oid === commit.oid}
             class:is-head={chips.isHead}
             class:is-merge={muteMerges && !synthetic && commit.parents.length >= 2}
+            class:is-base-update-merge={!synthetic && shouldMuteBaseUpdateMerge(commit.oid, baseUpdateMerges, muteBaseUpdateMerges)}
             class:uncommitted={synthetic}
             style:padding-left="{effectiveGraphWidth + 20}px"
             style:top="{rowY(index)}px"
@@ -2875,6 +2901,16 @@
   .commit-row.is-merge .date,
   .commit-row.is-merge .oid {
     opacity: 0.5;
+  }
+
+  /* Base-branch sync merges are housekeeping, not the PR's own work (#527).
+     When generic merge muting is off, keep their dedicated treatment visibly
+     quieter without hiding their graph topology. */
+  .commit-row.is-base-update-merge .summary,
+  .commit-row.is-base-update-merge .author,
+  .commit-row.is-base-update-merge .date,
+  .commit-row.is-base-update-merge .oid {
+    opacity: 0.32;
   }
 
   /* Inline details block, expanded directly below the selected row (#221).

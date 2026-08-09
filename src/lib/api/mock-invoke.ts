@@ -796,7 +796,6 @@ function fullOid(n: number): string {
 // numbers, so the array is a valid topological linearization.
 const GRAPH_BASE_TIME = Math.floor(Date.UTC(2024, 5, 1, 9, 0, 0) / 1000);
 const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string; stash?: string }> = [
-  { n: 17, parents: [10, 16], summary: "Merge main into base-update branch" },
   { n: 16, parents: [15, 13], summary: "Merge hotfix into main" },
   { n: 15, parents: [12, 14], summary: "Merge experiment" },
   { n: 14, parents: [9], summary: "Try alternative parser" },
@@ -849,7 +848,6 @@ const MOCK_GRAPH_REFS: Record<
   string,
   Array<{ name: string; kind: "LocalBranch" | "RemoteBranch" | "Tag" | "Head" }>
 > = {
-  [fullOid(17)]: [{ name: "base-update", kind: "LocalBranch" }],
   [fullOid(16)]: [
     { name: "HEAD", kind: "Head" },
     { name: "main", kind: "LocalBranch" },
@@ -2356,9 +2354,9 @@ const mockCommands: Record<string, CommandHandler> = {
     return [
       {
         number: 27,
-        title: "Keep base-update branch current",
-        headRef: "base-update",
-        baseRef: "main",
+        title: "Keep release branch current",
+        headRef: "release",
+        baseRef: "hotfix",
         htmlUrl: "https://github.com/mock/project/pull/27",
         draft: false,
         ciStatus: null,

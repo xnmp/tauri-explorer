@@ -35,6 +35,8 @@ pub struct PrInfo {
     pub title: String,
     #[serde(rename = "headRef")]
     pub head_ref: String,
+    #[serde(rename = "baseRef")]
+    pub base_ref: String,
     #[serde(rename = "htmlUrl")]
     pub html_url: String,
     pub draft: bool,
@@ -142,7 +144,7 @@ fn open_prs_query() -> String {
         "query($owner:String!,$name:String!){{\
 repository(owner:$owner,name:$name){{\
 pullRequests(states:OPEN,first:{OPEN_PR_FETCH_CAP}){{nodes{{\
-number title url isDraft headRefName reviewDecision bodyText \
+number title url isDraft headRefName baseRefName reviewDecision bodyText \
 comments(last:{COMMENT_FETCH_CAP}){{totalCount nodes{{author{{login}} createdAt bodyText}}}} \
 reviewThreads(first:{REVIEW_THREAD_FETCH_CAP}){{nodes{{isResolved comments(first:{REVIEW_COMMENT_FETCH_CAP}){{nodes{{author{{login}} createdAt bodyText path line}}}}}}}} \
 commits(last:1){{nodes{{commit{{statusCheckRollup{{state}}}}}}}}\
@@ -234,9 +236,11 @@ struct GhPull {
     #[serde(default)]
     body: Option<String>,
     head: GhHead,
+    #[serde(default)]
+    base: GhHead,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct GhHead {
     #[serde(rename = "ref")]
     ref_name: String,
@@ -248,6 +252,7 @@ impl From<GhPull> for PrInfo {
             number: p.number,
             title: p.title,
             head_ref: p.head.ref_name,
+            base_ref: p.base.ref_name,
             html_url: p.html_url,
             draft: p.draft,
             // The REST list endpoint carries none of the status fields; a
@@ -401,6 +406,9 @@ struct GqlPrNode {
     is_draft: bool,
     #[serde(rename = "headRefName")]
     head_ref_name: String,
+    #[serde(rename = "baseRefName")]
+    #[serde(default)]
+    base_ref_name: String,
     #[serde(rename = "reviewDecision", default)]
     review_decision: Option<String>,
     #[serde(rename = "bodyText", default)]
@@ -554,6 +562,7 @@ impl From<GqlPrNode> for PrInfo {
             number: n.number,
             title: n.title,
             head_ref: n.head_ref_name,
+            base_ref: n.base_ref_name,
             html_url: n.url,
             draft: n.is_draft,
             ci_status,
@@ -1017,6 +1026,7 @@ mod tests {
             number: 1,
             title: "t".to_string(),
             head_ref: "b".to_string(),
+            base_ref: "main".to_string(),
             html_url: "u".to_string(),
             draft: false,
             ci_status: None,
@@ -1102,7 +1112,7 @@ mod tests {
         )));
         assert!(query.contains(&format!("reviewThreads(first:{REVIEW_THREAD_FETCH_CAP})")));
         assert!(query.contains(&format!("comments(first:{REVIEW_COMMENT_FETCH_CAP})")));
-        for field in ["isResolved", "createdAt", "bodyText", "path", "line"] {
+        for field in ["baseRefName", "isResolved", "createdAt", "bodyText", "path", "line"] {
             assert!(query.contains(field), "query should request {field}");
         }
     }

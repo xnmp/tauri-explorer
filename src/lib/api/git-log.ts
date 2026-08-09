@@ -316,6 +316,9 @@ export interface OpenPr {
   number: number;
   title: string;
   headRef: string;
+  /** Branch the PR targets; used to distinguish base-update merges from other
+   * merges on its head branch (#527). */
+  baseRef: string;
   htmlUrl: string;
   draft: boolean;
   /** CI rollup for the PR's head commit; `null` when no checks / no token. */

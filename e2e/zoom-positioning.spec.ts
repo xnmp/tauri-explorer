@@ -63,18 +63,18 @@ test.describe("Overlay positioning under zoom", () => {
     const rect = (await viewportRect(page, ".context-menu"))!;
     expect(Math.abs(rect.x - clickX)).toBeLessThan(TOLERANCE);
     expect(Math.abs(rect.y - clickY)).toBeLessThan(TOLERANCE);
-    // Playwright screenshots omit the OS cursor. Mark the coordinate from the
-    // actual right-click so the committed capture proves the measured menu
-    // placement instead of merely showing an open menu.
-    await page.evaluate(({ x, y }) => {
+    // Playwright screenshots omit the OS cursor. This Chromium control uses
+    // the same fixed-coordinate conversion as the menu: raw viewport coords
+    // would be zoomed a second time and make the evidence misleading.
+    await page.evaluate(({ x, y, zoom }) => {
       const marker = document.createElement("div");
       marker.dataset.testid = "context-menu-invoking-cursor";
       marker.setAttribute("aria-label", "Invoking cursor");
       marker.textContent = "⊕";
       Object.assign(marker.style, {
         position: "fixed",
-        left: `${x}px`,
-        top: `${y}px`,
+        left: `${x / zoom}px`,
+        top: `${y / zoom}px`,
         transform: "translate(-50%, -50%)",
         zIndex: "10000",
         color: "#e11d48",
@@ -82,8 +82,24 @@ test.describe("Overlay positioning under zoom", () => {
         textShadow: "0 0 3px white, 0 0 3px white",
         pointerEvents: "none",
       });
+      const label = document.createElement("span");
+      label.textContent = `${Math.round(zoom * 100)}% zoom · right-click`;
+      Object.assign(label.style, {
+        position: "absolute",
+        left: "18px",
+        top: "-20px",
+        whiteSpace: "nowrap",
+        color: "#9f1239",
+        font: "700 12px/1 system-ui",
+        textShadow: "0 0 3px white, 0 0 3px white",
+      });
+      marker.append(label);
       document.body.append(marker);
-    }, { x: clickX, y: clickY });
+    }, { x: clickX, y: clickY, zoom });
+    const marker = page.locator('[data-testid="context-menu-invoking-cursor"]');
+    const markerBox = (await marker.boundingBox())!;
+    expect(Math.abs(markerBox.x + markerBox.width / 2 - clickX)).toBeLessThan(3);
+    expect(Math.abs(markerBox.y + markerBox.height / 2 - clickY)).toBeLessThan(3);
     await page.screenshot({ path: "evidence/ac-1-context-menu-at-cursor.png" });
   });
 

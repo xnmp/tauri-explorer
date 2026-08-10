@@ -128,6 +128,13 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     );
     assert_eq!(stream_walk_count_for_test(overlap_parent.path()), 1);
     assert_eq!(stream_walk_count_for_test(&overlap_child), 1);
+    let parent_reuse_id = start_search(&app_handle, overlap_parent.path(), "before-overlap");
+    assert!(wait_for_done(&receiver, parent_reuse_id).contains(&"before-overlap.txt".to_string()));
+    assert_eq!(
+        stream_walk_count_for_test(overlap_parent.path()),
+        1,
+        "establishing child coverage must not evict the unchanged parent listing"
+    );
 
     tauri::async_runtime::block_on(unwatch_directory(overlap_parent_path))
         .expect("remove overlapping parent watch");

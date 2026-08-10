@@ -50,6 +50,11 @@ test("light-themed update notice uses dialog chrome and can be dismissed", async
   await expect(viewRelease).toHaveClass(/btn.*primary/);
   await expect(viewRelease).toHaveCSS("background-color", "rgb(0, 102, 204)");
   await page.screenshot({ path: "evidence/ac-1-themed-update-notice-light.png" });
+  const checkedAt = await page.evaluate(() => localStorage.getItem("updateCheck.lastCheckedAt"));
+  expect(checkedAt).not.toBeNull();
   await notice.getByRole("button", { name: "Dismiss" }).click();
   await expect(notice).not.toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("updateCheck.lastCheckedAt")))
+    .toBe(checkedAt);
 });

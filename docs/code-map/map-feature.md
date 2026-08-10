@@ -203,12 +203,12 @@ backend for E2E/browser).
 ## Quick Open (Ctrl+P fuzzy file finder)
 
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
-- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous (#600)
+- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous, while the merged rendered result set stays bounded (#600, #651)
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
-- `src-tauri/src/search.rs` — nucleo fuzzy engine, streaming emits
-- FLOW: query → local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
+- `src-tauri/src/search.rs`, `search_cache.rs` — nucleo fuzzy engine, streaming emits, and a bounded short-lived cache of completed recursive listings (#651)
+- FLOW: query → bounded local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Watcher changes invalidate cached roots; cancelled cold walks are not published.
 
 ## Content search (grep, Ctrl+Shift+F)
 

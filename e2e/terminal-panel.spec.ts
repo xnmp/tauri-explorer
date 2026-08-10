@@ -104,13 +104,17 @@ test.describe("Terminal panel", () => {
 
     // Ctrl+P is one of the explicit core-navigation exceptions.
     await page.keyboard.press("Control+p");
-    await expect(page.locator(".quick-open-dialog input.search-input")).toBeVisible();
+    const quickOpenInput = page.locator(".quick-open-dialog input.search-input");
+    await expect(quickOpenInput).toBeVisible();
     await page.keyboard.press("Escape");
+    await expect(quickOpenInput).toBeHidden();
 
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Control+Shift+p");
-    await expect(page.locator(".command-palette-dialog input.search-input")).toBeVisible();
+    const commandPaletteInput = page.locator(".command-palette-dialog input.search-input");
+    await expect(commandPaletteInput).toBeVisible();
     await page.keyboard.press("Escape");
+    await expect(commandPaletteInput).toBeHidden();
 
     // Ctrl+PageUp switches to the previous tab while terminal focus is active.
     await panel.locator("textarea.xterm-helper-textarea").focus();

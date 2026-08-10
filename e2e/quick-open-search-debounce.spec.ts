@@ -77,7 +77,12 @@ test.describe("Quick Open recursive search debounce (#600)", () => {
     const searchInput = quickOpen.locator(".search-input");
     await expect(searchInput).toBeVisible();
 
-    await searchInput.pressSequentially("components", { delay: 80 });
+    // Keep the input update atomic here. A saturated WebKit runner can pause
+    // longer than the 150 ms debounce between Playwright's synthetic
+    // keystrokes, making intermediate searches correct rather than a product
+    // regression. The domain test owns exact clock/debounce coverage; this E2E
+    // case owns the final recursive result after the trailing pause.
+    await searchInput.fill("components");
 
     await expect
       .poll(

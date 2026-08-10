@@ -109,6 +109,13 @@ script can remain invisible to the app even when later injected scripts read
 the mutation back. Publish hook readiness and acknowledge each operation with a
 unique DOM token before polling its result; repeatedly dispatching an operation
 while waiting can queue duplicate real backend work that outlives the poll.
+Multi-step WebKit interaction tests must also wait for an opened modal to become
+hidden after Escape before focusing the next surface; otherwise the following
+shortcut can correctly be rejected while `hasModalOpen` is still true. Keep
+clock-exact debounce coverage in fake-timer domain tests: an E2E runner may stall
+between synthetic keystrokes for longer than the debounce and legitimately
+start an intermediate query, so contract-level final-query tests should update
+the input atomically.
 Real-watcher timing tests must also wait for the backend watch and frontend
 listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A

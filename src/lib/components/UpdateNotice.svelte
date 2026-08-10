@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
+  import "./modal.css";
   import {
     checkForUpdate,
     markUpdateChecked,
@@ -11,6 +12,7 @@
     type UpdateInfo,
   } from "$lib/api/update";
   import { openExternalUrl } from "$lib/api/crash";
+  import "./modal.css";
 
   /** Delay so the check never competes with startup work. */
   const STARTUP_DELAY_MS = 5000;
@@ -38,11 +40,11 @@
 </script>
 
 {#if update}
-  <div class="update-notice" role="status" data-testid="update-notice">
+  <div class="update-notice modal-card" role="status" data-testid="update-notice">
     <span>Tauri Explorer {update.version} is available.</span>
-    <div class="update-actions">
-      <button class="update-view-btn" onclick={viewRelease}>View release</button>
-      <button onclick={() => (update = null)}>Dismiss</button>
+    <div class="update-actions dialog-actions">
+      <button type="button" class="btn primary" onclick={viewRelease}>View release</button>
+      <button type="button" class="btn secondary" onclick={() => (update = null)}>Dismiss</button>
     </div>
   </div>
 {/if}
@@ -55,35 +57,14 @@
     z-index: 1000;
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 8px 14px;
-    border-radius: 8px;
-    background: var(--background-card, #fff);
-    border: 1px solid var(--border-color, #ddd);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-    font-size: 13px;
-    color: var(--text-primary, #222);
+    gap: var(--spacing-lg);
+    color: var(--text-primary);
   }
 
   .update-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--spacing-sm);
     flex-shrink: 0;
-  }
-
-  .update-actions button {
-    padding: 4px 10px;
-    border-radius: 5px;
-    border: 1px solid var(--border-color, #ccc);
-    background: var(--background-secondary, #f5f5f5);
-    color: inherit;
-    font-size: 12px;
-    cursor: pointer;
-  }
-
-  .update-view-btn {
-    background: var(--accent-color, #0078d4);
-    border-color: var(--accent-color, #0078d4);
-    color: #fff;
+    margin-top: 0;
   }
 </style>

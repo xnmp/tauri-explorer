@@ -31,11 +31,18 @@ watch separate from pane, thumbnail, and Miller-column refresh watches so many
 visible child folders do not create overlapping recursive watcher trees. Remove
 the cache watch with the final ordinary watch reference.
 
-Separate Quick Open search roots can still overlap, such as `/repo` and
-`/repo/src` in two panes. A single notify watcher may share the underlying
-descendant watches between those recursive registrations; unwatching either
-root can therefore remove coverage that the other registration still needs.
-Treat overlapping registrations as a coverage group: invalidate every affected
-cache epoch before the transition, tear down the group, and re-establish every
-root whose ordinary pane watch remains active. A root is cache-eligible again
-only after its recursive registration has been restored successfully.
+Recursive cache roots themselves can overlap when different panes search a
+parent and its child. A shared notify watcher cannot treat those registrations
+as independent on Linux: unwatching the parent can remove descendant inotify
+watches that the bookkeeping still attributes to the child. Rebuild every
+surviving recursive registration after one is removed, and invalidate each
+survivor's publication revision across that coverage transition. If any
+registration cannot be restored, remove its cache eligibility and walk fresh.
+When coverage is later established successfully, advance the root's revision
+before marking it eligible again; otherwise a walk that began in the uncovered
+gap can publish after the watcher returns. Coverage changes must use an
+exact-root epoch operation rather than filesystem-change invalidation, which is
+intentionally ancestor/descendant-aware and would evict unchanged overlapping
+listings. Exact-root epochs and ordinary loads must share the same bounded
+revision allocator; otherwise first-time coverage transitions bypass the root
+limit before the later load can enforce it.

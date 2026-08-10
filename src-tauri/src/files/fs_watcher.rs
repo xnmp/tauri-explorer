@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 use super::dir_listing::invalidate_dir_cache_sync;
 use crate::error::AppError;
-use crate::search::invalidate_search_cache_for_change;
+use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_root};
 
 /// Trailing debounce window for `directory-changed` events.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -102,9 +102,6 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
     let Some(search_watcher) = watcher.search_watcher.as_mut() else {
         return false;
     };
-    // A newly established coverage epoch must not inherit a listing or an
-    // in-flight publication from a prior failed/removed registration.
-    invalidate_search_cache_for_change(path);
     if let Err(error) = search_watcher.watch(path, RecursiveMode::Recursive) {
         log::warn!(
             "Failed to establish recursive Quick Open cache watch for {}: {}",
@@ -113,83 +110,12 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
         );
         return false;
     }
+    // Coverage may be returning after a failed rebuild. Advance the epoch
+    // before advertising it so a walk that started in the uncovered gap
+    // cannot publish into the newly covered cache.
+    invalidate_search_cache_root(path);
     watcher.search_watched.insert(path_string);
     true
-}
-
-fn remove_search_cache_watch(watcher: &mut FsWatcher, removed_path: &Path) {
-    let removed = removed_path.to_string_lossy().to_string();
-    if !watcher.search_watched.contains(&removed) {
-        return;
-    }
-
-    // notify's recursive Linux backend shares descendant OS registrations.
-    // Unwatching either side of overlapping roots can therefore remove
-    // coverage owned by the other registration. Tear down the whole overlap
-    // group and rebuild every root that still has an ordinary pane watch.
-    let mut overlap_group = HashSet::from([removed.clone()]);
-    loop {
-        let connected: Vec<String> = watcher
-            .search_watched
-            .iter()
-            .filter(|candidate| {
-                !overlap_group.contains(*candidate)
-                    && overlap_group.iter().any(|member| {
-                        let candidate = Path::new(candidate);
-                        let member = Path::new(member);
-                        candidate.starts_with(member) || member.starts_with(candidate)
-                    })
-            })
-            .cloned()
-            .collect();
-        if connected.is_empty() {
-            break;
-        }
-        overlap_group.extend(connected);
-    }
-    let mut overlapping: Vec<String> = overlap_group.into_iter().collect();
-    overlapping.sort_by_key(|path| Path::new(path).components().count());
-
-    // Advance every affected cache epoch before changing OS coverage. Any
-    // concurrent old walk is then unable to publish across the transition.
-    for path in &overlapping {
-        invalidate_search_cache_for_change(Path::new(path));
-    }
-
-    let remaining: Vec<String> = overlapping
-        .iter()
-        .filter(|path| path.as_str() != removed && watcher.watched.contains_key(path.as_str()))
-        .cloned()
-        .collect();
-
-    for path in &overlapping {
-        watcher.search_watched.remove(path);
-    }
-
-    let Some(search_watcher) = watcher.search_watcher.as_mut() else {
-        return;
-    };
-    for path in &overlapping {
-        if let Err(error) = search_watcher.unwatch(Path::new(path)) {
-            log::debug!(
-                "Recursive Quick Open cache watch was already removed for {}: {}",
-                path,
-                error
-            );
-        }
-    }
-    for path in remaining {
-        match search_watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
-            Ok(()) => {
-                watcher.search_watched.insert(path);
-            }
-            Err(error) => log::warn!(
-                "Failed to restore recursive Quick Open cache watch for {}: {}",
-                path,
-                error
-            ),
-        }
-    }
 }
 
 pub(crate) fn is_search_cache_watched(path: &Path) -> bool {
@@ -219,6 +145,68 @@ pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
     let path_string = path.to_string_lossy();
     invalidate_dir_cache_sync(&path_string);
     invalidate_search_cache_for_change(path);
+}
+
+fn new_search_cache_watcher() -> Result<RecommendedWatcher, notify::Error> {
+    notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
+        Ok(event)
+            if matches!(
+                event.kind,
+                EventKind::Create(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            ) =>
+        {
+            for path in event.paths {
+                invalidate_search_cache_for_change(&path);
+            }
+        }
+        Ok(_) => {}
+        Err(error) => log::warn!("Quick Open cache watcher error: {}", error),
+    })
+}
+
+/// Recreate all recursive registrations after one root is removed. On Linux,
+/// notify's inotify backend can remove descendant OS watches when overlapping
+/// parent and child registrations share a watcher. Rebuilding gives every
+/// surviving root fresh coverage and a fresh cache publication epoch.
+fn rebuild_search_cache_watches(watcher: &mut FsWatcher) {
+    let roots: Vec<String> = watcher.search_watched.iter().cloned().collect();
+    let mut replacement = match new_search_cache_watcher() {
+        Ok(replacement) => replacement,
+        Err(error) => {
+            log::warn!(
+                "Failed to rebuild recursive Quick Open cache watcher (cache disabled): {}",
+                error
+            );
+            watcher.search_watched.clear();
+            watcher.search_watcher = None;
+            for root in roots {
+                invalidate_search_cache_root(Path::new(&root));
+            }
+            return;
+        }
+    };
+
+    let mut failed = Vec::new();
+    for root in &roots {
+        if let Err(error) = replacement.watch(Path::new(root), RecursiveMode::Recursive) {
+            log::warn!(
+                "Failed to restore recursive Quick Open cache watch for {}: {}",
+                root,
+                error
+            );
+            failed.push(root.clone());
+        }
+    }
+    for root in &failed {
+        watcher.search_watched.remove(root);
+    }
+    watcher.search_watcher = Some(replacement);
+
+    for root in roots {
+        invalidate_search_cache_root(Path::new(&root));
+    }
 }
 
 /// Initialize the filesystem watcher. Call once during app setup.
@@ -284,32 +272,16 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
     // Pane refreshes only need direct children, but Quick Open caches a full
     // recursive listing. Keep a separate recursive watcher so cache coverage
     // does not turn every thumbnail/column watch into an overlapping tree.
-    let search_watcher =
-        match notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
-            Ok(event)
-                if matches!(
-                    event.kind,
-                    EventKind::Create(_)
-                        | EventKind::Remove(_)
-                        | EventKind::Modify(notify::event::ModifyKind::Name(_))
-                ) =>
-            {
-                for path in event.paths {
-                    invalidate_search_cache_for_change(&path);
-                }
-            }
-            Ok(_) => {}
-            Err(error) => log::warn!("Quick Open cache watcher error: {}", error),
-        }) {
-            Ok(watcher) => Some(watcher),
-            Err(error) => {
-                log::warn!(
-                    "Failed to create recursive Quick Open cache watcher (cache disabled): {}",
-                    error
-                );
-                None
-            }
-        };
+    let search_watcher = match new_search_cache_watcher() {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            log::warn!(
+                "Failed to create recursive Quick Open cache watcher (cache disabled): {}",
+                error
+            );
+            None
+        }
+    };
 
     let fs_watcher = FsWatcher {
         watcher,
@@ -404,11 +376,13 @@ pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
                 w.watched.remove(&path);
                 let pb = PathBuf::from(&path);
                 let _ = w.watcher.unwatch(&pb);
-                remove_search_cache_watch(w, &pb);
+                if w.search_watched.remove(&path) {
+                    rebuild_search_cache_watches(w);
+                }
                 // Ending the final watch also ends the cache epoch. Files can
                 // change unobserved before this root is watched again, and an
                 // in-flight walk from the old epoch must not publish afterward.
-                invalidate_search_cache_for_change(&pb);
+                invalidate_search_cache_root(&pb);
                 log::debug!("Stopped watching: {}", path);
             } else {
                 log::debug!("Decremented watch refcount for {}: {}", path, count);

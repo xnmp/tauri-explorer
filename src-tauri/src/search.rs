@@ -96,6 +96,10 @@ pub(crate) fn invalidate_search_cache_for_change(changed_path: &Path) {
     SEARCH_ENTRY_CACHE.invalidate_for_change(changed_path);
 }
 
+pub(crate) fn invalidate_search_cache_root(root: &Path) {
+    SEARCH_ENTRY_CACHE.invalidate_root(root);
+}
+
 // ─── WSL delegation (#414) ───────────────────────────────────────────────────
 // Walking a `\\wsl.localhost\…` tree from Windows crosses the 9P network
 // boundary once per directory — tens of thousands of round-trips, so the

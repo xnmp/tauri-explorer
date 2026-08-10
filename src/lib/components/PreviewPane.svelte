@@ -722,6 +722,7 @@
           previewImageUrl = result.data;
         } catch (error) {
           if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
+          if (!isCurrentPreview(file)) return;
           console.warn("[preview] video frame decode failed", { path: file.path, error });
           logFrontendDiagnostic("preview video frame decode failed", {
             path: file.path,

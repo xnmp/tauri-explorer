@@ -30,3 +30,11 @@ coverage cannot be installed, walk fresh instead of caching. Keep the recursive
 watch separate from pane, thumbnail, and Miller-column refresh watches so many
 visible child folders do not create overlapping recursive watcher trees. Remove
 the cache watch with the final ordinary watch reference.
+
+Recursive cache roots themselves can overlap when different panes search a
+parent and its child. A shared notify watcher cannot treat those registrations
+as independent on Linux: unwatching the parent can remove descendant inotify
+watches that the bookkeeping still attributes to the child. Rebuild every
+surviving recursive registration after one is removed, and invalidate each
+survivor's publication revision across that coverage transition. If any
+registration cannot be restored, remove its cache eligibility and walk fresh.

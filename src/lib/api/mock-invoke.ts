@@ -343,6 +343,19 @@ const mockFiles: Record<string, FileEntry[]> = {
   ],
 };
 
+if (typeof window !== "undefined") {
+  (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision = () => {
+    const videos = mockFiles["/home/user/Videos"];
+    const recording = videos.find((entry) => entry.path.endsWith("recording.mp4"));
+    if (!recording) return;
+    mockFiles["/home/user/Videos"] = videos.map((entry) =>
+      entry === recording
+        ? { ...entry, modified: new Date(Date.parse(entry.modified) + 1000).toISOString(), size: entry.size + 1 }
+        : entry,
+    );
+  };
+}
+
 // Synthetic large directory for scroll/render profiling (browser-only, mock).
 // Reached at `/perf/huge` (default 5000 entries) or `/perf/huge-N`. Deterministic
 // mix: ~6% directories, ~12% images (exercise Tiles thumbnails), rest files with

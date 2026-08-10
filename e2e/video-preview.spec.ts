@@ -66,3 +66,44 @@ test("a late frame from a previously selected video cannot replace the current f
   await page.waitForTimeout(500);
   await expect(frame).toHaveAttribute("alt", "tutorial.mkv");
 });
+
+test("a late frame from a previous revision keeps the new revision loading", async ({ page }) => {
+  await page.addInitScript(() => {
+    let recordingRequest = 0;
+    const frame = (color: string) =>
+      `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><rect width="80" height="60" fill="${color}"/></svg>`)}`;
+    (window as unknown as { __mockVideoThumbnail?: (path: string) => Promise<string> | string }).__mockVideoThumbnail =
+      (path) => {
+        if (!path.endsWith("recording.mp4")) return frame("gray");
+        recordingRequest += 1;
+        const color = recordingRequest === 1 ? "red" : "blue";
+        const delay = recordingRequest === 1 ? 350 : 700;
+        return new Promise((resolve) => window.setTimeout(() => resolve(frame(color)), delay));
+      };
+  });
+  const previewPane = await openVideosWithPreview(page);
+
+  await page.locator(".entry-item", { hasText: "recording.mp4" }).first().click();
+  await page.evaluate(() => {
+    (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision?.();
+  });
+  await page.keyboard.press("F5");
+
+  // The old red request has completed, but the refreshed revision is still
+  // extracting. It must neither replace the pane nor clear the new spinner.
+  await page.waitForTimeout(450);
+  await expect(previewPane.locator(".preview-loading")).toBeVisible();
+  await expect(previewPane.locator(".preview-image")).toHaveCount(0);
+
+  const frame = previewPane.locator(".preview-image");
+  await expect(frame).toHaveAttribute("alt", "recording.mp4");
+  const pixel = await frame.evaluate((element) => {
+    const image = element as HTMLImageElement;
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    canvas.getContext("2d")!.drawImage(image, 0, 0);
+    return [...canvas.getContext("2d")!.getImageData(1, 1, 1, 1).data];
+  });
+  expect(pixel).toEqual([0, 0, 255, 255]);
+});

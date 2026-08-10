@@ -48,6 +48,23 @@ impl<T> SearchEntryCache<T> {
         self.state.get_or_init(|| Mutex::new(CacheState::default()))
     }
 
+    fn advance_revision(state: &mut CacheState<T>, root: &Path) -> u64 {
+        if !state.revisions.contains_key(root) && state.revisions.len() >= MAX_TRACKED_ROOTS {
+            let evicted = state
+                .revisions
+                .keys()
+                .find(|path| !state.listings.contains_key(*path))
+                .cloned();
+            if let Some(evicted) = evicted {
+                state.revisions.remove(&evicted);
+            }
+        }
+        let revision = state.next_revision;
+        state.next_revision = state.next_revision.wrapping_add(1).max(1);
+        state.revisions.insert(root.to_path_buf(), revision);
+        revision
+    }
+
     pub(crate) fn completed(&self, root: &Path) -> Option<Arc<Vec<T>>> {
         let mut state = self.state().lock().ok()?;
         state
@@ -67,20 +84,7 @@ impl<T> SearchEntryCache<T> {
             return *revision;
         }
 
-        if state.revisions.len() >= MAX_TRACKED_ROOTS {
-            let evicted = state
-                .revisions
-                .keys()
-                .find(|path| !state.listings.contains_key(*path))
-                .cloned();
-            if let Some(evicted) = evicted {
-                state.revisions.remove(&evicted);
-            }
-        }
-        let revision = state.next_revision;
-        state.next_revision = state.next_revision.wrapping_add(1).max(1);
-        state.revisions.insert(root.to_path_buf(), revision);
-        revision
+        Self::advance_revision(&mut state, root)
     }
 
     pub(crate) fn publish_if_unchanged(
@@ -128,9 +132,7 @@ impl<T> SearchEntryCache<T> {
         let Ok(mut state) = self.state().lock() else {
             return;
         };
-        let revision = state.next_revision;
-        state.next_revision = state.next_revision.wrapping_add(1).max(1);
-        state.revisions.insert(root.to_path_buf(), revision);
+        Self::advance_revision(&mut state, root);
         state.listings.remove(root);
     }
 
@@ -145,9 +147,7 @@ impl<T> SearchEntryCache<T> {
             .cloned()
             .collect();
         for root in affected {
-            let revision = state.next_revision;
-            state.next_revision = state.next_revision.wrapping_add(1).max(1);
-            state.revisions.insert(root.clone(), revision);
+            Self::advance_revision(&mut state, &root);
             state.listings.remove(&root);
         }
         state

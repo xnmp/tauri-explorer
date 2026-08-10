@@ -17,5 +17,9 @@ test.describe("Quick Open in a directory with thousands of files (#651)", () => 
       timeout: 1_000,
     });
     await expect(quickOpen.locator(".result-item")).toHaveCount(20);
+    await page.screenshot({
+      path: "evidence/ac-1-quick-open-large-directory.png",
+      fullPage: true,
+    });
   });
 });

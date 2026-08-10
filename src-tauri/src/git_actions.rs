@@ -19,9 +19,25 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use tauri::ipc::Channel;
 
 use crate::error::AppError;
-use crate::process_ext::NoConsole;
+use crate::process_ext::{output_cancellable, NoConsole};
+use crate::task_registry::TaskRegistry;
+
+static GIT_NETWORK_OPERATIONS: TaskRegistry = TaskRegistry::new();
+const NETWORK_CANCELLED: &str = "git network operation cancelled";
+const REMOTE_DELETE_CANCELLED: &str =
+    "git network operation cancelled; remote branch may already have been deleted";
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitNetworkPhaseEvent {
+    task_id: u64,
+    cancellable: bool,
+}
 
 /// A successful graph mutation's immutable inverse + expected post-state.
 ///
@@ -117,6 +133,181 @@ async fn run_git_async(repo_path: String, args: Vec<String>) -> Result<(), AppEr
     })
     .await
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+fn run_git_network_sync(
+    repo_path: &str,
+    args: &[&str],
+    cancelled: &AtomicBool,
+    program: &str,
+) -> Result<(), AppError> {
+    run_git_network_sync_after_output(
+        repo_path,
+        args,
+        cancelled,
+        program,
+        NETWORK_CANCELLED,
+        || {},
+    )
+}
+
+fn run_git_network_sync_after_output<F>(
+    repo_path: &str,
+    args: &[&str],
+    cancelled: &AtomicBool,
+    program: &str,
+    cancel_message: &'static str,
+    after_output: F,
+) -> Result<(), AppError>
+where
+    F: FnOnce(),
+{
+    let dir = Path::new(repo_path);
+    if !dir.is_dir() {
+        return Err(AppError::NotFound(repo_path.to_string()));
+    }
+    let mut command = Command::new(program);
+    command.no_console().args(args).current_dir(dir);
+    let output = output_cancellable(&mut command, cancelled, cancel_message)?;
+    after_output();
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(AppError::Other(cancel_message.into()));
+    }
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Other(if stderr.is_empty() {
+        format!("git {} failed", args.first().copied().unwrap_or_default())
+    } else {
+        stderr
+    }))
+}
+
+async fn run_git_network_task<T, F>(task_id: u64, work: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
+{
+    let cancelled = GIT_NETWORK_OPERATIONS.start_with_id(task_id);
+    let joined = tokio::task::spawn_blocking(move || work(cancelled))
+        .await
+        .map_err(|error| AppError::Other(format!("git network task join: {error}")));
+    GIT_NETWORK_OPERATIONS.cleanup(task_id);
+    joined?
+}
+
+#[cfg(test)]
+async fn run_git_network_with_program(
+    repo_path: String,
+    args: Vec<String>,
+    task_id: u64,
+    program: String,
+) -> Result<(), AppError> {
+    run_git_network_task(task_id, move |cancelled| {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git_network_sync(&repo_path, &refs, &cancelled, &program)
+    })
+    .await
+}
+
+async fn run_git_network(
+    repo_path: String,
+    args: Vec<String>,
+    task_id: u64,
+    cancel_message: &'static str,
+) -> Result<(), AppError> {
+    run_git_network_task(task_id, move |cancelled| {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git_network_sync_after_output(
+            &repo_path,
+            &refs,
+            &cancelled,
+            "git",
+            cancel_message,
+            || {},
+        )
+    })
+    .await
+}
+
+/// Match `git fetch --all`'s configured-remote eligibility while allowing the
+/// eligible remotes to be fetched in separate atomic transactions (ADR 0006).
+fn fetch_all_eligible_remotes(repo_path: &str) -> Result<Vec<String>, AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let remotes = repo.remotes().map_err(crate::git_common::to_app_err)?;
+    let config = repo.config().map_err(crate::git_common::to_app_err)?;
+    let config_bool = |key: &str| match config.get_bool(key) {
+        Ok(value) => Ok(value),
+        Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(false),
+        Err(error) => Err(crate::git_common::to_app_err(error)),
+    };
+
+    let mut eligible = Vec::with_capacity(remotes.len());
+    for name in remotes.iter() {
+        let name =
+            name.ok_or_else(|| AppError::Other("git remote name is not valid UTF-8".into()))?;
+        let skip_fetch_all = config_bool(&format!("remote.{name}.skipFetchAll"))?;
+        let skip_default_update = config_bool(&format!("remote.{name}.skipDefaultUpdate"))?;
+        if !skip_fetch_all && !skip_default_update {
+            eligible.push(name.to_owned());
+        }
+    }
+    Ok(eligible)
+}
+
+fn fetch_all_remotes_sync_with_hook<F>(
+    repo_path: &str,
+    cancelled: &AtomicBool,
+    mut after_remote: F,
+) -> Result<(), AppError>
+where
+    F: FnMut(&str, &AtomicBool),
+{
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(AppError::Other(NETWORK_CANCELLED.into()));
+    }
+
+    let mut failures = Vec::new();
+    for remote in fetch_all_eligible_remotes(repo_path)? {
+        let result = run_git_network_sync(
+            repo_path,
+            &["fetch", "--prune", "--atomic", &remote],
+            cancelled,
+            "git",
+        );
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other(NETWORK_CANCELLED.into()));
+        }
+        match result {
+            Ok(()) => after_remote(&remote, cancelled),
+            Err(error) => failures.push(format!("{remote}: {error}")),
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other(NETWORK_CANCELLED.into()));
+        }
+    }
+
+    if !failures.is_empty() {
+        return Err(AppError::Other(format!(
+            "git fetch failed for one or more remotes:\n{}",
+            failures.join("\n")
+        )));
+    }
+    Ok(())
+}
+
+async fn run_fetch_all_remotes(repo_path: String, task_id: u64) -> Result<(), AppError> {
+    run_git_network_task(task_id, move |cancelled| {
+        fetch_all_remotes_sync_with_hook(&repo_path, &cancelled, |_, _| {})
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cancel_git_network_operation(task_id: u64) -> Result<(), AppError> {
+    GIT_NETWORK_OPERATIONS.cancel(task_id);
+    Ok(())
 }
 
 /// `run_git_with_env` behind `spawn_blocking`, owning its args/envs.
@@ -331,6 +522,64 @@ async fn run_head_move(
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
 }
 
+fn run_pull_sync_with_hooks<AfterFetch, FastForwardStarted>(
+    repo_path: &str,
+    cancelled: &AtomicBool,
+    after_fetch: AfterFetch,
+    fast_forward_started: FastForwardStarted,
+) -> Result<Option<GitUndoAction>, AppError>
+where
+    AfterFetch: FnOnce(&AtomicBool),
+    FastForwardStarted: FnOnce(&AtomicBool) -> Result<(), AppError>,
+{
+    let (before_oid, branch) = head_snapshot(repo_path)?;
+    run_git_network_sync(repo_path, &["fetch", "--atomic"], cancelled, "git")?;
+    after_fetch(cancelled);
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(AppError::Other(NETWORK_CANCELLED.into()));
+    }
+
+    // Cancellation owns only the unbounded network phase. Once this boundary
+    // is crossed, let Git's local fast-forward finish so HEAD/index/worktree
+    // are never exposed to process-tree termination (ADR 0006).
+    fast_forward_started(cancelled)?;
+    run_git(repo_path, &["merge", "--ff-only", "@{upstream}"])?;
+
+    let (after_oid, after_branch) = head_snapshot(repo_path)?;
+    if branch != after_branch {
+        return Err(AppError::Other(
+            "git operation unexpectedly changed the checked-out branch".into(),
+        ));
+    }
+    Ok(
+        (before_oid != after_oid).then_some(GitUndoAction::HeadMove {
+            operation: HeadMoveOperation::Pull,
+            branch,
+            before_oid,
+            after_oid,
+        }),
+    )
+}
+
+async fn run_network_pull<FastForwardStarted>(
+    repo_path: String,
+    task_id: u64,
+    fast_forward_started: FastForwardStarted,
+) -> Result<Option<GitUndoAction>, AppError>
+where
+    FastForwardStarted: FnOnce() -> Result<(), AppError> + Send + 'static,
+{
+    run_git_network_task(task_id, move |cancelled| {
+        run_pull_sync_with_hooks(
+            &repo_path,
+            &cancelled,
+            |_| {},
+            move |_| fast_forward_started(),
+        )
+    })
+    .await
+}
+
 /// Checkout a branch (attached HEAD) or a commit OID (detached HEAD).
 #[tauri::command]
 pub async fn git_checkout(repo_path: String, target: String) -> Result<(), AppError> {
@@ -469,27 +718,35 @@ pub async fn git_revert_abort(repo_path: String) -> Result<(), AppError> {
     run_git_async(repo_path, vec!["revert".into(), "--abort".into()]).await
 }
 
-/// Fetch from every remote, pruning deleted remote branches (#370). Uses the
-/// CLI so the user's credential setup (helpers, ssh agent) applies — libgit2
-/// has no access to those.
+/// Fetch from every remote, pruning deleted remote branches (#370). Each remote
+/// is fetched atomically because Git rejects `--all --atomic` for repositories
+/// with multiple remotes. Uses the CLI so the user's credential setup (helpers,
+/// ssh agent) applies — libgit2 has no access to those.
 #[tauri::command]
-pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
-    run_git_async(
-        repo_path,
-        vec!["fetch".into(), "--all".into(), "--prune".into()],
-    )
-    .await
+pub async fn git_fetch(repo_path: String, task_id: u64) -> Result<(), AppError> {
+    run_fetch_all_remotes(repo_path, task_id).await
 }
 
 /// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged
 /// branch errors (surfaced verbatim) instead of creating a surprise merge.
 #[tauri::command]
-pub async fn git_pull(repo_path: String) -> Result<Option<GitUndoAction>, AppError> {
-    run_head_move(
-        repo_path,
-        HeadMoveOperation::Pull,
-        vec!["pull".into(), "--ff-only".into()],
-    )
+pub async fn git_pull(
+    repo_path: String,
+    task_id: u64,
+    on_phase: Channel<GitNetworkPhaseEvent>,
+) -> Result<Option<GitUndoAction>, AppError> {
+    run_network_pull(repo_path, task_id, move || {
+        on_phase
+            .send(GitNetworkPhaseEvent {
+                task_id,
+                cancellable: false,
+            })
+            .map_err(|error| {
+                AppError::Other(format!(
+                    "pull stopped before fast-forward because its UI phase could not be delivered: {error}"
+                ))
+            })
+    })
     .await
 }
 
@@ -687,12 +944,15 @@ pub async fn git_delete_remote_branch(
     repo_path: String,
     remote: String,
     name: String,
+    task_id: u64,
 ) -> Result<(), AppError> {
     validate_arg("remote", &remote)?;
     validate_arg("branch name", &name)?;
-    run_git_async(
+    run_git_network(
         repo_path,
         vec!["push".into(), remote, "--delete".into(), name],
+        task_id,
+        REMOTE_DELETE_CANCELLED,
     )
     .await
 }
@@ -838,6 +1098,8 @@ pub async fn git_sync_local_branches(
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
     use tempfile::TempDir;
 
     /// Run a git command in a test repo, asserting success. Sets identity via
@@ -898,6 +1160,648 @@ mod tests {
 
     fn repo_path(dir: &TempDir) -> String {
         dir.path().to_str().unwrap().to_string()
+    }
+
+    fn assert_repo_consistent(dir: &Path) {
+        git(dir, &["fsck", "--no-dangling"]);
+        assert!(git_out(dir, &["status", "--porcelain"]).is_empty());
+
+        fn collect_locks(path: &Path, locks: &mut Vec<String>) {
+            let Ok(entries) = fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let child = entry.path();
+                if child.is_dir() {
+                    collect_locks(&child, locks);
+                } else if child
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".lock"))
+                {
+                    locks.push(child.display().to_string());
+                }
+            }
+        }
+
+        let mut locks = Vec::new();
+        collect_locks(&dir.join(".git"), &mut locks);
+        assert!(locks.is_empty(), "git left lock files behind: {locks:?}");
+    }
+
+    fn advance_bare_remote(dir: &TempDir) -> (TempDir, TempDir, String) {
+        let remote = TempDir::new().unwrap();
+        git(remote.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "-u", "origin", "main"]);
+        git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let other = TempDir::new().unwrap();
+        git(
+            other.path(),
+            &["clone", remote.path().to_str().unwrap(), "."],
+        );
+        git(other.path(), &["config", "user.name", "Test"]);
+        git(other.path(), &["config", "user.email", "t@x"]);
+        write(other.path(), "remote.txt", "remote\n");
+        git(other.path(), &["add", "."]);
+        git(other.path(), &["commit", "-m", "remote advance"]);
+        git(other.path(), &["push", "origin", "main"]);
+        let remote_tip = git_out(other.path(), &["rev-parse", "HEAD"]);
+        (remote, other, remote_tip)
+    }
+
+    #[test]
+    fn network_operation_cancellation_terminates_registered_child() {
+        let dir = TempDir::new().unwrap();
+        let task_id = 528_001;
+        #[cfg(not(windows))]
+        let (program, args) = ("sh".to_string(), vec!["-c".into(), "sleep 30".into()]);
+        #[cfg(windows)]
+        let (program, args) = (
+            "powershell.exe".to_string(),
+            vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                "Start-Sleep -Seconds 30".into(),
+            ],
+        );
+
+        let started = Instant::now();
+        let error = tokio_test_block(async {
+            let operation = tokio::spawn(run_git_network_with_program(
+                dir.path().to_string_lossy().into_owned(),
+                args,
+                task_id,
+                program,
+            ));
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancel_git_network_operation(task_id).await.unwrap();
+            operation.await.unwrap()
+        })
+        .expect_err("cancelling the registered operation must reject its command");
+
+        assert!(error
+            .to_string()
+            .contains("git network operation cancelled"));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "cancel did not terminate the network child promptly"
+        );
+    }
+
+    #[test]
+    fn network_operations_fetch_pull_and_push_observe_pre_cancel() {
+        let (dir, _commits) = linear_repo();
+        let repo = repo_path(&dir);
+
+        tokio_test_block(async {
+            cancel_git_network_operation(528_010).await.unwrap();
+            let fetch = git_fetch(repo.clone(), 528_010).await.unwrap_err();
+            assert!(fetch
+                .to_string()
+                .contains("git network operation cancelled"));
+
+            cancel_git_network_operation(528_011).await.unwrap();
+            let pull = run_network_pull(repo.clone(), 528_011, || Ok(()))
+                .await
+                .unwrap_err();
+            assert!(pull.to_string().contains("git network operation cancelled"));
+
+            cancel_git_network_operation(528_012).await.unwrap();
+            let push = git_delete_remote_branch(repo, "origin".into(), "topic".into(), 528_012)
+                .await
+                .unwrap_err();
+            assert!(push.to_string().contains("git network operation cancelled"));
+        });
+    }
+
+    #[test]
+    fn network_operation_fetch_cancel_after_ref_commit_preserves_repository() {
+        let (dir, _commits) = linear_repo();
+        let (_remote, _other, remote_tip) = advance_bare_remote(&dir);
+        let repo = repo_path(&dir);
+        let before_head = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        let cancelled = AtomicBool::new(false);
+
+        let error = run_git_network_sync_after_output(
+            &repo,
+            &["fetch", "--atomic", "origin"],
+            &cancelled,
+            "git",
+            NETWORK_CANCELLED,
+            || cancelled.store(true, Ordering::Relaxed),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains(NETWORK_CANCELLED));
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            remote_tip
+        );
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before_head);
+        assert_repo_consistent(dir.path());
+        git(dir.path(), &["fetch", "--atomic", "origin"]);
+    }
+
+    #[test]
+    fn network_operation_fetches_multiple_remotes_atomically_and_cancels_between_them() {
+        let (dir, _commits) = linear_repo();
+        let repo = repo_path(&dir);
+        let mut remotes = Vec::new();
+        let mut clones = Vec::new();
+        let mut first_tips = std::collections::HashMap::new();
+
+        for name in ["origin", "backup"] {
+            let remote = TempDir::new().unwrap();
+            git(remote.path(), &["init", "--bare"]);
+            git(
+                dir.path(),
+                &["remote", "add", name, remote.path().to_str().unwrap()],
+            );
+            git(dir.path(), &["push", name, "main"]);
+            git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+            let clone = TempDir::new().unwrap();
+            git(
+                clone.path(),
+                &["clone", remote.path().to_str().unwrap(), "."],
+            );
+            git(clone.path(), &["config", "user.name", "Test"]);
+            git(clone.path(), &["config", "user.email", "t@x"]);
+            write(
+                clone.path(),
+                &format!("{name}-one.txt"),
+                &format!("{name} one\n"),
+            );
+            git(clone.path(), &["add", "."]);
+            git(clone.path(), &["commit", "-m", &format!("{name} one")]);
+            git(clone.path(), &["push", "origin", "main"]);
+            first_tips.insert(
+                name.to_string(),
+                git_out(clone.path(), &["rev-parse", "HEAD"]),
+            );
+            remotes.push(remote);
+            clones.push((name.to_string(), clone));
+        }
+
+        let cancelled = AtomicBool::new(false);
+        let mut completed = Vec::new();
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |name, _| {
+            completed.push(name.to_string());
+        })
+        .unwrap();
+        assert_eq!(completed.len(), 2);
+        for name in ["origin", "backup"] {
+            assert_eq!(
+                git_out(
+                    dir.path(),
+                    &["rev-parse", &format!("refs/remotes/{name}/main")],
+                ),
+                first_tips[name]
+            );
+        }
+
+        let mut second_tips = std::collections::HashMap::new();
+        for (name, clone) in &clones {
+            write(
+                clone.path(),
+                &format!("{name}-two.txt"),
+                &format!("{name} two\n"),
+            );
+            git(clone.path(), &["add", "."]);
+            git(clone.path(), &["commit", "-m", &format!("{name} two")]);
+            git(clone.path(), &["push", "origin", "main"]);
+            second_tips.insert(name.clone(), git_out(clone.path(), &["rev-parse", "HEAD"]));
+        }
+
+        completed.clear();
+        let error = fetch_all_remotes_sync_with_hook(&repo, &cancelled, |name, flag| {
+            completed.push(name.to_string());
+            if completed.len() == 1 {
+                flag.store(true, Ordering::Relaxed);
+            }
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains(NETWORK_CANCELLED));
+        assert_eq!(completed.len(), 1);
+
+        for name in ["origin", "backup"] {
+            let actual = git_out(
+                dir.path(),
+                &["rev-parse", &format!("refs/remotes/{name}/main")],
+            );
+            let expected = if completed[0] == name {
+                &second_tips[name]
+            } else {
+                &first_tips[name]
+            };
+            assert_eq!(&actual, expected);
+        }
+        assert_repo_consistent(dir.path());
+
+        cancelled.store(false, Ordering::Relaxed);
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        for name in ["origin", "backup"] {
+            assert_eq!(
+                git_out(
+                    dir.path(),
+                    &["rev-parse", &format!("refs/remotes/{name}/main")],
+                ),
+                second_tips[name]
+            );
+        }
+        assert_repo_consistent(dir.path());
+
+        let mut third_tips = std::collections::HashMap::new();
+        for (name, clone) in &clones {
+            write(
+                clone.path(),
+                &format!("{name}-three.txt"),
+                &format!("{name} three\n"),
+            );
+            git(clone.path(), &["add", "."]);
+            git(clone.path(), &["commit", "-m", &format!("{name} three")]);
+            git(clone.path(), &["push", "origin", "main"]);
+            third_tips.insert(name.clone(), git_out(clone.path(), &["rev-parse", "HEAD"]));
+        }
+
+        git(
+            dir.path(),
+            &["config", "remote.backup.skipFetchAll", "true"],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            third_tips["origin"]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/backup/main"]),
+            second_tips["backup"]
+        );
+
+        git(
+            dir.path(),
+            &["config", "--unset", "remote.backup.skipFetchAll"],
+        );
+        let origin_clone = clones
+            .iter()
+            .find_map(|(name, clone)| (name == "origin").then_some(clone))
+            .unwrap();
+        write(origin_clone.path(), "origin-four.txt", "origin four\n");
+        git(origin_clone.path(), &["add", "."]);
+        git(origin_clone.path(), &["commit", "-m", "origin four"]);
+        git(origin_clone.path(), &["push", "origin", "main"]);
+        let fourth_origin_tip = git_out(origin_clone.path(), &["rev-parse", "HEAD"]);
+        git(
+            dir.path(),
+            &["config", "remote.origin.skipDefaultUpdate", "true"],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            third_tips["origin"]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/backup/main"]),
+            third_tips["backup"]
+        );
+        assert_repo_consistent(dir.path());
+
+        git(
+            dir.path(),
+            &["config", "--unset", "remote.origin.skipDefaultUpdate"],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            fourth_origin_tip
+        );
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
+    fn network_operation_multi_ref_fetch_rejection_is_atomic() {
+        let (dir, commits) = linear_repo();
+        let repo = repo_path(&dir);
+        git(dir.path(), &["branch", "topic"]);
+
+        let remote = TempDir::new().unwrap();
+        git(remote.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "origin", "main", "topic"]);
+        git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let cancelled = AtomicBool::new(false);
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+
+        let actor = TempDir::new().unwrap();
+        git(
+            actor.path(),
+            &["clone", remote.path().to_str().unwrap(), "."],
+        );
+        git(actor.path(), &["config", "user.name", "Test"]);
+        git(actor.path(), &["config", "user.email", "t@x"]);
+        write(actor.path(), "remote-main.txt", "remote main\n");
+        git(actor.path(), &["add", "."]);
+        git(actor.path(), &["commit", "-m", "advance main"]);
+        git(actor.path(), &["push", "origin", "main"]);
+        let advanced_main = git_out(actor.path(), &["rev-parse", "HEAD"]);
+        git(
+            remote.path(),
+            &["update-ref", "refs/heads/topic", &commits[0]],
+        );
+        git(
+            dir.path(),
+            &[
+                "config",
+                "--replace-all",
+                "remote.origin.fetch",
+                "refs/heads/*:refs/remotes/origin/*",
+            ],
+        );
+
+        let error = fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap_err();
+        assert!(error.to_string().contains("non-fast-forward"));
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            commits[1]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            commits[1]
+        );
+        assert_repo_consistent(dir.path());
+
+        git(
+            dir.path(),
+            &[
+                "config",
+                "--replace-all",
+                "remote.origin.fetch",
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            advanced_main
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            commits[0]
+        );
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
+    fn network_operation_multi_remote_error_does_not_skip_later_remotes() {
+        let (dir, commits) = linear_repo();
+        let repo = repo_path(&dir);
+        let missing_remote = dir.path().join("missing-remote");
+        git(
+            dir.path(),
+            &["remote", "add", "broken", missing_remote.to_str().unwrap()],
+        );
+
+        let good_remote = TempDir::new().unwrap();
+        let good_remote_path = good_remote.path().to_string_lossy().into_owned();
+        git(good_remote.path(), &["init", "--bare"]);
+        git(dir.path(), &["remote", "add", "good", &good_remote_path]);
+        git(dir.path(), &["push", "good", "main"]);
+        git(
+            good_remote.path(),
+            &["symbolic-ref", "HEAD", "refs/heads/main"],
+        );
+
+        let actor = TempDir::new().unwrap();
+        git(actor.path(), &["clone", &good_remote_path, "."]);
+        git(actor.path(), &["config", "user.name", "Test"]);
+        git(actor.path(), &["config", "user.email", "t@x"]);
+        write(actor.path(), "healthy.txt", "healthy remote\n");
+        git(actor.path(), &["add", "."]);
+        git(actor.path(), &["commit", "-m", "advance healthy remote"]);
+        git(actor.path(), &["push", "origin", "main"]);
+        let good_tip = git_out(actor.path(), &["rev-parse", "HEAD"]);
+
+        assert_eq!(
+            fetch_all_eligible_remotes(&repo).unwrap(),
+            vec!["broken".to_string(), "good".to_string()]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/good/main"]),
+            commits[1]
+        );
+
+        let cancelled = AtomicBool::new(false);
+        let mut completed = Vec::new();
+        let error = fetch_all_remotes_sync_with_hook(&repo, &cancelled, |name, _| {
+            completed.push(name.to_string());
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("broken"));
+        assert_eq!(completed, vec!["good"]);
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/good/main"]),
+            good_tip
+        );
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
+    fn network_operation_cancels_in_flight_multi_ref_fetch_without_partial_updates() {
+        let (dir, commits) = linear_repo();
+        let repo = repo_path(&dir);
+        git(dir.path(), &["branch", "topic"]);
+
+        let remote = TempDir::new().unwrap();
+        let remote_path = remote.path().to_string_lossy().into_owned();
+        git(remote.path(), &["init", "--bare"]);
+        git(dir.path(), &["remote", "add", "origin", &remote_path]);
+        git(dir.path(), &["push", "origin", "main", "topic"]);
+        git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+
+        let actor = TempDir::new().unwrap();
+        git(actor.path(), &["clone", &remote_path, "."]);
+        git(actor.path(), &["config", "user.name", "Test"]);
+        git(actor.path(), &["config", "user.email", "t@x"]);
+        write(actor.path(), "remote.txt", "remote\n");
+        git(actor.path(), &["add", "."]);
+        git(actor.path(), &["commit", "-m", "advance both refs"]);
+        git(actor.path(), &["push", "origin", "main"]);
+        let remote_tip = git_out(actor.path(), &["rev-parse", "HEAD"]);
+        git(
+            remote.path(),
+            &["update-ref", "refs/heads/topic", &remote_tip],
+        );
+
+        let marker = dir.path().join(".git/blocking-pack-started");
+        let pack_script = dir.path().join(".git/blocking-pack-objects.sh");
+        let marker_for_shell = marker.to_string_lossy().replace('\\', "/");
+        write(
+            dir.path(),
+            ".git/blocking-pack-objects.sh",
+            &format!(
+                "#!/bin/sh\n: > \"{marker_for_shell}\"\nsleep 30\nexec git pack-objects \"$@\"\n"
+            ),
+        );
+        let pack_script_for_shell = pack_script.to_string_lossy().replace('\\', "/");
+        let upload_pack_wrapper = dir.path().join(".git/blocking-upload-pack.sh");
+        write(
+            dir.path(),
+            ".git/blocking-upload-pack.sh",
+            &format!(
+                "#!/bin/sh\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=uploadpack.packObjectsHook\nexport GIT_CONFIG_VALUE_0='sh \"{pack_script_for_shell}\"'\nexec git-upload-pack \"$@\"\n"
+            ),
+        );
+        let wrapper_for_shell = upload_pack_wrapper.to_string_lossy().replace('\\', "/");
+        git(
+            dir.path(),
+            &[
+                "config",
+                "remote.origin.uploadpack",
+                &format!("sh \"{wrapper_for_shell}\""),
+            ],
+        );
+
+        let worker_repo = repo.clone();
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker = std::thread::spawn(move || {
+            fetch_all_remotes_sync_with_hook(&worker_repo, &worker_cancelled, |_, _| {})
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !marker.exists() {
+            cancelled.store(true, Ordering::Relaxed);
+            let _ = worker.join();
+            panic!("fetch never reached remote pack generation after negotiation");
+        }
+        let cancel_started = Instant::now();
+        cancelled.store(true, Ordering::Relaxed);
+        let error = worker.join().unwrap().unwrap_err();
+        assert!(error.to_string().contains(NETWORK_CANCELLED));
+        assert!(
+            cancel_started.elapsed() < Duration::from_secs(5),
+            "cancel did not terminate the in-flight multi-ref fetch promptly"
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            commits[1]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            commits[1]
+        );
+        assert_repo_consistent(dir.path());
+
+        cancelled.store(false, Ordering::Relaxed);
+        git(
+            dir.path(),
+            &["config", "--unset", "remote.origin.uploadpack"],
+        );
+        fetch_all_remotes_sync_with_hook(&repo, &cancelled, |_, _| {}).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            remote_tip
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/topic"]),
+            remote_tip
+        );
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
+    fn network_operation_pull_cancel_boundary_preserves_head_or_returns_undo() {
+        let (dir, _commits) = linear_repo();
+        let (_remote, _other, remote_tip) = advance_bare_remote(&dir);
+        let repo = repo_path(&dir);
+        let before_head = git_out(dir.path(), &["rev-parse", "HEAD"]);
+        let cancelled = AtomicBool::new(false);
+
+        let error = run_pull_sync_with_hooks(
+            &repo,
+            &cancelled,
+            |flag| flag.store(true, Ordering::Relaxed),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains(NETWORK_CANCELLED));
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before_head);
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/origin/main"]),
+            remote_tip
+        );
+        assert_repo_consistent(dir.path());
+
+        cancelled.store(false, Ordering::Relaxed);
+        let action = run_pull_sync_with_hooks(&repo, &cancelled, |_| {}, |_| Ok(()))
+            .unwrap()
+            .expect("a later pull must return an undo snapshot");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
+        tokio_test_block(git_undo(repo.clone(), action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before_head);
+
+        cancelled.store(false, Ordering::Relaxed);
+        let late_action = run_pull_sync_with_hooks(
+            &repo,
+            &cancelled,
+            |_| {},
+            |flag| {
+                flag.store(true, Ordering::Relaxed);
+                Ok(())
+            },
+        )
+        .unwrap()
+        .expect("late cancellation must let fast-forward finish with undo");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
+        tokio_test_block(git_undo(repo, late_action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before_head);
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
+    fn network_operation_remote_delete_cancel_reports_applied_outcome_as_uncertain() {
+        let (dir, _commits) = linear_repo();
+        let repo = repo_path(&dir);
+        let remote = TempDir::new().unwrap();
+        git(remote.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["branch", "topic"]);
+        git(dir.path(), &["push", "origin", "topic"]);
+        git(dir.path(), &["fetch", "origin"]);
+        let cancelled = AtomicBool::new(false);
+
+        let error = run_git_network_sync_after_output(
+            &repo,
+            &["push", "origin", "--delete", "topic"],
+            &cancelled,
+            "git",
+            REMOTE_DELETE_CANCELLED,
+            || cancelled.store(true, Ordering::Relaxed),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), REMOTE_DELETE_CANCELLED);
+        assert!(git_out(dir.path(), &["ls-remote", "origin", "refs/heads/topic"]).is_empty());
+        assert!(!git_out(dir.path(), &["show-ref", "refs/heads/topic"]).is_empty());
+        git(dir.path(), &["fetch", "--prune", "origin"]);
+        assert!(git_out(dir.path(), &["show-ref", "refs/remotes/origin/topic"]).is_empty());
+        assert_repo_consistent(dir.path());
     }
 
     #[test]
@@ -1095,7 +1999,7 @@ mod tests {
     }
 
     #[test]
-    fn git_undo_pull_restores_the_pre_pull_head() {
+    fn network_operation_pull_channel_fails_closed_and_preserves_undo() {
         let (dir, _cs) = linear_repo();
         let rp = repo_path(&dir);
         let remote = TempDir::new().unwrap();
@@ -1119,9 +2023,31 @@ mod tests {
         git(other.path(), &["push", "origin", "main"]);
         let remote_tip = git_out(other.path(), &["rev-parse", "HEAD"]);
 
-        let action = tokio_test_block(git_pull(rp.clone()))
+        let broken_channel: Channel<GitNetworkPhaseEvent> = Channel::new(|_| {
+            Err(
+                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "phase receiver unavailable")
+                    .into(),
+            )
+        });
+        let error = tokio_test_block(git_pull(rp.clone(), 528_002, broken_channel)).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("UI phase could not be delivered"));
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
+
+        let phase_payload: Arc<std::sync::Mutex<Option<GitNetworkPhaseEvent>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        let received_payload = Arc::clone(&phase_payload);
+        let phase_channel: Channel<GitNetworkPhaseEvent> = Channel::new(move |body| {
+            *received_payload.lock().unwrap() = Some(body.deserialize()?);
+            Ok(())
+        });
+        let action = tokio_test_block(git_pull(rp.clone(), 528_003, phase_channel))
             .unwrap()
             .expect("pull should move HEAD");
+        let phase = phase_payload.lock().unwrap().clone().unwrap();
+        assert_eq!(phase.task_id, 528_003);
+        assert!(!phase.cancellable);
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
         tokio_test_block(git_undo(rp, action)).unwrap();
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
@@ -1149,6 +2075,7 @@ mod tests {
             rp,
             "origin".into(),
             "topic".into(),
+            528_003,
         ))
         .unwrap();
         assert!(git_out(dir.path(), &["ls-remote", "origin", "refs/heads/topic"]).is_empty());

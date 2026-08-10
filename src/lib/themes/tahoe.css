@@ -106,6 +106,7 @@
 
   /* Icon colors - macOS blue folders */
   --icon-folder: #5ab4f5;
+  --icon-git-badge: var(--accent);
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

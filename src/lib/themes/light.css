@@ -102,6 +102,7 @@
 
   /* Icon colors - warmer gold */
   --icon-folder: #e8a800;
+  --icon-git-badge: var(--accent);
   /* --icon-file-tint: unset; when set, overrides ALL file icon colors */
   /* Per-category icon colors (override individually, or use --icon-file-tint for all) */
   /* --icon-image: #c05090; */

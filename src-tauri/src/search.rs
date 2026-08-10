@@ -2,6 +2,7 @@
 //! Issue: tauri-explorer-az6w, tauri-explorer-nv2y
 
 use crate::error::AppError;
+use crate::search_cache::{SearchEntryCache, MAX_CACHED_LISTING_ENTRIES};
 use jwalk::WalkDir;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -9,7 +10,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 /// Directories that are never walked: repo internals, caches and editor state.
 /// Nothing a user would Quick Open to lives inside them.
@@ -61,11 +62,42 @@ fn is_deferred(name: &str) -> bool {
 }
 
 /// One walked entry. `deferred` marks a hit found inside a build-output tree.
+#[derive(Clone)]
 struct Walked {
     relative_path: String,
     name: String,
     is_dir: bool,
     deferred: bool,
+}
+
+static SEARCH_ENTRY_CACHE: SearchEntryCache<Walked> = SearchEntryCache::new();
+
+#[cfg(test)]
+static TEST_WALK_COUNTS: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, usize>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+struct TestStreamGate {
+    started: std::sync::Barrier,
+    release: std::sync::Barrier,
+}
+
+#[cfg(test)]
+static TEST_STREAM_GATES: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<PathBuf, Arc<TestStreamGate>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+static TEST_STREAM_WALK_COUNTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<PathBuf, usize>>,
+> = std::sync::OnceLock::new();
+
+pub(crate) fn invalidate_search_cache_for_change(changed_path: &Path) {
+    SEARCH_ENTRY_CACHE.invalidate_for_change(changed_path);
+}
+
+pub(crate) fn invalidate_search_cache_root(root: &Path) {
+    SEARCH_ENTRY_CACHE.invalidate_root(root);
 }
 
 // ─── WSL delegation (#414) ───────────────────────────────────────────────────
@@ -529,11 +561,114 @@ fn normalize_rel_separators(p: String) -> String {
 /// Collect file/directory entries under `root_path` (both passes).
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
 fn walk_entries(root_path: &Path) -> Vec<Walked> {
+    #[cfg(test)]
+    {
+        *TEST_WALK_COUNTS
+            .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("test walk counts lock")
+            .entry(root_path.to_path_buf())
+            .or_default() += 1;
+    }
     let mut entries: Vec<Walked> = Vec::new();
     walk_passes(root_path, &|| false, WALK_SAFETY_CAP, &mut |w| {
         entries.push(w)
     });
     entries
+}
+
+#[cfg(test)]
+fn walk_count_for_test(root_path: &Path) -> usize {
+    TEST_WALK_COUNTS
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test walk counts lock")
+        .get(root_path)
+        .copied()
+        .unwrap_or_default()
+}
+
+fn walk_streaming_entries(
+    root_path: &Path,
+    cancelled: &dyn Fn() -> bool,
+    on_entry: &mut dyn FnMut(Walked),
+) -> Option<Vec<Walked>> {
+    #[cfg(test)]
+    {
+        *TEST_STREAM_WALK_COUNTS
+            .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("test stream walk counts lock")
+            .entry(root_path.to_path_buf())
+            .or_default() += 1;
+    }
+    let mut completed_entries = Some(Vec::new());
+    #[cfg(test)]
+    let mut paused = false;
+    walk_passes(root_path, cancelled, usize::MAX, &mut |entry| {
+        #[cfg(test)]
+        if !paused {
+            let gate = TEST_STREAM_GATES
+                .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+                .lock()
+                .expect("test stream gates lock")
+                .remove(root_path);
+            if let Some(gate) = gate {
+                paused = true;
+                gate.started.wait();
+                gate.release.wait();
+            }
+        }
+        if completed_entries
+            .as_ref()
+            .is_some_and(|entries| entries.len() >= MAX_CACHED_LISTING_ENTRIES)
+        {
+            completed_entries = None;
+        }
+        if let Some(entries) = completed_entries.as_mut() {
+            entries.push(entry.clone());
+        }
+        on_entry(entry);
+    });
+
+    if cancelled() {
+        None
+    } else {
+        completed_entries
+    }
+}
+
+#[cfg(test)]
+fn install_stream_gate_for_test(root_path: &Path) -> Arc<TestStreamGate> {
+    let gate = Arc::new(TestStreamGate {
+        started: std::sync::Barrier::new(2),
+        release: std::sync::Barrier::new(2),
+    });
+    TEST_STREAM_GATES
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test stream gates lock")
+        .insert(root_path.to_path_buf(), Arc::clone(&gate));
+    gate
+}
+
+#[cfg(test)]
+fn stream_walk_count_for_test(root_path: &Path) -> usize {
+    TEST_STREAM_WALK_COUNTS
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test stream walk counts lock")
+        .get(root_path)
+        .copied()
+        .unwrap_or_default()
+}
+
+fn cached_walk_entries(root_path: &Path) -> Arc<Vec<Walked>> {
+    if crate::files::fs_watcher::ensure_search_cache_watched(root_path) {
+        SEARCH_ENTRY_CACHE.get_or_load(root_path, || walk_entries(root_path))
+    } else {
+        Arc::new(walk_entries(root_path))
+    }
 }
 
 /// Directory bonus: directories are ranked higher than files with equal scores
@@ -621,7 +756,7 @@ fn fuzzy_search_sync(
     }
 
     let limit = limit.clamp(1, 100);
-    let entries = walk_entries(&root_path);
+    let entries = cached_walk_entries(&root_path);
     log::debug!("fuzzy_search: query={:?} entries={}", query, entries.len());
 
     if entries.is_empty() {
@@ -676,6 +811,16 @@ pub async fn start_streaming_search(
     limit: usize,
     boost_prefix: Option<String>,
 ) -> Result<u64, AppError> {
+    start_streaming_search_with_runtime(app, query, root, limit, boost_prefix).await
+}
+
+async fn start_streaming_search_with_runtime<R: Runtime>(
+    app: AppHandle<R>,
+    query: String,
+    root: String,
+    limit: usize,
+    boost_prefix: Option<String>,
+) -> Result<u64, AppError> {
     let root_path = PathBuf::from(&root);
 
     // Stat off the calling thread — a dead network mount can hang here.
@@ -716,37 +861,60 @@ pub async fn start_streaming_search(
 
         let mut pending_entries: Vec<Walked> = Vec::new();
 
-        // Fast pass first, then the deferred build-output trees (#393), so the
-        // first results land as quickly as they always did.
-        walk_passes(
-            &root_path,
-            &|| cancelled.load(Ordering::Relaxed),
-            usize::MAX,
-            &mut |entry| {
-                pending_entries.push(entry);
-                total_scanned += 1;
+        let cache_eligible = crate::files::fs_watcher::ensure_search_cache_watched(&root_path);
+        let cache_revision = cache_eligible.then(|| SEARCH_ENTRY_CACHE.begin_load(&root_path));
+        let cached_entries = cache_eligible
+            .then(|| SEARCH_ENTRY_CACHE.completed(&root_path))
+            .flatten();
+        let mut accept_entry = |entry: Walked| {
+            pending_entries.push(entry);
+            total_scanned += 1;
 
-                // Process batch and emit results
-                if pending_entries.len() >= batch_size {
-                    let ctx = BatchContext {
-                        app: &app,
-                        search_id,
-                        root_path: &root_path,
-                        pattern: &pattern,
-                        limit,
-                        boost_prefix: boost_path.as_deref(),
-                        query_lower: &query_lower,
-                    };
-                    process_batch(
-                        &ctx,
-                        &mut pending_entries,
-                        &mut all_results,
-                        &mut matcher,
-                        total_scanned,
-                    );
+            if pending_entries.len() >= batch_size {
+                let ctx = BatchContext {
+                    app: &app,
+                    search_id,
+                    root_path: &root_path,
+                    pattern: &pattern,
+                    limit,
+                    boost_prefix: boost_path.as_deref(),
+                    query_lower: &query_lower,
+                };
+                process_batch(
+                    &ctx,
+                    &mut pending_entries,
+                    &mut all_results,
+                    &mut matcher,
+                    total_scanned,
+                );
+            }
+        };
+
+        let completed_entries = if let Some(entries) = cached_entries {
+            for entry in entries.iter() {
+                if cancelled.load(Ordering::Relaxed) {
+                    break;
                 }
-            },
-        );
+                accept_entry(entry.clone());
+            }
+            None
+        } else {
+            // Fast pass first, then the deferred build-output trees (#393), so
+            // a cold search still emits its first results incrementally.
+            walk_streaming_entries(
+                &root_path,
+                &|| cancelled.load(Ordering::Relaxed),
+                &mut accept_entry,
+            )
+        };
+
+        if !cancelled.load(Ordering::Relaxed)
+            && crate::files::fs_watcher::is_search_cache_watched(&root_path)
+        {
+            if let (Some(entries), Some(revision)) = (completed_entries, cache_revision) {
+                SEARCH_ENTRY_CACHE.publish_if_unchanged(&root_path, Arc::new(entries), revision);
+            }
+        }
 
         // Process remaining entries
         if !pending_entries.is_empty() && !cancelled.load(Ordering::Relaxed) {
@@ -787,9 +955,17 @@ pub async fn start_streaming_search(
     Ok(search_id)
 }
 
+#[cfg(test)]
+#[path = "../test_support/issue_651_search_integration.rs"]
+mod issue_651_integration_tests;
+
+#[cfg(test)]
+#[path = "../test_support/issue_651_streaming_integration.rs"]
+mod issue_651_streaming_integration_tests;
+
 /// Per-search constants shared by every `process_batch` call.
-struct BatchContext<'a> {
-    app: &'a AppHandle,
+struct BatchContext<'a, R: Runtime> {
+    app: &'a AppHandle<R>,
     search_id: u64,
     root_path: &'a Path,
     pattern: &'a Pattern,
@@ -798,8 +974,8 @@ struct BatchContext<'a> {
     query_lower: &'a str,
 }
 
-fn process_batch(
-    ctx: &BatchContext<'_>,
+fn process_batch<R: Runtime>(
+    ctx: &BatchContext<'_, R>,
     pending: &mut Vec<Walked>,
     all_results: &mut Vec<SearchResult>,
     matcher: &mut Matcher,

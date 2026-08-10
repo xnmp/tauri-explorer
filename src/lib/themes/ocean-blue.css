@@ -98,6 +98,7 @@
 
   /* Icon colors - themeable */
   --icon-folder: #f0d060;
+  --icon-git-badge: var(--accent);
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
 }
 

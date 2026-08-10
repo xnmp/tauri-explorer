@@ -11,3 +11,4 @@ decision during review.
 | [0003](0003-windows-installer-trust-boundary.md) | Windows installer trust boundary | Accepted |
 | [0004](0004-config-watcher-lifecycle.md) | Config watcher lifecycle and symlink refresh | Accepted |
 | [0005](0005-github-pr-conversation-boundary.md) | GitHub PR conversation data boundary | Accepted |
+| [0006](0006-git-network-cancellation-boundary.md) | Git network cancellation and mutation boundary | Accepted |

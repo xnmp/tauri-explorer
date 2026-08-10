@@ -858,7 +858,7 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
         let mut pending_entries: Vec<Walked> = Vec::new();
 
         let cache_eligible = crate::files::fs_watcher::is_directory_watched(&root_path);
-        let cache_revision = cache_eligible.then(|| SEARCH_ENTRY_CACHE.begin_load());
+        let cache_revision = cache_eligible.then(|| SEARCH_ENTRY_CACHE.begin_load(&root_path));
         let cached_entries = cache_eligible
             .then(|| SEARCH_ENTRY_CACHE.completed(&root_path))
             .flatten();

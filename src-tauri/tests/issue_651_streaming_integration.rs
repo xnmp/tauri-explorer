@@ -42,7 +42,7 @@ fn wait_for_done(receiver: &Receiver<String>, search_id: u64) -> Vec<String> {
 
 fn wait_for_revision_change(root: &Path, revision: u64) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while SEARCH_ENTRY_CACHE.begin_load() == revision {
+    while SEARCH_ENTRY_CACHE.begin_load(root) == revision {
         assert!(
             Instant::now() < deadline,
             "real filesystem watcher did not invalidate the Quick Open cache"
@@ -78,7 +78,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     assert!(wait_for_done(&receiver, beta_id).contains(&"beta.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(watched.path()), 1);
 
-    let revision = SEARCH_ENTRY_CACHE.begin_load();
+    let revision = SEARCH_ENTRY_CACHE.begin_load(watched.path());
     fs::write(watched.path().join("after.txt"), "after").expect("watcher fixture");
     wait_for_revision_change(watched.path(), revision);
     let after_id = start_search(&app_handle, watched.path(), "after");
@@ -116,7 +116,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     ))
     .expect("watch racing root");
     let gate = install_stream_gate_for_test(racing_root.path());
-    let revision = SEARCH_ENTRY_CACHE.begin_load();
+    let revision = SEARCH_ENTRY_CACHE.begin_load(racing_root.path());
     let racing_id = start_search(&app_handle, racing_root.path(), "seed");
     gate.started.wait();
     fs::write(racing_root.path().join("raced.txt"), "raced").expect("raced fixture");

@@ -38,3 +38,6 @@ watches that the bookkeeping still attributes to the child. Rebuild every
 surviving recursive registration after one is removed, and invalidate each
 survivor's publication revision across that coverage transition. If any
 registration cannot be restored, remove its cache eligibility and walk fresh.
+When coverage is later established successfully, advance the root's revision
+before marking it eligible again; otherwise a walk that began in the uncovered
+gap can publish after the watcher returns.

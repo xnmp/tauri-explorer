@@ -70,4 +70,34 @@ test.describe("Video preview", () => {
     await page.waitForTimeout(350);
     await expect(frame).toHaveAttribute("src", latestFrameSrc!);
   });
+
+  test("does not show a stale extraction error after the selection changes", async ({ page }) => {
+    await page.goto("/?path=/home/user/Videos");
+    await waitForEntries(page);
+    const previewPane = page.locator(".preview-pane");
+    if (!(await previewPane.isVisible())) await pressShortcut(page, " ", {});
+
+    // Delay and reject only the first preview decode. The next selected video
+    // still decodes normally, so the late rejection must not replace it with
+    // an unavailable-preview error.
+    await page.evaluate(() => {
+      const originalDecode = HTMLImageElement.prototype.decode;
+      let decodeCount = 0;
+      HTMLImageElement.prototype.decode = function () {
+        if (++decodeCount === 1) {
+          return new Promise<void>((_resolve, reject) => {
+            setTimeout(() => reject(new Error("stale frame decode failed")), 500);
+          });
+        }
+        return originalDecode.call(this);
+      };
+    });
+
+    await page.locator(".entry-item", { hasText: "recording.mp4" }).first().click();
+    await page.waitForTimeout(30);
+    await page.locator(".entry-item", { hasText: "soundtrack.mp3" }).first().click();
+
+    await page.waitForTimeout(530);
+    await expect(previewPane.locator(".preview-error-text")).toHaveCount(0);
+  });
 });

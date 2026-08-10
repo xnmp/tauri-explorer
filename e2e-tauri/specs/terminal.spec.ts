@@ -21,6 +21,19 @@ async function terminalText(): Promise<string> {
   return domText(".terminal-panel .xterm-rows");
 }
 
+async function sendTerminalCommand(
+  input: ReturnType<typeof $>,
+  command: string,
+): Promise<void> {
+  await browser.execute((element: HTMLElement) => element.focus(), input);
+  await browser.waitUntil(() => input.isFocused(), {
+    timeout: 2_000,
+    timeoutMsg: "xterm input never received focus",
+  });
+  await input.addValue(command);
+  await browser.keys("Enter");
+}
+
 describe("embedded terminal", () => {
   it("opens with Ctrl+` and shows a live shell", async () => {
     await $(".file-list").waitForExist({ timeout: 15_000 });
@@ -37,9 +50,8 @@ describe("embedded terminal", () => {
   });
 
   it("round-trips input: a typed command executes and its output appears", async () => {
-    // Focus is already in the terminal after opening; type via the helper
-    // textarea xterm maintains.
-    const input = $(".terminal-panel textarea.xterm-helper-textarea");
+    // Type through the helper textarea xterm maintains.
+    const input = await $(".terminal-panel textarea.xterm-helper-textarea");
     await input.waitForExist();
 
     // Never type into a shell that hasn't prompted yet — keystrokes sent
@@ -58,22 +70,19 @@ describe("embedded terminal", () => {
       return text.split(marker).length >= 3;
     };
 
-    await input.addValue(`echo ${marker}\n`);
-    try {
-      await browser.waitUntil(markerEchoed, { timeout: 20_000 });
-    } catch {
-      // First keystrokes can still be lost right at prompt time — one retry.
-      await input.addValue(`echo ${marker}\n`);
-      await browser.waitUntil(markerEchoed, {
-        timeout: 20_000,
-        timeoutMsg: "echoed command output never appeared (after retry)",
-      });
-    }
+    // DOM inspection does not preserve xterm's input focus on WebView2.
+    // Establish and observe focus, then deliver Enter as a WebDriver key
+    // instead of relying on a newline embedded in element text input.
+    await sendTerminalCommand(input, `echo ${marker}`);
+    await browser.waitUntil(markerEchoed, {
+      timeout: 20_000,
+      timeoutMsg: "echoed command output never appeared",
+    });
   });
 
   it("shell starts in the explorer's current directory", async () => {
-    const input = $(".terminal-panel textarea.xterm-helper-textarea");
-    await input.addValue("pwd\n");
+    const input = await $(".terminal-panel textarea.xterm-helper-textarea");
+    await sendTerminalCommand(input, "pwd");
 
     // The app is launched with cwd = the test workspace (see wdio config);
     // pwd output must contain the explorer's path shown in the status bar.
@@ -123,9 +132,9 @@ describe("embedded terminal", () => {
       const target = mkdtempSync(join(tmpdir(), "te-cwd-"));
       await navigateTo(target);
 
-      const input = $(".terminal-panel textarea.xterm-helper-textarea");
+      const input = await $(".terminal-panel textarea.xterm-helper-textarea");
       await input.waitForExist();
-      await input.addValue("pwd\n");
+      await sendTerminalCommand(input, "pwd");
 
       await browser.waitUntil(async () => (await terminalText()).includes(target), {
         timeout: 15_000,
@@ -144,9 +153,9 @@ describe("embedded terminal", () => {
       }
       await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
 
-      const input = $(".terminal-panel textarea.xterm-helper-textarea");
+      const input = await $(".terminal-panel textarea.xterm-helper-textarea");
       await input.waitForExist();
-      await input.addValue("cd /tmp\n");
+      await sendTerminalCommand(input, "cd /tmp");
 
       await browser.waitUntil(
         async () => (await $(".status-path").getAttribute("title")) === "/tmp",

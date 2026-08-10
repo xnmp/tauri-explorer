@@ -143,6 +143,68 @@ pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
     invalidate_search_cache_for_change(path);
 }
 
+fn new_search_cache_watcher() -> Result<RecommendedWatcher, notify::Error> {
+    notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
+        Ok(event)
+            if matches!(
+                event.kind,
+                EventKind::Create(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            ) =>
+        {
+            for path in event.paths {
+                invalidate_search_cache_for_change(&path);
+            }
+        }
+        Ok(_) => {}
+        Err(error) => log::warn!("Quick Open cache watcher error: {}", error),
+    })
+}
+
+/// Recreate all recursive registrations after one root is removed. On Linux,
+/// notify's inotify backend can remove descendant OS watches when overlapping
+/// parent and child registrations share a watcher. Rebuilding gives every
+/// surviving root fresh coverage and a fresh cache publication epoch.
+fn rebuild_search_cache_watches(watcher: &mut FsWatcher) {
+    let roots: Vec<String> = watcher.search_watched.iter().cloned().collect();
+    let mut replacement = match new_search_cache_watcher() {
+        Ok(replacement) => replacement,
+        Err(error) => {
+            log::warn!(
+                "Failed to rebuild recursive Quick Open cache watcher (cache disabled): {}",
+                error
+            );
+            watcher.search_watched.clear();
+            watcher.search_watcher = None;
+            for root in roots {
+                invalidate_search_cache_for_change(Path::new(&root));
+            }
+            return;
+        }
+    };
+
+    let mut failed = Vec::new();
+    for root in &roots {
+        if let Err(error) = replacement.watch(Path::new(root), RecursiveMode::Recursive) {
+            log::warn!(
+                "Failed to restore recursive Quick Open cache watch for {}: {}",
+                root,
+                error
+            );
+            failed.push(root.clone());
+        }
+    }
+    for root in &failed {
+        watcher.search_watched.remove(root);
+    }
+    watcher.search_watcher = Some(replacement);
+
+    for root in roots {
+        invalidate_search_cache_for_change(Path::new(&root));
+    }
+}
+
 /// Initialize the filesystem watcher. Call once during app setup.
 pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
     let watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
@@ -206,32 +268,16 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
     // Pane refreshes only need direct children, but Quick Open caches a full
     // recursive listing. Keep a separate recursive watcher so cache coverage
     // does not turn every thumbnail/column watch into an overlapping tree.
-    let search_watcher =
-        match notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
-            Ok(event)
-                if matches!(
-                    event.kind,
-                    EventKind::Create(_)
-                        | EventKind::Remove(_)
-                        | EventKind::Modify(notify::event::ModifyKind::Name(_))
-                ) =>
-            {
-                for path in event.paths {
-                    invalidate_search_cache_for_change(&path);
-                }
-            }
-            Ok(_) => {}
-            Err(error) => log::warn!("Quick Open cache watcher error: {}", error),
-        }) {
-            Ok(watcher) => Some(watcher),
-            Err(error) => {
-                log::warn!(
-                    "Failed to create recursive Quick Open cache watcher (cache disabled): {}",
-                    error
-                );
-                None
-            }
-        };
+    let search_watcher = match new_search_cache_watcher() {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            log::warn!(
+                "Failed to create recursive Quick Open cache watcher (cache disabled): {}",
+                error
+            );
+            None
+        }
+    };
 
     let fs_watcher = FsWatcher {
         watcher,
@@ -327,9 +373,7 @@ pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
                 let pb = PathBuf::from(&path);
                 let _ = w.watcher.unwatch(&pb);
                 if w.search_watched.remove(&path) {
-                    if let Some(search_watcher) = w.search_watcher.as_mut() {
-                        let _ = search_watcher.unwatch(&pb);
-                    }
+                    rebuild_search_cache_watches(w);
                 }
                 // Ending the final watch also ends the cache epoch. Files can
                 // change unobserved before this root is watched again, and an

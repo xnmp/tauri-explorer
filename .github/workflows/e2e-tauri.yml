@@ -101,7 +101,11 @@ jobs:
         shell: bash
         env:
           VITE_E2E_HOOKS: "1"
-        run: bun run tauri build --debug --no-bundle
+          # The attach feature passes the CDP flag through WebView2's API.
+          # Environment overrides are ignored because hosted runners are
+          # elevated. Warm priming is disabled to keep one WebView2 context.
+          VITE_E2E_NO_WARM_PRIME: ${{ runner.os == 'Windows' && '1' || '' }}
+        run: bun run tauri build --debug --no-bundle ${{ runner.os == 'Windows' && '--features e2e-webview2-attach' || '' }}
 
       - name: Run smoke suite (Linux, under Xvfb)
         if: runner.os == 'Linux'
@@ -129,6 +133,8 @@ jobs:
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 15
+        env:
+          VITE_E2E_NO_WARM_PRIME: "1"
         run: bun run test:e2e:tauri
 
       - name: Upload WDIO logs

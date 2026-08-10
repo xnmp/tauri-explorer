@@ -32,3 +32,16 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
     .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
     .toBe("https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9");
 });
+
+test("dismiss hides a themed update notice", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("mockUpdateAvailable", "1");
+    localStorage.setItem("theme", JSON.stringify("dark"));
+  });
+  await page.goto("/");
+
+  const notice = page.getByTestId("update-notice");
+  await expect(notice).toBeVisible({ timeout: 15_000 });
+  await notice.getByRole("button", { name: "Dismiss" }).click();
+  await expect(notice).not.toBeVisible();
+});

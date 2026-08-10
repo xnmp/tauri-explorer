@@ -6,7 +6,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl, openFile } from "$lib/api/files";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
@@ -17,6 +17,7 @@
   import { getScmStore } from "$lib/state/scm.svelte";
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+  import { getVideoThumbnailData } from "$lib/api/thumbnails";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -543,6 +544,13 @@
     return url;
   }
 
+  /** A request is current only while its exact file revision remains selected.
+   * The revision check matters when a watcher refreshes a selected video at
+   * the same path while ffmpeg is still extracting its previous frame. */
+  function isCurrentPreview(file: FileEntry): boolean {
+    return lastPreviewKey === `${file.path}|${file.modified}|${file.size}`;
+  }
+
   async function loadPreview(file: FileEntry): Promise<void> {
     // Release any object-URL from a previous backend-fallback image so the
     // bytes aren't pinned in memory across navigations.
@@ -694,6 +702,40 @@
         }
       } else {
         await loadViaBackend();
+      }
+    } else if (isVideoFile(file)) {
+      // Video previews deliberately reuse the ffmpeg-backed thumbnail API
+      // used by TilesView: the preview pane shows the extracted still rather
+      // than attempting inline media playback.
+      const result = await getVideoThumbnailData(file.path);
+      if (!isCurrentPreview(file)) {
+        if (result.ok && result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
+        return;
+      }
+      if (result.ok) {
+        try {
+          await decodeImage(result.data);
+          if (!isCurrentPreview(file)) {
+            if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
+            return;
+          }
+          previewImageUrl = result.data;
+        } catch (error) {
+          if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
+          console.warn("[preview] video frame decode failed", { path: file.path, error });
+          logFrontendDiagnostic("preview video frame decode failed", {
+            path: file.path,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          previewError = "Cannot preview video";
+        }
+      } else {
+        console.warn("[preview] video frame extraction failed", { path: file.path, error: result.error });
+        logFrontendDiagnostic("preview video frame extraction failed", {
+          path: file.path,
+          error: result.error,
+        });
+        previewError = "Cannot preview video";
       }
     } else if (isTextFile(file)) {
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview

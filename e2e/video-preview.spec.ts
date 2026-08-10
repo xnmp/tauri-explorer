@@ -26,5 +26,6 @@ test.describe("Video preview", () => {
 
     await frame.click();
     await expect(previewPane).toHaveClass(/fullscreen/);
+    await page.screenshot({ path: "evidence/ac-2-video-preview-fullscreen.png" });
   });
 });

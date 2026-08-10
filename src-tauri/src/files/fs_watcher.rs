@@ -102,6 +102,9 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
     let Some(search_watcher) = watcher.search_watcher.as_mut() else {
         return false;
     };
+    // A newly established coverage epoch must not inherit a listing or an
+    // in-flight publication from a prior failed/removed registration.
+    invalidate_search_cache_for_change(path);
     if let Err(error) = search_watcher.watch(path, RecursiveMode::Recursive) {
         log::warn!(
             "Failed to establish recursive Quick Open cache watch for {}: {}",
@@ -112,6 +115,69 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
     }
     watcher.search_watched.insert(path_string);
     true
+}
+
+fn remove_search_cache_watch(watcher: &mut FsWatcher, removed_path: &Path) {
+    let removed = removed_path.to_string_lossy().to_string();
+    if !watcher.search_watched.contains(&removed) {
+        return;
+    }
+
+    // notify's recursive Linux backend shares descendant OS registrations.
+    // Unwatching either side of overlapping roots can therefore remove
+    // coverage owned by the other registration. Tear down the whole overlap
+    // group and rebuild every root that still has an ordinary pane watch.
+    let mut overlapping: Vec<String> = watcher
+        .search_watched
+        .iter()
+        .filter(|candidate| {
+            let candidate = Path::new(candidate);
+            candidate.starts_with(removed_path) || removed_path.starts_with(candidate)
+        })
+        .cloned()
+        .collect();
+    overlapping.sort_by_key(|path| Path::new(path).components().count());
+
+    // Advance every affected cache epoch before changing OS coverage. Any
+    // concurrent old walk is then unable to publish across the transition.
+    for path in &overlapping {
+        invalidate_search_cache_for_change(Path::new(path));
+    }
+
+    let remaining: Vec<String> = overlapping
+        .iter()
+        .filter(|path| path.as_str() != removed && watcher.watched.contains_key(path.as_str()))
+        .cloned()
+        .collect();
+
+    for path in &overlapping {
+        watcher.search_watched.remove(path);
+    }
+
+    let Some(search_watcher) = watcher.search_watcher.as_mut() else {
+        return;
+    };
+    for path in &overlapping {
+        if let Err(error) = search_watcher.unwatch(Path::new(path)) {
+            log::debug!(
+                "Recursive Quick Open cache watch was already removed for {}: {}",
+                path,
+                error
+            );
+        }
+    }
+    for path in remaining {
+        match search_watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
+            Ok(()) => {
+                watcher.search_watched.insert(path);
+            }
+            Err(error) => log::warn!(
+                "Failed to restore recursive Quick Open cache watch for {}: {}",
+                path,
+                error
+            ),
+        }
+    }
 }
 
 pub(crate) fn is_search_cache_watched(path: &Path) -> bool {
@@ -326,11 +392,7 @@ pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
                 w.watched.remove(&path);
                 let pb = PathBuf::from(&path);
                 let _ = w.watcher.unwatch(&pb);
-                if w.search_watched.remove(&path) {
-                    if let Some(search_watcher) = w.search_watcher.as_mut() {
-                        let _ = search_watcher.unwatch(&pb);
-                    }
-                }
+                remove_search_cache_watch(w, &pb);
                 // Ending the final watch also ends the cache epoch. Files can
                 // change unobserved before this root is watched again, and an
                 // in-flight walk from the old epoch must not publish afterward.

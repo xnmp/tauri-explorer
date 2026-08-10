@@ -158,7 +158,6 @@ export const config: WebdriverIO.Config = {
         `--port=${driverPort}`,
         "--verbose",
         `--log-path=${driverLogPath}`,
-        "--allowed-ips=",
       ],
       { stdio: ["ignore", process.stdout, process.stderr] },
     );

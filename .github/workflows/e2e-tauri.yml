@@ -10,18 +10,12 @@ on:
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
 # WKWebView support (tauri-apps/tauri#7068). Re-add when a stable driver
 # exists or if macOS regressions justify the CrabNebula subscription.
-# The windows-latest leg still fails at msedgedriver's WebView2 attach —
-# POST /session times out while the app itself boots fine (#457; refuted so
-# far: tauri-driver release, dev-server cold start, second warm-window
-# WebView2, stdout pipe blocking, log volume). Until that is fixed it runs on
-# manual dispatch only; Windows coverage is a local run on real hardware:
-# pull on the Windows machine and `bun run test:e2e:tauri`.
 jobs:
   smoke:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the
@@ -69,9 +63,10 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb nasm
 
-      # Install unconditionally and fail loudly: a missing binary surfaces
-      # here, not as an opaque ENOENT when wdio spawns it. Verify it lands.
+      # Linux uses tauri-driver as its WebDriver proxy. Windows attaches
+      # msedgedriver directly to the WebView2 CDP endpoint below.
       - name: Install tauri-driver
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           cargo install tauri-driver --locked
@@ -125,7 +120,7 @@ jobs:
           Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
           "TAURI_NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\msedgedriver.exe" >> $env:GITHUB_ENV
 
-      # Bounded well below the 25-minute job cap so a regression leaves time for
+      # Bounded well below the 40-minute job cap so a regression leaves time for
       # the artifact upload below instead of being killed by the cap with
       # nothing to show. Sized for a real run, not for the fast-fail path: the
       # Linux leg's whole job is ~10 minutes, so anything near the ~1 minute a

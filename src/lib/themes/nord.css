@@ -104,6 +104,7 @@
 
   /* Icon colors - frost + aurora set */
   --icon-folder: #ebcb8b;
+  --icon-git-badge: var(--accent);
   --icon-image: #b48ead;
   --icon-archive: #d08770;
   --icon-code: #81a1c1;

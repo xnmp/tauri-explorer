@@ -87,6 +87,7 @@
 
   /* Icon colors - all green to match terminal aesthetic */
   --icon-folder: #00ff41;
+  --icon-git-badge: #00cc33;
   --icon-file-tint: #00cc33;
   --theme-icon-pack: 'minimal';
   --theme-bg-animation: 'particles';

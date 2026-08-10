@@ -103,6 +103,7 @@
 
   /* Icon colors */
   --icon-folder: #fab795;
+  --icon-git-badge: var(--accent);
 }
 
 /* --- #437: non-premium (flat / high-contrast) fallback --- */

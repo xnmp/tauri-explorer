@@ -149,3 +149,8 @@ When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons
 
 `createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
 explorer directory-listener cleanup settles before Vitest closes the worker (#611).
+
+Video frames in `PreviewPane.svelte` come from `getVideoThumbnailData`, not the
+tile component. Keep its asynchronous results guarded by the full preview
+revision (path, mtime, and size), because a watcher can update a selected video
+without changing its path (#607).

@@ -288,6 +288,7 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_cherry_pick_abort,
             git_actions::git_revert_abort,
             git_actions::git_fetch,
+            git_actions::cancel_git_network_operation,
             git_actions::git_pull,
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,

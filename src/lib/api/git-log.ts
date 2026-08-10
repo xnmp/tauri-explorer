@@ -8,8 +8,11 @@
  * commit's `parents` array — the backend only supplies the edges.
  */
 
+import { Channel } from "@tauri-apps/api/core";
 import { invoke } from "./files";
+import { isTauri } from "./mock-invoke";
 import type { GitUndoAction } from "$lib/domain/git-graph-undo";
+import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 
 export type RefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
 
@@ -226,13 +229,23 @@ export async function gitBranchAuthors(repoPath: string): Promise<BranchAuthor[]
 }
 
 /** Fetch from every remote with pruning (#370). */
-export async function gitFetch(repoPath: string): Promise<void> {
-  await invoke("git_fetch", { repoPath });
+export async function gitFetch(repoPath: string, taskId: number): Promise<void> {
+  await invoke("git_fetch", { repoPath, taskId });
 }
 
 /** Fast-forward pull on the current branch (#377). */
-export async function gitPull(repoPath: string): Promise<GitUndoAction | null> {
-  return invoke<GitUndoAction | null>("git_pull", { repoPath });
+export async function gitPull(
+  repoPath: string,
+  taskId: number,
+  onPhase: (phase: GitNetworkPhaseEvent) => void,
+): Promise<GitUndoAction | null> {
+  const phaseChannel = isTauri() ? new Channel<GitNetworkPhaseEvent>(onPhase) : onPhase;
+  return invoke<GitUndoAction | null>("git_pull", { repoPath, taskId, onPhase: phaseChannel });
+}
+
+/** Terminate an in-flight fetch, pull, or remote push. */
+export async function cancelGitNetworkOperation(taskId: number): Promise<void> {
+  await invoke("cancel_git_network_operation", { taskId });
 }
 
 /** Commits `name`'s upstream has that the local branch lacks; null when no
@@ -277,8 +290,9 @@ export async function gitDeleteRemoteBranch(
   repoPath: string,
   remote: string,
   name: string,
+  taskId: number,
 ): Promise<void> {
-  await invoke("git_delete_remote_branch", { repoPath, remote, name });
+  await invoke("git_delete_remote_branch", { repoPath, remote, name, taskId });
 }
 
 /** Checkout a remote-tracking branch (#432): creates a local branch tracking

@@ -6,6 +6,7 @@
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
+import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
 
@@ -562,6 +563,57 @@ interface MockGitCommit {
 }
 
 const mockGitCommits: MockGitCommit[] = [];
+let pendingGitNetworkOperation:
+  | {
+      taskId: number;
+      cancellable: boolean;
+      reject: (reason: Error) => void;
+      onPhase?: (phase: GitNetworkPhaseEvent) => void;
+    }
+  | undefined;
+
+function holdGitNetworkOperation(
+  command: "git_fetch" | "git_pull" | "git_delete_remote_branch",
+  args: Record<string, unknown>,
+): Promise<never> | null {
+  if (new URLSearchParams(location.search).get("mockGitNetwork") !== command) return null;
+  return new Promise<never>((_resolve, reject) => {
+    pendingGitNetworkOperation = { taskId: Number(args.taskId), cancellable: true, reject };
+  });
+}
+
+function holdGitPullAtFastForwardBoundary(
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> | null {
+  const boundary = new URLSearchParams(location.search).get("mockGitPullBoundary");
+  if (boundary !== "fast_forward" && boundary !== "late_cancel") {
+    return null;
+  }
+
+  const taskId = Number(args.taskId);
+  const onPhase = args.onPhase as ((phase: GitNetworkPhaseEvent) => void) | undefined;
+  const before_oid = mockHeadOid();
+  const branch = mockDetached
+    ? null
+    : ((MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
+      null);
+
+  return new Promise((resolve, reject) => {
+    pendingGitNetworkOperation = { taskId, cancellable: false, reject, onPhase };
+    if (boundary === "fast_forward") onPhase?.({ taskId, cancellable: false });
+    window.addEventListener(
+      "tauri-explorer:mock-git-pull-finish",
+      () => {
+        if (pendingGitNetworkOperation?.taskId === taskId) {
+          pendingGitNetworkOperation = undefined;
+        }
+        const after_oid = mockAppendCommit("Pull from upstream");
+        resolve({ kind: "head_move", operation: "pull", branch, before_oid, after_oid });
+      },
+      { once: true },
+    );
+  });
+}
 
 function seedGitState(): MockGitState {
   return {
@@ -2039,8 +2091,32 @@ const mockCommands: Record<string, CommandHandler> = {
     mockClearOperation();
     return null;
   },
-  git_fetch: () => null,
-  git_pull: () => {
+  git_fetch: (args) => {
+    return holdGitNetworkOperation("git_fetch", args);
+  },
+  cancel_git_network_operation: (args) => {
+    if (
+      pendingGitNetworkOperation?.taskId === Number(args.taskId) &&
+      pendingGitNetworkOperation.cancellable
+    ) {
+      const operation = pendingGitNetworkOperation;
+      pendingGitNetworkOperation = undefined;
+      operation.reject(new Error("git network operation cancelled"));
+    } else if (pendingGitNetworkOperation?.taskId === Number(args.taskId)) {
+      // The local fast-forward has already begun. Model delayed phase-event
+      // delivery after a stale Cancel click without rejecting the pull.
+      pendingGitNetworkOperation.onPhase?.({
+        taskId: pendingGitNetworkOperation.taskId,
+        cancellable: false,
+      });
+    }
+    return null;
+  },
+  git_pull: (args) => {
+    const boundary = holdGitPullAtFastForwardBoundary(args);
+    if (boundary) return boundary;
+    const held = holdGitNetworkOperation("git_pull", args);
+    if (held) return held;
     const before_oid = mockHeadOid();
     const branch =
       mockDetached
@@ -2132,7 +2208,8 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     throw new Error("unknown git undo action");
   },
-  git_delete_remote_branch: () => null,
+  git_delete_remote_branch: (args) =>
+    holdGitNetworkOperation("git_delete_remote_branch", args),
 
   // Tracking checkout (#432): create a local branch tracking <remote>/<name>
   // at the remote branch's current tip, then move HEAD onto it.

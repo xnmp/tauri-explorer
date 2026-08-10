@@ -86,7 +86,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
 - `pane-refresh.ts` / `pane-watch.ts` (above); `refresh-manager.ts` owns policy layering.
 - `git-refresh.ts` — single `git-status-changed` listener; fans out to badge + SCM subscribers.
-- `git-graph-refresh.ts` — F5 refresh bus plus importable graph refresh machinery: `createReloader` serializes fetches with generation/dirty guards, `shouldReloadGraphForChange` filters local-action echoes, and `countGraphWalkCommits` excludes woven stash rows from numeric paging (#432, #444). GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane.
+- `git-graph-refresh.ts` — F5 refresh bus plus importable graph refresh machinery: `createReloader` serializes fetches with generation/dirty guards, `shouldReloadGraphForChange` filters local-action echoes, and `countGraphWalkCommits` excludes woven stash rows from numeric paging (#432, #444). It also owns the process-wide cancellable Git-operation state and applies its per-command IPC phase callback so pull stops offering Cancel during protected local fast-forward (#528). GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane.
 - `git-graph-nav.ts` — branch-line jump bus: GitGraphView registers its selection stepper per pane id; the `gitGraph.selectOlderOnLine`/`selectNewerOnLine` commands (Ctrl+Down/Up) dispatch to the active pane (#530). Same shape as `git-graph-refresh.ts`, same reason.
 - `git-palette.ts` — pane-scoped Git Graph branch, commit, and stash targets registered in the window-global command palette; commands are available only for the active graph pane (#520).
 - `git-graph-undo.ts` — bounded session ledger + active-pane request bus for confirmed graph-operation undo (#513); entries are repository-scoped and contain backend-produced expected-state snapshots.
@@ -224,6 +224,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
 - `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
 - `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
+- `git-network-operation.ts` — shared IPC channel payload for crossing a Git network operation from cancellable network work into a protected local mutation (#528).
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.

@@ -2,7 +2,7 @@ use super::{
     cancel_search, install_stream_gate_for_test, start_streaming_search_with_runtime,
     stream_walk_count_for_test, SEARCH_ENTRY_CACHE,
 };
-use crate::files::fs_watcher::{init_watcher, watch_directory};
+use crate::files::fs_watcher::{init_watcher, unwatch_directory, watch_directory};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -84,6 +84,33 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let after_id = start_search(&app_handle, watched.path(), "after");
     assert!(wait_for_done(&receiver, after_id).contains(&"after.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(watched.path()), 2);
+
+    let rewatched = tempfile::tempdir().expect("rewatched search root");
+    fs::write(rewatched.path().join("before-gap.txt"), "before").expect("pre-unwatch fixture");
+    let rewatched_path = rewatched.path().to_string_lossy().into_owned();
+    tauri::async_runtime::block_on(watch_directory(rewatched_path.clone()))
+        .expect("watch cache epoch root");
+    let before_gap_id = start_search(&app_handle, rewatched.path(), "before-gap");
+    assert!(wait_for_done(&receiver, before_gap_id).contains(&"before-gap.txt".to_string()));
+    assert_eq!(stream_walk_count_for_test(rewatched.path()), 1);
+
+    tauri::async_runtime::block_on(unwatch_directory(rewatched_path.clone()))
+        .expect("remove final cache epoch watch");
+    fs::remove_file(rewatched.path().join("before-gap.txt")).expect("remove pre-unwatch fixture");
+    fs::write(rewatched.path().join("after-gap.txt"), "after").expect("post-unwatch fixture");
+    tauri::async_runtime::block_on(watch_directory(rewatched_path))
+        .expect("rewatch cache epoch root");
+
+    let after_gap_id = start_search(&app_handle, rewatched.path(), "after-gap");
+    assert!(
+        wait_for_done(&receiver, after_gap_id).contains(&"after-gap.txt".to_string()),
+        "rewatching within the TTL must not reuse the pre-unwatch listing"
+    );
+    assert_eq!(
+        stream_walk_count_for_test(rewatched.path()),
+        2,
+        "a fresh watch epoch must force a fresh recursive walk"
+    );
 
     let cancelled_root = tempfile::tempdir().expect("cancelled search root");
     for index in 0..100 {

@@ -9,6 +9,9 @@ a multi-thousand-node render.
 Debouncing prevents searches for intermediate keystrokes, but separate paused
 queries still used to walk the same recursive tree repeatedly. Reuse only a
 fully completed walk, bound both its lifetime and size, and drop the cache for
-watcher changes under its root. Never publish a cancelled partial walk as a
-complete listing, and preserve cold-walk streaming so the first useful matches
-still arrive before the full scan finishes.
+watcher changes under its root. Cache only a root with an active watcher; an
+unwatched root must keep walking fresh. Capture an invalidation revision before
+walking and compare it while holding the cache lock at publication, so a change
+that races an in-flight cold walk cannot be overwritten by stale results. Never
+publish a cancelled partial walk as a complete listing, and preserve cold-walk
+streaming so the first useful matches still arrive before the full scan finishes.

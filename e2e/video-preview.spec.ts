@@ -21,7 +21,9 @@ test("selecting a video displays its still frame and opens fullscreen", async ({
   const frame = previewPane.locator(".preview-image");
   await expect(frame).toBeVisible({ timeout: 3000 });
   await expect(frame).toHaveAttribute("alt", "recording.mp4");
+  await page.screenshot({ path: "evidence/ac-1-video-preview-frame.png" });
 
   await frame.click();
   await expect(previewPane).toHaveClass(/fullscreen/);
+  await page.screenshot({ path: "evidence/ac-2-video-preview-fullscreen.png" });
 });

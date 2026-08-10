@@ -153,6 +153,7 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/home/user/Videos": [
     file("recording.mp4", "/home/user/Videos/recording.mp4", 52428800),
     file("tutorial.mkv", "/home/user/Videos/tutorial.mkv", 104857600),
+    file("soundtrack.mp3", "/home/user/Videos/soundtrack.mp3", 8388608),
   ],
   "/home/user/Documents/project": [
     dir("src", "/home/user/Documents/project/src"),
@@ -2904,7 +2905,11 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
   // (window.__MOCK_LATENCY__ = { git_status: 2000 }) or via URL for
   // fetches that fire during boot (?mockLatency=git_status:2000,foo:500),
   // to make transient loading states observable and assertable (#271).
-  const g = globalThis as { __MOCK_LATENCY__?: Record<string, number>; location?: Location };
+  const g = globalThis as {
+    __MOCK_LATENCY__?: Record<string, number>;
+    __MOCK_FAILURES__?: Record<string, string>;
+    location?: Location;
+  };
   if (!g.__MOCK_LATENCY__ && typeof location !== "undefined") {
     g.__MOCK_LATENCY__ = {};
     const param = new URLSearchParams(location.search).get("mockLatency");
@@ -2915,6 +2920,9 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
   }
   const extraLatency = g.__MOCK_LATENCY__?.[cmd];
   if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
+
+  const failure = g.__MOCK_FAILURES__?.[cmd];
+  if (failure) throw new Error(failure);
 
   const handler = mockCommands[cmd];
   if (!handler) {

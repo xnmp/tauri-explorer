@@ -208,7 +208,7 @@ backend for E2E/browser).
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
 - `src-tauri/src/search.rs`, `search_cache.rs` — nucleo fuzzy engine, streaming emits, and a bounded short-lived cache of completed recursive listings (#651)
-- FLOW: query → bounded local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Unwatched roots walk fresh; watcher changes invalidate affected cached roots and advance their per-root publication revisions; cancelled cold walks are not published.
+- FLOW: query → bounded local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Unwatched roots walk fresh; watcher changes and the final unwatch invalidate affected cached roots and advance their per-root publication revisions; cancelled cold walks are not published.
 
 ## Content search (grep, Ctrl+Shift+F)
 

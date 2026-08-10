@@ -16,3 +16,9 @@ change that races an in-flight cold walk cannot be overwritten by stale results
 and an unrelated root's event cannot discard valid work. Never publish a
 cancelled partial walk as a complete listing, and preserve cold-walk streaming
 so the first useful matches still arrive before the full scan finishes.
+
+The final watcher reference is also an invalidation boundary. Once the OS watch
+is removed, changes during the unwatched gap are invisible; invalidate the
+listing and advance its revision before a later watch can reuse it. This also
+prevents a cold walk started in the old watch epoch from publishing after an
+unwatch/rewatch cycle.

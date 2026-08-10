@@ -12,6 +12,7 @@
     type UpdateInfo,
   } from "$lib/api/update";
   import { openExternalUrl } from "$lib/api/crash";
+  import "./modal.css";
 
   /** Delay so the check never competes with startup work. */
   const STARTUP_DELAY_MS = 5000;
@@ -41,7 +42,7 @@
 {#if update}
   <div class="update-notice modal-card" role="status" data-testid="update-notice">
     <span>Tauri Explorer {update.version} is available.</span>
-    <div class="update-actions">
+    <div class="update-actions dialog-actions">
       <button type="button" class="btn primary" onclick={viewRelease}>View release</button>
       <button type="button" class="btn secondary" onclick={() => (update = null)}>Dismiss</button>
     </div>
@@ -64,5 +65,6 @@
     display: flex;
     gap: var(--spacing-sm);
     flex-shrink: 0;
+    margin-top: 0;
   }
 </style>

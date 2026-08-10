@@ -13,7 +13,6 @@ test("update notice appears when a newer release exists", async ({ page }) => {
   const notice = page.locator('[data-testid="update-notice"]');
   await expect(notice).toBeVisible({ timeout: 15_000 });
   await expect(notice).toContainText("9.9.9 is available");
-
   await notice.getByRole("button", { name: "Dismiss" }).click();
   await expect(notice).not.toBeVisible();
 });

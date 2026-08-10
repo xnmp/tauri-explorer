@@ -297,7 +297,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `config.rs` — JSON config file persistence.
 - `config_watch.rs` — watches the config dir and emits `config-file-changed` for `settings.json` / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist.
 - `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414); complete walks feed the shared listing cache (#651).
-- `search_cache.rs` — bounded five-second cache of completed recursive Quick Open listings for watched roots; invalidation revisions prevent an in-flight cold walk from republishing stale entries, and incomplete/cancelled walks are never published (#651).
+- `search_cache.rs` — bounded five-second cache of completed recursive Quick Open listings for watched roots; per-root invalidation revisions prevent an in-flight cold walk from republishing stale entries without discarding unrelated roots, and incomplete/cancelled walks are never published (#651).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
 - `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593). Hot.

@@ -16,6 +16,17 @@ async function openVideosWithPreview(page: import("@playwright/test").Page) {
   return previewPane;
 }
 
+async function renderedPixel(frame: import("@playwright/test").Locator): Promise<number[]> {
+  return frame.evaluate((element) => {
+    const image = element as HTMLImageElement;
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    canvas.getContext("2d")!.drawImage(image, 0, 0);
+    return [...canvas.getContext("2d")!.getImageData(1, 1, 1, 1).data];
+  });
+}
+
 test("selecting a video displays its still frame and opens fullscreen", async ({ page }) => {
   const previewPane = await openVideosWithPreview(page);
   await page.locator(".entry-item", { hasText: "recording.mp4" }).first().click();
@@ -56,6 +67,7 @@ test("a late frame from a previously selected video cannot replace the current f
   await expect(frame).toHaveAttribute("alt", "tutorial.mkv");
   await page.waitForTimeout(500);
   await expect(frame).toHaveAttribute("alt", "tutorial.mkv");
+  expect(await renderedPixel(frame)).toEqual([0, 0, 255, 255]);
 });
 
 test("a late frame from a previous revision keeps the new revision loading", async ({ page }) => {
@@ -79,13 +91,5 @@ test("a late frame from a previous revision keeps the new revision loading", asy
 
   const frame = previewPane.locator(".preview-image");
   await expect(frame).toHaveAttribute("alt", "recording.mp4");
-  const pixel = await frame.evaluate((element) => {
-    const image = element as HTMLImageElement;
-    const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    canvas.getContext("2d")!.drawImage(image, 0, 0);
-    return [...canvas.getContext("2d")!.getImageData(1, 1, 1, 1).data];
-  });
-  expect(pixel).toEqual([0, 0, 255, 255]);
+  expect(await renderedPixel(frame)).toEqual([0, 0, 255, 255]);
 });

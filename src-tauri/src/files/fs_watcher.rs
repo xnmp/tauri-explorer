@@ -255,6 +255,10 @@ pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
                 w.watched.remove(&path);
                 let pb = PathBuf::from(&path);
                 let _ = w.watcher.unwatch(&pb);
+                // Ending the final watch also ends the cache epoch. Files can
+                // change unobserved before this root is watched again, and an
+                // in-flight walk from the old epoch must not publish afterward.
+                invalidate_search_cache_for_change(&pb);
                 log::debug!("Stopped watching: {}", path);
             } else {
                 log::debug!("Decremented watch refcount for {}: {}", path, count);

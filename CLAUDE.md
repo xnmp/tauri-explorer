@@ -149,3 +149,7 @@ When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons
 
 `createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
 explorer directory-listener cleanup settles before Vitest closes the worker (#611).
+
+The floating update notice uses the shared `modal-card` and `btn` control chrome;
+import `components/modal.css` in `UpdateNotice.svelte` so the globally scoped
+dialog styles accompany the otherwise standalone notice.

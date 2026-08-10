@@ -24,13 +24,15 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
   await expect(viewRelease).toHaveCSS("background-color", "rgb(76, 194, 244)");
   await expect(notice.getByRole("button", { name: "Dismiss" })).toHaveClass(/btn.*secondary/);
   await page.screenshot({ path: "evidence/ac-1-themed-update-notice.png" });
-  await page.screenshot({ path: "evidence/ac-2-shared-dialog-controls.png" });
 
   await viewRelease.click();
   await expect(notice).not.toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
-    .toBe("https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9");
+  const releaseUrl = "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9";
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url"))).toBe(releaseUrl);
+  await page.screenshot({ path: "evidence/ac-3-dismissed-update-notice.png" });
+  await page.goto(releaseUrl);
+  await expect(page).toHaveURL(releaseUrl);
+  await page.screenshot({ path: "evidence/ac-3-release-destination.png" });
 });
 
 test("light-themed update notice uses dialog chrome and can be dismissed", async ({ page }) => {
@@ -50,6 +52,8 @@ test("light-themed update notice uses dialog chrome and can be dismissed", async
   await expect(viewRelease).toHaveClass(/btn.*primary/);
   await expect(viewRelease).toHaveCSS("background-color", "rgb(0, 102, 204)");
   await page.screenshot({ path: "evidence/ac-1-themed-update-notice-light.png" });
+  await notice.getByRole("button", { name: "Dismiss" }).focus();
+  await page.screenshot({ path: "evidence/ac-2-dialog-controls.png" });
   const checkedAt = await page.evaluate(() => localStorage.getItem("updateCheck.lastCheckedAt"));
   expect(checkedAt).not.toBeNull();
   await notice.getByRole("button", { name: "Dismiss" }).click();

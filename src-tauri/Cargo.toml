@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 criterion = "0.5"
+tauri = { version = "2", features = ["test"] }
 
 [[bench]]
 name = "scan_directory_parallel"
@@ -106,4 +107,3 @@ opt-level = 3
 # Tracks crabnebula-dev/drag-rs#72.
 [patch.crates-io]
 drag = { path = "vendor/drag" }
-

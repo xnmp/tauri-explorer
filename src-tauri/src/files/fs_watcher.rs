@@ -9,14 +9,15 @@
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use super::dir_listing::invalidate_dir_cache_sync;
 use crate::error::AppError;
+use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_root};
 
 /// Trailing debounce window for `directory-changed` events.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -43,10 +44,15 @@ struct PendingChange {
 #[derive(Debug)]
 struct FsWatcher {
     watcher: RecommendedWatcher,
+    search_watcher: Option<RecommendedWatcher>,
     watched: HashMap<String, usize>,
+    search_watched: HashSet<String>,
 }
 
 static FS_WATCHER: OnceLock<Mutex<FsWatcher>> = OnceLock::new();
+
+#[cfg(test)]
+static TEST_WATCHED_PATHS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 
 /// Directories with pending change events, keyed by the time of the most
 /// recent event. Flushed (emitted) once no new event arrived for DEBOUNCE.
@@ -65,8 +71,146 @@ fn unix_time_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+fn is_test_watched(_path: &Path) -> bool {
+    #[cfg(test)]
+    if TEST_WATCHED_PATHS
+        .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .is_ok_and(|paths| paths.contains(_path))
+    {
+        return true;
+    }
+
+    false
+}
+
+pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
+    if is_test_watched(path) {
+        return true;
+    }
+
+    let path_string = path.to_string_lossy().to_string();
+    let Some(mut watcher) = FS_WATCHER.get().and_then(|watcher| watcher.lock().ok()) else {
+        return false;
+    };
+    if !watcher.watched.contains_key(&path_string) {
+        return false;
+    }
+    if watcher.search_watched.contains(&path_string) {
+        return true;
+    }
+    let Some(search_watcher) = watcher.search_watcher.as_mut() else {
+        return false;
+    };
+    if let Err(error) = search_watcher.watch(path, RecursiveMode::Recursive) {
+        log::warn!(
+            "Failed to establish recursive Quick Open cache watch for {}: {}",
+            path.display(),
+            error
+        );
+        return false;
+    }
+    // Coverage may be returning after a failed rebuild. Advance the epoch
+    // before advertising it so a walk that started in the uncovered gap
+    // cannot publish into the newly covered cache.
+    invalidate_search_cache_root(path);
+    watcher.search_watched.insert(path_string);
+    true
+}
+
+pub(crate) fn is_search_cache_watched(path: &Path) -> bool {
+    if is_test_watched(path) {
+        return true;
+    }
+
+    FS_WATCHER
+        .get()
+        .and_then(|watcher| watcher.lock().ok())
+        .is_some_and(|watcher| {
+            let path = path.to_string_lossy().to_string();
+            watcher.watched.contains_key(&path) && watcher.search_watched.contains(&path)
+        })
+}
+
+#[cfg(test)]
+pub(crate) fn mark_directory_watched_for_test(path: &Path) {
+    TEST_WATCHED_PATHS
+        .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .expect("test watched paths lock")
+        .insert(path.to_path_buf());
+}
+
+pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
+    let path_string = path.to_string_lossy();
+    invalidate_dir_cache_sync(&path_string);
+    invalidate_search_cache_for_change(path);
+}
+
+fn new_search_cache_watcher() -> Result<RecommendedWatcher, notify::Error> {
+    notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
+        Ok(event)
+            if matches!(
+                event.kind,
+                EventKind::Create(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Modify(notify::event::ModifyKind::Name(_))
+            ) =>
+        {
+            for path in event.paths {
+                invalidate_search_cache_for_change(&path);
+            }
+        }
+        Ok(_) => {}
+        Err(error) => log::warn!("Quick Open cache watcher error: {}", error),
+    })
+}
+
+/// Recreate all recursive registrations after one root is removed. On Linux,
+/// notify's inotify backend can remove descendant OS watches when overlapping
+/// parent and child registrations share a watcher. Rebuilding gives every
+/// surviving root fresh coverage and a fresh cache publication epoch.
+fn rebuild_search_cache_watches(watcher: &mut FsWatcher) {
+    let roots: Vec<String> = watcher.search_watched.iter().cloned().collect();
+    let mut replacement = match new_search_cache_watcher() {
+        Ok(replacement) => replacement,
+        Err(error) => {
+            log::warn!(
+                "Failed to rebuild recursive Quick Open cache watcher (cache disabled): {}",
+                error
+            );
+            watcher.search_watched.clear();
+            watcher.search_watcher = None;
+            for root in roots {
+                invalidate_search_cache_root(Path::new(&root));
+            }
+            return;
+        }
+    };
+
+    let mut failed = Vec::new();
+    for root in &roots {
+        if let Err(error) = replacement.watch(Path::new(root), RecursiveMode::Recursive) {
+            log::warn!(
+                "Failed to restore recursive Quick Open cache watch for {}: {}",
+                root,
+                error
+            );
+            failed.push(root.clone());
+        }
+    }
+    for root in &failed {
+        watcher.search_watched.remove(root);
+    }
+    watcher.search_watcher = Some(replacement);
+
+    for root in roots {
+        invalidate_search_cache_root(Path::new(&root));
+    }
+}
+
 /// Initialize the filesystem watcher. Call once during app setup.
-pub fn init_watcher(app: &AppHandle) {
+pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
     let watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         let event = match res {
             Ok(e) => e,
@@ -96,7 +240,7 @@ pub fn init_watcher(app: &AppHandle) {
         for dir in dirs {
             // Invalidate the directory cache immediately so re-listings are
             // fresh; the frontend notification is debounced separately.
-            invalidate_dir_cache_sync(&dir);
+            invalidate_directory_caches_for_change(Path::new(&dir));
 
             if let Ok(mut pending) = pending_changes().lock() {
                 pending.insert(
@@ -125,9 +269,25 @@ pub fn init_watcher(app: &AppHandle) {
         }
     };
 
+    // Pane refreshes only need direct children, but Quick Open caches a full
+    // recursive listing. Keep a separate recursive watcher so cache coverage
+    // does not turn every thumbnail/column watch into an overlapping tree.
+    let search_watcher = match new_search_cache_watcher() {
+        Ok(watcher) => Some(watcher),
+        Err(error) => {
+            log::warn!(
+                "Failed to create recursive Quick Open cache watcher (cache disabled): {}",
+                error
+            );
+            None
+        }
+    };
+
     let fs_watcher = FsWatcher {
         watcher,
+        search_watcher,
         watched: HashMap::new(),
+        search_watched: HashSet::new(),
     };
 
     FS_WATCHER
@@ -216,6 +376,13 @@ pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
                 w.watched.remove(&path);
                 let pb = PathBuf::from(&path);
                 let _ = w.watcher.unwatch(&pb);
+                if w.search_watched.remove(&path) {
+                    rebuild_search_cache_watches(w);
+                }
+                // Ending the final watch also ends the cache epoch. Files can
+                // change unobserved before this root is watched again, and an
+                // in-flight walk from the old epoch must not publish afterward.
+                invalidate_search_cache_root(&pb);
                 log::debug!("Stopped watching: {}", path);
             } else {
                 log::debug!("Decremented watch refcount for {}: {}", path, count);

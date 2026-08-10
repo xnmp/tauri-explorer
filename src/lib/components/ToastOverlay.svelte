@@ -89,6 +89,10 @@
 
   .toast.progress {
     color: var(--text-secondary);
+    /* Progress feedback must be visible immediately. WebKit can leave an
+       entrance animation at its zero-opacity first frame under heavy load,
+       hiding the only indication that a slow operation was accepted. */
+    animation: none;
   }
 
   .spinner-arc {

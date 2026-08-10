@@ -27,6 +27,7 @@
   import {
     createQuickOpenSearchController,
     createQuickOpenStreamResources,
+    QUICK_OPEN_RESULT_LIMIT,
   } from "$lib/domain/quick-open-search";
 
   // Helper to convert SearchResult to FileEntry-like object for icon functions
@@ -189,7 +190,7 @@
     }
     const merged = [...primary, ...unique];
     merged.sort((a, b) => effectiveScore(b) - effectiveScore(a));
-    return merged;
+    return merged.slice(0, QUICK_OPEN_RESULT_LIMIT);
   }
 
   // Show recent files when query is empty

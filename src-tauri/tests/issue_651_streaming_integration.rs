@@ -67,6 +67,9 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let watched = tempfile::tempdir().expect("watched search root");
     fs::write(watched.path().join("alpha.txt"), "alpha").expect("alpha fixture");
     fs::write(watched.path().join("beta.txt"), "beta").expect("beta fixture");
+    let nested = watched.path().join("nested");
+    fs::create_dir(&nested).expect("nested fixture directory");
+    fs::write(nested.join("before-nested.txt"), "before").expect("nested fixture");
     tauri::async_runtime::block_on(watch_directory(
         watched.path().to_string_lossy().into_owned(),
     ))
@@ -84,6 +87,21 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let after_id = start_search(&app_handle, watched.path(), "after");
     assert!(wait_for_done(&receiver, after_id).contains(&"after.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(watched.path()), 2);
+
+    let revision = SEARCH_ENTRY_CACHE.begin_load(watched.path());
+    fs::remove_file(nested.join("before-nested.txt")).expect("remove nested fixture");
+    fs::write(nested.join("after-nested.txt"), "after").expect("changed nested fixture");
+    wait_for_revision_change(watched.path(), revision);
+    let nested_id = start_search(&app_handle, watched.path(), "after-nested");
+    assert!(
+        wait_for_done(&receiver, nested_id).contains(&"after-nested.txt".to_string()),
+        "a nested descendant change must invalidate the recursive listing"
+    );
+    assert_eq!(
+        stream_walk_count_for_test(watched.path()),
+        3,
+        "a nested descendant change must force a fresh recursive walk"
+    );
 
     let rewatched = tempfile::tempdir().expect("rewatched search root");
     fs::write(rewatched.path().join("before-gap.txt"), "before").expect("pre-unwatch fixture");

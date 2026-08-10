@@ -127,15 +127,27 @@ fn remove_search_cache_watch(watcher: &mut FsWatcher, removed_path: &Path) {
     // Unwatching either side of overlapping roots can therefore remove
     // coverage owned by the other registration. Tear down the whole overlap
     // group and rebuild every root that still has an ordinary pane watch.
-    let mut overlapping: Vec<String> = watcher
-        .search_watched
-        .iter()
-        .filter(|candidate| {
-            let candidate = Path::new(candidate);
-            candidate.starts_with(removed_path) || removed_path.starts_with(candidate)
-        })
-        .cloned()
-        .collect();
+    let mut overlap_group = HashSet::from([removed.clone()]);
+    loop {
+        let connected: Vec<String> = watcher
+            .search_watched
+            .iter()
+            .filter(|candidate| {
+                !overlap_group.contains(*candidate)
+                    && overlap_group.iter().any(|member| {
+                        let candidate = Path::new(candidate);
+                        let member = Path::new(member);
+                        candidate.starts_with(member) || member.starts_with(candidate)
+                    })
+            })
+            .cloned()
+            .collect();
+        if connected.is_empty() {
+            break;
+        }
+        overlap_group.extend(connected);
+    }
+    let mut overlapping: Vec<String> = overlap_group.into_iter().collect();
     overlapping.sort_by_key(|path| Path::new(path).components().count());
 
     // Advance every affected cache epoch before changing OS coverage. Any

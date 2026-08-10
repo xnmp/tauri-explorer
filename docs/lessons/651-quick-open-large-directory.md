@@ -40,4 +40,7 @@ survivor's publication revision across that coverage transition. If any
 registration cannot be restored, remove its cache eligibility and walk fresh.
 When coverage is later established successfully, advance the root's revision
 before marking it eligible again; otherwise a walk that began in the uncovered
-gap can publish after the watcher returns.
+gap can publish after the watcher returns. Coverage changes must use an
+exact-root epoch operation rather than filesystem-change invalidation, which is
+intentionally ancestor/descendant-aware and would evict unchanged overlapping
+listings.

@@ -9,7 +9,7 @@
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -44,7 +44,9 @@ struct PendingChange {
 #[derive(Debug)]
 struct FsWatcher {
     watcher: RecommendedWatcher,
+    search_watcher: Option<RecommendedWatcher>,
     watched: HashMap<String, usize>,
+    search_watched: HashSet<String>,
 }
 
 static FS_WATCHER: OnceLock<Mutex<FsWatcher>> = OnceLock::new();
@@ -69,7 +71,7 @@ fn unix_time_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-pub(crate) fn is_directory_watched(path: &Path) -> bool {
+fn is_test_watched(path: &Path) -> bool {
     #[cfg(test)]
     if TEST_WATCHED_PATHS
         .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
@@ -79,13 +81,50 @@ pub(crate) fn is_directory_watched(path: &Path) -> bool {
         return true;
     }
 
+    false
+}
+
+pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
+    if is_test_watched(path) {
+        return true;
+    }
+
+    let path_string = path.to_string_lossy().to_string();
+    let Some(mut watcher) = FS_WATCHER.get().and_then(|watcher| watcher.lock().ok()) else {
+        return false;
+    };
+    if !watcher.watched.contains_key(&path_string) {
+        return false;
+    }
+    if watcher.search_watched.contains(&path_string) {
+        return true;
+    }
+    let Some(search_watcher) = watcher.search_watcher.as_mut() else {
+        return false;
+    };
+    if let Err(error) = search_watcher.watch(path, RecursiveMode::Recursive) {
+        log::warn!(
+            "Failed to establish recursive Quick Open cache watch for {}: {}",
+            path.display(),
+            error
+        );
+        return false;
+    }
+    watcher.search_watched.insert(path_string);
+    true
+}
+
+pub(crate) fn is_search_cache_watched(path: &Path) -> bool {
+    if is_test_watched(path) {
+        return true;
+    }
+
     FS_WATCHER
         .get()
         .and_then(|watcher| watcher.lock().ok())
         .is_some_and(|watcher| {
-            watcher
-                .watched
-                .contains_key(&path.to_string_lossy().to_string())
+            let path = path.to_string_lossy().to_string();
+            watcher.watched.contains_key(&path) && watcher.search_watched.contains(&path)
         })
 }
 
@@ -164,9 +203,41 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
         }
     };
 
+    // Pane refreshes only need direct children, but Quick Open caches a full
+    // recursive listing. Keep a separate recursive watcher so cache coverage
+    // does not turn every thumbnail/column watch into an overlapping tree.
+    let search_watcher =
+        match notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
+            Ok(event)
+                if matches!(
+                    event.kind,
+                    EventKind::Create(_)
+                        | EventKind::Remove(_)
+                        | EventKind::Modify(notify::event::ModifyKind::Name(_))
+                ) =>
+            {
+                for path in event.paths {
+                    invalidate_search_cache_for_change(&path);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => log::warn!("Quick Open cache watcher error: {}", error),
+        }) {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                log::warn!(
+                    "Failed to create recursive Quick Open cache watcher (cache disabled): {}",
+                    error
+                );
+                None
+            }
+        };
+
     let fs_watcher = FsWatcher {
         watcher,
+        search_watcher,
         watched: HashMap::new(),
+        search_watched: HashSet::new(),
     };
 
     FS_WATCHER
@@ -255,6 +326,11 @@ pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
                 w.watched.remove(&path);
                 let pb = PathBuf::from(&path);
                 let _ = w.watcher.unwatch(&pb);
+                if w.search_watched.remove(&path) {
+                    if let Some(search_watcher) = w.search_watcher.as_mut() {
+                        let _ = search_watcher.unwatch(&pb);
+                    }
+                }
                 // Ending the final watch also ends the cache epoch. Files can
                 // change unobserved before this root is watched again, and an
                 // in-flight walk from the old epoch must not publish afterward.

@@ -660,7 +660,7 @@ fn stream_walk_count_for_test(root_path: &Path) -> usize {
 }
 
 fn cached_walk_entries(root_path: &Path) -> Arc<Vec<Walked>> {
-    if crate::files::fs_watcher::is_directory_watched(root_path) {
+    if crate::files::fs_watcher::ensure_search_cache_watched(root_path) {
         SEARCH_ENTRY_CACHE.get_or_load(root_path, || walk_entries(root_path))
     } else {
         Arc::new(walk_entries(root_path))
@@ -857,7 +857,7 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
 
         let mut pending_entries: Vec<Walked> = Vec::new();
 
-        let cache_eligible = crate::files::fs_watcher::is_directory_watched(&root_path);
+        let cache_eligible = crate::files::fs_watcher::ensure_search_cache_watched(&root_path);
         let cache_revision = cache_eligible.then(|| SEARCH_ENTRY_CACHE.begin_load(&root_path));
         let cached_entries = cache_eligible
             .then(|| SEARCH_ENTRY_CACHE.completed(&root_path))
@@ -907,7 +907,7 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
         drop(accept_entry);
 
         if !cancelled.load(Ordering::Relaxed)
-            && crate::files::fs_watcher::is_directory_watched(&root_path)
+            && crate::files::fs_watcher::is_search_cache_watched(&root_path)
         {
             if let (Some(entries), Some(revision)) = (completed_entries, cache_revision) {
                 SEARCH_ENTRY_CACHE.publish_if_unchanged(&root_path, Arc::new(entries), revision);

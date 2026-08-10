@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Runtime};
 
 use super::dir_listing::invalidate_dir_cache_sync;
 use crate::error::AppError;
-use crate::search::invalidate_search_cache_for_change;
+use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_root};
 
 /// Trailing debounce window for `directory-changed` events.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -113,7 +113,7 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
     // Coverage may be returning after a failed rebuild. Advance the epoch
     // before advertising it so a walk that started in the uncovered gap
     // cannot publish into the newly covered cache.
-    invalidate_search_cache_for_change(path);
+    invalidate_search_cache_root(path);
     watcher.search_watched.insert(path_string);
     true
 }
@@ -182,7 +182,7 @@ fn rebuild_search_cache_watches(watcher: &mut FsWatcher) {
             watcher.search_watched.clear();
             watcher.search_watcher = None;
             for root in roots {
-                invalidate_search_cache_for_change(Path::new(&root));
+                invalidate_search_cache_root(Path::new(&root));
             }
             return;
         }
@@ -205,7 +205,7 @@ fn rebuild_search_cache_watches(watcher: &mut FsWatcher) {
     watcher.search_watcher = Some(replacement);
 
     for root in roots {
-        invalidate_search_cache_for_change(Path::new(&root));
+        invalidate_search_cache_root(Path::new(&root));
     }
 }
 
@@ -382,7 +382,7 @@ pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
                 // Ending the final watch also ends the cache epoch. Files can
                 // change unobserved before this root is watched again, and an
                 // in-flight walk from the old epoch must not publish afterward.
-                invalidate_search_cache_for_change(&pb);
+                invalidate_search_cache_root(&pb);
                 log::debug!("Stopped watching: {}", path);
             } else {
                 log::debug!("Decremented watch refcount for {}: {}", path, count);

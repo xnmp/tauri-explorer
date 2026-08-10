@@ -121,6 +121,19 @@ impl<T> SearchEntryCache<T> {
         );
     }
 
+    /// Advance one root's publication epoch without invalidating overlapping
+    /// ancestor or descendant listings. Coverage lifecycle transitions use
+    /// this; filesystem changes use `invalidate_for_change` below.
+    pub(crate) fn invalidate_root(&self, root: &Path) {
+        let Ok(mut state) = self.state().lock() else {
+            return;
+        };
+        let revision = state.next_revision;
+        state.next_revision = state.next_revision.wrapping_add(1).max(1);
+        state.revisions.insert(root.to_path_buf(), revision);
+        state.listings.remove(root);
+    }
+
     pub(crate) fn invalidate_for_change(&self, changed_path: &Path) {
         let Ok(mut state) = self.state().lock() else {
             return;

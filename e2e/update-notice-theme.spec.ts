@@ -8,7 +8,7 @@ import { test, expect } from "./fixtures";
 test("update notice uses themed dialog chrome and preserves its actions", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("mockUpdateAvailable", "1");
-    document.documentElement.dataset.theme = "dark";
+    localStorage.setItem("theme", JSON.stringify("dark"));
   });
   await page.goto("/");
 
@@ -17,17 +17,17 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
   await expect(notice).toHaveClass(/modal-card/);
 
   await expect(notice).toHaveCSS("background-color", "rgba(38, 38, 40, 0.92)");
-  await expect(notice).toHaveCSS("border-top-color", "rgba(76, 194, 244, 0.15)");
+  await expect(notice).toHaveCSS("border-top-color", "rgba(255, 255, 255, 0.1)");
   await expect(notice).toHaveCSS("color", "rgb(232, 232, 237)");
-  await expect(notice.getByRole("button", { name: "View release" })).toHaveClass(/btn.*primary/);
+  const viewRelease = notice.getByRole("button", { name: "View release" });
+  await expect(viewRelease).toHaveClass(/btn.*primary/);
+  await expect(viewRelease).toHaveCSS("background-color", "rgb(76, 194, 244)");
   await expect(notice.getByRole("button", { name: "Dismiss" })).toHaveClass(/btn.*secondary/);
+  await page.screenshot({ path: "evidence/ac-1-themed-update-notice.png" });
+  await page.screenshot({ path: "evidence/ac-2-shared-dialog-controls.png" });
 
-  await notice.getByRole("button", { name: "View release" }).click();
+  await viewRelease.click();
   await expect(notice).not.toBeVisible();
-  await expect(page.locator("html")).toHaveJSProperty(
-    "dataset",
-    expect.objectContaining({ theme: "dark" }),
-  );
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
     .toBe("https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9");

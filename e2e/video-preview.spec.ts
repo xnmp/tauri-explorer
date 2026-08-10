@@ -72,6 +72,12 @@ test.describe("Video preview", () => {
   });
 
   test("does not show a stale extraction error after the selection changes", async ({ page }) => {
+    const staleDecodeWarnings: string[] = [];
+    page.on("console", (message) => {
+      if (message.text().includes("[preview] video frame decode failed")) {
+        staleDecodeWarnings.push(message.text());
+      }
+    });
     await page.goto("/?path=/home/user/Videos");
     await waitForEntries(page);
     const previewPane = page.locator(".preview-pane");
@@ -99,5 +105,6 @@ test.describe("Video preview", () => {
 
     await page.waitForTimeout(530);
     await expect(previewPane.locator(".preview-error-text")).toHaveCount(0);
+    await expect(staleDecodeWarnings).toEqual([]);
   });
 });

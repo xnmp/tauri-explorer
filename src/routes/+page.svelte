@@ -3,7 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj, tauri-explorer-npjh.4
 -->
 <script lang="ts">
-  import "@fontsource-variable/inter";
+  import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
   import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
   import { E2E_HOOKS_ENABLED, E2E_WARM_WINDOW_PRIMING_DISABLED } from "$lib/domain/e2e-hooks";

@@ -908,8 +908,6 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
             )
         };
 
-        drop(accept_entry);
-
         if !cancelled.load(Ordering::Relaxed)
             && crate::files::fs_watcher::is_search_cache_watched(&root_path)
         {
@@ -958,11 +956,11 @@ async fn start_streaming_search_with_runtime<R: Runtime>(
 }
 
 #[cfg(test)]
-#[path = "../tests/issue_651_search_integration.rs"]
+#[path = "../test_support/issue_651_search_integration.rs"]
 mod issue_651_integration_tests;
 
 #[cfg(test)]
-#[path = "../tests/issue_651_streaming_integration.rs"]
+#[path = "../test_support/issue_651_streaming_integration.rs"]
 mod issue_651_streaming_integration_tests;
 
 /// Per-search constants shared by every `process_batch` call.

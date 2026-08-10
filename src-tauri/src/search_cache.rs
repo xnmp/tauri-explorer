@@ -170,5 +170,5 @@ impl<T> SearchEntryCache<T> {
 }
 
 #[cfg(test)]
-#[path = "../tests/issue_651_search_cache.rs"]
+#[path = "../test_support/issue_651_search_cache.rs"]
 mod issue_651_tests;

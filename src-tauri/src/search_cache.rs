@@ -1,29 +1,78 @@
-use std::marker::PhantomData;
-use std::path::Path;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+const CACHE_TTL: Duration = Duration::from_secs(5);
+const MAX_CACHED_ROOTS: usize = 4;
+pub(crate) const MAX_CACHED_LISTING_ENTRIES: usize = 100_000;
+
+struct CompletedListing<T> {
+    entries: Arc<Vec<T>>,
+    cached_at: Instant,
+}
 
 /// Process-local store for completed recursive Quick Open listings.
 ///
 /// A listing is published only after its walk completes, so a later query can
 /// reuse it without confusing a cancelled partial walk for a complete tree.
 pub(crate) struct SearchEntryCache<T> {
-    _entry: PhantomData<T>,
+    listings: OnceLock<Mutex<HashMap<PathBuf, CompletedListing<T>>>>,
 }
 
 impl<T> SearchEntryCache<T> {
     pub(crate) const fn new() -> Self {
         Self {
-            _entry: PhantomData,
+            listings: OnceLock::new(),
         }
     }
 
-    pub(crate) fn completed(&self, _root: &Path) -> Option<Arc<Vec<T>>> {
-        None
+    fn listings(&self) -> &Mutex<HashMap<PathBuf, CompletedListing<T>>> {
+        self.listings.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
-    pub(crate) fn publish(&self, _root: &Path, _entries: Arc<Vec<T>>) {}
+    pub(crate) fn completed(&self, root: &Path) -> Option<Arc<Vec<T>>> {
+        let mut listings = self.listings().lock().ok()?;
+        listings.retain(|_, listing| listing.cached_at.elapsed() < CACHE_TTL);
+        listings
+            .get(root)
+            .map(|listing| Arc::clone(&listing.entries))
+    }
 
-    pub(crate) fn invalidate_for_change(&self, _changed_path: &Path) {}
+    pub(crate) fn publish(&self, root: &Path, entries: Arc<Vec<T>>) {
+        if entries.len() > MAX_CACHED_LISTING_ENTRIES {
+            return;
+        }
+
+        let Ok(mut listings) = self.listings().lock() else {
+            return;
+        };
+        listings.retain(|_, listing| listing.cached_at.elapsed() < CACHE_TTL);
+        if !listings.contains_key(root) && listings.len() >= MAX_CACHED_ROOTS {
+            let oldest = listings
+                .iter()
+                .min_by_key(|(_, listing)| listing.cached_at)
+                .map(|(path, _)| path.clone());
+            if let Some(oldest) = oldest {
+                listings.remove(&oldest);
+            }
+        }
+        listings.insert(
+            root.to_path_buf(),
+            CompletedListing {
+                entries,
+                cached_at: Instant::now(),
+            },
+        );
+    }
+
+    pub(crate) fn invalidate_for_change(&self, changed_path: &Path) {
+        let Ok(mut listings) = self.listings().lock() else {
+            return;
+        };
+        listings
+            .retain(|root, _| !changed_path.starts_with(root) && !root.starts_with(changed_path));
+    }
 
     pub(crate) fn get_or_load<F>(&self, root: &Path, load: F) -> Arc<Vec<T>>
     where

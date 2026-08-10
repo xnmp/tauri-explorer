@@ -2,6 +2,7 @@
 //! Issue: tauri-explorer-az6w, tauri-explorer-nv2y
 
 use crate::error::AppError;
+use crate::search_cache::{SearchEntryCache, MAX_CACHED_LISTING_ENTRIES};
 use jwalk::WalkDir;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -61,11 +62,18 @@ fn is_deferred(name: &str) -> bool {
 }
 
 /// One walked entry. `deferred` marks a hit found inside a build-output tree.
+#[derive(Clone)]
 struct Walked {
     relative_path: String,
     name: String,
     is_dir: bool,
     deferred: bool,
+}
+
+static SEARCH_ENTRY_CACHE: SearchEntryCache<Walked> = SearchEntryCache::new();
+
+pub(crate) fn invalidate_search_cache_for_change(changed_path: &Path) {
+    SEARCH_ENTRY_CACHE.invalidate_for_change(changed_path);
 }
 
 // ─── WSL delegation (#414) ───────────────────────────────────────────────────
@@ -536,6 +544,10 @@ fn walk_entries(root_path: &Path) -> Vec<Walked> {
     entries
 }
 
+fn cached_walk_entries(root_path: &Path) -> Arc<Vec<Walked>> {
+    SEARCH_ENTRY_CACHE.get_or_load(root_path, || walk_entries(root_path))
+}
+
 /// Directory bonus: directories are ranked higher than files with equal scores
 /// since users more commonly navigate to folders from QuickOpen.
 const DIRECTORY_BONUS: u32 = 30;
@@ -621,7 +633,7 @@ fn fuzzy_search_sync(
     }
 
     let limit = limit.clamp(1, 100);
-    let entries = walk_entries(&root_path);
+    let entries = cached_walk_entries(&root_path);
     log::debug!("fuzzy_search: query={:?} entries={}", query, entries.len());
 
     if entries.is_empty() {
@@ -716,37 +728,69 @@ pub async fn start_streaming_search(
 
         let mut pending_entries: Vec<Walked> = Vec::new();
 
-        // Fast pass first, then the deferred build-output trees (#393), so the
-        // first results land as quickly as they always did.
-        walk_passes(
-            &root_path,
-            &|| cancelled.load(Ordering::Relaxed),
-            usize::MAX,
-            &mut |entry| {
-                pending_entries.push(entry);
-                total_scanned += 1;
+        let cached_entries = SEARCH_ENTRY_CACHE.completed(&root_path);
+        let mut completed_entries = cached_entries.is_none().then(Vec::new);
 
-                // Process batch and emit results
-                if pending_entries.len() >= batch_size {
-                    let ctx = BatchContext {
-                        app: &app,
-                        search_id,
-                        root_path: &root_path,
-                        pattern: &pattern,
-                        limit,
-                        boost_prefix: boost_path.as_deref(),
-                        query_lower: &query_lower,
-                    };
-                    process_batch(
-                        &ctx,
-                        &mut pending_entries,
-                        &mut all_results,
-                        &mut matcher,
-                        total_scanned,
-                    );
+        let mut accept_entry = |entry: Walked| {
+            if completed_entries
+                .as_ref()
+                .is_some_and(|entries| entries.len() >= MAX_CACHED_LISTING_ENTRIES)
+            {
+                // Preserve the streaming path's bounded-memory behavior for
+                // enormous roots; listings above the cache cap stay uncached.
+                completed_entries = None;
+            }
+            if let Some(entries) = completed_entries.as_mut() {
+                entries.push(entry.clone());
+            }
+            pending_entries.push(entry);
+            total_scanned += 1;
+
+            if pending_entries.len() >= batch_size {
+                let ctx = BatchContext {
+                    app: &app,
+                    search_id,
+                    root_path: &root_path,
+                    pattern: &pattern,
+                    limit,
+                    boost_prefix: boost_path.as_deref(),
+                    query_lower: &query_lower,
+                };
+                process_batch(
+                    &ctx,
+                    &mut pending_entries,
+                    &mut all_results,
+                    &mut matcher,
+                    total_scanned,
+                );
+            }
+        };
+
+        if let Some(entries) = cached_entries {
+            for entry in entries.iter() {
+                if cancelled.load(Ordering::Relaxed) {
+                    break;
                 }
-            },
-        );
+                accept_entry(entry.clone());
+            }
+        } else {
+            // Fast pass first, then the deferred build-output trees (#393), so
+            // a cold search still emits its first results incrementally.
+            walk_passes(
+                &root_path,
+                &|| cancelled.load(Ordering::Relaxed),
+                usize::MAX,
+                &mut accept_entry,
+            );
+        }
+
+        drop(accept_entry);
+
+        if !cancelled.load(Ordering::Relaxed) {
+            if let Some(entries) = completed_entries {
+                SEARCH_ENTRY_CACHE.publish(&root_path, Arc::new(entries));
+            }
+        }
 
         // Process remaining entries
         if !pending_entries.is_empty() && !cancelled.load(Ordering::Relaxed) {

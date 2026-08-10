@@ -17,6 +17,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::dir_listing::invalidate_dir_cache_sync;
 use crate::error::AppError;
+use crate::search::invalidate_search_cache_for_change;
 
 /// Trailing debounce window for `directory-changed` events.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -97,6 +98,7 @@ pub fn init_watcher(app: &AppHandle) {
             // Invalidate the directory cache immediately so re-listings are
             // fresh; the frontend notification is debounced separately.
             invalidate_dir_cache_sync(&dir);
+            invalidate_search_cache_for_change(std::path::Path::new(&dir));
 
             if let Ok(mut pending) = pending_changes().lock() {
                 pending.insert(

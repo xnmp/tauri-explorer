@@ -30,3 +30,12 @@ coverage cannot be installed, walk fresh instead of caching. Keep the recursive
 watch separate from pane, thumbnail, and Miller-column refresh watches so many
 visible child folders do not create overlapping recursive watcher trees. Remove
 the cache watch with the final ordinary watch reference.
+
+Separate Quick Open search roots can still overlap, such as `/repo` and
+`/repo/src` in two panes. A single notify watcher may share the underlying
+descendant watches between those recursive registrations; unwatching either
+root can therefore remove coverage that the other registration still needs.
+Treat overlapping registrations as a coverage group: invalidate every affected
+cache epoch before the transition, tear down the group, and re-establish every
+root whose ordinary pane watch remains active. A root is cache-eligible again
+only after its recursive registration has been restored successfully.

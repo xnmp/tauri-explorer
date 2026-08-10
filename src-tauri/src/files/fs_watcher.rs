@@ -110,6 +110,10 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
         );
         return false;
     }
+    // Coverage may be returning after a failed rebuild. Advance the epoch
+    // before advertising it so a walk that started in the uncovered gap
+    // cannot publish into the newly covered cache.
+    invalidate_search_cache_for_change(path);
     watcher.search_watched.insert(path_string);
     true
 }

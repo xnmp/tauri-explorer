@@ -245,8 +245,9 @@ fn fetch_all_eligible_remotes(repo_path: &str) -> Result<Vec<String>, AppError> 
 
     let mut eligible = Vec::with_capacity(remotes.len());
     for name in remotes.iter() {
-        let name =
-            name.ok_or_else(|| AppError::Other("git remote name is not valid UTF-8".into()))?;
+        let name = name
+            .map_err(crate::git_common::to_app_err)?
+            .ok_or_else(|| AppError::Other("git remote name is not valid UTF-8".into()))?;
         let skip_fetch_all = config_bool(&format!("remote.{name}.skipFetchAll"))?;
         let skip_default_update = config_bool(&format!("remote.{name}.skipDefaultUpdate"))?;
         if !skip_fetch_all && !skip_default_update {
@@ -355,7 +356,7 @@ fn head_snapshot(repo_path: &str) -> Result<(String, Option<String>), AppError> 
         .target()
         .ok_or_else(|| AppError::Other("HEAD has no target commit".into()))?;
     let branch = if head.is_branch() {
-        head.shorthand().map(str::to_owned)
+        head.shorthand().ok().map(str::to_owned)
     } else {
         None
     };
@@ -1020,7 +1021,7 @@ fn sync_local_branches(repo_path: &str) -> Result<SyncLocalBranchesResult, AppEr
         .head()
         .ok()
         .filter(|h| h.is_branch())
-        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+        .and_then(|h| h.shorthand().ok().map(str::to_string));
 
     // Collect the plan first — mutating refs while iterating repo.branches()
     // would invalidate the iterator. Each entry is a branch strictly behind

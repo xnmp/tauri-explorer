@@ -186,7 +186,7 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
             .index_to_workdir()
             .and_then(|d| d.new_file().path())
             .or_else(|| entry.head_to_index().and_then(|d| d.new_file().path()))
-            .or_else(|| entry.path().map(Path::new))
+            .or_else(|| entry.path().ok().map(Path::new))
             .map(|p| p.to_string_lossy().replace('\\', "/"));
         if let Some(path) = path {
             out.merge = Some(GitFileEntry {
@@ -206,7 +206,7 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
 
     // Untracked: working tree has a new file AND the index has nothing for it.
     if flags.contains(Status::WT_NEW) && !flags.intersects(index_flags) {
-        if let Some(p) = entry.path() {
+        if let Ok(p) = entry.path() {
             out.untracked = Some(GitFileEntry {
                 path: p.replace('\\', "/"),
                 old_path: None,
@@ -408,7 +408,7 @@ fn collect_status_inner(
     match repo.head() {
         Ok(head) => {
             if head.is_branch() {
-                summary.branch = head.shorthand().map(|s| s.to_string());
+                summary.branch = head.shorthand().ok().map(str::to_string);
             } else {
                 summary.detached = true;
                 summary.branch = head.target().map(|oid| format!("{:.7}", oid));
@@ -1569,7 +1569,7 @@ pub async fn git_commit(
         let commit = repo.find_commit(oid).map_err(to_app_err)?;
         Ok(GitCommitResult {
             commit_id: oid.to_string(),
-            summary: commit.summary().unwrap_or("").to_string(),
+            summary: commit.summary().ok().flatten().unwrap_or("").to_string(),
         })
     })
     .await

@@ -10,7 +10,7 @@
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -49,6 +49,9 @@ struct FsWatcher {
 
 static FS_WATCHER: OnceLock<Mutex<FsWatcher>> = OnceLock::new();
 
+#[cfg(test)]
+static TEST_WATCHED_PATHS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+
 /// Directories with pending change events, keyed by the time of the most
 /// recent event. Flushed (emitted) once no new event arrived for DEBOUNCE.
 static PENDING_CHANGES: OnceLock<Mutex<HashMap<String, PendingChange>>> = OnceLock::new();
@@ -64,6 +67,41 @@ fn unix_time_ms() -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+pub(crate) fn is_directory_watched(path: &Path) -> bool {
+    #[cfg(test)]
+    if TEST_WATCHED_PATHS
+        .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .is_ok_and(|paths| paths.contains(path))
+    {
+        return true;
+    }
+
+    FS_WATCHER
+        .get()
+        .and_then(|watcher| watcher.lock().ok())
+        .is_some_and(|watcher| {
+            watcher
+                .watched
+                .contains_key(&path.to_string_lossy().to_string())
+        })
+}
+
+#[cfg(test)]
+pub(crate) fn mark_directory_watched_for_test(path: &Path) {
+    TEST_WATCHED_PATHS
+        .get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .expect("test watched paths lock")
+        .insert(path.to_path_buf());
+}
+
+pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
+    let path_string = path.to_string_lossy();
+    invalidate_dir_cache_sync(&path_string);
+    invalidate_search_cache_for_change(path);
 }
 
 /// Initialize the filesystem watcher. Call once during app setup.
@@ -97,8 +135,7 @@ pub fn init_watcher(app: &AppHandle) {
         for dir in dirs {
             // Invalidate the directory cache immediately so re-listings are
             // fresh; the frontend notification is debounced separately.
-            invalidate_dir_cache_sync(&dir);
-            invalidate_search_cache_for_change(std::path::Path::new(&dir));
+            invalidate_directory_caches_for_change(Path::new(&dir));
 
             if let Ok(mut pending) = pending_changes().lock() {
                 pending.insert(

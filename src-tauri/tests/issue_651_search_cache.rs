@@ -70,3 +70,30 @@ fn issue_651_invalidated_listing_exposes_filesystem_changes() {
     );
     assert_eq!(walks.get(), 2, "invalidation must force a fresh walk");
 }
+
+#[test]
+fn issue_651_invalidation_during_a_walk_prevents_stale_publication() {
+    let root = tempfile::tempdir().expect("temporary search root");
+    fs::write(root.path().join("before.txt"), "before").expect("initial fixture");
+    let cache = SearchEntryCache::new();
+    let walks = Cell::new(0);
+
+    let first = cache.get_or_load(root.path(), || {
+        walks.set(walks.get() + 1);
+        let entries = vec!["before.txt".to_string()];
+        cache.invalidate_for_change(root.path());
+        entries
+    });
+    assert_eq!(first.as_slice(), ["before.txt"]);
+
+    fs::remove_file(root.path().join("before.txt")).expect("remove initial fixture");
+    fs::write(root.path().join("after.txt"), "after").expect("changed fixture");
+    let after = matching_names(&cache, root.path(), "after", &walks);
+
+    assert_eq!(after, ["after.txt"]);
+    assert_eq!(
+        walks.get(),
+        2,
+        "an invalidated in-flight walk must not become the completed listing"
+    );
+}

@@ -72,6 +72,10 @@ struct Walked {
 
 static SEARCH_ENTRY_CACHE: SearchEntryCache<Walked> = SearchEntryCache::new();
 
+#[cfg(test)]
+static TEST_WALK_COUNTS: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, usize>>> =
+    std::sync::OnceLock::new();
+
 pub(crate) fn invalidate_search_cache_for_change(changed_path: &Path) {
     SEARCH_ENTRY_CACHE.invalidate_for_change(changed_path);
 }
@@ -537,11 +541,57 @@ fn normalize_rel_separators(p: String) -> String {
 /// Collect file/directory entries under `root_path` (both passes).
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
 fn walk_entries(root_path: &Path) -> Vec<Walked> {
+    #[cfg(test)]
+    {
+        *TEST_WALK_COUNTS
+            .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("test walk counts lock")
+            .entry(root_path.to_path_buf())
+            .or_default() += 1;
+    }
     let mut entries: Vec<Walked> = Vec::new();
     walk_passes(root_path, &|| false, WALK_SAFETY_CAP, &mut |w| {
         entries.push(w)
     });
     entries
+}
+
+#[cfg(test)]
+fn walk_count_for_test(root_path: &Path) -> usize {
+    TEST_WALK_COUNTS
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test walk counts lock")
+        .get(root_path)
+        .copied()
+        .unwrap_or_default()
+}
+
+fn walk_streaming_entries(
+    root_path: &Path,
+    cancelled: &dyn Fn() -> bool,
+    on_entry: &mut dyn FnMut(Walked),
+) -> Option<Vec<Walked>> {
+    let mut completed_entries = Some(Vec::new());
+    walk_passes(root_path, cancelled, usize::MAX, &mut |entry| {
+        if completed_entries
+            .as_ref()
+            .is_some_and(|entries| entries.len() >= MAX_CACHED_LISTING_ENTRIES)
+        {
+            completed_entries = None;
+        }
+        if let Some(entries) = completed_entries.as_mut() {
+            entries.push(entry.clone());
+        }
+        on_entry(entry);
+    });
+
+    if cancelled() {
+        None
+    } else {
+        completed_entries
+    }
 }
 
 fn cached_walk_entries(root_path: &Path) -> Arc<Vec<Walked>> {
@@ -729,20 +779,7 @@ pub async fn start_streaming_search(
         let mut pending_entries: Vec<Walked> = Vec::new();
 
         let cached_entries = SEARCH_ENTRY_CACHE.completed(&root_path);
-        let mut completed_entries = cached_entries.is_none().then(Vec::new);
-
         let mut accept_entry = |entry: Walked| {
-            if completed_entries
-                .as_ref()
-                .is_some_and(|entries| entries.len() >= MAX_CACHED_LISTING_ENTRIES)
-            {
-                // Preserve the streaming path's bounded-memory behavior for
-                // enormous roots; listings above the cache cap stay uncached.
-                completed_entries = None;
-            }
-            if let Some(entries) = completed_entries.as_mut() {
-                entries.push(entry.clone());
-            }
             pending_entries.push(entry);
             total_scanned += 1;
 
@@ -766,23 +803,23 @@ pub async fn start_streaming_search(
             }
         };
 
-        if let Some(entries) = cached_entries {
+        let completed_entries = if let Some(entries) = cached_entries {
             for entry in entries.iter() {
                 if cancelled.load(Ordering::Relaxed) {
                     break;
                 }
                 accept_entry(entry.clone());
             }
+            None
         } else {
             // Fast pass first, then the deferred build-output trees (#393), so
             // a cold search still emits its first results incrementally.
-            walk_passes(
+            walk_streaming_entries(
                 &root_path,
                 &|| cancelled.load(Ordering::Relaxed),
-                usize::MAX,
                 &mut accept_entry,
-            );
-        }
+            )
+        };
 
         drop(accept_entry);
 
@@ -830,6 +867,10 @@ pub async fn start_streaming_search(
 
     Ok(search_id)
 }
+
+#[cfg(test)]
+#[path = "../tests/issue_651_search_integration.rs"]
+mod issue_651_integration_tests;
 
 /// Per-search constants shared by every `process_batch` call.
 struct BatchContext<'a> {

@@ -33,9 +33,7 @@ test(`Git repository folder badge follows the active theme in ${viewMode} view`,
   if (viewMode !== "details") await switchViewMode(page, viewMode);
 
   const repository = page.locator('.entry-item[data-path="/home/user/my-project"]');
-  // The badge includes a decorative inner ring; assert the painted theme
-  // surface rather than every circle in the SVG.
-  const badge = repository.locator(".git-repo-badge");
+  const badge = repository.locator(".git-repo-folder svg > circle.git-repo-badge");
   const folder = page.locator('.entry-item[data-path="/home/user/Documents"] svg path').first();
   await expect(badge).toBeVisible();
 

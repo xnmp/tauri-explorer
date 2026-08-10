@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use super::dir_listing::invalidate_dir_cache_sync;
 use crate::error::AppError;
@@ -105,7 +105,7 @@ pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
 }
 
 /// Initialize the filesystem watcher. Call once during app setup.
-pub fn init_watcher(app: &AppHandle) {
+pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
     let watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         let event = match res {
             Ok(e) => e,

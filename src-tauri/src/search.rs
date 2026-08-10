@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 /// Directories that are never walked: repo internals, caches and editor state.
 /// Nothing a user would Quick Open to lives inside them.
@@ -75,6 +75,22 @@ static SEARCH_ENTRY_CACHE: SearchEntryCache<Walked> = SearchEntryCache::new();
 #[cfg(test)]
 static TEST_WALK_COUNTS: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, usize>>> =
     std::sync::OnceLock::new();
+
+#[cfg(test)]
+struct TestStreamGate {
+    started: std::sync::Barrier,
+    release: std::sync::Barrier,
+}
+
+#[cfg(test)]
+static TEST_STREAM_GATES: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<PathBuf, Arc<TestStreamGate>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+static TEST_STREAM_WALK_COUNTS: std::sync::OnceLock<
+    Mutex<std::collections::HashMap<PathBuf, usize>>,
+> = std::sync::OnceLock::new();
 
 pub(crate) fn invalidate_search_cache_for_change(changed_path: &Path) {
     SEARCH_ENTRY_CACHE.invalidate_for_change(changed_path);
@@ -573,8 +589,32 @@ fn walk_streaming_entries(
     cancelled: &dyn Fn() -> bool,
     on_entry: &mut dyn FnMut(Walked),
 ) -> Option<Vec<Walked>> {
+    #[cfg(test)]
+    {
+        *TEST_STREAM_WALK_COUNTS
+            .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .expect("test stream walk counts lock")
+            .entry(root_path.to_path_buf())
+            .or_default() += 1;
+    }
     let mut completed_entries = Some(Vec::new());
+    #[cfg(test)]
+    let mut paused = false;
     walk_passes(root_path, cancelled, usize::MAX, &mut |entry| {
+        #[cfg(test)]
+        if !paused {
+            let gate = TEST_STREAM_GATES
+                .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+                .lock()
+                .expect("test stream gates lock")
+                .remove(root_path);
+            if let Some(gate) = gate {
+                paused = true;
+                gate.started.wait();
+                gate.release.wait();
+            }
+        }
         if completed_entries
             .as_ref()
             .is_some_and(|entries| entries.len() >= MAX_CACHED_LISTING_ENTRIES)
@@ -592,6 +632,31 @@ fn walk_streaming_entries(
     } else {
         completed_entries
     }
+}
+
+#[cfg(test)]
+fn install_stream_gate_for_test(root_path: &Path) -> Arc<TestStreamGate> {
+    let gate = Arc::new(TestStreamGate {
+        started: std::sync::Barrier::new(2),
+        release: std::sync::Barrier::new(2),
+    });
+    TEST_STREAM_GATES
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test stream gates lock")
+        .insert(root_path.to_path_buf(), Arc::clone(&gate));
+    gate
+}
+
+#[cfg(test)]
+fn stream_walk_count_for_test(root_path: &Path) -> usize {
+    TEST_STREAM_WALK_COUNTS
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .expect("test stream walk counts lock")
+        .get(root_path)
+        .copied()
+        .unwrap_or_default()
 }
 
 fn cached_walk_entries(root_path: &Path) -> Arc<Vec<Walked>> {
@@ -742,6 +807,16 @@ pub async fn start_streaming_search(
     limit: usize,
     boost_prefix: Option<String>,
 ) -> Result<u64, AppError> {
+    start_streaming_search_with_runtime(app, query, root, limit, boost_prefix).await
+}
+
+async fn start_streaming_search_with_runtime<R: Runtime>(
+    app: AppHandle<R>,
+    query: String,
+    root: String,
+    limit: usize,
+    boost_prefix: Option<String>,
+) -> Result<u64, AppError> {
     let root_path = PathBuf::from(&root);
 
     // Stat off the calling thread — a dead network mount can hang here.
@@ -882,9 +957,13 @@ pub async fn start_streaming_search(
 #[path = "../tests/issue_651_search_integration.rs"]
 mod issue_651_integration_tests;
 
+#[cfg(test)]
+#[path = "../tests/issue_651_streaming_integration.rs"]
+mod issue_651_streaming_integration_tests;
+
 /// Per-search constants shared by every `process_batch` call.
-struct BatchContext<'a> {
-    app: &'a AppHandle,
+struct BatchContext<'a, R: Runtime> {
+    app: &'a AppHandle<R>,
     search_id: u64,
     root_path: &'a Path,
     pattern: &'a Pattern,
@@ -893,8 +972,8 @@ struct BatchContext<'a> {
     query_lower: &'a str,
 }
 
-fn process_batch(
-    ctx: &BatchContext<'_>,
+fn process_batch<R: Runtime>(
+    ctx: &BatchContext<'_, R>,
     pending: &mut Vec<Walked>,
     all_results: &mut Vec<SearchResult>,
     matcher: &mut Matcher,

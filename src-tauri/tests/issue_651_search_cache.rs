@@ -97,3 +97,24 @@ fn issue_651_invalidation_during_a_walk_prevents_stale_publication() {
         "an invalidated in-flight walk must not become the completed listing"
     );
 }
+
+#[test]
+fn issue_651_unrelated_change_does_not_discard_an_unchanged_root_walk() {
+    let root = tempfile::tempdir().expect("temporary search root");
+    let unrelated = tempfile::tempdir().expect("unrelated temporary root");
+    let cache = SearchEntryCache::new();
+    let walks = Cell::new(0);
+
+    let entries = cache.get_or_load(root.path(), || {
+        walks.set(walks.get() + 1);
+        cache.invalidate_for_change(unrelated.path());
+        vec!["kept.txt".to_string()]
+    });
+
+    assert_eq!(entries.as_slice(), ["kept.txt"]);
+    assert_eq!(
+        cache.completed(root.path()).as_deref(),
+        Some(entries.as_ref())
+    );
+    assert_eq!(walks.get(), 1);
+}

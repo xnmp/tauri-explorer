@@ -14,6 +14,7 @@ test("update notice appears when a newer release exists", async ({ page }) => {
   await expect(notice).toBeVisible({ timeout: 15_000 });
   await expect(notice).toContainText("9.9.9 is available");
   await page.screenshot({ path: "evidence/ac-2-dialog-controls.png" });
+  await page.screenshot({ path: "evidence/ac-3-update-actions.png" });
 
   await notice.getByRole("button", { name: "Dismiss" }).click();
   await expect(notice).not.toBeVisible();

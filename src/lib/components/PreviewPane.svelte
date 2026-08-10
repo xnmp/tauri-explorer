@@ -775,7 +775,8 @@
       }
     }
 
-    previewLoading = false;
+    // A superseded request must not hide the current selection's spinner.
+    if (isCurrentPreview(file)) previewLoading = false;
   }
 </script>
 

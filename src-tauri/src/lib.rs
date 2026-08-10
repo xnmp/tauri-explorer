@@ -41,6 +41,7 @@ mod portal {
     }
 }
 mod search;
+mod search_cache;
 pub mod system;
 pub mod task_registry;
 mod terminal;

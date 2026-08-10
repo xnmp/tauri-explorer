@@ -1300,12 +1300,6 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     const url = args.url as string;
     localStorage.setItem("mock-opened-url", url);
-    // Evidence-only browser tests opt in to following the native handoff in
-    // the page so a real release destination can be captured after the user
-    // clicks the notice action. Ordinary mock tests keep the IPC-only seam.
-    if (localStorage.getItem("mock-navigate-external-url") === "1") {
-      window.location.assign(url);
-    }
     return undefined;
   },
   submit_user_report: (args) => {

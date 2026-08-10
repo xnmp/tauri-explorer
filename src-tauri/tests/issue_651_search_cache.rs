@@ -1,4 +1,4 @@
-use super::SearchEntryCache;
+use super::{SearchEntryCache, MAX_TRACKED_ROOTS};
 use std::cell::Cell;
 use std::fs;
 
@@ -117,4 +117,25 @@ fn issue_651_unrelated_change_does_not_discard_an_unchanged_root_walk() {
         Some(entries.as_ref())
     );
     assert_eq!(walks.get(), 1);
+}
+
+#[test]
+fn issue_651_exact_root_epochs_keep_revision_tracking_bounded() {
+    let cache = SearchEntryCache::<String>::new();
+    let base = tempfile::tempdir().expect("temporary revision roots");
+
+    for index in 0..(MAX_TRACKED_ROOTS * 2) {
+        cache.invalidate_root(&base.path().join(format!("root-{index}")));
+    }
+
+    assert!(
+        cache
+            .state()
+            .lock()
+            .expect("cache state lock")
+            .revisions
+            .len()
+            <= MAX_TRACKED_ROOTS,
+        "coverage epoch allocation must preserve the revision tracking bound"
+    );
 }

@@ -22,3 +22,11 @@ is removed, changes during the unwatched gap are invisible; invalidate the
 listing and advance its revision before a later watch can reuse it. This also
 prevents a cold walk started in the old watch epoch from publishing after an
 unwatch/rewatch cycle.
+
+A pane's ordinary filesystem watch is deliberately non-recursive, while the
+cached Quick Open listing spans the entire subtree. Cache eligibility therefore
+requires a separate recursive invalidation watch for that search root. If that
+coverage cannot be installed, walk fresh instead of caching. Keep the recursive
+watch separate from pane, thumbnail, and Miller-column refresh watches so many
+visible child folders do not create overlapping recursive watcher trees. Remove
+the cache watch with the final ordinary watch reference.

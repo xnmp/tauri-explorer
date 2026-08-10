@@ -595,7 +595,11 @@ fn walk_streaming_entries(
 }
 
 fn cached_walk_entries(root_path: &Path) -> Arc<Vec<Walked>> {
-    SEARCH_ENTRY_CACHE.get_or_load(root_path, || walk_entries(root_path))
+    if crate::files::fs_watcher::is_directory_watched(root_path) {
+        SEARCH_ENTRY_CACHE.get_or_load(root_path, || walk_entries(root_path))
+    } else {
+        Arc::new(walk_entries(root_path))
+    }
 }
 
 /// Directory bonus: directories are ranked higher than files with equal scores
@@ -778,7 +782,11 @@ pub async fn start_streaming_search(
 
         let mut pending_entries: Vec<Walked> = Vec::new();
 
-        let cached_entries = SEARCH_ENTRY_CACHE.completed(&root_path);
+        let cache_eligible = crate::files::fs_watcher::is_directory_watched(&root_path);
+        let cache_revision = cache_eligible.then(|| SEARCH_ENTRY_CACHE.begin_load());
+        let cached_entries = cache_eligible
+            .then(|| SEARCH_ENTRY_CACHE.completed(&root_path))
+            .flatten();
         let mut accept_entry = |entry: Walked| {
             pending_entries.push(entry);
             total_scanned += 1;
@@ -823,9 +831,11 @@ pub async fn start_streaming_search(
 
         drop(accept_entry);
 
-        if !cancelled.load(Ordering::Relaxed) {
-            if let Some(entries) = completed_entries {
-                SEARCH_ENTRY_CACHE.publish(&root_path, Arc::new(entries));
+        if !cancelled.load(Ordering::Relaxed)
+            && crate::files::fs_watcher::is_directory_watched(&root_path)
+        {
+            if let (Some(entries), Some(revision)) = (completed_entries, cache_revision) {
+                SEARCH_ENTRY_CACHE.publish_if_unchanged(&root_path, Arc::new(entries), revision);
             }
         }
 

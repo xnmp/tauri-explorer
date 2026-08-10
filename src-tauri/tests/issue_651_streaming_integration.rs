@@ -103,6 +103,53 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         "a nested descendant change must force a fresh recursive walk"
     );
 
+    let overlap_parent = tempfile::tempdir().expect("overlapping parent search root");
+    let overlap_child = overlap_parent.path().join("child");
+    let overlap_deep = overlap_child.join("deep");
+    fs::create_dir_all(&overlap_deep).expect("overlapping child fixture directory");
+    fs::write(overlap_deep.join("before-overlap.txt"), "before")
+        .expect("overlapping nested fixture");
+    let overlap_parent_path = overlap_parent.path().to_string_lossy().into_owned();
+    let overlap_child_path = overlap_child.to_string_lossy().into_owned();
+    tauri::async_runtime::block_on(watch_directory(overlap_parent_path.clone()))
+        .expect("watch overlapping parent root");
+    tauri::async_runtime::block_on(watch_directory(overlap_child_path.clone()))
+        .expect("watch overlapping child root");
+
+    let parent_overlap_id = start_search(&app_handle, overlap_parent.path(), "before-overlap");
+    assert!(wait_for_done(&receiver, parent_overlap_id).contains(&"before-overlap.txt".to_string()));
+    let child_overlap_id = start_search(&app_handle, &overlap_child, "before-overlap");
+    assert!(wait_for_done(&receiver, child_overlap_id).contains(&"before-overlap.txt".to_string()));
+    assert_eq!(stream_walk_count_for_test(overlap_parent.path()), 1);
+    assert_eq!(stream_walk_count_for_test(&overlap_child), 1);
+
+    tauri::async_runtime::block_on(unwatch_directory(overlap_parent_path))
+        .expect("remove overlapping parent watch");
+    let child_recache_id = start_search(&app_handle, &overlap_child, "before-overlap");
+    assert!(wait_for_done(&receiver, child_recache_id).contains(&"before-overlap.txt".to_string()));
+    assert_eq!(
+        stream_walk_count_for_test(&overlap_child),
+        2,
+        "the parent coverage transition must invalidate the child cache"
+    );
+
+    let revision = SEARCH_ENTRY_CACHE.begin_load(&overlap_child);
+    fs::remove_file(overlap_deep.join("before-overlap.txt"))
+        .expect("remove overlapping nested fixture");
+    fs::write(overlap_deep.join("after-overlap.txt"), "after")
+        .expect("changed overlapping nested fixture");
+    wait_for_revision_change(&overlap_child, revision);
+    let changed_overlap_id = start_search(&app_handle, &overlap_child, "after-overlap");
+    assert!(
+        wait_for_done(&receiver, changed_overlap_id).contains(&"after-overlap.txt".to_string()),
+        "the child cache watch must survive removal of an overlapping parent"
+    );
+    assert_eq!(
+        stream_walk_count_for_test(&overlap_child),
+        3,
+        "a descendant change under the remaining child watch must force a fresh walk"
+    );
+
     let rewatched = tempfile::tempdir().expect("rewatched search root");
     fs::write(rewatched.path().join("before-gap.txt"), "before").expect("pre-unwatch fixture");
     let rewatched_path = rewatched.path().to_string_lossy().into_owned();

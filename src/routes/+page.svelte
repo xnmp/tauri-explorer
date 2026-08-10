@@ -6,7 +6,7 @@
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
   import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
-  import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+  import { E2E_HOOKS_ENABLED, E2E_WARM_WINDOW_PRIMING_DISABLED } from "$lib/domain/e2e-hooks";
   import { themeStore } from "$lib/state/theme.svelte";
   import { startConfigWatch } from "$lib/state/config-watch";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -564,7 +564,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // runaway-spawn bug. Deferred so it never competes with this window's own
     // first paint; settings are read at fire time, after settingsStore.init()
     // has resolved.
-    if (wmode === "off") {
+    if (wmode === "off" && !E2E_WARM_WINDOW_PRIMING_DISABLED) {
       setTimeout(() => {
         if (settingsStore.warmWindow) void spawnWarmWindow();
       }, 1500);

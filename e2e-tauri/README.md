@@ -1,4 +1,4 @@
-# Tauri-binary E2E (`tauri-driver` + WebdriverIO)
+# Tauri-binary E2E (WebdriverIO)
 
 A smoke suite that launches the built Tauri binary and drives it via WebDriver. Complements the Playwright suite in `../e2e/`, which runs against the browser dev server with mocked IPC and cannot catch issues that only surface in the real WebView.
 
@@ -6,20 +6,21 @@ A smoke suite that launches the built Tauri binary and drives it via WebDriver. 
 
 | OS      | Supported | Notes                                                              |
 | ------- | --------- | ------------------------------------------------------------------ |
-| Linux   | yes       | Uses WebKitGTK via `webkit2gtk-driver`                             |
-| Windows | yes       | Uses WebView2 via `msedgedriver` (matched to installed Edge)       |
+| Linux   | yes       | Uses `tauri-driver` + WebKitGTK                                    |
+| Windows | yes       | Attaches `msedgedriver` to WebView2 through an E2E-only CDP port   |
 | macOS   | **no**    | `tauri-driver` has no WKWebView driver. See project issue tracker. |
 
 ## One-time setup
 
 ```bash
-# Binary: tauri-driver (installs to ~/.cargo/bin/)
+# Linux only: tauri-driver (installs to ~/.cargo/bin/)
 cargo install tauri-driver --locked
 
 # Linux only: WebKitWebDriver
 sudo apt-get install -y webkit2gtk-driver
 
-# Windows only: msedgedriver must be on PATH (pre-installed on windows-latest CI runners)
+# Windows only: download msedgedriver matching the installed WebView2 runtime
+# and set TAURI_NATIVE_DRIVER to its full path.
 ```
 
 ## Running locally
@@ -40,14 +41,17 @@ asset path with no dev server in the loop. The suite's test hooks are compiled
 in with `VITE_E2E_HOOKS=1` at build time (see `src/lib/domain/e2e-hooks.ts`);
 without it every spec fails with "dev e2e hooks never became ready".
 
+Windows additionally builds with `--features e2e-webview2-attach`, sets
+`VITE_E2E_NO_WARM_PRIME=1`, and runs with `TAURI_NATIVE_DRIVER` pointing to a
+driver that matches the WebView2 runtime. That Cargo feature is intentionally
+absent from release builds: it is the only path that exposes a CDP port.
+
 ## CI
 
 See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to
-`dev`/`main` against `ubuntu-latest`. The `windows-latest` leg is manual
-dispatch only until #457 is fixed — msedgedriver's WebView2 attach times out
-while the app itself boots fine; `docs/lessons/457-windows-tauri-smoke-hang.md`
-records which hypotheses are already refuted. Windows coverage is a local run
-on real hardware instead.
+`dev`/`main` against both `ubuntu-latest` and `windows-latest`.
+`docs/lessons/457-windows-tauri-smoke-hang.md` records why the Windows harness
+must use the programmatic CDP attach path.
 
 ## Adding specs
 

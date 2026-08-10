@@ -71,6 +71,10 @@ tauri-plugin-log = "2"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
 
 [features]
+# Enables the programmatic WebView2 debug port used by the Windows binary-E2E
+# harness. This must stay opt-in: release builds must not expose a CDP port.
+e2e-webview2-attach = []
+
 # AVIF thumbnails/previews, via image's avif-native decoder (system dav1d).
 # Off by default so the cross-platform release build needs no dav1d (Ubuntu
 # 22.04's is too old, and bundling it into the AppImage/deb is a headache).

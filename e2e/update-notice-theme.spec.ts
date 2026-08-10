@@ -11,7 +11,6 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
     localStorage.setItem("mockUpdateAvailable", "1");
     localStorage.setItem("theme", JSON.stringify("dark"));
     localStorage.setItem("mock-update-url", "https://github.com/xnmp/tauri-explorer/releases/tag/v1.8.0");
-    localStorage.setItem("mock-navigate-external-url", "1");
   });
   await page.goto("/");
 
@@ -28,11 +27,11 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
   await expect(notice.getByRole("button", { name: "Dismiss" })).toHaveClass(/btn.*secondary/);
   await page.screenshot({ path: "evidence/ac-1-themed-update-notice.png" });
 
-  const releaseDestination = page.waitForURL(releaseUrl);
   await viewRelease.click();
-  await releaseDestination;
-  await expect(page).toHaveTitle(/Release v1\.8\.0/);
-  await page.screenshot({ path: "evidence/ac-3-release-destination.png" });
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    .toBe(releaseUrl);
+  await expect(notice).not.toBeVisible();
 });
 
 test("light-themed update notice uses dialog chrome and can be dismissed", async ({ page }) => {

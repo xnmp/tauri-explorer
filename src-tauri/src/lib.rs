@@ -48,6 +48,23 @@ mod terminal;
 mod thumbnails;
 mod wallpaper;
 mod warm_pool;
+
+#[cfg(all(target_os = "windows", feature = "e2e-webview2-attach"))]
+fn e2e_webview2_browser_args() -> String {
+    let port = std::env::var("TAURI_E2E_WEBVIEW2_DEBUG_PORT")
+        .expect("TAURI_E2E_WEBVIEW2_DEBUG_PORT must be set for e2e-webview2-attach");
+    let port = port
+        .parse::<u16>()
+        .expect("TAURI_E2E_WEBVIEW2_DEBUG_PORT must be a valid TCP port");
+    assert_ne!(port, 0, "TAURI_E2E_WEBVIEW2_DEBUG_PORT must not be zero");
+
+    // Calling additional_browser_args replaces WRY's defaults, so preserve
+    // them before adding the E2E-only CDP endpoint.
+    format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+         --remote-debugging-port={port}"
+    )
+}
 mod wsl;
 
 use system::{
@@ -422,6 +439,16 @@ pub fn run(launch_dir: Option<String>) {
             // background transparent so the effect shows through.
             #[cfg(target_os = "windows")]
             {
+                // GitHub's Windows runner starts the host elevated. WebView2
+                // deliberately ignores WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+                // in elevated processes, so the E2E harness must configure
+                // its CDP port through CoreWebView2EnvironmentOptions instead.
+                // The Cargo feature keeps this unreachable in shipped builds.
+                #[cfg(feature = "e2e-webview2-attach")]
+                {
+                    builder = builder.additional_browser_args(&e2e_webview2_browser_args());
+                }
+
                 let backdrop = config::config_dir()
                     .ok()
                     .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())

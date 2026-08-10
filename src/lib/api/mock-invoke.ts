@@ -153,6 +153,7 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/home/user/Videos": [
     file("recording.mp4", "/home/user/Videos/recording.mp4", 52428800),
     file("tutorial.mkv", "/home/user/Videos/tutorial.mkv", 104857600),
+    file("soundtrack.mp3", "/home/user/Videos/soundtrack.mp3", 8388608),
   ],
   "/home/user/Documents/project": [
     dir("src", "/home/user/Documents/project/src"),
@@ -342,6 +343,19 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("index.ts", "/home/user/Documents/project/lib/plugins/index.ts", 120),
   ],
 };
+
+if (typeof window !== "undefined") {
+  (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision = () => {
+    const videos = mockFiles["/home/user/Videos"];
+    const recording = videos.find((entry) => entry.path.endsWith("recording.mp4"));
+    if (!recording) return;
+    mockFiles["/home/user/Videos"] = videos.map((entry) =>
+      entry === recording
+        ? { ...entry, modified: new Date(Date.parse(entry.modified) + 1000).toISOString(), size: entry.size + 1 }
+        : entry,
+    );
+  };
+}
 
 // Synthetic large directory for scroll/render profiling (browser-only, mock).
 // Reached at `/perf/huge` (default 5000 entries) or `/perf/huge-N`. Deterministic
@@ -1286,12 +1300,6 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     const url = args.url as string;
     localStorage.setItem("mock-opened-url", url);
-    // Evidence-only browser tests opt in to following the native handoff in
-    // the page so a real release destination can be captured after the user
-    // clicks the notice action. Ordinary mock tests keep the IPC-only seam.
-    if (localStorage.getItem("mock-navigate-external-url") === "1") {
-      window.location.assign(url);
-    }
     return undefined;
   },
   submit_user_report: (args) => {
@@ -1752,7 +1760,13 @@ const mockCommands: Record<string, CommandHandler> = {
     return mockInvoke<string>("get_thumbnail_data");
   },
 
-  get_video_thumbnail_data: () => {
+  get_video_thumbnail_data: (args) => {
+    const videoThumbnailMock = (globalThis as {
+      __mockVideoThumbnail?: (path: string) => string | Promise<string>;
+    }).__mockVideoThumbnail;
+    if (videoThumbnailMock) {
+      return videoThumbnailMock((args.path as string) ?? "");
+    }
     // Same realistic 128px thumbnail as images — stands in for an extracted
     // video frame so the tiles view can be demoed in browser/E2E mode.
     return mockInvoke<string>("get_thumbnail_data");
@@ -2897,7 +2911,11 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
   // (window.__MOCK_LATENCY__ = { git_status: 2000 }) or via URL for
   // fetches that fire during boot (?mockLatency=git_status:2000,foo:500),
   // to make transient loading states observable and assertable (#271).
-  const g = globalThis as { __MOCK_LATENCY__?: Record<string, number>; location?: Location };
+  const g = globalThis as {
+    __MOCK_LATENCY__?: Record<string, number>;
+    __MOCK_FAILURES__?: Record<string, string>;
+    location?: Location;
+  };
   if (!g.__MOCK_LATENCY__ && typeof location !== "undefined") {
     g.__MOCK_LATENCY__ = {};
     const param = new URLSearchParams(location.search).get("mockLatency");
@@ -2908,6 +2926,9 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
   }
   const extraLatency = g.__MOCK_LATENCY__?.[cmd];
   if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
+
+  const failure = g.__MOCK_FAILURES__?.[cmd];
+  if (failure) throw new Error(failure);
 
   const handler = mockCommands[cmd];
   if (!handler) {

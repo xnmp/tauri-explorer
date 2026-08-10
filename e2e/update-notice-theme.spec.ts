@@ -6,9 +6,12 @@
 import { test, expect } from "./fixtures";
 
 test("update notice uses themed dialog chrome and preserves its actions", async ({ page }) => {
+  const releaseUrl = "https://github.com/xnmp/tauri-explorer/releases/tag/v1.8.0";
   await page.addInitScript(() => {
     localStorage.setItem("mockUpdateAvailable", "1");
     localStorage.setItem("theme", JSON.stringify("dark"));
+    localStorage.setItem("mock-update-url", "https://github.com/xnmp/tauri-explorer/releases/tag/v1.8.0");
+    localStorage.setItem("mock-navigate-external-url", "1");
   });
   await page.goto("/");
 
@@ -25,13 +28,10 @@ test("update notice uses themed dialog chrome and preserves its actions", async 
   await expect(notice.getByRole("button", { name: "Dismiss" })).toHaveClass(/btn.*secondary/);
   await page.screenshot({ path: "evidence/ac-1-themed-update-notice.png" });
 
+  const releaseDestination = page.waitForURL(releaseUrl);
   await viewRelease.click();
-  await expect(notice).not.toBeVisible();
-  const releaseUrl = "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9";
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url"))).toBe(releaseUrl);
-  await page.screenshot({ path: "evidence/ac-3-dismissed-update-notice.png" });
-  await page.goto(releaseUrl);
-  await expect(page).toHaveURL(releaseUrl);
+  await releaseDestination;
+  await expect(page).toHaveTitle(/Release v1\.8\.0/);
   await page.screenshot({ path: "evidence/ac-3-release-destination.png" });
 });
 

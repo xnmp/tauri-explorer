@@ -103,7 +103,7 @@
         <path d="M2.5 7.5C2.5 6.94772 2.94772 6.5 3.5 6.5H14.5C15.0523 6.5 15.5 6.94772 15.5 7.5V12.5C15.5 13.6046 14.6046 14.5 13.5 14.5H4.5C3.39543 14.5 2.5 13.6046 2.5 12.5V7.5Z" fill="currentColor"/>
         <path d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 4.29289C8.30886 4.10536 8.56321 4 8.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V6.5H2V5.5Z" fill="currentColor" opacity="0.6"/>
         <circle class="git-repo-badge" cx="13.1" cy="13.1" r="3.55" fill="var(--icon-git-badge, #f05033)"/>
-        <circle class="git-repo-badge-ring" cx="13.1" cy="13.1" r="3.05" fill="none" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="0.55" opacity="0.32"/>
+        <path class="git-repo-badge-ring" d="M16.15 13.1a3.05 3.05 0 1 1-6.1 0 3.05 3.05 0 0 1 6.1 0Z" fill="none" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="0.55" opacity="0.32"/>
         <g class="git-repo-badge-glyph" transform="translate(10.35 9.95) scale(0.37)">
           <circle cx="4" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
           <circle cx="4" cy="12.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
@@ -118,7 +118,7 @@
         <path d="M2 10C2 7.2 3.79 5 6 5H14.34C15.4 5 16.42 5.5 17.17 6.5L20 10H42C44.21 10 46 12.2 46 15V38.75C46 41.5 44.21 43.75 42 43.75H6C3.79 43.75 2 41.5 2 38.75V10Z" fill="currentColor" opacity="0.85"/>
         <path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V20Z" fill="currentColor"/>
         <circle class="git-repo-badge" cx="37.5" cy="37.5" r="9.25" fill="var(--icon-git-badge, #f05033)"/>
-        <circle class="git-repo-badge-ring" cx="37.5" cy="37.5" r="8.2" fill="none" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.35" opacity="0.32"/>
+        <path class="git-repo-badge-ring" d="M45.7 37.5a8.2 8.2 0 1 1-16.4 0 8.2 8.2 0 0 1 16.4 0Z" fill="none" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.35" opacity="0.32"/>
         <g class="git-repo-badge-glyph" transform="translate(30.95 29.45) scale(0.9)">
           <circle cx="4" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
           <circle cx="4" cy="12.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />

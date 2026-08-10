@@ -118,8 +118,14 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
 
     let parent_overlap_id = start_search(&app_handle, overlap_parent.path(), "before-overlap");
     assert!(wait_for_done(&receiver, parent_overlap_id).contains(&"before-overlap.txt".to_string()));
+    let child_uncovered_revision = SEARCH_ENTRY_CACHE.begin_load(&overlap_child);
     let child_overlap_id = start_search(&app_handle, &overlap_child, "before-overlap");
     assert!(wait_for_done(&receiver, child_overlap_id).contains(&"before-overlap.txt".to_string()));
+    assert_ne!(
+        SEARCH_ENTRY_CACHE.begin_load(&overlap_child),
+        child_uncovered_revision,
+        "establishing recursive coverage must start a fresh cache epoch"
+    );
     assert_eq!(stream_walk_count_for_test(overlap_parent.path()), 1);
     assert_eq!(stream_walk_count_for_test(&overlap_child), 1);
 

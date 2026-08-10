@@ -1298,7 +1298,14 @@ const mockCommands: Record<string, CommandHandler> = {
     if (localStorage.getItem("mock-open-url-error") === "1") {
       throw new Error("Mock browser handoff failed");
     }
-    localStorage.setItem("mock-opened-url", args.url as string);
+    const url = args.url as string;
+    localStorage.setItem("mock-opened-url", url);
+    // Evidence-only browser tests opt in to following the native handoff in
+    // the page so a real release destination can be captured after the user
+    // clicks the notice action. Ordinary mock tests keep the IPC-only seam.
+    if (localStorage.getItem("mock-navigate-external-url") === "1") {
+      window.location.assign(url);
+    }
     return undefined;
   },
   submit_user_report: (args) => {
@@ -1322,7 +1329,12 @@ const mockCommands: Record<string, CommandHandler> = {
   // sets localStorage.mockUpdateAvailable before load.
   check_for_update: () =>
     localStorage.getItem("mockUpdateAvailable") === "1"
-      ? { version: "9.9.9", url: "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9" }
+      ? {
+          version: "9.9.9",
+          url:
+            localStorage.getItem("mock-update-url") ??
+            "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9",
+        }
       : null,
 
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused

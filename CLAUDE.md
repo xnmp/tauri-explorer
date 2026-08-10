@@ -154,3 +154,7 @@ Video frames in `PreviewPane.svelte` come from `getVideoThumbnailData`, not the
 tile component. Keep its asynchronous results guarded by the full preview
 revision (path, mtime, and size), because a watcher can update a selected video
 without changing its path (#607).
+
+The floating update notice uses the shared `modal-card` and `btn` control chrome;
+import `components/modal.css` in `UpdateNotice.svelte` so the globally scoped
+dialog styles accompany the otherwise standalone notice.

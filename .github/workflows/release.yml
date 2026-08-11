@@ -128,5 +128,6 @@ jobs:
             -o -name '*.msi' -o -name '*-setup.exe' \))
           gh release create "$VERSION" \
             --title "$VERSION" \
+            --target "$GITHUB_SHA" \
             --generate-notes \
             "${assets[@]}"

@@ -33,7 +33,9 @@ async function terminalText(): Promise<string> {
     });
 
     await input.click();
-    await browser.action("key").down("\uE009").down("q").up("q").up("\uE009").perform();
+    // Use WebDriver's chord helper here. webkit2gtk-driver intermittently drops
+    // a printable key from a manually batched down/up action sequence.
+    await browser.keys(["Control", "q"]);
     await browser.waitUntil(async () => (await terminalText()).includes("terminal-key-byte=17"), {
       timeout: 15_000,
       timeoutMsg: "terminal-hosted key probe never received Ctrl+Q",

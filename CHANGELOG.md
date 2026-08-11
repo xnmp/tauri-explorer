@@ -2,6 +2,25 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.8.1 — 2026-08-11
+
+Reliability and responsiveness fixes for previews, Quick Open, git integrations, and Windows CI.
+
+### Improved
+
+- **Quick Open is substantially faster in large directories** by reusing cached, watched directory listings instead of repeatedly traversing the tree (#653).
+- **Update notifications follow the active theme** (#652), and Git repository badges have clearer styling and theme-aware colours (#646, #649).
+
+### Fixed
+
+- **Video previews render their first frame reliably** and size correctly when entering fullscreen (#654).
+- **Hung git network operations can be cancelled**, preventing stalled fetch, pull, and push actions from blocking the app indefinitely (#643).
+- **Windows Tauri smoke tests run on hosted CI again** by attaching the runtime-matched Edge driver to WebView2 through an E2E-only debug port (#655).
+
+### Housekeeping
+
+- Updated routine frontend and Rust dependencies, including TypeScript 6 and git2 0.21 (#641, #642).
+
 ## v1.8.0 — 2026-08-09
 
 Live config reload, in-app bug reporting with image attachments, git session undo, and a large git-graph/SCM feature batch.

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.8.0"
+version = "1.8.1"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"

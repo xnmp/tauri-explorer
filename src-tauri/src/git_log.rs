@@ -173,7 +173,7 @@ fn head_branch_of(repo: &Repository) -> Option<String> {
     }
     repo.head()
         .ok()
-        .and_then(|h| h.shorthand().map(str::to_string))
+        .and_then(|h| h.shorthand().ok().map(str::to_string))
 }
 
 fn short_oid(oid: Oid) -> String {
@@ -215,8 +215,8 @@ fn collect_decorations(
             Err(_) => continue,
         };
         let name = match r.shorthand() {
-            Some(n) => n.to_string(),
-            None => continue,
+            Ok(n) => n.to_string(),
+            Err(_) => continue,
         };
         // Resolve to the underlying commit OID (peel annotated tags).
         let target = match r.peel_to_commit() {
@@ -435,7 +435,13 @@ fn build_log(
             author_name: author.name().unwrap_or("").to_string(),
             author_email: author.email().unwrap_or("").to_string(),
             author_time: author.when().seconds(),
-            summary: commit.summary().unwrap_or("").trim_start().to_string(),
+            summary: commit
+                .summary()
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .trim_start()
+                .to_string(),
             stash: None,
         });
     }
@@ -672,7 +678,7 @@ fn collect_refs(repo: &Repository) -> Result<GitRefs, AppError> {
         }
     }
     if let Ok(names) = repo.tag_names(None) {
-        for name in names.iter().flatten() {
+        for name in names.iter().filter_map(|name| name.ok().flatten()) {
             if let Ok(obj) = repo.revparse_single(name) {
                 // Peel annotated tags to their commit.
                 let target = obj
@@ -691,7 +697,7 @@ fn collect_refs(repo: &Repository) -> Result<GitRefs, AppError> {
         Ok(head) => {
             out.detached = head_detached_in(repo);
             if head.is_branch() && !out.detached {
-                out.head_branch = head.shorthand().map(|s| s.to_string());
+                out.head_branch = head.shorthand().ok().map(str::to_string);
             }
             out.head = head.peel_to_commit().ok().map(|c| c.id().to_string());
         }

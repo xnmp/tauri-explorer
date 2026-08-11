@@ -590,7 +590,10 @@ impl From<GqlPrNode> for PrInfo {
 /// all, or the resolved remote has no URL (e.g. a purely local remote).
 fn selected_remote(repo: &git2::Repository) -> Option<(String, String)> {
     let names = repo.remotes().ok()?;
-    let names: Vec<&str> = names.iter().flatten().collect();
+    let names: Vec<&str> = names
+        .iter()
+        .filter_map(|name| name.ok().flatten())
+        .collect();
     let chosen = if names.contains(&"origin") {
         "origin"
     } else {
@@ -599,6 +602,7 @@ fn selected_remote(repo: &git2::Repository) -> Option<(String, String)> {
     repo.find_remote(chosen)
         .ok()?
         .url()
+        .ok()
         .map(|url| (chosen.to_string(), url.to_string()))
 }
 

@@ -409,13 +409,13 @@ fn walk_passes(
             for e in children.iter_mut().flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
                 if is_hard_skip(&name) {
-                    e.read_children_path = None;
+                    e.read_children = None;
                 } else if is_deferred(&name) {
                     // Reported as an entry, but its contents wait for pass two.
                     if let Ok(mut roots) = collect.lock() {
                         roots.push(e.path());
                     }
-                    e.read_children_path = None;
+                    e.read_children = None;
                 }
             }
         },
@@ -477,7 +477,7 @@ fn walk_passes(
             .process_read_dir(|_depth, _path, _state, children| {
                 for e in children.iter_mut().flatten() {
                     if is_hard_skip(&e.file_name().to_string_lossy()) {
-                        e.read_children_path = None;
+                        e.read_children = None;
                     }
                 }
             });

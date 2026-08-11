@@ -100,20 +100,20 @@
     contextMenuStore.close();
   }
 
-  function handleCut(): void {
+  async function handleCut(): Promise<void> {
     const selected = explorer.getSelectedEntries();
     if (selected.length > 0) {
       recordActioned();
-      explorer.cutToClipboard(selected);
+      await explorer.cutToClipboard(selected);
     }
     contextMenuStore.close();
   }
 
-  function handleCopy(): void {
+  async function handleCopy(): Promise<void> {
     const selected = explorer.getSelectedEntries();
     if (selected.length > 0) {
       recordActioned();
-      explorer.copyToClipboard(selected);
+      await explorer.copyToClipboard(selected);
     }
     contextMenuStore.close();
   }

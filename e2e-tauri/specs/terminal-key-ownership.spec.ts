@@ -5,6 +5,14 @@ async function terminalText(): Promise<string> {
   return domText(".terminal-panel .xterm-rows");
 }
 
+async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
+  await browser.execute((element: HTMLElement) => element.focus(), input);
+  await browser.waitUntil(() => input.isFocused(), {
+    timeout: 2_000,
+    timeoutMsg: "xterm input never received focus",
+  });
+}
+
 (process.platform !== "win32" ? describe : describe.skip)("terminal key ownership (#496)", () => {
   it("delivers Ctrl+Q to a terminal-hosted application instead of Explorer", async () => {
     // The native WebView keeps its tab layout between test runs. Start from
@@ -32,9 +40,8 @@ async function terminalText(): Promise<string> {
       timeoutMsg: "terminal key probe never entered raw mode",
     });
 
-    await input.click();
-    // Use WebDriver's chord helper here. webkit2gtk-driver intermittently drops
-    // a printable key from a manually batched down/up action sequence.
+    await focusTerminalInput(input);
+    // Match the chord path used by the app's other shortcut tests.
     await browser.keys(["Control", "q"]);
     await browser.waitUntil(async () => (await terminalText()).includes("terminal-key-byte=17"), {
       timeout: 15_000,
@@ -46,13 +53,13 @@ async function terminalText(): Promise<string> {
     // Quick Open is still an explicit terminal-focus exception. The raw-mode
     // probe result remains visible behind the modal, proving this comes from
     // the healthy real PTY session above rather than browser/mock mode.
-    await input.click();
+    await focusTerminalInput(input);
     await browser.keys(["Control", "p"]);
     await $(".quick-open-dialog input.search-input").waitForDisplayed({ timeout: 10_000 });
     await browser.saveScreenshot("evidence/ac-2-quick-open-from-terminal.png");
     await browser.keys("Escape");
 
-    await input.click();
+    await focusTerminalInput(input);
     await browser.keys(["Control", "Shift", "p"]);
     const paletteSearch = $(".command-palette-dialog input.search-input");
     await paletteSearch.waitForDisplayed({ timeout: 10_000 });
@@ -74,7 +81,7 @@ async function terminalText(): Promise<string> {
     const newTabId = await $(".tab.active").getAttribute("data-tab-id");
     expect(newTabId).not.toBeNull();
 
-    await input.click();
+    await focusTerminalInput(input);
     await browser.action("key").down("\uE009").down("\uE00E").up("\uE00E").up("\uE009").perform();
     await browser.waitUntil(
       async () => (await $(".tab.active").getAttribute("data-tab-id")) !== newTabId,
@@ -82,7 +89,7 @@ async function terminalText(): Promise<string> {
     );
     await browser.saveScreenshot("evidence/ac-4-previous-tab-from-terminal.png");
 
-    await input.click();
+    await focusTerminalInput(input);
     await browser.action("key").down("\uE009").down("\uE00F").up("\uE00F").up("\uE009").perform();
     await browser.waitUntil(
       async () => (await $(".tab.active").getAttribute("data-tab-id")) === newTabId,

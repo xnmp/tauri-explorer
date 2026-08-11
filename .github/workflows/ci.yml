@@ -7,6 +7,10 @@ on:
     branches: [dev, main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   # Code maps are only useful while they are accurate: an agent that trusts a map
   # naming a moved file searches worse than one with no map at all. Two guards —

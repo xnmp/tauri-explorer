@@ -6,6 +6,7 @@
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
+import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
 
@@ -152,6 +153,7 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/home/user/Videos": [
     file("recording.mp4", "/home/user/Videos/recording.mp4", 52428800),
     file("tutorial.mkv", "/home/user/Videos/tutorial.mkv", 104857600),
+    file("soundtrack.mp3", "/home/user/Videos/soundtrack.mp3", 8388608),
   ],
   "/home/user/Documents/project": [
     dir("src", "/home/user/Documents/project/src"),
@@ -341,6 +343,19 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("index.ts", "/home/user/Documents/project/lib/plugins/index.ts", 120),
   ],
 };
+
+if (typeof window !== "undefined") {
+  (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision = () => {
+    const videos = mockFiles["/home/user/Videos"];
+    const recording = videos.find((entry) => entry.path.endsWith("recording.mp4"));
+    if (!recording) return;
+    mockFiles["/home/user/Videos"] = videos.map((entry) =>
+      entry === recording
+        ? { ...entry, modified: new Date(Date.parse(entry.modified) + 1000).toISOString(), size: entry.size + 1 }
+        : entry,
+    );
+  };
+}
 
 // Synthetic large directory for scroll/render profiling (browser-only, mock).
 // Reached at `/perf/huge` (default 5000 entries) or `/perf/huge-N`. Deterministic
@@ -562,6 +577,57 @@ interface MockGitCommit {
 }
 
 const mockGitCommits: MockGitCommit[] = [];
+let pendingGitNetworkOperation:
+  | {
+      taskId: number;
+      cancellable: boolean;
+      reject: (reason: Error) => void;
+      onPhase?: (phase: GitNetworkPhaseEvent) => void;
+    }
+  | undefined;
+
+function holdGitNetworkOperation(
+  command: "git_fetch" | "git_pull" | "git_delete_remote_branch",
+  args: Record<string, unknown>,
+): Promise<never> | null {
+  if (new URLSearchParams(location.search).get("mockGitNetwork") !== command) return null;
+  return new Promise<never>((_resolve, reject) => {
+    pendingGitNetworkOperation = { taskId: Number(args.taskId), cancellable: true, reject };
+  });
+}
+
+function holdGitPullAtFastForwardBoundary(
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> | null {
+  const boundary = new URLSearchParams(location.search).get("mockGitPullBoundary");
+  if (boundary !== "fast_forward" && boundary !== "late_cancel") {
+    return null;
+  }
+
+  const taskId = Number(args.taskId);
+  const onPhase = args.onPhase as ((phase: GitNetworkPhaseEvent) => void) | undefined;
+  const before_oid = mockHeadOid();
+  const branch = mockDetached
+    ? null
+    : ((MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
+      null);
+
+  return new Promise((resolve, reject) => {
+    pendingGitNetworkOperation = { taskId, cancellable: false, reject, onPhase };
+    if (boundary === "fast_forward") onPhase?.({ taskId, cancellable: false });
+    window.addEventListener(
+      "tauri-explorer:mock-git-pull-finish",
+      () => {
+        if (pendingGitNetworkOperation?.taskId === taskId) {
+          pendingGitNetworkOperation = undefined;
+        }
+        const after_oid = mockAppendCommit("Pull from upstream");
+        resolve({ kind: "head_move", operation: "pull", branch, before_oid, after_oid });
+      },
+      { once: true },
+    );
+  });
+}
 
 function seedGitState(): MockGitState {
   return {
@@ -1232,7 +1298,8 @@ const mockCommands: Record<string, CommandHandler> = {
     if (localStorage.getItem("mock-open-url-error") === "1") {
       throw new Error("Mock browser handoff failed");
     }
-    localStorage.setItem("mock-opened-url", args.url as string);
+    const url = args.url as string;
+    localStorage.setItem("mock-opened-url", url);
     return undefined;
   },
   submit_user_report: (args) => {
@@ -1256,7 +1323,12 @@ const mockCommands: Record<string, CommandHandler> = {
   // sets localStorage.mockUpdateAvailable before load.
   check_for_update: () =>
     localStorage.getItem("mockUpdateAvailable") === "1"
-      ? { version: "9.9.9", url: "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9" }
+      ? {
+          version: "9.9.9",
+          url:
+            localStorage.getItem("mock-update-url") ??
+            "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9",
+        }
       : null,
 
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
@@ -1688,7 +1760,13 @@ const mockCommands: Record<string, CommandHandler> = {
     return mockInvoke<string>("get_thumbnail_data");
   },
 
-  get_video_thumbnail_data: () => {
+  get_video_thumbnail_data: (args) => {
+    const videoThumbnailMock = (globalThis as {
+      __mockVideoThumbnail?: (path: string) => string | Promise<string>;
+    }).__mockVideoThumbnail;
+    if (videoThumbnailMock) {
+      return videoThumbnailMock((args.path as string) ?? "");
+    }
     // Same realistic 128px thumbnail as images — stands in for an extracted
     // video frame so the tiles view can be demoed in browser/E2E mode.
     return mockInvoke<string>("get_thumbnail_data");
@@ -2039,8 +2117,32 @@ const mockCommands: Record<string, CommandHandler> = {
     mockClearOperation();
     return null;
   },
-  git_fetch: () => null,
-  git_pull: () => {
+  git_fetch: (args) => {
+    return holdGitNetworkOperation("git_fetch", args);
+  },
+  cancel_git_network_operation: (args) => {
+    if (
+      pendingGitNetworkOperation?.taskId === Number(args.taskId) &&
+      pendingGitNetworkOperation.cancellable
+    ) {
+      const operation = pendingGitNetworkOperation;
+      pendingGitNetworkOperation = undefined;
+      operation.reject(new Error("git network operation cancelled"));
+    } else if (pendingGitNetworkOperation?.taskId === Number(args.taskId)) {
+      // The local fast-forward has already begun. Model delayed phase-event
+      // delivery after a stale Cancel click without rejecting the pull.
+      pendingGitNetworkOperation.onPhase?.({
+        taskId: pendingGitNetworkOperation.taskId,
+        cancellable: false,
+      });
+    }
+    return null;
+  },
+  git_pull: (args) => {
+    const boundary = holdGitPullAtFastForwardBoundary(args);
+    if (boundary) return boundary;
+    const held = holdGitNetworkOperation("git_pull", args);
+    if (held) return held;
     const before_oid = mockHeadOid();
     const branch =
       mockDetached
@@ -2132,7 +2234,8 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     throw new Error("unknown git undo action");
   },
-  git_delete_remote_branch: () => null,
+  git_delete_remote_branch: (args) =>
+    holdGitNetworkOperation("git_delete_remote_branch", args),
 
   // Tracking checkout (#432): create a local branch tracking <remote>/<name>
   // at the remote branch's current tip, then move HEAD onto it.
@@ -2808,7 +2911,11 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
   // (window.__MOCK_LATENCY__ = { git_status: 2000 }) or via URL for
   // fetches that fire during boot (?mockLatency=git_status:2000,foo:500),
   // to make transient loading states observable and assertable (#271).
-  const g = globalThis as { __MOCK_LATENCY__?: Record<string, number>; location?: Location };
+  const g = globalThis as {
+    __MOCK_LATENCY__?: Record<string, number>;
+    __MOCK_FAILURES__?: Record<string, string>;
+    location?: Location;
+  };
   if (!g.__MOCK_LATENCY__ && typeof location !== "undefined") {
     g.__MOCK_LATENCY__ = {};
     const param = new URLSearchParams(location.search).get("mockLatency");
@@ -2819,6 +2926,9 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
   }
   const extraLatency = g.__MOCK_LATENCY__?.[cmd];
   if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
+
+  const failure = g.__MOCK_FAILURES__?.[cmd];
+  if (failure) throw new Error(failure);
 
   const handler = mockCommands[cmd];
   if (!handler) {

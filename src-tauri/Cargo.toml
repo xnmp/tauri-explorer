@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.8.0"
+version = "1.8.1"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -15,7 +15,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
+tauri = { version = "2", features = ["test"] }
 
 [[bench]]
 name = "scan_directory_parallel"
@@ -39,10 +40,10 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 trash = "5"
 chrono = { version = "0.4", features = ["serde"] }
-dirs = "5"
+dirs = "6"
 opener = "0.8"
 nucleo-matcher = "0.3"
-jwalk = "0.8"
+jwalk = "0.9"
 rayon = "1"
 grep-regex = "0.1"
 grep-searcher = "0.1"
@@ -54,22 +55,26 @@ thiserror = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 icns = "0.4"
 turbojpeg = { version = "1", features = ["image"] }
-lru = "0.12"
-sha2 = "0.10"
-base64 = "0.22"
+lru = "0.18"
+sha2 = "0.11"
+base64 = "0.23"
 hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "process"] }
-notify = "7"
+notify = "8"
 tempfile = "3"
 portable-pty = "0.9"
-git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
+git2 = { version = "0.21", default-features = false, features = ["vendored-libgit2"] }
 libc = "0.2.183"
 log = "0.4"
 tauri-plugin-log = "2"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
 
 [features]
+# Enables the programmatic WebView2 debug port used by the Windows binary-E2E
+# harness. This must stay opt-in: release builds must not expose a CDP port.
+e2e-webview2-attach = []
+
 # AVIF thumbnails/previews, via image's avif-native decoder (system dav1d).
 # Off by default so the cross-platform release build needs no dav1d (Ubuntu
 # 22.04's is too old, and bundling it into the AppImage/deb is a headache).
@@ -106,4 +111,3 @@ opt-level = 3
 # Tracks crabnebula-dev/drag-rs#72.
 [patch.crates-io]
 drag = { path = "vendor/drag" }
-

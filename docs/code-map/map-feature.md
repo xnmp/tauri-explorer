@@ -185,7 +185,7 @@ backend for E2E/browser).
 - `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
 - `state/git-summary-cache.ts` — shared per-repo `git_status` fetch (in-flight dedup + short TTL, #431): SCM `refreshSummary` (force), GitGraphView `fetchPage0Snapshot` + uncommitted-row selection route through it, so one `git-status-changed` is one working-tree scan, not several
 - panel VISIBILITY is also per-pane (#434): `window-tabs.svelte.ts` `getPaneScmVisible`/`toggleScmInActivePane` on the pane node (falls back to the global `showScmPanel` default); the `view.toggleScmPanel` command (`view-commands.ts`) acts on the active pane only
-- `state/git-graph-refresh.ts` — F5 refresh bus plus importable `createReloader` concurrency state machine, local-change filter, and real-commit paging counter: GitGraphView registers its fetch+reload per pane; `gitGraph.refresh` command dispatches to the active graph pane (#432, #444)
+- `domain/git-network-operation.ts`, `state/git-graph-refresh.ts` — F5 refresh bus plus importable `createReloader` concurrency state machine, local-change filter, real-commit paging counter, and shared network-operation phase state: GitGraphView registers its fetch+reload per pane; `gitGraph.refresh` dispatches to the active graph pane, while a per-pull IPC channel removes cancellation once protected local fast-forward begins and fails closed if that transition cannot be delivered (#432, #444, #528)
 - `state/git-graph-nav.ts` — branch-line jump bus (#530): GitGraphView registers a per-pane selection stepper; `gitGraph.selectOlderOnLine` (Ctrl+Down) / `gitGraph.selectNewerOnLine` (Ctrl+Up) dispatch to the active graph pane. Row math is pure: `stepOnBranchLine` in `domain/git-graph.ts` follows `parents[0]` down and the nearest first-parent child up, so a jump steps over interleaved rows from other branch lines
 - `state/git-palette.ts` — active-pane bridge from GitGraphView's current local branches, commits, and stashes to fuzzy command-palette targets (#520); checkout/merge/cherry-pick/rebase/stash actions reuse the graph action seam and a commit target selects/reveals its row. Commit targets are capped at the 50 most-recent loaded rows because CommandPalette is unvirtualized; ephemeral targets do not enter frecency.
 - `domain/git-graph-undo.ts`, `state/git-graph-undo.ts` — bounded repository-scoped session ledger + active-pane Ctrl+Z request bus (#513). Successful branch/tag delete, branch rename, merge, and pull commands return immutable backend snapshots; confirmation consumes the latest matching entry, while Rust rechecks absent/exact refs or unchanged HEAD + clean worktree immediately before the inverse.
@@ -203,12 +203,12 @@ backend for E2E/browser).
 ## Quick Open (Ctrl+P fuzzy file finder)
 
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
-- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous (#600)
+- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous, while the merged rendered result set stays bounded (#600, #651)
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
-- `src-tauri/src/search.rs` — nucleo fuzzy engine, streaming emits
-- FLOW: query → local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
+- `src-tauri/src/search.rs`, `search_cache.rs` — nucleo fuzzy engine, streaming emits, and a bounded short-lived cache of completed recursive listings (#651)
+- FLOW: query → bounded local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → recursively-covered watched-root completed listing cache or cold backend walk → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens. Quick Open installs separate recursive invalidation coverage only for cache-eligible roots, leaving pane/thumbnail refresh watches non-recursive; uncovered or unwatched roots walk fresh. Descendant filesystem changes invalidate affected ancestor/descendant caches. Removing any recursive registration rebuilds all surviving registrations; coverage transitions advance exact-root revisions so overlapping parent/child roots retain real OS coverage without evicting unchanged listings. Cancelled cold walks are not published.
 
 ## Content search (grep, Ctrl+Shift+F)
 

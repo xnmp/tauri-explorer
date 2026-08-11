@@ -103,6 +103,7 @@
 
   /* Icon colors - warm retro set */
   --icon-folder: #fabd2f;
+  --icon-git-badge: var(--accent);
   --icon-image: #d3869b;
   --icon-archive: #d65d0e;
   --icon-code: #83a598;

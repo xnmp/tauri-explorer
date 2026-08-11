@@ -13,6 +13,7 @@ import { terminalPanelStore } from "../terminal.svelte";
 import { openInTerminal, gitRepoRoot } from "$lib/api/files";
 import { gitFetch } from "$lib/api/git-log";
 import { notifyLocalGitChange } from "$lib/state/git-refresh";
+import { runGitNetworkOperation } from "$lib/state/git-graph-refresh";
 import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
@@ -150,13 +151,20 @@ export const gitGraphCommands: Command[] = [
         return;
       }
       try {
-        await gitFetch(root.data);
+        await runGitNetworkOperation(root.data, "fetch", (taskId) =>
+          gitFetch(root.data!, taskId),
+        );
         toastStore.success("Fetched from remotes");
         // The repo watcher (git graph, SCM panel, badges) picks up the new
         // refs; announce for consumers without a watcher.
         notifyLocalGitChange(root.data);
       } catch (err) {
-        toastStore.error(err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        if (/git network operation cancelled/i.test(message)) {
+          toastStore.show("Git fetch cancelled", "info");
+        } else {
+          toastStore.error(message);
+        }
       }
     },
   },

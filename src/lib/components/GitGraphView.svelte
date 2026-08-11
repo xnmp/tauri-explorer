@@ -63,6 +63,7 @@
     gitRefs,
     gitFetch,
     gitPull,
+    cancelGitNetworkOperation,
     gitBranchBehindUpstream,
     gitBranchAuthors,
     gitDeleteBranch,
@@ -92,9 +93,13 @@
   import { openExternalUrl } from "$lib/api/crash";
   import {
     countGraphWalkCommits,
+    cancelActiveGitNetworkOperation,
     createReloader,
     registerGraphRefresher,
+    runGitNetworkOperation,
     shouldReloadGraphForChange,
+    subscribeGitNetworkOperation,
+    type GitNetworkOperation,
   } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
   import { MAX_GIT_PALETTE_COMMIT_TARGETS, registerGitPaletteTargets } from "$lib/state/git-palette";
@@ -1493,7 +1498,12 @@
       if (undoAction) gitUndoLedger.record(repoPath, undoAction);
       toastStore.success(`${label} done`);
     } catch (err) {
-      toastStore.error(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      if (/git network operation cancelled/i.test(message)) {
+        toastStore.show(message, "info");
+      } else {
+        toastStore.error(message);
+      }
     } finally {
       // Reload through the single entry point, then notify OTHER consumers
       // (SCM panel, badges); the graph's own subscriber filters `local` so
@@ -1535,7 +1545,11 @@
 
   function confirmPull(): void {
     pullOffer = null;
-    void runAction("Pull", () => gitPull(repoPath));
+    void runAction("Pull", () =>
+      runGitNetworkOperation(repoPath, "pull", (taskId, onPhase) =>
+        gitPull(repoPath, taskId, onPhase),
+      ),
+    );
   }
   function cherryPick(oid: string): void {
     void runAction("Cherry-pick", () => gitCherryPick(repoPath, oid));
@@ -1563,7 +1577,9 @@
       // push failure must not strand the already-deleted local branch.
       gitUndoLedger.record(repoPath, undoAction);
       for (const remote of remotes) {
-        await gitDeleteRemoteBranch(repoPath, remote, name);
+        await runGitNetworkOperation(repoPath, `push to ${remote}`, (taskId) =>
+          gitDeleteRemoteBranch(repoPath, remote, name, taskId),
+        );
       }
       return null;
     });
@@ -1592,7 +1608,9 @@
   /** Delete a remote-only branch chip like "origin/feat/x" (#371). */
   function deleteRemoteChip(chip: RemoteRefChip): void {
     void runAction(`Delete ${chip.name}`, () =>
-      gitDeleteRemoteBranch(repoPath, chip.remote, chip.branch),
+      runGitNetworkOperation(repoPath, `push to ${chip.remote}`, (taskId) =>
+        gitDeleteRemoteBranch(repoPath, chip.remote, chip.branch, taskId),
+      ),
     );
   }
 
@@ -1681,6 +1699,17 @@
   }
 
   let fetching = $state(false);
+  let networkOperation = $state<GitNetworkOperation | null>(null);
+  $effect(() => subscribeGitNetworkOperation((operation) => (networkOperation = operation)));
+
+  async function cancelNetworkOperation(): Promise<void> {
+    try {
+      await cancelActiveGitNetworkOperation(cancelGitNetworkOperation);
+    } catch (err) {
+      toastStore.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function refreshWithFetch(): Promise<void> {
     if (fetching) return;
     // Kill the post-F5 focus ring (#433): F5 is a keyboard event, so it
@@ -1696,7 +1725,7 @@
     // focus-highlighted the selected row).
     toastStore.show("Refreshing graph…", "info");
     try {
-      await gitFetch(repoPath);
+      await runGitNetworkOperation(repoPath, "fetch", (taskId) => gitFetch(repoPath, taskId));
       // Optional local-branch sync (#432): fast-forward every local branch
       // strictly behind its upstream. Diverged branches are never touched —
       // they're surfaced in a toast so the user knows a manual merge is due.
@@ -1724,7 +1753,12 @@
         toastStore.success("Fetched from remotes");
       }
     } catch (err) {
-      toastStore.error(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      if (/git network operation cancelled/i.test(message)) {
+        toastStore.show("Git fetch cancelled", "info");
+      } else {
+        toastStore.error(message);
+      }
     } finally {
       fetching = false;
       await reload();
@@ -1774,6 +1808,25 @@
         title={detachedIndicator.title}
       >
         {detachedIndicator.label}
+      </div>
+    {/if}
+    {#if networkOperation?.repoPath === repoPath}
+      <div class="network-operation-banner" role="status">
+        <span>
+          {networkOperation.cancellable
+            ? `Git ${networkOperation.label} in progress…`
+            : `Finishing Git ${networkOperation.label}…`}
+        </span>
+        {#if networkOperation.cancellable}
+          <button
+            type="button"
+            aria-label="Cancel {networkOperation.label}"
+            disabled={networkOperation.cancelling}
+            onclick={() => void cancelNetworkOperation()}
+          >
+            {networkOperation.cancelling ? "Cancelling…" : "Cancel"}
+          </button>
+        {/if}
       </div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- right-click opens the column-visibility menu; not reachable by keyboard by design (parity with the row context menu) -->
@@ -3308,6 +3361,53 @@
     font-weight: 600;
     color: var(--text-tertiary);
     user-select: none;
+  }
+
+  .network-operation-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    min-height: 40px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    background: color-mix(in srgb, var(--accent) 9%, var(--background-card));
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, var(--divider));
+    font-size: var(--font-size-small);
+  }
+
+  .network-operation-banner button {
+    position: relative;
+    min-width: 64px;
+    min-height: 28px;
+    padding: 3px 10px;
+    color: var(--text-primary);
+    background: var(--background-card);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm, 4px);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .network-operation-banner button::after {
+    content: "";
+    position: absolute;
+    inset: -6px 0;
+  }
+
+  .network-operation-banner button:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .network-operation-banner button:active:not(:disabled) {
+    scale: 0.96;
+  }
+
+  .network-operation-banner button:disabled {
+    opacity: 0.65;
+    cursor: default;
   }
 
   .gh-message {

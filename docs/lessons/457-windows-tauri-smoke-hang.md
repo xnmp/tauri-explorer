@@ -1,4 +1,4 @@
-# #457 — Windows smoke hang: what got fixed, what got refuted (issue still open)
+# #457 — Windows smoke hang: elevated WebView2 ignored the debug override
 
 ## Symptom
 
@@ -51,6 +51,35 @@ The break window `8fbb2a86..71a53c38` contains exactly one commit (#424, the
 gitstat logging), yet both mechanisms tried for it are refuted. Treat that
 single-commit window as an unexplained coincidence, not as evidence.
 
+## Root cause and fix
+
+The first attach probe used Microsoft's documented
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` approach,
+but its own evidence showed that port 9222 never opened. The missing condition
+was process integrity: GitHub's hosted Windows runner launches the app elevated,
+and WebView2 ignores user-controlled `WEBVIEW2_*` environment overrides for an
+elevated host.
+
+The fixed harness passes `--remote-debugging-port=<dynamic-port>`
+programmatically through Tauri/WRY's `additional_browser_args` API. A dedicated
+`e2e-webview2-attach` Cargo feature gates that code, so shipped builds cannot
+expose the port. On Windows, WDIO now:
+
+1. reserves a loopback port;
+2. launches the app with the chosen port;
+3. waits for WebView2's CDP endpoint;
+4. launches the runtime-matched `msedgedriver` directly; and
+5. creates a `webview2` session with `ms:edgeOptions.debuggerAddress`.
+
+Warm-window priming is disabled on this leg because JS-created WebViews cannot
+set Tauri's `additionalBrowserArgs`, and WebViews sharing a data directory must
+use identical browser arguments. Linux retains `warm-window.spec` coverage.
+
+GitHub Actions run `31436674920` verified the result on `windows-latest`: the
+first session was created in about 1.4 seconds and all 13 enabled spec files
+passed in 1m20s. The Ubuntu leg also passed. Windows was then restored to the
+normal pull-request and `dev`/`main` push matrix.
+
 ## What DID get fixed along the way (merged; Ubuntu-verified)
 
 **The suite no longer needs a dev server.** The smoke binary was built with
@@ -92,14 +121,8 @@ run, leaving the `always()` artifact upload alive.
   image update — before instrumenting the app. Two of five hypotheses died in
   one HTTP request each.
 
-## Where the hunt stands
+## Final state
 
-Everything app-side is exonerated; the failure lives in msedgedriver's attach
-(or the runner's WebView2/driver pairing — the runner image updated in the
-same July window). Next probes, in order of information value: plain headless
-Edge with no app (if that hangs, the runner pairing is broken and the app was
-never at fault); msedgedriver spoken to directly with Microsoft's documented
-WebView2 capabilities and `--verbose --log-path` for the driver's own account;
-the documented "attach" approach via `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`
-remote-debugging-port. A local Windows machine turns each iteration from ~25
-CI minutes into seconds.
+Windows runs on every pull request and every push to `dev`/`main`. If session
+creation regresses, inspect `e2e-tauri/logs/msedgedriver.log`; do not restore the
+environment-variable override on elevated hosted runners.

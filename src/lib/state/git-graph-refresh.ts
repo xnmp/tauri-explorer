@@ -12,6 +12,8 @@
  * ACTIVE pane's handler only. No component-level global key listener.
  */
 
+import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
+
 type RefreshFn = () => void;
 
 export interface ReloaderContext {
@@ -65,6 +67,74 @@ export function createReloader(fetchFn: (context: ReloaderContext) => Promise<vo
 /** A graph action reloads itself, so it ignores its matching local event. */
 export function shouldReloadGraphForChange(change: { source: "watcher" | "local" }): boolean {
   return change.source !== "local";
+}
+
+export interface GitNetworkOperation {
+  taskId: number;
+  repoPath: string;
+  label: string;
+  cancellable: boolean;
+  cancelling: boolean;
+}
+
+type GitNetworkOperationListener = (operation: GitNetworkOperation | null) => void;
+const networkOperationListeners = new Set<GitNetworkOperationListener>();
+let activeNetworkOperation: GitNetworkOperation | null = null;
+
+function applyNetworkPhase(phase: GitNetworkPhaseEvent): void {
+  const operation = activeNetworkOperation;
+  if (!operation || operation.taskId !== phase.taskId) return;
+  activeNetworkOperation = {
+    ...operation,
+    cancellable: phase.cancellable,
+    cancelling: phase.cancellable ? operation.cancelling : false,
+  };
+  publishNetworkOperation();
+}
+
+function publishNetworkOperation(): void {
+  const snapshot = activeNetworkOperation ? { ...activeNetworkOperation } : null;
+  for (const listener of networkOperationListeners) listener(snapshot);
+}
+
+/** Observe the single process-wide graph network operation. */
+export function subscribeGitNetworkOperation(listener: GitNetworkOperationListener): () => void {
+  networkOperationListeners.add(listener);
+  listener(activeNetworkOperation ? { ...activeNetworkOperation } : null);
+  return () => networkOperationListeners.delete(listener);
+}
+
+/** Run one fetch/pull/push with a client-generated cancellation id. */
+export async function runGitNetworkOperation<T>(
+  repoPath: string,
+  label: string,
+  invoke: (taskId: number, onPhase: (phase: GitNetworkPhaseEvent) => void) => Promise<T>,
+): Promise<T> {
+  if (activeNetworkOperation) {
+    throw new Error(`Git ${activeNetworkOperation.label} is already running`);
+  }
+  const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+  activeNetworkOperation = { taskId, repoPath, label, cancellable: true, cancelling: false };
+  publishNetworkOperation();
+  try {
+    return await invoke(taskId, applyNetworkPhase);
+  } finally {
+    if (activeNetworkOperation?.taskId === taskId) {
+      activeNetworkOperation = null;
+      publishNetworkOperation();
+    }
+  }
+}
+
+/** Mark the active UI state immediately, then relay cancellation to Rust. */
+export async function cancelActiveGitNetworkOperation(
+  cancel: (taskId: number) => Promise<void>,
+): Promise<void> {
+  const operation = activeNetworkOperation;
+  if (!operation || !operation.cancellable || operation.cancelling) return;
+  activeNetworkOperation = { ...operation, cancelling: true };
+  publishNetworkOperation();
+  await cancel(operation.taskId);
 }
 
 /** Stash rows are woven into the graph but are not git-walk pagination steps. */

@@ -11,6 +11,9 @@ export interface QuickOpenSearchScheduler {
   cancel(): void;
 }
 
+/** Maximum number of ranked rows Quick Open presents for one query. */
+export const QUICK_OPEN_RESULT_LIMIT = 20;
+
 export type StartQuickOpenSearch = (query: string) => void;
 
 export interface QuickOpenSearchController<T> {

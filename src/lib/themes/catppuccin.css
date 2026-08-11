@@ -103,6 +103,7 @@
 
   /* Icon colors - pastel set */
   --icon-folder: #f9e2af;
+  --icon-git-badge: var(--accent);
   --icon-image: #f5c2e7;
   --icon-archive: #fab387;
   --icon-code: #89b4fa;

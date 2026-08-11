@@ -22,7 +22,7 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
     await $(".file-list").waitForExist({ timeout: 15_000 });
     await browser.keys(["Control", "`"]);
     await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
-    const input = $(".terminal-panel textarea.xterm-helper-textarea");
+    const input = await $(".terminal-panel textarea.xterm-helper-textarea");
     await input.waitForExist();
     await browser.waitUntil(async () => (await terminalText()).trim().length > 0, {
       timeout: 45_000,

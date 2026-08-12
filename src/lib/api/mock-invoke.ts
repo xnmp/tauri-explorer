@@ -2801,7 +2801,10 @@ const mockCommands: Record<string, CommandHandler> = {
 
   open_file_with: () => {},
 
-  open_recycle_bin: () => {},
+  open_recycle_bin: () => {
+    const error = localStorage.getItem("mock-open-recycle-bin-error");
+    if (error) throw new Error(error);
+  },
 
   open_in_terminal: () => {},
   list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],

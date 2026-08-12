@@ -36,3 +36,25 @@ fn issue_660_recycle_bin_returns_an_error_when_both_linux_launchers_fail() {
 
     assert!(result.is_err());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn issue_660_recycle_bin_falls_back_when_gio_is_unavailable() {
+    let mut launchers = Vec::new();
+
+    let result = open_linux_recycle_bin_with(|launcher| {
+        launchers.push((launcher.program, launcher.arguments.clone()));
+        if launcher.program == "gio" {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "gio missing"))
+        } else {
+            Ok(std::process::ExitStatus::from_raw(0))
+        }
+    });
+
+    assert!(result.is_ok());
+    assert_eq!(launchers.len(), 2);
+    assert_eq!(launchers[1].0, "xdg-open");
+    assert!(launchers[1].1[0]
+        .to_string_lossy()
+        .ends_with("/Trash/files"));
+}

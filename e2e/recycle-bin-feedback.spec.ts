@@ -5,4 +5,5 @@ test("Recycle Bin uses a distinct amber sidebar icon (#660)", async ({ page }) =
 
   const recycleBinIcon = page.getByRole("button", { name: "Open Recycle Bin" }).locator("svg");
   await expect(recycleBinIcon).toHaveCSS("color", "rgb(217, 119, 6)");
+  await page.screenshot({ path: "evidence/ac-4-recycle-bin-icon.png" });
 });

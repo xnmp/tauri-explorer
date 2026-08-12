@@ -448,7 +448,7 @@
 
         {#if settingsStore.showRecycleBin}
           <button class="nav-item recycle-bin-item" onclick={handleOpenRecycleBin} aria-label="Open Recycle Bin">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #d97706" aria-hidden="true">
               <path d="M3.5 4.5H12.5L11.7 14H4.3L3.5 4.5ZM6 2H10L10.75 3.5H5.25L6 2ZM2.5 3.5H13.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
               <path d="M6.5 7V11.5M9.5 7V11.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
             </svg>

@@ -9,7 +9,10 @@ type ReportError = (message: string) => void;
  */
 export async function openRecycleBinWithFeedback(
   openRecycleBin: OpenRecycleBin,
-  _reportError: ReportError,
+  reportError: ReportError,
 ): Promise<void> {
-  await openRecycleBin();
+  const result = await openRecycleBin();
+  if (!result.ok) {
+    reportError(`Could not open Recycle Bin: ${result.error}`);
+  }
 }

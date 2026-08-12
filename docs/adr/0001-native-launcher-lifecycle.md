@@ -23,6 +23,12 @@ Because the IPC response cannot wait for a detached launcher's eventual exit, a
 non-zero exit or wait failure is recorded as a warning rather than retroactively
 changing the command result. Successful exit is debug-level lifecycle detail.
 
+Linux Recycle Bin is a narrow exception: `gio open trash:///` acts as a
+synchronous desktop-handler probe. The command waits for its status so a
+rejected URI can fall back to `xdg-open` on the user's Freedesktop
+`Trash/files` directory. The fallback's failure is returned through IPC, since
+the frontend must be able to tell the user that neither native surface opened.
+
 Launcher construction remains a side-effect-free seam so each target's executable
 and arguments can be tested without opening a native surface.
 

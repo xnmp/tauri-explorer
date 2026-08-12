@@ -12,6 +12,7 @@ pub struct LaunchCwd(pub String);
 
 /// Reap a launcher child asynchronously so opening a native surface does not
 /// accumulate zombies on Unix.
+#[cfg(not(target_os = "linux"))]
 fn reap_in_background(child: std::process::Child) {
     std::thread::spawn(move || {
         let mut child = child;
@@ -65,6 +66,62 @@ fn recycle_bin_launcher() -> RecycleBinLauncher {
             program: "gio",
             arguments: vec![OsString::from("open"), OsString::from("trash:///")],
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_trash_files_directory() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("Trash/files")
+}
+
+#[cfg(target_os = "linux")]
+fn linux_recycle_bin_launchers() -> [RecycleBinLauncher; 2] {
+    [
+        recycle_bin_launcher(),
+        RecycleBinLauncher {
+            program: "xdg-open",
+            arguments: vec![linux_trash_files_directory().into_os_string()],
+        },
+    ]
+}
+
+/// `gio open` reports whether the desktop accepted `trash:///` synchronously.
+/// On minimalist Linux desktops, wait for that result so a rejected URI can
+/// fall back to the Freedesktop Trash directory.
+#[cfg(target_os = "linux")]
+fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
+where
+    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
+{
+    let [primary, fallback] = linux_recycle_bin_launchers();
+
+    match launch(&primary) {
+        Ok(status) if status.success() => return Ok(()),
+        Ok(status) => log::warn!(
+            "Recycle Bin: {} {:?} exited with {status}; falling back to {:?}",
+            primary.program,
+            primary.arguments,
+            fallback.arguments
+        ),
+        Err(error) => log::warn!(
+            "Recycle Bin: failed to launch {} {:?}: {error}; falling back to {:?}",
+            primary.program,
+            primary.arguments,
+            fallback.arguments
+        ),
+    }
+
+    match launch(&fallback) {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(AppError::Other(format!(
+            "Failed to open Recycle Bin: {} {:?} exited with {status}",
+            fallback.program, fallback.arguments
+        ))),
+        Err(error) => Err(AppError::Io(error)),
     }
 }
 
@@ -145,6 +202,22 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
 #[tauri::command]
 pub async fn open_recycle_bin() -> Result<(), AppError> {
     files::run_blocking(|| {
+        #[cfg(target_os = "linux")]
+        {
+            return open_linux_recycle_bin_with(|launcher| {
+                log::info!(
+                    "Recycle Bin: launching native surface via {} {:?}",
+                    launcher.program,
+                    launcher.arguments
+                );
+                std::process::Command::new(launcher.program)
+                    .args(&launcher.arguments)
+                    .status()
+            });
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
         let launcher = recycle_bin_launcher();
         log::info!(
             "Recycle Bin: launching native surface via {} {:?}",
@@ -168,6 +241,7 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
                 );
                 Err(AppError::Io(error))
             }
+        }
         }
     })
     .await
@@ -360,7 +434,8 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
-    #[path = "../test_support/issue_660_recycle_bin.rs"]
-    mod issue_660_recycle_bin;
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../test_support/issue_660_recycle_bin.rs"]
+mod issue_660_recycle_bin;

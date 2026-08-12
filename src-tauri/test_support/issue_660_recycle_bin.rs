@@ -1,5 +1,5 @@
 #[cfg(target_os = "linux")]
-use super::super::open_linux_recycle_bin_with;
+use super::open_linux_recycle_bin_with;
 #[cfg(target_os = "linux")]
 use std::os::unix::process::ExitStatusExt;
 

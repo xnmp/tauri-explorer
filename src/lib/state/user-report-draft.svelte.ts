@@ -17,12 +17,17 @@ const EMPTY_DRAFT: UserReportTextDraft = {
   contact: "",
 };
 
-function normalizeDraft(value: Partial<UserReportTextDraft>): UserReportTextDraft {
+function normalizeDraft(value: unknown): UserReportTextDraft {
+  const draft = value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    ? value as Partial<UserReportTextDraft>
+    : {};
   return {
-    kind: value.kind === "feature" ? "feature" : "bug",
-    title: typeof value.title === "string" ? value.title : "",
-    body: typeof value.body === "string" ? value.body : "",
-    contact: typeof value.contact === "string" ? value.contact : "",
+    kind: draft.kind === "feature" ? "feature" : "bug",
+    title: typeof draft.title === "string" ? draft.title : "",
+    body: typeof draft.body === "string" ? draft.body : "",
+    contact: typeof draft.contact === "string" ? draft.contact : "",
   };
 }
 
@@ -33,7 +38,7 @@ function normalizeDraft(value: Partial<UserReportTextDraft>): UserReportTextDraf
  */
 export function createUserReportDraftStore() {
   let value = $state<UserReportTextDraft>(
-    normalizeDraft(loadPersisted<Partial<UserReportTextDraft>>(USER_REPORT_DRAFT_KEY, EMPTY_DRAFT)),
+    normalizeDraft(loadPersisted<unknown>(USER_REPORT_DRAFT_KEY, EMPTY_DRAFT)),
   );
   const persister = createCoalescedPersister<UserReportTextDraft>(USER_REPORT_DRAFT_KEY, 300);
 

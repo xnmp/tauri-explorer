@@ -107,6 +107,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `undo-helpers.ts` — pure undo/redo helpers.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
+- `user-report-draft.svelte.ts` — debounced localStorage store for Report Issue's text-only unsent draft; attachments stay in the dialog's in-session retry state.
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
 - `command-definitions.ts` — command palette command definitions (assembles command modules).

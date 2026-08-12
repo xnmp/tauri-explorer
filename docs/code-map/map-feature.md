@@ -280,11 +280,11 @@ backend for E2E/browser).
 - `domain/lazy-dialog.ts` — failure-safe dialog chunk loading (`loadDialogComponent`) + mount-crash recovery (`createDialogCrashHandler`); `+page.svelte` routes all 12 code-split dialogs through the loader and wraps each in `<svelte:boundary>` so a failed import (#584) or a component that throws while mounting (#585) resets the open-flag and toasts instead of soft-locking hotkeys
 - `domain/theme-list.ts` — `dedupeThemesById`, last occurrence wins; applied in `theme.svelte.ts` `discoverThemes()` so a user theme reusing a built-in id overrides it instead of crashing ThemePicker's keyed each (#585)
 - `components/Modal.svelte`, `components/modal.css` — modal shell
-- `components/UserReportDialog.svelte`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, preserved GitHub fallback, and report IPC
+- `components/UserReportDialog.svelte`, `state/user-report-draft.svelte.ts`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, debounced persisted text-only drafts, preserved GitHub fallback, and report IPC
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
 - `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown
 - FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
-- REPORT FLOW: `help.reportIssue` → `dialogStore` → `UserReportDialog` (picker + clipboard-image previews, optimistic close, failed-draft retry cache) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments, enriches with environment only — no log tail (#595), uploads selected images through `gh image`, appends the returned GitHub `user-attachments` Markdown, then runs `gh issue create`); background failures toast, attachment failures restore on the next open, and text-only CLI/relay failures use `userReportFallbackUrl`.
+- REPORT FLOW: `help.reportIssue` → `dialogStore` → `UserReportDialog` (text fields bind through `userReportDraftStore`'s debounced localStorage draft; picker + clipboard-image previews and failed-draft attachment retry cache remain in-session) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments, enriches with environment only — no log tail (#595), uploads selected images through `gh image`, appends the returned GitHub `user-attachments` Markdown, then runs `gh issue create`); a successful report clears the persisted text draft, background failures toast, attachment failures restore on the next open, and text-only CLI/relay failures use `userReportFallbackUrl`.
 
 ## Theming
 

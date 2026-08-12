@@ -14,6 +14,20 @@ afterEach(() => {
 });
 
 describe("user report drafts", () => {
+  it("falls back to an empty draft when persisted JSON is not an object", () => {
+    localStorage.setItem(USER_REPORT_DRAFT_KEY, "null");
+
+    const draft = createUserReportDraftStore();
+
+    expect(draft.value).toEqual({
+      kind: "bug",
+      title: "",
+      body: "",
+      contact: "",
+    });
+    draft.dispose();
+  });
+
   it("restores the unsent text and report kind after the store is recreated", () => {
     const draft = createUserReportDraftStore();
 

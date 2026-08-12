@@ -12,6 +12,7 @@ pub struct LaunchCwd(pub String);
 
 /// Reap a launcher child asynchronously so opening a native surface does not
 /// accumulate zombies on Unix.
+#[cfg(not(target_os = "linux"))]
 fn reap_in_background(child: std::process::Child) {
     std::thread::spawn(move || {
         let mut child = child;
@@ -65,6 +66,92 @@ fn recycle_bin_launcher() -> RecycleBinLauncher {
             program: "gio",
             arguments: vec![OsString::from("open"), OsString::from("trash:///")],
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_trash_files_directory_from(
+    xdg_data_home: Option<OsString>,
+    home_directory: Option<PathBuf>,
+) -> Result<PathBuf, AppError> {
+    if let Some(xdg_data_home) = xdg_data_home {
+        let xdg_data_home = PathBuf::from(xdg_data_home);
+        if xdg_data_home.is_absolute() && !xdg_data_home.as_os_str().is_empty() {
+            return Ok(xdg_data_home.join("Trash/files"));
+        }
+    }
+
+    home_directory
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join(".local/share/Trash/files"))
+        .ok_or_else(|| {
+            AppError::Other("Cannot locate the user's Freedesktop Trash directory".to_string())
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_trash_files_directory() -> Result<PathBuf, AppError> {
+    linux_trash_files_directory_from(std::env::var_os("XDG_DATA_HOME"), dirs::home_dir())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_recycle_bin_fallback_launcher() -> Result<RecycleBinLauncher, AppError> {
+    Ok(RecycleBinLauncher {
+        program: "xdg-open",
+        arguments: vec![linux_trash_files_directory()?.into_os_string()],
+    })
+}
+
+/// `gio open` reports whether the desktop accepted `trash:///` synchronously.
+/// On minimalist Linux desktops, wait for that result so a rejected URI can
+/// fall back to the Freedesktop Trash directory.
+#[cfg(target_os = "linux")]
+fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
+where
+    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
+{
+    open_linux_recycle_bin_with_fallback(&mut launch, linux_recycle_bin_fallback_launcher)
+}
+
+#[cfg(target_os = "linux")]
+fn open_linux_recycle_bin_with_fallback<F, R>(
+    mut launch: F,
+    fallback_launcher: R,
+) -> Result<(), AppError>
+where
+    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
+    R: FnOnce() -> Result<RecycleBinLauncher, AppError>,
+{
+    let primary = recycle_bin_launcher();
+
+    match launch(&primary) {
+        Ok(status) if status.success() => return Ok(()),
+        Ok(status) => log::warn!(
+            "Recycle Bin: {} {:?} exited with {status}; resolving fallback",
+            primary.program,
+            primary.arguments,
+        ),
+        Err(error) => log::warn!(
+            "Recycle Bin: failed to launch {} {:?}: {error}; resolving fallback",
+            primary.program,
+            primary.arguments,
+        ),
+    }
+
+    let fallback = fallback_launcher()?;
+    log::info!(
+        "Recycle Bin: launching fallback via {} {:?}",
+        fallback.program,
+        fallback.arguments
+    );
+
+    match launch(&fallback) {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(AppError::Other(format!(
+            "Failed to open Recycle Bin: {} {:?} exited with {status}",
+            fallback.program, fallback.arguments
+        ))),
+        Err(error) => Err(AppError::Io(error)),
     }
 }
 
@@ -145,28 +232,45 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
 #[tauri::command]
 pub async fn open_recycle_bin() -> Result<(), AppError> {
     files::run_blocking(|| {
-        let launcher = recycle_bin_launcher();
-        log::info!(
-            "Recycle Bin: launching native surface via {} {:?}",
-            launcher.program,
-            launcher.arguments
-        );
-        let mut command = std::process::Command::new(launcher.program);
-        command.args(&launcher.arguments);
-        match command.spawn() {
-            Ok(child) => {
-                let child_id = child.id();
-                log::info!("Recycle Bin: native surface launch started as process {child_id}");
-                reap_in_background(child);
-                Ok(())
-            }
-            Err(error) => {
-                log::error!(
-                    "Recycle Bin: failed to launch {} {:?}: {error}",
+        #[cfg(target_os = "linux")]
+        {
+            open_linux_recycle_bin_with(|launcher| {
+                log::info!(
+                    "Recycle Bin: launching native surface via {} {:?}",
                     launcher.program,
                     launcher.arguments
                 );
-                Err(AppError::Io(error))
+                std::process::Command::new(launcher.program)
+                    .args(&launcher.arguments)
+                    .status()
+            })
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let launcher = recycle_bin_launcher();
+            log::info!(
+                "Recycle Bin: launching native surface via {} {:?}",
+                launcher.program,
+                launcher.arguments
+            );
+            let mut command = std::process::Command::new(launcher.program);
+            command.args(&launcher.arguments);
+            match command.spawn() {
+                Ok(child) => {
+                    let child_id = child.id();
+                    log::info!("Recycle Bin: native surface launch started as process {child_id}");
+                    reap_in_background(child);
+                    Ok(())
+                }
+                Err(error) => {
+                    log::error!(
+                        "Recycle Bin: failed to launch {} {:?}: {error}",
+                        launcher.program,
+                        launcher.arguments
+                    );
+                    Err(AppError::Io(error))
+                }
             }
         }
     })
@@ -360,3 +464,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../test_support/issue_660_recycle_bin.rs"]
+mod issue_660_recycle_bin;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../test_support/issue_660_primary_launcher.rs"]
+mod issue_660_primary_launcher;

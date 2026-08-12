@@ -359,4 +359,8 @@ mod tests {
                 .into_os_string()]
         );
     }
+
+    #[cfg(target_os = "linux")]
+    #[path = "../test_support/issue_660_recycle_bin.rs"]
+    mod issue_660_recycle_bin;
 }

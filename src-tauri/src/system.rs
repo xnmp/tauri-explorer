@@ -95,14 +95,11 @@ fn linux_trash_files_directory() -> Result<PathBuf, AppError> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_recycle_bin_launchers() -> Result<[RecycleBinLauncher; 2], AppError> {
-    Ok([
-        recycle_bin_launcher(),
-        RecycleBinLauncher {
-            program: "xdg-open",
-            arguments: vec![linux_trash_files_directory()?.into_os_string()],
-        },
-    ])
+fn linux_recycle_bin_fallback_launcher() -> Result<RecycleBinLauncher, AppError> {
+    Ok(RecycleBinLauncher {
+        program: "xdg-open",
+        arguments: vec![linux_trash_files_directory()?.into_os_string()],
+    })
 }
 
 /// `gio open` reports whether the desktop accepted `trash:///` synchronously.
@@ -113,23 +110,40 @@ fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
 where
     F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
 {
-    let [primary, fallback] = linux_recycle_bin_launchers()?;
+    open_linux_recycle_bin_with_fallback(&mut launch, linux_recycle_bin_fallback_launcher)
+}
+
+#[cfg(target_os = "linux")]
+fn open_linux_recycle_bin_with_fallback<F, R>(
+    mut launch: F,
+    fallback_launcher: R,
+) -> Result<(), AppError>
+where
+    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
+    R: FnOnce() -> Result<RecycleBinLauncher, AppError>,
+{
+    let primary = recycle_bin_launcher();
 
     match launch(&primary) {
         Ok(status) if status.success() => return Ok(()),
         Ok(status) => log::warn!(
-            "Recycle Bin: {} {:?} exited with {status}; falling back to {:?}",
+            "Recycle Bin: {} {:?} exited with {status}; resolving fallback",
             primary.program,
             primary.arguments,
-            fallback.arguments
         ),
         Err(error) => log::warn!(
-            "Recycle Bin: failed to launch {} {:?}: {error}; falling back to {:?}",
+            "Recycle Bin: failed to launch {} {:?}: {error}; resolving fallback",
             primary.program,
             primary.arguments,
-            fallback.arguments
         ),
     }
+
+    let fallback = fallback_launcher()?;
+    log::info!(
+        "Recycle Bin: launching fallback via {} {:?}",
+        fallback.program,
+        fallback.arguments
+    );
 
     match launch(&fallback) {
         Ok(status) if status.success() => Ok(()),

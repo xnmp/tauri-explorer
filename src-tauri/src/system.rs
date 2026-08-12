@@ -234,7 +234,7 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
     files::run_blocking(|| {
         #[cfg(target_os = "linux")]
         {
-            return open_linux_recycle_bin_with(|launcher| {
+            open_linux_recycle_bin_with(|launcher| {
                 log::info!(
                     "Recycle Bin: launching native surface via {} {:?}",
                     launcher.program,
@@ -243,7 +243,7 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
                 std::process::Command::new(launcher.program)
                     .args(&launcher.arguments)
                     .status()
-            });
+            })
         }
 
         #[cfg(not(target_os = "linux"))]

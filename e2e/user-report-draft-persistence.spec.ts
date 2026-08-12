@@ -45,14 +45,12 @@ test("an unsent report survives closing the dialog and restarting the app", asyn
 test("a successful report clears its saved text", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("user-report-draft", JSON.stringify({
-    kind: "feature",
-    title: "Submitted title",
-    body: "Submitted description",
-    contact: "@submitted-reporter",
-  })));
 
   let dialog = await openReportDialog(page);
+  await dialog.getByRole("button", { name: "Feature" }).click();
+  await dialog.getByLabel("Title").fill("Submitted title");
+  await dialog.getByLabel("Description").fill("Submitted description");
+  await dialog.getByLabel(/How can we reach you/).fill("@submitted-reporter");
   await dialog.getByRole("button", { name: "Submit" }).click();
   await expect(page.locator(".toast.success")).toContainText("Report submitted");
 

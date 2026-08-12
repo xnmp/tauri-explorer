@@ -17,6 +17,8 @@
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { openRecycleBin } from "$lib/api/open";
+  import { openRecycleBinWithFeedback } from "$lib/domain/recycle-bin";
+  import { toastStore } from "$lib/state/toast.svelte";
 
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
 
@@ -26,7 +28,7 @@
   };
 
   function handleOpenRecycleBin() {
-    void openRecycleBin();
+    void openRecycleBinWithFeedback(openRecycleBin, toastStore.error);
   }
 
   const homeDir = $derived(homeDirectory.value ?? "/home");

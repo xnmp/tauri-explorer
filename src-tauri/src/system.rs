@@ -70,23 +70,39 @@ fn recycle_bin_launcher() -> RecycleBinLauncher {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_trash_files_directory() -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("Trash/files")
+fn linux_trash_files_directory_from(
+    xdg_data_home: Option<OsString>,
+    home_directory: Option<PathBuf>,
+) -> Result<PathBuf, AppError> {
+    if let Some(xdg_data_home) = xdg_data_home {
+        let xdg_data_home = PathBuf::from(xdg_data_home);
+        if xdg_data_home.is_absolute() && !xdg_data_home.as_os_str().is_empty() {
+            return Ok(xdg_data_home.join("Trash/files"));
+        }
+    }
+
+    home_directory
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join(".local/share/Trash/files"))
+        .ok_or_else(|| {
+            AppError::Other("Cannot locate the user's Freedesktop Trash directory".to_string())
+        })
 }
 
 #[cfg(target_os = "linux")]
-fn linux_recycle_bin_launchers() -> [RecycleBinLauncher; 2] {
-    [
+fn linux_trash_files_directory() -> Result<PathBuf, AppError> {
+    linux_trash_files_directory_from(std::env::var_os("XDG_DATA_HOME"), dirs::home_dir())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_recycle_bin_launchers() -> Result<[RecycleBinLauncher; 2], AppError> {
+    Ok([
         recycle_bin_launcher(),
         RecycleBinLauncher {
             program: "xdg-open",
-            arguments: vec![linux_trash_files_directory().into_os_string()],
+            arguments: vec![linux_trash_files_directory()?.into_os_string()],
         },
-    ]
+    ])
 }
 
 /// `gio open` reports whether the desktop accepted `trash:///` synchronously.
@@ -97,7 +113,7 @@ fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
 where
     F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
 {
-    let [primary, fallback] = linux_recycle_bin_launchers();
+    let [primary, fallback] = linux_recycle_bin_launchers()?;
 
     match launch(&primary) {
         Ok(status) if status.success() => return Ok(()),
@@ -218,30 +234,30 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
 
         #[cfg(not(target_os = "linux"))]
         {
-        let launcher = recycle_bin_launcher();
-        log::info!(
-            "Recycle Bin: launching native surface via {} {:?}",
-            launcher.program,
-            launcher.arguments
-        );
-        let mut command = std::process::Command::new(launcher.program);
-        command.args(&launcher.arguments);
-        match command.spawn() {
-            Ok(child) => {
-                let child_id = child.id();
-                log::info!("Recycle Bin: native surface launch started as process {child_id}");
-                reap_in_background(child);
-                Ok(())
+            let launcher = recycle_bin_launcher();
+            log::info!(
+                "Recycle Bin: launching native surface via {} {:?}",
+                launcher.program,
+                launcher.arguments
+            );
+            let mut command = std::process::Command::new(launcher.program);
+            command.args(&launcher.arguments);
+            match command.spawn() {
+                Ok(child) => {
+                    let child_id = child.id();
+                    log::info!("Recycle Bin: native surface launch started as process {child_id}");
+                    reap_in_background(child);
+                    Ok(())
+                }
+                Err(error) => {
+                    log::error!(
+                        "Recycle Bin: failed to launch {} {:?}: {error}",
+                        launcher.program,
+                        launcher.arguments
+                    );
+                    Err(AppError::Io(error))
+                }
             }
-            Err(error) => {
-                log::error!(
-                    "Recycle Bin: failed to launch {} {:?}: {error}",
-                    launcher.program,
-                    launcher.arguments
-                );
-                Err(AppError::Io(error))
-            }
-        }
         }
     })
     .await
@@ -433,7 +449,6 @@ mod tests {
                 .into_os_string()]
         );
     }
-
 }
 
 #[cfg(all(test, target_os = "linux"))]

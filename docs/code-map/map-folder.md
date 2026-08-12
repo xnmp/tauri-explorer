@@ -210,6 +210,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
+- `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
 - `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.

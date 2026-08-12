@@ -62,6 +62,12 @@ backend for E2E/browser).
 - `state/navigation.ts` — history stack, navigate/back/forward
 - FLOW: navigate mutates explorer.currentPath + history; breadcrumbs derived from currentPath; autocomplete lists dirs via `listDirectory`.
 
+## Recycle Bin
+
+- `components/FilesSidebarView.svelte`, `domain/recycle-bin.ts`, `api/open.ts` — sidebar action opens the native Recycle Bin and reports an IPC failure through `toastStore`.
+- `src-tauri/src/system.rs` — `open_recycle_bin`: Linux probes `gio open trash:///`, then falls back to `xdg-open` on an absolute Freedesktop `Trash/files` directory; Windows and macOS retain their native shell launchers.
+- FLOW: sidebar click → `openRecycleBinWithFeedback` → `open_recycle_bin` IPC → Linux URI probe/fallback; a terminal failure returns to the toast.
+
 ## Window tabs
 
 - `components/WindowTabBar.svelte` — tab strip UI, drag-reorder, tear-off

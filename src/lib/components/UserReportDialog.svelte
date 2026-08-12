@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     readClipboardReportImage,
     submitUserReport,
@@ -15,6 +16,7 @@
     type UserReportError,
     type UserReportKind,
   } from "$lib/domain/user-report";
+  import { userReportDraftStore } from "$lib/state/user-report-draft.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import Modal from "./Modal.svelte";
 
@@ -51,10 +53,13 @@
     const restoredClipboardAttachmentData = retryClipboardAttachmentData;
     retryDraft = null;
     retryClipboardAttachmentData = null;
-    kind = restoredDraft?.kind ?? "bug";
-    title = restoredDraft?.title ?? "";
-    body = restoredDraft?.body ?? "";
-    contact = restoredDraft?.contact ?? "";
+    // Persisting the restored text updates the store below; do not let that
+    // write rerun this one-shot opening reset and discard retry attachments.
+    const persistedDraft = untrack(() => userReportDraftStore.value);
+    kind = restoredDraft?.kind ?? persistedDraft.kind;
+    title = restoredDraft?.title ?? persistedDraft.title;
+    body = restoredDraft?.body ?? persistedDraft.body;
+    contact = restoredDraft?.contact ?? persistedDraft.contact;
     attachments = [...(restoredDraft?.attachments ?? [])];
     attachmentError = "";
     clipboardImageAvailable = false;
@@ -62,6 +67,16 @@
     readingClipboard = false;
     submitting = false;
     void probeClipboardImage();
+  });
+
+  // Persist the user-visible text only. Attachment retries remain in memory so
+  // closing/reopening after a failed submission continues to restore them.
+  $effect(() => {
+    if (!open) return;
+    const textDraft = { kind, title, body, contact };
+    // The store reads and replaces its own reactive value while saving; keep
+    // that internal state out of this effect's dependency set.
+    untrack(() => userReportDraftStore.update(textDraft));
   });
 
   function attachmentUsage() {
@@ -182,6 +197,7 @@
     const retirePendingToast = () => toastStore.dismiss(pendingToastId);
     try {
       const issue = await submitUserReport(draft);
+      userReportDraftStore.clear();
       retirePendingToast();
       toastStore.show("Report submitted", "success", {
         duration: 6000,

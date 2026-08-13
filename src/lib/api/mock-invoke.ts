@@ -1762,10 +1762,10 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_video_thumbnail_data: (args) => {
     const videoThumbnailMock = (globalThis as {
-      __mockVideoThumbnail?: (path: string) => string | Promise<string>;
+      __mockVideoThumbnail?: (path: string, size?: number) => string | Promise<string>;
     }).__mockVideoThumbnail;
     if (videoThumbnailMock) {
-      return videoThumbnailMock((args.path as string) ?? "");
+      return videoThumbnailMock((args.path as string) ?? "", args.size as number | undefined);
     }
     // Same realistic 128px thumbnail as images — stands in for an extracted
     // video frame so the tiles view can be demoed in browser/E2E mode.

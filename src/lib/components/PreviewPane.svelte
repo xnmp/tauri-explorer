@@ -55,6 +55,9 @@
   const DEFAULT_HEIGHT = 240;
   const MIN_HEIGHT = 120;
   const MAX_HEIGHT = 600;
+  // This frame is also the fullscreen source, so keep it separate from the
+  // 96–256px frames requested by the virtualized tile views.
+  const VIDEO_PREVIEW_SIZE = 1024;
   let resizing = $state(false);
   let startX = 0;
   let startY = 0;
@@ -706,7 +709,7 @@
     } else if (isVideoFile(file)) {
       // Reuse the ffmpeg-backed thumbnail seam from TilesView. The pane shows
       // its extracted still frame rather than attempting inline playback.
-      const result = await getVideoThumbnailData(file.path);
+      const result = await getVideoThumbnailData(file.path, VIDEO_PREVIEW_SIZE);
       if (!isCurrentPreview(file)) {
         if (result.ok && result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
         return;

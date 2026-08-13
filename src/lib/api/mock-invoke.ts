@@ -78,6 +78,7 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("notes.md", "/home/user/notes.md", 2048),
     file("people.csv", "/home/user/people.csv", 256),
     file("broken.csv", "/home/user/broken.csv", 128),
+    file("many-people.csv", "/home/user/many-people.csv", 8192),
   ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
@@ -1204,6 +1205,7 @@ const mockFileContent: Record<string, string> = {
   "/home/user/readme.txt": "This is a readme file.\n",
   "/home/user/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
   "/home/user/broken.csv": 'name,note\nAda,"unterminated',
+  "/home/user/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
   "/home/user/notes.md": [
     "---",
     "title: August notes",

@@ -1357,7 +1357,7 @@
 
   .preview-csv-row {
     display: grid;
-    grid-template-columns: repeat(var(--csv-columns), minmax(8rem, 1fr));
+    grid-template-columns: repeat(var(--csv-columns), minmax(8rem, max-content));
     min-width: max-content;
   }
 
@@ -1373,11 +1373,9 @@
   .preview-csv-cell {
     min-width: 0;
     padding: 6px 10px;
-    overflow: hidden;
     border-right: 1px solid var(--divider);
     border-bottom: 1px solid color-mix(in srgb, var(--divider) 65%, transparent);
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
+    white-space: pre;
     line-height: 16px;
   }
 

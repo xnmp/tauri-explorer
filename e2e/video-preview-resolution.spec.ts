@@ -44,7 +44,11 @@ test("video preview uses a 1024px frame while tiles retain their configured fram
   expect(requestSizes).toContain(96);
   expect(requestSizes).toContain(1024);
 
-  const previewRequestsBeforeFullscreen = requestSizes?.filter((size) => size === 1024).length;
+  const requestsBeforeFullscreen = await page.evaluate(() =>
+    (window as unknown as { __videoThumbnailRequests?: Array<{ path: string; size?: number }> })
+      .__videoThumbnailRequests
+      ?.filter((request) => request.path.endsWith("recording.mp4")),
+  );
   await frame.click();
   await expect(previewPane).toHaveClass(/fullscreen/);
   await page.screenshot({ path: "evidence/ac-2-video-preview-fullscreen-1024px.png" });
@@ -52,6 +56,6 @@ test("video preview uses a 1024px frame while tiles retain their configured fram
   await expect.poll(() => page.evaluate(() =>
     (window as unknown as { __videoThumbnailRequests?: Array<{ path: string; size?: number }> })
       .__videoThumbnailRequests
-      ?.filter((request) => request.path.endsWith("recording.mp4") && request.size === 1024).length,
-  )).toBe(previewRequestsBeforeFullscreen);
+      ?.filter((request) => request.path.endsWith("recording.mp4")),
+  )).toEqual(requestsBeforeFullscreen);
 });

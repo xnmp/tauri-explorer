@@ -76,6 +76,8 @@ const mockFiles: Record<string, FileEntry[]> = {
     dir(".config", "/home/user/.config", false),
     file("readme.txt", "/home/user/readme.txt", 1024),
     file("notes.md", "/home/user/notes.md", 2048),
+    file("people.csv", "/home/user/people.csv", 256),
+    file("broken.csv", "/home/user/broken.csv", 128),
   ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
@@ -1200,6 +1202,8 @@ const mockFileContent: Record<string, string> = {
   "/home/user/Documents/project/tsconfig.json": '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
   "/home/user/Documents/project/README.md": '# Project\n\nA sample project.\n',
   "/home/user/readme.txt": "This is a readme file.\n",
+  "/home/user/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
+  "/home/user/broken.csv": 'name,note\nAda,"unterminated',
   "/home/user/notes.md": [
     "---",
     "title: August notes",

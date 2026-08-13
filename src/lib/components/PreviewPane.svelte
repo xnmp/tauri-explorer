@@ -18,6 +18,8 @@
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
   import { getVideoThumbnailData } from "$lib/api/thumbnails";
+  import VirtualList from "./VirtualList.svelte";
+  import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -300,6 +302,7 @@
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
+  let previewCsv = $state<CsvPreview | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
   // Set when a folder/ZIP preview descended through one or more single-child
@@ -325,8 +328,13 @@
   });
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
+  let previewTruncatedLabel = $state("lines");
   let lastPreviewPath: string | null = null;
   let lastPreviewKey: string | null = null;
+
+  function csvRowHeight(row: string[]): number {
+    return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
+  }
 
   // --- Git diff preview state ---
   const activeDiff = $derived(scmStore.activeDiff);
@@ -525,6 +533,7 @@
       previewText = null;
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
+      previewCsv = null;
       previewPdfUrl = null;
       previewFolderChildrenRaw = [];
       previewCollapsedRoot = null;
@@ -562,12 +571,14 @@
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
+    previewCsv = null;
     previewPdfUrl = null;
     previewFolderChildrenRaw = [];
     previewCollapsedRoot = null;
     previewCollapsedNote = null;
     previewError = null;
     previewTruncatedLines = 0;
+    previewTruncatedLabel = "lines";
     previewLoading = true;
 
     if (file.kind !== "directory") {
@@ -744,6 +755,14 @@
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview
       if (file.path !== lastPreviewPath) return; // Stale
       if (result.ok) {
+        const csvPreview = /\.csv$/i.test(file.name) ? parseCsvPreview(result.data) : null;
+        if (csvPreview) {
+          previewCsv = csvPreview;
+          if (csvPreview.totalRows > csvPreview.rows.length) {
+            previewTruncatedLines = csvPreview.totalRows;
+            previewTruncatedLabel = "rows";
+          }
+        } else {
         // Limit to first 200 lines to avoid lag on large files
         const MAX_PREVIEW_LINES = 200;
         const lines = result.data.split("\n");
@@ -772,6 +791,7 @@
           }
         } else {
           previewHighlightedHtml = null;
+        }
         }
       } else {
         previewError = result.error;
@@ -963,20 +983,40 @@
             </div>
           {/each}
         </div>
+      {:else if previewCsv !== null}
+        <div class="preview-csv" role="table" aria-label="CSV preview" style={`--csv-columns: ${previewCsv.header.length};`}>
+          <div class="preview-csv-row preview-csv-header" role="row">
+            {#each previewCsv.header as cell, index (index)}
+              <div class="preview-csv-cell" role="columnheader">{cell}</div>
+            {/each}
+          </div>
+          <VirtualList items={previewCsv.rows} itemHeight={28} getItemHeight={csvRowHeight} getKey={(_row, index) => index} class="preview-csv-rows">
+            {#snippet children(row)}
+              <div class="preview-csv-row" role="row">
+                {#each row as cell, index (index)}
+                  <div class="preview-csv-cell" role="cell">{cell}</div>
+                {/each}
+              </div>
+            {/snippet}
+          </VirtualList>
+        </div>
+        {#if previewTruncatedLines > 0}
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
+        {/if}
       {:else if previewMarkdownHtml !== null}
         <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html previewMarkdownHtml}</div>
         {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
         {/if}
       {:else if previewHighlightedHtml !== null}
         <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html previewHighlightedHtml}</code></pre>
         {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
         {/if}
       {:else if previewText !== null}
         <pre class="preview-text">{previewText}</pre>
         {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
         {/if}
       {:else if previewError}
         <div class="preview-empty">
@@ -1303,6 +1343,46 @@
     word-break: break-all;
     margin: 0;
     flex: 1;
+  }
+
+  .preview-csv {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow: auto;
+    font-size: var(--preview-font-size, 11px);
+    color: var(--text-secondary);
+  }
+
+  .preview-csv-row {
+    display: grid;
+    grid-template-columns: repeat(var(--csv-columns), minmax(8rem, 1fr));
+    min-width: max-content;
+  }
+
+  .preview-csv-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--background-solid);
+    border-bottom: 1px solid var(--divider);
+    font-weight: 600;
+  }
+
+  .preview-csv-cell {
+    min-width: 0;
+    padding: 6px 10px;
+    overflow: hidden;
+    border-right: 1px solid var(--divider);
+    border-bottom: 1px solid color-mix(in srgb, var(--divider) 65%, transparent);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    line-height: 16px;
+  }
+
+  .preview-csv-rows {
+    min-height: 0;
   }
 
   .preview-code :global(.hljs) {

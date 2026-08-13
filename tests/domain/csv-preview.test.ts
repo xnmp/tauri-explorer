@@ -26,4 +26,12 @@ describe("parseCsvPreview", () => {
       totalRows: 3,
     });
   });
+
+  it("does not create a blank record for a trailing line ending", () => {
+    expect(parseCsvPreview("id\n1\n")).toEqual({
+      header: ["id"],
+      rows: [["1"]],
+      totalRows: 1,
+    });
+  });
 });

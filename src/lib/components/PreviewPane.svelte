@@ -336,6 +336,18 @@
     return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
   }
 
+  /** One column template shared by the sticky header and every virtual row. */
+  function csvColumnTemplate(csv: CsvPreview): string {
+    return csv.header
+      .map((header, column) => {
+        const longestCell = Math.max(header.length, ...csv.rows.map((row) => row[column]?.length ?? 0));
+        // Pixels keep a track's computed width identical in the bold header
+        // and normal-weight data rows; `ch` varies with font weight.
+        return `${Math.max(128, longestCell * 8 + 20)}px`;
+      })
+      .join(" ");
+  }
+
   // --- Git diff preview state ---
   const activeDiff = $derived(scmStore.activeDiff);
   // Commit file diff routed from the git graph (#366); wins over the
@@ -984,21 +996,23 @@
           {/each}
         </div>
       {:else if previewCsv !== null}
-        <div class="preview-csv" role="table" aria-label="CSV preview" style={`--csv-columns: ${previewCsv.header.length};`}>
-          <div class="preview-csv-row preview-csv-header" role="row">
-            {#each previewCsv.header as cell, index (index)}
-              <div class="preview-csv-cell" role="columnheader">{cell}</div>
-            {/each}
+        <div class="preview-csv" role="table" aria-label="CSV preview">
+          <div class="preview-csv-table" style={`--csv-column-template: ${csvColumnTemplate(previewCsv)};`}>
+            <div class="preview-csv-row preview-csv-header" role="row">
+              {#each previewCsv.header as cell, index (index)}
+                <div class="preview-csv-cell" role="columnheader">{cell}</div>
+              {/each}
+            </div>
+            <VirtualList items={previewCsv.rows} itemHeight={28} getItemHeight={csvRowHeight} getKey={(_row, index) => index} itemOverflow="visible" class="preview-csv-rows">
+              {#snippet children(row)}
+                <div class="preview-csv-row" role="row">
+                  {#each row as cell, index (index)}
+                    <div class="preview-csv-cell" role="cell">{cell}</div>
+                  {/each}
+                </div>
+              {/snippet}
+            </VirtualList>
           </div>
-          <VirtualList items={previewCsv.rows} itemHeight={28} getItemHeight={csvRowHeight} getKey={(_row, index) => index} class="preview-csv-rows">
-            {#snippet children(row)}
-              <div class="preview-csv-row" role="row">
-                {#each row as cell, index (index)}
-                  <div class="preview-csv-cell" role="cell">{cell}</div>
-                {/each}
-              </div>
-            {/snippet}
-          </VirtualList>
         </div>
         {#if previewTruncatedLines > 0}
           <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
@@ -1350,15 +1364,24 @@
     flex: 1;
     flex-direction: column;
     min-height: 0;
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
     font-size: var(--preview-font-size, 11px);
     color: var(--text-secondary);
   }
 
+  .preview-csv-table {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: max-content;
+    min-width: 100%;
+    min-height: 0;
+  }
+
   .preview-csv-row {
     display: grid;
-    grid-template-columns: repeat(var(--csv-columns), minmax(8rem, max-content));
-    min-width: max-content;
+    grid-template-columns: var(--csv-column-template);
   }
 
   .preview-csv-header {
@@ -1381,6 +1404,10 @@
 
   .preview-csv-rows {
     min-height: 0;
+  }
+
+  .preview-csv-table :global(.preview-csv-rows) {
+    overflow-x: visible;
   }
 
   .preview-code :global(.hljs) {

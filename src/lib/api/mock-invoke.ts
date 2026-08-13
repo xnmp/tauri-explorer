@@ -79,6 +79,7 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("people.csv", "/home/user/people.csv", 256),
     file("broken.csv", "/home/user/broken.csv", 128),
     file("many-people.csv", "/home/user/many-people.csv", 8192),
+    file("wide.csv", "/home/user/wide.csv", 1024),
   ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
@@ -1206,6 +1207,7 @@ const mockFileContent: Record<string, string> = {
   "/home/user/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
   "/home/user/broken.csv": 'name,note\nAda,"unterminated',
   "/home/user/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
+  "/home/user/wide.csv": "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
   "/home/user/notes.md": [
     "---",
     "title: August notes",

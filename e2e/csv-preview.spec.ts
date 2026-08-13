@@ -55,4 +55,32 @@ test.describe("CSV preview", () => {
     expect(await rows.count()).toBeLessThan(50);
     await page.screenshot({ path: "evidence/ac-5-large-csv-virtualized.png" });
   });
+
+  test("keeps wide CSV columns aligned and horizontally reachable", async ({ page }) => {
+    await page.locator('[data-path="/home/user/wide.csv"]').click();
+
+    const table = page.getByRole("table", { name: "CSV preview" });
+    const headers = table.getByRole("columnheader");
+    const cells = table.getByRole("cell");
+    await expect(headers).toHaveText(["first", "description", "final"]);
+    await expect(cells.last()).toHaveText("reachable final value");
+
+    const alignment = await page.locator(".preview-csv").evaluate((scroller) => {
+      const header = scroller.querySelectorAll<HTMLElement>('[role="columnheader"]')[2];
+      const cell = scroller.querySelectorAll<HTMLElement>('[role="cell"]')[2];
+      return {
+        difference: Math.abs(header.getBoundingClientRect().left - cell.getBoundingClientRect().left),
+        header: getComputedStyle(header.parentElement!).gridTemplateColumns,
+        cell: getComputedStyle(cell.parentElement!).gridTemplateColumns,
+      };
+    });
+    expect(alignment).toEqual({ difference: 0, header: alignment.header, cell: alignment.header });
+
+    await page.locator(".preview-csv").evaluate((scroller) => {
+      scroller.scrollLeft = scroller.scrollWidth;
+    });
+    await expect(headers.last()).toBeInViewport();
+    await expect(cells.last()).toBeInViewport();
+    await page.screenshot({ path: "evidence/ac-6-wide-csv-columns.png" });
+  });
 });

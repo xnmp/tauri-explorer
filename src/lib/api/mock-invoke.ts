@@ -76,10 +76,6 @@ const mockFiles: Record<string, FileEntry[]> = {
     dir(".config", "/home/user/.config", false),
     file("readme.txt", "/home/user/readme.txt", 1024),
     file("notes.md", "/home/user/notes.md", 2048),
-    file("single-tag.md", "/home/user/single-tag.md", 512),
-    file("plain.md", "/home/user/plain.md", 512),
-    file("empty-frontmatter.md", "/home/user/empty-frontmatter.md", 512),
-    file("malformed-frontmatter.md", "/home/user/malformed-frontmatter.md", 512),
   ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
@@ -1236,10 +1232,6 @@ const mockFileContent: Record<string, string> = {
     "> Blockquotes render too. See [the docs](https://example.com).",
     "",
   ].join("\n"),
-  "/home/user/single-tag.md": "---\ntags: [tauri]\n---\n\n# Single tag\n\nThis note has one tag.\n",
-  "/home/user/plain.md": "# Plain notes\n\nThis document has no properties.\n",
-  "/home/user/empty-frontmatter.md": "---\n---\n\n# Empty metadata\n\nThis document has no properties.\n",
-  "/home/user/malformed-frontmatter.md": "---\ntitle: [unterminated\n---\n\n# Recoverable body\n\nThis document has no properties.\n",
 };
 
 // Mutable so manual/E2E testing can simulate ejecting a removable drive: the

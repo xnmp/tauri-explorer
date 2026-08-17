@@ -49,7 +49,33 @@ authors:
     const html = renderMarkdown("---\ntags: []\n---\n\n# Untagged note\n");
 
     expect(html).toContain('<dt class="md-property-key">tags</dt>');
-    expect(html).toContain('<dd class="md-property-value"></dd>');
+    expect(html).toContain('<dd><ul class="md-property-values"></ul></dd>');
     expect(html).toContain("<h1>Untagged note</h1>");
+  });
+
+  it("renders one-element YAML arrays as property value lists", () => {
+    const html = renderMarkdown("---\ntags: [tauri]\n---\n\n# Tagged note\n");
+
+    expect(html).toContain('<dd><ul class="md-property-values"><li>tauri</li></ul></dd>');
+    expect(html).not.toContain('<dd class="md-property-value">tauri</dd>');
+  });
+
+  it("escapes hostile frontmatter keys and scalar or array values", () => {
+    const html = renderMarkdown(`---
+'<key>&"': '<img src=x onerror="alert(1)"> & value'
+tags: ['<svg onload="alert(1)">', '"quoted" & value']
+---
+
+# Safe body
+`);
+
+    expect(html).toContain("&lt;key&gt;&amp;&quot;");
+    expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &amp; value");
+    expect(html).toContain("&lt;svg onload=&quot;alert(1)&quot;&gt;");
+    expect(html).toContain("&quot;quoted&quot; &amp; value");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("<svg");
+    expect(html).not.toContain(' onerror="');
+    expect(html).not.toContain(' onload="');
   });
 });

@@ -137,6 +137,7 @@ The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for 
 **E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
 Markdown preview content is inserted with `{@html}` in `PreviewPane.svelte`, so its element styles require `:global(...)`; keep heading and link colours on the existing theme variables and verify their computed colours in the browser.
+Markdown frontmatter is parsed in `domain/markdown.ts` before Marked renders the document body. Only non-empty YAML maps made of scalar values or scalar arrays become the preview's properties panel; malformed, empty, or nested metadata falls back to ordinary Markdown rendering.
 
 The Linux FileChooser portal is selected through the user's
 `~/.config/xdg-desktop-portal/portals.conf`; do not add deprecated `UseIn`

@@ -69,10 +69,19 @@ const marked = new Marked({
   },
 });
 
-type FrontmatterProperty = {
+type ScalarFrontmatterProperty = {
+  kind: "scalar";
+  key: string;
+  value: string;
+};
+
+type SequenceFrontmatterProperty = {
+  kind: "sequence";
   key: string;
   values: string[];
 };
+
+type FrontmatterProperty = ScalarFrontmatterProperty | SequenceFrontmatterProperty;
 
 function extractFrontmatter(md: string): { properties: FrontmatterProperty[]; body: string } | null {
   // A frontmatter header belongs only at the very start of the document. This
@@ -89,7 +98,7 @@ function extractFrontmatter(md: string): { properties: FrontmatterProperty[]; bo
       if (!isScalar(item.key) || typeof item.key.value !== "string" || item.value === null) return null;
 
       if (isScalar(item.value)) {
-        properties.push({ key: item.key.value, values: [String(item.value.value ?? "")] });
+        properties.push({ kind: "scalar", key: item.key.value, value: String(item.value.value ?? "") });
       } else if (isSeq(item.value)) {
         const values: string[] = [];
         for (const value of item.value.items) {
@@ -97,6 +106,7 @@ function extractFrontmatter(md: string): { properties: FrontmatterProperty[]; bo
           values.push(String(value.value ?? ""));
         }
         properties.push({
+          kind: "sequence",
           key: item.key.value,
           values,
         });
@@ -115,14 +125,12 @@ function extractFrontmatter(md: string): { properties: FrontmatterProperty[]; bo
 
 function renderProperties(properties: FrontmatterProperty[]): string {
   const rows = properties
-    .map(({ key, values }) => {
-      const value = values.length === 0
-        ? ""
-        : values.length > 1
-        ? `<ul class="md-property-values">${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
-        : escapeHtml(values[0]);
-      const valueClass = values.length > 1 ? "" : ' class="md-property-value"';
-      return `<div class="md-property"><dt class="md-property-key">${escapeHtml(key)}</dt><dd${valueClass}>${value}</dd></div>`;
+    .map((property) => {
+      const value = property.kind === "sequence"
+        ? `<ul class="md-property-values">${property.values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+        : escapeHtml(property.value);
+      const valueClass = property.kind === "scalar" ? ' class="md-property-value"' : "";
+      return `<div class="md-property"><dt class="md-property-key">${escapeHtml(property.key)}</dt><dd${valueClass}>${value}</dd></div>`;
     })
     .join("");
   return `<section class="md-properties" aria-label="Properties"><dl>${rows}</dl></section>`;

@@ -116,7 +116,9 @@ function extractFrontmatter(md: string): { properties: FrontmatterProperty[]; bo
 function renderProperties(properties: FrontmatterProperty[]): string {
   const rows = properties
     .map(({ key, values }) => {
-      const value = values.length > 1
+      const value = values.length === 0
+        ? ""
+        : values.length > 1
         ? `<ul class="md-property-values">${values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
         : escapeHtml(values[0]);
       const valueClass = values.length > 1 ? "" : ' class="md-property-value"';

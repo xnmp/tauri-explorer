@@ -44,4 +44,12 @@ authors:
     expect(malformed).not.toContain("md-properties");
     expect(malformed).toContain("<h1>Recoverable body</h1>");
   });
+
+  it("renders an empty array property without crashing", () => {
+    const html = renderMarkdown("---\ntags: []\n---\n\n# Untagged note\n");
+
+    expect(html).toContain('<dt class="md-property-key">tags</dt>');
+    expect(html).toContain('<dd class="md-property-value"></dd>');
+    expect(html).toContain("<h1>Untagged note</h1>");
+  });
 });

@@ -40,6 +40,7 @@ struct RecycleBinLauncher {
     arguments: Vec<OsString>,
 }
 
+#[cfg(not(target_os = "linux"))]
 fn recycle_bin_launcher() -> RecycleBinLauncher {
     #[cfg(target_os = "windows")]
     {
@@ -57,14 +58,6 @@ fn recycle_bin_launcher() -> RecycleBinLauncher {
                 .unwrap_or_else(|| PathBuf::from("/"))
                 .join(".Trash")
                 .into_os_string()],
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        RecycleBinLauncher {
-            program: "gio",
-            arguments: vec![OsString::from("open"), OsString::from("trash:///")],
         }
     }
 }
@@ -95,63 +88,51 @@ fn linux_trash_files_directory() -> Result<PathBuf, AppError> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_recycle_bin_fallback_launcher() -> Result<RecycleBinLauncher, AppError> {
+fn linux_recycle_bin_launcher() -> Result<RecycleBinLauncher, AppError> {
     Ok(RecycleBinLauncher {
         program: "xdg-open",
         arguments: vec![linux_trash_files_directory()?.into_os_string()],
     })
 }
 
-/// `gio open` reports whether the desktop accepted `trash:///` synchronously.
-/// On minimalist Linux desktops, wait for that result so a rejected URI can
-/// fall back to the Freedesktop Trash directory.
+/// Open the Freedesktop deleted-files directory directly. A successful URI
+/// dispatcher exit cannot prove that its asynchronous desktop handler accepted
+/// `trash:///`, so Linux never sends that URI to the handler.
 #[cfg(target_os = "linux")]
 fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
 where
     F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
 {
-    open_linux_recycle_bin_with_fallback(&mut launch, linux_recycle_bin_fallback_launcher)
+    open_linux_recycle_bin_with_launcher(&mut launch, linux_recycle_bin_launcher)
 }
 
 #[cfg(target_os = "linux")]
-fn open_linux_recycle_bin_with_fallback<F, R>(
-    mut launch: F,
-    fallback_launcher: R,
-) -> Result<(), AppError>
+fn open_linux_recycle_bin_with_launcher<F, R>(mut launch: F, launcher: R) -> Result<(), AppError>
 where
     F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
     R: FnOnce() -> Result<RecycleBinLauncher, AppError>,
 {
-    let primary = recycle_bin_launcher();
-
-    match launch(&primary) {
-        Ok(status) if status.success() => return Ok(()),
-        Ok(status) => log::warn!(
-            "Recycle Bin: {} {:?} exited with {status}; resolving fallback",
-            primary.program,
-            primary.arguments,
-        ),
-        Err(error) => log::warn!(
-            "Recycle Bin: failed to launch {} {:?}: {error}; resolving fallback",
-            primary.program,
-            primary.arguments,
-        ),
-    }
-
-    let fallback = fallback_launcher()?;
+    let launcher = launcher()?;
     log::info!(
-        "Recycle Bin: launching fallback via {} {:?}",
-        fallback.program,
-        fallback.arguments
+        "Recycle Bin: launching deleted-files directory via {} {:?}",
+        launcher.program,
+        launcher.arguments
     );
 
-    match launch(&fallback) {
+    match launch(&launcher) {
         Ok(status) if status.success() => Ok(()),
         Ok(status) => Err(AppError::Other(format!(
             "Failed to open Recycle Bin: {} {:?} exited with {status}",
-            fallback.program, fallback.arguments
+            launcher.program, launcher.arguments
         ))),
-        Err(error) => Err(AppError::Io(error)),
+        Err(error) => {
+            log::error!(
+                "Recycle Bin: failed to launch {} {:?}: {error}",
+                launcher.program,
+                launcher.arguments
+            );
+            Err(AppError::Io(error))
+        }
     }
 }
 
@@ -401,7 +382,12 @@ pub async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_launcher_artifact_cwd, recycle_bin_launcher};
+    use super::is_launcher_artifact_cwd;
+    #[cfg(target_os = "linux")]
+    use super::linux_recycle_bin_launcher;
+    #[cfg(not(target_os = "linux"))]
+    use super::recycle_bin_launcher;
+    #[cfg(target_os = "windows")]
     use std::ffi::OsString;
     use std::path::Path;
 
@@ -427,14 +413,12 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn recycle_bin_launcher_uses_the_freedesktop_trash_uri() {
-        let launcher = recycle_bin_launcher();
+    fn recycle_bin_launcher_uses_the_freedesktop_deleted_files_directory() {
+        let launcher = linux_recycle_bin_launcher().unwrap();
 
-        assert_eq!(launcher.program, "gio");
-        assert_eq!(
-            launcher.arguments,
-            vec![OsString::from("open"), OsString::from("trash:///")]
-        );
+        assert_eq!(launcher.program, "xdg-open");
+        assert!(Path::new(&launcher.arguments[0]).is_absolute());
+        assert!(Path::new(&launcher.arguments[0]).ends_with("Trash/files"));
     }
 
     #[cfg(target_os = "windows")]

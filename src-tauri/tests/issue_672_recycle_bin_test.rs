@@ -1,11 +1,9 @@
-#[cfg(target_os = "linux")]
-use super::{open_linux_recycle_bin_with_launcher, RecycleBinLauncher};
-#[cfg(target_os = "linux")]
-use std::ffi::OsString;
-#[cfg(target_os = "linux")]
-use std::os::unix::process::ExitStatusExt;
+#![cfg(target_os = "linux")]
 
-#[cfg(target_os = "linux")]
+use std::ffi::OsString;
+use std::os::unix::process::ExitStatusExt;
+use tauri_explorer_lib::system::{open_linux_recycle_bin_with_launcher, RecycleBinLauncher};
+
 #[test]
 fn issue_672_successful_uri_handler_cannot_skip_the_deleted_files_directory() {
     let deleted_files = OsString::from("/home/alice/.local/share/Trash/files");
@@ -38,7 +36,6 @@ fn issue_672_successful_uri_handler_cannot_skip_the_deleted_files_directory() {
         .all(|argument| argument != "trash:///"));
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn issue_672_deleted_files_launcher_spawn_failure_is_reported() {
     let result = open_linux_recycle_bin_with_launcher(
@@ -59,7 +56,6 @@ fn issue_672_deleted_files_launcher_spawn_failure_is_reported() {
     assert!(result.is_err());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn issue_672_deleted_files_launcher_unsuccessful_exit_is_reported() {
     let result = open_linux_recycle_bin_with_launcher(

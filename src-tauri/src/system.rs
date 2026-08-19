@@ -35,9 +35,9 @@ fn reap_in_background(child: std::process::Child) {
 /// bin surface. Keeping this separate from spawning makes the platform
 /// contract testable without launching the host desktop during tests.
 #[derive(Debug, PartialEq, Eq)]
-struct RecycleBinLauncher {
-    program: &'static str,
-    arguments: Vec<OsString>,
+pub struct RecycleBinLauncher {
+    pub program: &'static str,
+    pub arguments: Vec<OsString>,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -107,7 +107,10 @@ where
 }
 
 #[cfg(target_os = "linux")]
-fn open_linux_recycle_bin_with_launcher<F, R>(mut launch: F, launcher: R) -> Result<(), AppError>
+pub fn open_linux_recycle_bin_with_launcher<F, R>(
+    mut launch: F,
+    launcher: R,
+) -> Result<(), AppError>
 where
     F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
     R: FnOnce() -> Result<RecycleBinLauncher, AppError>,
@@ -456,7 +459,3 @@ mod issue_660_recycle_bin;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../test_support/issue_660_primary_launcher.rs"]
 mod issue_660_primary_launcher;
-
-#[cfg(all(test, target_os = "linux"))]
-#[path = "../test_support/issue_672_recycle_bin_test.rs"]
-mod issue_672_recycle_bin;

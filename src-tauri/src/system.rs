@@ -458,5 +458,5 @@ mod issue_660_recycle_bin;
 mod issue_660_primary_launcher;
 
 #[cfg(all(test, target_os = "linux"))]
-#[path = "../test_support/issue_672_recycle_bin.rs"]
+#[path = "../test_support/issue_672_recycle_bin_test.rs"]
 mod issue_672_recycle_bin;

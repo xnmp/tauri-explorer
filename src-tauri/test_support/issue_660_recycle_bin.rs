@@ -37,31 +37,25 @@ fn issue_660_recycle_bin_errors_without_an_absolute_xdg_or_home_directory() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn issue_660_recycle_bin_uses_the_trash_files_fallback_after_gio_rejects_the_uri() {
+fn issue_660_recycle_bin_opens_the_trash_files_directory() {
     let mut launchers = Vec::new();
 
     let result = open_linux_recycle_bin_with(|launcher| {
         launchers.push((launcher.program, launcher.arguments.clone()));
-        let status = if launcher.program == "gio" {
-            std::process::ExitStatus::from_raw(1 << 8)
-        } else {
-            std::process::ExitStatus::from_raw(0)
-        };
-        Ok(status)
+        Ok(std::process::ExitStatus::from_raw(0))
     });
 
     assert!(result.is_ok());
-    assert_eq!(launchers.len(), 2);
-    assert_eq!(launchers[0].0, "gio");
-    assert_eq!(launchers[1].0, "xdg-open");
-    assert!(launchers[1].1[0]
+    assert_eq!(launchers.len(), 1);
+    assert_eq!(launchers[0].0, "xdg-open");
+    assert!(launchers[0].1[0]
         .to_string_lossy()
         .ends_with("/Trash/files"));
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn issue_660_recycle_bin_returns_an_error_when_both_linux_launchers_fail() {
+fn issue_660_recycle_bin_returns_an_error_when_the_linux_launcher_fails() {
     let result = open_linux_recycle_bin_with(|_| Ok(std::process::ExitStatus::from_raw(1 << 8)));
 
     assert!(result.is_err());
@@ -69,7 +63,7 @@ fn issue_660_recycle_bin_returns_an_error_when_both_linux_launchers_fail() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn issue_660_recycle_bin_falls_back_when_gio_is_unavailable() {
+fn issue_660_recycle_bin_does_not_depend_on_gio() {
     let mut launchers = Vec::new();
 
     let result = open_linux_recycle_bin_with(|launcher| {
@@ -85,9 +79,9 @@ fn issue_660_recycle_bin_falls_back_when_gio_is_unavailable() {
     });
 
     assert!(result.is_ok());
-    assert_eq!(launchers.len(), 2);
-    assert_eq!(launchers[1].0, "xdg-open");
-    assert!(launchers[1].1[0]
+    assert_eq!(launchers.len(), 1);
+    assert_eq!(launchers[0].0, "xdg-open");
+    assert!(launchers[0].1[0]
         .to_string_lossy()
         .ends_with("/Trash/files"));
 }

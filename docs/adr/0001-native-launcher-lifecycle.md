@@ -23,11 +23,13 @@ Because the IPC response cannot wait for a detached launcher's eventual exit, a
 non-zero exit or wait failure is recorded as a warning rather than retroactively
 changing the command result. Successful exit is debug-level lifecycle detail.
 
-Linux Recycle Bin is a narrow exception: `gio open trash:///` acts as a
-synchronous desktop-handler probe. The command waits for its status so a
-rejected URI can fall back to `xdg-open` on the user's Freedesktop
-`Trash/files` directory. The fallback's failure is returned through IPC, since
-the frontend must be able to tell the user that neither native surface opened.
+Linux Recycle Bin is a narrow exception: a successful URI-dispatcher exit does
+not prove its asynchronous desktop handler accepted `trash:///`. The command
+therefore never dispatches that URI. It resolves the user's absolute
+Freedesktop `Trash/files` directory and waits for `xdg-open` to launch it
+directly. A spawn failure or unsuccessful exit is returned through IPC, since
+the frontend must be able to tell the user that the deleted-files location did
+not open.
 
 Launcher construction remains a side-effect-free seam so each target's executable
 and arguments can be tested without opening a native surface.
@@ -38,4 +40,6 @@ and arguments can be tested without opening a native surface.
 - Production logs identify launch attempts, successful process ownership transfer,
   and asynchronous launcher failures.
 - Every successful child has one owner responsible for reaping it.
+- Linux Recycle Bin does not depend on desktop support for the `trash` URI
+  scheme.
 - New launcher commands governed by this module must follow the same policy.

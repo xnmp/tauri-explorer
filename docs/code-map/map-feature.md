@@ -65,8 +65,8 @@ backend for E2E/browser).
 ## Recycle Bin
 
 - `components/FilesSidebarView.svelte`, `domain/recycle-bin.ts`, `api/open.ts` — sidebar action opens the native Recycle Bin and reports an IPC failure through `toastStore`.
-- `src-tauri/src/system.rs` — `open_recycle_bin`: Linux probes `gio open trash:///`, then falls back to `xdg-open` on an absolute Freedesktop `Trash/files` directory; Windows and macOS retain their native shell launchers.
-- FLOW: sidebar click → `openRecycleBinWithFeedback` → `open_recycle_bin` IPC → Linux URI probe/fallback; a terminal failure returns to the toast.
+- `src-tauri/src/system.rs` — `open_recycle_bin`: Linux launches an absolute Freedesktop `Trash/files` directory through `xdg-open` without dispatching `trash:///`; Windows and macOS retain their native shell launchers.
+- FLOW: sidebar click → `openRecycleBinWithFeedback` → `open_recycle_bin` IPC → platform launcher; a terminal failure returns to the toast.
 
 ## Window tabs
 

@@ -169,6 +169,11 @@ The preview pane requests a 1024px video frame because fullscreen reuses that
 same source; tile views keep their independently configured 96–256px requests
 and cache keys (#664).
 
+CSV previews must parse the complete bounded read before applying their record
+limit: splitting physical lines first corrupts valid quoted newlines. Keep the
+CSV branch separate from the existing Markdown/text paths and virtualize its
+record rows with `VirtualList` (#666).
+
 The floating update notice uses the shared `modal-card` and `btn` control chrome;
 import `components/modal.css` in `UpdateNotice.svelte` so the globally scoped
 dialog styles accompany the otherwise standalone notice.

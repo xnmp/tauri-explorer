@@ -154,15 +154,16 @@ backend for E2E/browser).
 
 ## Preview pane
 
-- `components/PreviewPane.svelte` — text/image/diff/archive preview + syntax highlight; hand-rolled resize (width when docked right, height when docked top/bottom, #460); reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
+- `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; hand-rolled resize (width when docked right, height when docked top/bottom, #460); reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
 - `domain/preview-pane-position.ts` — pure dock-position validate/cycle (right/bottom/top, #460); `+page.svelte` column-stacks the pane for top/bottom. Also: `PreviewPanePositionMode` ("auto" | right/bottom/top), `resolveAutoDockPosition(width, height)` (aspect-ratio heuristic: wide → right, narrow-tall → top, else bottom) and `resolveEffectivePreviewPanePosition(mode, width, height)` (#467)
 - `state/window-size.svelte.ts` — reactive `window.innerWidth/innerHeight` (`windowSizeStore`); `+page.svelte` syncs it on mount + `resize`. Feeds `settingsStore.resolvedPreviewPanePosition` for auto-dock (#467)
 - `state/settings.svelte.ts` — `previewPanePosition` (raw stored mode, may be "auto") vs `resolvedPreviewPanePosition` (concrete right/bottom/top, the one layout code reads; #467)
 - `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
+- `domain/csv-preview.ts` — quoted CSV table parser; malformed input leaves PreviewPane on its existing text path (#666)
 - `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
 - `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff)
 - `themes/syntax.css` — shared hljs token colors
-- FLOW: selection change → PreviewPane fetches content by type → highlights → renders. 512KB read cap, 50KB highlight cap.
+- FLOW: selection change → PreviewPane fetches content by type → CSV parses to a shared-column virtual table or text highlights/renders. 512KB read cap, 200 CSV data-row cap, 50KB highlight cap.
 
 ## Miller columns
 

@@ -77,6 +77,14 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("readme.txt", "/home/user/readme.txt", 1024),
     file("notes.md", "/home/user/notes.md", 2048),
   ],
+  // Keep preview fixtures out of the shared home directory. Many browser
+  // tests deliberately search or count that directory's baseline contents.
+  "/home/csv-preview": [
+    file("people.csv", "/home/csv-preview/people.csv", 256),
+    file("broken.csv", "/home/csv-preview/broken.csv", 128),
+    file("many-people.csv", "/home/csv-preview/many-people.csv", 8192),
+    file("wide.csv", "/home/csv-preview/wide.csv", 1024),
+  ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
     dir("src", "/home/user/my-project/src", false),
@@ -1200,6 +1208,10 @@ const mockFileContent: Record<string, string> = {
   "/home/user/Documents/project/tsconfig.json": '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
   "/home/user/Documents/project/README.md": '# Project\n\nA sample project.\n',
   "/home/user/readme.txt": "This is a readme file.\n",
+  "/home/csv-preview/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
+  "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
+  "/home/csv-preview/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
+  "/home/csv-preview/wide.csv": "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
   "/home/user/notes.md": [
     "---",
     "title: August notes",

@@ -8,7 +8,12 @@ import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
-import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
+import type {
+  GitFileEntry,
+  GitStatusCode,
+  GitStatusSummary,
+  GitOpState,
+} from "$lib/api/files";
 
 // Check if we're running in Tauri v2
 // Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
@@ -22,7 +27,9 @@ const TIMESTAMP_BASE = Date.UTC(2024, 0, 1, 12, 0, 0);
 const TIMESTAMP_STEP_MS = 60 * 60 * 1000;
 let timestampSeq = 0;
 function nextTimestamp(): string {
-  return new Date(TIMESTAMP_BASE + timestampSeq++ * TIMESTAMP_STEP_MS).toISOString();
+  return new Date(
+    TIMESTAMP_BASE + timestampSeq++ * TIMESTAMP_STEP_MS,
+  ).toISOString();
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -41,7 +48,12 @@ function file(name: string, path: string, size: number): FileEntry {
 // which consults this map for such folders.
 const mockDirEmpty: Record<string, boolean> = {};
 
-function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boolean): FileEntry {
+function dir(
+  name: string,
+  path: string,
+  is_empty?: boolean,
+  is_git_repo?: boolean,
+): FileEntry {
   if (is_empty !== undefined) mockDirEmpty[path] = is_empty;
   // is_empty is intentionally absent from the listing contract (#129).
   return {
@@ -59,10 +71,14 @@ const mockFiles: Record<string, FileEntry[]> = {
   // Matches get_log_dir so "Open Logs Folder" (#197) is navigable in e2e.
   "/tmp": [dir("tauri-explorer", "/tmp/tauri-explorer")],
   "/tmp/tauri-explorer": [dir("logs", "/tmp/tauri-explorer/logs")],
-  "/tmp/tauri-explorer/logs": [file("tauri-explorer.log", "/tmp/tauri-explorer/logs/tauri-explorer.log", 2048)],
-  "/home": [
-    dir("user", "/home/user"),
+  "/tmp/tauri-explorer/logs": [
+    file(
+      "tauri-explorer.log",
+      "/tmp/tauri-explorer/logs/tauri-explorer.log",
+      2048,
+    ),
   ],
+  "/home": [dir("user", "/home/user")],
   "/home/user": [
     dir("Documents", "/home/user/Documents", false),
     dir("Downloads", "/home/user/Downloads", false),
@@ -76,10 +92,14 @@ const mockFiles: Record<string, FileEntry[]> = {
     dir(".config", "/home/user/.config", false),
     file("readme.txt", "/home/user/readme.txt", 1024),
     file("notes.md", "/home/user/notes.md", 2048),
-    file("people.csv", "/home/user/people.csv", 256),
-    file("broken.csv", "/home/user/broken.csv", 128),
-    file("many-people.csv", "/home/user/many-people.csv", 8192),
-    file("wide.csv", "/home/user/wide.csv", 1024),
+  ],
+  // Keep preview fixtures out of the shared home directory. Many browser
+  // tests deliberately search or count that directory's baseline contents.
+  "/home/csv-preview": [
+    file("people.csv", "/home/csv-preview/people.csv", 256),
+    file("broken.csv", "/home/csv-preview/broken.csv", 128),
+    file("many-people.csv", "/home/csv-preview/many-people.csv", 8192),
+    file("wide.csv", "/home/csv-preview/wide.csv", 1024),
   ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
@@ -99,7 +119,11 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("notes.txt", "/media/user/USB_DRIVE/notes.txt", 2048),
   ],
   "/media/user/USB_DRIVE/Backups": [
-    file("backup-2024.zip", "/media/user/USB_DRIVE/Backups/backup-2024.zip", 8388608),
+    file(
+      "backup-2024.zip",
+      "/media/user/USB_DRIVE/Backups/backup-2024.zip",
+      8388608,
+    ),
   ],
   // Google Drive File Stream mount — browsable so the breadcrumb's Google-mark
   // anchor (which collapses the mount crumb) can be exercised.
@@ -110,11 +134,30 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
   ],
   "/home/user/Documents": [
-    { ...dir("project", "/home/user/Documents/project"), modified: daysAgo(150) },
-    { ...file("report.pdf", "/home/user/Documents/report.pdf", 102400), modified: daysAgo(35) },
-    { ...file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200), modified: daysAgo(5) },
-    { ...file("presentation.pptx", "/home/user/Documents/presentation.pptx", 204800), modified: daysAgo(1) },
-    { ...file("notes.md", "/home/user/Documents/notes.md", 4096), modified: daysAgo(0) },
+    {
+      ...dir("project", "/home/user/Documents/project"),
+      modified: daysAgo(150),
+    },
+    {
+      ...file("report.pdf", "/home/user/Documents/report.pdf", 102400),
+      modified: daysAgo(35),
+    },
+    {
+      ...file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200),
+      modified: daysAgo(5),
+    },
+    {
+      ...file(
+        "presentation.pptx",
+        "/home/user/Documents/presentation.pptx",
+        204800,
+      ),
+      modified: daysAgo(1),
+    },
+    {
+      ...file("notes.md", "/home/user/Documents/notes.md", 4096),
+      modified: daysAgo(0),
+    },
   ],
   "/home/user/Downloads": [
     dir("wrapper", "/home/user/Downloads/wrapper", false),
@@ -136,7 +179,11 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/home/user/Downloads/wrapper/payload/inner": [
     dir("assets", "/home/user/Downloads/wrapper/payload/inner/assets"),
     file("app.js", "/home/user/Downloads/wrapper/payload/inner/app.js", 1024),
-    file("style.css", "/home/user/Downloads/wrapper/payload/inner/style.css", 512),
+    file(
+      "style.css",
+      "/home/user/Downloads/wrapper/payload/inner/style.css",
+      512,
+    ),
   ],
   "/home/user/Pictures": [
     dir("vacation", "/home/user/Pictures/vacation"),
@@ -175,9 +222,17 @@ const mockFiles: Record<string, FileEntry[]> = {
     file(".gitignore", "/home/user/Documents/project/.gitignore", 64),
     file("Makefile", "/home/user/Documents/project/Makefile", 800),
     file("Dockerfile", "/home/user/Documents/project/Dockerfile", 350),
-    file("docker-compose.yml", "/home/user/Documents/project/docker-compose.yml", 420),
+    file(
+      "docker-compose.yml",
+      "/home/user/Documents/project/docker-compose.yml",
+      420,
+    ),
     file("jest.config.js", "/home/user/Documents/project/jest.config.js", 200),
-    file("babel.config.js", "/home/user/Documents/project/babel.config.js", 150),
+    file(
+      "babel.config.js",
+      "/home/user/Documents/project/babel.config.js",
+      150,
+    ),
     file(".env.example", "/home/user/Documents/project/.env.example", 100),
     file("LICENSE", "/home/user/Documents/project/LICENSE", 1100),
     file("CHANGELOG.md", "/home/user/Documents/project/CHANGELOG.md", 6200),
@@ -200,61 +255,213 @@ const mockFiles: Record<string, FileEntry[]> = {
     dir("Button", "/home/user/Documents/project/src/components/Button"),
     dir("Modal", "/home/user/Documents/project/src/components/Modal"),
     dir("Sidebar", "/home/user/Documents/project/src/components/Sidebar"),
-    file("Header.tsx", "/home/user/Documents/project/src/components/Header.tsx", 1800),
-    file("Footer.tsx", "/home/user/Documents/project/src/components/Footer.tsx", 900),
-    file("Layout.tsx", "/home/user/Documents/project/src/components/Layout.tsx", 1200),
-    file("ErrorBoundary.tsx", "/home/user/Documents/project/src/components/ErrorBoundary.tsx", 700),
-    file("Loading.tsx", "/home/user/Documents/project/src/components/Loading.tsx", 400),
-    file("Avatar.tsx", "/home/user/Documents/project/src/components/Avatar.tsx", 600),
-    file("Badge.tsx", "/home/user/Documents/project/src/components/Badge.tsx", 350),
-    file("Card.tsx", "/home/user/Documents/project/src/components/Card.tsx", 550),
-    file("Tooltip.tsx", "/home/user/Documents/project/src/components/Tooltip.tsx", 800),
-    file("Dropdown.tsx", "/home/user/Documents/project/src/components/Dropdown.tsx", 1100),
-    file("index.ts", "/home/user/Documents/project/src/components/index.ts", 300),
+    file(
+      "Header.tsx",
+      "/home/user/Documents/project/src/components/Header.tsx",
+      1800,
+    ),
+    file(
+      "Footer.tsx",
+      "/home/user/Documents/project/src/components/Footer.tsx",
+      900,
+    ),
+    file(
+      "Layout.tsx",
+      "/home/user/Documents/project/src/components/Layout.tsx",
+      1200,
+    ),
+    file(
+      "ErrorBoundary.tsx",
+      "/home/user/Documents/project/src/components/ErrorBoundary.tsx",
+      700,
+    ),
+    file(
+      "Loading.tsx",
+      "/home/user/Documents/project/src/components/Loading.tsx",
+      400,
+    ),
+    file(
+      "Avatar.tsx",
+      "/home/user/Documents/project/src/components/Avatar.tsx",
+      600,
+    ),
+    file(
+      "Badge.tsx",
+      "/home/user/Documents/project/src/components/Badge.tsx",
+      350,
+    ),
+    file(
+      "Card.tsx",
+      "/home/user/Documents/project/src/components/Card.tsx",
+      550,
+    ),
+    file(
+      "Tooltip.tsx",
+      "/home/user/Documents/project/src/components/Tooltip.tsx",
+      800,
+    ),
+    file(
+      "Dropdown.tsx",
+      "/home/user/Documents/project/src/components/Dropdown.tsx",
+      1100,
+    ),
+    file(
+      "index.ts",
+      "/home/user/Documents/project/src/components/index.ts",
+      300,
+    ),
   ],
   "/home/user/Documents/project/src/components/Button": [
-    file("Button.tsx", "/home/user/Documents/project/src/components/Button/Button.tsx", 900),
-    file("Button.test.tsx", "/home/user/Documents/project/src/components/Button/Button.test.tsx", 1200),
-    file("Button.module.css", "/home/user/Documents/project/src/components/Button/Button.module.css", 400),
-    file("index.ts", "/home/user/Documents/project/src/components/Button/index.ts", 60),
+    file(
+      "Button.tsx",
+      "/home/user/Documents/project/src/components/Button/Button.tsx",
+      900,
+    ),
+    file(
+      "Button.test.tsx",
+      "/home/user/Documents/project/src/components/Button/Button.test.tsx",
+      1200,
+    ),
+    file(
+      "Button.module.css",
+      "/home/user/Documents/project/src/components/Button/Button.module.css",
+      400,
+    ),
+    file(
+      "index.ts",
+      "/home/user/Documents/project/src/components/Button/index.ts",
+      60,
+    ),
   ],
   "/home/user/Documents/project/src/components/Modal": [
-    file("Modal.tsx", "/home/user/Documents/project/src/components/Modal/Modal.tsx", 1400),
-    file("Modal.test.tsx", "/home/user/Documents/project/src/components/Modal/Modal.test.tsx", 1600),
-    file("Modal.module.css", "/home/user/Documents/project/src/components/Modal/Modal.module.css", 600),
-    file("index.ts", "/home/user/Documents/project/src/components/Modal/index.ts", 60),
+    file(
+      "Modal.tsx",
+      "/home/user/Documents/project/src/components/Modal/Modal.tsx",
+      1400,
+    ),
+    file(
+      "Modal.test.tsx",
+      "/home/user/Documents/project/src/components/Modal/Modal.test.tsx",
+      1600,
+    ),
+    file(
+      "Modal.module.css",
+      "/home/user/Documents/project/src/components/Modal/Modal.module.css",
+      600,
+    ),
+    file(
+      "index.ts",
+      "/home/user/Documents/project/src/components/Modal/index.ts",
+      60,
+    ),
   ],
   "/home/user/Documents/project/src/components/Sidebar": [
-    file("Sidebar.tsx", "/home/user/Documents/project/src/components/Sidebar/Sidebar.tsx", 2200),
-    file("Sidebar.test.tsx", "/home/user/Documents/project/src/components/Sidebar/Sidebar.test.tsx", 1800),
-    file("Sidebar.module.css", "/home/user/Documents/project/src/components/Sidebar/Sidebar.module.css", 700),
-    file("SidebarItem.tsx", "/home/user/Documents/project/src/components/Sidebar/SidebarItem.tsx", 500),
-    file("index.ts", "/home/user/Documents/project/src/components/Sidebar/index.ts", 80),
+    file(
+      "Sidebar.tsx",
+      "/home/user/Documents/project/src/components/Sidebar/Sidebar.tsx",
+      2200,
+    ),
+    file(
+      "Sidebar.test.tsx",
+      "/home/user/Documents/project/src/components/Sidebar/Sidebar.test.tsx",
+      1800,
+    ),
+    file(
+      "Sidebar.module.css",
+      "/home/user/Documents/project/src/components/Sidebar/Sidebar.module.css",
+      700,
+    ),
+    file(
+      "SidebarItem.tsx",
+      "/home/user/Documents/project/src/components/Sidebar/SidebarItem.tsx",
+      500,
+    ),
+    file(
+      "index.ts",
+      "/home/user/Documents/project/src/components/Sidebar/index.ts",
+      80,
+    ),
   ],
   "/home/user/Documents/project/src/utils": [
     file("format.ts", "/home/user/Documents/project/src/utils/format.ts", 800),
-    file("validate.ts", "/home/user/Documents/project/src/utils/validate.ts", 1200),
-    file("helpers.ts", "/home/user/Documents/project/src/utils/helpers.ts", 600),
-    file("debounce.ts", "/home/user/Documents/project/src/utils/debounce.ts", 300),
+    file(
+      "validate.ts",
+      "/home/user/Documents/project/src/utils/validate.ts",
+      1200,
+    ),
+    file(
+      "helpers.ts",
+      "/home/user/Documents/project/src/utils/helpers.ts",
+      600,
+    ),
+    file(
+      "debounce.ts",
+      "/home/user/Documents/project/src/utils/debounce.ts",
+      300,
+    ),
     file("cn.ts", "/home/user/Documents/project/src/utils/cn.ts", 150),
     file("date.ts", "/home/user/Documents/project/src/utils/date.ts", 900),
-    file("api-client.ts", "/home/user/Documents/project/src/utils/api-client.ts", 1500),
-    file("storage.ts", "/home/user/Documents/project/src/utils/storage.ts", 700),
+    file(
+      "api-client.ts",
+      "/home/user/Documents/project/src/utils/api-client.ts",
+      1500,
+    ),
+    file(
+      "storage.ts",
+      "/home/user/Documents/project/src/utils/storage.ts",
+      700,
+    ),
     file("index.ts", "/home/user/Documents/project/src/utils/index.ts", 200),
   ],
   "/home/user/Documents/project/src/hooks": [
-    file("useAuth.ts", "/home/user/Documents/project/src/hooks/useAuth.ts", 1100),
-    file("useTheme.ts", "/home/user/Documents/project/src/hooks/useTheme.ts", 500),
-    file("useDebounce.ts", "/home/user/Documents/project/src/hooks/useDebounce.ts", 250),
-    file("useLocalStorage.ts", "/home/user/Documents/project/src/hooks/useLocalStorage.ts", 400),
-    file("useFetch.ts", "/home/user/Documents/project/src/hooks/useFetch.ts", 800),
+    file(
+      "useAuth.ts",
+      "/home/user/Documents/project/src/hooks/useAuth.ts",
+      1100,
+    ),
+    file(
+      "useTheme.ts",
+      "/home/user/Documents/project/src/hooks/useTheme.ts",
+      500,
+    ),
+    file(
+      "useDebounce.ts",
+      "/home/user/Documents/project/src/hooks/useDebounce.ts",
+      250,
+    ),
+    file(
+      "useLocalStorage.ts",
+      "/home/user/Documents/project/src/hooks/useLocalStorage.ts",
+      400,
+    ),
+    file(
+      "useFetch.ts",
+      "/home/user/Documents/project/src/hooks/useFetch.ts",
+      800,
+    ),
     file("index.ts", "/home/user/Documents/project/src/hooks/index.ts", 150),
   ],
   "/home/user/Documents/project/src/services": [
-    file("auth.service.ts", "/home/user/Documents/project/src/services/auth.service.ts", 2000),
-    file("api.service.ts", "/home/user/Documents/project/src/services/api.service.ts", 1500),
-    file("user.service.ts", "/home/user/Documents/project/src/services/user.service.ts", 1200),
-    file("notification.service.ts", "/home/user/Documents/project/src/services/notification.service.ts", 800),
+    file(
+      "auth.service.ts",
+      "/home/user/Documents/project/src/services/auth.service.ts",
+      2000,
+    ),
+    file(
+      "api.service.ts",
+      "/home/user/Documents/project/src/services/api.service.ts",
+      1500,
+    ),
+    file(
+      "user.service.ts",
+      "/home/user/Documents/project/src/services/user.service.ts",
+      1200,
+    ),
+    file(
+      "notification.service.ts",
+      "/home/user/Documents/project/src/services/notification.service.ts",
+      800,
+    ),
     file("index.ts", "/home/user/Documents/project/src/services/index.ts", 120),
   ],
   "/home/user/Documents/project/src/types": [
@@ -264,10 +471,22 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("index.ts", "/home/user/Documents/project/src/types/index.ts", 100),
   ],
   "/home/user/Documents/project/src/styles": [
-    file("globals.css", "/home/user/Documents/project/src/styles/globals.css", 2400),
-    file("variables.css", "/home/user/Documents/project/src/styles/variables.css", 800),
+    file(
+      "globals.css",
+      "/home/user/Documents/project/src/styles/globals.css",
+      2400,
+    ),
+    file(
+      "variables.css",
+      "/home/user/Documents/project/src/styles/variables.css",
+      800,
+    ),
     file("reset.css", "/home/user/Documents/project/src/styles/reset.css", 500),
-    file("animations.css", "/home/user/Documents/project/src/styles/animations.css", 600),
+    file(
+      "animations.css",
+      "/home/user/Documents/project/src/styles/animations.css",
+      600,
+    ),
   ],
   "/home/user/Documents/project/tests": [
     dir("unit", "/home/user/Documents/project/tests/unit"),
@@ -277,26 +496,82 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("fixtures.ts", "/home/user/Documents/project/tests/fixtures.ts", 1200),
   ],
   "/home/user/Documents/project/tests/unit": [
-    file("format.test.ts", "/home/user/Documents/project/tests/unit/format.test.ts", 1400),
-    file("validate.test.ts", "/home/user/Documents/project/tests/unit/validate.test.ts", 1800),
-    file("helpers.test.ts", "/home/user/Documents/project/tests/unit/helpers.test.ts", 900),
-    file("date.test.ts", "/home/user/Documents/project/tests/unit/date.test.ts", 1100),
+    file(
+      "format.test.ts",
+      "/home/user/Documents/project/tests/unit/format.test.ts",
+      1400,
+    ),
+    file(
+      "validate.test.ts",
+      "/home/user/Documents/project/tests/unit/validate.test.ts",
+      1800,
+    ),
+    file(
+      "helpers.test.ts",
+      "/home/user/Documents/project/tests/unit/helpers.test.ts",
+      900,
+    ),
+    file(
+      "date.test.ts",
+      "/home/user/Documents/project/tests/unit/date.test.ts",
+      1100,
+    ),
   ],
   "/home/user/Documents/project/tests/integration": [
-    file("auth.test.ts", "/home/user/Documents/project/tests/integration/auth.test.ts", 2200),
-    file("api.test.ts", "/home/user/Documents/project/tests/integration/api.test.ts", 1900),
-    file("user.test.ts", "/home/user/Documents/project/tests/integration/user.test.ts", 1600),
+    file(
+      "auth.test.ts",
+      "/home/user/Documents/project/tests/integration/auth.test.ts",
+      2200,
+    ),
+    file(
+      "api.test.ts",
+      "/home/user/Documents/project/tests/integration/api.test.ts",
+      1900,
+    ),
+    file(
+      "user.test.ts",
+      "/home/user/Documents/project/tests/integration/user.test.ts",
+      1600,
+    ),
   ],
   "/home/user/Documents/project/tests/e2e": [
-    file("login.spec.ts", "/home/user/Documents/project/tests/e2e/login.spec.ts", 2400),
-    file("dashboard.spec.ts", "/home/user/Documents/project/tests/e2e/dashboard.spec.ts", 3200),
-    file("settings.spec.ts", "/home/user/Documents/project/tests/e2e/settings.spec.ts", 1800),
+    file(
+      "login.spec.ts",
+      "/home/user/Documents/project/tests/e2e/login.spec.ts",
+      2400,
+    ),
+    file(
+      "dashboard.spec.ts",
+      "/home/user/Documents/project/tests/e2e/dashboard.spec.ts",
+      3200,
+    ),
+    file(
+      "settings.spec.ts",
+      "/home/user/Documents/project/tests/e2e/settings.spec.ts",
+      1800,
+    ),
   ],
   "/home/user/Documents/project/docs": [
-    file("architecture.md", "/home/user/Documents/project/docs/architecture.md", 5400),
-    file("api-reference.md", "/home/user/Documents/project/docs/api-reference.md", 8200),
-    file("contributing.md", "/home/user/Documents/project/docs/contributing.md", 3100),
-    file("deployment.md", "/home/user/Documents/project/docs/deployment.md", 2800),
+    file(
+      "architecture.md",
+      "/home/user/Documents/project/docs/architecture.md",
+      5400,
+    ),
+    file(
+      "api-reference.md",
+      "/home/user/Documents/project/docs/api-reference.md",
+      8200,
+    ),
+    file(
+      "contributing.md",
+      "/home/user/Documents/project/docs/contributing.md",
+      3100,
+    ),
+    file(
+      "deployment.md",
+      "/home/user/Documents/project/docs/deployment.md",
+      2800,
+    ),
   ],
   "/home/user/Documents/project/scripts": [
     file("build.sh", "/home/user/Documents/project/scripts/build.sh", 400),
@@ -305,27 +580,71 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("migrate.ts", "/home/user/Documents/project/scripts/migrate.ts", 900),
   ],
   "/home/user/Documents/project/config": [
-    file("default.json", "/home/user/Documents/project/config/default.json", 800),
-    file("production.json", "/home/user/Documents/project/config/production.json", 600),
-    file("development.json", "/home/user/Documents/project/config/development.json", 700),
+    file(
+      "default.json",
+      "/home/user/Documents/project/config/default.json",
+      800,
+    ),
+    file(
+      "production.json",
+      "/home/user/Documents/project/config/production.json",
+      600,
+    ),
+    file(
+      "development.json",
+      "/home/user/Documents/project/config/development.json",
+      700,
+    ),
     file("test.json", "/home/user/Documents/project/config/test.json", 500),
   ],
   "/home/user/Documents/project/assets": [
     dir("images", "/home/user/Documents/project/assets/images"),
     dir("fonts", "/home/user/Documents/project/assets/fonts"),
     file("logo.svg", "/home/user/Documents/project/assets/logo.svg", 4800),
-    file("favicon.ico", "/home/user/Documents/project/assets/favicon.ico", 15000),
+    file(
+      "favicon.ico",
+      "/home/user/Documents/project/assets/favicon.ico",
+      15000,
+    ),
   ],
   "/home/user/Documents/project/assets/images": [
-    file("hero.png", "/home/user/Documents/project/assets/images/hero.png", 245000),
-    file("banner.jpg", "/home/user/Documents/project/assets/images/banner.jpg", 180000),
-    file("icon-set.svg", "/home/user/Documents/project/assets/images/icon-set.svg", 12000),
-    file("placeholder.png", "/home/user/Documents/project/assets/images/placeholder.png", 3200),
+    file(
+      "hero.png",
+      "/home/user/Documents/project/assets/images/hero.png",
+      245000,
+    ),
+    file(
+      "banner.jpg",
+      "/home/user/Documents/project/assets/images/banner.jpg",
+      180000,
+    ),
+    file(
+      "icon-set.svg",
+      "/home/user/Documents/project/assets/images/icon-set.svg",
+      12000,
+    ),
+    file(
+      "placeholder.png",
+      "/home/user/Documents/project/assets/images/placeholder.png",
+      3200,
+    ),
   ],
   "/home/user/Documents/project/assets/fonts": [
-    file("Inter-Regular.woff2", "/home/user/Documents/project/assets/fonts/Inter-Regular.woff2", 48000),
-    file("Inter-Bold.woff2", "/home/user/Documents/project/assets/fonts/Inter-Bold.woff2", 49000),
-    file("FiraCode-Regular.woff2", "/home/user/Documents/project/assets/fonts/FiraCode-Regular.woff2", 52000),
+    file(
+      "Inter-Regular.woff2",
+      "/home/user/Documents/project/assets/fonts/Inter-Regular.woff2",
+      48000,
+    ),
+    file(
+      "Inter-Bold.woff2",
+      "/home/user/Documents/project/assets/fonts/Inter-Bold.woff2",
+      49000,
+    ),
+    file(
+      "FiraCode-Regular.woff2",
+      "/home/user/Documents/project/assets/fonts/FiraCode-Regular.woff2",
+      52000,
+    ),
   ],
   "/home/user/Documents/project/lib": [
     dir("core", "/home/user/Documents/project/lib/core"),
@@ -336,26 +655,50 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/home/user/Documents/project/lib/core": [
     file("engine.ts", "/home/user/Documents/project/lib/core/engine.ts", 3200),
     file("parser.ts", "/home/user/Documents/project/lib/core/parser.ts", 2800),
-    file("compiler.ts", "/home/user/Documents/project/lib/core/compiler.ts", 4100),
-    file("runtime.ts", "/home/user/Documents/project/lib/core/runtime.ts", 2200),
+    file(
+      "compiler.ts",
+      "/home/user/Documents/project/lib/core/compiler.ts",
+      4100,
+    ),
+    file(
+      "runtime.ts",
+      "/home/user/Documents/project/lib/core/runtime.ts",
+      2200,
+    ),
     file("index.ts", "/home/user/Documents/project/lib/core/index.ts", 150),
   ],
   "/home/user/Documents/project/lib/plugins": [
-    file("logger.ts", "/home/user/Documents/project/lib/plugins/logger.ts", 800),
+    file(
+      "logger.ts",
+      "/home/user/Documents/project/lib/plugins/logger.ts",
+      800,
+    ),
     file("cache.ts", "/home/user/Documents/project/lib/plugins/cache.ts", 1100),
-    file("metrics.ts", "/home/user/Documents/project/lib/plugins/metrics.ts", 950),
+    file(
+      "metrics.ts",
+      "/home/user/Documents/project/lib/plugins/metrics.ts",
+      950,
+    ),
     file("index.ts", "/home/user/Documents/project/lib/plugins/index.ts", 120),
   ],
 };
 
 if (typeof window !== "undefined") {
-  (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision = () => {
+  (
+    window as unknown as { __mockVideoRevision?: () => void }
+  ).__mockVideoRevision = () => {
     const videos = mockFiles["/home/user/Videos"];
-    const recording = videos.find((entry) => entry.path.endsWith("recording.mp4"));
+    const recording = videos.find((entry) =>
+      entry.path.endsWith("recording.mp4"),
+    );
     if (!recording) return;
     mockFiles["/home/user/Videos"] = videos.map((entry) =>
       entry === recording
-        ? { ...entry, modified: new Date(Date.parse(entry.modified) + 1000).toISOString(), size: entry.size + 1 }
+        ? {
+            ...entry,
+            modified: new Date(Date.parse(entry.modified) + 1000).toISOString(),
+            size: entry.size + 1,
+          }
         : entry,
     );
   };
@@ -365,7 +708,20 @@ if (typeof window !== "undefined") {
 // Reached at `/perf/huge` (default 5000 entries) or `/perf/huge-N`. Deterministic
 // mix: ~6% directories, ~12% images (exercise Tiles thumbnails), rest files with
 // varied extensions/sizes/dates so sort + column formatting have real work.
-const PERF_EXTS = ["ts", "js", "json", "md", "rs", "svelte", "css", "html", "txt", "log", "yaml", "toml"];
+const PERF_EXTS = [
+  "ts",
+  "js",
+  "json",
+  "md",
+  "rs",
+  "svelte",
+  "css",
+  "html",
+  "txt",
+  "log",
+  "yaml",
+  "toml",
+];
 const perfHugeCache = new Map<string, FileEntry[]>();
 function generateHugeDir(path: string, count: number): FileEntry[] {
   const cached = perfHugeCache.get(path);
@@ -375,12 +731,30 @@ function generateHugeDir(path: string, count: number): FileEntry[] {
     const idx = String(i).padStart(5, "0");
     const bucket = i % 16;
     if (bucket < 1) {
-      entries.push({ name: `folder-${idx}`, path: `${path}/folder-${idx}`, kind: "directory", size: 0, modified: new Date(TIMESTAMP_BASE + i * 137 * 1000).toISOString() });
+      entries.push({
+        name: `folder-${idx}`,
+        path: `${path}/folder-${idx}`,
+        kind: "directory",
+        size: 0,
+        modified: new Date(TIMESTAMP_BASE + i * 137 * 1000).toISOString(),
+      });
     } else if (bucket < 3) {
-      entries.push({ name: `image-${idx}.png`, path: `${path}/image-${idx}.png`, kind: "file", size: 20000 + ((i * 7919) % 500000), modified: new Date(TIMESTAMP_BASE + i * 211 * 1000).toISOString() });
+      entries.push({
+        name: `image-${idx}.png`,
+        path: `${path}/image-${idx}.png`,
+        kind: "file",
+        size: 20000 + ((i * 7919) % 500000),
+        modified: new Date(TIMESTAMP_BASE + i * 211 * 1000).toISOString(),
+      });
     } else {
       const ext = PERF_EXTS[i % PERF_EXTS.length];
-      entries.push({ name: `file-${idx}.${ext}`, path: `${path}/file-${idx}.${ext}`, kind: "file", size: 100 + ((i * 31337) % 900000), modified: new Date(TIMESTAMP_BASE + i * 89 * 1000).toISOString() });
+      entries.push({
+        name: `file-${idx}.${ext}`,
+        path: `${path}/file-${idx}.${ext}`,
+        kind: "file",
+        size: 100 + ((i * 31337) % 900000),
+        modified: new Date(TIMESTAMP_BASE + i * 89 * 1000).toISOString(),
+      });
     }
   }
   perfHugeCache.set(path, entries);
@@ -393,7 +767,23 @@ function generateHugeDir(path: string, count: number): FileEntry[] {
 // mixes in non-images and is too sparse to stress the thumbnail decode/paint
 // path specifically. Deterministic: realistic names/sizes derived from `i`.
 const IMAGE_EXTS = ["jpg", "jpg", "jpg", "png"]; // mostly jpg, some png
-const IMAGE_NAME_WORDS = ["sunset", "beach", "mountain", "forest", "city", "portrait", "family", "trip", "event", "wedding", "hike", "camp", "garden", "sky", "river"];
+const IMAGE_NAME_WORDS = [
+  "sunset",
+  "beach",
+  "mountain",
+  "forest",
+  "city",
+  "portrait",
+  "family",
+  "trip",
+  "event",
+  "wedding",
+  "hike",
+  "camp",
+  "garden",
+  "sky",
+  "river",
+];
 const perfImagesCache = new Map<string, FileEntry[]>();
 function generateImagesDir(path: string, count: number): FileEntry[] {
   const cached = perfImagesCache.get(path);
@@ -435,7 +825,11 @@ function hashPath(path: string): number {
   }
   return h >>> 0;
 }
-function generateMockThumbnail(path: string, size: number, quality: number): string | null {
+function generateMockThumbnail(
+  path: string,
+  size: number,
+  quality: number,
+): string | null {
   const key = `${path}:${size}`;
   const cached = mockThumbnailCache.get(key);
   if (cached) return cached;
@@ -458,7 +852,10 @@ function generateMockThumbnail(path: string, size: number, quality: number): str
     ctx.fill();
     ctx.fillStyle = `hsl(${(hue + 180) % 360}, 50%, 30%)`;
     ctx.fillRect(size * 0.5, size * 0.5, shape, shape);
-    const dataUri = canvas.toDataURL("image/jpeg", Math.min(1, Math.max(0.1, quality / 100)));
+    const dataUri = canvas.toDataURL(
+      "image/jpeg",
+      Math.min(1, Math.max(0.1, quality / 100)),
+    );
     // A canvas that fails to implement toDataURL (some headless shells)
     // returns "data:," — treat that as unavailable rather than caching junk.
     if (!dataUri || dataUri === "data:,") return null;
@@ -498,7 +895,9 @@ if (loadReposEnabled) {
   for (let i = 0; i < LOAD_REPO_COUNT; i++) {
     const root = `${LOAD_REPO_PREFIX}${i}`;
     // Visible + navigable under Documents, flagged as a git repo (#463 badge).
-    mockFiles["/home/user/Documents"].push(dir(`load-repo-${i}`, root, false, true));
+    mockFiles["/home/user/Documents"].push(
+      dir(`load-repo-${i}`, root, false, true),
+    );
     mockFiles[root] = [
       dir("src", `${root}/src`, false),
       file("README.md", `${root}/README.md`, 2048),
@@ -594,30 +993,44 @@ function holdGitNetworkOperation(
   command: "git_fetch" | "git_pull" | "git_delete_remote_branch",
   args: Record<string, unknown>,
 ): Promise<never> | null {
-  if (new URLSearchParams(location.search).get("mockGitNetwork") !== command) return null;
+  if (new URLSearchParams(location.search).get("mockGitNetwork") !== command)
+    return null;
   return new Promise<never>((_resolve, reject) => {
-    pendingGitNetworkOperation = { taskId: Number(args.taskId), cancellable: true, reject };
+    pendingGitNetworkOperation = {
+      taskId: Number(args.taskId),
+      cancellable: true,
+      reject,
+    };
   });
 }
 
 function holdGitPullAtFastForwardBoundary(
   args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> | null {
-  const boundary = new URLSearchParams(location.search).get("mockGitPullBoundary");
+  const boundary = new URLSearchParams(location.search).get(
+    "mockGitPullBoundary",
+  );
   if (boundary !== "fast_forward" && boundary !== "late_cancel") {
     return null;
   }
 
   const taskId = Number(args.taskId);
-  const onPhase = args.onPhase as ((phase: GitNetworkPhaseEvent) => void) | undefined;
+  const onPhase = args.onPhase as
+    ((phase: GitNetworkPhaseEvent) => void) | undefined;
   const before_oid = mockHeadOid();
   const branch = mockDetached
     ? null
-    : ((MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
-      null);
+    : ((MOCK_GRAPH_REFS[before_oid] ?? []).find(
+        (ref) => ref.kind === "LocalBranch",
+      )?.name ?? null);
 
   return new Promise((resolve, reject) => {
-    pendingGitNetworkOperation = { taskId, cancellable: false, reject, onPhase };
+    pendingGitNetworkOperation = {
+      taskId,
+      cancellable: false,
+      reject,
+      onPhase,
+    };
     if (boundary === "fast_forward") onPhase?.({ taskId, cancellable: false });
     window.addEventListener(
       "tauri-explorer:mock-git-pull-finish",
@@ -626,7 +1039,13 @@ function holdGitPullAtFastForwardBoundary(
           pendingGitNetworkOperation = undefined;
         }
         const after_oid = mockAppendCommit("Pull from upstream");
-        resolve({ kind: "head_move", operation: "pull", branch, before_oid, after_oid });
+        resolve({
+          kind: "head_move",
+          operation: "pull",
+          branch,
+          before_oid,
+          after_oid,
+        });
       },
       { once: true },
     );
@@ -659,10 +1078,16 @@ let mockGit: MockGitState = seedGitState();
 // Per-file hunk state lets browser tests exercise the same partial staging
 // outcome as the real `git apply` command rather than pretending a hunk is a
 // whole-file operation.
-const mockHunkState = new Map<string, { staged: Set<number>; discarded: Set<number> }>();
+const mockHunkState = new Map<
+  string,
+  { staged: Set<number>; discarded: Set<number> }
+>();
 const MOCK_HUNK_STARTS = [1, 10] as const;
 
-function hunkState(path: string): { staged: Set<number>; discarded: Set<number> } {
+function hunkState(path: string): {
+  staged: Set<number>;
+  discarded: Set<number>;
+} {
   let state = mockHunkState.get(path);
   if (!state) {
     // Seeded/whole-file staged entries already live entirely in the index.
@@ -680,7 +1105,10 @@ function hunkState(path: string): { staged: Set<number>; discarded: Set<number> 
   return state;
 }
 
-function removeFrom(list: GitFileEntry[], path: string): GitFileEntry | undefined {
+function removeFrom(
+  list: GitFileEntry[],
+  path: string,
+): GitFileEntry | undefined {
   const idx = list.findIndex((e) => e.path === path);
   if (idx < 0) return undefined;
   return list.splice(idx, 1)[0];
@@ -801,7 +1229,11 @@ if (typeof window !== "undefined") {
       !mockGit.changes.some((e) => e.path === path) &&
       !mockGit.staged.some((e) => e.path === path)
     ) {
-      mockGit.changes.push({ path, old_path: null, status: "Modified" as GitStatusCode });
+      mockGit.changes.push({
+        path,
+        old_path: null,
+        status: "Modified" as GitStatusCode,
+      });
     }
     emitWatcherGitChange(MOCK_REPO_ROOT);
   };
@@ -821,7 +1253,11 @@ if (typeof window !== "undefined") {
   w.__mockGitStartMergeConflict = () => {
     mockGit.op_state = "merge";
     if (!mockGit.merge.some((e) => e.path === "src/constants.ts")) {
-      mockGit.merge.push({ path: "src/constants.ts", old_path: null, status: "Conflicted" });
+      mockGit.merge.push({
+        path: "src/constants.ts",
+        old_path: null,
+        status: "Conflicted",
+      });
     }
     emitWatcherGitChange(MOCK_REPO_ROOT);
   };
@@ -865,7 +1301,12 @@ function fullOid(n: number): string {
 // merged into main at #12, and tags on #1 and #5. Parents reference lower
 // numbers, so the array is a valid topological linearization.
 const GRAPH_BASE_TIME = Math.floor(Date.UTC(2024, 5, 1, 9, 0, 0) / 1000);
-const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string; stash?: string }> = [
+const MOCK_GRAPH_SPEC: Array<{
+  n: number;
+  parents: number[];
+  summary: string;
+  stash?: string;
+}> = [
   { n: 16, parents: [15, 13], summary: "Merge hotfix into main" },
   { n: 15, parents: [12, 14], summary: "Merge experiment" },
   { n: 14, parents: [9], summary: "Try alternative parser" },
@@ -883,7 +1324,12 @@ const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string; st
   { n: 2, parents: [1], summary: "Project scaffolding" },
   { n: 1, parents: [], summary: "Initial commit" },
   // Stash entry woven in by git_log right before its base (16).
-  { n: 99, parents: [16], summary: "WIP on main: experimenting", stash: "stash@{0}" },
+  {
+    n: 99,
+    parents: [16],
+    summary: "WIP on main: experimenting",
+    stash: "stash@{0}",
+  },
 ];
 
 let mockCommitGraphCache: MockCommit[] | null = null;
@@ -899,15 +1345,21 @@ function mockCommitGraph(): MockCommit[] {
     // graph's relative-time wording is exercised (#389); older commits get
     // fixed historical timestamps.
     author_time:
-      i < 3 ? Math.floor(Date.now() / 1000) - [30, 5 * 60, 5 * 3600][i] : GRAPH_BASE_TIME - i * 3600,
+      i < 3
+        ? Math.floor(Date.now() / 1000) - [30, 5 * 60, 5 * 3600][i]
+        : GRAPH_BASE_TIME - i * 3600,
     summary: c.summary,
     ...(c.stash ? { stash: c.stash } : {}),
   }));
   // The stash entry sits right before its base commit, like the backend weave.
-  const stashIdx = mockCommitGraphCache.findIndex((c) => (c as { stash?: string }).stash);
+  const stashIdx = mockCommitGraphCache.findIndex(
+    (c) => (c as { stash?: string }).stash,
+  );
   if (stashIdx > 0) {
     const [stashRow] = mockCommitGraphCache.splice(stashIdx, 1);
-    const basePos = mockCommitGraphCache.findIndex((c) => c.oid === stashRow.parents[0]);
+    const basePos = mockCommitGraphCache.findIndex(
+      (c) => c.oid === stashRow.parents[0],
+    );
     mockCommitGraphCache.splice(Math.max(0, basePos), 0, stashRow);
   }
   return mockCommitGraphCache;
@@ -1057,10 +1509,17 @@ function buildSyntheticGraph(repoIndex: number, n: number): SyntheticGraph {
   ];
   // Decorate the most recent few feature tips so the graph has extra chips.
   featureTips.slice(-3).forEach((tip, k) => {
-    (refs[loadOid(tip)] ??= []).push({ name: `feature-${k + 1}`, kind: "LocalBranch" });
+    (refs[loadOid(tip)] ??= []).push({
+      name: `feature-${k + 1}`,
+      kind: "LocalBranch",
+    });
   });
   // A couple of tags on older commits.
-  if (n >= 4) (refs[loadOid(Math.max(1, Math.floor(n / 4)))] ??= []).push({ name: "v1.0", kind: "Tag" });
+  if (n >= 4)
+    (refs[loadOid(Math.max(1, Math.floor(n / 4)))] ??= []).push({
+      name: "v1.0",
+      kind: "Tag",
+    });
   (refs[loadOid(1)] ??= []).push({ name: "v0.1", kind: "Tag" });
 
   return { commits, refs };
@@ -1086,8 +1545,10 @@ function syntheticRefs(repoIndex: number, n: number) {
   for (const [oid, list] of Object.entries(g.refs)) {
     for (const r of list) {
       if (r.kind === "Head") head = oid;
-      else if (r.kind === "LocalBranch") local.push({ name: r.name, target: oid });
-      else if (r.kind === "RemoteBranch") remote.push({ name: r.name, target: oid });
+      else if (r.kind === "LocalBranch")
+        local.push({ name: r.name, target: oid });
+      else if (r.kind === "RemoteBranch")
+        remote.push({ name: r.name, target: oid });
       else if (r.kind === "Tag") tags.push({ name: r.name, target: oid });
     }
   }
@@ -1188,7 +1649,9 @@ function mockAppendCommit(summary: string): string {
   // Advance whatever local branch HEAD was on (default: main), then HEAD.
   // While detached, HEAD moves alone — no branch follows it, like git (#524).
   if (!mockDetached) {
-    const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+    const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find(
+      (r) => r.kind === "LocalBranch",
+    );
     mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
   }
   mockMoveHead(oid);
@@ -1198,16 +1661,28 @@ function mockAppendCommit(summary: string): string {
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 const mockFileContent: Record<string, string> = {
-  "/home/user/Documents/project/index.ts": 'export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n',
-  "/home/user/Documents/project/main.py": 'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n',
-  "/home/user/Documents/project/package.json": '{\n  "name": "project",\n  "version": "1.0.0"\n}\n',
-  "/home/user/Documents/project/tsconfig.json": '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
-  "/home/user/Documents/project/README.md": '# Project\n\nA sample project.\n',
+  "/home/user/Documents/project/index.ts":
+    "export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n",
+  "/home/user/Documents/project/main.py":
+    'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n',
+  "/home/user/Documents/project/package.json":
+    '{\n  "name": "project",\n  "version": "1.0.0"\n}\n',
+  "/home/user/Documents/project/tsconfig.json":
+    '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
+  "/home/user/Documents/project/README.md": "# Project\n\nA sample project.\n",
   "/home/user/readme.txt": "This is a readme file.\n",
-  "/home/user/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
-  "/home/user/broken.csv": 'name,note\nAda,"unterminated',
-  "/home/user/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
-  "/home/user/wide.csv": "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
+  "/home/csv-preview/people.csv":
+    'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
+  "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
+  "/home/csv-preview/many-people.csv": [
+    "name,note",
+    ...Array.from(
+      { length: 250 },
+      (_, index) => `Person ${index + 1},record ${index + 1}`,
+    ),
+  ].join("\n"),
+  "/home/csv-preview/wide.csv":
+    "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
   "/home/user/notes.md": [
     "---",
     "title: August notes",
@@ -1245,18 +1720,48 @@ const mockFileContent: Record<string, string> = {
 // Mutable so manual/E2E testing can simulate ejecting a removable drive: the
 // drives store re-polls `list_drives` every ~1.5s, so replacing this list makes
 // the change propagate. `window.__mockEjectDrive(path)` (set below) removes one.
-let mockDrives: { name: string; path: string; kind: string; detail?: string; provider?: string }[] = [
+let mockDrives: {
+  name: string;
+  path: string;
+  kind: string;
+  detail?: string;
+  provider?: string;
+}[] = [
   // Removable drive showing a volume label with the drive letter as dimmed detail.
-  { name: "USB Backup", path: "/media/user/USB_DRIVE", kind: "removable", detail: "E:" },
-  { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable", detail: "F:" },
+  {
+    name: "USB Backup",
+    path: "/media/user/USB_DRIVE",
+    kind: "removable",
+    detail: "E:",
+  },
+  {
+    name: "Memory Stick",
+    path: "/media/user/Memory_Stick",
+    kind: "removable",
+    detail: "F:",
+  },
   // Cloud / remote section: Google Drive File Stream + a WSL home mount.
-  { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", detail: "G:", provider: "googledrive" },
-  { name: "Ubuntu", path: "\\\\wsl$\\Ubuntu\\home", kind: "cloud", detail: "WSL", provider: "wsl" },
+  {
+    name: "Google Drive",
+    path: "/media/user/GoogleDrive",
+    kind: "cloud",
+    detail: "G:",
+    provider: "googledrive",
+  },
+  {
+    name: "Ubuntu",
+    path: "\\\\wsl$\\Ubuntu\\home",
+    kind: "cloud",
+    detail: "WSL",
+    provider: "wsl",
+  },
 ];
 
 if (typeof window !== "undefined") {
   // Test affordance (mock/browser only): drop a drive to mimic an eject.
-  (window as unknown as { __mockEjectDrive?: (path: string) => void }).__mockEjectDrive = (path: string) => {
+  (
+    window as unknown as { __mockEjectDrive?: (path: string) => void }
+  ).__mockEjectDrive = (path: string) => {
     mockDrives = mockDrives.filter((d) => d.path !== path);
   };
   // Test affordance (mock/browser only): fire the watcher signal a repo on a
@@ -1325,9 +1830,10 @@ const mockCommands: Record<string, CommandHandler> = {
     if (error) {
       throw {
         kind: error,
-        message: error === "daily_cap"
-          ? "Reports are temporarily unavailable"
-          : "Unable to submit report",
+        message:
+          error === "daily_cap"
+            ? "Reports are temporarily unavailable"
+            : "Unable to submit report",
       };
     }
     return {
@@ -1370,7 +1876,8 @@ const mockCommands: Record<string, CommandHandler> = {
 
   is_directory_empty: (args) => {
     const path = args.path as string;
-    const includeHidden = (args.includeHidden ?? args.include_hidden) as boolean;
+    const includeHidden = (args.includeHidden ??
+      args.include_hidden) as boolean;
     // Prefer computing from known children; fall back to the seeded ground truth
     // for folders that have no children keyed in mockFiles.
     if (path in mockFiles) {
@@ -1382,10 +1889,17 @@ const mockCommands: Record<string, CommandHandler> = {
 
   check_paths_exist: (args) => {
     const paths = args.paths as string[];
-    return paths.map((p: string) => p in mockFiles || Object.keys(mockFiles).some((k) => {
-      const entries = mockFiles[k];
-      return Array.isArray(entries) && entries.some((e: { path: string }) => e.path === p);
-    }));
+    return paths.map(
+      (p: string) =>
+        p in mockFiles ||
+        Object.keys(mockFiles).some((k) => {
+          const entries = mockFiles[k];
+          return (
+            Array.isArray(entries) &&
+            entries.some((e: { path: string }) => e.path === p)
+          );
+        }),
+    );
   },
 
   estimate_size: (args) => {
@@ -1397,7 +1911,9 @@ const mockCommands: Record<string, CommandHandler> = {
       if (p in mockFiles) {
         const entries = mockFiles[p] || [];
         fileCount += entries.filter((e) => e.kind === "file").length;
-        totalBytes += entries.filter((e) => e.kind === "file").reduce((sum, e) => sum + e.size, 0);
+        totalBytes += entries
+          .filter((e) => e.kind === "file")
+          .reduce((sum, e) => sum + e.size, 0);
       } else {
         // Single file — find it in parent
         const parentPath = parentDir(p);
@@ -1527,7 +2043,11 @@ const mockCommands: Record<string, CommandHandler> = {
     }
 
     const newPath = `${destDir}/${finalName}`;
-    const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: newPath };
+    const newEntry: FileEntry = {
+      ...sourceEntry,
+      name: finalName,
+      path: newPath,
+    };
     const existingIdx = dest.findIndex((e) => e.name === finalName);
     if (existingIdx >= 0) dest[existingIdx] = newEntry;
     else dest.push(newEntry);
@@ -1602,14 +2122,22 @@ const mockCommands: Record<string, CommandHandler> = {
     // Browser mode falls back to this complete-result search when Tauri event
     // streaming is unavailable; record the same Quick Open search boundary as
     // `start_streaming_search` below.
-    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+    const calls = JSON.parse(
+      localStorage.getItem("mock-streaming-searches") ?? "[]",
+    ) as Array<{
       query: string;
     }>;
     calls.push({ query: String(args.query ?? "") });
     localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
     const root = (args.root as string) || "/home/user";
-    const limit = args.limit as number || 20;
-    const results: Array<{ name: string; path: string; relativePath: string; score: number; kind: "file" | "directory" }> = [];
+    const limit = (args.limit as number) || 20;
+    const results: Array<{
+      name: string;
+      path: string;
+      relativePath: string;
+      score: number;
+      kind: "file" | "directory";
+    }> = [];
 
     // Only search within directories that are under root (recursive)
     for (const [dirPath, entries] of Object.entries(mockFiles)) {
@@ -1643,7 +2171,9 @@ const mockCommands: Record<string, CommandHandler> = {
     // Browser Quick Open regressions can assert the real component's IPC
     // boundary without replacing its search API. This stays mock-only: the
     // production backend never reads this diagnostic key.
-    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+    const calls = JSON.parse(
+      localStorage.getItem("mock-streaming-searches") ?? "[]",
+    ) as Array<{
       query: string;
     }>;
     calls.push({ query: String(args.query ?? "") });
@@ -1669,7 +2199,9 @@ const mockCommands: Record<string, CommandHandler> = {
     const maxResults = (args.maxResults as number) ?? 500;
 
     if (!query) throw new Error("Search query cannot be empty");
-    const pattern = regexMode ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = regexMode
+      ? query
+      : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     let re: RegExp;
     try {
       re = new RegExp(pattern, caseSensitive ? "g" : "gi");
@@ -1696,7 +2228,8 @@ const mockCommands: Record<string, CommandHandler> = {
       if (dirPath !== root && !dirPath.startsWith(rootPrefix)) continue;
       for (const entry of entries) {
         if (entry.kind !== "file" || totalMatches >= maxResults) continue;
-        const content = mockWrittenFiles[entry.path] ?? mockFileContent[entry.path];
+        const content =
+          mockWrittenFiles[entry.path] ?? mockFileContent[entry.path];
         if (content === undefined) continue;
         filesSearched++;
 
@@ -1778,11 +2311,19 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   get_video_thumbnail_data: (args) => {
-    const videoThumbnailMock = (globalThis as {
-      __mockVideoThumbnail?: (path: string, size?: number) => string | Promise<string>;
-    }).__mockVideoThumbnail;
+    const videoThumbnailMock = (
+      globalThis as {
+        __mockVideoThumbnail?: (
+          path: string,
+          size?: number,
+        ) => string | Promise<string>;
+      }
+    ).__mockVideoThumbnail;
     if (videoThumbnailMock) {
-      return videoThumbnailMock((args.path as string) ?? "", args.size as number | undefined);
+      return videoThumbnailMock(
+        (args.path as string) ?? "",
+        args.size as number | undefined,
+      );
     }
     // Same realistic 128px thumbnail as images — stands in for an extracted
     // video frame so the tiles view can be demoed in browser/E2E mode.
@@ -1797,7 +2338,9 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!entries) throw new Error(`Not a directory: ${path}`);
     const names = entries.filter((e) => e.kind === "file").map((e) => e.name);
     const selected = new Set(selectPreviewImages(names));
-    const image_paths = entries.filter((e) => selected.has(e.name)).map((e) => e.path);
+    const image_paths = entries
+      .filter((e) => selected.has(e.name))
+      .map((e) => e.path);
     return {
       folder_path: path,
       image_paths,
@@ -1837,7 +2380,6 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_config_dir: () => "/home/user/.config/tauri-explorer",
 
-
   get_git_status: (args: Record<string, unknown>) => {
     const path = args.path as string;
     // Mock: treat /home/user/Documents/project as a git repo
@@ -1848,7 +2390,7 @@ const mockCommands: Record<string, CommandHandler> = {
           "App.tsx": "Modified",
           "index.css": "Modified",
           "router.tsx": "Untracked",
-          "src": "Modified",
+          src: "Modified",
           "CHANGELOG.md": "Modified",
           ".env.example": "Untracked",
         },
@@ -1867,14 +2409,17 @@ const mockCommands: Record<string, CommandHandler> = {
   git_repo_root: (args: Record<string, unknown>) => {
     const p = args.path as string;
     // No trailing slash — must stay consistent with git_status.repo_root
-    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project";
+    if (p?.startsWith("/home/user/Documents/project"))
+      return "/home/user/Documents/project";
     const li = loadRepoIndex(p);
     if (li !== null) return `${LOAD_REPO_PREFIX}${li}`;
     return null;
   },
 
   git_add_to_gitignore: (args: Record<string, unknown>) => {
-    const entry = ((args.entry as string) || "").replace(/^\.\//, "").replace(/^\//, "");
+    const entry = ((args.entry as string) || "")
+      .replace(/^\.\//, "")
+      .replace(/^\//, "");
     if (!mockGitignored.has(entry)) {
       mockGitignored.add(entry);
     }
@@ -1883,7 +2428,13 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_archive_untracked: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
-    if (paths.length === 0 || new Set(paths).size !== paths.length || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+    if (
+      paths.length === 0 ||
+      new Set(paths).size !== paths.length ||
+      paths.some(
+        (path) => !mockGit.untracked.some((entry) => entry.path === path),
+      )
+    ) {
       throw new Error("refusing to operate on non-untracked path");
     }
     for (const path of paths) {
@@ -1891,14 +2442,22 @@ const mockCommands: Record<string, CommandHandler> = {
       mockGitArchived.add(`.archive/${path}`);
     }
     if (typeof window !== "undefined") {
-      (window as unknown as { __mockGitArchived?: string[] }).__mockGitArchived = [...mockGitArchived];
+      (
+        window as unknown as { __mockGitArchived?: string[] }
+      ).__mockGitArchived = [...mockGitArchived];
     }
     return null;
   },
 
   git_trash_untracked: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
-    if (paths.length === 0 || new Set(paths).size !== paths.length || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+    if (
+      paths.length === 0 ||
+      new Set(paths).size !== paths.length ||
+      paths.some(
+        (path) => !mockGit.untracked.some((entry) => entry.path === path),
+      )
+    ) {
       throw new Error("refusing to operate on non-untracked path");
     }
     for (const path of paths) removeFrom(mockGit.untracked, path);
@@ -2051,7 +2610,9 @@ const mockCommands: Record<string, CommandHandler> = {
     // `index.has_conflicts()` guard). Resolving = staging moves the entry out
     // of `merge`, at which point committing is allowed.
     if (mockGit.merge.length > 0) {
-      throw new Error(`resolve ${mockGit.merge.length} conflicted file(s) before committing`);
+      throw new Error(
+        `resolve ${mockGit.merge.length} conflicted file(s) before committing`,
+      );
     }
     const committed = mockGit.staged.map((e) => e.path);
     if (committed.length === 0 && !amend) {
@@ -2064,24 +2625,32 @@ const mockCommands: Record<string, CommandHandler> = {
     mockGit.op_state = "clean";
     const effectiveMessage =
       msg.trim().length === 0 && amend
-        ? mockGitCommits[mockGitCommits.length - 1]?.message ?? ""
+        ? (mockGitCommits[mockGitCommits.length - 1]?.message ?? "")
         : msg;
     if (amend && mockGitCommits.length > 0) {
       const prev = mockGitCommits[mockGitCommits.length - 1];
       prev.message = effectiveMessage;
       prev.files = Array.from(new Set([...prev.files, ...committed]));
-      return { commit_id: prev.commit_id, summary: effectiveMessage.split("\n")[0] };
+      return {
+        commit_id: prev.commit_id,
+        summary: effectiveMessage.split("\n")[0],
+      };
     }
     // A fresh commit advances HEAD/main and weaves a new row onto the graph so
     // the git-graph view reflects it after its reload (#466) — mirroring the
     // real backend, which `git_log` re-reads. mockAppendCommit returns the OID.
     const commit_id = mockAppendCommit(effectiveMessage.split("\n")[0]);
-    mockGitCommits.push({ message: effectiveMessage, amend, files: committed, commit_id });
+    mockGitCommits.push({
+      message: effectiveMessage,
+      amend,
+      files: committed,
+      commit_id,
+    });
     return { commit_id, summary: effectiveMessage.split("\n")[0] };
   },
   git_diff: (args: Record<string, unknown>) => {
     const p = args.path as string;
-    const staged = !!((args.options as { staged?: boolean } | null)?.staged);
+    const staged = !!(args.options as { staged?: boolean } | null)?.staged;
     // Binary files show a marker rather than a textual hunk.
     if (/\.(png|jpg|jpeg|gif|webp|ico|bin|exe|zip|pdf)$/i.test(p)) {
       return [
@@ -2094,15 +2663,30 @@ const mockCommands: Record<string, CommandHandler> = {
     // Two distant hunks make partial stage/unstage/discard observable in the
     // running browser, matching the real patch command's semantics.
     const state = hunkState(p);
-    const visible = (hunk: number) => staged ? state.staged.has(hunk) : !state.staged.has(hunk) && !state.discarded.has(hunk);
+    const visible = (hunk: number) =>
+      staged
+        ? state.staged.has(hunk)
+        : !state.staged.has(hunk) && !state.discarded.has(hunk);
     const lines = [
       `diff --git a/${p} b/${p}`,
       "index 1111111..2222222 100644",
       `--- a/${p}`,
       `+++ b/${p}`,
     ];
-    if (visible(1)) lines.push("@@ -1,3 +1,3 @@", " import { useState } from \"react\";", "-export function App() { return null; }", "+export function App() { return <div>first hunk</div>; }");
-    if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
+    if (visible(1))
+      lines.push(
+        "@@ -1,3 +1,3 @@",
+        ' import { useState } from "react";',
+        "-export function App() { return null; }",
+        "+export function App() { return <div>first hunk</div>; }",
+      );
+    if (visible(10))
+      lines.push(
+        "@@ -10,3 +10,3 @@",
+        ' export const VERSION = "1.0";',
+        "-export const FLAG = false;",
+        "+export const FLAG = true;",
+      );
     return [...lines, ""].join("\n");
   },
   git_watch_repo: () => null,
@@ -2161,13 +2745,19 @@ const mockCommands: Record<string, CommandHandler> = {
     const held = holdGitNetworkOperation("git_pull", args);
     if (held) return held;
     const before_oid = mockHeadOid();
-    const branch =
-      mockDetached
-        ? null
-        : (MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
-          null;
+    const branch = mockDetached
+      ? null
+      : ((MOCK_GRAPH_REFS[before_oid] ?? []).find(
+          (ref) => ref.kind === "LocalBranch",
+        )?.name ?? null);
     const after_oid = mockAppendCommit("Pull from upstream");
-    return { kind: "head_move", operation: "pull", branch, before_oid, after_oid };
+    return {
+      kind: "head_move",
+      operation: "pull",
+      branch,
+      before_oid,
+      after_oid,
+    };
   },
   // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
   git_branch_behind_upstream: (args: Record<string, unknown>) =>
@@ -2218,14 +2808,18 @@ const mockCommands: Record<string, CommandHandler> = {
     };
     if (action.kind === "branch_delete") {
       if (mockFindRef(action.name!, "LocalBranch")) {
-        throw new Error(`branch '${action.name}' already exists; undo is no longer safe`);
+        throw new Error(
+          `branch '${action.name}' already exists; undo is no longer safe`,
+        );
       }
       mockAddRef(action.name!, "LocalBranch", action.target!);
       return null;
     }
     if (action.kind === "tag_delete") {
       if (mockFindRef(action.name!, "Tag")) {
-        throw new Error(`tag '${action.name}' already exists; undo is no longer safe`);
+        throw new Error(
+          `tag '${action.name}' already exists; undo is no longer safe`,
+        );
       }
       mockAddRef(action.name!, "Tag", action.target!);
       return null;
@@ -2243,9 +2837,12 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     if (action.kind === "head_move") {
       if (mockHeadOid() !== action.after_oid) {
-        throw new Error("HEAD moved since the operation; undo is no longer safe");
+        throw new Error(
+          "HEAD moved since the operation; undo is no longer safe",
+        );
       }
-      if (action.branch) mockMoveRef(action.branch, "LocalBranch", action.before_oid!);
+      if (action.branch)
+        mockMoveRef(action.branch, "LocalBranch", action.before_oid!);
       mockMoveHead(action.before_oid!);
       return null;
     }
@@ -2291,7 +2888,11 @@ const mockCommands: Record<string, CommandHandler> = {
     const loadIdx = loadRepoIndex(repoPath);
     if (loadIdx !== null) {
       const opts =
-        (args.options as { skip?: number; limit?: number; cursor?: string } | null) ?? {};
+        (args.options as {
+          skip?: number;
+          limit?: number;
+          cursor?: string;
+        } | null) ?? {};
       const all = getSyntheticGraph(loadIdx, loadRepoCommitCount()).commits;
       const skip = Math.max(0, opts.skip ?? 0);
       const limit = Math.max(1, opts.limit ?? 500);
@@ -2347,11 +2948,14 @@ const mockCommands: Record<string, CommandHandler> = {
       const tips = new Map<string, string>();
       for (const [oid, refList] of Object.entries(MOCK_GRAPH_REFS)) {
         for (const r of refList) {
-          if (r.kind === "LocalBranch" || r.kind === "RemoteBranch") tips.set(r.name, oid);
+          if (r.kind === "LocalBranch" || r.kind === "RemoteBranch")
+            tips.set(r.name, oid);
         }
       }
       const seeds = options.branches ?? [...tips.keys()];
-      const byOid = new Map(all.filter((c) => !("stash" in c)).map((c) => [c.oid, c]));
+      const byOid = new Map(
+        all.filter((c) => !("stash" in c)).map((c) => [c.oid, c]),
+      );
       const reachable = new Set<string>();
       const queue = seeds
         .filter((n) => !excluded.has(n))
@@ -2375,7 +2979,12 @@ const mockCommands: Record<string, CommandHandler> = {
       all = all.filter((commit) => {
         if ("stash" in commit) return false;
         const n = parseInt(commit.oid.slice(0, 4), 16);
-        if (n === 12) return path === "src/feature-x.ts" || path === "src/index.ts" || path === "src/index.css";
+        if (n === 12)
+          return (
+            path === "src/feature-x.ts" ||
+            path === "src/index.ts" ||
+            path === "src/index.css"
+          );
         if (n === 11) return path === MOCK_LONG_COMMIT_FILE_PATH;
         return path === `src/file-${n}.ts`;
       });
@@ -2385,7 +2994,9 @@ const mockCommands: Record<string, CommandHandler> = {
     // when no cursor is given (filtered queries).
     let start = skip;
     if (options.cursor) {
-      const idx = all.findIndex((c) => !("stash" in c) && c.oid === options.cursor);
+      const idx = all.findIndex(
+        (c) => !("stash" in c) && c.oid === options.cursor,
+      );
       start = idx >= 0 ? idx + 1 : all.length; // unknown cursor → empty page
     }
     const page = all.slice(start, start + limit);
@@ -2405,11 +3016,13 @@ const mockCommands: Record<string, CommandHandler> = {
     // same commit (#524).
     const headBranch = mockDetached
       ? null
-      : ((MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null);
+      : ((MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")
+          ?.name ?? null);
     // Test hook (like __MOCK_LATENCY__): force `has_more` so the infinite-
     // scroll loading row (#433) is reachable/observable with a small history.
     const forceHasMore =
-      (globalThis as { __mockGraphForceHasMore?: boolean }).__mockGraphForceHasMore === true;
+      (globalThis as { __mockGraphForceHasMore?: boolean })
+        .__mockGraphForceHasMore === true;
     return {
       commits: page,
       refs: MOCK_GRAPH_REFS,
@@ -2443,8 +3056,10 @@ const mockCommands: Record<string, CommandHandler> = {
     const tags: Array<{ name: string; target: string }> = [];
     for (const [target, refList] of Object.entries(MOCK_GRAPH_REFS)) {
       for (const ref of refList) {
-        if (ref.kind === "LocalBranch") local_branches.push({ name: ref.name, target });
-        else if (ref.kind === "RemoteBranch") remote_branches.push({ name: ref.name, target });
+        if (ref.kind === "LocalBranch")
+          local_branches.push({ name: ref.name, target });
+        else if (ref.kind === "RemoteBranch")
+          remote_branches.push({ name: ref.name, target });
         else if (ref.kind === "Tag") tags.push({ name: ref.name, target });
       }
     }
@@ -2457,8 +3072,9 @@ const mockCommands: Record<string, CommandHandler> = {
       head: mockHeadOid(),
       head_branch: mockDetached
         ? null
-        : ((MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find((r) => r.kind === "LocalBranch")?.name ??
-          null),
+        : ((MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find(
+            (r) => r.kind === "LocalBranch",
+          )?.name ?? null),
       detached: mockDetached,
     };
   },
@@ -2478,18 +3094,20 @@ const mockCommands: Record<string, CommandHandler> = {
     );
     return [
       ...(baseUpdateFixture
-        ? [{
-            number: 27,
-            title: "Keep release branch current",
-            headRef: "release",
-            baseRef: "hotfix",
-            baseRemote: "origin",
-            htmlUrl: "https://github.com/mock/project/pull/27",
-            draft: false,
-            ciStatus: null,
-            reviewDecision: null,
-            commentCount: null,
-          }]
+        ? [
+            {
+              number: 27,
+              title: "Keep release branch current",
+              headRef: "release",
+              baseRef: "hotfix",
+              baseRemote: "origin",
+              htmlUrl: "https://github.com/mock/project/pull/27",
+              draft: false,
+              ciStatus: null,
+              reviewDecision: null,
+              commentCount: null,
+            },
+          ]
         : []),
       {
         number: 7,
@@ -2587,8 +3205,13 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   git_failed_ci_check_log: (args: Record<string, unknown>) => {
-    const check = args.check as { name?: string; runId?: number; jobId?: number };
-    if (check.runId !== 1201 || check.jobId !== 9001) throw new Error("Unknown CI check");
+    const check = args.check as {
+      name?: string;
+      runId?: number;
+      jobId?: number;
+    };
+    if (check.runId !== 1201 || check.jobId !== 9001)
+      throw new Error("Unknown CI check");
     return {
       checkName: check.name ?? "Unit tests",
       log: "tests/unit/parser.test.ts > parser rejects invalid input\nAssertionError: expected true to be false",
@@ -2600,7 +3223,10 @@ const mockCommands: Record<string, CommandHandler> = {
   git_checkout: (args: Record<string, unknown>) => {
     const target = (args.target as string) ?? "";
     const oid = mockResolveTarget(target);
-    if (!oid) throw new Error(`pathspec '${target}' did not match any file(s) known to git`);
+    if (!oid)
+      throw new Error(
+        `pathspec '${target}' did not match any file(s) known to git`,
+      );
     // Only a local branch name reattaches HEAD; an OID, a tag or a remote
     // branch detaches it, like git (#524).
     mockCheckout(oid, mockIsLocalBranch(target) ? target : null);
@@ -2637,13 +3263,19 @@ const mockCommands: Record<string, CommandHandler> = {
   git_merge: (args: Record<string, unknown>) => {
     const target = (args.target as string) ?? "";
     const before_oid = mockHeadOid();
-    const branch =
-      mockDetached
-        ? null
-        : (MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
-          null;
+    const branch = mockDetached
+      ? null
+      : ((MOCK_GRAPH_REFS[before_oid] ?? []).find(
+          (ref) => ref.kind === "LocalBranch",
+        )?.name ?? null);
     const after_oid = mockAppendCommit(`Merge ${target} into current branch`);
-    return { kind: "head_move", operation: "merge", branch, before_oid, after_oid };
+    return {
+      kind: "head_move",
+      operation: "merge",
+      branch,
+      before_oid,
+      after_oid,
+    };
   },
   git_rebase: (args: Record<string, unknown>) => {
     const oid = (args.oid as string) ?? "";
@@ -2675,7 +3307,9 @@ const mockCommands: Record<string, CommandHandler> = {
     // A detached reset moves HEAD only (#524).
     const head = mockHeadOid();
     if (!mockDetached) {
-      const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+      const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find(
+        (r) => r.kind === "LocalBranch",
+      );
       mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
     }
     mockMoveHead(oid);
@@ -2824,7 +3458,13 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   open_in_terminal: () => {},
-  list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
+  list_installed_terminals: () => [
+    "ghostty",
+    "kitty",
+    "alacritty",
+    "gnome-terminal",
+    "xterm",
+  ],
   set_ffmpeg_path: () => {},
 
   set_as_wallpaper: () => {},
@@ -2834,7 +3474,14 @@ const mockCommands: Record<string, CommandHandler> = {
   get_log_dir: () => "/tmp/tauri-explorer/logs",
   // Theme from Image (#203): deterministic palette; theme CSS goes into the
   // in-memory config store and is injected by the mocked list_user_themes.
-  extract_palette: () => ["#1a2233", "#5de5d5", "#31425c", "#d98500", "#88a0c8", "#223044"],
+  extract_palette: () => [
+    "#1a2233",
+    "#5de5d5",
+    "#31425c",
+    "#d98500",
+    "#88a0c8",
+    "#223044",
+  ],
   write_theme_file: (args) => {
     mockConfigFiles[`themes/${args.filename as string}`] = args.data as string;
     return undefined;
@@ -2903,7 +3550,8 @@ function loadMockConfigSeed(): Record<string, string> {
     const raw = localStorage.getItem(MOCK_CONFIG_SEED_KEY);
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      return {};
     return Object.fromEntries(
       Object.entries(parsed as Record<string, unknown>).filter(
         ([, v]) => typeof v === "string",
@@ -2917,11 +3565,17 @@ function loadMockConfigSeed(): Record<string, string> {
 /**
  * Mock invoke function for browser-based testing.
  */
-export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const testWindow = globalThis as { __mockInvokeCounts?: Record<string, number> };
+export async function mockInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const testWindow = globalThis as {
+    __mockInvokeCounts?: Record<string, number>;
+  };
   if (typeof window !== "undefined") {
     testWindow.__mockInvokeCounts ??= {};
-    testWindow.__mockInvokeCounts[cmd] = (testWindow.__mockInvokeCounts[cmd] ?? 0) + 1;
+    testWindow.__mockInvokeCounts[cmd] =
+      (testWindow.__mockInvokeCounts[cmd] ?? 0) + 1;
   }
 
   // Add small delay to simulate async operation
@@ -2945,7 +3599,8 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     }
   }
   const extraLatency = g.__MOCK_LATENCY__?.[cmd];
-  if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
+  if (extraLatency)
+    await new Promise((resolve) => setTimeout(resolve, extraLatency));
 
   const failure = g.__MOCK_FAILURES__?.[cmd];
   if (failure) throw new Error(failure);

@@ -79,6 +79,15 @@ describe("native bookmark drops", () => {
     expect(bookmarks.addBookmark).toHaveBeenCalledWith("/home/user/Projects");
     expect(transfer).not.toHaveBeenCalled();
   });
+
+  it("pins a directory dropped directly on a user-created bookmark instead of moving it", async () => {
+    state.dragData = { path: "/home/user/Projects", name: "Projects", kind: "directory" };
+    state.target = { type: "bookmark", path: "/home/user/Archive" };
+    await state.nativeDrop!(["/home/user/Projects"], { x: 10, y: 10 });
+
+    expect(bookmarks.addBookmark).toHaveBeenCalledWith("/home/user/Projects");
+    expect(transfer).not.toHaveBeenCalled();
+  });
 });
 
 describe("pointer bookmark drops", () => {
@@ -123,6 +132,21 @@ describe("pointer bookmark drops", () => {
 
   it("pins a directory dropped directly on a user-created bookmark instead of moving it", async () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
+    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
+    const drag = usePointerDrag({ getExplorer: () => explorer });
+    drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
+      path: "/home/user/Projects", name: "Projects", kind: "directory",
+    } as any, false);
+
+    await fire("mousemove", { clientX: 110, clientY: 110 });
+    await fire("mouseup", { clientX: 120, clientY: 120, altKey: false });
+
+    expect(bookmarks.addBookmark).toHaveBeenCalledWith("/home/user/Projects");
+    expect(transfer).not.toHaveBeenCalled();
+  });
+
+  it("pins a directory dropped directly on a built-in bookmark instead of moving it", async () => {
+    state.pointerTarget = { type: "bookmark", path: "/home/user/Downloads" };
     const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
     const drag = usePointerDrag({ getExplorer: () => explorer });
     drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {

@@ -20,6 +20,11 @@ export type DropTargetResult =
 
 let highlightedElement: HTMLElement | null = null;
 
+function notifyBookmarkDropTarget(isBookmarkTarget: boolean): void {
+  if (typeof document === "undefined" || typeof document.dispatchEvent !== "function" || typeof CustomEvent === "undefined") return;
+  document.dispatchEvent(new CustomEvent("explorer-bookmark-drop-target", { detail: { isBookmarkTarget } }));
+}
+
 // Tauri onDragDropEvent gives physical pixels. elementFromPoint in
 // WebKitGTK expects viewport coordinates (DPR-adjusted, no zoom).
 function adjustForHitTest(pos: { x: number; y: number }): { x: number; y: number } {
@@ -126,6 +131,7 @@ function highlightAtCoords(cx: number, cy: number): void {
   if (!el) {
     clearHighlights();
     clearSidebarHighlight();
+    notifyBookmarkDropTarget(false);
     return;
   }
 
@@ -146,8 +152,10 @@ function highlightAtCoords(cx: number, cy: number): void {
       if (highlightedElement) highlightedElement.classList.add("drop-target");
     }
     setSidebarHighlight(sidebarEl);
+    notifyBookmarkDropTarget(bookmarkEl !== null);
   } else {
     clearSidebarHighlight();
+    notifyBookmarkDropTarget(false);
     if (targetEl !== highlightedElement) {
       if (highlightedElement) highlightedElement.classList.remove("drop-target");
       highlightedElement = targetEl;
@@ -178,4 +186,5 @@ export function clearHighlights(): void {
     highlightedElement = null;
   }
   clearSidebarHighlight();
+  notifyBookmarkDropTarget(false);
 }

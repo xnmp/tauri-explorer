@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   nativeDrop: undefined as undefined | ((paths: string[], position: { x: number; y: number }) => Promise<void>),
-  target: { type: "sidebar" } as { type: "sidebar" } | { type: "folder"; path: string },
-  pointerTarget: { type: "sidebar" } as { type: "sidebar" } | { type: "folder"; path: string },
+  target: { type: "sidebar" } as { type: "sidebar" } | { type: "folder"; path: string } | { type: "bookmark"; path: string },
+  pointerTarget: { type: "sidebar" } as { type: "sidebar" } | { type: "folder"; path: string } | { type: "bookmark"; path: string },
   dragData: { path: "/home/user/report.txt", name: "report.txt", kind: "file" } as { path: string; name: string; kind: string } | null,
 }));
 
@@ -70,6 +70,15 @@ describe("native bookmark drops", () => {
       expect.objectContaining({ broadcastToOtherWindows: true }),
     );
   });
+
+  it("pins a directory dropped directly on a built-in bookmark instead of moving it", async () => {
+    state.dragData = { path: "/home/user/Projects", name: "Projects", kind: "directory" };
+    state.target = { type: "bookmark", path: "/home/user/Downloads" };
+    await state.nativeDrop!(["/home/user/Projects"], { x: 10, y: 10 });
+
+    expect(bookmarks.addBookmark).toHaveBeenCalledWith("/home/user/Projects");
+    expect(transfer).not.toHaveBeenCalled();
+  });
 });
 
 describe("pointer bookmark drops", () => {
@@ -109,6 +118,21 @@ describe("pointer bookmark drops", () => {
     await fire("mouseup", { clientX: 120, clientY: 120, altKey: false });
 
     expect(bookmarks.addBookmark).not.toHaveBeenCalled();
+    expect(transfer).not.toHaveBeenCalled();
+  });
+
+  it("pins a directory dropped directly on a user-created bookmark instead of moving it", async () => {
+    state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
+    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
+    const drag = usePointerDrag({ getExplorer: () => explorer });
+    drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
+      path: "/home/user/Projects", name: "Projects", kind: "directory",
+    } as any, false);
+
+    await fire("mousemove", { clientX: 110, clientY: 110 });
+    await fire("mouseup", { clientX: 120, clientY: 120, altKey: false });
+
+    expect(bookmarks.addBookmark).toHaveBeenCalledWith("/home/user/Projects");
     expect(transfer).not.toHaveBeenCalled();
   });
 });

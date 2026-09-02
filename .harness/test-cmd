@@ -1,1 +1,0 @@
-bunx vitest run tests/composables/bookmark-drop-target.test.ts tests/composables/bookmark-drop-behavior.test.ts

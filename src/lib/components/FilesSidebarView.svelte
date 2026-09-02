@@ -349,7 +349,8 @@
       </svg>
       <span>Bookmarks</span>
       {#if isDragOver}
-        <span class="drop-hint">Drop to pin</span>
+        <span class="drop-hint drop-hint-pin">Drop to pin</span>
+        <span class="drop-hint drop-hint-move">Move to bookmark</span>
       {/if}
     </button>
 
@@ -357,7 +358,8 @@
       <div class="section-content">
         {#each quickAccessFolders as folder}
           <div
-            class="nav-item folder-item"
+            class="nav-item folder-item bookmark-drop-target"
+            data-path={folder.path}
             onclick={() => navigateTo(folder.path)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(folder.path); }}}
             role="button"
@@ -404,7 +406,8 @@
 
         {#each bookmarksStore.list as bookmark, index}
           <div
-            class="nav-item folder-item user-bookmark"
+            class="nav-item folder-item user-bookmark bookmark-drop-target"
+            data-path={bookmark.path}
             class:dragging={draggedBookmarkIndex === index}
             class:drop-target={dropTargetIndex === index && draggedBookmarkIndex !== index}
             onclick={() => navigateTo(bookmark.path)}
@@ -775,6 +778,18 @@
     border-radius: 4px;
   }
 
+  .drop-hint-move {
+    display: none;
+  }
+
+  .quick-access:has(.bookmark-drop-target:global(.drop-target)) .drop-hint-pin {
+    display: none;
+  }
+
+  .quick-access:has(.bookmark-drop-target:global(.drop-target)) .drop-hint-move {
+    display: inline;
+  }
+
   .user-bookmark {
     position: relative;
   }
@@ -817,6 +832,11 @@
   .user-bookmark.drop-target {
     background: var(--subtle-fill-secondary);
     box-shadow: 0 -2px 0 0 var(--accent);
+  }
+
+  .bookmark-drop-target:global(.drop-target) {
+    background: var(--subtle-fill-secondary);
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
 
   .section-menu-backdrop {

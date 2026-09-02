@@ -8,7 +8,7 @@ vi.mock("$lib/state/settings.svelte", () => ({
   settingsStore: { zoomLevel: 100 },
 }));
 
-import { resolveDropTargetAtPoint } from "$lib/composables/use-native-drop-target.svelte";
+import { resolveDropTarget, resolveDropTargetAtPoint } from "$lib/composables/use-native-drop-target.svelte";
 
 function bookmarkChild(path: string): HTMLElement {
   const bookmark = {
@@ -35,7 +35,16 @@ function sidebarChild(): HTMLElement {
 describe("bookmark drop targets", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("resolves an individual bookmark to its destination folder for in-app file moves", () => {
+  it("resolves an individual bookmark to its destination folder for native Linux file moves", () => {
+    vi.stubGlobal("document", { elementFromPoint: () => bookmarkChild("/home/user/Archive") });
+
+    expect(resolveDropTarget({ x: 100, y: 120 })).toEqual({
+      type: "folder",
+      path: "/home/user/Archive",
+    });
+  });
+
+  it("resolves an individual bookmark to its destination folder for pointer-drag file moves", () => {
     vi.stubGlobal("document", { elementFromPoint: () => bookmarkChild("/home/user/Archive") });
 
     expect(resolveDropTargetAtPoint(100, 120)).toEqual({

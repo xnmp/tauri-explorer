@@ -11,6 +11,7 @@ import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 export type DropTargetResult =
   | { type: "folder"; path: string }
+  | { type: "bookmark"; path: string }
   | { type: "tab"; tabId: string; path: string }
   | { type: "background"; path?: string }
   | { type: "sidebar" }
@@ -60,13 +61,11 @@ function resolveFromElement(el: Element | null): DropTargetResult {
     if (path) return { type: "folder", path };
   }
 
-  // A specific bookmark is a folder destination. The surrounding Bookmarks
-  // section remains a sidebar target so dropping a folder in its empty space
-  // still pins it instead of moving it.
+  // Preserve bookmark identity: files move into its folder, while folders pin.
   const bookmark = (el as HTMLElement).closest?.(".bookmark-drop-target[data-path]");
   if (bookmark) {
     const path = bookmark.getAttribute("data-path");
-    if (path) return { type: "folder", path };
+    if (path) return { type: "bookmark", path };
   }
 
   const sidebar = (el as HTMLElement).closest?.(".quick-access");

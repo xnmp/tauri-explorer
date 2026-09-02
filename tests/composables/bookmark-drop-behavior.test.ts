@@ -60,7 +60,7 @@ describe("native bookmark drops", () => {
   });
 
   it("uses the existing transfer operation when a file is dropped on a specific bookmark", async () => {
-    state.target = { type: "folder", path: "/home/user/Archive" };
+    state.target = { type: "bookmark", path: "/home/user/Archive" };
     await state.nativeDrop!(["/home/user/report.txt"], { x: 10, y: 10 });
 
     expect(transfer).toHaveBeenCalledWith(

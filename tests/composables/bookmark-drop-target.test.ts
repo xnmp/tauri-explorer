@@ -35,20 +35,20 @@ function sidebarChild(): HTMLElement {
 describe("bookmark drop targets", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("resolves an individual bookmark to its destination folder for native Linux file moves", () => {
+  it("preserves an individual bookmark identity for native Linux drops", () => {
     vi.stubGlobal("document", { elementFromPoint: () => bookmarkChild("/home/user/Archive") });
 
     expect(resolveDropTarget({ x: 100, y: 120 })).toEqual({
-      type: "folder",
+      type: "bookmark",
       path: "/home/user/Archive",
     });
   });
 
-  it("resolves an individual bookmark to its destination folder for pointer-drag file moves", () => {
+  it("preserves an individual bookmark identity for pointer-drag drops", () => {
     vi.stubGlobal("document", { elementFromPoint: () => bookmarkChild("/home/user/Archive") });
 
     expect(resolveDropTargetAtPoint(100, 120)).toEqual({
-      type: "folder",
+      type: "bookmark",
       path: "/home/user/Archive",
     });
   });

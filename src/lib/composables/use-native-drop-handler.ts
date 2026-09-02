@@ -80,8 +80,16 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       broadcastToOtherWindows: isInternalDrag,
     };
 
-    // Drop onto a specific folder or tab
-    if (target?.type === "folder" || target?.type === "tab") {
+    // A bookmark row pins directories but receives files through the normal
+    // transfer operation. Empty Bookmarks space is handled separately above.
+    if (target?.type === "bookmark" && dragData?.kind === "directory") {
+      for (const path of sourcePaths) bookmarksStore.addBookmark(path);
+      dragState.clear();
+      return;
+    }
+
+    // Drop onto a specific folder, bookmark, or tab.
+    if (target?.type === "folder" || target?.type === "bookmark" || target?.type === "tab") {
       // Skip dropping onto self or into one's own descendant; multi-item
       // drops are a single undoable batch (#163).
       const valid = sourcePaths.filter((sourcePath) => !isInsideDir(target.path, sourcePath));

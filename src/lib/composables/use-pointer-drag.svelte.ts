@@ -134,6 +134,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       const destDir =
         target?.type === "folder" || target?.type === "tab"
           ? target.path
+          : target?.type === "bookmark" && entryData?.kind !== "directory"
+            ? target.path
           : target?.type === "background"
             ? target.path || deps.getExplorer().currentPath
             : undefined;
@@ -184,7 +186,11 @@ export function usePointerDrag(deps: PointerDragDeps) {
           bookmarksStore.addBookmark(p);
         }
       }
-    } else if (target?.type === "folder" || target?.type === "tab") {
+    } else if (target?.type === "bookmark" && entryData?.kind === "directory") {
+      for (const path of dragPaths) {
+        bookmarksStore.addBookmark(path);
+      }
+    } else if (target?.type === "folder" || target?.type === "bookmark" || target?.type === "tab") {
       const paths = [...dragPaths];
       const targetPath = target.path;
       cleanup(true);

@@ -5,3 +5,7 @@ section and retain their bookmark identity. Files transfer into the row's
 folder, but folders pin; the section's empty space is also a folder-pinning
 surface. This ordering is shared by Linux native drop hit-testing and the
 pointer-drag path used by the other supported engines.
+
+The Bookmarks hint must derive from the source kind as well as the target:
+directories always advertise pinning, while only files over a specific bookmark
+advertise moving.

@@ -177,8 +177,12 @@ export function usePointerDrag(deps: PointerDragDeps) {
       // Type the paths into the shell prompt (#265).
       terminalPanelStore.insertPaths([...dragPaths]);
     } else if (target?.type === "sidebar") {
-      for (const p of dragPaths) {
-        bookmarksStore.addBookmark(p);
+      // Empty Bookmarks space pins folders only. A file dropped onto a
+      // particular bookmark resolves as its folder destination instead.
+      if (entryData?.kind === "directory") {
+        for (const p of dragPaths) {
+          bookmarksStore.addBookmark(p);
+        }
       }
     } else if (target?.type === "folder" || target?.type === "tab") {
       const paths = [...dragPaths];

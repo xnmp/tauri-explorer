@@ -61,8 +61,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Sidebar bookmark drop
     if (target?.type === "sidebar") {
       const sourcePaths = isInternalDrag ? internalPaths! : paths;
-      for (const p of sourcePaths) {
-        bookmarksStore.addBookmark(p);
+      // Empty Bookmarks space is a pinning surface for Explorer folders only.
+      // Files require a specific bookmark destination, resolved as a folder above.
+      if (dragData?.kind === "directory") {
+        for (const p of sourcePaths) {
+          bookmarksStore.addBookmark(p);
+        }
       }
       dragState.clear();
       return;

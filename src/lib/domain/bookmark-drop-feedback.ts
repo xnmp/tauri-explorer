@@ -3,3 +3,11 @@ export function getBookmarkDropHint(kind: string | undefined, isBookmarkTarget: 
   if (kind === "directory") return "Drop to pin";
   return isBookmarkTarget ? "Move to bookmark" : "Drop not allowed";
 }
+
+/** Use the same in-memory-then-persisted precedence as native drop handling. */
+export function getEffectiveDragKind(
+  current: { kind: string } | null,
+  crossWindow: { kind: string } | null,
+): string | undefined {
+  return (current ?? crossWindow)?.kind;
+}

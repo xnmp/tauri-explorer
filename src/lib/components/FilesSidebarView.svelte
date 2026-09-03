@@ -19,7 +19,7 @@
   import { openRecycleBin } from "$lib/api/open";
   import { openRecycleBinWithFeedback } from "$lib/domain/recycle-bin";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { getBookmarkDropHint } from "$lib/domain/bookmark-drop-feedback";
+  import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
 
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
 
@@ -35,7 +35,10 @@
   const homeDir = $derived(homeDirectory.value ?? "/home");
   let isDragOver = $state(false);
   let isBookmarkDropTarget = $state(false);
-  const bookmarkDropHint = $derived(getBookmarkDropHint(dragState.current?.kind, isBookmarkDropTarget));
+  const bookmarkDropHint = $derived(getBookmarkDropHint(
+    getEffectiveDragKind(dragState.current, dragState.readCrossWindow()),
+    isBookmarkDropTarget,
+  ));
 
   let quickAccessEl: HTMLDivElement | undefined;
   let dragPollInterval: ReturnType<typeof setInterval> | null = null;

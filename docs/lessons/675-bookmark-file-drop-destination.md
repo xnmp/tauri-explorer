@@ -9,3 +9,7 @@ pointer-drag path used by the other supported engines.
 The Bookmarks hint must derive from the source kind as well as the target:
 directories always advertise pinning, while only files over a specific bookmark
 advertise moving.
+
+Destination windows must read the persisted cross-window drag data when no
+in-memory drag state exists; otherwise a cross-window directory drag displays
+file-move feedback despite being pinned by the native handler.

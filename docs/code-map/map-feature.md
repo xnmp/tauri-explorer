@@ -99,6 +99,7 @@ backend for E2E/browser).
 - `state/drop-operations.ts` — `handleFileDrop`/`handleFileDropMany`, source-path extraction
 - `state/file-transfer.ts` — `performFileTransfer` (move vs copy decision)
 - `composables/use-sidebar-drag.svelte.ts` — drag onto sidebar bookmarks
+- `domain/bookmark-drop-feedback.ts` — derives bookmark-drop feedback from the effective local or cross-window source kind.
 - FLOW: pointer-drag sets `dragState` → drop-target computes destination → `performFileTransfer` → `moveEntry`/`copyEntry` (files.ts → file_ops.rs). Branch: `fix/multi-file-drag-ghost-opacity`.
 
 ## External drag/drop (OS ↔ app)

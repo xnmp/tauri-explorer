@@ -36,8 +36,9 @@ export interface EmptyFolderDeps {
  */
 export class EmptyFolderResolver {
   #cache = new SvelteMap<string, boolean>();
-  #inFlight = new Set<string>();
-  #queue: string[] = [];
+  #inFlight = new Map<string, number>();
+  #queue: Array<{ path: string; version: number }> = [];
+  #versions = new Map<string, number>();
   #active = 0;
   #key = "";
   #resolveEmpty: EmptyFolderDeps["resolveEmpty"];
@@ -77,16 +78,38 @@ export class EmptyFolderResolver {
       return;
     }
 
-    this.#inFlight.add(path);
-    this.#queue.push(path);
-    this.#pump();
+    this.#enqueue(path, this.#version(path));
   }
 
   /** Drop all resolved state (setting flips, forced refresh, tests). */
   reset(): void {
+    for (const path of new Set([
+      ...this.#cache.keys(),
+      ...this.#inFlight.keys(),
+      ...this.#queue.map(({ path }) => path),
+    ])) {
+      this.#advanceVersion(path);
+    }
     this.#cache.clear();
     this.#inFlight.clear();
     this.#queue = [];
+  }
+
+  /**
+   * Recheck folders changed by a successful file operation. A probe that began
+   * before the mutation is versioned out so it cannot restore an old result.
+   */
+  invalidate(paths: readonly string[]): void {
+    for (const path of paths) {
+      const wasTracked = this.#cache.has(path)
+        || this.#inFlight.has(path)
+        || this.#queue.some((work) => work.path === path);
+      this.#cache.delete(path);
+      const version = this.#advanceVersion(path);
+      this.#queue = this.#queue.filter((work) => work.path !== path);
+      this.#inFlight.delete(path);
+      if (wasTracked) this.#enqueue(path, version);
+    }
   }
 
   #syncKey(): void {
@@ -97,18 +120,38 @@ export class EmptyFolderResolver {
     }
   }
 
+  #version(path: string): number {
+    return this.#versions.get(path) ?? 0;
+  }
+
+  #advanceVersion(path: string): number {
+    const version = this.#version(path) + 1;
+    this.#versions.set(path, version);
+    return version;
+  }
+
+  #enqueue(path: string, version: number): void {
+    this.#inFlight.set(path, version);
+    this.#queue.push({ path, version });
+    this.#pump();
+  }
+
   #pump(): void {
     while (this.#active < this.#maxConcurrent && this.#queue.length > 0) {
-      const path = this.#queue.shift()!;
+      const { path, version } = this.#queue.shift()!;
       this.#active += 1;
       void this.#resolveEmpty(path, this.#includeHidden())
-        .then((empty) => this.#cache.set(path, empty))
+        .then((empty) => {
+          if (this.#version(path) === version && this.#inFlight.get(path) === version) {
+            this.#cache.set(path, empty);
+          }
+        })
         .catch(() => {
           // resolveEmpty is expected to swallow errors (unreadable dirs resolve
           // to "not empty"); guard anyway so one rejection can't stall the pool.
         })
         .finally(() => {
-          this.#inFlight.delete(path);
+          if (this.#inFlight.get(path) === version) this.#inFlight.delete(path);
           this.#active -= 1;
           this.#pump();
         });

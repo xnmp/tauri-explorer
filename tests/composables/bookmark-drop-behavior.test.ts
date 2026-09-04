@@ -130,6 +130,26 @@ describe("pointer bookmark drops", () => {
     expect(transfer).not.toHaveBeenCalled();
   });
 
+  it("moves a file dropped directly on a bookmark instead of pinning it", async () => {
+    state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
+    const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;
+    const drag = usePointerDrag({ getExplorer: () => explorer });
+    drag.handlePointerDown({ button: 0, preventDefault: vi.fn(), currentTarget: { querySelector: () => null } } as any, {
+      path: "/home/user/report.txt", name: "report.txt", kind: "file",
+    } as any, false);
+
+    await fire("mousemove", { clientX: 110, clientY: 110 });
+    await fire("mouseup", { clientX: 120, clientY: 120, altKey: false });
+
+    expect(transfer).toHaveBeenCalledWith(
+      ["/home/user/report.txt"],
+      "/home/user/Archive",
+      false,
+      expect.objectContaining({ onRefresh: expect.any(Function) }),
+    );
+    expect(bookmarks.addBookmark).not.toHaveBeenCalled();
+  });
+
   it("pins a directory dropped directly on a user-created bookmark instead of moving it", async () => {
     state.pointerTarget = { type: "bookmark", path: "/home/user/Archive" };
     const explorer = { currentPath: "/home/user", getSelectedEntries: () => [], refresh: vi.fn() } as any;

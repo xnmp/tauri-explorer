@@ -6,6 +6,7 @@
  * this broadcasts the affected directories so all windows can refresh.
  * Uses BroadcastChannel for same-origin inter-window communication.
  */
+import { emptyFolderResolver } from "./empty-folders.svelte";
 
 export interface FileChangeEvent {
   /** Directories that were modified (source/destination) */
@@ -40,6 +41,7 @@ export function initFileChangeListener(onChanged: (dirs: string[]) => void): voi
   listener = onChanged;
 
   channel.onmessage = (event: MessageEvent<FileChangeEvent>) => {
+    emptyFolderResolver.invalidate(event.data.affectedDirs);
     listener?.(event.data.affectedDirs);
     notifyLocalMutationListeners(event.data.affectedDirs);
   };
@@ -48,6 +50,7 @@ export function initFileChangeListener(onChanged: (dirs: string[]) => void): voi
 /** Broadcast that directories have changed and notify local cache consumers. */
 export function broadcastFileChange(affectedDirs: string[]): void {
   if (affectedDirs.length === 0) return;
+  emptyFolderResolver.invalidate(affectedDirs);
   notifyLocalMutationListeners(affectedDirs);
   channel?.postMessage({ affectedDirs } satisfies FileChangeEvent);
 }

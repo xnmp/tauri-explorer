@@ -18,7 +18,7 @@ function deferred<T>() {
 class FakeWindow implements LaunchWindow {
   handlers = new Map<string, (event?: { payload?: unknown }) => void>();
   stops: ReturnType<typeof vi.fn>[] = [];
-  close = vi.fn(async () => {});
+  destroy = vi.fn(async () => {});
   once: LaunchWindow["once"] = vi.fn(async (event: "tauri://created" | "tauri://error", handler: (event?: { payload?: unknown }) => void) => {
     this.handlers.set(event, handler);
     const stop = vi.fn(() => { this.handlers.delete(event); });
@@ -128,7 +128,7 @@ describe("window launch owner", () => {
     await vi.waitFor(() => expect(f.windows[0].window.stops.every((stop) => stop.mock.calls.length === 1)).toBe(true));
   });
 
-  it("cleans seed, listeners, and child after asynchronous native error", async () => {
+  it("cleans seed and listeners without destroying an unowned window after native error", async () => {
     const f = fixture({ seeds: [seed("/repo", "a")] });
     const opening = f.open("/repo");
     await vi.waitFor(() => expect(f.windows).toHaveLength(1));
@@ -138,8 +138,23 @@ describe("window launch owner", () => {
     });
     await expect(opening).resolves.toBeNull();
     expect(f.storage.size).toBe(0);
-    expect(f.windows[0].window.close).toHaveBeenCalledOnce();
+    expect(f.windows[0].window.destroy).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(f.windows[0].window.stops.every((stop) => stop.mock.calls.length === 1)).toBe(true));
+  });
+
+  it("does not close the existing native window when creation rejects a duplicate label", async () => {
+    // Tauri window handles address labels, not unique native instances. A
+    // rejected constructor can still produce a JS handle for an existing label.
+    const existing = new Set(["explorer-id-1"]);
+    const proxy = new FakeWindow();
+    proxy.destroy = vi.fn(async () => { existing.delete("explorer-id-1"); });
+    const f = fixture({ seeds: [seed("/repo", "a")], construct: () => proxy });
+    const opening = f.open("/repo");
+    await vi.waitFor(() => expect(f.windows).toHaveLength(1));
+    proxy.emit("tauri://error", "a window with label `explorer-id-1` already exists");
+    await expect(opening).resolves.toBeNull();
+    expect(existing.has("explorer-id-1")).toBe(true);
+    expect(f.storage.size).toBe(0);
   });
 
   it("retires late listener acquisitions after creation timeout", async () => {
@@ -173,22 +188,57 @@ describe("window launch owner", () => {
     expect(lateStops[0]).toHaveBeenCalledOnce();
     expect(lateStops[1]).toHaveBeenCalledOnce();
     expect(f.storage.size).toBe(0);
-    expect(lateStops).toHaveLength(2);
+    expect(child.destroy).not.toHaveBeenCalled();
   });
 
-  it("retries retirement when creation arrives after the initial timeout", async () => {
+  it("defers retirement until timed-out creation establishes native ownership", async () => {
     vi.useFakeTimers();
     const child = new FakeWindow();
     const f = fixture({ seeds: [seed("/repo", "a")], construct: () => child });
     const opening = f.open("/repo");
     await vi.advanceTimersByTimeAsync(10_000);
     await expect(opening).resolves.toBeNull();
-    expect(child.close).toHaveBeenCalledOnce();
+    expect(child.destroy).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(20_000);
     child.emit("tauri://created");
     await Promise.resolve();
-    expect(child.close).toHaveBeenCalledTimes(2);
+    expect(child.destroy).toHaveBeenCalledOnce();
     expect(child.stops.every((stop) => stop.mock.calls.length === 1)).toBe(true);
+  });
+
+  it.each(["throw", "reject"])("retains creation ownership after an error-listener %s", async (mode) => {
+    const child = new FakeWindow();
+    const observe = child.once;
+    child.once = (event, handler) => {
+      if (event === "tauri://created") return observe(event, handler);
+      if (mode === "throw") throw new Error("listener unavailable");
+      return Promise.reject(new Error("listener unavailable"));
+    };
+    const f = fixture({ seeds: [seed("/repo", "a")], construct: () => child });
+    await expect(f.open("/repo")).resolves.toBeNull();
+    expect(f.storage.size).toBe(0);
+    expect(child.destroy).not.toHaveBeenCalled();
+    child.emit("tauri://created");
+    await Promise.resolve();
+    expect(child.destroy).toHaveBeenCalledOnce();
+    expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      label: "explorer-id-1", phase: "listener", error: expect.objectContaining({ message: "listener unavailable" }),
+    });
+  });
+
+  it("retires an owned child when its adoption acknowledgement is lost", async () => {
+    const ack = deferred<boolean>();
+    const f = fixture({ handoff: async (_source, _target, dispatch) => {
+      await dispatch({ sourceWindow: "source", requestId: "lost" });
+      return ack.promise;
+    } });
+    const opening = f.open("/repo", undefined, { path: "/repo" });
+    await vi.waitFor(() => expect(f.windows).toHaveLength(1));
+    f.windows[0].window.emit("tauri://created");
+    ack.resolve(false);
+    await expect(opening).resolves.toBeNull();
+    expect(f.windows[0].window.destroy).toHaveBeenCalledOnce();
+    expect(f.storage.size).toBe(0);
   });
 
   it("does not allocate a fresh window or seed when a warm window accepts", async () => {
@@ -269,7 +319,7 @@ describe("window launch owner", () => {
     f.windows[0].window.emit("tauri://error");
     await expect(opening).resolves.toBeNull();
     expect(f.storage.size).toBe(0);
-    expect(f.windows[0].window.close).toHaveBeenCalled();
+    expect(f.windows[0].window.destroy).not.toHaveBeenCalled();
   });
 
   it("returns immediately on adoption timeout and retires a later-created child", async () => {
@@ -280,10 +330,10 @@ describe("window launch owner", () => {
     const opening = f.open("/repo", undefined, { path: "/repo" });
     await vi.waitFor(() => expect(f.windows).toHaveLength(1));
     await expect(opening).resolves.toBeNull();
-    expect(f.windows[0].window.close).toHaveBeenCalledOnce();
+    expect(f.windows[0].window.destroy).not.toHaveBeenCalled();
     f.windows[0].window.emit("tauri://created");
     await Promise.resolve();
-    expect(f.windows[0].window.close).toHaveBeenCalledTimes(2);
+    expect(f.windows[0].window.destroy).toHaveBeenCalledOnce();
     expect(f.storage.size).toBe(0);
   });
 });

@@ -64,7 +64,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "native-destroy" | "target-state" | "open-picker"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
@@ -88,6 +88,30 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
           void child.once("tauri://error", ({ payload }) => reject(new Error(String(payload)))).catch(reject);
         });
         return { label, token: pickerToken };
+      }
+      if (op === "open-unready") {
+        const [{ WebviewWindow }, { explorerWindowAppearance }] = await whileActive(Promise.all([
+          import("@tauri-apps/api/webviewWindow"),
+          import("$lib/state/window-appearance"),
+        ]));
+        const label = `explorer-unready-${crypto.randomUUID()}`;
+        const requestedPath = target ?? "/";
+        // A real native webview with no application document gives the handoff
+        // transport a deterministic destination with no receiver to adopt it.
+        const child = new WebviewWindow(label, {
+          url: "about:blank",
+          width: 900, height: 560,
+          ...explorerWindowAppearance("Unready Explorer fixture"),
+        });
+        await new Promise<void>((resolve, reject) => {
+          void child.once("tauri://created", () => resolve()).catch(reject);
+          void child.once("tauri://error", ({ payload }) => reject(new Error(String(payload)))).catch(reject);
+        });
+        const params = new URLSearchParams({ path: requestedPath, focusAddressBar: "1" });
+        return {
+          label,
+          appUrl: `${window.location.origin}${window.location.pathname}?${params}`,
+        };
       }
       if (op === "target-state") {
         const { Window } = await whileActive(import("@tauri-apps/api/window"));
@@ -118,6 +142,60 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
         const opened = await openNewWindow(target ?? windowTabsManager.getActiveExplorer()!.currentPath);
         return opened ? { kind: opened.kind, label: opened.label } : null;
       }
+      if (op === "arm-transfer-close") {
+        const [{ listen }, { TAB_ADOPT_EVENT, normalizeWindowHandoff }, { isRecord }] =
+          await whileActive(Promise.all([
+            import("@tauri-apps/api/event"),
+            import("$lib/state/window-handoff"),
+            import("$lib/domain/window-input"),
+          ]));
+        const receiptKey = `e2e-transfer-receipt:${target ?? token}`;
+        let stop: (() => void) | undefined;
+        let received = false;
+        const release = () => {
+          signal.removeEventListener("abort", onAbort);
+          const acquired = stop;
+          stop = undefined;
+          if (acquired) void Promise.resolve(acquired()).catch(() => {});
+        };
+        const onAbort = () => release();
+        stop = await listen<unknown>(TAB_ADOPT_EVENT, ({ payload }) => {
+          if (signal.aborted || received) return;
+          const handoff = isRecord(payload) ? normalizeWindowHandoff(payload.handoff) : null;
+          if (!handoff) return;
+          received = true;
+          release();
+          const receipt = {
+            token: target ?? token,
+            requestId: handoff.requestId,
+            sourceWindow: handoff.sourceWindow,
+            targetWindow: windowTabsManager.windowLabel,
+            receivedAt: Date.now(),
+          };
+          localStorage.setItem(receiptKey, JSON.stringify(receipt));
+          // Tauri invokes all listeners for one emit synchronously. Production's
+          // async receiver yields at its first import, so this real close request
+          // revokes transfer admission before that receiver can pass isVisible.
+          const closing = windowTabsManager.requestWindowClose();
+          localStorage.setItem(receiptKey, JSON.stringify({
+            ...receipt,
+            closeRequestedAt: Date.now(),
+          }));
+          void closing;
+        }, { target: windowTabsManager.windowLabel });
+        if (signal.aborted || received) {
+          release();
+          signal.throwIfAborted();
+        } else signal.addEventListener("abort", onAbort, { once: true });
+        return { receiptKey };
+      }
+      if (op === "fresh-open") {
+        const { createWindowLauncher } = await whileActive(import("$lib/state/window-launch"));
+        const opened = await createWindowLauncher({ warmEnabled: () => false })(
+          target ?? windowTabsManager.getActiveExplorer()!.currentPath,
+        );
+        return opened ? { kind: opened.kind, label: opened.label } : null;
+      }
       if (op === "native-close") {
         const { getCurrentWindow } = await whileActive(import("@tauri-apps/api/window"));
         await getCurrentWindow().close();
@@ -135,6 +213,23 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
       if (!transfer) throw new Error("No transferable tab");
       try {
         const snapshot = transfer.snapshot;
+        if (op === "collision-transfer" && target) {
+          if (!target.startsWith("explorer-") || target.length === "explorer-".length) {
+            throw new Error("Collision target is not an Explorer window label");
+          }
+          const failures: Array<{ label: string; phase: string; error?: string }> = [];
+          const { createWindowLauncher } = await whileActive(import("$lib/state/window-launch"));
+          const opened = await createWindowLauncher({
+            warmEnabled: () => false,
+            uuid: () => target.slice("explorer-".length),
+            reportFailure: ({ label, phase, error }) => failures.push({
+              label,
+              phase,
+              ...(error === undefined ? {} : { error: String(error) }),
+            }),
+          })(snapshot.path, undefined, snapshot);
+          return { moved: !!opened && transfer.complete(), target, failures };
+        }
         if (op === "transfer" && target) {
           const { sendTabToWindow } = await whileActive(import("$lib/state/tab-transfer"));
           return { moved: await sendTabToWindow(target, snapshot) && transfer.complete(), target };

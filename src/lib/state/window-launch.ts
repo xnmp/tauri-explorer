@@ -20,7 +20,7 @@ type CreationEvent = "tauri://created" | "tauri://error";
 
 export interface LaunchWindow {
   once(event: CreationEvent, handler: (event?: { payload?: unknown }) => void): Promise<() => void>;
-  close(): Promise<void>;
+  destroy(): Promise<void>;
 }
 
 /** Fresh construction and warm activation both name the accepted destination.
@@ -105,7 +105,7 @@ function createCreationOwner(
   child: LaunchWindow,
   dependencies: WindowLaunchDependencies,
   onFailure: (failure: Omit<WindowLaunchFailure, "label">) => void,
-  onLateCreated: () => void,
+  onCreated: () => void,
 ): { result: Promise<boolean>; expire(): void } {
   let expire = () => {};
   const result = new Promise<boolean>((resolve) => {
@@ -117,37 +117,46 @@ function createCreationOwner(
       stops.clear();
     };
     const finish = (created: boolean, failure: Omit<WindowLaunchFailure, "label">) => {
+      if (settled && !draining) return;
+      // A JS window handle is only a label proxy. Native success is the first
+      // point at which this invocation owns a window, including after timeout.
+      if (created) onCreated();
       if (draining) {
-        if (created) onLateCreated();
-        else onFailure(failure); // Retain a native error arriving after timeout.
+        if (!created) onFailure(failure); // Retain a native error arriving after timeout.
         draining = false;
         cleanup();
         return;
       }
-      if (settled) return;
       settled = true;
       dependencies.clearTimer(timer);
       cleanup();
       if (!created) onFailure(failure);
       resolve(created);
     };
+    const failPending = (failure: Omit<WindowLaunchFailure, "label">) => {
+      if (settled && !draining) return;
+      settled = true;
+      draining = true;
+      dependencies.clearTimer(timer);
+      onFailure(failure);
+      resolve(false);
+      // Native construction cannot be cancelled. Keep surviving observers so
+      // a late success can retire the owned child without touching other labels.
+    };
     const acquire = (event: CreationEvent, created: boolean) => {
-      void child.once(event, (value) => finish(created, { phase: "native", error: value?.payload })).then((stop) => {
-        if (settled && !draining) stop();
-        else stops.add(stop);
-      }).catch((error) => finish(false, { phase: "listener", error }));
+      try {
+        void child.once(event, (value) => finish(created, { phase: "native", error: value?.payload })).then((stop) => {
+          if (settled && !draining) stop();
+          else stops.add(stop);
+        }).catch((error) => failPending({ phase: "listener", error }));
+      } catch (error) {
+        failPending({ phase: "listener", error });
+      }
     };
     const timer = dependencies.setTimer(() => expire(), CREATION_TIMEOUT_MS);
     expire = () => {
       if (settled) return;
-      settled = true;
-      draining = true;
-      dependencies.clearTimer(timer);
-      onFailure({ phase: "timeout" });
-      resolve(false);
-      // Keep the created observer until native construction actually settles. A close sent
-      // before native construction completes may legitimately find no window;
-      // a late created event retries retirement instead of orphaning it.
+      failPending({ phase: "timeout" });
     };
     // WebviewWindow stores these creation handlers synchronously before its
     // constructor's native invoke promise can settle.
@@ -158,7 +167,8 @@ function createCreationOwner(
 }
 
 /** Create a window launcher with injectable native/storage boundaries. */
-export function createWindowLauncher(dependencies: WindowLaunchDependencies = defaultDependencies) {
+export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies> = {}) {
+  const dependencies: WindowLaunchDependencies = { ...defaultDependencies, ...overrides };
   return async function openNewWindow(
     path: string,
     viewMode?: ViewMode,
@@ -199,6 +209,8 @@ export function createWindowLauncher(dependencies: WindowLaunchDependencies = de
     let seedKey: string | null = null;
     let seedTimer: ReturnType<typeof setTimeout> | null = null;
     let retired = false;
+    let owned = false;
+    let destroyRequested = false;
     const publishSeed = (key: string, value: unknown): boolean => {
       if (!windowSeedFitsBudget(value)) return false;
       seedKey = key;
@@ -213,11 +225,13 @@ export function createWindowLauncher(dependencies: WindowLaunchDependencies = de
       if (seedTimer) dependencies.clearTimer(seedTimer);
       seedTimer = null;
     };
-    const retireChild = (retry = false) => {
-      if (retired && !retry) return;
+    const retireChild = () => {
       retired = true;
       clearOwnedSeed();
-      if (child) void child.close().catch((error) => {
+      if (!child || !owned || destroyRequested) return;
+      destroyRequested = true;
+      // Rollback must not depend on the rejected child's close-request handler.
+      void child.destroy().catch((error) => {
         dependencies.reportFailure?.({ label, phase: "retire", error });
       });
     };
@@ -227,7 +241,10 @@ export function createWindowLauncher(dependencies: WindowLaunchDependencies = de
         return createCreationOwner(child, dependencies, (failure) => {
           retireChild();
           dependencies.reportFailure?.({ label, ...failure });
-        }, () => retireChild(true));
+        }, () => {
+          owned = true;
+          if (retired) retireChild();
+        });
       } catch (error) {
         dependencies.reportFailure?.({ label, phase: "construct", error });
         retireChild();

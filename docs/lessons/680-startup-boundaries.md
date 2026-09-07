@@ -584,3 +584,35 @@ an active WebKit page and detached its graph. That run is not product evidence.
 
 References: [Flexbox automatic minimum size](https://www.w3.org/TR/css-flexbox-1/#min-size-auto)
 and [WAI button keyboard interaction](https://www.w3.org/WAI/ARIA/apg/patterns/button/).
+
+
+### Native creation ownership
+
+A Tauri `WebviewWindow` returned by its JavaScript constructor is a label proxy,
+not proof that a native window was created. A duplicate-label error leaves the
+existing native window intact; calling `close()` or `destroy()` on the failed
+proxy addresses that existing window. The native regression reproduced its
+unintended closure before the launcher fix.
+
+Establish ownership only on `tauri://created`. Failure clears this invocation's
+launch seed immediately, but retirement waits for ownership. Creation timeout,
+failed handoff and listener-acquisition failure retain surviving terminal
+observers: late success destroys the owned rejected child once, while native
+error ends the drain without addressing that label. Use `destroy()` for rollback
+of an owned child, because `close()` is an interceptable request. Never claim
+reclamation if the creation observer itself cannot be installed; no safe label
+operation can recover native identity in that case.
+
+The installed Tauri creation listeners register synchronously in a local array.
+Their returned promise does not represent IPC readiness. The broader injectable
+contract still needs to handle a throw or rejection without discarding a
+success observer that was installed independently.
+
+For an unready native fixture, Tauri runtime Wry deliberately omits `with_url`
+when the requested URL is `about:blank`. WebKit therefore exposes a native
+window with an empty initial URL and no initialized document. Script evaluation
+can fail with “Could not parse script result.” Inspect the native URL through
+WebDriver, allow that empty state, and load the actual app through WebDriver
+navigation. Require the same handle to publish the requested Tauri label and
+original tab/pane/path afterward; a newly replenished warm window must not be
+mistaken for the unready target.

@@ -38,7 +38,10 @@ cancellable focus request across lazy loading. Graph mutation refresh invalidate
 old cache entries before publishing fresh history. The current local checkpoint
 also gives graph headers and rows shared full-table geometry, preserves complete
 reference access through the existing menu owner, and restores native/custom
-button activation ownership. Each remains
+button activation ownership. Native launch rollback now also separates a JavaScript
+label proxy from proven native creation ownership: duplicate-label errors preserve
+the existing window, while cancelled late creations are destroyed only after
+successful creation. Each remains
 subject to the integration and platform evidence recorded in that ledger.
 
 ## Product and architectural direction

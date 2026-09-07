@@ -82,7 +82,7 @@ backend for E2E/browser).
 - `state/window-handoff.ts` — correlated destination acknowledgement before source tab removal; late listener/timeout cleanup.
 - `domain/window-launch-plan.ts` — pure query/cwd/home precedence and restoration policy.
 - `state/window-session.ts` — page subscription/delayed-work ownership, rollback, and post-readiness warm priming; borrows window-scoped stores.
-- `src/test-support/window-session-probe.ts` — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; native target lookup and picker fixtures cover rejected handoffs.
+- `src/test-support/window-session-probe.ts` — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; native target, picker, unready and in-flight close fixtures cover rejected handoffs and duplicate-label creation ownership.
 - `state/window-startup.ts` — owns settings → theme/readiness → plugins initialization; teardown revokes late startup.
 
 - `state/repo-root-cache.svelte.ts` — bounded shared root probes for tab labels and Git warming, invalidated by existing file/Git buses.

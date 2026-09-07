@@ -5,16 +5,16 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): graph rows and their header now share one table
-geometry across pane resize, filtering, column changes and horizontal scrolling.
-The compact message cell retains access to every branch, remote, tag, stash and
-PR through the existing menu owner. Native buttons retain unmodified Enter/Space,
-and accepted custom role-button keys retire pending Explorer chords. Focused
-acceptance passes 78 keyboard units, 22 Chromium/WebKit graph cases and four
-post-Super browser keyboard cases. Expanded
-integration passes 172 cases with two skips across both engines and emits no
-ResizeObserver warnings. This follows completed scrollbar-layout commit `8654e3ab` and
-native rejected-transfer-target commit `b2c720a4`. The comprehensive review is
+Current checkpoint (2026-09-07): native window rollback now requires a successful
+creation event before addressing a window label. A real duplicate-label creation
+regression reproduced unintended closure of the existing window before this fix.
+Timeout, failed handoff and listener failure retain surviving creation observers;
+a late owned child is destroyed once, while native errors clear seeds without
+closing an unrelated window. Focused launcher/transfer/warm/probe contracts pass
+66 cases. Independent review accepts the ownership fix and native evidence:
+all five rejection cases pass, alongside eight existing transfer/warm cases on
+the same binary. Details and limitations are recorded below. This follows graph
+geometry and keyboard checkpoint `1cf4e04b`. The comprehensive review is
 **not complete**: same-process crash recovery, broader product/native integration
 and soak, the wider product matrix, Windows/Mac acceptance and actual Mac
 half-bounce measurements remain open.
@@ -34,7 +34,7 @@ limitations and must not be read as current status.
 | 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; same-process crash recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
-| 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during handoff, unready targets and native asynchronous creation failure remain open |
+| 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during real handoff receipt, unready native targets with later app initialization, and duplicate-label asynchronous creation failure now pass Linux binary acceptance; Windows/Mac equivalents remain open |
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
 | 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Graph detail expansion has a reproduced/fixed WebKit scrollbar feedback loop. The following checkpoint aligns the full graph header and metadata table, preserves complete reference access and restores native/custom button keyboard ownership in focused Chromium/WebKit, unit and integrated browser acceptance. The wider theme/native interaction matrix remains pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
@@ -1811,3 +1811,62 @@ The completed production bundle remains within budget: 44 chunks / 652,348 raw /
 (`/tmp/graph-header-bundle-final.log`). Relative to checkpoint `8654e3ab`, this is
 +365 raw and +108 gzip bytes. It is a payload measurement, not native launch
 latency or evidence for the Mac half-bounce target.
+
+
+### Native creation ownership and rejected handoffs (2026-09-07)
+
+`window-launch.ts` previously retired every JavaScript constructor handle after
+`tauri://error`. Tauri addresses these handles by label: duplicate-label creation
+fails without replacing the existing native window, so that retirement closed an
+unrelated live destination. The real binary failed the new preservation assertion
+before the fix (`/tmp/window-collision-native-before.log`), as did the domain
+boundary regression. Listener throw/rejection tests also failed against the old
+owner (`/tmp/window-creation-drain-before.log`).
+
+The launcher now separates retirement intent from native ownership. Only
+`tauri://created` grants ownership. Timeout, failed handoff and listener failure
+clear the launch seed and retain surviving terminal observers; a later creation
+forces one `destroy()`, while a native error ends the drain without addressing
+that label. Forced rollback bypasses an unaccepted child's close-request handler.
+Partial dependency overrides allow the native collision test to control only UUID
+allocation and warming while using actual construction, storage and handoff.
+
+Verification:
+
+- **66/66** launcher, handoff, close admission, transfer, warm and probe contracts
+  pass (`/tmp/window-creation-all-contracts-final.log`).
+- **5/5** real Linux rejection cases pass in 1m13.4s
+  (`/tmp/window-creation-native-accepted.log`): missing/destroyed/hidden targets,
+  actual picker, unready native destination, closure during actual handoff receipt,
+  and asynchronous duplicate-label creation failure. They verify retained source
+  tab identity/layout/path plus subsequent filesystem updates. The collision case
+  also verifies the original target handle/state and its subsequent filesystem
+  update. Inspected `native-window-collision-source.png` and
+  `native-window-collision-target.png` record both surviving windows.
+- The same rebuilt binary passes **5 transfer + 3 warm-window cases**
+  (`/tmp/window-creation-native-final.log`). That earlier combined run also contains
+  a rejected unready fixture result; the accepted five-case rerun supersedes it.
+- The unready fixture initially tried script evaluation and then an exact
+  `about:blank` URL match. Installed Wry intentionally skips initial navigation for
+  that URL, so WebKit has no initialized document and reports an empty URL. The
+  final driver matcher accepts that real state and navigates the same handle to
+  the app, requiring the exact native label and original single tab/pane/path.
+  The isolated corrected case passes in 12.3s (`/tmp/window-unready-native.log`).
+- Independent Sol source/evidence review **CONFIRMED** ownership and all three
+  new native outcomes. Type checking has zero errors/warnings, architecture lint
+  is clean and source maps cover 378/378 files.
+
+This is Linux debug-binary acceptance, not Windows/Mac runtime or startup timing.
+An unavailable created observer cannot safely reclaim a future window by label;
+the installed SDK registers creation handlers synchronously in its local array.
+A failed destroy remains diagnostic: retrying by a potentially reused label is
+unsafe. Existing-destination adoption followed by lost ACK still has a documented
+duplication possibility; these rejection cases do not prove exactly-once transfer.
+The full release integration, platform/soak/product matrix and Mac half-bounce
+measurements remain outstanding.
+
+Production bundle verification passes at 44 startup chunks / 652,465 raw /
+212,418 gzip bytes; the main chunk is 302,764 raw / 89,963 gzip
+(`/tmp/window-creation-bundle.log`). The new native failure probe strings are
+absent from normal production output. This is +117 raw / +51 gzip startup bytes
+from the preceding checkpoint and carries no native launch-time claim.

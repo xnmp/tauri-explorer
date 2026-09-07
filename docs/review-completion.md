@@ -5,9 +5,10 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Latest checkpoint (2026-09-07): warm activation and native pool retirement now
-have explicit ownership and acknowledgements; terminal readiness polling no longer
-holds the control mutex while waiting. Validation below supersedes earlier
+Latest checkpoint (2026-09-07): page dialogs now have a typed host and owned lazy
+imports; CI retention coverage uses bounded fake-clock bursts. Warm activation and
+native pool retirement have explicit ownership and acknowledgements; terminal
+readiness polling no longer holds the control mutex while waiting. Validation below supersedes earlier
 checkpoint counts. The foundation is published in **[draft PR #684](https://github.com/xnmp/tauri-explorer/pull/684)**
 against `dev` (implementation commit `fd06b3c6`); this does not complete the review
 or authorize merge/release. Historical handovers
@@ -19,7 +20,7 @@ below record the state at their own checkpoint.
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
 | 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Workspace/plugin churn, scaled soak and native retention acceptance remain outstanding |
-| 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Larger page orchestration remains open |
+| 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Keyboard/session page orchestration remains open |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
@@ -556,3 +557,61 @@ acceptance. None is completed by creating the draft PR. Do not merge or close
 Continuation: preserve the user's unrelated `AGENTS.md`, `docs/AI-native-ideas.md`,
 `docs/gotcha-study/` and `screenshots/_issue-refs/`. Production and acceptance changes
 belong to `refactor/repo-health-cleanup`. The entire-review goal remains active.
+
+
+## Page dialog ownership and CI retention fixture — 2026-09-07
+
+`WindowDialogs.svelte` composes the twelve lazy dialogs, contributed dialogs,
+crash boundaries, and window-level feedback. The page now owns layout and passes
+its file-refresh callback; constructor props are inferred from the actual dynamic
+imports instead of `Component<any>`. `use-lazy-dialog.svelte.ts` tracks only each
+dialog's own demand, while `state/lazy-dialog.svelte.ts` owns pending imports,
+successful constructors and retirement. Close/reopen shares one pending import;
+closed requests cannot publish failure feedback, successful constructors remain
+mounted for local state/outros, and host destruction suppresses late results.
+Portal mode now renders the toast that its failed-import recovery already needs.
+
+A real delayed Theme Picker import, cancelled before opening Quick Open, reproduced
+an obsolete error toast on the old page loader (`/tmp/dialog-owner-before.log`).
+The corrected test snapshots feedback after the failure's render turn; retrying
+an absence assertion could hide this bug by waiting for the toast to expire.
+The same regression passes with the new owner. The real Svelte parent-lifetime
+fixture is under `src/test-support/`, imported only by E2E and absent from the
+production graph; it verifies that neither import resolution nor rejection can
+publish after parent destruction. Independent review confirms all these contracts
+and preservation of lazy imports, crash recovery, portal mode and feature wiring.
+
+Validation:
+
+- **222 unit files, 1,996 passed / 3 skipped**, plus **30 performance checks**
+  (`/tmp/dialog-owner-full-unit.log`); eight new owned-loader cases and the nine
+  existing failure-containment cases pass. Final type check has zero errors/warnings
+  (`/tmp/dialog-owner-final-check.log`); architecture lint and whitespace checks pass;
+  source maps cover **352/352** files.
+- **14 Chromium/WebKit outcomes** for modal input, theme selection and lazy failure
+  recovery (`/tmp/dialog-owner-browser.log`), plus **44** for bulk rename, conflict
+  resolution, jobs, picker output and lazy failures (`/tmp/dialog-owner-features.log`).
+  These runs overlap on the six lazy-failure cases; they are not 58 unique outcomes.
+- **4/4 real Svelte parent-lifetime outcomes** across Chromium and WebKit
+  (`/tmp/dialog-owner-host-lifetime.log`). The inspected `dialog-load-lifetime.png`
+  shows usable Quick Open results after the cancelled Theme Picker failure.
+- Normal startup graph remains **44 chunks**, **636,724 B raw / 206,581 B gzip**,
+  within budgets (`/tmp/dialog-owner-bundle.log`). The 642-byte gzip increase is
+  measured overhead for ownership and typed host composition, not a startup-time
+  improvement claim. Mac half-bounce measurements remain outstanding.
+
+Published CI at `ddd38d69` passed Rust, source maps, macOS launch smoke and both
+performance jobs, but frontend unit acceptance timed out in the 5,000-directory
+retention regression. Independent diagnosis reproduced a 2.94–3.06-second isolated
+fake-clock drain versus 5.745 seconds under CI contention. The test now processes
+5,000 distinct keys in four 1,250-key bursts, each above the 1,024 retention cap,
+and asserts the cap after each settlement. All callbacks and final cleanup remain
+covered; production refresh logic is unchanged. The whole 12-case file now takes
+637 ms (`/tmp/refresh-retention-ci-after.log`); full unit/performance acceptance
+passes. Independent review confirms no retention contract was lost. This resolves
+the fixture cause; the next pushed commit still needs its own CI result.
+
+Remaining page work: keyboard routing and window-session setup/teardown still
+live in `+page.svelte`; inspect their ownership before extracting them. Dense pane
+viewport policy, workspace/plugin/native retention, platform and product matrices,
+and actual Mac launch measurement remain open as specified by the table above.

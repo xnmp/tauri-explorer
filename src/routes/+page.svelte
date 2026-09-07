@@ -13,7 +13,7 @@
   import { themeStore } from "$lib/state/theme.svelte";
   import { startConfigWatch } from "$lib/state/config-watch";
   import { settingsStore } from "$lib/state/settings.svelte";
-import { windowSizeStore } from "$lib/state/window-size.svelte";
+  import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -24,12 +24,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
-  import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { toastStore } from "$lib/state/toast.svelte";
-  import { createDialogCrashHandler, loadDialogComponent, type LazyDialogRequest } from "$lib/domain/lazy-dialog";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
@@ -39,17 +36,13 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { useFileWatchers } from "$lib/composables/use-file-watchers";
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
   import "$lib/themes/index.css";
+  import WindowDialogs from "$lib/components/WindowDialogs.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import CrashNotice from "$lib/components/CrashNotice.svelte";
   import UpdateNotice from "$lib/components/UpdateNotice.svelte";
-  import ShortcutCheatsheet from "$lib/components/ShortcutCheatsheet.svelte";
-    import type { PickerInfo } from "$lib/components/FilePicker.svelte";
+  import type { PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-    import PaneContainer from "$lib/components/PaneContainer.svelte";
-  import ProgressDialog from "$lib/components/ProgressDialog.svelte";
-  import ToastOverlay from "$lib/components/ToastOverlay.svelte";
-  import type { Component } from "svelte";
-  import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
+  import PaneContainer from "$lib/components/PaneContainer.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { initTabTransferListener } from "$lib/state/tab-transfer";
   import StatusBar from "$lib/components/StatusBar.svelte";
@@ -89,72 +82,6 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   }
 
   const refreshAllPanes = () => windowTabsManager.refreshAllPanes();
-
-  // Rarely-opened dialogs are code-split out of the startup bundle and loaded
-  // on first open. They stay mounted after loading so close transitions and
-  // internal state behave exactly as with a static import.
-  let ThemePicker = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
-  let SettingsDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
-  let WorkspaceDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
-  let BulkRenameDialog = $state<Component<any> | null>(null);
-  let QuickOpen = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
-  let CommandPalette = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
-  let ContentSearchDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
-  let FilePicker = $state<Component<{ info: PickerInfo }> | null>(null);
-  let ConflictDialog = $state<Component<any> | null>(null);
-  let JobsPanel = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
-  let OptionPicker = $state<Component<any> | null>(null);
-  let UserReportDialog = $state<Component<any> | null>(null);
-
-  // A failed chunk load must roll back the dialog's open-state (otherwise
-  // dialogStore.hasModalOpen soft-locks every shortcut with nothing visible
-  // to close — #584) and tell the user. loadDialogComponent enforces both.
-  const loadDialog = <T,>(request: LazyDialogRequest<T>): void => void loadDialogComponent(request, (message) => toastStore.error(message));
-  // Same rollback contract for the failure loadDialog can't see: a dialog
-  // that throws while mounting (e.g. #585's duplicate theme id crashing the
-  // picker's keyed each). Used as <svelte:boundary onerror>.
-  const dialogCrash = (label: string, rollback?: () => void) => createDialogCrashHandler(label, rollback, (message) => toastStore.error(message));
-
-  $effect(() => {
-    if (dialogStore.isThemePickerOpen && !ThemePicker) {
-      loadDialog({ label: "Theme Picker", load: () => import("$lib/components/ThemePicker.svelte"), onLoaded: (c) => (ThemePicker = c), onFailure: () => dialogStore.closeThemePicker() });
-    }
-    if (dialogStore.isSettingsOpen && !SettingsDialog) {
-      loadDialog({ label: "Settings", load: () => import("$lib/components/SettingsDialog.svelte"), onLoaded: (c) => (SettingsDialog = c), onFailure: () => dialogStore.closeSettings() });
-    }
-    if (dialogStore.isWorkspaceOpen && !WorkspaceDialog) {
-      loadDialog({ label: "Workspaces", load: () => import("$lib/components/WorkspaceDialog.svelte"), onLoaded: (c) => (WorkspaceDialog = c), onFailure: () => dialogStore.closeWorkspace() });
-    }
-    if (dialogStore.isBulkRenameOpen && !BulkRenameDialog) {
-      loadDialog({ label: "Bulk Rename", load: () => import("$lib/components/BulkRenameDialog.svelte"), onLoaded: (c) => (BulkRenameDialog = c), onFailure: () => dialogStore.closeBulkRename() });
-    }
-    if (dialogStore.isQuickOpenOpen && !QuickOpen) {
-      loadDialog({ label: "Quick Open", load: () => import("$lib/components/QuickOpen.svelte"), onLoaded: (c) => (QuickOpen = c), onFailure: () => dialogStore.closeQuickOpen() });
-    }
-    if (dialogStore.isCommandPaletteOpen && !CommandPalette) {
-      loadDialog({ label: "Command Palette", load: () => import("$lib/components/CommandPalette.svelte"), onLoaded: (c) => (CommandPalette = c), onFailure: () => dialogStore.closeCommandPalette() });
-    }
-    if (dialogStore.isContentSearchOpen && !ContentSearchDialog) {
-      loadDialog({ label: "Content Search", load: () => import("$lib/components/ContentSearchDialog.svelte"), onLoaded: (c) => (ContentSearchDialog = c), onFailure: () => dialogStore.closeContentSearch() });
-    }
-    if (pickerInfo && !FilePicker) {
-      // Portal picker windows render nothing but FilePicker; there is no
-      // open-flag to roll back — the toast is the only recovery available.
-      loadDialog({ label: "File Picker", load: () => import("$lib/components/FilePicker.svelte"), onLoaded: (c) => (FilePicker = c) });
-    }
-    if (conflictResolver.isActive && !ConflictDialog) {
-      loadDialog({ label: "Conflict dialog", load: () => import("$lib/components/ConflictDialog.svelte"), onLoaded: (c) => (ConflictDialog = c), onFailure: () => conflictResolver.resolve("cancel", true) });
-    }
-    if (dialogStore.isJobsPanelOpen && !JobsPanel) {
-      loadDialog({ label: "Jobs Panel", load: () => import("$lib/components/JobsPanel.svelte"), onLoaded: (c) => (JobsPanel = c), onFailure: () => dialogStore.closeJobsPanel() });
-    }
-    if (dialogStore.isPickerOpen && !OptionPicker) {
-      loadDialog({ label: "Option Picker", load: () => import("$lib/components/OptionPicker.svelte"), onLoaded: (c) => (OptionPicker = c), onFailure: () => dialogStore.closePicker() });
-    }
-    if (dialogStore.isUserReportOpen && !UserReportDialog) {
-      loadDialog({ label: "Report dialog", load: () => import("$lib/components/UserReportDialog.svelte"), onLoaded: (c) => (UserReportDialog = c), onFailure: () => dialogStore.closeUserReport() });
-    }
-  });
 
   // Initialize composables
   const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });
@@ -700,13 +627,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 ></div>
 <AnimatedBackground />
 
-{#if pickerInfo}
-  {#if FilePicker}
-    <svelte:boundary onerror={dialogCrash("File Picker")}>
-      <FilePicker info={pickerInfo} />
-    </svelte:boundary>
-  {/if}
-{:else}
+{#if !pickerInfo}
 <main class="explorer">
   <TitleBar />
   <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
@@ -753,84 +674,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 
 <CrashNotice />
 <UpdateNotice />
-<ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
-{#if QuickOpen}
-  <svelte:boundary onerror={dialogCrash("Quick Open", () => dialogStore.closeQuickOpen())}>
-    <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
-  </svelte:boundary>
 {/if}
-{#if CommandPalette}
-  <svelte:boundary onerror={dialogCrash("Command Palette", () => dialogStore.closeCommandPalette())}>
-    <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
-  </svelte:boundary>
-{/if}
-{#if ThemePicker}
-  <svelte:boundary onerror={dialogCrash("Theme Picker", () => dialogStore.closeThemePicker())}>
-    <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
-  </svelte:boundary>
-{/if}
-{#if OptionPicker}
-  <svelte:boundary onerror={dialogCrash("Option Picker", () => dialogStore.closePicker())}>
-    <OptionPicker />
-  </svelte:boundary>
-{/if}
-{#if UserReportDialog}
-  <svelte:boundary onerror={dialogCrash("Report dialog", () => dialogStore.closeUserReport())}>
-    <UserReportDialog
-      open={dialogStore.isUserReportOpen}
-      onClose={() => dialogStore.closeUserReport()}
-    />
-  </svelte:boundary>
-{/if}
-{#if ContentSearchDialog}
-  <svelte:boundary onerror={dialogCrash("Content Search", () => dialogStore.closeContentSearch())}>
-    <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
-  </svelte:boundary>
-{/if}
-{#if SettingsDialog}
-  <svelte:boundary onerror={dialogCrash("Settings", () => dialogStore.closeSettings())}>
-    <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
-  </svelte:boundary>
-{/if}
-{#if WorkspaceDialog}
-  <svelte:boundary onerror={dialogCrash("Workspaces", () => dialogStore.closeWorkspace())}>
-    <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
-  </svelte:boundary>
-{/if}
-{#if BulkRenameDialog}
-  <svelte:boundary onerror={dialogCrash("Bulk Rename", () => dialogStore.closeBulkRename())}>
-    <BulkRenameDialog
-      open={dialogStore.isBulkRenameOpen}
-      entries={dialogStore.bulkRenameEntries}
-      onClose={() => dialogStore.closeBulkRename()}
-      onComplete={() => refreshAllPanes()}
-    />
-  </svelte:boundary>
-{/if}
-{#each dialogRegistry.openDialogs as d (d.id)}
-  {@const DialogComponent = d.component}
-  <svelte:boundary onerror={dialogCrash(d.id, () => dialogRegistry.close(d.id))}>
-    <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
-  </svelte:boundary>
-{/each}
-{#if JobsPanel}
-  <svelte:boundary onerror={dialogCrash("Jobs Panel", () => dialogStore.closeJobsPanel())}>
-    <JobsPanel
-      open={dialogStore.isJobsPanelOpen}
-      onClose={() => dialogStore.closeJobsPanel()}
-    />
-  </svelte:boundary>
-{/if}
-<ProgressDialog />
-<!-- Toasts live at the app root (#417): mounted per-FileList they vanished in
-     any pane mode without a file list (git graph), silently eating feedback. -->
-<ToastOverlay />
-{#if ConflictDialog}
-  <svelte:boundary onerror={dialogCrash("Conflict dialog", () => conflictResolver.resolve("cancel", true))}>
-    <ConflictDialog />
-  </svelte:boundary>
-{/if}
-{/if}
+
+<WindowDialogs {pickerInfo} onFilesChanged={refreshAllPanes} />
 
 <style>
   /* Windows 11 Fluent Design System */

@@ -152,12 +152,21 @@ describe("refresh-manager", () => {
 
   it("bounds settled directory metadata over a long session and fully clears on teardown", () => {
     const refresh = vi.fn();
-    for (let index = 0; index < 5000; index++) {
-      requestRefresh(refresh, `/long-session/${index}`);
+    // Churn 5,000 distinct directories in bursts larger than the retention cap.
+    // Draining 5,000 same-deadline fake timers at once spends seconds in the
+    // timer harness and times out under CI contention; this is a retention
+    // contract, not a benchmark of the fake clock's timer lookup algorithm.
+    const burst = 1250;
+    for (let start = 0; start < 5000; start += burst) {
+      for (let index = start; index < start + burst; index++) {
+        requestRefresh(refresh, `/long-session/${index}`);
+      }
+      expect(refreshManagerRetention().pending).toBe(burst);
+      expect(vi.getTimerCount()).toBe(burst);
+      vi.advanceTimersByTime(150);
+      expect(refresh).toHaveBeenCalledTimes(start + burst);
+      expect(refreshManagerRetention().lastRefresh).toBe(1024);
     }
-    expect(refreshManagerRetention().pending).toBe(5000);
-    expect(vi.getTimerCount()).toBe(5000);
-    vi.advanceTimersByTime(150);
 
     expect(refresh).toHaveBeenCalledTimes(5000);
     expect(refreshManagerRetention()).toEqual({

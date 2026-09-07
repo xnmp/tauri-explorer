@@ -187,3 +187,15 @@
   fixtures must await actual animation completion before measuring centers. A
   count-only fixture targeted a zero-width third tab's old coordinates, then
   released over the second tab and incorrectly blamed correct hit testing.
+
+- A shared lazy-dialog effect can attach duplicate callbacks when unrelated open
+  flags change. Give each dialog its own demand effect and one host-owned import;
+  closing cancels feedback while a successful constructor remains reusable.
+  Capture failure relevance before rollback changes the flag. Portal windows need
+  the same root toast surface for their existing import-failure recovery.
+- Negative browser assertions can pass by waiting out the bug: an unwanted toast
+  disappears after three seconds. Observe the operation settling, allow its render
+  turn, then snapshot the count instead of retrying until feedback expires.
+- Large fake-clock timer bursts can dominate a retention test under CI contention.
+  Churn across repeated bursts above the production retention cap, preserving total
+  keys and per-burst eviction/callback assertions, rather than extending timeouts.

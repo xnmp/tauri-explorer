@@ -19,6 +19,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
+- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
@@ -72,6 +74,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
+
+- `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.
 
 - `git-graph-query.svelte.ts` — mounted history/pagination owner; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
 - `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
@@ -213,6 +217,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `system.ts` — OS/window-shell plumbing: picker response, native window theme, ffmpeg path. Not filesystem.
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
+
+- `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
 
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
@@ -384,3 +390,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `drives.rs` — enumerate drives/volumes cross-platform.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
+
+## src/test-support/ — browser fixtures; never imported by the application.
+
+- `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.

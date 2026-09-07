@@ -309,7 +309,9 @@ backend for E2E/browser).
 
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
-- `domain/lazy-dialog.ts` — failure-safe dialog chunk loading (`loadDialogComponent`) + mount-crash recovery (`createDialogCrashHandler`); `+page.svelte` routes all 12 code-split dialogs through the loader and wraps each in `<svelte:boundary>` so a failed import (#584) or a component that throws while mounting (#585) resets the open-flag and toasts instead of soft-locking hotkeys
+- `src/test-support/lazy-dialog-lifetime.svelte.ts` — browser-only effect-lifetime fixture imported by E2E; absent from the production import graph.
+- `components/WindowDialogs.svelte`, `composables/use-lazy-dialog.svelte.ts`, `state/lazy-dialog.svelte.ts` — typed lazy constructors with independent demand, one pending import per host/dialog, retained success and teardown-safe publication. The host includes plugin dialogs and portal feedback.
+- `domain/lazy-dialog.ts` — shared failure containment and mount-crash recovery; the host wraps each dialog in `<svelte:boundary>`. Active failures roll back modal ownership and notify; cancelled requests and destroyed hosts cannot publish stale feedback.
 - `domain/theme-list.ts` — `dedupeThemesById`, last occurrence wins; applied in `theme.svelte.ts` `discoverThemes()` so a user theme reusing a built-in id overrides it instead of crashing ThemePicker's keyed each (#585)
 - `components/Modal.svelte`, `components/modal.css` — modal shell
 - `components/UserReportDialog.svelte`, `state/user-report-draft.svelte.ts`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, debounced persisted text-only drafts, preserved GitHub fallback, and report IPC

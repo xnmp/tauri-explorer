@@ -12,7 +12,8 @@
 import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { fetchDirectory, watchDirectory, unwatchDirectory, isDirectoryEmpty } from "$lib/api/files";
+  import { fetchDirectory, isDirectoryEmpty } from "$lib/api/files";
+  import { createDirectoryWatch } from "$lib/state/directory-watch";
   import FileIcon from "./FileIcon.svelte";
   import EntryName from "./EntryName.svelte";
   import { dragState } from "$lib/state/drag.svelte";
@@ -59,7 +60,7 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
     }
   }
   let rawColumns = $state<MillerColumn[]>([]);
-  const watchedPaths = new Set<string>();
+  const watchedPaths = new Map<string, ReturnType<typeof createDirectoryWatch>>();
 
   // Cache of `path -> isEmpty` keyed by the (path, showHidden) combination.
   // Repopulated when showHidden changes via clearEmptyCache().
@@ -111,6 +112,8 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
     const layers = explorer.millerLayers;
     if (layers === 0 || crumbs.length <= 1) {
       rawColumns = [];
+      for (const watch of watchedPaths.values()) void watch.destroy();
+      watchedPaths.clear();
       return;
     }
 
@@ -136,16 +139,17 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
 
     untrack(() => {
       const desiredPaths = new Set(newColumns.map((c) => c.path));
-      for (const path of watchedPaths) {
+      for (const [path, watch] of watchedPaths) {
         if (!desiredPaths.has(path)) {
-          unwatchDirectory(path);
+          void watch.destroy();
           watchedPaths.delete(path);
         }
       }
       for (const col of newColumns) {
         if (!watchedPaths.has(col.path)) {
-          watchDirectory(col.path);
-          watchedPaths.add(col.path);
+          const watch = createDirectoryWatch();
+          watchedPaths.set(col.path, watch);
+          void watch.update(col.path);
         }
         if (!rawCache.has(col.path)) {
           loadColumn(col.path);
@@ -219,8 +223,8 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
       disposed = true;
       unlisten?.();
       unsubscribeLocalChanges();
-      for (const path of watchedPaths) {
-        unwatchDirectory(path);
+      for (const [path, watch] of watchedPaths) {
+        void watch.destroy();
       }
       watchedPaths.clear();
     };

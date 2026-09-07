@@ -12,12 +12,15 @@
 
 import { loadPersisted, savePersisted } from "./persisted";
 import { type ClosedTabSnapshot, normalizeClosedSnapshot } from "./window-tabs-persistence";
+import { WINDOW_SEED_MAX_CHARS } from "$lib/domain/window-input";
 
 const CLOSED_TABS_KEY = "explorer-closed-tabs";
 const MAX_CLOSED_TABS = 20;
 
 function loadClosedTabs(): ClosedTabSnapshot[] {
-  return loadPersisted<unknown[]>(CLOSED_TABS_KEY, [])
+  const raw = loadPersisted<unknown>(CLOSED_TABS_KEY, [], WINDOW_SEED_MAX_CHARS);
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(-MAX_CLOSED_TABS)
     .map(normalizeClosedSnapshot)
     .filter((s): s is ClosedTabSnapshot => s !== null);
 }

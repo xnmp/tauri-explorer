@@ -15,6 +15,7 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
+import { collectStartupFiles } from "./startup-bundle.mjs";
 
 // Measured 2026-07-12 (chore/perf-regression-guards, post merge of dev):
 // main chunk _app/immutable/chunks/*.js was 691,381 bytes raw / 217,992
@@ -22,6 +23,12 @@ import { gzipSync } from "node:zlib";
 // note here) when a feature legitimately grows the cold-start payload;
 // never raise it just to make CI green.
 const BUDGET_GZIP_BYTES = 239_791;
+
+// Full static entry closure at ea256aaf, measured before #680's lazy mock
+// split. Guard both parse input (raw bytes, relevant to local Tauri assets)
+// and transfer size. Splitting a large chunk must not evade the startup cap.
+const STARTUP_RAW_BUDGET = 866_617;
+const STARTUP_GZIP_BUDGET = 277_378;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");
@@ -49,26 +56,14 @@ try {
  * the largest of those — the +page.svelte import graph. Resolving it through
  * the import closure keeps this stable across hash and chunk-name changes.
  */
-function mainEntryChunk(m) {
-  const seen = new Set();
-  const queue = Object.keys(m).filter((key) => m[key].isEntry);
-  while (queue.length > 0) {
-    const key = queue.pop();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    queue.push(...(m[key].imports ?? []));
-  }
-
-  const chunks = [...seen]
-    .map((key) => m[key].file)
-    .filter((file) => file.endsWith(".js"))
-    .map((file) => ({ file, rawBytes: statSync(resolve(clientDir, file)).size }));
-
-  if (chunks.length === 0) throw new Error("no entry JS chunks found in manifest");
-  return chunks.reduce((max, c) => (c.rawBytes > max.rawBytes ? c : max));
-}
-
-const main = mainEntryChunk(manifest);
+const chunks = collectStartupFiles(manifest).map((file) => ({
+  file,
+  rawBytes: statSync(resolve(clientDir, file)).size,
+  gzipBytes: gzipSync(readFileSync(resolve(clientDir, file))).length,
+}));
+const main = chunks.reduce((max, chunk) => chunk.rawBytes > max.rawBytes ? chunk : max);
+const startupRaw = chunks.reduce((total, chunk) => total + chunk.rawBytes, 0);
+const startupGzip = chunks.reduce((total, chunk) => total + chunk.gzipBytes, 0);
 const gzipBytes = gzipSync(readFileSync(resolve(clientDir, main.file))).length;
 const pct = ((gzipBytes / BUDGET_GZIP_BYTES) * 100).toFixed(1);
 
@@ -76,6 +71,13 @@ console.log(`Main chunk:  ${main.file}`);
 console.log(`Raw size:    ${main.rawBytes.toLocaleString()} bytes (${kib(main.rawBytes)})`);
 console.log(`Gzip size:   ${gzipBytes.toLocaleString()} bytes (${kib(gzipBytes)})`);
 console.log(`Budget:      ${BUDGET_GZIP_BYTES.toLocaleString()} bytes (${kib(BUDGET_GZIP_BYTES)}) — ${pct}% used`);
+console.log(`Startup JS:  ${chunks.length} chunks, ${startupRaw.toLocaleString()} bytes raw / ${startupGzip.toLocaleString()} bytes gzip`);
+console.log(`Startup cap: ${STARTUP_RAW_BUDGET.toLocaleString()} bytes raw / ${STARTUP_GZIP_BUDGET.toLocaleString()} bytes gzip`);
+
+if (startupRaw > STARTUP_RAW_BUDGET || startupGzip > STARTUP_GZIP_BUDGET) {
+  console.error("FAIL: the full static startup graph exceeds its budget. Inspect eager imports before raising the cap.");
+  process.exit(1);
+}
 
 if (gzipBytes > BUDGET_GZIP_BYTES) {
   const over = gzipBytes - BUDGET_GZIP_BYTES;
@@ -89,4 +91,4 @@ if (gzipBytes > BUDGET_GZIP_BYTES) {
   process.exit(1);
 }
 
-console.log("\nPASS: main chunk is within the bundle-size budget.");
+console.log("\nPASS: main chunk and full startup graph are within their budgets.");

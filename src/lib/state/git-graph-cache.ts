@@ -11,11 +11,9 @@
  * a visible lag. A remount paints synchronously from the cached snapshot, then
  * refreshes in the background.
  *
- * Staleness (Finding 7): the cache is evicted for a repo whenever the shared
- * `git-refresh` stream reports an external (non-local) change, so a remounted
- * graph never paints history that a pull/rebase already invalidated. Local
- * mutations are handled by the mounted view, which reloads and re-caches
- * itself, so they are ignored here (mirroring the graph's own subscription).
+ * Every Git change invalidates snapshots and outstanding writer tokens for
+ * that repository. Local actions may originate from another surface while
+ * the graph is hidden, so they must invalidate history too.
  */
 
 import { gitLog, type CommitInfo, type RefInfo } from "$lib/api/git-log";
@@ -25,28 +23,66 @@ import { directoryKey } from "$lib/domain/path";
 
 export const PAGE_SIZE = 300;
 
+export type GraphCommit = Readonly<Omit<CommitInfo, "parents">> & { readonly parents: readonly string[] };
+export type GraphRefs = Readonly<Record<string, readonly Readonly<RefInfo>[]>>;
+export interface GraphWalk {
+  readonly branches: readonly string[] | null;
+  readonly excludeBranches: readonly string[] | null;
+}
+
 export interface GraphSnapshot {
-  commits: CommitInfo[];
-  refs: Record<string, RefInfo[]>;
-  hasMore: boolean;
-  headOid: string | null;
+  /** Resolved seed/exclusion set that produced these rows. Pagination must
+   *  retain it even when the branch popover has not loaded after a remount. */
+  readonly walk?: GraphWalk;
+  readonly commits: readonly GraphCommit[];
+  readonly refs: GraphRefs;
+  readonly hasMore: boolean;
+  readonly headOid: string | null;
   /** Shorthand of the checked-out branch (HEAD's symbolic target), or null
    *  when detached / unborn — highlights only that branch chip (#433). */
-  headBranch: string | null;
+  readonly headBranch: string | null;
   /** True while HEAD is detached (#524). Carried through the snapshot so a
    *  remount repaints the standing indicator from cache instead of dropping
    *  it until the background refetch lands. Not derivable from `headBranch`,
    *  which is also null on an unborn branch. Optional so callers that build a
    *  snapshot by hand needn't care; absent reads as attached. */
-  detached?: boolean;
-  workingChanges: number;
+  readonly detached?: boolean;
+  readonly workingChanges: number;
+  /** False means the summary failed/cancelled; display history but do not retain it as a complete snapshot. */
+  readonly summaryReady?: boolean;
   /** Resume cursor for the commit AFTER this snapshot's page (#431); passed
    *  to the next `gitLog` so deeper pages don't re-walk from the tips. Always
    *  corresponds to the last real commit of the stored slice. */
-  nextCursor: string | null;
+  readonly nextCursor: string | null;
+}
+
+// Share immutable page-zero payloads across mounts. Ownership is established
+// once on ingress; getters never clone large histories on the render path.
+const ownedSnapshots = new WeakSet<GraphSnapshot>();
+export function ownGraphSnapshot(snapshot: GraphSnapshot): GraphSnapshot {
+  if (ownedSnapshots.has(snapshot)) return snapshot;
+  const commits = Object.freeze(snapshot.commits.map((commit) =>
+    Object.isFrozen(commit) && Object.isFrozen(commit.parents) ? commit
+      : Object.freeze({ ...commit, parents: Object.freeze([...commit.parents]) }),
+  ));
+  const refs = Object.freeze(Object.fromEntries(Object.entries(snapshot.refs).map(([oid, values]) =>
+    [oid, Object.freeze(values.map((ref) => Object.isFrozen(ref) ? ref : Object.freeze({ ...ref })))],
+  )));
+  const walk = snapshot.walk ? Object.freeze({
+    branches: snapshot.walk.branches === null ? null : Object.freeze([...snapshot.walk.branches]),
+    excludeBranches: snapshot.walk.excludeBranches === null ? null : Object.freeze([...snapshot.walk.excludeBranches]),
+  }) : undefined;
+  const owned = Object.freeze({ ...snapshot, commits, refs, ...(walk ? { walk } : {}) });
+  ownedSnapshots.add(owned);
+  return owned;
 }
 
 const graphCache = new Map<string, GraphSnapshot>();
+// Only outstanding writers occupy this map: invalidation needs no permanent
+// per-path epoch table. Replacing a token also prevents an older warm from
+// overwriting a newer visible reload for the same query.
+const writers = new Map<string, object>();
+const warmInFlight = new Map<string, Promise<void>>();
 // The high-load tab fan-out opens 12 distinct graphs. Keep modest headroom so
 // returning to any of those tabs paints its last snapshot synchronously rather
 // than forcing a fresh git log during the switch.
@@ -56,36 +92,57 @@ const GRAPH_CACHE_MAX = 16;
  *  so a remount with the same filter paints instantly and can never flash
  *  another filter's rows (#342). The local-only (#381) and hide-remote-only
  *  (#515) toggles change what the walk seeds from, so they are part of the key
- *  too. The repo path is the segment before the first `|`, which the eviction
- *  pass relies on. */
+ *  too. A structured tuple keeps path characters distinct from key syntax. */
 export function snapshotKey(
   repoPath: string,
-  branches: string[] | null,
+  branches: readonly string[] | null,
   localOnly: boolean,
   hideRemoteOnly = false,
   filePath = "",
 ): string {
-  const mode = `${localOnly ? "local" : ""}${hideRemoteOnly ? "-noremoteonly" : ""}`;
-  return `${repoPath}|${mode}|${branches ? branches.join("\n") : "*"}|${filePath.trim()}`;
+  return JSON.stringify([directoryKey(repoPath), branches, localOnly, hideRemoteOnly, filePath.trim()]);
 }
 
-/** Repo path portion of a snapshot key (segment before the first `|`). */
+/** Keys are private structured tuples; path characters cannot act as syntax. */
 function repoOfKey(key: string): string {
-  const i = key.indexOf("|");
-  return i < 0 ? key : key.slice(0, i);
+  return (JSON.parse(key) as [string])[0];
 }
 
 export function getSnapshot(key: string): GraphSnapshot | undefined {
-  return graphCache.get(key);
+  const snapshot = graphCache.get(key);
+  if (snapshot) {
+    graphCache.delete(key);
+    graphCache.set(key, snapshot);
+  }
+  return snapshot;
 }
 
 export function cacheSnapshot(key: string, snapshot: GraphSnapshot): void {
+  if (snapshot.summaryReady === false) return;
+  writers.delete(key);
   graphCache.delete(key); // re-insert to refresh LRU position
-  graphCache.set(key, snapshot);
+  graphCache.set(key, ownGraphSnapshot(snapshot));
   if (graphCache.size > GRAPH_CACHE_MAX) {
     const oldest = graphCache.keys().next().value;
     if (oldest !== undefined) graphCache.delete(oldest);
   }
+}
+
+/** Capture before starting an async read; dispose in its finally block.
+ * Publication succeeds only while this is still the current, valid writer. */
+export function beginSnapshotWrite(key: string) {
+  const token = {};
+  writers.set(key, token);
+  return {
+    publish(snapshot: GraphSnapshot): boolean {
+      if (snapshot.summaryReady === false || writers.get(key) !== token) return false;
+      cacheSnapshot(key, snapshot);
+      return true;
+    },
+    dispose(): void {
+      if (writers.get(key) === token) writers.delete(key);
+    },
+  };
 }
 
 /** Drop every cached snapshot (all filters/local-only variants) for a repo so
@@ -93,8 +150,10 @@ export function cacheSnapshot(key: string, snapshot: GraphSnapshot): void {
 export function evictRepoSnapshots(repoRoot: string | null): void {
   if (!repoRoot) return;
   const target = directoryKey(repoRoot);
-  for (const key of graphCache.keys()) {
-    if (directoryKey(repoOfKey(key)) === target) graphCache.delete(key);
+  for (const map of [graphCache, writers, warmInFlight]) {
+    for (const key of map.keys()) {
+      if (repoOfKey(key) === target) map.delete(key);
+    }
   }
 }
 
@@ -115,40 +174,45 @@ export async function fetchPage0Snapshot(
   filePath = "",
   consumerId?: string,
 ): Promise<GraphSnapshot> {
+  const walk = {
+    branches: branches === null ? null : [...branches],
+    excludeBranches: excludeBranches === null ? null : [...excludeBranches],
+  };
   const summaryPromise = fetchGitSummary(repoPath, { consumerId });
-  const page = await gitLog(repoPath, {
+  const logPromise = gitLog(repoPath, {
     skip: 0,
     limit: PAGE_SIZE,
-    ...(branches ? { branches } : {}),
-    ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
+    ...(walk.branches ? { branches: walk.branches } : {}),
+    ...(walk.excludeBranches ? { exclude_branches: walk.excludeBranches } : {}),
     ...(localOnly ? { local_only: true } : {}),
     ...(filePath.trim() ? { file_path: filePath.trim() } : {}),
+  }).then((page) => {
+    const headOid =
+      Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
+    const partial = {
+      walk,
+      commits: page.commits.slice(0, PAGE_SIZE),
+      refs: page.refs,
+      hasMore: page.has_more,
+      headOid,
+      headBranch: page.head_branch,
+      // Normalized so the snapshot always holds a real boolean, even if an
+      // older backend binary omits the field entirely (#524).
+      detached: page.detached === true,
+      nextCursor: page.next_cursor,
+    };
+    onLog?.(partial);
+    return partial;
   });
-  const headOid =
-    Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
-  const partial = {
-    commits: page.commits.slice(0, PAGE_SIZE),
-    refs: page.refs,
-    hasMore: page.has_more,
-    headOid,
-    headBranch: page.head_branch,
-    // Normalized so the snapshot always holds a real boolean, even if an
-    // older backend binary omits the field entirely (#524).
-    detached: page.detached === true,
-    nextCursor: page.next_cursor,
-  };
-  onLog?.(partial);
-  const summary = await summaryPromise;
+  const [partial, summary] = await Promise.all([logPromise, summaryPromise]);
   const workingChanges = summary.ok
     ? summary.data.staged.length +
       summary.data.changes.length +
       summary.data.untracked.length +
       summary.data.merge.length
     : 0;
-  return { ...partial, workingChanges };
+  return { ...partial, workingChanges, summaryReady: summary.ok };
 }
-
-const warmInFlight = new Set<string>();
 
 /**
  * Best-effort background warm (#287): populate the cache for a repo before its
@@ -157,24 +221,25 @@ const warmInFlight = new Set<string>();
  * repo is already in flight; failures are swallowed (the view still loads
  * normally when actually opened).
  */
-export async function warmGraphSnapshot(repoPath: string, consumerId?: string): Promise<void> {
+export function warmGraphSnapshot(repoPath: string, consumerId?: string): Promise<void> {
   const key = snapshotKey(repoPath, null, false);
-  if (!repoPath || graphCache.has(key) || warmInFlight.has(repoPath)) return;
-  warmInFlight.add(repoPath);
-  try {
-    cacheSnapshot(key, await fetchPage0Snapshot(repoPath, null, undefined, false, null, "", consumerId));
-  } catch {
-    /* best-effort warm — ignore failures */
-  } finally {
-    warmInFlight.delete(repoPath);
-  }
+  if (!repoPath || graphCache.has(key)) return Promise.resolve();
+  const existing = warmInFlight.get(key);
+  if (existing) return existing;
+  const writer = beginSnapshotWrite(key);
+  const task = fetchPage0Snapshot(repoPath, null, undefined, false, null, "", consumerId)
+    .then((snapshot) => { writer.publish(snapshot); })
+    .catch(() => { /* best-effort warm; opening the view can retry */ })
+    .finally(() => {
+      writer.dispose();
+      if (warmInFlight.get(key) === task) warmInFlight.delete(key);
+    });
+  warmInFlight.set(key, task);
+  return task;
 }
 
-// Evict cached snapshots for a repo on any external git change (#433). Local
-// mutations are re-cached by the mounted view itself, so they are ignored here
-// (mirrors GitGraphView's own `source === "local"` filter). This subscription
-// is a process-lifetime singleton, like the cache it guards.
+// Cache lifetime is process-wide, so its invalidation subscription is too.
+// This only invalidates storage; mounted views retain their shared refresh policy.
 void subscribeGitChanges((change) => {
-  if (change.source === "local") return;
   evictRepoSnapshots(change.repoRoot);
 });

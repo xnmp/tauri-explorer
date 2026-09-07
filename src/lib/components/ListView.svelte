@@ -161,13 +161,13 @@
   }
 
   .list-view :global(.list-item.drop-target) {
-    background: rgba(0, 120, 212, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .list-view :global(.list-item.drop-target.copy-drop) {
-    background: rgba(16, 185, 129, 0.15);
-    box-shadow: inset 0 0 0 1px #10b981;
+    background: color-mix(in srgb, var(--system-success) 15%, transparent);
+    box-shadow: inset 0 0 0 1px var(--system-success);
   }
 
   .list-view :global(.list-icon) {

@@ -158,6 +158,7 @@ pub fn run(launch_dir: Option<String>) {
 
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd_for_state))
+        .manage(system::StartupClock(t_start))
         .plugin({
             let mut targets = vec![
                 Target::new(TargetKind::LogDir { file_name: None }),
@@ -339,6 +340,7 @@ pub fn run(launch_dir: Option<String>) {
             warm_pool::warm_pool_cancel_spawn,
             warm_pool::warm_pool_register,
             warm_pool::warm_pool_claim,
+            warm_pool::warm_pool_activate,
             warm_pool::warm_pool_discard,
             warm_pool::warm_pool_shutdown,
             // Embedded terminal
@@ -473,6 +475,7 @@ pub fn run(launch_dir: Option<String>) {
             }
 
             builder.build()?;
+            let t_window_built = std::time::Instant::now();
 
             // WARM_MEASURE=1: also spawn a hidden measure-mode warm window
             // (see runWarmWindow in warm-window.ts). It boots, self-fires one
@@ -493,10 +496,11 @@ pub fn run(launch_dir: Option<String>) {
             }
 
             log::info!(
-                "Startup: pre-builder={:?} builder→setup={:?} total={:?}",
+                "Startup: pre-builder={:?} builder→setup={:?} setup→window-built={:?} total={:?}",
                 t_plugins - t_start,
                 t_setup - t_plugins,
-                t_setup - t_start,
+                t_window_built - t_setup,
+                t_window_built - t_start,
             );
             Ok(())
         })

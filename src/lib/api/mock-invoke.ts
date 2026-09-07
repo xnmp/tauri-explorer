@@ -8,13 +8,7 @@ import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
-import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
-
-// Check if we're running in Tauri v2
-// Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
-export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/git";
 
 // Deterministic, varied timestamps: each created entry gets a distinct
 // modified time (1h apart from a fixed base) so sort-by-modified is testable.
@@ -353,7 +347,22 @@ const mockFiles: Record<string, FileEntry[]> = {
 };
 
 if (typeof window !== "undefined") {
-  (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision = () => {
+  const previewHooks = window as unknown as {
+    __mockVideoRevision?: () => void;
+    __mockPreviewRevision?: (path: string) => void;
+  };
+  previewHooks.__mockPreviewRevision = (path) => {
+    const parent = parentDir(path);
+    const entries = mockFiles[parent];
+    const current = entries?.find((entry) => entry.path === path);
+    if (!entries || !current) return;
+    mockFiles[parent] = entries.map((entry) =>
+      entry === current
+        ? { ...entry, modified: new Date(Date.parse(entry.modified) + 1000).toISOString(), size: entry.size + 1 }
+        : entry,
+    );
+  };
+  previewHooks.__mockVideoRevision = () => {
     const videos = mockFiles["/home/user/Videos"];
     const recording = videos.find((entry) => entry.path.endsWith("recording.mp4"));
     if (!recording) return;
@@ -1355,6 +1364,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
   // and claims always miss, so openNewWindow takes the fresh-window path.
   warm_pool_begin_spawn: () => false,
+  warm_pool_activate: () => false,
   warm_pool_cancel_spawn: () => undefined,
   warm_pool_register: () => undefined,
   warm_pool_claim: () => null,
@@ -1572,6 +1582,9 @@ const mockCommands: Record<string, CommandHandler> = {
 
   read_text_file: (args) => {
     const path = args.path as string;
+    const hook = (globalThis as { __mockPreviewReadText?: (path: string) => string | Promise<string> })
+      .__mockPreviewReadText;
+    if (hook) return hook(path);
     if (path in mockWrittenFiles) return mockWrittenFiles[path];
     const content = mockFileContent[path];
     if (content !== undefined) return content;
@@ -1775,7 +1788,10 @@ const mockCommands: Record<string, CommandHandler> = {
     );
   },
 
-  read_image_data_url: () => {
+  read_image_data_url: (args) => {
+    const hook = (globalThis as { __mockPreviewReadImage?: (path: string) => string | Promise<string> })
+      .__mockPreviewReadImage;
+    if (hook) return hook((args.path as string) ?? "");
     // Full-size preview in browser/E2E mode: reuse the realistic thumbnail
     // JPEG so the preview pane (and its fullscreen mode) can be exercised.
     return mockInvoke<string>("get_thumbnail_data");
@@ -1894,7 +1910,7 @@ const mockCommands: Record<string, CommandHandler> = {
       removeFrom(mockGit.untracked, path);
       mockGitArchived.add(`.archive/${path}`);
     }
-    if (typeof window !== "undefined") {
+if (typeof window !== "undefined") {
       (window as unknown as { __mockGitArchived?: string[] }).__mockGitArchived = [...mockGitArchived];
     }
     return null;

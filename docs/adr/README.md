@@ -13,3 +13,4 @@ decision during review.
 | [0005](0005-github-pr-conversation-boundary.md) | GitHub PR conversation data boundary | Accepted |
 | [0006](0006-git-network-cancellation-boundary.md) | Git network cancellation and mutation boundary | Accepted |
 | [0007](0007-markdown-frontmatter-preview-boundary.md) | Markdown frontmatter preview boundary | Accepted |
+| [0008](0008-resource-and-contribution-ownership.md) | Asynchronous resource and contribution ownership | Accepted |

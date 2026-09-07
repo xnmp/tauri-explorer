@@ -8,7 +8,7 @@ Paths relative to repo root. No line numbers (they go stale).
 Central hubs (open these for almost anything): `src/lib/state/explorer.svelte.ts`
 (per-pane store: entries, selection, navigation; `createExplorerState`),
 `src/routes/+page.svelte` (SPA root: global shortcuts, store init, layout),
-`src/lib/api/files.ts` (all IPC wrappers), `src/lib/api/mock-invoke.ts` (fake
+`src/lib/api/common.ts` (IPC primitives; feature wrappers live in sibling modules), `src/lib/api/mock-invoke.ts` (fake
 backend for E2E/browser).
 
 ---
@@ -41,6 +41,9 @@ backend for E2E/browser).
 
 ## Directory listing & refresh/watcher events
 
+- `state/git-repo-watch.ts` — adapts Git watch results to ordered acquisition/release for the graph.
+- `state/directory-watch.ts` — serialized refcount ownership used by pane-watch, FolderThumbnail, MillerColumns and drives; destroy drains late acquisition without changing refresh policy.
+
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
 - `state/pane-refresh.ts` — `createPaneRefresh`: re-list without UI flash (fingerprint diff)
 - `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
@@ -64,22 +67,34 @@ backend for E2E/browser).
 
 ## Recycle Bin
 
-- `components/FilesSidebarView.svelte`, `domain/recycle-bin.ts`, `api/open.ts` — sidebar action opens the native Recycle Bin and reports an IPC failure through `toastStore`.
+- `components/FilesSidebarView.svelte`, `state/recycle-bin.ts`, `api/open.ts` — sidebar action opens the native Recycle Bin and reports an IPC failure through `toastStore`.
 - `src-tauri/src/system.rs` — `open_recycle_bin`: Linux launches an absolute Freedesktop `Trash/files` directory through `xdg-open` without dispatching `trash:///`; Windows and macOS retain their native shell launchers.
 - FLOW: sidebar click → `openRecycleBinWithFeedback` → `open_recycle_bin` IPC → platform launcher; a terminal failure returns to the toast.
 
 ## Window tabs
 
+- `domain/window-input.ts` — validates launch/warm/directory seeds and bounds storage parsing and producer serialization.
+- `state/window-launch.ts` — fresh/warm launch coordination, destination-keyed seeds, created/error ownership and late-child retirement.
+- `state/window-handoff.ts` — correlated destination acknowledgement before source tab removal; late listener/timeout cleanup.
+- `state/window-startup.ts` — owns settings → theme/readiness → plugins initialization; teardown revokes late startup.
+
+- `state/repo-root-cache.svelte.ts` — bounded shared root probes for tab labels and Git warming, invalidated by existing file/Git buses.
+
 - `components/WindowTabBar.svelte` — tab strip UI, drag-reorder, tear-off
-- `state/window-tabs.svelte.ts` — `windowTabsManager`: tab list, active tab, per-tab explorer
+- `state/window-tabs.svelte.ts` — `windowTabsManager`: tab list, layout, active pane, persistence orchestration; incarnation-bound transfer leases and native-close allocation guard
+- `state/pane-sessions.ts` — reserves restored pane identities without opening inactive directories; activation materializes explorers, all removal paths share cleanup including SCM/commit/graph handoff stores
+- `state/pane-activation.ts` — focused-first restoration with cancellable post-paint batches; `PaneLayoutView` leaves unmaterialized subtrees as placeholders without truncating saved layouts
+- `state/pane-resize.ts` — coalesced divider drag lifetime; manager resize operations retain their original tab incarnation and `PaneContainer` remounts revived instances
 - `state/window-tabs-persistence.ts` — save/restore tab sessions
 - `state/closed-tabs.ts` — reopen-closed-tab stack
 - `state/tab-transfer.ts` — drag tab across windows (`sendTabToWindow`, `initTabTransferListener`, screen-pos hit-test)
 - `domain/tab-title.ts` — compute tab label from path
 - `state/tab-display.svelte.ts` — tab title/icon derivation: git-root decoration, VS Code-style disambiguation, multi-pane joining
 - `state/window-title.svelte.ts` — resolves launch-home context and synchronizes the OS window title with the active tab/pane directory
-- `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — pre-spawned windows for instant new-tab/window
-- FLOW: each tab owns an `ExplorerInstance`; cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage.
+- `state/window-close.ts` — common titlebar, last-tab and native-close lifecycle; blocks transfer admission until destruction or recovery
+- `state/window-chrome.ts` — native titlebar maximize observation with one in-flight read and owned late subscription cleanup
+- `state/warm-activation.ts`, `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — acknowledged warm-window activation, owned native reservations and expiring abandoned claims
+- FLOW: each layout leaf identifies one pane session. `PaneLayoutView` keys its `ExplorerPane` by the owned explorer and injects it explicitly; the component captures it for the mount lifetime. Cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage, validated before resource allocation.
 
 ## Workspaces & split panes
 
@@ -155,6 +170,8 @@ backend for E2E/browser).
 
 ## Preview pane
 
+- `state/preview-lifetime.ts` — revision tokens and blob ownership across text/image/archive/directory/video loads and unmount.
+
 - `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; hand-rolled resize (width when docked right, height when docked top/bottom, #460); reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
 - `domain/preview-pane-position.ts` — pure dock-position validate/cycle (right/bottom/top, #460); `+page.svelte` column-stacks the pane for top/bottom. Also: `PreviewPanePositionMode` ("auto" | right/bottom/top), `resolveAutoDockPosition(width, height)` (aspect-ratio heuristic: wide → right, narrow-tall → top, else bottom) and `resolveEffectivePreviewPanePosition(mode, width, height)` (#467)
 - `state/window-size.svelte.ts` — reactive `window.innerWidth/innerHeight` (`windowSizeStore`); `+page.svelte` syncs it on mount + `resize`. Feeds `settingsStore.resolvedPreviewPanePosition` for auto-dock (#467)
@@ -198,7 +215,13 @@ backend for E2E/browser).
 - `state/git-palette.ts` — active-pane bridge from GitGraphView's current local branches, commits, and stashes to fuzzy command-palette targets (#520); checkout/merge/cherry-pick/rebase/stash actions reuse the graph action seam and a commit target selects/reveals its row. Commit targets are capped at the 50 most-recent loaded rows because CommandPalette is unvirtualized; ephemeral targets do not enter frecency.
 - `domain/git-graph-undo.ts`, `state/git-graph-undo.ts` — bounded repository-scoped session ledger + active-pane Ctrl+Z request bus (#513). Successful branch/tag delete, branch rename, merge, and pull commands return immutable backend snapshots; confirmation consumes the latest matching entry, while Rust rechecks absent/exact refs or unchanged HEAD + clean worktree immediately before the inverse.
 - `state/git-graph-file-history.ts` — SCM file-history handoff (#518): opens the owning pane's graph and sends its repository-relative file path straight to a matching mounted graph or buffers it through a keyed repo remount; pending paths are dropped when panes close
-- `state/git-graph-cache.ts` — bounded per-repo graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot` (moved out of GitGraphView so `git-warm.ts` imports state, not a component); retains the supported 12-tab graph fan-out for remounts. GitGraphView skips its redundant initial reload for a valid cache hit, while external watcher changes evict a repo's snapshots before remount (#433, #505, arch Finding 7)
+- `state/git-graph-component.ts` — caches the dynamically imported graph constructor; first opening loads the feature, later mounts render synchronously from the resolved constructor.
+- `state/git-commit-files-cache.ts` — importable bounded commit-file LRU used by graph detail loads; working-tree and comparison diffs retain their separate paths.
+- `state/git-graph-cache.ts` — bounded per-repo graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; immutable payload ingress and resolved walk metadata preserve cached pagination. Retains the supported 12-tab graph fan-out for remounts; watcher changes invalidate writers and snapshots (#433, #505).
+- `state/git-graph-query.svelte.ts` — mounted graph history/page owner using the existing reloader; partial log paint precedes summary, stale query/append cleanup cannot overwrite replacements, complete page zero alone enters the shared cache.
+- `src/lib/state/git-graph-detail.svelte.ts` — Commit/comparison selection, current working-tree refresh and staged/unstaged inline diffs.
+- `state/git-pr-session.svelte.ts` — same-repository badge refresh, PR checks and CI logs use invocation identity and immutable payloads; close/reopen and disposal revoke stale completion.
+- `state/git-graph-branches.svelte.ts` — query/popover branch metadata requests coordinate current coverage; cold failure cannot silently cache an unfiltered graph under hide-remote-only, known coverage survives later failures.
 - `domain/commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel (#466): `buildStageFiles`/`groupStageFiles` (stage-status grouping, partial-stage handled), `canCommit`/`commitButtonLabel`, and the ephemeral message-editor transitions (idle→committing→idle, message preserved on failure). `state/commit-panel.svelte.ts` wraps these in a per-pane rune store (`getCommitPanelStore`) whose `begin()` guard survives close+reopen (`resetIfIdle()` no-ops while committing) so a second concurrent commit can't start. GitGraphView calls the store; stage/unstage/commit reuse `gitStage`/`gitUnstage`/`gitCommit` and refresh via `reload()` + `notifyLocalGitChange` (no private refresh stack — stage/unstage also `reload()` so the partial-stage double-count in `workingChanges` can't leave the header stale). Backend `git_commit` rejects a nothing-staged index (no spurious empty commit)
 - `domain/scm-filter.ts` — fuzzy filter over the sidebar's pending files (#517): `filterScmEntries`/`filterScmSummary` score paths with the Quick Open scorer (`fuzzyScorePath`), so one query behaves the same in both places. ScmSidebarView owns only the query string; while it is non-empty every tree folder renders expanded (a match inside a collapsed folder reads as a dropped match) and `toggleFolder` no-ops so a click can't rewrite the saved collapse state invisibly. `scmEmptyState`/`showScmFilterInput` key off the pending count BEFORE the filter, so a query that outlives its rows (subfolder with no changes, watcher-clean tree) still reads "Working tree clean" and keeps its input mounted. Count badges follow the filter, `canCommit` deliberately does not (commits stay repo-wide).
 - `git-graph-comparison.ts` — pure comparison-detail state machine: selecting a second commit produces an older→newer pair and every transition increments the generation that rejects stale file-list responses (#512).
@@ -251,6 +274,7 @@ backend for E2E/browser).
 - `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
 - `state/persisted.ts` — localStorage load/save helpers
 - `domain/settings-migration.ts` — versioned migrations for the persisted blob; add an entry here whenever a DEFAULT flips, or existing installs keep the old value (#471/#506)
+- `domain/settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `api/config.ts`, `src-tauri/src/config.rs` — JSON config file persistence (disk)
 - `src-tauri/src/config_watch.rs`, `state/config-watch.ts`, `domain/config-reload.ts` — config autoreload (#599): the Rust watcher emits `config-file-changed`, `handleConfigFileChanged` routes it, `settingsStore.reloadFromDisk` adopts it, `decideConfigReload` rejects our own writes
 - `plugins/settings-registry.svelte.ts` — plugin-contributed settings rows
@@ -285,7 +309,9 @@ backend for E2E/browser).
 
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
-- `domain/lazy-dialog.ts` — failure-safe dialog chunk loading (`loadDialogComponent`) + mount-crash recovery (`createDialogCrashHandler`); `+page.svelte` routes all 12 code-split dialogs through the loader and wraps each in `<svelte:boundary>` so a failed import (#584) or a component that throws while mounting (#585) resets the open-flag and toasts instead of soft-locking hotkeys
+- `src/test-support/lazy-dialog-lifetime.svelte.ts` — browser-only effect-lifetime fixture imported by E2E; absent from the production import graph.
+- `components/WindowDialogs.svelte`, `composables/use-lazy-dialog.svelte.ts`, `state/lazy-dialog.svelte.ts` — typed lazy constructors with independent demand, one pending import per host/dialog, retained success and teardown-safe publication. The host includes plugin dialogs and portal feedback.
+- `domain/lazy-dialog.ts` — shared failure containment and mount-crash recovery; the host wraps each dialog in `<svelte:boundary>`. Active failures roll back modal ownership and notify; cancelled requests and destroyed hosts cannot publish stale feedback.
 - `domain/theme-list.ts` — `dedupeThemesById`, last occurrence wins; applied in `theme.svelte.ts` `discoverThemes()` so a user theme reusing a built-in id overrides it instead of crashing ThemePicker's keyed each (#585)
 - `components/Modal.svelte`, `components/modal.css` — modal shell
 - `components/UserReportDialog.svelte`, `state/user-report-draft.svelte.ts`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, debounced persisted text-only drafts, preserved GitHub fallback, and report IPC
@@ -305,8 +331,12 @@ backend for E2E/browser).
 
 ## Plugins
 
+- `state/owned-registry.ts` — invocation identity and duplicate policy shared by command, menu, dialog and filesystem contributions.
+- `state/modal-ownership.svelte.ts` — contributed dialogs and shared Modal participate in the same input gate as built-in dialogs.
+
 - `plugins/registry.svelte.ts` — `pluginRegistry` (register/enable)
 - `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings)
+- `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner.
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
 - built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`
 - backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`, `plugin_job.rs` (shared job scaffolding: id alloc, output-path validation, timeout, complete/error events)
@@ -314,6 +344,8 @@ backend for E2E/browser).
 - FLOW: plugins register commands/settings/dialogs via PluginContext at startup; AI actions invoke Gemini-backed Rust commands (upscale invokes fal.ai's SeedVR2 queue API via `fal.rs`).
 
 ## Terminal panel
+
+- `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal.
 
 - `components/TerminalPanel.svelte` — embedded terminal UI
 - `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)

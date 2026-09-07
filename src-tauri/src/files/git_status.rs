@@ -439,7 +439,7 @@ pub async fn get_git_status(
     task_id: Option<u64>,
 ) -> Result<GitStatusResponse, AppError> {
     let (id, cancelled) = match task_id {
-        Some(id) => (id, BADGE_STATUS_TASKS.start_with_id(id)),
+        Some(id) => (id, BADGE_STATUS_TASKS.start_with_id(id)?),
         None => BADGE_STATUS_TASKS.start(),
     };
     let result = tokio::task::spawn_blocking(move || get_git_status_sync(&path, &cancelled)).await;

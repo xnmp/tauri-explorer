@@ -6,6 +6,11 @@
  */
 
 export type FileKind = "file" | "directory";
+export type ViewMode = "details" | "list" | "tiles";
+
+export function isViewMode(value: unknown): value is ViewMode {
+  return value === "details" || value === "list" || value === "tiles";
+}
 
 export interface FileEntry {
   readonly name: string;

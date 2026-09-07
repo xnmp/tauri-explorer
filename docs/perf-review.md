@@ -327,7 +327,11 @@ instant." None of it is search.
 
 ---
 
-## Cold-start deep-dive
+## Cold-start deep-dive (historical)
+
+For the September 2026 review, full static bundle measurements and the macOS
+half-bounce acceptance procedure, see [repo-health-review.md](repo-health-review.md).
+The payload figures and completed recommendations below describe earlier revisions.
 
 For small-directory workloads the directory-work fixes barely register — cold start
 dominates the felt experience. Findings in critical-path order.
@@ -386,21 +390,18 @@ JS to parse+execute. Each is a small `{#if}`-gated dynamic import; risk is per-c
 
 ### Measuring cold start
 
-Two log lines, written to the app log file (`~/Library/Logs/com.explorer.app/tauri-explorer.log`
-on macOS; platform log dir elsewhere — see `get_log_dir`). Durable in release builds, no
-devtools needed.
+Current instrumentation records three complementary views:
 
-- **`Startup:`** (Rust, `lib.rs`) — `pre-builder` (sync work before window create) +
-  `builder→setup` (webview creation, **platform-fixed**) + `total`. Historically
-  `builder→setup` is ~110–225 ms; `pre-builder` is microseconds.
-- **`Startup(webview):`** (frontend, `startup-timing.ts`) — milestones from boot `t0`
-  (anchored in `app.html`'s head script, before the bundle loads):
-  - `bundle-exec` — bundle parsed + executing (the JS download+parse cost the
-    dialog lazy-loading targets)
-  - `mount` — `onMount` fired
-  - `list-visible` — first directory listing rendered (`total`)
+- `Startup:` (Rust, `lib.rs`) records pre-builder, builder-to-setup,
+  setup-to-window-built, and total through initial window construction.
+- `Startup(webview):` records bundle execution, mount, commands, settings,
+  initial listing readiness (including empty directories), and core Explorer
+  readiness after a DOM paint opportunity.
+- `Startup(native-ready):` records main-window readiness IPC receipt on the
+  Rust clock starting at `run()`. It includes the interval through window
+  construction and webview initialization, but excludes OS process loading.
 
-Read them together: the Rust line is the backend half (≈fixed), the webview line is the
-half we can move. To get a before/after on the dialog split, compare `bundle-exec` across
-a revert. Note the timer anchors differ (Rust `Instant` at process start vs webview
-`t0` at first script run), so don't add the two totals — read each half on its own axis.
+Do not add Rust and JavaScript totals or equate a frame callback with compositor
+presentation. Use release builds and external macOS launch/interaction traces
+for the half-bounce target. The full procedure and limitations are documented in
+[repo-health-review.md](repo-health-review.md#half-bounce-acceptance).

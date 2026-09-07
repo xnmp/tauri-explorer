@@ -41,6 +41,12 @@ jobs:
       - name: Type check
         run: bun run check
 
+      - name: Architecture boundaries
+        run: bun run lint:arch
+
+      - name: Startup bundle budget
+        run: bun run check:bundle
+
       - name: Unit tests
         run: bun run test
 

@@ -10,14 +10,15 @@ import { workspacesStore } from "../workspaces.svelte";
 import { recentFilesStore } from "../recent-files.svelte";
 import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
-import { openInTerminal, gitRepoRoot } from "$lib/api/files";
+import { openInTerminal } from "$lib/api/open";
+import { gitRepoRoot } from "$lib/api/git";
 import { gitFetch } from "$lib/api/git-log";
 import { notifyLocalGitChange } from "$lib/state/git-refresh";
 import { runGitNetworkOperation } from "$lib/state/git-graph-refresh";
 import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
-import { getLogDir } from "$lib/api/files";
+import { getLogDir } from "$lib/api/environment";
 
 /** Window commands */
 export const windowCommands: Command[] = [

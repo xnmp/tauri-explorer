@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const readConfigFileMock = vi.fn();
 const writeConfigQueuedMock = vi.fn();
 
-vi.mock("$lib/api/files", async (importOriginal) => {
+vi.mock("$lib/api/config", async (importOriginal) => {
   const original = await importOriginal<Record<string, unknown>>();
   return {
     ...original,
@@ -101,6 +101,83 @@ describe("settingsStore.init precedence (#280)", () => {
     // Defaults intact for everything the file didn't set.
     expect(store.showSidebar).toBe(true);
     expect(store.floatingIslands).toBe(false);
+  });
+
+  it("preserves unknown config fields on a later settings write without exposing them live", async () => {
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({
+        showHidden: true,
+        settingsVersion: 999,
+        futureSurface: { mode: "spatial", enabled: true },
+      }),
+    });
+    const store = await freshStore();
+
+    await store.init();
+    expect((store.state as unknown as Record<string, unknown>).futureSurface).toBeUndefined();
+    store.update({ showSidebar: false });
+
+    const written = JSON.parse(writeConfigQueuedMock.mock.calls.at(-1)![1]);
+    expect(written.futureSurface).toEqual({ mode: "spatial", enabled: true });
+    expect(written.settingsVersion).toBe(999);
+    expect(written.showSidebar).toBe(false);
+  });
+
+  it.each([null, [], "wrong", 42])("ignores malformed localStorage root %j", async (value) => {
+    localStorage.setItem("explorer-settings", JSON.stringify(value));
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    await expect(store.init()).resolves.toBeUndefined();
+    expect(store.showSidebar).toBe(true);
+    expect(store.zoomLevel).toBe(100);
+  });
+
+  it("keeps valid partial settings while defaulting malformed nested and scalar values", async () => {
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({
+        showHidden: true,
+        zoomLevel: "huge",
+        backgroundOpacity: null,
+        navBarButtons: { back: false, forward: "yes", up: true },
+        columnVisibility: null,
+        pluginsEnabled: { demo: false, broken: "yes" },
+        terminalShortcuts: { home: "Ctrl+A", bad: false },
+        viewMode: "unknown",
+      }),
+    });
+    const store = await freshStore();
+
+    await store.init();
+
+    expect(store.showHidden).toBe(true);
+    expect(store.zoomLevel).toBe(100);
+    expect(store.backgroundOpacity).toBe(100);
+    expect(store.navBarButtons).toEqual({ back: false, forward: true, up: true, refresh: false });
+    expect(store.columnVisibility).toEqual({ date: true, type: true, size: true });
+    expect(store.pluginsEnabled).toEqual({ demo: false });
+    expect(store.terminalShortcuts).toEqual({ home: "Ctrl+A" });
+    expect(store.viewMode).toBe("details");
+  });
+
+  it("defaults finite numeric values outside their consumer bounds", async () => {
+    readConfigFileMock.mockResolvedValue({
+      ok: true,
+      data: JSON.stringify({
+        zoomLevel: -1e308,
+        terminalPanelHeight: 1e308,
+        backgroundOpacity: -1,
+        millerLayers: 1e9,
+      }),
+    });
+    const store = await freshStore();
+    await store.init();
+    expect(store.zoomLevel).toBe(100);
+    expect(store.terminalPanelHeight).toBe(240);
+    expect(store.backgroundOpacity).toBe(100);
+    expect(store.millerLayers).toBe(0);
   });
 });
 
@@ -221,5 +298,55 @@ describe("settingsStore.update (#280)", () => {
     expect(store.showSidebar).toBe(true); // untouched key keeps its value
     const persisted = JSON.parse(localStorage.getItem("explorer-settings")!);
     expect(persisted.showHidden).toBe(true);
+  });
+});
+
+describe("numeric settings consumer contracts", () => {
+  it("rejects fractional counts and dimensions between zero and the panel minimum", async () => {
+    const { normalizeSettingsInput } = await import("$lib/state/settings.svelte");
+    expect(normalizeSettingsInput({
+      listViewColumns: 2.5, recentItemsCount: 3.5, millerLayers: 1.5,
+      millerLayersPreferred: 2.5, settingsVersion: 1.5,
+      previewPaneWidth: 1, previewPaneHeight: 1,
+    })).toEqual({});
+    expect(normalizeSettingsInput({
+      listViewColumns: 6, previewPaneWidth: 0, previewPaneHeight: 120,
+      backgroundOpacity: 0.5, zoomLevel: 100.5, previewFontSize: 27.5,
+    })).toEqual({
+      listViewColumns: 6, previewPaneWidth: 0, previewPaneHeight: 120,
+      backgroundOpacity: 0.5, zoomLevel: 100.5, previewFontSize: 27.5,
+    });
+  });
+
+  it("preserves the four-column command and clamps setters to usable panel and count values", async () => {
+    const store = await freshStore();
+    store.setListViewColumns(4);
+    expect(store.listViewColumns).toBe(4);
+    store.setPreviewPaneWidth(1);
+    store.setPreviewPaneHeight(1);
+    expect(store.previewPaneWidth).toBe(160);
+    expect(store.previewPaneHeight).toBe(120);
+    store.setMillerLayers(1.4);
+    expect(store.millerLayers).toBe(1);
+    expect(store.state.millerLayersPreferred).toBe(1);
+    store.setRecentItemsCount(2.4);
+    expect(store.recentItemsCount).toBe(2);
+    store.setPreviewPaneWidth(0);
+    expect(store.previewPaneWidth).toBe(0);
+  });
+
+  it("generic updates and non-finite setters cannot bypass the persisted contract", async () => {
+    const store = await freshStore();
+    store.update({ zoomLevel: 125 });
+    store.update({ zoomLevel: Number.NaN, listViewColumns: 2.5, previewPaneWidth: 1 });
+    store.setMillerLayers(Number.NaN);
+    store.setListViewColumns(Number.POSITIVE_INFINITY);
+    expect(store.zoomLevel).toBe(125);
+    expect(store.listViewColumns).toBe(0);
+    expect(store.previewPaneWidth).toBe(0);
+    expect(Number.isInteger(store.millerLayers)).toBe(true);
+    const saved = JSON.parse(localStorage.getItem("explorer-settings")!);
+    expect(saved.zoomLevel).toBe(125);
+    expect(saved.listViewColumns).toBe(0);
   });
 });

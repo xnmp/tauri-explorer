@@ -33,6 +33,7 @@ const DEBOUNCE_MS = 150;
 const MIN_INTERVAL_MS = 2000;
 const SLOW_LISTING_MULTIPLIER = 3;
 const MAX_INTERVAL_MS = 8000;
+const MAX_RETAINED_DIRECTORIES = 1024;
 
 type RefreshCallback = (opts: { silent: boolean }) => void | Promise<void>;
 
@@ -49,8 +50,47 @@ const listingBaselines = new Map<string, number>();
 const refreshIntervals = new Map<string, number>();
 let refreshGeneration = 0;
 
+/** Retained scheduler state, exposed for lifecycle/performance regression tests. */
+export function refreshManagerRetention(): {
+  pending: number;
+  lastRefresh: number;
+  inFlight: number;
+  baselines: number;
+  intervals: number;
+} {
+  return {
+    pending: pendingRefreshes.size,
+    lastRefresh: lastRefreshAt.size,
+    inFlight: inFlightRefreshes.size,
+    baselines: listingBaselines.size,
+    intervals: refreshIntervals.size,
+  };
+}
+
 function intervalFor(dirPath: string): number {
   return refreshIntervals.get(dirPath) ?? MIN_INTERVAL_MS;
+}
+
+function deleteDirectoryMetadata(dirPath: string): void {
+  lastRefreshAt.delete(dirPath);
+  listingBaselines.delete(dirPath);
+  refreshIntervals.delete(dirPath);
+}
+
+/** Bound inactive history without creating one cleanup timer per directory.
+ * Active work owns its metadata until completion; each completion retries the
+ * bound, so a large concurrent burst contracts as it drains. */
+function pruneDirectoryMetadata(): void {
+  while (lastRefreshAt.size > MAX_RETAINED_DIRECTORIES) {
+    let removed = false;
+    for (const dirPath of lastRefreshAt.keys()) {
+      if (pendingRefreshes.has(dirPath) || inFlightRefreshes.has(dirPath)) continue;
+      deleteDirectoryMetadata(dirPath);
+      removed = true;
+      break;
+    }
+    if (!removed) break;
+  }
 }
 
 function schedule(dirPath: string, pending: PendingRefresh): void {
@@ -95,6 +135,7 @@ function finishRefresh(dirPath: string, startedAt: number, generation: number): 
   recordListingDuration(dirPath, Date.now() - startedAt);
   const pending = pendingRefreshes.get(dirPath);
   if (pending) schedule(dirPath, pending);
+  else pruneDirectoryMetadata();
 }
 
 function flush(dirPath: string): void {
@@ -103,6 +144,8 @@ function flush(dirPath: string): void {
   pendingRefreshes.delete(dirPath);
   const startedAt = Date.now();
   const generation = refreshGeneration;
+  // Map insertion order is the LRU order used by metadata pruning.
+  lastRefreshAt.delete(dirPath);
   lastRefreshAt.set(dirPath, startedAt);
   inFlightRefreshes.set(dirPath, startedAt);
   const completions: Promise<void>[] = [];

@@ -157,7 +157,6 @@
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .clear-btn:hover {
@@ -177,7 +176,6 @@
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .close-btn:hover {

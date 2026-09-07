@@ -346,3 +346,9 @@ describe("splitFlattenedUriList (#253)", () => {
     expect(splitFlattenedUriList("")).toEqual([""]);
   });
 });
+
+it("preserves the case-sensitive Linux suffix of WSL directory identities", () => {
+  expect(directoryKey("\\\\wsl.localhost\\Ubuntu\\home\\User")).not.toBe(directoryKey("\\\\wsl.localhost\\Ubuntu\\home\\user"));
+  expect(directoryKey("\\\\WSL.LOCALHOST\\Ubuntu\\home\\User\\")).toBe(directoryKey("//wsl.localhost/Ubuntu/home/User"));
+  expect(directoryKey("//wsl$/Ubuntu/home/User")).not.toBe(directoryKey("//wsl$/Ubuntu/home/user"));
+});

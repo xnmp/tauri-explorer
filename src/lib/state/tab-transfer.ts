@@ -1,82 +1,44 @@
-/**
- * Cross-window tab drag-and-drop and tear-off.
- *
- * Mirrors the file-drag pattern (drag.svelte.ts): dataTransfer is
- * unreliable between separate webview contexts in Tauri, so the in-flight
- * tab drag is marked in localStorage (all windows share the origin), and a
- * BroadcastChannel tells the source window when a target claimed the tab.
- *
- * Flow:
- * - source dragstart  → tabDragState.start(snapshot + ids)
- * - target tab-strip drop → claimDraggedTab(): adopt locally, clear marker,
- *   broadcast "tab-claimed"
- * - source "tab-claimed" → removeTransferredTab() (no closed-tab snapshot)
- * - source dragend with no claim and the pointer outside the window
- *   → tear-off: spawn a new window seeded with the tab (WindowTabBar)
- */
+/** Pointer-driven tab drag markers and acknowledged native tab transfers.
+ * The sender retains ownership until the destination actually adopts its tab. */
 
-import { loadPersisted, savePersisted, removePersisted } from "./persisted";
 import { windowTabsManager, type TabSnapshot } from "./window-tabs.svelte";
-
-const DRAG_KEY = "explorer-tab-drag";
-const CHANNEL_NAME = "explorer-tab-transfer";
-/** Tauri event used to hand a tab off to a specific window (cross-window move). */
-const ADOPT_EVENT = "explorer://adopt-tab";
+import { normalizeSnapshot } from "./window-tabs-persistence";
+import { TAB_ADOPT_EVENT, acknowledgeWindowHandoff, normalizeWindowHandoff, requestWindowHandoff } from "./window-handoff";
+import { isRecord, isWindowPath, windowSeedFitsBudget } from "$lib/domain/window-input";
 
 export interface TabDragData {
+  id: string;
   sourceWindow: string;
   tabId: string;
   snapshot: TabSnapshot;
 }
 
-interface TabClaimedMessage {
-  type: "tab-claimed";
-  sourceWindow: string;
-  tabId: string;
+function normalizeTabDrag(raw: unknown): TabDragData | null {
+  if (!isRecord(raw) || !isWindowPath(raw.id) || !isWindowPath(raw.sourceWindow) || !isWindowPath(raw.tabId)) return null;
+  const snapshot = normalizeSnapshot(raw.snapshot);
+  return snapshot ? { id: raw.id, sourceWindow: raw.sourceWindow, tabId: raw.tabId, snapshot } : null;
 }
 
-let channel: BroadcastChannel | null = null;
-
-function getChannel(): BroadcastChannel | null {
-  if (channel) return channel;
-  if (typeof BroadcastChannel === "undefined") return null;
-  channel = new BroadcastChannel(CHANNEL_NAME);
-  return channel;
-}
-
-/** The in-flight tab drag, visible to every window. */
-export const tabDragState = {
-  start(data: TabDragData): void {
-    savePersisted(DRAG_KEY, data);
-  },
-  read(): TabDragData | null {
-    return loadPersisted<TabDragData | null>(DRAG_KEY, null);
-  },
-  clear(): void {
-    removePersisted(DRAG_KEY);
-  },
-};
-
-/** True when `data` is a tab drag coming from a different window. */
-export function isForeignTabDrag(data: TabDragData | null): data is TabDragData {
-  return data !== null && data.sourceWindow !== windowTabsManager.windowLabel;
-}
-
-/** Target side: adopt the dragged tab into this window (at `index`),
- *  notify the source so it removes its copy, and take focus. */
-export function claimDraggedTab(data: TabDragData, index?: number): void {
-  windowTabsManager.adoptTab(data.snapshot, index);
-  tabDragState.clear();
-  const msg: TabClaimedMessage = {
-    type: "tab-claimed",
-    sourceWindow: data.sourceWindow,
-    tabId: data.tabId,
+/** Pointer drag state belongs to this source window. Native transfer routing
+ * uses screen coordinates and explicit messages; no other window reads this
+ * marker, so it must not persist across windows or application launches. */
+export function createTabDragState() {
+  let active: TabDragData | null = null;
+  return {
+    start(data: unknown): string | null {
+      active = isRecord(data) ? normalizeTabDrag({ ...data, id: crypto.randomUUID() }) : null;
+      return active?.id ?? null;
+    },
+    read(): TabDragData | null { return active; },
+    clear(expectedId: string | null | undefined): boolean {
+      if (!active || active.id !== expectedId) return false;
+      active = null;
+      return true;
+    },
   };
-  getChannel()?.postMessage(msg);
-  import("@tauri-apps/api/window")
-    .then(({ getCurrentWindow }) => getCurrentWindow().setFocus())
-    .catch(() => {}); // Not in Tauri runtime
 }
+
+export const tabDragState = createTabDragState();
 
 /**
  * Resolve which explorer window (if any) contains the given SCREEN position
@@ -90,6 +52,7 @@ export async function windowAtScreenPos(physX: number, physY: number): Promise<s
     const { getAllWindows } = await import("@tauri-apps/api/window");
     const wins = await getAllWindows();
     for (const w of wins) {
+      if (!await w.isVisible()) continue;
       const pos = await w.outerPosition();
       const size = await w.outerSize();
       if (
@@ -107,48 +70,56 @@ export async function windowAtScreenPos(physX: number, physY: number): Promise<s
   return null;
 }
 
-/** Source side: push the dragged tab to another window via a Tauri event. */
-export async function sendTabToWindow(targetLabel: string, snapshot: TabSnapshot): Promise<void> {
-  try {
+/** False leaves the source tab intact, including when a picker or an unready
+ * window receives the native event but has no adoption listener. */
+export async function sendTabToWindow(targetLabel: string, snapshot: TabSnapshot): Promise<boolean> {
+  const normalized = normalizeSnapshot(snapshot);
+  if (!normalized || !windowSeedFitsBudget(normalized)) return false;
+  return requestWindowHandoff(windowTabsManager.windowLabel, targetLabel, async (handoff) => {
     const { emitTo } = await import("@tauri-apps/api/event");
-    await emitTo(targetLabel, ADOPT_EVENT, snapshot);
-  } catch {
-    // Not in Tauri runtime.
-  }
+    const payload = { snapshot: normalized, handoff };
+    if (!windowSeedFitsBudget(payload)) throw new Error("Tab transfer exceeds window message budget");
+    await emitTo(targetLabel, TAB_ADOPT_EVENT, payload);
+  });
 }
 
-/** Source side: remove tabs that other windows claim, and (target side) adopt
- *  tabs handed to us via the Tauri adopt event. Call once per window; returns
- *  an unsubscribe. */
+/** Install a label-scoped receiver: Tauri's default Any target also receives
+ * events emitted to other windows. Picker windows never install it, and therefore cannot acknowledge/consume a tab dropped over them. */
 export function initTabTransferListener(): () => void {
-  // Source side: BroadcastChannel removal when a same-document drop claims a tab.
-  const ch = getChannel();
-  const onMessage = (event: MessageEvent) => {
-    const msg = event.data as TabClaimedMessage | null;
-    if (msg?.type !== "tab-claimed") return;
-    if (msg.sourceWindow !== windowTabsManager.windowLabel) return;
-    windowTabsManager.removeTransferredTab(msg.tabId);
-  };
-  ch?.addEventListener("message", onMessage);
-
-  // Target side: adopt a tab handed to us from another window via Tauri event.
-  let unlistenAdopt: (() => void) | null = null;
-  import("@tauri-apps/api/event")
-    .then(({ listen }) =>
-      listen<TabSnapshot>(ADOPT_EVENT, (event) => {
-        windowTabsManager.adoptTab(event.payload);
-        import("@tauri-apps/api/window")
-          .then(({ getCurrentWindow }) => getCurrentWindow().setFocus())
-          .catch(() => {});
-      }),
-    )
-    .then((un) => {
-      unlistenAdopt = un;
-    })
-    .catch(() => {}); // Not in Tauri runtime.
-
+  let disposed = false;
+  let unlisten: (() => void) | null = null;
+  const adoptedRequests = new Set<string>();
+  import("@tauri-apps/api/event").then(({ listen }) =>
+    listen<unknown>(TAB_ADOPT_EVENT, async ({ payload }) => {
+      if (disposed || !isRecord(payload) || !windowSeedFitsBudget(payload)) return;
+      const snapshot = normalizeSnapshot(payload.snapshot);
+      const handoff = normalizeWindowHandoff(payload.handoff);
+      if (!snapshot || !handoff) return;
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const self = getCurrentWindow();
+        if (!await self.isVisible() || disposed || !windowTabsManager.acceptsTransfers) return;
+        const requestKey = JSON.stringify([handoff.sourceWindow, handoff.requestId]);
+        if (!adoptedRequests.has(requestKey)) {
+          windowTabsManager.adoptTab(snapshot);
+          adoptedRequests.add(requestKey);
+          if (adoptedRequests.size > 128) adoptedRequests.delete(adoptedRequests.values().next().value!);
+        }
+        await acknowledgeWindowHandoff(handoff, windowTabsManager.windowLabel);
+        if (!disposed) await self.setFocus();
+      } catch {
+        // The native destination may disappear at any await. Without an
+        // acknowledgement the source keeps its tab; retries remain idempotent.
+      }
+    }, { target: windowTabsManager.windowLabel }),
+  ).then((stop) => {
+    if (disposed) stop();
+    else unlisten = stop;
+  }).catch(() => {});
   return () => {
-    ch?.removeEventListener("message", onMessage);
-    unlistenAdopt?.();
+    if (disposed) return;
+    disposed = true;
+    adoptedRequests.clear();
+    unlisten?.();
   };
 }

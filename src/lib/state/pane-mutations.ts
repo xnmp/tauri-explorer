@@ -8,21 +8,9 @@
  * applied.
  */
 
-import {
-  createDirectory,
-  createEmptyFile,
-  renameEntry as apiRenameEntry,
-  deleteEntry,
-  deleteMultipleEntries,
-  deleteEntryPermanent,
-  extractArchive as apiExtractArchive,
-  compressToZip as apiCompressToZip,
-  cancelCompress as apiCancelCompress,
-  cancelExtract as apiCancelExtract,
-  createSymlink as apiCreateSymlink,
-  type ApiResult,
-  type ZipProgressEvent,
-} from "$lib/api/files";
+import { createDirectory, createEmptyFile, renameEntry as apiRenameEntry, deleteEntry, deleteMultipleEntries, deleteEntryPermanent, createSymlink as apiCreateSymlink } from "$lib/api/files";
+import { extractArchive as apiExtractArchive, compressToZip as apiCompressToZip, cancelCompress as apiCancelCompress, cancelExtract as apiCancelExtract, type ZipProgressEvent } from "$lib/api/archive";
+import { type ApiResult } from "$lib/api/common";
 import { operationsManager } from "./operations.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerCoreState } from "./types";
@@ -44,7 +32,7 @@ export interface PaneMutationContext {
   markLocalMutation: () => void;
   /** Parent of the current directory, or null at the root. */
   getParentPath: () => string | null;
-  navigateTo: (path: string) => Promise<void>;
+  navigateTo: (path: string) => Promise<unknown>;
   refreshSilent: () => void;
 }
 

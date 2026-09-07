@@ -7,7 +7,8 @@
  * batch undo, and aggregate toast/broadcast.
  */
 
-import { estimateSize, cancelCopy, type ZipProgressEvent } from "$lib/api/files";
+import { estimateSize, cancelCopy } from "$lib/api/files";
+import { type ZipProgressEvent } from "$lib/api/archive";
 import { operationsManager } from "./operations.svelte";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";

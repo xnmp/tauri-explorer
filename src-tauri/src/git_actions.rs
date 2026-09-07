@@ -189,7 +189,7 @@ where
     T: Send + 'static,
     F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
 {
-    let cancelled = GIT_NETWORK_OPERATIONS.start_with_id(task_id);
+    let cancelled = GIT_NETWORK_OPERATIONS.start_with_id(task_id)?;
     let joined = tokio::task::spawn_blocking(move || work(cancelled))
         .await
         .map_err(|error| AppError::Other(format!("git network task join: {error}")));

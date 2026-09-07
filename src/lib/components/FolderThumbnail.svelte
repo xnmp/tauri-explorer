@@ -15,7 +15,8 @@
   short-circuits re-renders when the image set is unchanged.
 -->
 <script lang="ts">
-  import { getFolderPreview, watchDirectory, unwatchDirectory } from "$lib/api/files";
+  import { getFolderPreview } from "$lib/api/thumbnails";
+  import { createDirectoryWatch } from "$lib/state/directory-watch";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount, type Snippet } from "svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
@@ -88,11 +89,9 @@
   // parent directory's watch. watch/unwatch are refcounted backend-side.
   $effect(() => {
     if (!visible) return;
-    const watched = path;
-    watchDirectory(watched);
-    return () => {
-      unwatchDirectory(watched);
-    };
+    const watch = createDirectoryWatch();
+    void watch.update(path);
+    return () => { void watch.destroy(); };
   });
 
   onMount(() => {

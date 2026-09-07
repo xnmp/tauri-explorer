@@ -347,7 +347,7 @@ test.describe("Git graph tab", () => {
     const main = popover.locator("label.bf-row:not(.bf-author-row):not(.bf-local-only):not(.bf-all)", { hasText: "main" }).first();
     await expect(main.locator("input")).not.toBeChecked();
     // The graph now shows experiment's + origin/legacy-import's ancestry.
-    expect(await view.locator(".commit-row").count()).toBeGreaterThan(0);
+    await expect(view.locator(".commit-row .summary", { hasText: "Try alternative parser" })).toBeVisible();
 
     // Unticking Bob deselects his branches again.
     await bob.locator("input").click();

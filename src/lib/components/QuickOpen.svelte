@@ -5,14 +5,8 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { filenameMatchScore, fuzzyScorePath } from "$lib/domain/fuzzy-score";
-  import {
-    startStreamingSearch,
-    cancelSearch,
-    fuzzySearch,
-    openFile,
-    type SearchResult,
-    type SearchResultsEvent,
-  } from "$lib/api/files";
+  import { startStreamingSearch, cancelSearch, fuzzySearch, type SearchResult, type SearchResultsEvent } from "$lib/api/search";
+import { openFile } from "$lib/api/open";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { homeDirectory } from "$lib/state/home.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -906,7 +900,7 @@
   .downvote-btn:hover {
     opacity: 1;
     background: var(--subtle-fill-tertiary);
-    color: var(--danger, #e5484d);
+    color: var(--system-critical);
   }
 
   .result-item.selected .downvote-btn {

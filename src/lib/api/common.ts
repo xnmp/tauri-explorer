@@ -4,13 +4,17 @@
  */
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { isTauri, mockInvoke } from "./mock-invoke";
 import { isVirtualPath, virtualScheme } from "$lib/domain/virtual-path";
 
 // Cached Tauri detection. Only the positive result is latched: an invoke
 // racing ahead of __TAURI_INTERNALS__ injection must not permanently stick
 // the real app on the mock, so we re-detect until Tauri is found.
 let cachedIsTauri = false;
+
+/** Keep runtime detection independent of the browser-only fixture backend. */
+export function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
 
 /**
  * Mock-aware invoke: dispatches to the real Tauri IPC when available,
@@ -21,8 +25,13 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
   if (!cachedIsTauri && isTauri()) {
     cachedIsTauri = true;
   }
-  const invoker = cachedIsTauri ? tauriInvoke<T> : mockInvoke<T>;
-  return args !== undefined ? invoker(cmd, args) : invoker(cmd);
+  // Native windows never load or initialize browser fixtures. Dynamic import
+  // also lets the bundler keep their data out of the cold-start import graph.
+  if (cachedIsTauri) {
+    return args !== undefined ? tauriInvoke<T>(cmd, args) : tauriInvoke<T>(cmd);
+  }
+  const { mockInvoke } = await import("./mock-invoke");
+  return args !== undefined ? mockInvoke<T>(cmd, args) : mockInvoke<T>(cmd);
 }
 
 /** Structured error from Tauri backend */

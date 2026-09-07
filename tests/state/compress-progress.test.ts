@@ -46,7 +46,7 @@ const apiMocks = vi.hoisted(() => {
   };
 });
 
-vi.mock(import("../../src/lib/api/files"), async (importOriginal) => {
+vi.mock(import("../../src/lib/api/archive"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,

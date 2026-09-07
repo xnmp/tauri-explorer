@@ -3,7 +3,8 @@
  */
 
 import type { Command } from "../commands.svelte";
-import { writeTextFile, clipboardPasteImage } from "$lib/api/files";
+import { writeTextFile } from "$lib/api/files";
+import { clipboardPasteImage } from "$lib/api/clipboard-image";
 import { dialogStore } from "../dialogs.svelte";
 import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
@@ -96,7 +97,7 @@ export const fileCommands: Command[] = [
         if (target.kind === "directory") {
           explorer?.navigateTo(target.path);
         } else {
-          const { openFile } = await import("$lib/api/files");
+          const { openFile } = await import("$lib/api/open");
           const result = await openFile(target.path);
           if (result.ok) {
             // Opening a file marks its folder as worked-in for Recent ranking.

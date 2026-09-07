@@ -133,6 +133,10 @@ export function parentDir(path: string): string {
  */
 export function directoryKey(path: string): string {
   const norm = stripTrailingSlash(toForwardSlashes(path));
+  // The WSL host name is Windows syntax; its filesystem suffix is Linux and
+  // may contain distinct paths differing only by case. Never fold that suffix.
+  const wsl = norm.match(/^(\/\/(?:wsl\$|wsl\.localhost))(?=\/|$)/i);
+  if (wsl) return wsl[1].toLowerCase() + norm.slice(wsl[1].length);
   const isWindowsPath = /^[A-Za-z]:/.test(norm) || norm.startsWith("//");
   return isWindowsPath ? norm.toLowerCase() : norm;
 }

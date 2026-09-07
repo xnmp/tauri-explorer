@@ -41,8 +41,8 @@ describe("gitWarmer pane ownership", () => {
       debounceMs: 1,
     });
 
-    const releaseFirst = warmer.schedule("/repo/first");
-    const releaseSecond = warmer.schedule("/repo/second");
+    const releaseFirst = warmer.schedule("/repo/first", "first");
+    const releaseSecond = warmer.schedule("/repo/second", "second");
     await vi.advanceTimersByTimeAsync(1);
 
     releaseSecond();

@@ -8,7 +8,8 @@
   import Modal from "$lib/components/Modal.svelte";
   import "../plugin-dialog.css";
   import type { PluginJobs, PluginToast } from "$lib/plugins/api";
-  import { startNanoBananaJob, checkPathsExist } from "$lib/api/files";
+  import { startNanoBananaJob } from "$lib/api/plugin-jobs";
+import { checkPathsExist } from "$lib/api/files";
   import { parentDir, basename } from "$lib/domain/path";
   import { findAvailableFilename } from "$lib/domain/available-filename";
 
@@ -60,17 +61,12 @@
     if (!hasApiKey) return;
 
     submitting = true;
-    const result = await startNanoBananaJob(
-      sourcePath,
-      prompt.trim(),
-      outputDir,
-      outputFilename.trim(),
-      apiKey,
-      model,
+    const result = await jobs.accept(
+      { kind: "nano-banana", label: fileName, detail: prompt.trim() },
+      () => startNanoBananaJob(sourcePath, prompt.trim(), outputDir, outputFilename.trim(), apiKey, model),
     );
 
     if (result.ok) {
-      jobs.add(result.data, fileName, prompt.trim());
       toast.show(`Nano Banana job started: ${fileName}`, "info");
       onClose();
     } else {

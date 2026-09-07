@@ -10,6 +10,7 @@
  * points (the Keep provider, #143).
  */
 
+import { createOwnedRegistry } from "$lib/state/owned-registry";
 import type { DirectoryListing } from "$lib/domain/file";
 import { virtualScheme } from "$lib/domain/virtual-path";
 
@@ -18,18 +19,19 @@ export interface FsProvider {
   list(path: string): DirectoryListing | Promise<DirectoryListing>;
 }
 
-const providers = new Map<string, FsProvider>();
+const providers = createOwnedRegistry<FsProvider>();
 
 /**
  * Register a provider for `scheme`. Returns a disposer that unregisters it
  * (only if it is still the registered provider for that scheme).
  */
-export function registerFsProvider(scheme: string, provider: FsProvider): () => void {
+export function registerFsProvider(
+  scheme: string,
+  provider: FsProvider,
+  replace = true,
+): () => void {
   const key = scheme.toLowerCase();
-  providers.set(key, provider);
-  return () => {
-    if (providers.get(key) === provider) providers.delete(key);
-  };
+  return providers.register(key, provider, replace);
 }
 
 /** The provider matching `path`'s scheme, or null when none matches. */

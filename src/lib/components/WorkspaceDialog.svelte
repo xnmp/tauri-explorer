@@ -253,7 +253,6 @@
     font-size: var(--font-size-caption);
     cursor: pointer;
     border: 1px solid var(--control-stroke);
-    transition: all var(--transition-fast);
   }
 
   .btn-primary {
@@ -350,7 +349,6 @@
     color: var(--text-tertiary);
     cursor: pointer;
     font-size: 14px;
-    transition: all var(--transition-fast);
   }
 
   .icon-btn:hover {

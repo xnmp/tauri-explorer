@@ -456,7 +456,6 @@
     font-family: monospace;
     font-size: 12px;
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .option-btn:hover {
@@ -478,7 +477,7 @@
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: filter var(--transition-fast);
   }
 
   .search-btn:hover:not(:disabled) {

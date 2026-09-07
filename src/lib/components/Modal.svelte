@@ -16,7 +16,8 @@
 -->
 <script lang="ts">
   import "./modal.css";
-  import type { Snippet } from "svelte";
+  import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+  import { untrack, type Snippet } from "svelte";
 
   interface Props {
     open: boolean;
@@ -58,6 +59,10 @@
 
   let overlayRef = $state<HTMLElement | null>(null);
 
+  $effect(() => {
+    if (open) return untrack(() => modalOwnership.register(() => onClose()));
+  });
+
   // `:not([tabindex="-1"])` on every clause so an element opted out of the tab
   // order (e.g. a mouse-only affordance reachable another way) is skipped by the
   // trap too — matching native Tab behavior instead of just the [tabindex] rule.
@@ -72,6 +77,12 @@
       // offsetParent is null for display:none subtrees (e.g. inactive tabs)
       (el) => el.offsetParent !== null
     );
+  }
+
+  function canRestoreFocus(element: HTMLElement): boolean {
+    if (!element.isConnected || element.closest("[inert], [aria-hidden='true']")) return false;
+    if (element.matches(":disabled")) return false;
+    return element === document.body || element.offsetParent !== null;
   }
 
   /** Keep Tab inside the dialog: cycle through focusable elements. */
@@ -125,7 +136,13 @@
       }
     });
     return () => {
-      if (previous && document.contains(previous)) previous.focus();
+      if (previous && canRestoreFocus(previous)) {
+        previous.focus();
+      } else if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
+        // Let removal return focus to the document instead of retaining a
+        // hidden control that continues to claim keyboard input.
+        document.activeElement.blur();
+      }
     };
   });
 </script>

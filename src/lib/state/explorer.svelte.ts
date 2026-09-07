@@ -16,11 +16,13 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardHasImage, clipboardPasteImage, fetchDirectory } from "$lib/api/files";
+import { clipboardHasImage, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
@@ -41,13 +43,7 @@ import { createPaneMutations } from "./pane-mutations";
 import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
 import { broadcastFileChange } from "./file-events";
 
-interface ExplorerSeed {
-  currentPath: string;
-  entries: FileEntry[];
-  sortBy: SortField;
-  sortAscending: boolean;
-  viewMode: ViewMode;
-}
+import type { ExplorerSeed } from "$lib/domain/window-input";
 
 function createExplorerState(seed?: ExplorerSeed) {
   // Core per-pane state using $state rune
@@ -265,7 +261,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   /**
-   * Navigate to a directory.
+   * Navigate to a directory. Returns false on failed or superseded navigation.
    *
    * `autoEnterSingleSubdir` (default true) controls whether the "auto-enter
    * single subfolder" setting applies to this navigation. Breadcrumb/ancestor
@@ -305,6 +301,7 @@ function createExplorerState(seed?: ExplorerSeed) {
         toastStore.show(`Entered ${basename(resolved)} (skipped ${levels})`, "info");
       }
     }
+    return success;
   }
 
   /** Visible-entry filter matching `displayEntries` (hidden + manually-hidden
@@ -789,7 +786,8 @@ function createExplorerState(seed?: ExplorerSeed) {
       return millerLayersOverride ?? settingsStore.millerLayers;
     },
     setMillerLayers(n: number) {
-      millerLayersOverride = Math.max(0, Math.min(3, n));
+      const clamped = clampNumericSetting("millerLayers", n);
+      if (clamped !== undefined) millerLayersOverride = clamped;
     },
     toggleMillerColumns() {
       const on = (millerLayersOverride ?? settingsStore.millerLayers) > 0;
@@ -874,10 +872,11 @@ function createExplorerState(seed?: ExplorerSeed) {
     },
     // Cleanup
     destroy: async (): Promise<void> => {
-      watch.destroy();
       // Tear down the streaming listener and any in-flight listing,
       // otherwise each closed tab leaks a Tauri event listener.
-      await dirListing.cleanup();
+      const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup()]);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
     },
   };
 }

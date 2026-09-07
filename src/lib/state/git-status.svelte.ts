@@ -8,11 +8,7 @@
  * `git-status-changed` from the Rust watcher to refresh when files change.
  */
 
-import {
-  cancelGetGitStatus,
-  getGitStatus,
-  type GitFileStatus,
-} from "$lib/api/files";
+import { cancelGetGitStatus, getGitStatus, type GitFileStatus } from "$lib/api/git";
 import { subscribeGitChanges } from "./git-refresh";
 
 interface DirGitStatus {

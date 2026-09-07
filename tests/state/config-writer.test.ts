@@ -14,7 +14,7 @@ interface PendingWrite {
 
 const pendingWrites: PendingWrite[] = [];
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/config", () => ({
   writeConfigFile: vi.fn(
     (filename: string, data: string) =>
       new Promise((resolve) => {

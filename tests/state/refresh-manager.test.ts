@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
+import {
+  requestRefresh,
+  cancelPendingRefreshes,
+  refreshManagerRetention,
+} from "$lib/state/refresh-manager";
 
 describe("refresh-manager", () => {
   beforeEach(() => {
@@ -144,5 +148,43 @@ describe("refresh-manager", () => {
     requestRefresh(refreshB, "/home/user/pictures");
     vi.advanceTimersByTime(150);
     expect(refreshB).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds settled directory metadata over a long session and fully clears on teardown", () => {
+    const refresh = vi.fn();
+    // Churn 5,000 distinct directories in bursts larger than the retention cap.
+    // Draining 5,000 same-deadline fake timers at once spends seconds in the
+    // timer harness and times out under CI contention; this is a retention
+    // contract, not a benchmark of the fake clock's timer lookup algorithm.
+    const burst = 1250;
+    for (let start = 0; start < 5000; start += burst) {
+      for (let index = start; index < start + burst; index++) {
+        requestRefresh(refresh, `/long-session/${index}`);
+      }
+      expect(refreshManagerRetention().pending).toBe(burst);
+      expect(vi.getTimerCount()).toBe(burst);
+      vi.advanceTimersByTime(150);
+      expect(refresh).toHaveBeenCalledTimes(start + burst);
+      expect(refreshManagerRetention().lastRefresh).toBe(1024);
+    }
+
+    expect(refresh).toHaveBeenCalledTimes(5000);
+    expect(refreshManagerRetention()).toEqual({
+      pending: 0,
+      lastRefresh: 1024,
+      inFlight: 0,
+      baselines: 0,
+      intervals: 0,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    cancelPendingRefreshes();
+    expect(refreshManagerRetention()).toEqual({
+      pending: 0,
+      lastRefresh: 0,
+      inFlight: 0,
+      baselines: 0,
+      intervals: 0,
+    });
   });
 });

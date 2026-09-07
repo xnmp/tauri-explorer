@@ -8,12 +8,14 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fetchDirectory, getHomeDirectory, pickerRespond } from "$lib/api/files";
+  import { fetchDirectory } from "$lib/api/files";
+import { getHomeDirectory } from "$lib/api/environment";
+import { pickerRespond } from "$lib/api/system";
   import type { FileEntry } from "$lib/domain/file";
   import FileIcon from "./FileIcon.svelte";
   import PickerQuickOpen from "./PickerQuickOpen.svelte";
   import { joinPath, parentDir } from "$lib/domain/path";
-  import type { SearchResult } from "$lib/api/files";
+  import type { SearchResult } from "$lib/api/search";
 
   export interface PickerInfo {
     mode: "open" | "save";

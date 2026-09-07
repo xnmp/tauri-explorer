@@ -12,12 +12,12 @@
   import { getScmStore } from "$lib/state/scm.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { gitInit, gitAddToGitignore, gitArchiveUntracked, gitTrashUntracked } from "$lib/api/files";
+  import { gitInit, gitAddToGitignore, gitArchiveUntracked, gitTrashUntracked } from "$lib/api/git";
   import { toastStore } from "$lib/state/toast.svelte";
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { showFileHistoryInPane } from "$lib/state/git-graph-file-history";
-  import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
+  import type { GitFileEntry, GitStatusCode } from "$lib/api/git";
   import { gitOpStateLabel } from "$lib/domain/git";
   import Modal from "./Modal.svelte";
 
@@ -1439,8 +1439,8 @@
   }
 
   .row-btn.destructive:hover {
-    color: var(--error, #e5534b);
-    background: color-mix(in srgb, var(--error, #e5534b) 15%, transparent);
+    color: var(--system-critical);
+    background: color-mix(in srgb, var(--system-critical) 15%, transparent);
   }
 
   .loading-state {

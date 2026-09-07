@@ -5,21 +5,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  renameEntry,
-  deleteEntry,
-  deleteEntryPermanent,
-  copyEntry,
-  moveEntry,
-  openFile,
-  openFileWith,
-  readTextFile,
-  createDirectory,
-  createSymlink,
-  compressToZip,
-  extractArchive,
-  getThumbnailData,
-} from "$lib/api/files";
+import { renameEntry, deleteEntry, deleteEntryPermanent, copyEntry, moveEntry, readTextFile, createDirectory, createSymlink } from "$lib/api/files";
+import { openFile, openFileWith } from "$lib/api/open";
+import { compressToZip, extractArchive } from "$lib/api/archive";
+import { getThumbnailData } from "$lib/api/thumbnails";
 
 const V = "demo://notes/a.txt";
 

@@ -5,51 +5,14 @@
   refs decoration chips, summary, author and date. Pages in more commits as
   the list nears its end.
 -->
-<script lang="ts" module>
-  import { gitCommitFiles as gitCommitFilesApi, type CommitFile as ApiCommitFile } from "$lib/api/git-log";
-  // Snapshot cache lives in the state layer now (#433 / arch Finding 7) so the
-  // git warmer no longer imports from this component.
-  import {
-    PAGE_SIZE,
-    snapshotKey,
-    getSnapshot,
-    cacheSnapshot,
-    fetchPage0Snapshot,
-  } from "$lib/state/git-graph-cache";
-
-  /**
-   * Per-commit changed-file lists (#431). A commit's file list is immutable
-   * (fixed by its OID), so re-clicking a commit — or reopening one after
-   * scrolling away — should never re-invoke the backend diff. Bounded LRU keyed
-   * by repo+OID; the uncommitted row is served from the shared summary cache
-   * instead (its contents change) and never enters here.
-   */
-  const commitFilesCache = new Map<string, ApiCommitFile[]>();
-  const COMMIT_FILES_MAX = 50;
-
-  async function cachedCommitFiles(repoPath: string, oid: string): Promise<ApiCommitFile[]> {
-    const key = `${repoPath}\0${oid}`;
-    const hit = commitFilesCache.get(key);
-    if (hit) {
-      commitFilesCache.delete(key); // refresh LRU position
-      commitFilesCache.set(key, hit);
-      return hit;
-    }
-    const files = await gitCommitFilesApi(repoPath, oid);
-    commitFilesCache.set(key, files);
-    if (commitFilesCache.size > COMMIT_FILES_MAX) {
-      const oldest = commitFilesCache.keys().next().value;
-      if (oldest !== undefined) commitFilesCache.delete(oldest);
-    }
-    return files;
-  }
-</script>
-
 <script lang="ts">
+  import { createGitGraphBranches } from "$lib/state/git-graph-branches.svelte";
+  import { createGitPrSession, type PrSnapshot } from "$lib/state/git-pr-session.svelte";
+  import type { GraphCommit as CommitInfo } from "$lib/state/git-graph-cache";
+  import { createGitGraphQuerySession } from "$lib/state/git-graph-query.svelte";
+  import { createGitGraphDetail, UNCOMMITTED_OID, type DetailFile, type DetailSelectionToken } from "$lib/state/git-graph-detail.svelte";
+  import { createGitRepoWatch } from "$lib/state/git-repo-watch";
   import {
-    gitCommitFileDiff,
-    gitCompareCommitFiles,
-    gitCompareCommitFileDiff,
     gitCheckout,
     gitCreateBranch,
     gitCreateTag,
@@ -65,7 +28,6 @@
     gitPull,
     cancelGitNetworkOperation,
     gitBranchBehindUpstream,
-    gitBranchAuthors,
     gitDeleteBranch,
     gitDeleteTag,
     gitRenameBranch,
@@ -73,28 +35,15 @@
     gitUndo,
     gitCheckoutTracking,
     gitSyncLocalBranches,
-    gitLog,
-    gitOpenPrs,
-    gitFailedCiChecks,
-    gitFailedCiCheckLog,
-    type CommitInfo,
-    type RefInfo,
-    type CommitFile,
     type ResetMode,
-    type OpenPr,
-    type FailedCiCheck,
-    type FailedCiCheckLog,
   } from "$lib/api/git-log";
   import {
-    fetchGitSummary,
     releaseGitSummaryConsumer,
   } from "$lib/state/git-summary-cache";
-  import { assignLayout, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, baseUpdateMergeOids, branchPath, detachedHeadIndicator, groupRefChips, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, shouldMuteBaseUpdateMerge, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import {
-    countGraphWalkCommits,
     cancelActiveGitNetworkOperation,
-    createReloader,
     registerGraphRefresher,
     runGitNetworkOperation,
     shouldReloadGraphForChange,
@@ -105,30 +54,18 @@
   import { MAX_GIT_PALETTE_COMMIT_TARGETS, registerGitPaletteTargets } from "$lib/state/git-palette";
   import { registerGraphFileHistoryHandler } from "$lib/state/git-graph-file-history";
   import { clientToFixed } from "$lib/domain/zoom";
-  import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { compactRelativeTimeToday } from "$lib/domain/git";
-  import {
-    acceptsDetailLoad,
-    closeCommitComparison,
-    createCommitComparisonState,
-    exitCommitComparison,
-    selectComparisonCommit,
-    startCommitComparison,
-  } from "$lib/domain/git-graph-comparison";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
-  import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
   import { directoryKey, splitPathForDisplay } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { gitDiff, gitStage, gitUnstage, gitCommit } from "$lib/api/files";
+  import { gitStage, gitUnstage, gitCommit } from "$lib/api/git";
   import {
-    buildStageFiles,
     groupStageFiles,
     stagedCountOf,
     conflictCountOf,
     canCommit,
     commitButtonLabel,
-    type StageSection,
     type StageFile,
   } from "$lib/domain/commit-panel";
   import { getCommitPanelStore } from "$lib/state/commit-panel.svelte";
@@ -163,42 +100,25 @@
 
   const ROW_HEIGHT = 28;
   const LANE_WIDTH = 14;
-  // PAGE_SIZE lives in the module script (shared with warmGraphSnapshot).
-  const UNCOMMITTED = "*";
+  const UNCOMMITTED = UNCOMMITTED_OID;
 
-  let commits = $state<CommitInfo[]>([]);
-  let refs = $state<Record<string, RefInfo[]>>({});
   // Open GitHub PRs keyed by head branch (#448). Fetched alongside every
   // graph (re)load — piggybacking the existing refresh machine rather than
   // adding a private timer — and left empty (never surfaced as an error) for
   // repos without a GitHub remote, offline machines, or rate-limit failures;
   // the backend does the degrading.
-  let prsByBranch = $state<Map<string, OpenPr>>(new Map());
-  let hasMore = $state(false);
-  // Resume cursor for the next page (#431). Points at the last real commit
-  // loaded; passed to `gitLog` so deeper pages resume instead of skip-walking.
-  let nextCursor = $state<string | null>(null);
-  let loading = $state(false);
-  // Distinct from `loading` (initial/full reload → "Loading history…"): true
-  // only while a scroll-triggered page append is in flight, so a small spinner
-  // row shows at the list bottom during infinite scroll (#433).
-  let loadingMore = $state(false);
-  let error = $state<string | null>(null);
-  // The importable domain state machine owns commit/comparison transitions and
-  // request invalidation; this component only performs the resulting IPC.
-  let comparisonState = $state(createCommitComparisonState<CommitInfo>());
-  const selected = $derived(comparisonState.selected);
-  const comparisonFirst = $derived(comparisonState.first);
-  const comparison = $derived(comparisonState.comparison);
+  const branchSession = createGitGraphBranches(untrack(() => repoPath));
+  onDestroy(() => branchSession.dispose());
+  const prSession = createGitPrSession(untrack(() => repoPath));
+  onDestroy(() => prSession.dispose());
+  const prsByBranch = $derived(prSession.prsByBranch);
+  const detailSession = createGitGraphDetail(untrack(() => repoPath), summaryConsumerId);
+  onDestroy(() => detailSession.dispose());
+  const selected = $derived(detailSession.selected);
+  const comparisonFirst = $derived(detailSession.comparisonFirst);
+  const comparison = $derived(detailSession.comparison);
+  const selectedFiles = $derived(detailSession.files);
   let hoveredTraceOid = $state<string | null>(null);
-  /** File rows in the expanded details. `staged`/`section` are set only for
-   *  the synthetic uncommitted row, where they pick the right working-tree
-   *  diff and drive the stage/unstage affordances (#466). */
-  interface DetailFile extends CommitFile {
-    staged?: boolean;
-    section?: StageSection;
-  }
-  let selectedFiles = $state<DetailFile[]>([]);
   /** Ephemeral commit-message editor for the uncommitted node (#466). The
    *  state machine (transitions) lives in `domain/commit-panel`; the live
    *  instance lives in a per-pane rune store so its in-flight commit guard
@@ -207,16 +127,6 @@
   const commitPanelStore = $derived(
     getCommitPanelStore(paneId ?? windowTabsManager.activePaneId ?? "default"),
   );
-  /** Working-tree change count → synthetic top row (reference behavior). */
-  let workingChanges = $state(0);
-  let headOid = $state<string | null>(null);
-  // Checked-out branch (HEAD's symbolic target); highlights only that chip (#433).
-  let headBranch = $state<string | null>(null);
-  // Detached HEAD (#524): a MODE, not an event — surfaced as a standing badge
-  // for as long as it lasts, so it survives the checkout menu closing. Read
-  // from the log payload, never inferred from `headBranch === null` (also null
-  // on an unborn branch).
-  let detached = $state(false);
   // Graph-wide commit filter (#529). Kept ephemeral: unlike branch curation,
   // a one-off path lookup should not silently survive reopening the graph.
   let filePathFilter = $state("");
@@ -233,7 +143,6 @@
     }, 200);
   }
 
-  const detachedIndicator = $derived(detachedHeadIndicator(detached, headOid));
 
   // Branch subset filter (#342): null = all branches. Persisted per repo so a
   // curated view (e.g. just dev + main) survives reopening the graph.
@@ -273,34 +182,38 @@
     closePrDetail();
   }
 
-  // Paint the last-known graph immediately on remount (#255); the load
-  // effect below still refreshes from git in the background. The cache is
-  // keyed by repo + filter + local-only (#416), so a filtered remount paints
-  // its own filtered snapshot — never another filter's rows (#342, #381).
-  let hasCachedSnapshot = false;
-  {
-    // untrack: the view is {#key}ed on repoPath, so the initial values are
-    // the right ones for this instance's lifetime.
-    const cached = getSnapshot(
-      untrack(() => snapshotKey(repoPath, branchFilter, localOnly, hideRemoteOnly)),
-    );
-    if (cached) {
-      hasCachedSnapshot = true;
-      commits = cached.commits;
-      refs = cached.refs;
-      hasMore = cached.hasMore;
-      headOid = cached.headOid;
-      headBranch = cached.headBranch;
-      detached = cached.detached === true;
-      workingChanges = cached.workingChanges;
-      nextCursor = cached.nextCursor;
-    }
-  }
+  // This owner starts from the shared page-zero snapshot synchronously. Only
+  // a cold view starts a history read; watcher invalidation governs remounts.
+  const querySession = createGitGraphQuerySession({
+    repoPath: untrack(() => repoPath),
+    summaryConsumerId,
+    readQuery: () => untrack(() => ({ branches: branchFilter, localOnly, hideRemoteOnly, filePath: filePathFilter })),
+    readBranches: () => untrack(() => branchSession.branches),
+    refreshBranches: branchSession.refreshForQuery,
+    onReload: () => { void prSession.reloadBadges(); },
+    onLoaded: branchSession.invalidate,
+  });
+  let hasCachedSnapshot = querySession.seeded;
+  onDestroy(() => querySession.dispose());
+
+  const commits = $derived(querySession.commits);
+  const refs = $derived(querySession.refs);
+  const hasMore = $derived(querySession.hasMore);
+  const loading = $derived(querySession.loading);
+  // Pagination has its own spinner while the initial summary can still load.
+  const loadingMore = $derived(querySession.loadingMore);
+  const error = $derived(querySession.error);
+  // Working changes add a synthetic top row; detached HEAD is an explicit
+  // backend mode, not inferred from a missing branch on an unborn repository.
+  const workingChanges = $derived(querySession.workingChanges);
+  const headOid = $derived(querySession.headOid);
+  const headBranch = $derived(querySession.headBranch);
+  const detached = $derived(querySession.detached);
+  const detachedIndicator = $derived(detachedHeadIndicator(detached, headOid));
 
   // Inline per-file diff (#221, VSCode Git Graph parity): one open at a time.
-  let openDiffPath = $state<string | null>(null);
-  let openDiff = $state<ParsedDiff | null>(null);
-  let diffLoading = $state(false);
+  const openDiff = $derived(detailSession.openDiff);
+  const diffLoading = $derived(detailSession.diffLoading);
   // Measured height of the inline details block; stretches the graph SVG so
   // rows below the expansion stay aligned with their vertices.
   let detailsHeight = $state(0);
@@ -309,130 +222,37 @@
   // alongside commit details. Anchored to a commit row's oid so it reuses the
   // same RowExpand stretch. Only one expansion (commit OR PR) is open at a
   // time, which keeps the RowExpand derivation single-valued.
-  let prDetail = $state<{ oid: string; pr: OpenPr } | null>(null);
+  const prDetail = $derived(prSession.prDetail);
   let prDetailHeight = $state(0);
-  let failedCiChecks = $state<{ prNumber: number; checks: FailedCiCheck[]; error: string | null } | null>(null);
-  let failedCiChecksLoading = $state(false);
-  let ciCheckLog = $state<{ prNumber: number; check: FailedCiCheck; result: FailedCiCheckLog | null; error: string | null } | null>(null);
-  let ciCheckLogRequest = 0;
-
-  function resetCiDetail(): void {
-    failedCiChecks = null;
-    failedCiChecksLoading = false;
-    ciCheckLogRequest += 1;
-    ciCheckLog = null;
-  }
+  const failedCiChecks = $derived(prSession.failedCiChecks);
+  const failedCiChecksLoading = $derived(prSession.failedCiChecksLoading);
+  const ciCheckLog = $derived(prSession.ciCheckLog);
+  const openFailedCiCheckLog = prSession.openCheckLog;
 
   function closePrDetail(): void {
-    prDetail = null;
+    prSession.closeDetail();
     prDetailHeight = 0;
-    resetCiDetail();
-  }
-
-  async function loadFailedCiChecks(pr: OpenPr): Promise<void> {
-    failedCiChecksLoading = true;
-    failedCiChecks = null;
-    try {
-      const checks = await gitFailedCiChecks(repoPath, pr.number);
-      if (prDetail?.pr.number === pr.number) failedCiChecks = { prNumber: pr.number, checks, error: null };
-    } catch (error) {
-      if (prDetail?.pr.number === pr.number) {
-        failedCiChecks = { prNumber: pr.number, checks: [], error: error instanceof Error ? error.message : "Could not load failed checks" };
-      }
-    } finally {
-      if (prDetail?.pr.number === pr.number) failedCiChecksLoading = false;
-    }
-  }
-
-  async function openFailedCiCheckLog(pr: OpenPr, check: FailedCiCheck): Promise<void> {
-    const request = ++ciCheckLogRequest;
-    ciCheckLog = { prNumber: pr.number, check, result: null, error: null };
-    try {
-      const result = await gitFailedCiCheckLog(repoPath, check);
-      if (ciCheckLogRequest === request) ciCheckLog = { prNumber: pr.number, check, result, error: null };
-    } catch (error) {
-      if (ciCheckLogRequest === request) {
-        ciCheckLog = { prNumber: pr.number, check, result: null, error: error instanceof Error ? error.message : "Could not load CI check log" };
-      }
-    }
   }
 
   function closeDetails(): void {
-    comparisonState = closeCommitComparison(comparisonState).state;
-    selectedFiles = [];
-    // Ephemeral editor: a fresh open starts blank (mirrors keifu's
-    // commit_editor) — but NOT while a commit is in flight, so close+reopen
-    // can't drop the in-flight guard and let a second commit start (#466).
+    detailSession.close();
+    // Keep the pane-owned in-flight commit guard across close/reopen.
     commitPanelStore.resetIfIdle();
-    openDiffPath = null;
-    openDiff = null;
     detailsHeight = 0;
   }
 
   async function selectCommit(commit: CommitInfo): Promise<void> {
-    // Opening commit details closes any open PR dropdown — one expansion at a
-    // time (#459).
     closePrDetail();
-    const transition = selectComparisonCommit(comparisonState, commit, UNCOMMITTED);
-    comparisonState = transition.state;
-    if (!transition.clearFiles) return;
-    selectedFiles = [];
-    openDiffPath = null;
-    openDiff = null;
-    if (!transition.load) {
+    const pending = detailSession.select(commit);
+    if (!detailSession.selected) {
       commitPanelStore.resetIfIdle();
       detailsHeight = 0;
-      return;
     }
-    try {
-      if (transition.load.kind === "comparison") {
-        const files = await gitCompareCommitFiles(repoPath, transition.load.older.oid, transition.load.newer.oid);
-        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
-      } else if (transition.load.commit.oid === UNCOMMITTED) {
-        // Working-tree changes: group the SCM summary buckets by stage status
-        // (merge / staged / unstaged / untracked), remembering which side of
-        // the index each file sits on for the diff and the stage/unstage
-        // affordance (#466). Served from the shared summary cache (#431) — the
-        // graph's own reload just scanned this, so selecting the row reuses it
-        // instead of re-scanning.
-        const res = await fetchGitSummary(repoPath, { consumerId: summaryConsumerId });
-        if (!res.ok) throw new Error(res.error);
-        if (acceptsDetailLoad(comparisonState, transition.load)) {
-          selectedFiles = buildStageFiles(res.data);
-        }
-      } else {
-        // Cached per OID (#431): re-clicking or re-selecting a commit is instant.
-        const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
-        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
-      }
-    } catch {
-      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
-    }
+    await pending;
   }
 
-  function beginComparison(): void {
-    const transition = startCommitComparison(comparisonState, UNCOMMITTED);
-    comparisonState = transition.state;
-    if (!transition.clearFiles) return;
-    selectedFiles = [];
-    openDiffPath = null;
-    openDiff = null;
-  }
-
-  async function exitComparison(): Promise<void> {
-    const transition = exitCommitComparison(comparisonState, UNCOMMITTED);
-    comparisonState = transition.state;
-    selectedFiles = [];
-    openDiffPath = null;
-    openDiff = null;
-    if (!transition.load || transition.load.kind !== "normal") return;
-    try {
-      const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
-      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
-    } catch {
-      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
-    }
-  }
+  const beginComparison = detailSession.beginComparison;
+  const exitComparison = detailSession.exitComparison;
 
   /** Expand/collapse one file's diff below its row. */
   async function toggleFileDiff(file: DetailFile): Promise<void> {
@@ -443,14 +263,12 @@
         // Working-tree diffs go through the SCM store's own loader, which
         // needs its repoRoot on THIS repo; otherwise keep the inline diff.
         if (scmStore.repoRoot && directoryKey(scmStore.repoRoot) === directoryKey(repoPath)) {
-          openDiffPath = null;
-          openDiff = null;
+          detailSession.closeDiff();
           scmStore.openDiff(file.path, !!file.staged);
           return;
         }
       } else {
-        openDiffPath = null;
-        openDiff = null;
+        detailSession.closeDiff();
         scmStore.openCommitDiff(
           repoPath,
           forPreview.oid,
@@ -460,38 +278,8 @@
         return;
       }
     }
-    if (openDiffPath === file.path) {
-      openDiffPath = null;
-      openDiff = null;
-      return;
-    }
-    const forCommit = selected;
-    if (!forCommit) return;
-    openDiffPath = file.path;
-    openDiff = null;
-    diffLoading = true;
-    try {
-      const text =
-        forCommit.oid === UNCOMMITTED
-          ? await gitDiff(repoPath, file.path, { staged: !!file.staged }).then((r) => {
-              if (!r.ok) throw new Error(r.error);
-              return r.data;
-            })
-          : comparison
-            ? await gitCompareCommitFileDiff(repoPath, comparison.older.oid, comparison.newer.oid, file.path)
-            : await gitCommitFileDiff(repoPath, forCommit.oid, file.path);
-      // Ignore a late response if the user moved on.
-      if (openDiffPath === file.path && selected?.oid === forCommit.oid) {
-        openDiff = parseUnifiedDiff(text);
-      }
-    } catch (err) {
-      if (openDiffPath === file.path) {
-        toastStore.error(err instanceof Error ? err.message : String(err));
-        openDiffPath = null;
-      }
-    } finally {
-      diffLoading = false;
-    }
+    const error = await detailSession.toggleDiff(file);
+    if (error) toastStore.error(error);
   }
 
   // ── Inline commit panel on the uncommitted node (#466) ─────────────────────
@@ -500,9 +288,12 @@
   // backend commands and route refresh through the standard policy — reload()
   // for the graph, notifyLocalGitChange() for badges + an open SCM panel — so
   // no private refresh stack lives here (the cause of #431/#432).
-  const stageGroups = $derived(groupStageFiles(selectedFiles as StageFile[]));
-  const uncommittedStagedCount = $derived(stagedCountOf(selectedFiles as StageFile[]));
-  const uncommittedConflictCount = $derived(conflictCountOf(selectedFiles as StageFile[]));
+  const stageFiles = $derived(selectedFiles.filter(
+    (file): file is StageFile => file.section !== undefined && file.staged !== undefined,
+  ));
+  const stageGroups = $derived(groupStageFiles(stageFiles));
+  const uncommittedStagedCount = $derived(stagedCountOf(stageFiles));
+  const uncommittedConflictCount = $derived(conflictCountOf(stageFiles));
   const commitEnabled = $derived(
     canCommit({
       message: commitPanelStore.message,
@@ -511,17 +302,6 @@
     }),
   );
 
-  /** Re-scan the working tree and rebuild the grouped file list in place
-   *  (after a stage/unstage/commit). Forces past the summary-cache TTL so the
-   *  post-mutation state is observed. */
-  async function refreshUncommittedFiles(): Promise<void> {
-    const res = await fetchGitSummary(repoPath, {
-      force: true,
-      consumerId: summaryConsumerId,
-    });
-    selectedFiles = res.ok ? buildStageFiles(res.data) : [];
-  }
-
   /** After a stage/unstage: rebuild the panel's file list, then reload() so
    *  the synthetic row's "Uncommitted Changes (N)" count is recomputed from
    *  the canonical summary. A partially-staged file is double-counted in that
@@ -529,8 +309,8 @@
    *  flips the count by one — without this reload the header would go stale
    *  until a watcher event (#466). Routes through the same refresh channels as
    *  every other graph action; no private refresh machinery. */
-  async function afterStageChange(): Promise<void> {
-    await refreshUncommittedFiles();
+  async function afterStageChange(selection: DetailSelectionToken | null): Promise<void> {
+    await detailSession.refreshUncommittedFiles(selection);
     await reload();
     notifyLocalGitChange(repoPath);
   }
@@ -538,23 +318,25 @@
   async function stagePaths(paths: string[]): Promise<void> {
     const unique = [...new Set(paths)];
     if (unique.length === 0) return;
+    const selection = detailSession.captureSelection();
     const r = await gitStage(repoPath, unique);
     if (!r.ok) {
       toastStore.error(r.error);
       return;
     }
-    await afterStageChange();
+    await afterStageChange(selection);
   }
 
   async function unstagePaths(paths: string[]): Promise<void> {
     const unique = [...new Set(paths)];
     if (unique.length === 0) return;
+    const selection = detailSession.captureSelection();
     const r = await gitUnstage(repoPath, unique);
     if (!r.ok) {
       toastStore.error(r.error);
       return;
     }
-    await afterStageChange();
+    await afterStageChange(selection);
   }
 
   async function commitUncommitted(): Promise<void> {
@@ -564,6 +346,7 @@
     // running for this pane, so Escape + reopen mid-flight can't start a second
     // concurrent gitCommit (which, absent the backend guard, could be empty).
     if (!commitPanelStore.begin()) return;
+    const selection = detailSession.captureSelection();
     const r = await gitCommit(repoPath, message);
     if (!r.ok) {
       // Preserve the typed message so the user can fix and retry (#466).
@@ -577,13 +360,13 @@
     // working-changes count), rebuild the still-open panel's file list, and
     // announce the change so badges + an open SCM panel update (#102, #432).
     await reload();
-    await refreshUncommittedFiles();
+    const refreshed = await detailSession.refreshUncommittedFiles(selection);
     notifyLocalGitChange(repoPath);
     if (scmStore.repoRoot && directoryKey(scmStore.repoRoot) === directoryKey(repoPath)) {
       void scmStore.refresh();
     }
     // Working tree now clean → the synthetic row is gone; close the stale panel.
-    if (selectedFiles.length === 0) closeDetails();
+    if (refreshed && selectedFiles.length === 0) closeDetails();
   }
 
   function onCommitBoxKeydown(event: KeyboardEvent): void {
@@ -601,7 +384,7 @@
 
   /** Rows fed to layout/render: a synthetic uncommitted-changes row on top
    *  (when the working tree is dirty and HEAD is loaded), then the page. */
-  const displayCommits: CommitInfo[] = $derived(
+  const displayCommits: readonly CommitInfo[] = $derived(
     workingChanges > 0 && headOid && !filePathFilter.trim()
       ? [
           {
@@ -857,86 +640,11 @@
       : undefined,
   );
 
-  // ── Unified refresh (#432) ─────────────────────────────────────────────────
-  // The graph has ONE reload entry point. Previously three uncoordinated
-  // triggers (repo/filter effect, watcher subscription, and each mutating
-  // action's own loadPage) raced, and a watcher refresh arriving mid-load was
-  // silently dropped — the structural cause of "pull completes but the graph
-  // doesn't update". Now a generation counter discards stale results and a
-  // dirty flag re-runs a request that arrived while a load was in flight, so a
-  // refresh is never lost. The state-layer reloader owns the generation and
-  // dirty-flag machine so its concurrency contract is directly testable.
-
-  /** PR badges (#448): fetched alongside every reload, never blocking the
-   *  commit-list paint. `repo` is captured by the caller so a repoPath
-   *  change mid-flight can't clobber a newer repo's badges with a stale
-   *  response. Errors never surface here — `gitOpenPrs` itself resolves to
-   *  `[]` for every offline/no-remote/rate-limit condition. */
-  async function loadPrs(repo: string): Promise<void> {
-    try {
-      const prs = await gitOpenPrs(repo);
-      if (repo === repoPath) prsByBranch = indexPrsByBranch(prs);
-    } catch {
-      if (repo === repoPath) prsByBranch = new Map();
-    }
-  }
-
-  const reloader = createReloader(async ({ isCurrent }) => {
-    // Captured once so a mid-flight filter change can't mix pages. Every
-    // page-0 load is cached under its own repo+filter key (#416), so
-    // re-entering the same view — filtered or not — paints instantly.
-    const selection = untrack(() => branchFilter);
-    const local = untrack(() => localOnly);
-    const hideRemotes = untrack(() => hideRemoteOnly);
-    const filePath = untrack(() => filePathFilter.trim());
-    // Cache under the RAW selection + toggles: the excluded set below depends
-    // on the lazily-loaded branch list, so keying on it would let a pre-load
-    // remount paint the unfiltered variant's rows (#416).
-    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes, filePath);
-    loading = true;
-    error = null;
-    void loadPrs(repoPath);
-    // Which refs are remote-only is only knowable from the branch list, which
-    // the popover loads lazily — refresh it here so a persisted toggle applies
-    // on the first paint too, and stays right after refs move (#515).
-    if (hideRemotes) await loadBranchList();
-    const { branches: filter, excludeBranches } = branchWalkQuery(
-      untrack(() => branchList),
-      selection,
-      hideRemotes,
-    );
-    try {
-      // Same page-0 fetch used by the background warm (#287). The commit list
-      // paints as soon as the log arrives; the working-changes count (a full
-      // status scan, slow on big working trees) fills in after (#367). Every
-      // write is guarded on `gen` so a stale in-flight load can't clobber a
-      // newer one's results.
-      const snapshot = await fetchPage0Snapshot(repoPath, filter, (partial) => {
-        if (!isCurrent()) return;
-        commits = partial.commits;
-        refs = partial.refs;
-        hasMore = partial.hasMore;
-        headOid = partial.headOid;
-        headBranch = partial.headBranch;
-        detached = partial.detached === true;
-        nextCursor = partial.nextCursor;
-        loading = false;
-      }, local, excludeBranches, filePath, summaryConsumerId);
-      if (!isCurrent()) return;
-      workingChanges = snapshot.workingChanges;
-      cacheSnapshot(cacheKey, snapshot);
-      // Branch list / author map may be stale after a reload (refs moved on a
-      // pull, F5 fetch, or local action). Invalidate so the next popover open
-      // refetches lazily (#431); keep the current values visible until then.
-      branchDataLoaded = false;
-    } catch (err) {
-      if (isCurrent()) error = err instanceof Error ? err.message : String(err);
-    } finally {
-      if (isCurrent()) loading = false;
-    }
-  });
-
-  const reload = reloader.reload;
+  // Every watcher, filter and action refresh enters the query owner's shared
+  // reloader. Pagination extends the mounted history without replacing its
+  // retained page-zero snapshot or adding a separate refresh policy.
+  const reload = querySession.reload;
+  const loadMore = querySession.loadMore;
 
   /** Apply a file-history request from the SCM panel. Keeping the filter
    *  component-local preserves #529's ephemeral graph-search behaviour. */
@@ -956,91 +664,6 @@
     return registerGraphFileHistoryHandler(paneId, showFileHistory);
   });
 
-  /** Append the next page of history (incremental scroll). Distinct from
-   *  `reload()`: it never resets the head of the list, so it doesn't race the
-   *  unified refresh. */
-  /** Cursor that resumes AFTER a cached slice: its last real (non-stash)
-   *  commit. Keeps the cached snapshot's cursor consistent with its rows so a
-   *  remount resumes gap-free (#431). */
-  function cursorForSlice(slice: CommitInfo[]): string | null {
-    for (let i = slice.length - 1; i >= 0; i--) {
-      if (!slice[i].stash) return slice[i].oid;
-    }
-    return null;
-  }
-
-  async function loadMore(): Promise<void> {
-    const selection = untrack(() => branchFilter);
-    const local = untrack(() => localOnly);
-    const hideRemotes = untrack(() => hideRemoteOnly);
-    const filePath = untrack(() => filePathFilter.trim());
-    const generation = reloader.generation;
-    const queryIsCurrent = (): boolean =>
-      generation === reloader.generation &&
-      selection === untrack(() => branchFilter) &&
-      local === untrack(() => localOnly) &&
-      hideRemotes === untrack(() => hideRemoteOnly) &&
-      filePath === untrack(() => filePathFilter.trim());
-    // `reload()` refreshed `branchList` already when the toggle is on.
-    const { branches: filter, excludeBranches } = branchWalkQuery(
-      untrack(() => branchList),
-      selection,
-      hideRemotes,
-    );
-    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes, filePath);
-    loading = true;
-    loadingMore = true;
-    error = null;
-    try {
-      // Cursor resume (#431) for unfiltered / local-only views: gap-free and
-      // immune to woven stash rows that a numeric skip miscounts (#432).
-      // Filtered queries keep the numeric skip (real-commit count) path — the
-      // cursor is keyed to the unfiltered walk. Skip by the number of REAL
-      // commits, never commits.length (woven stash rows aren't walk steps).
-      // An exclusion changes the walk just like a selection does, so it also
-      // rules out the cursor (which is keyed to the unfiltered walk) (#515).
-      const useCursor =
-        filter === null && excludeBranches === null && !filePath && nextCursor !== null;
-      const page = await gitLog(repoPath, {
-        limit: PAGE_SIZE,
-        ...(useCursor
-          ? { cursor: nextCursor as string }
-          : { skip: countGraphWalkCommits(commits) }),
-        ...(filter ? { branches: filter } : {}),
-        ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
-        ...(local ? { local_only: true } : {}),
-        ...(filePath ? { file_path: filePath } : {}),
-      });
-      // A path/branch query can change while a deeper page is in flight. The
-      // page belongs to the captured walk and must never append into the new
-      // result set (or overwrite its cache) after that change.
-      if (!queryIsCurrent()) return;
-      commits = [...commits, ...page.commits];
-      refs = { ...refs, ...page.refs };
-      hasMore = page.has_more;
-      nextCursor = page.next_cursor;
-      // Snapshot page 0 for instant remount paint (#255) — deliberately not
-      // the full paged history, which can grow unbounded. The stored cursor
-      // matches the stored slice so a remount resumes without a gap.
-      const slice = commits.slice(0, PAGE_SIZE);
-      cacheSnapshot(cacheKey, {
-        commits: slice,
-        refs,
-        hasMore: hasMore || commits.length > PAGE_SIZE,
-        headOid,
-        headBranch,
-        detached,
-        workingChanges,
-        nextCursor: cursorForSlice(slice),
-      });
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    } finally {
-      if (queryIsCurrent()) loading = false;
-      loadingMore = false;
-    }
-  }
-
   // Genuine side effect (IPC) keyed on the repo this tab shows and the
   // active branch filter; reload reads the filter via untrack, so the
   // explicit reads here are the only dependencies.
@@ -1055,7 +678,7 @@
     // do not immediately start the same full history walk again.
     if (hasCachedSnapshot) {
       hasCachedSnapshot = false;
-      void loadPrs(repoPath);
+      void prSession.reloadBadges();
       return;
     }
     untrack(() => void reload());
@@ -1073,7 +696,8 @@
     const repo = repoPath;
     let disposed = false;
     let unsub: (() => void) | undefined;
-    void gitWatchRepo(repo);
+    const watch = createGitRepoWatch();
+    void watch.update(repo);
     void subscribeGitChanges((change) => {
       if (!shouldReloadGraphForChange(change)) return;
       if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
@@ -1091,7 +715,7 @@
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       refreshTimer = null;
       unsub?.();
-      void gitUnwatchRepo(repo);
+      void watch.destroy();
       if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
     };
   });
@@ -1147,50 +771,16 @@
 
   let branchPopoverOpen = $state(false);
   let branchQuery = $state("");
-  let branchList = $state<Array<{ name: string; remote: boolean }>>([]);
-
-  // Branch → creator map for the author filter (#376); loaded lazily with
-  // the branch list (the creator walk is deferred work). Both are fetched only
-  // when the popover first opens and kept cached until a graph reload
-  // invalidates them (#431) — the popover is closed during the frequent
-  // watcher reloads, so the refetch (cheap now: gitBranchAuthors is cached
-  // per repo by tip OIDs in the backend) happens lazily on the next open.
-  let branchAuthors = $state<Record<string, string>>({});
-  let branchDataLoaded = false;
-
-  /** Refresh the popover's branch list. Also driven by `reload()` while the
-   *  hide-remote-only toggle is on — that filter is computed from this list,
-   *  so it can't wait for the popover to be opened (#515). */
-  async function loadBranchList(): Promise<void> {
-    try {
-      const r = await gitRefs(repoPath);
-      branchList = [
-        ...r.local_branches.map((b) => ({ name: b.name, remote: false })),
-        ...r.remote_branches.map((b) => ({ name: b.name, remote: true })),
-      ];
-    } catch {
-      // Keep the last known list. Blanking it would make the hide toggle
-      // subtract nothing while still reading as on — and cache those
-      // unexcluded rows under the toggle's snapshot key (#416).
-    }
-  }
+  const branchList = $derived(branchSession.branches);
+  const branchAuthors = $derived(branchSession.authors);
 
   async function toggleBranchPopover(): Promise<void> {
     branchPopoverOpen = !branchPopoverOpen;
-    if (branchPopoverOpen && !branchDataLoaded) {
-      branchDataLoaded = true;
-      await loadBranchList();
-      try {
-        const authors = await gitBranchAuthors(repoPath);
-        branchAuthors = Object.fromEntries(authors.map((a) => [a.name, a.author]));
-      } catch {
-        branchAuthors = {};
-      }
-    }
+    if (branchPopoverOpen) await branchSession.loadForPopover();
   }
 
   const authorOptions = $derived(
-    [...new Set(Object.values(branchAuthors).filter((a) => a))].sort(),
+    [...new Set([...branchAuthors.values()].filter((a) => a))].sort(),
   );
 
   const filteredBranchList = $derived(
@@ -1208,7 +798,7 @@
   }
 
   /** Remote refs no local branch tracks — the set the bulk toggle hides. */
-  const remoteOnlySet = $derived(new Set(remoteOnlyBranchNames(branchList as BranchListEntry[])));
+  const remoteOnlySet = $derived(new Set(remoteOnlyBranchNames(branchList)));
 
   function isHiddenAsRemoteOnly(name: string): boolean {
     return hideRemoteOnly && remoteOnlySet.has(name);
@@ -1241,7 +831,7 @@
    *  neither uncheck their author nor get (de)selected by clicking them. */
   function branchesByAuthor(author: string): string[] {
     return branchList
-      .filter((b) => branchAuthors[b.name] === author && !isHiddenAsRemoteOnly(b.name))
+      .filter((b) => branchAuthors.get(b.name) === author && !isHiddenAsRemoteOnly(b.name))
       .map((b) => b.name);
   }
 
@@ -1314,14 +904,14 @@
   }
 
   /** Open PR badge for a local-branch chip, if any (#448). */
-  function prForHead(name: string): OpenPr | undefined {
+  function prForHead(name: string): PrSnapshot | undefined {
     return prsByBranch.get(name);
   }
 
   /** Open PR badge for a remote-only chip, keyed by its branch (not the
    *  full `remote/branch` name) so `origin/feature` still matches a PR
    *  whose head is `feature`. */
-  function prForRemote(chip: RemoteRefChip): OpenPr | undefined {
+  function prForRemote(chip: RemoteRefChip): PrSnapshot | undefined {
     return prsByBranch.get(chip.branch);
   }
 
@@ -1329,7 +919,7 @@
    *  row (#459). Called from a badge inside a clickable commit row, so the
    *  click must not also select the row. Clicking the same badge again closes
    *  it; opening it closes any open commit details (one expansion at a time). */
-  function togglePrDetail(event: MouseEvent, commit: CommitInfo, pr: OpenPr): void {
+  function togglePrDetail(event: MouseEvent, commit: CommitInfo, pr: PrSnapshot): void {
     event.stopPropagation();
     if (prDetail?.oid === commit.oid && prDetail.pr.number === pr.number) {
       closePrDetail();
@@ -1338,20 +928,18 @@
     closeDetails();
     // Switching directly from one badge to another must not attach the prior
     // PR's checks or log to this expansion while either request is in flight.
-    resetCiDetail();
     prDetailHeight = 0;
-    prDetail = { oid: commit.oid, pr };
-    if (pr.ciStatus === "failure") void loadFailedCiChecks(pr);
+    void prSession.openDetail(commit.oid, pr);
   }
 
   /** Whether `pr` under `commit` is the currently open dropdown. */
-  function isPrDetailOpen(commit: CommitInfo, pr: OpenPr): boolean {
+  function isPrDetailOpen(commit: CommitInfo, pr: PrSnapshot): boolean {
     return prDetail?.oid === commit.oid && prDetail.pr.number === pr.number;
   }
 
   /** Open a PR's page in the default browser (host-pinned to github.com);
    *  the dropdown's "Open on GitHub" action. */
-  function openPrExternal(pr: OpenPr): void {
+  function openPrExternal(pr: PrSnapshot): void {
     void openExternalUrl(pr.htmlUrl);
   }
 
@@ -2152,7 +1740,7 @@
         <!-- PR badge (#448/#459): CI-colored, glyph-decorated, and a toggle for
              the in-app details dropdown. Shared by both the local-branch and
              remote-only chip render sites. -->
-        {#snippet prBadge(commit: CommitInfo, pr: OpenPr)}
+        {#snippet prBadge(commit: CommitInfo, pr: PrSnapshot)}
           {@const p = prBadgePresentation(pr)}
           <button
             type="button"
@@ -2344,7 +1932,7 @@
                     <span class="file-path" title={path}><span class="file-dir">{parts.dir}</span><span class="file-name">{parts.name}</span></span>
                   {/snippet}
                   {#snippet fileDiff(file: DetailFile)}
-                    {#if openDiffPath === file.path}
+                    {#if detailSession.isDiffOpen(file)}
                       <div class="file-diff" data-testid="git-graph-file-diff">
                         {#if diffLoading}
                           <div class="diff-note">Loading diff…</div>
@@ -2406,7 +1994,7 @@
                                   <button
                                     type="button"
                                     class="detail-file"
-                                    class:open={openDiffPath === file.path}
+                                    class:open={detailSession.isDiffOpen(file)}
                                     onclick={() => void toggleFileDiff(file)}
                                     title="Show diff"
                                   >
@@ -2445,7 +2033,7 @@
                           <button
                             type="button"
                             class="detail-file"
-                            class:open={openDiffPath === file.path}
+                            class:open={detailSession.isDiffOpen(file)}
                             onclick={() => void toggleFileDiff(file)}
                             title="Show diff"
                           >
@@ -2515,7 +2103,7 @@
                   <div class="pr-detail-ci-log" data-testid="git-graph-ci-check-log">
                     <div class="pr-detail-ci-log-head">
                       <strong>{ciCheckLog.check.name}</strong>
-                      <button type="button" class="detail-close" onclick={() => { ciCheckLogRequest += 1; ciCheckLog = null; }} aria-label="Close CI check log">✕</button>
+                      <button type="button" class="detail-close" onclick={prSession.closeCheckLog} aria-label="Close CI check log">✕</button>
                     </div>
                     {#if ciCheckLog.error}
                       <div class="pr-detail-error">Could not load CI check log: {ciCheckLog.error}</div>
@@ -2879,7 +2467,7 @@
   }
 
   .graph-status.error {
-    color: var(--danger, #ef4444);
+    color: var(--system-critical);
   }
 
   /* Standing detached-HEAD banner (#524). Deliberately louder than the rest of
@@ -4126,7 +3714,7 @@
   }
 
   .modal-option.danger .mo-title {
-    color: var(--error, #e5534b);
+    color: var(--system-critical);
   }
 
   .mo-title {

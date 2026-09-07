@@ -5,7 +5,7 @@
  * its own module (rather than files.ts) since it is plugin-scoped surface.
  */
 
-import { invoke, extractError, type ApiResult } from "./files";
+import { invoke, extractError, type ApiResult } from "./common";
 
 /**
  * Ask the configured model for `count` filename suggestions.

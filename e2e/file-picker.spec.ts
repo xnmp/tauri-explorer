@@ -19,6 +19,14 @@ async function readResponse(page: Page): Promise<{ token: string; paths: string[
 }
 
 test.describe("File picker mode", () => {
+  test("reports a failed picker import in the portal window", async ({ page }) => {
+    await page.route("**/FilePicker.svelte*", (route) => route.abort());
+    await page.goto("/?picker=open&token=failed&folder=%2Fhome%2Fuser");
+    await expect(page.locator(".toast", { hasText: "Could not load File Picker" })).toBeVisible();
+    await expect(page.locator(".picker")).toHaveCount(0);
+    await expect(page.locator(".tab-area")).toHaveCount(0);
+  });
+
   test("renders columns instead of the full app and picks a file", async ({ page }) => {
     await page.goto("/?picker=open&token=t1&multiple=0&directory=0&folder=%2Fhome%2Fuser");
 

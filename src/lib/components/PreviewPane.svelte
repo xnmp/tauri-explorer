@@ -3,12 +3,16 @@
   Issue: tauri-explorer-2c6b, tauri-explorer-xago, tauri-explorer-osjq
 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl, openFile } from "$lib/api/files";
+  import { readTextFile, fetchDirectory, readImageAsBlobUrl } from "$lib/api/files";
+import { gitDiff } from "$lib/api/git";
+import { listArchiveContents } from "$lib/api/archive";
+import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { isTauri } from "$lib/api/mock-invoke";
+  import { isTauri } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -20,6 +24,7 @@
   import { getVideoThumbnailData } from "$lib/api/thumbnails";
   import VirtualList from "./VirtualList.svelte";
   import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
+  import { createPreviewLifetime, type PreviewRequest } from "$lib/state/preview-lifetime";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -329,8 +334,8 @@
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
   let previewTruncatedLabel = $state("lines");
-  let lastPreviewPath: string | null = null;
   let lastPreviewKey: string | null = null;
+  const previewLifetime = createPreviewLifetime((url) => URL.revokeObjectURL(url));
 
   function csvRowHeight(row: string[]): number {
     return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
@@ -539,7 +544,8 @@
     const key = previewKey;
     const file = selectedFile;
     if (!file || !path) {
-      lastPreviewPath = null;
+      previewLifetime.invalidate();
+      previewLifetime.clearBlob();
       lastPreviewKey = null;
       previewImageUrl = null;
       previewText = null;
@@ -555,7 +561,6 @@
       return;
     }
     if (key === lastPreviewKey) return;
-    lastPreviewPath = path;
     lastPreviewKey = key;
     loadPreview(file);
   });
@@ -568,17 +573,11 @@
     return url;
   }
 
-  /** A request is current only while its exact file revision remains selected.
-   * A watcher can refresh a selected video at the same path while ffmpeg is
-   * extracting its previous frame, so path-only checks are insufficient. */
-  function isCurrentPreview(file: FileEntry): boolean {
-    return lastPreviewKey === `${file.path}|${file.modified}|${file.size}`;
-  }
-
   async function loadPreview(file: FileEntry): Promise<void> {
+    const request = previewLifetime.begin(`${file.path}|${file.modified}|${file.size}`);
     // Release any object-URL from a previous backend-fallback image so the
     // bytes aren't pinned in memory across navigations.
-    if (previewImageUrl?.startsWith("blob:")) URL.revokeObjectURL(previewImageUrl);
+    previewLifetime.clearBlob();
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;
@@ -608,7 +607,7 @@
       const chain: string[] = [];
       for (let depth = 0; depth < MAX_DESCENT; depth++) {
         const result = await fetchDirectory(dirPath);
-        if (file.path !== lastPreviewPath) return;
+        if (!previewLifetime.isCurrent(request)) return;
         if (!result.ok) {
           previewError = result.error;
           previewLoading = false;
@@ -636,7 +635,7 @@
     // to a single top-level folder (or chain of them), descend and show its name.
     if (isZipFile(file)) {
       const result = await listArchiveContents(file.path);
-      if (file.path !== lastPreviewPath) return;
+      if (!previewLifetime.isCurrent(request)) return;
       if (result.ok) {
         previewFolderChildrenRaw = result.data.entries;
         if (result.data.rootFolder) {
@@ -658,8 +657,10 @@
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
+          if (!previewLifetime.isCurrent(request)) return;
           previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
         } catch (error) {
+          if (!previewLifetime.isCurrent(request)) return;
           console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
           logFrontendDiagnostic("preview PDF asset URL creation failed", {
             path: file.path,
@@ -682,13 +683,19 @@
       // browser/E2E mode, where the mock serves a data URI.
       const loadViaBackend = async () => {
         const fallback = await readImageAsBlobUrl(file.path);
-        if (file.path !== lastPreviewPath) return; // Stale after fetch
+        if (!previewLifetime.isCurrent(request)) {
+          previewLifetime.adoptBlob(request, fallback.ok ? fallback.data : "");
+          return;
+        }
         if (fallback.ok) {
+          if (!previewLifetime.adoptBlob(request, fallback.data)) return;
           try {
             await decodeImage(fallback.data);
-            if (file.path !== lastPreviewPath) return; // Stale after decode
+            if (!previewLifetime.isCurrent(request)) return;
             previewImageUrl = fallback.data;
           } catch (error) {
+            if (!previewLifetime.isCurrent(request)) return;
+            previewLifetime.releaseBlob(request, fallback.data);
             console.warn("[preview] backend image decode failed", { path: file.path, error });
             logFrontendDiagnostic("preview backend image decode failed", {
               path: file.path,
@@ -709,13 +716,14 @@
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
-          if (file.path !== lastPreviewPath) return; // Stale
+          if (!previewLifetime.isCurrent(request)) return; // Stale
           const url = `${convertFileSrc(file.path)}?v=${bust}`;
           // Decode off-screen — spinner stays visible until ready
           await decodeImage(url);
-          if (file.path !== lastPreviewPath) return; // Stale after decode
+          if (!previewLifetime.isCurrent(request)) return; // Stale after decode
           previewImageUrl = url;
         } catch (assetErr) {
+          if (!previewLifetime.isCurrent(request)) return;
           console.warn("[preview] asset image decode failed; using backend fallback", {
             path: file.path,
             error: assetErr,
@@ -733,21 +741,19 @@
       // Reuse the ffmpeg-backed thumbnail seam from TilesView. The pane shows
       // its extracted still frame rather than attempting inline playback.
       const result = await getVideoThumbnailData(file.path, VIDEO_PREVIEW_SIZE);
-      if (!isCurrentPreview(file)) {
-        if (result.ok && result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
+      if (!previewLifetime.isCurrent(request)) {
+        if (result.ok) previewLifetime.adoptBlob(request, result.data);
         return;
       }
       if (result.ok) {
+        if (!previewLifetime.adoptBlob(request, result.data)) return;
         try {
           await decodeImage(result.data);
-          if (!isCurrentPreview(file)) {
-            if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
-            return;
-          }
+          if (!previewLifetime.isCurrent(request)) return;
           previewImageUrl = result.data;
         } catch (error) {
-          if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
-          if (!isCurrentPreview(file)) return;
+          if (!previewLifetime.isCurrent(request)) return;
+          previewLifetime.releaseBlob(request, result.data);
           console.warn("[preview] video frame decode failed", { path: file.path, error });
           logFrontendDiagnostic("preview video frame decode failed", {
             path: file.path,
@@ -765,7 +771,7 @@
       }
     } else if (isTextFile(file)) {
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview
-      if (file.path !== lastPreviewPath) return; // Stale
+      if (!previewLifetime.isCurrent(request)) return; // Stale
       if (result.ok) {
         const csvPreview = /\.csv$/i.test(file.name) ? parseCsvPreview(result.data) : null;
         if (csvPreview) {
@@ -811,8 +817,13 @@
     }
 
     // A superseded request must not hide the current selection's spinner.
-    if (isCurrentPreview(file)) previewLoading = false;
+    if (previewLifetime.isCurrent(request)) previewLoading = false;
   }
+
+  onDestroy(() => {
+    handleResizeEnd();
+    previewLifetime.dispose();
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

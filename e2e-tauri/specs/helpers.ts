@@ -38,21 +38,12 @@ export async function entryNames(): Promise<string[]> {
  * appear in them verbatim.
  */
 export async function navigateTo(dir: string): Promise<void> {
-  // Close any commit graph restored from a prior spec's persisted state before
-  // waiting for the listing. localStorage is shared across every tauri-driver
+  // Close any commit graph restored from a prior spec's persisted state.
+  // localStorage is shared across every tauri-driver
   // session (same origin), so a spec that left the graph open would relaunch
   // this one into graph mode and `.file-list` would never render (#447). The
   // pane's onMount registers the hook. Wait for its DOM readiness marker before
   // dispatching so exactly one real navigation/listing is queued.
-  await browser.waitUntil(
-    async () => {
-      await browser.execute(() => {
-        window.dispatchEvent(new CustomEvent("e2e-reset-view"));
-      });
-      return await $(".file-list").isExisting();
-    },
-    { timeout: 15_000, timeoutMsg: "file listing never rendered (graph stuck open?)" },
-  );
   await browser.waitUntil(
     async () =>
       await browser.execute(
@@ -60,6 +51,13 @@ export async function navigateTo(dir: string): Promise<void> {
       ),
     { timeout: 15_000, timeoutMsg: "dev e2e hooks never became ready" },
   );
+
+  // A prior spec can persist a temporary path and then delete its fixture.
+  // The next session correctly starts on an error surface with no file list,
+  // but its navigation hook is ready and can recover to the requested path.
+  await browser.execute(() => {
+    window.dispatchEvent(new CustomEvent("e2e-reset-view"));
+  });
 
   const token = `${Date.now()}-${Math.random()}`;
   await browser.execute((target: string, navigationToken: string) => {

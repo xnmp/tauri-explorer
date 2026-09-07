@@ -19,6 +19,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
+- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
@@ -73,11 +75,38 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
+- `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.
+
+- `git-graph-query.svelte.ts` — mounted history/pagination owner; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
+- `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
+- `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
+- `git-graph-branches.svelte.ts` — lazy branch/author metadata owner; known-coverage fallback and query/popover request coordination.
+
+- `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
+- `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; tear-offs require adoption ACK before source retirement.
+- `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
+- `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
+
+- `git-repo-watch.ts` — Git graph adapter over the ordered directory-watch owner; failed acquisition never releases another consumer’s reference.
+- `directory-watch.ts` — one refcounted native watch owner; orders acquisition/release and drains late registration on destruction; reused by panes, thumbnails, Miller columns and drives.
+- `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
+- `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop.
+- `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
+- `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
+- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+
+- `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
+- `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
+- `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
+
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
 - `pane-mutations.ts` — per-pane create/rename/delete/symlink/archive mutations.
 - `pane-refresh.ts` — flicker-free re-list of current dir (streamed chunk accumulation).
+- `pane-sessions.ts` — manager-owned pane identities and deferred explorer resources; activation opens restored directories on demand, cleanup drains loads and pane stores (ADR 0002).
+- `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.
+- `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane fs-watch + local-mutation cooldown (pure).
 - `directory-listing.ts` — streaming/event-based incremental dir load management.
 - `navigation.ts` — pure back/forward history utilities.
@@ -91,9 +120,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-palette.ts` — pane-scoped Git Graph branch, commit, and stash targets registered in the window-global command palette; commands are available only for the active graph pane (#520).
 - `git-graph-undo.ts` — bounded session ledger + active-pane request bus for confirmed graph-operation undo (#513); entries are repository-scoped and contain backend-produced expected-state snapshots.
 - `git-graph-file-history.ts` — per-pane SCM-to-graph handoff: buffers a repository-relative file path through a keyed graph remount, delivers directly to an already matching graph, and drops closed-pane requests (#518).
-- `git-graph-cache.ts` — bounded per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; retains the supported 12-tab fan-out. GitGraphView skips its redundant initial reload for a valid cache hit, while external watcher changes evict a repo's snapshots before remount (#433, #505, arch Finding 7).
+- `git-graph-cache.ts` — bounded per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; retains the supported 12-tab fan-out. GitGraphView skips its redundant initial reload for a valid cache hit, while local and external changes revoke pending writers and evict a repo's snapshots before remount (#433, #505, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.
-- `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
+- `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431); Git-change events revoke cached/joinable reads, publication uses current-flight identity, and successful summaries use a bounded 64-entry LRU.
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
@@ -123,12 +152,15 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
-- `tab-transfer.ts` — cross-window tab drag/tear-off (localStorage handshake).
+- `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
 - `closed-tabs.ts` — closed-tab LIFO stack for Ctrl+Shift+T.
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
-- `warm-window.ts` — pre-warmed hidden window pool logic (fast Ctrl+N).
+- `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
+- `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
 - `window-appearance.ts` — shared window creation options (parity across code paths).
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
+- `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
+- `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
 - `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
@@ -150,12 +182,17 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
 - `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards); serialized config-file writer plus `isConfigWritePending`/`lastWrittenConfig`, the echo-suppression facts config autoreload reads (#599).
-- `startup-timing.ts` — cold-start boot milestone instrumentation.
+- `startup-timing.ts` — boot/list/settings/commands/readiness milestones; main-window report also records app-run-to-ready on the Rust monotonic clock.
 - `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
 - `git-warm.ts` — wires the pure git-warm scheduler to the repo-root probe + git-graph/SCM cache warmers.
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
+
+- `environment.ts` — home/launch environment and startup telemetry IPC.
+- `drives.ts` — drive enumeration, mount, unmount and eject IPC.
+- `clipboard-image.ts` — clipboard bitmap detection and save IPC.
+- `plugin-jobs.ts` — accepted plugin job result types and image/provider job IPC.
 
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
@@ -181,6 +218,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
 
+- `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
+
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
@@ -203,6 +242,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
+- `window-input.ts` — launch, warm-window and directory-seed validation; shared parse/producer budgets and canonical explorer seed shape.
+
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
@@ -212,7 +253,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `virtual-path.ts` — virtual (plugin-provided) path parsing.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
-- `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
 - `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
@@ -240,6 +280,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `titlebar.ts` — title bar / tab strip visibility rules.
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
+- `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
@@ -318,7 +359,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
 - `update_check.rs` — update check via GitHub releases (#185).
-- `warm_pool.rs` — pre-warmed hidden window registry.
+- `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).
@@ -349,3 +390,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `drives.rs` — enumerate drives/volumes cross-platform.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
+
+## src/test-support/ — browser fixtures; never imported by the application.
+
+- `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.

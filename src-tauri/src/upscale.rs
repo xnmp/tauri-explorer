@@ -39,16 +39,24 @@ pub async fn start_upscale_job(
 
     let api_key = crate::fal::resolve_fal_key(&api_key)?;
     let job_id = plugin_job::next_job_id();
+    let control = plugin_job::JobControl::new();
+    let worker_control = control.clone();
 
     tokio::spawn(async move {
         let job = async {
             tokio::task::spawn_blocking(move || {
-                run_seedvr_upscale(&source, &final_output, &api_key, upscale_factor)
+                run_seedvr_upscale(
+                    &source,
+                    &final_output,
+                    &api_key,
+                    upscale_factor,
+                    &worker_control,
+                )
             })
             .await
             .map_err(|e| AppError::Other(format!("Upscale task failed: {}", e)))?
         };
-        plugin_job::run_and_emit(&app, "upscale", job_id, job).await;
+        plugin_job::run_and_emit(&app, "upscale", job_id, control, job).await;
     });
 
     Ok(job_id)
@@ -60,8 +68,10 @@ fn run_seedvr_upscale(
     final_output: &Path,
     api_key: &str,
     upscale_factor: f64,
+    control: &plugin_job::JobControl,
 ) -> Result<String, AppError> {
-    let image_url = crate::fal::upload_file(source, api_key)?;
+    control.check()?;
+    let image_url = crate::fal::upload_file(source, api_key, control)?;
 
     // Preserve the output extension the user picked; fal re-encodes.
     let output_format = match final_output
@@ -85,12 +95,15 @@ fn run_seedvr_upscale(
         }),
         api_key,
         POLL_SECS,
+        control,
     )?;
 
     let url = result["image"]["url"]
         .as_str()
         .ok_or_else(|| AppError::Other(format!("fal returned no image url: {}", result)))?;
-    crate::fal::download_to(url, final_output)?;
+    let mut staging = plugin_job::StagedOutput::new(final_output)?;
+    crate::fal::download_to(url, staging.file_mut(), control)?;
+    staging.commit(final_output, control)?;
 
     Ok(final_output.to_string_lossy().to_string())
 }

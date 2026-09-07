@@ -24,6 +24,7 @@ export interface ReloaderContext {
 export interface Reloader {
   readonly generation: number;
   reload(): Promise<void>;
+  dispose(): void;
 }
 
 /**
@@ -33,34 +34,35 @@ export interface Reloader {
  */
 export function createReloader(fetchFn: (context: ReloaderContext) => Promise<void>): Reloader {
   let generation = 0;
-  let reloading = false;
-  let reloadDirty = false;
+  let pending: Promise<void> | null = null;
+  let disposed = false;
 
-  const reload = async (): Promise<void> => {
-    if (reloading) {
-      reloadDirty = true;
-      return;
-    }
-
-    reloading = true;
-    reloadDirty = false;
-    const currentGeneration = ++generation;
-    try {
-      await fetchFn({
-        generation: currentGeneration,
-        isCurrent: () => currentGeneration === generation,
-      });
-    } finally {
-      reloading = false;
-      if (reloadDirty) void reload();
-    }
-  };
+  function reload(): Promise<void> {
+    if (disposed) return Promise.resolve();
+    // Revoke publication immediately, including while a prior reload is
+    // awaiting branch metadata. All callers await the same serialized drain.
+    generation++;
+    if (pending) return pending;
+    const run = async () => {
+      while (!disposed) {
+        const current = generation;
+        try {
+          await fetchFn({ generation: current, isCurrent: () => !disposed && current === generation });
+        } catch (error) {
+          if (current === generation || disposed) throw error;
+          // An obsolete failure must not swallow the queued fresh request.
+        }
+        if (current === generation) return;
+      }
+    };
+    pending = run().finally(() => { pending = null; });
+    return pending;
+  }
 
   return {
-    get generation() {
-      return generation;
-    },
+    get generation() { return generation; },
     reload,
+    dispose(): void { disposed = true; generation++; },
   };
 }
 

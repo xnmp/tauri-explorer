@@ -1129,7 +1129,6 @@
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .close-btn:hover {
@@ -1288,7 +1287,7 @@
     font-size: 13px;
     color: var(--text-primary);
     outline: none;
-    transition: all var(--transition-fast);
+    transition: border-color var(--transition-fast);
   }
 
   .text-input:hover {
@@ -1326,7 +1325,6 @@
     color: var(--text-secondary);
     cursor: pointer;
     font-size: 12px;
-    transition: all var(--transition-fast);
   }
 
   .clear-btn:hover {
@@ -1356,7 +1354,7 @@
     color: var(--text-primary);
     cursor: pointer;
     outline: none;
-    transition: all var(--transition-fast);
+    transition: border-color var(--transition-fast);
   }
 
   .theme-select:hover {
@@ -1393,7 +1391,9 @@
     background: var(--control-fill-secondary);
     border: 1px solid var(--control-stroke);
     border-radius: 12px;
-    transition: all var(--transition-fast);
+    transition:
+      background-color var(--transition-fast),
+      border-color var(--transition-fast);
   }
 
   .toggle-slider::before {
@@ -1405,7 +1405,7 @@
     bottom: 2px;
     background: var(--text-secondary);
     border-radius: 50%;
-    transition: all var(--transition-fast);
+    transition: transform var(--transition-fast);
   }
 
   .toggle input:checked + .toggle-slider {

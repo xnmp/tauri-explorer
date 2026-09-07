@@ -8,10 +8,12 @@
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { initFileChangeListener, cleanupFileChangeListener } from "$lib/state/file-events";
+import { initFileChangeListener, cleanupFileChangeListener, subscribeToLocalFileChanges } from "$lib/state/file-events";
 import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
 import { settingsStore } from "$lib/state/settings.svelte";
 import { gitStatusStore } from "$lib/state/git-status.svelte";
+import { repoRootCache } from "$lib/state/repo-root-cache.svelte";
+import { subscribeGitChanges } from "$lib/state/git-refresh";
 
 export interface FileWatcherDeps {
   getAllExplorers: () => ExplorerInstance[];
@@ -43,6 +45,8 @@ function publishWatcherReceipt(path: string, observedAt: number | undefined): vo
 
 export function useFileWatchers(deps: FileWatcherDeps) {
   let unlistenWatcher: UnlistenFn | undefined;
+  let stopLocalInvalidation: (() => void) | undefined;
+  let stopGitInvalidation: (() => void) | undefined;
   // Guards against cleanup() racing the async listen() registrations:
   // if cleanup runs before a registration resolves, unlisten on arrival.
   let disposed = false;
@@ -60,6 +64,13 @@ export function useFileWatchers(deps: FileWatcherDeps) {
 
   function setup(): void {
     disposed = false;
+    stopLocalInvalidation = subscribeToLocalFileChanges((paths) => {
+      for (const path of paths) repoRootCache.invalidate(path);
+    });
+    void subscribeGitChanges((change) => repoRootCache.invalidate(change.repoRoot ?? undefined)).then(
+      track((fn) => { stopGitInvalidation = fn; }),
+      () => {},
+    );
     // Listen for file changes from other windows. Refresh every explorer
     // (including inactive tabs) whose current path is in affectedDirs so
     // the source tab sees the change without needing to be activated.
@@ -86,6 +97,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     try {
       listen<{ path: string; observed_at_ms?: number }>("directory-changed", (event) => {
         const changedPath = event.payload.path;
+        repoRootCache.invalidate(changedPath);
         publishWatcherReceipt(changedPath, event.payload.observed_at_ms);
         for (const exp of deps.getAllExplorers()) {
           if (exp.currentPath === changedPath) {
@@ -121,6 +133,10 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     disposed = true;
     cancelPendingRefreshes();
     cleanupFileChangeListener();
+    stopLocalInvalidation?.();
+    stopLocalInvalidation = undefined;
+    stopGitInvalidation?.();
+    stopGitInvalidation = undefined;
     unlistenWatcher?.();
   }
 

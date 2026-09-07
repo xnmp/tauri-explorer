@@ -9,7 +9,7 @@ import { browser, $ } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domTexts } from "./helpers";
+import { domTexts, navigateTo } from "./helpers";
 
 const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-config-"));
 const configDir = process.platform === "win32"
@@ -40,12 +40,9 @@ async function runPaletteCommand(query: string): Promise<void> {
 }
 
 async function navigateToScratch(): Promise<void> {
-  await $(".file-list").waitForExist({ timeout: 10_000 });
-  await browser.execute((target) => {
-    window.dispatchEvent(new CustomEvent("e2e-navigate", { detail: target }));
-  }, scratchDir);
+  await navigateTo(scratchDir);
   await browser.waitUntil(
-    async () => (await $(".file-list").getText()).includes("TXT"),
+    async () => (await domTexts(".entry-name")).includes("external-config-proof.txt"),
     { timeout: 10_000, timeoutMsg: "scratch directory never rendered" },
   );
 }

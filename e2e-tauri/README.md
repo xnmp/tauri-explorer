@@ -33,6 +33,21 @@ VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle
 bun run test:e2e:tauri
 ```
 
+Linux tests that assert native window state need a window manager, not only an
+X server. Tiling compositors can ignore maximize requests for grouped Xwayland
+clients. Use an isolated display for reproducible maximize/restore acceptance:
+
+```bash
+# Debian/Ubuntu prerequisites: xvfb openbox x11-utils
+xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
+```
+
+The wrapper waits for the owned manager to advertise readiness and retires it
+after the test command exits. Run it under `xvfb-run`, not on your working desktop.
+CI uses the same fixture; unsupported compositor behavior must not weaken native
+state assertions or be inferred merely from a failed assertion.
+
 Build through the Tauri CLI, **not** `cargo build`. A bare cargo debug build
 omits the `tauri/custom-protocol` feature, so the binary serves `build.devUrl`
 (localhost:1420) and the suite silently depends on a Vite dev server running
@@ -56,3 +71,10 @@ must use the programmatic CDP attach path.
 ## Adding specs
 
 Specs live in `specs/`. Keep this suite **small** — it's slow (full Tauri build per run) and has more platform-specific flake than the browser Playwright suite. Only add tests here that genuinely need the real binary (native shortcuts, WebView-specific rendering, IPC contract). Prefer Playwright for everything else.
+
+
+`warm-window-lifetime.spec.ts` verifies real warm reuse, acknowledged navigation,
+fresh fallback after rejected activation, and retirement after a claimer closes
+without dispatching. Its abandoned-claim case exercises the production 30-second
+lease expiry; retain that native outcome instead of replacing it with a browser
+mock or shortened test-only timeout.

@@ -11,12 +11,12 @@
  *   activation fetches fresh; a change on the ACTIVE repo refetches directly.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { GitStatusSummary } from "$lib/api/files";
+import type { GitStatusSummary } from "$lib/api/git";
 
 const gitRepoRootMock = vi.fn();
 const gitSummaryMock = vi.fn();
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
   gitSummary: (root: string) => gitSummaryMock(root),
   gitStage: vi.fn(async () => ({ ok: true })),

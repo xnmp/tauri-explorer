@@ -86,7 +86,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata owner; known-coverage fallback and query/popover request coordination.
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
-- `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; tear-offs require adoption ACK before source retirement.
+- `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; labelled failure-phase diagnostics; tear-offs require adoption ACK before source retirement.
 - `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
 - `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
 
@@ -161,7 +161,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
-- `window-appearance.ts` — shared window creation options (parity across code paths).
+- `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
 - `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.

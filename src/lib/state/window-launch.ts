@@ -1,3 +1,5 @@
+import { extractError } from "$lib/api/common";
+import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { ExplorerSeed } from "$lib/domain/window-input";
@@ -17,7 +19,7 @@ type WindowOptions = NonNullable<ConstructorParameters<typeof WebviewWindow>[1]>
 type CreationEvent = "tauri://created" | "tauri://error";
 
 export interface LaunchWindow {
-  once(event: CreationEvent, handler: () => void): Promise<() => void>;
+  once(event: CreationEvent, handler: (event?: { payload?: unknown }) => void): Promise<() => void>;
   close(): Promise<void>;
 }
 
@@ -27,7 +29,14 @@ export type WindowLaunchResult =
   | { kind: "fresh"; label: string; window: WebviewWindow }
   | { kind: "warm"; label: string };
 
+export interface WindowLaunchFailure {
+  label: string;
+  phase: "geometry" | "construct" | "listener" | "native" | "timeout" | "retire";
+  error?: unknown;
+}
+
 export interface WindowLaunchDependencies {
+  reportFailure?(failure: WindowLaunchFailure): void;
   warmEnabled(): boolean;
   consumeWarm(path: string, viewMode?: ViewMode, at?: { x: number; y: number }): Promise<string | null>;
   captureDirectorySeed(path: string, viewMode?: ViewMode): ExplorerSeed | null;
@@ -52,6 +61,9 @@ export interface WindowLaunchDependencies {
 }
 
 const defaultDependencies: WindowLaunchDependencies = {
+  reportFailure: ({ label, phase, error }) => logFrontendDiagnostic("window launch failed", {
+    label, phase, error: error === undefined ? null : extractError(error),
+  }),
   warmEnabled: () => settingsStore.warmWindow,
   consumeWarm: consumeWarmWindow,
   captureDirectorySeed: (path, viewMode) => {
@@ -92,7 +104,7 @@ const SEED_RETENTION_MS = 10_000;
 function createCreationOwner(
   child: LaunchWindow,
   dependencies: WindowLaunchDependencies,
-  onFailure: () => void,
+  onFailure: (failure: Omit<WindowLaunchFailure, "label">) => void,
   onLateCreated: () => void,
 ): { result: Promise<boolean>; expire(): void } {
   let expire = () => {};
@@ -104,9 +116,10 @@ function createCreationOwner(
       for (const stop of stops) stop();
       stops.clear();
     };
-    const finish = (created: boolean) => {
+    const finish = (created: boolean, failure: Omit<WindowLaunchFailure, "label">) => {
       if (draining) {
         if (created) onLateCreated();
+        else onFailure(failure); // Retain a native error arriving after timeout.
         draining = false;
         cleanup();
         return;
@@ -115,14 +128,14 @@ function createCreationOwner(
       settled = true;
       dependencies.clearTimer(timer);
       cleanup();
-      if (!created) onFailure();
+      if (!created) onFailure(failure);
       resolve(created);
     };
     const acquire = (event: CreationEvent, created: boolean) => {
-      void child.once(event, () => finish(created)).then((stop) => {
+      void child.once(event, (value) => finish(created, { phase: "native", error: value?.payload })).then((stop) => {
         if (settled && !draining) stop();
         else stops.add(stop);
-      }).catch(() => finish(false));
+      }).catch((error) => finish(false, { phase: "listener", error }));
     };
     const timer = dependencies.setTimer(() => expire(), CREATION_TIMEOUT_MS);
     expire = () => {
@@ -130,7 +143,7 @@ function createCreationOwner(
       settled = true;
       draining = true;
       dependencies.clearTimer(timer);
-      onFailure();
+      onFailure({ phase: "timeout" });
       resolve(false);
       // Keep the created observer until native construction actually settles. A close sent
       // before native construction completes may legitimately find no window;
@@ -164,7 +177,8 @@ export function createWindowLauncher(dependencies: WindowLaunchDependencies = de
     let geometry: Awaited<ReturnType<WindowLaunchDependencies["prepareGeometry"]>>;
     try {
       geometry = await dependencies.prepareGeometry();
-    } catch {
+    } catch (error) {
+      dependencies.reportFailure?.({ label, phase: "geometry", error });
       return null;
     }
 
@@ -203,13 +217,19 @@ export function createWindowLauncher(dependencies: WindowLaunchDependencies = de
       if (retired && !retry) return;
       retired = true;
       clearOwnedSeed();
-      if (child) void child.close().catch(() => {});
+      if (child) void child.close().catch((error) => {
+        dependencies.reportFailure?.({ label, phase: "retire", error });
+      });
     };
     const construct = (): { result: Promise<boolean>; expire(): void } | null => {
       try {
         child = dependencies.createWindow(label, options);
-        return createCreationOwner(child, dependencies, retireChild, () => retireChild(true));
-      } catch {
+        return createCreationOwner(child, dependencies, (failure) => {
+          retireChild();
+          dependencies.reportFailure?.({ label, ...failure });
+        }, () => retireChild(true));
+      } catch (error) {
+        dependencies.reportFailure?.({ label, phase: "construct", error });
         retireChild();
         return null;
       }

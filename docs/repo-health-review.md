@@ -427,3 +427,10 @@ uses an application-side real-write/receipt protocol instead of a timed WebDrive
 interleaving. Both Linux native watcher cases and 43 focused contracts pass;
 production cadence is unchanged and the coordinator is absent from release assets.
 See `review-completion.md` for evidence and remaining platform/release gates.
+
+Native windows checkpoint (2026-09-07): eight final Linux transfer/warm lifetime
+outcomes pass. The Windows attach build now propagates matching WebView2 browser
+arguments through all creation paths, with Windows native verification pending.
+Labelled launch-stage diagnostics preserve future failure evidence. The prior
+Linux creation failure is unreproduced locally; see the completion ledger rather
+than treating local success as an explanation of that failure.

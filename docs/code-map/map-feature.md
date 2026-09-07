@@ -78,7 +78,7 @@ backend for E2E/browser).
 ## Window tabs
 
 - `domain/window-input.ts` — validates launch/warm/directory seeds and bounds storage parsing and producer serialization.
-- `state/window-launch.ts` — fresh/warm launch coordination, destination-keyed seeds, created/error ownership and late-child retirement.
+- `state/window-launch.ts` — fresh/warm launch coordination, destination-keyed seeds, created/error ownership, labelled failure diagnostics and late-child retirement.
 - `state/window-handoff.ts` — correlated destination acknowledgement before source tab removal; late listener/timeout cleanup.
 - `state/window-startup.ts` — owns settings → theme/readiness → plugins initialization; teardown revokes late startup.
 

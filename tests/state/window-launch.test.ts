@@ -16,16 +16,16 @@ function deferred<T>() {
 }
 
 class FakeWindow implements LaunchWindow {
-  handlers = new Map<string, () => void>();
+  handlers = new Map<string, (event?: { payload?: unknown }) => void>();
   stops: ReturnType<typeof vi.fn>[] = [];
   close = vi.fn(async () => {});
-  once: LaunchWindow["once"] = vi.fn(async (event: "tauri://created" | "tauri://error", handler: () => void) => {
+  once: LaunchWindow["once"] = vi.fn(async (event: "tauri://created" | "tauri://error", handler: (event?: { payload?: unknown }) => void) => {
     this.handlers.set(event, handler);
     const stop = vi.fn(() => { this.handlers.delete(event); });
     this.stops.push(stop);
     return stop;
   });
-  emit(event: "tauri://created" | "tauri://error") { this.handlers.get(event)?.(); }
+  emit(event: "tauri://created" | "tauri://error", payload?: unknown) { this.handlers.get(event)?.({ payload }); }
 }
 
 const seed = (path: string, name: string): ExplorerSeed => ({
@@ -48,7 +48,9 @@ function fixture(options: {
   const windows: Array<{ label: string; window: FakeWindow }> = [];
   const seeds = [...(options.seeds ?? [null])];
   let id = 0;
+  const reportFailure = vi.fn();
   const dependencies: WindowLaunchDependencies = {
+    reportFailure,
     warmEnabled: () => options.warm ?? false,
     consumeWarm: vi.fn(options.consumeWarm ?? (async () => null)),
     captureDirectorySeed: vi.fn(() => seeds.shift() ?? null),
@@ -97,6 +99,9 @@ describe("window launch owner", () => {
     await expect(f.open("/repo")).resolves.toBeNull();
     expect(f.dependencies.save).not.toHaveBeenCalled();
     expect(f.dependencies.createWindow).not.toHaveBeenCalled();
+    expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      label: "explorer-id-1", phase: "geometry", error: expect.objectContaining({ message: "position" }),
+    });
   });
 
   it("cleans its seed when construction throws", async () => {
@@ -107,6 +112,9 @@ describe("window launch owner", () => {
     await expect(f.open("/repo")).resolves.toBeNull();
     expect(f.storage.size).toBe(0);
     expect(f.dependencies.remove).toHaveBeenCalledWith("dir-seed:explorer-id-1");
+    expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      label: "explorer-id-1", phase: "construct", error: expect.objectContaining({ message: "constructor" }),
+    });
   });
 
   it("waits for created and releases both native listeners on success", async () => {
@@ -124,7 +132,10 @@ describe("window launch owner", () => {
     const f = fixture({ seeds: [seed("/repo", "a")] });
     const opening = f.open("/repo");
     await vi.waitFor(() => expect(f.windows).toHaveLength(1));
-    f.windows[0].window.emit("tauri://error");
+    f.windows[0].window.emit("tauri://error", "HRESULT 0x8007139F");
+    expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      label: "explorer-id-1", phase: "native", error: "HRESULT 0x8007139F",
+    });
     await expect(opening).resolves.toBeNull();
     expect(f.storage.size).toBe(0);
     expect(f.windows[0].window.close).toHaveBeenCalledOnce();
@@ -146,11 +157,15 @@ describe("window launch owner", () => {
     const opening = f.open("/repo");
     await vi.advanceTimersByTimeAsync(10_000);
     await expect(opening).resolves.toBeNull();
+    expect(f.dependencies.reportFailure).toHaveBeenCalledWith({ label: "explorer-id-1", phase: "timeout" });
     // Listener ownership follows the still-pending native creation task.
     // Its eventual error terminates the drain; acquisitions resolving even
     // later must retire themselves immediately.
     await vi.advanceTimersByTimeAsync(20_000);
     handlers["tauri://error"]!();
+    expect(f.dependencies.reportFailure).toHaveBeenLastCalledWith({
+      label: "explorer-id-1", phase: "native", error: undefined,
+    });
     createdAcquisition.resolve(lateStops[0]);
     errorAcquisition.resolve(lateStops[1]);
     await Promise.resolve();

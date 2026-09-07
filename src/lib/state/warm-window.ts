@@ -38,6 +38,8 @@
  * Measure windows never register with the pool: they are probes, not stock.
  */
 
+import { extractError } from "$lib/api/common";
+import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 import { createWarmActivation } from "./warm-activation";
 import { requestWindowAcknowledgement, acknowledgeWindowRequest } from "./window-handoff";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -98,7 +100,10 @@ export async function spawnWarmWindow(): Promise<void> {
   }
   if (!reserved) return;
 
-  const cancelReservation = () => void warmPoolCancelSpawn(label).catch(() => {});
+  const cancelReservation = (error: unknown) => {
+    logFrontendDiagnostic("warm window creation failed", { label, error: extractError(error) });
+    void warmPoolCancelSpawn(label).catch(() => {});
+  };
 
   const baseUrl = window.location.origin + window.location.pathname;
   // Park the warm window at the SPAWNER's current path so its boot-time init
@@ -118,9 +123,9 @@ export async function spawnWarmWindow(): Promise<void> {
       skipTaskbar: true,
       ...explorerWindowAppearance(formatWindowTitle(parkPath, homePath)),
     });
-    void win.once("tauri://error", cancelReservation).catch(cancelReservation);
-  } catch {
-    cancelReservation();
+    void win.once("tauri://error", ({ payload }) => cancelReservation(payload)).catch(cancelReservation);
+  } catch (error) {
+    cancelReservation(error);
   }
 }
 

@@ -245,3 +245,33 @@
   without remounting, and verify the listing when returning from the graph.
 - Temporary Git lock filtering must be scoped to metadata. Worktree `Cargo.lock`
   and backup-named files remain user data and must invalidate summaries.
+
+### Native multiwindow acceptance: preserve the WebView2 environment
+
+The Windows attach build configured CDP browser arguments only on the main Rust
+window. JS-created fresh/warm windows shared its data directory but omitted those
+arguments. CI logged immediate WebView2 `0x8007139F` failures during concurrent
+creation. Microsoft's [environment creation reference](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl?view=webview2-1.0.3595.46)
+identifies mismatched options within a shared browser process as a cause of
+`ERROR_INVALID_STATE`. Disabling automatic warm priming did not establish a
+single-window invariant: new-window misses and successful warm claims still
+prime or replenish the pool.
+
+The feature-gated Rust plugin now injects the exact main-window argument string
+into every spawning page, JSON encoded. The shared child-window options preserve
+it for both fresh and warm creation, and the Rust measure window uses the same
+helper. The installed public TS constructor type omits `additionalBrowserArgs`,
+but the Rust `create_webview_window` command consumes `WindowConfig`, whose
+camelCase deserializer accepts that field. Portal pickers are Linux-only. Normal
+builds exclude the injection and frontend option; no generic runtime browser-args
+setting or new IPC was added. Windows native verification remains required.
+
+The earlier Linux `[null, null]` result remains unreproduced locally: the isolated
+pair and all five transfer cases pass, with automatic warm priming both disabled
+and enabled. Current native acceptance also passes all three warm lifetime cases,
+including abandoned-claim expiry. Do not call the Linux failure fixed from this.
+Launch diagnostics now retain destination labels, failure phases and native error
+payloads (including errors delivered after timeout) in the application log, so a
+future failure can distinguish geometry, construction, listener registration,
+native rejection, timeout and failed retirement. Warm creation logs its label and
+error too; cleanup ownership is unchanged.

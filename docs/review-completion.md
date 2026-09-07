@@ -878,3 +878,46 @@ These are local Linux outcomes, not Windows/macOS acceptance or launch measureme
 The review remains open. Next native work is isolated child-window creation and
 failure/reclamation diagnostics, followed by page-session ownership and the
 remaining retention, viewport, product/platform and macOS startup gates.
+
+## Native window acceptance and Windows attach environment — 2026-09-07
+
+The isolated Linux concurrent-child test passed; all five transfer/close cases
+then passed with automatic warm priming both disabled and enabled. The final
+rebuilt application passes **eight native outcomes** across transfer and warm
+lifetime suites, including real watcher updates after transfer/close, rejected
+warm navigation with fresh fallback, and abandoned claim expiry after source
+closure (`/tmp/window-environment-native-final.log`). The earlier Linux creation
+failure remains unreproduced, not explained away.
+
+Source inspection and Microsoft's WebView2 environment contract identified a
+configuration mismatch in Windows E2E: main alone had explicit CDP arguments while
+fresh/warm descendants shared its data directory with default arguments. A
+Windows-and-Cargo-feature-gated plugin now injects the exact main argument string
+into every spawning page; shared child options preserve it, and Rust's measure
+window uses the same helper. This addresses the concrete mismatch underlying the
+`0x8007139F` hypothesis; **Windows feature-build/native verification is pending**.
+Normal frontend output contains neither the injected global nor the option.
+
+Launch failures now record the destination label, stage and underlying error in
+the rotating application log. Late native errors after timeout remain observable;
+retirement stays idempotent. Warm creation failures retain their label/payload.
+The propagation regression fails before the configuration fix; four diagnostic
+contracts fail before the logging change (`/tmp/window-environment-before.log`,
+`/tmp/window-launch-diagnostics-before.log`). All 29 focused launch/appearance/
+warm/focus/tear-off contracts pass, typecheck is clean, and Linux strict Clippy
+passes all targets with the attach feature enabled. That Linux compilation does
+not compile the Windows-only block. Independent source review confirms plugin
+inference/order, accepted WindowConfig key, release gating and lifecycle behavior.
+
+Final integrated frontend acceptance: **2,047 unit tests passed, three skipped,
+plus 30 performance checks**, across 228 unit files
+(`/tmp/native-acceptance-integrated-unit.log`).
+
+Normal startup: **44 chunks, 640,677 raw bytes / 208,148 gzip bytes**, within budgets
+(`/tmp/window-environment-bundle-final.log`). The small diagnostic-code increase
+is not a startup speedup claim. Source maps cover 360/360 files. No UI work merged.
+
+Remaining: published Windows acceptance, unreproduced Linux creation failure if
+it recurs, native Git leases on crashed windows, page-session ownership, dense
+viewport policy, workspace/plugin/native soak, full product/platform matrices,
+and actual macOS release half-bounce measurements. The entire review remains open.

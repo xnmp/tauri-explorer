@@ -102,7 +102,8 @@ jobs:
           VITE_E2E_HOOKS: "1"
           # The attach feature passes the CDP flag through WebView2's API.
           # Environment overrides are ignored because hosted runners are
-          # elevated. Warm priming is disabled to keep one WebView2 context.
+          # elevated. Automatic warm priming is disabled during initial attach;
+          # explicit child windows inherit the same environment arguments.
           VITE_E2E_NO_WARM_PRIME: ${{ runner.os == 'Windows' && '1' || '' }}
         run: bun run tauri build --debug --no-bundle ${{ runner.os == 'Windows' && '--features e2e-webview2-attach' || '' }}
 

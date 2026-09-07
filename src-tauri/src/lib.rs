@@ -157,7 +157,21 @@ pub fn run(launch_dir: Option<String>) {
         .and_then(|s| s.parse().ok())
         .unwrap_or(log::LevelFilter::Info);
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Every WebView sharing Windows' data directory must use the exact same
+    // environment options. Inject the main window's attach-build arguments
+    // into every spawning page so fresh and warm descendants preserve them.
+    #[cfg(all(target_os = "windows", feature = "e2e-webview2-attach"))]
+    let builder = builder.plugin(
+        tauri::plugin::Builder::new("e2e-webview-environment")
+            .js_init_script(format!(
+                "Object.defineProperty(window, '__E2E_WEBVIEW_BROWSER_ARGS__', {{ value: {} }});",
+                serde_json::to_string(&e2e_webview2_browser_args()).unwrap()
+            ))
+            .build(),
+    );
+
+    builder
         .manage(LaunchCwd(launch_cwd_for_state))
         .manage(system::StartupClock(t_start))
         .plugin({
@@ -484,7 +498,7 @@ pub fn run(launch_dir: Option<String>) {
             // keypress-free latency probe for platforms with no WebDriver
             // (macOS CI): launch with the env var, wait, grep the app log.
             if std::env::var("WARM_MEASURE").is_ok() {
-                tauri::WebviewWindowBuilder::new(
+                let measure = tauri::WebviewWindowBuilder::new(
                     app,
                     "explorer-warm-measure",
                     tauri::WebviewUrl::App("index.html".into()),
@@ -492,8 +506,10 @@ pub fn run(launch_dir: Option<String>) {
                 .initialization_script("window.__WARM_MEASURE__ = true;")
                 .visible(false)
                 .skip_taskbar(true)
-                .inner_size(1200.0, 800.0)
-                .build()?;
+                .inner_size(1200.0, 800.0);
+                #[cfg(all(target_os = "windows", feature = "e2e-webview2-attach"))]
+                let measure = measure.additional_browser_args(&e2e_webview2_browser_args());
+                measure.build()?;
             }
 
             log::info!(

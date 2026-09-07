@@ -301,7 +301,7 @@ backend for E2E/browser).
 - `domain/drives.ts`; `api/files.ts` (listDrives); `src-tauri/src/files/drives.rs`
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)
-- `domain/panel-width.ts` → `state/panel-resize.ts` → `composables/use-panel-resize.svelte.ts` — normalized widths and captured/coalesced pointer lifetime shared by Sidebar, SCM, Miller and Git author/date columns
+- `domain/panel-width.ts` → `state/panel-resize.ts` → `composables/use-panel-resize.svelte.ts` — normalized widths and captured/coalesced pointer lifetime shared by Sidebar, SCM, Miller and all Git columns, including the gutter's live automatic/manual preference
 - `state/resize-activity.svelte.ts` — owns active panel gesture leases so geometry updates cannot trigger automatic reveal and cancel the resize that caused them
 - `components/PanelResizeHandle.svelte` — shared Sidebar/SCM/Miller keyboard/pointer separator
 - FLOW: sidebar sections read their stores; drives polled from `listDrives` (drives.rs); bookmarks/recent persisted in localStorage; drop-onto-sidebar adds bookmark.

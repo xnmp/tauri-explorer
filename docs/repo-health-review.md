@@ -472,3 +472,15 @@ seven real Linux outcomes pass. All new browser scenarios pass in both engines;
 two existing WebKit detail failures in the wider run pass repeated isolation but
 leave that wider acceptance gate open. ADR0012 and the completion ledger retain
 scope, evidence and remaining graph-gutter/platform/startup work.
+
+
+Graph-gutter checkpoint (2026-09-07): automatic lane-derived sizing and manual
+preferences now compose with the shared resize owner. The private mouse-listener
+stack is removed; pointer capture, visual/CSS zoom conversion, keyboard controls,
+retirement and pane-capture rollback have behavioral regressions. All 58 combined
+Chromium/WebKit resize outcomes, 2,092 unit tests, 30 performance cases and the
+rebuilt Linux inline-panel baseline pass. Normal startup payload is 42 chunks /
+649,109 raw bytes / 210,846 gzip bytes, within budget. ADR0012 and the completion
+ledger describe the semantics, evidence and remaining Terminal/Preview/Details
+resize migrations. macOS half-bounce measurements and full release acceptance
+remain outstanding; this checkpoint does not complete the architectural review.

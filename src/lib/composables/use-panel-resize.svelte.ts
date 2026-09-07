@@ -8,16 +8,21 @@ export type PanelResizeOptions = PanelWidthOptions;
 
 /** DOM adapter for the importable panel-width owner. Only an active captured
  * gesture subscribes to global cancellation; no body style overrides survive it. */
-export function usePersistedPanelWidth(key: string, options: PanelResizeOptions) {
-  let width = $state(0), isResizing = $state(false);
+export function usePersistedPanelWidth(key: string, options: PanelResizeOptions, presentation: {
+  automaticWidth?(): number;
+  /** Use when the controlled surface is not the handle's immediate parent. */
+  element?(handle: HTMLElement): HTMLElement | null;
+} = {}) {
+  let revision = $state(0), isResizing = $state(false);
   let retireActivity: (() => void) | undefined;
   let pointer: number | undefined;
   let release: (() => void) | undefined;
-  const owner = createPanelResize(loadPersisted<unknown>(key, options.default), options, {
+  const owner = createPanelResize(loadPersisted<unknown>(key, presentation.automaticWidth ? null : options.default), options, {
     schedule: callback => { const frame = requestAnimationFrame(callback); return () => cancelAnimationFrame(frame); },
     persist: value => savePersisted(key, value),
-    publish(value, active) {
-      width = value; isResizing = active;
+    automaticWidth: presentation.automaticWidth,
+    publish(_value, active) {
+      revision += 1; isResizing = active;
       if (active) retireActivity ??= resizeActivity.begin();
       else {
         const cleanup = release; release = undefined; pointer = undefined; cleanup?.();
@@ -25,13 +30,13 @@ export function usePersistedPanelWidth(key: string, options: PanelResizeOptions)
       }
     },
   });
-  width = owner.width;
+  const width = $derived.by(() => { revision; return owner.width; });
   onDestroy(owner.cancel);
 
   function startResize(event: PointerEvent) {
     if (!event.isPrimary || event.button !== 0) return;
     const handle = event.currentTarget as HTMLElement;
-    const panel = handle.parentElement;
+    const panel = presentation.element ? presentation.element(handle) : handle.parentElement;
     if (!panel) return;
     owner.cancel();
     const cssWidth = parseFloat(getComputedStyle(panel).width);

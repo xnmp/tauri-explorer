@@ -410,17 +410,12 @@
   const resizeRegionId = $props.id();
   const authorCol = usePersistedPanelWidth("git-graph-col-author", { min: 60, max: 320, default: 120, invert: true });
   const dateCol = usePersistedPanelWidth("git-graph-col-date", { min: 56, max: 220, default: 84, invert: true });
-  const GRAPH_COL_KEY = "git-graph-col-graph";
-  const GRAPH_COL_MIN = 28;
-  const GRAPH_COL_MAX = 800;
-  const savedGraphCol = loadPersisted<unknown>(GRAPH_COL_KEY, null);
-  let graphCol = $state<number | null>(
-    typeof savedGraphCol === "number" && Number.isFinite(savedGraphCol) ? savedGraphCol : null,
-  );
-  let graphColResizing = $state(false);
-  const effectiveGraphWidth = $derived(
-    graphCol === null ? graphWidth : Math.max(GRAPH_COL_MIN, Math.min(GRAPH_COL_MAX, graphCol)),
-  );
+  let graphClip = $state<HTMLElement>();
+  const graphCol = usePersistedPanelWidth("git-graph-col-graph", { min: 28, max: 800, default: 56 }, {
+    automaticWidth: () => graphWidth,
+    element: () => graphClip ?? null,
+  });
+  const effectiveGraphWidth = $derived(graphCol.width);
 
   // Column visibility (#372): author/date/commit are hideable via the
   // header's right-click menu; message and the graph itself always show.
@@ -501,27 +496,6 @@
 
   $effect(() => { if (!shownColumns.author) untrack(authorCol.cancel); if (!shownColumns.date) untrack(dateCol.cancel); });
 
-  function startGraphColResize(event: MouseEvent): void {
-    event.preventDefault();
-    graphColResizing = true;
-    const startX = event.clientX;
-    const startWidth = effectiveGraphWidth;
-    function onMouseMove(e: MouseEvent) {
-      graphCol = Math.max(GRAPH_COL_MIN, Math.min(GRAPH_COL_MAX, startWidth + (e.clientX - startX)));
-    }
-    function onMouseUp() {
-      graphColResizing = false;
-      savePersisted(GRAPH_COL_KEY, graphCol);
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-  }
   /** Oid of the row with an open inline expansion — commit details OR the PR
    *  dropdown (#459). Only one is ever open (each opener closes the other), so
    *  this stays single-valued and the RowExpand math is unchanged. */
@@ -1536,12 +1510,16 @@
           </div>
         </div>
       {/if}
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handles; role=separator conveys the semantics, keyboard resize is a separate unimplemented feature -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
       <span
         class="col-handle handle-graph"
-        class:active={graphColResizing}
+        class:active={graphCol.isResizing}
         style:left="{effectiveGraphWidth + 6}px"
-        onmousedown={startGraphColResize}
+        onpointerdown={graphCol.startResize} onpointermove={graphCol.move} onpointerup={graphCol.finish}
+        onpointercancel={graphCol.cancelPointer} onlostpointercapture={graphCol.cancelPointer}
+        onkeydown={graphCol.keydown} tabindex="0"
+        aria-controls={`${resizeRegionId}-graph`}
+        aria-valuemin={graphCol.min} aria-valuemax={graphCol.max} aria-valuenow={graphCol.width}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize graph column"
@@ -1673,7 +1651,7 @@
       <div class="graph-body" style:height="{graphHeight}px">
         <!-- Clip window for the lane SVG: when the user narrows the graph
              column below the lane-derived width, overflow is cut (#341). -->
-        <div class="graph-clip" style:width="{effectiveGraphWidth}px">
+        <div bind:this={graphClip} id={`${resizeRegionId}-graph`} class="graph-clip" style:width="{effectiveGraphWidth}px">
         <svg
           class="graph-underlay"
           width={graphWidth}
@@ -3032,6 +3010,7 @@
   }
 
   .col-handle {
+    touch-action: none;
     position: absolute;
     top: 0;
     bottom: 0;
@@ -3056,7 +3035,7 @@
     width: 2px;
   }
 
-  .handle-in-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .col-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
   /* Author/date handles sit on the cell's left edge, in the flex gap. */
   .handle-in-cell {

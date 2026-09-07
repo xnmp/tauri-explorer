@@ -114,7 +114,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.
 - `pane-viewport.svelte.ts` — window-owned viewport measurements and derived pane geometry; never persists rendered ratios.
 - `resize-activity.svelte.ts` — window-wide, token-owned resize activity; automatic workspace reveal pauses until all gestures retire.
-- `panel-resize.ts` — importable panel width gesture owner; coalesced updates, cancellation and persistence contracts.
+- `panel-resize.ts` — importable panel width gesture owner; fixed/live automatic modes, coalesced updates, cancellation and persistence contracts.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane fs-watch + local-mutation cooldown (pure).
 - `directory-listing.ts` — streaming/event-based incremental dir load management.
@@ -248,7 +248,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
 - `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
-- `use-panel-resize.svelte.ts` — pointer/keyboard DOM adapter for persisted panel widths; Sidebar, SCM, Miller and Git author/date columns.
+- `use-panel-resize.svelte.ts` — pointer/keyboard DOM adapter for persisted panel widths; Sidebar, SCM, Miller and all Git columns; optional explicit controlled-element geometry.
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.

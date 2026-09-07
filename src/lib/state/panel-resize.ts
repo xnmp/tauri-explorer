@@ -6,28 +6,34 @@ export function createPanelResize(initial: unknown, options: PanelWidthOptions, 
   schedule(callback: () => void): () => void;
   publish(width: number, active: boolean): void;
   persist(width: number): void;
+  automaticWidth?(): number;
 }) {
-  let width = panelWidth(initial, options);
-  let drag: { initial: number; client: number; scale: number; pending?: number; stop?: () => void } | undefined;
-  const publish = () => deps.publish(width, !!drag);
+  let preferred = typeof initial === "number" && Number.isFinite(initial)
+    ? panelWidth(initial, options) : deps.automaticWidth ? undefined : panelWidth(initial, options);
+  let drag: { initial: number; preference: number | undefined; client: number; scale: number; pending?: number; stop?: () => void } | undefined;
+  const width = () => preferred ?? drag?.initial ?? panelWidth(deps.automaticWidth?.(), options);
+  const publish = () => deps.publish(width(), !!drag);
   function cancel() {
     const previous = drag;
+    const completed = preferred;
     drag = undefined;
     previous?.stop?.();
     if (!previous) return;
     publish();
-    if (width !== previous.initial) deps.persist(width);
+    if (completed !== previous.preference && completed !== undefined) deps.persist(completed);
   }
   function start(client: number, scale: number) {
     cancel();
     if (!Number.isFinite(client) || !Number.isFinite(scale) || scale <= 0) return false;
-    drag = { initial: width, client, scale };
+    drag = { initial: width(), preference: preferred, client, scale };
     publish();
     return true;
   }
   function apply(job: NonNullable<typeof drag>) {
     if (drag !== job || job.pending === undefined) return;
-    width = draggedPanelWidth(job.initial, job.pending - job.client, job.scale, options);
+    const next = draggedPanelWidth(job.initial, job.pending - job.client, job.scale, options);
+    // A click, rejected movement or unchanged boundary keeps automatic sizing.
+    if (next !== job.initial || preferred !== undefined) preferred = next;
     job.pending = undefined;
     publish();
   }
@@ -50,11 +56,12 @@ export function createPanelResize(initial: unknown, options: PanelWidthOptions, 
     if (drag === job) cancel();
   }
   function key(key: string): boolean {
-    const next = panelWidthFromKey(width, key, options);
+    const previous = width();
+    const next = panelWidthFromKey(previous, key, options);
     if (next === undefined) return false;
     cancel();
-    if (width !== next) { width = next; publish(); deps.persist(width); }
+    if (previous !== next) { preferred = next; publish(); deps.persist(next); }
     return true;
   }
-  return { get width() { return width; }, start, move, finish, cancel, key };
+  return { get width() { return width(); }, start, move, finish, cancel, key };
 }

@@ -56,8 +56,9 @@ export function usePaneDividers(deps: {
     activeId = node.id;
     valid = unchanged;
     pointer = event.pointerId;
-    handle.setPointerCapture(event.pointerId);
     release = () => { if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId); };
+    try { handle.setPointerCapture(event.pointerId); }
+    catch { resize.cancel(); }
   }
   function move(event: PointerEvent) {
     if (event.pointerId !== pointer) return;

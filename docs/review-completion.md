@@ -5,13 +5,13 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): inline SCM/Miller width contributions and
-window-wide resize activity now keep optional panels composable with constrained
-pane geometry. Shared panel resize ownership handles zoom, keyboard input and
-retirement across Sidebar/SCM/Miller/Git author/date columns. Unit and native
-Linux acceptance pass; new browser scenarios pass in both engines. Two existing
-WebKit detail cases failed in the wider run and passed repeated isolation; the
-wider-run cause remains open. The full review is **not complete**.
+Current checkpoint (2026-09-07): the Git graph gutter now shares panel resize
+ownership, including live automatic sizing until an effective manual adjustment.
+Zoom, keyboard input, saved preference restoration and capture rollback pass in
+both browser engines. All 58 combined resize cases, 2,092 unit tests, 30 performance
+cases and the rebuilt Linux inline-panel regression pass. Terminal, Preview and
+Details resize owners remain to migrate; the prior wider WebKit detail failures
+and native platform/startup acceptance remain open. The full review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -1185,3 +1185,52 @@ resize path, and other custom resize surfaces need separate audit. Larger theme,
 DPI and assistive-technology combinations, native Windows/macOS acceptance and
 actual macOS half-bounce measurements remain open. No startup speedup or full
 review completion is claimed. See ADR0012.
+
+
+## Graph gutter automatic/manual sizing — 2026-09-07
+
+The Git graph gutter now uses the shared panel resize owner with an explicit
+controlled `.graph-clip` element. Private document mouse listeners and body style
+overrides are gone; pointer capture, zoom conversion, coalescing, keyboard sizing
+and teardown follow the same contracts as other panel controls. Pane dividers also
+roll back their owner if native pointer capture fails.
+
+`createPanelResize` now distinguishes an absent manual preference from a numeric
+width. A live automatic source is derived while idle and bounded by the same
+range as manual sizing (28–800px for the graph). During a gesture its displayed
+origin is captured. No-op movement, untouched cancellation and clicks keep the
+source automatic. An effective pointer or keyboard change pins the preference;
+a move away and back still counts as an explicit choice. Retirement captures the
+completed preference before publishing, so reentrant callbacks cannot substitute
+a replacement gesture's result.
+
+Before implementation, ten Chromium/WebKit regression cases failed: incorrect
+zoom distance, missing keyboard range control, late persistence after graph
+retirement, and pane-capture failure leaving resize state active. The original
+failure log is `/tmp/graph-resize-before.log`.
+
+Unit verification passes: 235 files / 2,092 tests (three skipped), plus 30
+performance cases. Architecture lint is clean and source maps cover 371/371 files.
+All 58 combined graph-gutter, shared-panel and pane-lifetime browser scenarios
+pass in Chromium/WebKit. The graph test proves automatic topology changes and
+manual preference restoration after closing/reopening the graph. Typecheck has
+zero errors/warnings. The rebuilt Linux binary passes the real-file inline-panel layout and keyboard
+regression. The normal startup graph is 42 chunks / 649,109 raw bytes / 210,846 gzip
+bytes, within budget. This is payload acceptance, not measured macOS launch time.
+The inspected keyboard screenshot shows the focused gutter control and preserved
+commit selection; native evidence shows a real file reachable beside inline panels.
+
+Independent review found no production blocker and prompted stronger browser
+outcomes for topology changes and failed pointer capture. A diagnostic initially
+mistook four lanes at 56px for stale width; the source uses 14px lanes, so that
+observation was correct. The actual fixture error was deselecting every branch,
+which removes the gutter. The replacement test uses a nonempty file-filtered
+history and asserts lane-count changes before checking automatic/manual widths.
+
+The related audit found remaining work in Details-column queued frame ownership,
+Preview dock/axis lifetime, and Terminal pointer lifetime/counter-zoom conversion.
+Preview and Terminal also persist full settings on raw pointer moves. These need
+a shared bounded scalar gesture pattern with captured axis/model scale and a
+separate durable commit; their existing implementations are not claimed migrated.
+The wider WebKit PR/CI detail run failures from the preceding checkpoint, native
+Windows/macOS matrices and measured macOS half-bounce startup remain open.

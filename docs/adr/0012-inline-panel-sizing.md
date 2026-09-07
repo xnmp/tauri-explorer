@@ -42,8 +42,8 @@ by 10 CSS pixels, Home/End choose bounds, and a left-side handle reverses arrow
 and pointer growth direction.
 
 The DOM adapter captures the pointer and the sized parent rectangle when the
-gesture begins. Every caller must place its handle directly inside its explicitly
-sized, nonshrinking panel or column. Window blur/resize/scroll and root style
+gesture begins. Callers place the handle inside its explicitly sized, nonshrinking
+panel or column, or supply the controlled element explicitly. Window blur/resize/scroll and root style
 changes retire the gesture; root zoom therefore cannot reuse an old coordinate
 scale. Capture failure rolls back ownership. Global listeners and the root style
 observer exist only during the gesture. No body cursor or user-selection styles
@@ -54,5 +54,11 @@ the same input owner. Unhandled modified shortcuts retain window routing.
 Keyboard/range behavior follows the [WAI window-splitter pattern](https://www.w3.org/WAI/ARIA/apg/patterns/windowsplitter/),
 and pointer lifetime uses [Pointer capture](https://developer.mozilla.org/en-US/docs/Web/API/Element/setPointerCapture).
 This is targeted keyboard/browser acceptance, not assistive-technology certification.
-The graph gutter's separate automatic-width resize and other custom resize
-surfaces remain separate audit work; this decision does not claim their migration.
+The graph gutter now uses this owner with a live automatic-width source and an
+explicit controlled element. With no finite stored preference, its width follows
+lane topology within 28–800px. A gesture captures the current automatic width.
+No-op movement and cancellation before a published manual adjustment keep
+automatic mode, while an effective pointer or keyboard adjustment establishes a
+persisted manual preference. The source can change during a drag without changing
+its captured origin. Author/date and ordinary panels keep
+their fixed default widths. Other custom resize surfaces remain separate audit work.

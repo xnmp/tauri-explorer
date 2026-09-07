@@ -75,3 +75,38 @@ it("finishing an old gesture cannot cancel a replacement started by its publicat
   expect(owner.width).toBe(290);
   expect(persisted).toEqual([260, 290]);
 });
+
+it("automatic width follows its source until an effective manual adjustment", () => {
+  let automatic = 200;
+  const persisted: number[] = [];
+  const owner = createPanelResize(null, options, { automaticWidth: () => automatic,
+    schedule: () => () => {}, publish: () => {}, persist: width => persisted.push(width) });
+  expect(owner.width).toBe(200);
+  automatic = 300; expect(owner.width).toBe(300); expect(persisted).toEqual([]);
+  owner.start(100, 1); automatic = 350;
+  expect(owner.width).toBe(300); // active gesture captures its displayed origin
+  owner.finish(); expect(owner.width).toBe(350); expect(persisted).toEqual([]);
+  owner.start(100, 1); owner.move(100); owner.finish();
+  automatic = 320; expect(owner.width).toBe(320); expect(persisted).toEqual([]);
+  owner.start(100, 1); owner.move(130); owner.finish();
+  automatic = 200; expect(owner.width).toBe(350); expect(persisted).toEqual([350]);
+});
+
+it("automatic sizing is bounded, keyboard adjustment becomes explicit, and stored preference wins", () => {
+  const deps = { automaticWidth: () => 1e6, schedule: () => () => {}, publish: () => {}, persist: () => {} };
+  const automatic = createPanelResize(NaN, options, deps);
+  expect(automatic.width).toBe(400);
+  automatic.key("ArrowLeft"); expect(automatic.width).toBe(390);
+  const stored = createPanelResize(260, options, deps);
+  expect(stored.width).toBe(260);
+});
+
+it("returning a manual drag to its automatic origin persists the explicit preference", () => {
+  let source = 240;
+  let frame = () => {};
+  const saved: number[] = [];
+  const owner = createPanelResize(null, options, { automaticWidth: () => source,
+    schedule: cb => { frame = cb; return () => {}; }, publish: () => {}, persist: width => saved.push(width) });
+  owner.start(100, 1); owner.move(130); frame(); owner.move(100); owner.finish();
+  source = 300; expect(owner.width).toBe(240); expect(saved).toEqual([240]);
+});

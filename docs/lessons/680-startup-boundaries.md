@@ -360,3 +360,21 @@ before clicking (Playwright clicks can scroll hidden content into view). In a
 fixture that manually scrolls after resizing the viewport, first wait for the new
 canvas measurement: otherwise late automatic reveal can undo the fixture's scroll
 before the drag even starts.
+
+
+### Automatic size is derived presentation until the user adjusts it
+
+The Git gutter's old private mouse listeners used visual deltas as CSS widths,
+persisted late movement after unmount, and offered no keyboard path. Its shared
+resize owner now distinguishes an absent manual preference from a numeric width.
+Do not initialize automatic width by copying a reactive source into a fixed field:
+it must keep following topology while idle. Capture its displayed width for a
+gesture, and establish a manual preference only after an effective adjustment.
+A move away and back still establishes that preference; a click or untouched
+cancellation does not. Capture the completed preference before publishing retirement, so a reentrant
+callback cannot substitute the replacement gesture's value.
+
+A handle's DOM parent is not always its controlled surface: the graph gutter
+handle lives in the header, while the sized clip is in the body. Pass that sized
+element explicitly when measuring zoom scale. Also install capture cleanup before
+calling setPointerCapture and roll back on failure, including pane dividers.

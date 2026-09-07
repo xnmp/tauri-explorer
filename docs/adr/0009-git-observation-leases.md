@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Governs: `src-tauri/src/git_watch.rs`, `src-tauri/src/git_watch/`,
+Governs: `src-tauri/src/git_watch.rs`, `src-tauri/src/git_watch/`, `src/lib/api/git.ts`,
 `src/lib/state/git-repo-watch.ts`, `src/lib/state/git-graph-coverage.ts`,
 `src/lib/state/scm.svelte.ts`
 
@@ -18,16 +18,16 @@ retain the lease after failed release and retry it before acquiring a replacemen
 SCM and the graph share that owner.
 
 Each native lease also belongs to the concrete calling window. The Tauri adapter
-keeps one lazy cancellation token in that window's resource table, independent of
+keeps one lazy renderer-generation slot in that window's resource table, independent of
 its reusable label. Acquisition and release obtain the identity from Tauri's
 injected `Window`; it is not supplied by renderer arguments. The builder's native
 `Destroyed` callback creates/finds and retires the token under the same resource
-table lock. Retired state remains with old native handles, so even a delayed first
+table lock. Closed state remains with old native handles, so even a delayed first
 command cannot reopen ownership, and a new window with the same label starts with
 a fresh token. No global registry retains closed-window labels. Resource lookup
 scans that window's resource IDs, since Tauri's table is not a type map; creation
-under the table lock ensures exactly one token. This does not start the Git worker
-or allocate the token on application startup.
+under the table lock ensures exactly one slot. Page-load callbacks only inspect existing slots, so
+ordinary startup neither allocates Git ownership nor starts its worker.
 
 Retirement flips cancellation state and requests a nonblocking worker wake. A
 coalesced retirement flag survives a full inbox. The worker reclaims retired
@@ -71,7 +71,34 @@ snapshot cache is bounded; live leases and per-tree OS watches are proportional
 to active owners and tree size. Native installation itself is synchronous on the
 dedicated worker and can delay queued operations on very large or remote trees.
 Native window destruction reclaims owners, including when the renderer does not
-run cleanup. A renderer crash/reload which leaves its native window alive is a
-separate lifetime boundary and is not detected here. Large-repository cost, OS
-watch-resource drainage, and Windows/macOS destruction acceptance remain separate
-acceptance; this decision does not establish the macOS startup latency target.
+run cleanup. Committed document replacement also retires the previous renderer's
+owner: the global Tauri `on_page_load` hook advances its generation on `Started`.
+Same-URL reloads are replacements; SPA navigation within the same document is not.
+The app currently has one application Webview per native Window. Independently
+navigating child Webviews would require moving this generation to Webview identity.
+
+Each JavaScript realm lazily acknowledges `git_watch_session` before its first
+watch and shares that promise among concurrent callers. Every watch/unwatch carries
+that generation. The native slot checks it under the same locks as page/native
+retirement before cloning the worker owner. Delayed old-generation acquisition is
+rejected; old release is an idempotent no-op because retirement owns cleanup. Work
+already accepted by the worker retains its retired cancellation token and cannot
+acknowledge stale coverage. Failed session acknowledgement may retry; a failed
+watch must never silently adopt another renderer generation. Generation exhaustion
+fails closed. Native destruction is terminal even if a later load callback arrives.
+
+In installed Wry 0.55.1, Started maps to committed navigation on GTK/WKWebView and
+ContentLoading on WebView2, rather than a navigation attempt which may be denied.
+Waiting for Finished would let the new document request coverage before the old
+owner is retired. A destroyed realm cannot consume a late session acknowledgement
+and issue new watch requests with it. The existing dedicated worker/coalesced wake
+handles retirement; there is no heartbeat or periodic idle work.
+
+A crash followed by reload is covered at that replacement boundary. A crash which
+leaves the renderer blank indefinitely remains open: Tauri's general API has no
+cross-platform process-termination callback. Apple has a dedicated hook; native
+WebKitGTK/WebView2 termination integration and real acceptance remain separate work.
+Large-repository cost, OS watch-resource drainage, and Windows/macOS lifecycle
+acceptance also remain open. This decision does not establish Mac startup latency.
+References: [Tauri page-load hook](https://docs.rs/tauri/2.11.5/tauri/struct.Builder.html#method.on_page_load)
+and [Apple process termination hook](https://docs.rs/tauri/2.11.5/tauri/struct.Builder.html#method.on_web_content_process_terminate).

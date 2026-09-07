@@ -72,8 +72,10 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
         const { invoke } = await whileActive(import("@tauri-apps/api/core"));
         // Intentionally no frontend lease owner or cleanup: this fixture checks
         // native reclamation when a renderer disappears with accepted work.
-        const lease = await invoke<{ id: string; repoRoot: string }>("git_watch_repo", { repoPath: target });
-        return { lease, logDir: await invoke<string>("get_log_dir") };
+        const { gitWatchRepo } = await whileActive(import("$lib/api/git"));
+        const result = await gitWatchRepo(target ?? "");
+        if (!result.ok) throw new Error(result.error);
+        return { lease: result.data, logDir: await invoke<string>("get_log_dir") };
       }
       if (op === "native-destroy") {
         const { getCurrentWindow } = await whileActive(import("@tauri-apps/api/window"));

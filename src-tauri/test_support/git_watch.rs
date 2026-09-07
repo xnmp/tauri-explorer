@@ -587,16 +587,28 @@ fn concrete_native_windows_keep_retirement_with_old_handles() {
         .as_ref()
         .window();
     let old_handle = window.clone();
-    let owner = super::resource_owner(&mut window.resources_table());
+    let slot = super::resource_owner(&mut window.resources_table());
+    let session = slot.0.lock().unwrap().session().unwrap();
+    let owner = slot.0.lock().unwrap().owner(&session).unwrap();
     let lease = run(f.service.acquire(&owner, path.clone())).unwrap();
     let observer = receive(&f.observers);
     // Looking up through a clone must retain release authority.
-    let clone_owner = super::resource_owner(&mut old_handle.resources_table());
+    let clone_owner = super::resource_owner(&mut old_handle.resources_table())
+        .0
+        .lock()
+        .unwrap()
+        .owner(&session)
+        .unwrap();
     run(f.service.release(&clone_owner, lease.id)).unwrap();
     receive(&observer.dropped);
     super::on_window_destroyed(&window);
-    let late = super::resource_owner(&mut old_handle.resources_table());
-    assert!(run(f.service.acquire(&late, path.clone())).is_err());
+    assert!(super::resource_owner(&mut old_handle.resources_table())
+        .0
+        .lock()
+        .unwrap()
+        .owner(&session)
+        .is_none());
+    assert!(run(f.service.acquire(&owner, path.clone())).is_err());
 
     // The mock dispatcher cannot destroy/remove a window; a separate app can
     // create the same native label with a fresh resource table.
@@ -609,7 +621,14 @@ fn concrete_native_windows_keep_retirement_with_old_handles() {
             .unwrap()
             .as_ref()
             .window();
-    let replacement_owner = super::resource_owner(&mut replacement.resources_table());
+    let replacement_slot = super::resource_owner(&mut replacement.resources_table());
+    let replacement_session = replacement_slot.0.lock().unwrap().session().unwrap();
+    let replacement_owner = replacement_slot
+        .0
+        .lock()
+        .unwrap()
+        .owner(&replacement_session)
+        .unwrap();
     let lease = run(f.service.acquire(&replacement_owner, path.clone())).unwrap();
     let replacement_observer = receive(&f.observers);
     // A delayed destruction notification for an old handle cannot retire it.
@@ -633,12 +652,81 @@ fn native_destruction_before_first_command_keeps_admission_closed() {
         .as_ref()
         .window();
     super::on_window_destroyed(&window);
-    let late_owner = super::resource_owner(&mut window.resources_table());
+    let slot = super::resource_owner(&mut window.resources_table());
+    assert!(slot.0.lock().unwrap().session().is_none());
+    super::on_page_started(&window);
+    assert!(
+        slot.0.lock().unwrap().session().is_none(),
+        "late page load reopened a destroyed window"
+    );
+}
+
+#[test]
+fn renderer_generations_reclaim_old_leases_and_reject_delayed_work() {
     let f = fixture();
     let dir = repo();
-    assert!(run(f
-        .service
-        .acquire(&late_owner, dir.path().to_string_lossy().into_owned()))
-    .is_err());
-    assert!(f.observers.try_recv().is_err());
+    let path = dir.path().to_string_lossy().into_owned();
+    let mut scope = super::scope::RendererScope::default();
+    let session = scope.session().unwrap();
+    let old = scope.owner(&session).unwrap();
+    let old_lease = run(f.service.acquire(&old, path.clone())).unwrap();
+    let observer = receive(&f.observers);
+    let retired = scope.advance().unwrap();
+    f.service.retire(&retired);
+    receive(&observer.dropped);
+    assert!(scope.owner(&session).is_none());
+    assert!(run(f.service.acquire(&old, path.clone())).is_err());
+    let next_session = scope.session().unwrap();
+    assert_ne!(next_session, session);
+    let next = scope.owner(&next_session).unwrap();
+    let lease = run(f.service.acquire(&next, path.clone())).unwrap();
+    let replacement = receive(&f.observers);
+    run(f.service.release(&old, lease.id.clone())).unwrap();
+    run(f.service.release(&next, old_lease.id)).unwrap();
+    assert!(replacement.dropped.try_recv().is_err());
+    run(f.service.release(&next, lease.id)).unwrap();
+    receive(&replacement.dropped);
+    scope.close();
+    assert!(scope.advance().is_none());
+    assert!(scope.session().is_none());
+    assert!(scope.owner(&next_session).is_none());
+}
+
+#[test]
+fn page_loads_rotate_only_the_concrete_window_with_existing_ownership() {
+    use tauri::Manager;
+    let app = tauri::test::mock_builder()
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let left = tauri::WebviewWindowBuilder::new(&app, "left", Default::default())
+        .build()
+        .unwrap()
+        .as_ref()
+        .window();
+    let right = tauri::WebviewWindowBuilder::new(&app, "right", Default::default())
+        .build()
+        .unwrap()
+        .as_ref()
+        .window();
+    super::on_page_started(&left);
+    assert!(
+        super::existing_owner(&left.resources_table()).is_none(),
+        "unused Git ownership was allocated on startup"
+    );
+    let left_slot = super::resource_owner(&mut left.resources_table());
+    let right_slot = super::resource_owner(&mut right.resources_table());
+    let first = left_slot.0.lock().unwrap().session().unwrap();
+    let right_session = right_slot.0.lock().unwrap().session().unwrap();
+    super::on_page_started(&left);
+    let second = left_slot.0.lock().unwrap().session().unwrap();
+    assert_ne!(first, second);
+    assert!(left_slot.0.lock().unwrap().owner(&first).is_none());
+    assert!(right_slot.0.lock().unwrap().owner(&right_session).is_some());
+    // Same URL / no Finished event does not weaken the replacement boundary.
+    super::on_page_started(&left);
+    assert_ne!(left_slot.0.lock().unwrap().session().unwrap(), second);
+    super::on_window_destroyed(&left);
+    super::on_page_started(&left);
+    assert!(left_slot.0.lock().unwrap().session().is_none());
+    assert!(right_slot.0.lock().unwrap().owner(&right_session).is_some());
 }

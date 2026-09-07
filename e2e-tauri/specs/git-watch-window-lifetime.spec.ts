@@ -9,6 +9,7 @@ import { navigateTo, domTexts } from "./helpers";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-watch-owner-"));
 const repository = path.join(scratch, "repository");
+const reloadRepository = path.join(scratch, "reload-repository");
 let mainHandle: string;
 
 async function operation(op: string, target?: string): Promise<unknown> {
@@ -33,6 +34,7 @@ function readLogs(directory: string): string {
 describe("Git observation native window ownership", () => {
   before(() => {
     execFileSync("git", ["init", "--quiet", repository]);
+    execFileSync("git", ["init", "--quiet", reloadRepository]);
     fs.writeFileSync(path.join(scratch, "survivor.txt"), "main window stays usable");
   });
   after(async () => {
@@ -87,5 +89,30 @@ describe("Git observation native window ownership", () => {
     await navigateTo(repository);
     await navigateTo(scratch);
     expect(await domTexts(".entry-name")).toContain("survivor.txt");
+  });
+
+  it("reclaims an abandoned renderer lease when the same native window reloads", async () => {
+    await navigateTo(scratch);
+    mainHandle = await browser.getWindowHandle();
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const { lease, logDir } = await operation("watch-acquire", reloadRepository) as {
+        lease: { id: string; repoRoot: string }; logDir: string;
+      };
+      const reclamation = `Reclaimed Git observation for closed native owner: ${lease.repoRoot}`;
+      const count = () => readLogs(logDir).split(reclamation).length - 1;
+      const before = count();
+      // The probe deliberately has no frontend cleanup. Reload destroys its JS
+      // realm while keeping the native window and application process alive.
+      await browser.refresh();
+      await navigateTo(scratch);
+      expect(await browser.getWindowHandle()).toBe(mainHandle);
+      expect(await domTexts(".entry-name")).toContain("survivor.txt");
+      await browser.waitUntil(() => count() > before, {
+        timeout: 10_000, timeoutMsg: "reload retained the previous renderer's Git observation",
+      });
+    }
+    // Visual evidence establishes post-reload usability; reclamation itself is
+    // established by the acknowledgements and worker log above, not this image.
+    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-renderer-reload.png");
   });
 });

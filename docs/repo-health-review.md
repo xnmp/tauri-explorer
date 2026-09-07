@@ -529,3 +529,14 @@ editing/modal ownership. Both browser engines reproduce the failure before the
 fix; 14 command/address outcomes and 44 targeted units pass afterward. Independent
 review confirms the layer boundary. This closes the palette defect found during
 native resize acceptance; broader release gates remain in the completion ledger.
+
+
+Renderer-generation checkpoint (2026-09-07): the native window's continued existence
+no longer lets abandoned Git leases survive a page reload. A pure generation scope,
+lazy acknowledged session and generation-checked IPC retire old ownership while
+preserving the dedicated worker and unused-window startup path. The same-window
+native regression fails before the fix and passes afterward; six independent native
+window/cache cases, 2,130 frontend tests plus30perf, 448 Rust tests, strict Clippy,
+typecheck, architecture/map checks and payload budgets pass. ADR0009 and the ledger
+state the evidence limits. An indefinitely blank renderer crash still needs native
+termination handling; full platform/integration/startup acceptance remains open.

@@ -450,3 +450,23 @@ ordinary shortcuts while editing or inside a modal. Keep `when` for feature/mode
 availability. The regression opens and closes readable Preview content through the
 focused palette, then verifies Space edits a path and toggles Preview after focus
 returns to files. It fails in both browser engines before the guard removal.
+
+
+### A native window can outlive the renderer which owns its watches
+
+A real-binary test acquired a Git lease without frontend cleanup, then reloaded the
+same native window. The new page remained usable but the old observer never retired;
+native window destruction still reclaimed it. Window identity alone was too broad.
+
+Keep a renderer generation inside the concrete window slot. Advance and retire at
+committed page-load Started; require an acknowledged generation on watch/unwatch IPC.
+Rotating only the owner is insufficient: a delayed old-page command would otherwise
+look up the new owner and acquire against its lifetime. Work captured before the
+boundary must retain the old cancellation token. Old releases are idempotent and
+cannot affect a replacement. Native close is terminal even after a late load event.
+
+The frontend caches its acknowledged session per JS realm; only a failed handshake
+can retry. A rejected watch cannot renew the generation and adopt another page's
+lifetime. Page hooks inspect existing slots so sessions without Git stay lazy.
+Test repeated same-window reload, not only closing the window or application. A
+blank process crash without reload still needs platform-native termination handling.

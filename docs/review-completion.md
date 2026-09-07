@@ -5,15 +5,15 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): Preview now joins fixed/automatic panels,
-Terminal and keyed Details on the shared scalar/DOM resize owner. All 148 targeted
-Chromium/WebKit outcomes, 2,127 unit tests and 30 performance cases pass; typecheck
-has zero errors/warnings. Teardown regressions exposed and fixed historical
-settings rollback across dock/hide changes. The real Linux Preview scenario and
-normal bundle budgets also pass. Wider integration, native renderer
-retention and full platform/startup acceptance remain open.
-The follow-up palette fix passes 14 focused browser cases, 44 targeted unit
-contracts and the rebuilt native scenario. The full review is **not complete**.
+Current checkpoint (2026-09-07): native Git ownership now distinguishes renderer
+replacements within a surviving window. Acknowledged generation IDs reject delayed
+old-document watch IPC; committed page reload reclaims the previous owner without
+starting a worker or allocating Git state in unused windows. Full frontend validation
+passes 2,130 tests plus 30 performance cases; Rust passes 448 with seven ignored;
+typecheck and strict Clippy pass. Independent native verification passes six
+window/cache scenarios, including two consecutive reloads of the same window.
+The comprehensive review is **not complete**. Indefinitely blank renderer crashes,
+broader retention/integration and platform/startup acceptance remain open.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -27,7 +27,7 @@ limitations and must not be read as current status.
 | Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
-| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer survival after a crash/reload, workspace/plugin churn, scaled soak and broader native retention acceptance remain outstanding |
+| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; indefinitely blank renderer crashes, workspace/plugin churn, scaled soak and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
@@ -1435,3 +1435,63 @@ lint and 376/376 map coverage remain clean. Final normal startup payload is
 44 chunks / 651,836 raw bytes / 212,142 gzip bytes, within budget
 (`/tmp/preview-command-bundle.log`). These results do not establish Mac startup
 latency or complete the remaining release gates.
+
+
+## Renderer generation and native Git reclamation checkpoint — 2026-09-07
+
+The existing native-window owner outlived a reloaded renderer. An acknowledged
+lease with no frontend cleanup survived replacement indefinitely even though the
+same native window returned a usable listing. The new real-binary regression fails
+before the fix while native-window destruction still passes
+(`/tmp/git-renderer-before.log`). This is a distinct boundary from the already
+implemented native-window retirement and observer runtime recovery.
+
+`git_watch/scope.rs` now owns a generation and cancellable observer owner beneath
+the concrete window resource. Tauri page-load Started advances and retires existing
+ownership. The frontend lazily acknowledges `git_watch_session` once per JS realm;
+watch/unwatch must carry that session. Native lookup under the retirement locks
+rejects delayed obsolete acquisition and treats obsolete release as an idempotent
+no-op. Requests already sent to the worker retain the cancelled old owner. Close
+is terminal; late page callbacks cannot reopen a destroyed native window. Windows
+without Git ownership allocate neither a slot nor a worker on page load. No idle
+polling was added. ADR0009 records the single-app-Webview-per-Window assumption,
+committed-load event mapping and the separate blank-crash boundary.
+
+Verification:
+
+- 19 targeted Rust Git-watch tests pass, one ignored. New generation and native
+  adapter contracts cover old-owner rejection, observer disposal, replacement
+  release isolation, repeated page starts without Finished, unused-window laziness,
+  concrete-window independence and close followed by a late load event. Existing
+  held-registration and saturated-inbox cancellation contracts also pass.
+- Full Rust library: 448 pass, seven ignored (`/tmp/git-renderer-full-rust.log`).
+  Strict all-target Clippy passes (`/tmp/git-renderer-clippy.log`).
+- Full frontend: 2,130 pass in 240 files, three skipped, plus 30 performance cases
+  (`/tmp/git-renderer-full-units.log`). API contracts cover lazy concurrent handshake,
+  retry after acknowledgement failure, release identity and failure to adopt a
+  replacement generation after watch rejection. Typecheck has zero errors/warnings.
+- Independent Linux binary verification: six scenarios pass across native-window
+  and Git-cache suites (`/tmp/git-renderer-native-independent.log`). The reload test
+  repeats twice with the same native handle and real `survivor.txt` listing, requiring
+  a new worker reclamation log after each previously acknowledged lease. Existing
+  hidden-cache invalidation, pagination, diff and recovery remain healthy.
+- Native reclamation evidence is a repo-qualified worker log after accepted work;
+  Rust tests separately observe actual observer disposal. This is not an OS-handle
+  census or a native overlap/crash race test. Independent architectural review
+  confirms generation, delayed IPC, terminal close and lazy-startup contracts.
+- Architecture lint and maps377/377 pass. Startup remains within budget at 44 chunks /
+  651,970 raw bytes / 212,228 gzip bytes (`/tmp/git-renderer-bundle.log`). This measures
+  payload, not elapsed launch time or the Mac half-bounce target.
+
+A crash followed by reload is reclaimed at page replacement. A renderer that stays
+blank after crashing still requires native WebKitGTK/WebView2/Apple termination
+handling and platform acceptance. Larger repository cost, watcher OS-resource census,
+scaled retention, full integration and actual Mac startup measurements remain open.
+
+
+The native window suite also passes its final evidence run (2/2 in 2.7 seconds,
+`/tmp/git-renderer-native-evidence.log`). The inspected
+`screenshots/refactor/repo-health-cleanup/native-renderer-reload.png` demonstrates
+post-reload listing usability; it is supporting UI evidence, not proof of resource
+reclamation by itself. The Git-cache suite's automatically regenerated historical
+screenshots were restored to avoid unrelated image churn.

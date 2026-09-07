@@ -232,9 +232,20 @@ export async function gitCommit(
 
 export interface GitWatchLease { id: string; repoRoot: string }
 
+// One acknowledged generation per JS realm. Reload creates a new module cache;
+// commands already sent retain the old ID and cannot acquire for that new page.
+let watchSession: Promise<string> | undefined;
+function getWatchSession(): Promise<string> {
+  return watchSession ??= invoke<string>("git_watch_session").catch(error => {
+    watchSession = undefined;
+    throw error;
+  });
+}
+
 export async function gitWatchRepo(repoPath: string): Promise<ApiResult<GitWatchLease>> {
   try {
-    const lease = await invoke<GitWatchLease>("git_watch_repo", { repoPath });
+    const sessionId = await getWatchSession();
+    const lease = await invoke<GitWatchLease>("git_watch_repo", { repoPath, sessionId });
     recordWatchAcknowledgement(lease, true);
     return { ok: true, data: lease };
   } catch (err) {
@@ -244,7 +255,8 @@ export async function gitWatchRepo(repoPath: string): Promise<ApiResult<GitWatch
 
 export async function gitUnwatchRepo(lease: GitWatchLease): Promise<ApiResult<void>> {
   try {
-    await invoke<void>("git_unwatch_repo", { leaseId: lease.id });
+    const sessionId = await getWatchSession();
+    await invoke<void>("git_unwatch_repo", { leaseId: lease.id, sessionId });
     recordWatchAcknowledgement(lease, false);
     return { ok: true, data: undefined };
   } catch (err) {

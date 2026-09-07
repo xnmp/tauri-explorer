@@ -201,6 +201,11 @@ pub fn run(launch_dir: Option<String>) {
                 git_watch::on_window_destroyed(window);
             }
         })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                git_watch::on_page_started(&webview.window());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             // Launch info
             get_launch_cwd,
@@ -303,6 +308,7 @@ pub fn run(launch_dir: Option<String>) {
             git::git_discard,
             git::git_diff,
             git::git_commit,
+            git_watch::git_watch_session,
             git_watch::git_watch_repo,
             git_watch::git_unwatch_repo,
             git_log::git_log,

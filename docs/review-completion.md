@@ -5,15 +5,18 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): native Git ownership now retires on renderer
-termination even while its page stays blank. Linux/Windows lazily acknowledge native
-listener installation before issuing a session; Apple uses its native termination
-hook. UI-thread installation survives cancelled callers without duplicating handlers.
-The Linux crash experiment confirms reclamation before any reload while the native
-process survives. Full Rust validation passes 449 tests with seven ignored; strict
-Clippy, typecheck and architecture lint pass. The comprehensive review is **not
-complete**. Same-process crash recovery, Windows/Mac native acceptance, broader
-retention/integration and actual Mac startup measurements remain open.
+Current checkpoint (2026-09-07): plugin lifecycle teardown now handles synchronous
+reentrancy during active deactivation, activation failure and shutdown. The registry
+publishes real activation/shutdown completion before invoking external hooks and
+retires old contributions before re-enable/retry. Four production-registry tests
+reproduced the failures before their fixes; mixed-plugin churn verifies 5,001
+activations without retained or duplicate contributions. Full frontend validation
+passes 2,135 tests plus 30 performance cases; typecheck, architecture lint and bundle
+budgets pass. Native Git blank-crash cleanup remains implemented and Linux-verified.
+All seven bounded browser load cases pass, with workspace and graph churn scaled
+to 150 cycles. The comprehensive review is **not complete**: same-process crash
+recovery, broader product/native integration and Windows/Mac
+acceptance, including actual Mac startup measurements, remain open.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -27,7 +30,7 @@ limitations and must not be read as current status.
 | Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
-| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; same-process crash recovery, workspace/plugin churn, scaled soak and broader native retention acceptance remain outstanding |
+| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; same-process crash recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
@@ -1556,3 +1559,76 @@ repository and asserts the created file is visible. The inspected updated
 `native-renderer-reload.png` shows `observed-after-reload-2.txt` in the recovered
 ordinary-reload session; it is not crash-recovery evidence. The four historical
 Git-cache screenshots regenerated by their runner were restored unchanged.
+
+
+## Plugin lifecycle and workspace retention checkpoint — 2026-09-07
+
+The registry now publishes real activation completion before invoking a plugin,
+marks failed/cancelled activation retired before cleanup hooks, and publishes its
+shared shutdown drain before active hooks can re-enter it. Active deactivation
+removes the entry and context before the hook, permitting a fresh registration of
+the same command/provider without collision or stale cleanup. Four production-import
+regressions failed before the fixes: recursive disposal/duplicate job teardown,
+enabled-but-inactive self re-enable, lost retry after partial activation failure,
+and shutdown completing while activation remained held. Logs:
+`/tmp/review-plugin-reentrancy-before.log`,
+`/tmp/review-plugin-activation-before.log`.
+
+Independent review accepts the final lifecycle behavior. The final focused plugin
+and job suite passes 66 tests; mixed-plugin churn performs 5,001 activations using
+real context/command/menu/settings/provider/dialog stores, including concurrent
+plugins and repeated partial activation failure. It asserts visible singleton
+effects, full contribution retirement and exactly-once job-owner disposal. This
+checks resource contracts, not native AI services or every built-in plugin pairing.
+Full frontend validation passes 2,135 tests in 241 files (three skipped), plus 30
+performance cases (`/tmp/review-retention-full-units.log`). Typecheck reports zero
+errors/warnings; architecture lint and maps 378/378 pass. Startup payload remains
+within budget: 44 chunks, 651,987 raw / 212,258 gzip bytes
+(`/tmp/review-retention-bundle.log`); this is not a native startup measurement.
+
+A new UI-driven load test saves/restores single-pane and split/graph workspaces via
+the real palette/dialogs. Every transition asserts restored tab/pane counts, the
+correct repository graph and actual directory contents. At 150 cycles, all three
+churn cases pass without retries (`/tmp/review-final-scaled-churn.log`):
+
+| Workload | Post-warmup JS heap | Final JS heap | Delta |
+| --- | --- | --- | --- |
+| 150 graph-tab open/close cycles | 25.2 MiB | 29.7 MiB | +4.5 MiB |
+| 150 graph toggles | 25.4 MiB | 27.6 MiB | +2.2 MiB |
+| 150 expanded/base workspace replacement pairs | 26.58 MiB | 30.03 MiB | +3.45 MiB |
+
+Workspace post-GC samples at cycles 0/25/50/75/100/125/150 were
+26.58/28.98/29.90/30.90/30.29/29.72/30.03 MiB. DOM nodes/listeners varied, including
+9,838/764 at cycle 75 and a return to the baseline 4,624/362 at cycle 125; the final sample was
+4,726/366. This run does not show monotonic DOM retention. Counters are diagnostics,
+not a separately enforced budget, and pending asynchronous work can affect samples.
+All cases enforce the existing +25 MiB retained-renderer-heap cap. These are bounded
+mock-browser workloads with forced Chromium GC, not proof of leak freedom, a native
+resource census, hours-long soak, or Mac launch latency.
+
+The shared tab-creation load helper now waits for a newly active stable tab ID.
+Counting DOM tabs is invalid while closed tabs remain mounted for keyed outros.
+Earlier diagnostics also overlapped development-source/generated-output changes;
+those runs cannot establish a product navigation defect. Final measurement ran with
+source and generated SvelteKit output frozen. No product navigation workaround or
+relaxed memory budget was introduced.
+
+
+The remaining four load cases also pass without retries
+(`/tmp/review-final-remaining-load.log`), completing all seven bounded load cases:
+12 graph tabs, 5,000-commit pagination with bounded DOM, actual 4x CPU throttling,
+and survival under a 256 MiB V8 old-space cap. Independent verification confirms
+all outcomes and scope. The final workspace image run passes separately (one cycle,
+`/tmp/review-workspace-retention-image.log`); inspected
+`screenshots/refactor/repo-health-cleanup/workspace-retention.png` shows the restored
+split, populated graph and directory listing. The screenshot run does not replace
+the 150-cycle measurement. Every load runner stopped and released port1430.
+
+
+Chromium and WebKit integration also passes all 28 plugin/pane/workspace outcomes
+without retries (`/tmp/review-retention-browser.log`): enabling and invoking commands,
+context-menu effects, virtual directory contents, disabling contributions, split/tab
+closure, pane restoration and saved-workspace reopening. These are details-view
+checks; broader view/theme/accessibility/native matrices remain open. Backend source
+is unchanged by this checkpoint, so prior Rust/native evidence is retained rather
+than represented as a fresh native integration run.

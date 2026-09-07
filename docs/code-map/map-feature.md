@@ -349,7 +349,7 @@ backend for E2E/browser).
 - `state/owned-registry.ts` — invocation identity and duplicate policy shared by command, menu, dialog and filesystem contributions.
 - `state/modal-ownership.svelte.ts` — contributed dialogs and shared Modal participate in the same input gate as built-in dialogs.
 
-- `plugins/registry.svelte.ts` — `pluginRegistry` (register/enable)
+- `plugins/registry.svelte.ts` — `pluginRegistry` owns activation, retry and shutdown completion; context retirement precedes reentrant hooks
 - `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings)
 - `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner.
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points

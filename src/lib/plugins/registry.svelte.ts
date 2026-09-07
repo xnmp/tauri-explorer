@@ -64,14 +64,25 @@ function createPluginRegistry(
     }
 
     const { ctx, dispose } = createPluginContext(plugin.id);
+    // Plugin code can synchronously request shutdown or retry. Publish the
+    // actual completion before invoking it so those operations join this run.
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const completion = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
     const activation: Activation = {
       dispose,
-      promise: Promise.resolve(),
+      promise: completion,
       cancelled: false,
       deactivated: false,
     };
     activating.set(plugin.id, activation);
     const deactivateActivation = () => {
+      // A retry requested by cleanup must wait for this retired run to finish.
+      activation.cancelled = true;
+      dispose();
       if (!activation.deactivated) {
         activation.deactivated = true;
         try {
@@ -80,7 +91,6 @@ function createPluginRegistry(
           console.error(`[plugins] deactivate hook for "${plugin.id}" threw:`, err);
         }
       }
-      dispose();
     };
 
     const run = (async () => {
@@ -101,8 +111,8 @@ function createPluginRegistry(
         if (activating.get(plugin.id) === activation) activating.delete(plugin.id);
       }
     })();
-    activation.promise = run;
-    return run;
+    void run.then(resolve, reject);
+    return completion;
   }
 
   function deactivate(id: string): void {
@@ -117,13 +127,16 @@ function createPluginRegistry(
     }
     const entry = active.get(id);
     if (!entry) return; // not active (an in-flight activate re-checks isEnabled)
+    // Retire before invoking external code. A deactivate hook may synchronously
+    // re-enable this plugin; its new context must see no old registration or
+    // provider-scheme collision, and this cleanup must not erase its replacement.
+    active.delete(id);
+    entry.dispose();
     try {
       entry.plugin.deactivate?.();
     } catch (err) {
       console.error(`[plugins] deactivate hook for "${id}" threw:`, err);
     }
-    entry.dispose();
-    active.delete(id);
   }
 
   return {
@@ -142,15 +155,15 @@ function createPluginRegistry(
       if (disposal) return disposal;
       closed = true;
       const inFlight = [...activating.values()];
+      // Publish the shared drain before hooks can re-enter dispose(). Promise
+      // continuations run after the synchronous context retirement below.
+      disposal = Promise.allSettled(inFlight.map((activation) => activation.promise))
+        .then(() => jobLifecycle.dispose());
       for (const activation of inFlight) {
         activation.cancelled = true;
         activation.dispose();
       }
       for (const id of [...active.keys()]) deactivate(id);
-      disposal = (async () => {
-        await Promise.allSettled(inFlight.map((activation) => activation.promise));
-        await jobLifecycle.dispose();
-      })();
       return disposal;
     },
 

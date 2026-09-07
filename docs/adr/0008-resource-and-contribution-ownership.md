@@ -35,7 +35,16 @@ it does not implement a private cache or refresh policy.
 - Contribution identity belongs to each registration invocation. A disposer is
   idempotent and cannot delete a replacement, even if it reused the same value.
   Plugins cannot silently replace existing commands, menus, dialogs or provider
-  schemes. Explicit core replacement contracts remain available.
+  schemes. Explicit core replacement contracts remain available. Active plugin
+  teardown detaches its registry entry and retires its context before calling the
+  external deactivate hook. A synchronous re-enable can therefore register a new
+  context without colliding with or being removed by the old one. Registry shutdown
+  publishes its shared drain promise before invoking hooks, so reentrant disposal
+  returns that same operation and releases the window job owner exactly once.
+  The real activation completion must likewise be published before plugin code
+  executes: synchronous shutdown during activation must await its held work and
+  cleanup. Failed activation marks itself retired before its cleanup hook, so a
+  reentrant retry queues behind that completion instead of adopting a failed run.
 - Native client task IDs cannot replace an active task's cancellation flag.
   Terminal reservations are window-owned and atomically claimed once; an ID is
   not authorization to control another window's terminal.

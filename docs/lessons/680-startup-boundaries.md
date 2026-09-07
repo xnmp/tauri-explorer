@@ -493,3 +493,27 @@ crash-recovery evidence. Assert cleanup through native diagnostics without any D
 calls, retain the recovery gap, and test ordinary reload separately. Use fresh unique
 repository roots when proving renewed observation, so delayed old-root events cannot
 satisfy the new mutation's receipt assertion.
+
+
+### Publish plugin retirement before external hooks
+
+Two production-registry tests reproduced reentrant shutdown recursion and a plugin
+that became enabled in settings but inactive after its deactivate hook re-enabled
+it. Publish the shared shutdown promise before invoking hooks. On ordinary disable,
+remove the active entry and dispose its context before calling deactivate; otherwise
+re-enable either sees the stale active marker or collides with the old provider
+scheme. Registration identity then prevents old disposal from erasing replacements.
+Keep the fs-provider collision in the regression, not only command existence.
+
+
+The same rule applies before activation starts: a resolved placeholder promise
+lets synchronous shutdown inside activate finish before held activation work.
+Publish the real completion first while preserving immediate activation side
+effects. Mark failed activation cancelled before cleanup hooks, so their retry
+requests wait for its full cleanup instead of joining the failed operation.
+
+Load helpers must identify a newly active tab by stable ID, not DOM count: keyed
+outros retain closed tab elements temporarily. Freeze source **and generated**
+SvelteKit output during browser retention measurements. A concurrent `bun run check`
+runs `svelte-kit sync`, which can invalidate the page and make a test's navigation
+failure look like a product lifecycle defect.

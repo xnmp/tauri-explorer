@@ -8,6 +8,7 @@ can run alongside a normal dev server on :1420).
 |------|--------------|--------------------|
 | `tab-fanout` | 12 tabs, each a git graph of a distinct 300-commit repo | Open-latency degradation as tabs accumulate (>3× first tabs); slow/incorrect tab switches |
 | `churn-leak` | 25× open/close tab cycles + 25× graph toggle in one pane (`LOAD_CYCLES=N` to scale) | Retained renderer JS heap exceeds baseline + 25 MiB after forced GC; excludes native resources |
+| `workspace-churn` | Alternating saved base and split/graph workspaces (`LOAD_CYCLES=N`), with real palette/save/restore UI | Wrong restored panes/files/graph, page errors, or retained renderer JS heap exceeding baseline + 25 MiB; logs post-GC DOM/listener counts every 25 cycles |
 | `large-graph` | Single 5000-commit graph | Slow first 300-commit page, unbounded commit-row DOM while paging to 5000, slow deep-commit selection |
 | `cpu-throttle` | 6 graph tabs at 4× CDP CPU throttle (stand-in for a game / many other browser tabs hogging CPU) | Interactions exceeding ~4× the unthrottled budgets |
 | `constrained-memory` | 8 tabs × 1000 commits under a 256 MiB V8 old-space cap | Renderer crash or unresponsive tabs (survival test, no timing assertions) |
@@ -36,6 +37,6 @@ retention slope. The 256 MiB setting caps V8 old space, not total process RSS.
 The CPU test applies a real CDP throttle but compares against fixed budgets,
 not an unthrottled baseline measured in the same run. Correct tab remounts alone
 do not prove a cache hit; retain the separate cache-remount outcome tests that
-assert no redundant history request/loading state. Workspace replacement,
-plugin churn, native resources and macOS first-presentation/input need separate
-acceptance.
+assert no redundant history request/loading state. Workspace replacement has its own bounded browser case; plugin contribution churn
+is covered separately by production-registry unit contracts. Neither establishes
+native resource retention or macOS first-presentation/input acceptance.

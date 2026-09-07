@@ -553,3 +553,15 @@ Same-process crash recovery is still unverified because WebKitWebDriver deletes 
 session after a renderer crash. Windows/Apple runtime acceptance, broader retention
 and integration, and actual Mac half-bounce measurements remain open; ADR0009 and
 the current completion ledger record evidence and platform limits.
+
+
+Plugin/retention checkpoint (2026-09-07): four failing-before production-registry
+regressions now cover synchronous reentrant activation, failure/retry, deactivation
+and shutdown. Real completion and retirement precede external hooks; 5,001 mixed
+activation cycles retain no observable duplicate contributions. Full frontend
+validation passes 2,135 tests plus 30 performance cases; independent review, typecheck and payload checks pass.
+New workspace replacement coverage and scaled graph churn pass 150 cycles each under
+frozen source/generated output, with post-GC JS-heap deltas of +3.45 MiB (workspace),
++4.5 MiB (tab churn), and +2.2 MiB (toggle). The ledger records intermediate samples and
+limits: these bounded browser workloads do not establish native-resource retention,
+all plugin/platform combinations, hours-long soak or Mac half-bounce performance.

@@ -175,8 +175,8 @@ async fn run_scenario(
         })
         .await?;
 
-        let previous_session = invoke(view, "native_resource_session", json!({})).await?;
-        let mut previous_session = string_result(&previous_session, "initial Git session")?;
+        let previous_session = operation(view, "native-session", "", "initial-session").await?;
+        let mut previous_session = string_result(&previous_session["result"], "initial Git session")?;
         let initial_repo = directory.join("repository-0");
         let mut previous_lease = acquire(view, &initial_repo, "initial-watch").await?;
 
@@ -233,8 +233,8 @@ async fn run_scenario(
             })
             .await?;
 
-            let current_session = invoke(view, "native_resource_session", json!({})).await?;
-            let current_session = string_result(&current_session, "recovered Git session")?;
+            let current_session = operation(view, "native-session", "", "recovered-session").await?;
+            let current_session = string_result(&current_session["result"], "recovered Git session")?;
             if current_session == previous_session {
                 return Err("renderer recovery reused the previous Git session".into());
             }
@@ -408,17 +408,6 @@ async fn operation(
         return Err(format!("{operation} failed: {error}"));
     }
     Ok(response)
-}
-
-async fn invoke(view: &WebView, command: &str, arguments: Value) -> HarnessResult<Value> {
-    let outcome = invoke_outcome(view, command, arguments).await?;
-    if outcome.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err(format!(
-            "{command} failed: {}",
-            outcome.get("error").unwrap_or(&Value::Null)
-        ));
-    }
-    Ok(outcome.get("result").cloned().unwrap_or(Value::Null))
 }
 
 async fn invoke_outcome(view: &WebView, command: &str, arguments: Value) -> HarnessResult<Value> {

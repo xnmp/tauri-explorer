@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiResult } from "$lib/api/common";
-import type { FileEntry } from "$lib/domain/file";
+import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
+import type {
+  HistoryPort,
+  HistoryReply,
+  HistorySummary,
+  UndoAction,
+} from "$lib/domain/file-history";
 import type {
   DirectoryListingCallbacks,
   DirectoryListingResult,
@@ -26,8 +32,76 @@ const mocks = vi.hoisted(() => ({
   deleteEntry: vi.fn(),
   deleteMultipleEntries: vi.fn(),
   deleteEntryPermanent: vi.fn(),
-  restoreFromTrash: vi.fn(),
 }));
+
+const history = vi.hoisted(() => {
+  let revision = 0;
+  let nextEntryId = 0;
+  let undoId: number | null = null;
+  let stackSize = 0;
+  let receive: ((summary: HistorySummary) => void) | undefined;
+  let queuedExecution: Pick<HistoryReply, "action" | "error"> | undefined;
+
+  const summary = (): HistorySummary => ({
+    revision,
+    undoId,
+    redoId: null,
+    stackSize,
+    busy: false,
+  });
+  const advance = (next: Omit<HistorySummary, "revision">): HistorySummary => {
+    revision += 1;
+    undoId = next.undoId;
+    stackSize = next.stackSize;
+    return { revision, ...next };
+  };
+  const port = {
+    subscribe: vi.fn((listener: (next: HistorySummary) => void) => {
+      receive = listener;
+      listener(summary());
+      return () => {
+        if (receive === listener) receive = undefined;
+      };
+    }),
+    push: vi.fn(async (_action: UndoAction, _shared: boolean): Promise<HistoryReply> => {
+      nextEntryId += 1;
+      return {
+        summary: advance({
+          undoId: nextEntryId,
+          redoId: null,
+          stackSize: stackSize + 1,
+          busy: false,
+        }),
+      };
+    }),
+    clear: vi.fn(async (): Promise<HistoryReply> => ({
+      summary: advance({ undoId: null, redoId: null, stackSize: 0, busy: false }),
+    })),
+    execute: vi.fn(async (): Promise<HistoryReply> => {
+      if (!queuedExecution) throw new Error("Test must provide the native history outcome");
+      const outcome = queuedExecution;
+      queuedExecution = undefined;
+      return {
+        summary: advance({ undoId: null, redoId: nextEntryId, stackSize: 0, busy: false }),
+        ...outcome,
+      };
+    }),
+  } satisfies HistoryPort;
+
+  return {
+    port,
+    queueExecution(action: UndoAction, error?: string) {
+      queuedExecution = { action, ...(error ? { error } : {}) };
+    },
+    currentUndoId: () => undoId,
+    resetCalls() {
+      port.push.mockClear();
+      port.clear.mockClear();
+      port.execute.mockClear();
+      queuedExecution = undefined;
+    },
+  };
+});
 
 vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
@@ -43,14 +117,16 @@ vi.mock("$lib/api/files", async (importOriginal) => ({
   deleteEntry: mocks.deleteEntry,
   deleteMultipleEntries: mocks.deleteMultipleEntries,
   deleteEntryPermanent: mocks.deleteEntryPermanent,
-  restoreFromTrash: mocks.restoreFromTrash,
 }));
+
+vi.mock("$lib/api/file-history", () => ({ fileHistoryPort: history.port }));
 
 import {
   createExplorerState,
   type ExplorerInstance,
 } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { clipboardStore } from "$lib/state/clipboard.svelte";
 import {
   subscribeToLocalFileChanges,
 } from "$lib/state/file-events";
@@ -93,25 +169,25 @@ function listing(entriesByPath: Record<string, FileEntry[]>): Load {
 
 let explorers: ExplorerInstance[] = [];
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear();
   explorers = [];
   dialogStore.closeAll();
-  undoStore.clear();
+  await undoStore.clear();
+  history.resetCalls();
   mocks.load.current = async () => ({ ok: false, error: "unset" });
   mocks.cleanup.mockClear();
   mocks.renameEntry.mockReset();
   mocks.deleteEntry.mockReset();
   mocks.deleteMultipleEntries.mockReset();
   mocks.deleteEntryPermanent.mockReset();
-  mocks.restoreFromTrash.mockReset();
-  mocks.restoreFromTrash.mockImplementation(async (paths: string[]) => ({ ok: true, data: { succeeded: paths, failed: [] } }));
 });
 
 afterEach(async () => {
   dialogStore.closeAll();
-  undoStore.clear();
+  await undoStore.clear();
   await Promise.all(explorers.map((explorer) => explorer.destroy()));
+  vi.restoreAllMocks();
 });
 
 describe("deferred rename dialog ownership", () => {
@@ -119,7 +195,7 @@ describe("deferred rename dialog ownership", () => {
     const first = entry("first.txt", "/A");
     const second = entry("second.txt", "/A");
     const renamed = entry("renamed.txt", "/A");
-    const request = deferred<ApiResult<FileEntry>>();
+    const request = deferred<ApiResult<FileMutationReceipt>>();
     mocks.renameEntry.mockReturnValueOnce(request.promise);
     const explorer = explorerAt("/A", [first, second]);
 
@@ -127,18 +203,24 @@ describe("deferred rename dialog ownership", () => {
     const pending = explorer.rename("renamed.txt");
     explorer.startRename(second);
 
-    request.resolve({ ok: true, data: renamed });
+    request.resolve({ ok: true, data: { path: renamed.path, entry: renamed } });
     expect(await pending).toBeNull();
 
     expect(dialogStore.isRenameOpen).toBe(true);
     expect(dialogStore.renamingEntry?.path).toBe(second.path);
+    expect(history.port.push).toHaveBeenCalledWith({
+      type: "rename",
+      path: renamed.path,
+      oldName: first.name,
+      newName: renamed.name,
+    }, false);
   });
 
   it("does not close a newer rename session when the same path is reopened", async () => {
     const original = entry("same.txt", "/A", { modified: "2026-01-01T00:00:00Z" });
     const reopened = entry("same.txt", "/A", { modified: "2026-02-01T00:00:00Z" });
     const renamed = entry("renamed.txt", "/A");
-    const request = deferred<ApiResult<FileEntry>>();
+    const request = deferred<ApiResult<FileMutationReceipt>>();
     mocks.renameEntry.mockReturnValueOnce(request.promise);
     const explorer = explorerAt("/A", [original]);
 
@@ -146,11 +228,47 @@ describe("deferred rename dialog ownership", () => {
     const pending = explorer.rename("renamed.txt");
     explorer.startRename(reopened);
 
-    request.resolve({ ok: true, data: renamed });
+    request.resolve({ ok: true, data: { path: renamed.path, entry: renamed } });
     expect(await pending).toBeNull();
 
     expect(dialogStore.isRenameOpen).toBe(true);
     expect(dialogStore.renamingEntry?.modified).toBe(reopened.modified);
+    expect(history.port.push).toHaveBeenCalledWith({
+      type: "rename",
+      path: renamed.path,
+      oldName: original.name,
+      newName: renamed.name,
+    }, false);
+  });
+
+  it("reconciles a committed rename without metadata and retains its selection identity", async () => {
+    const original = entry("old.txt", "/A");
+    const renamed = entry("renamed.txt", "/A");
+    const request = deferred<ApiResult<FileMutationReceipt>>();
+    mocks.renameEntry.mockReturnValueOnce(request.promise);
+    mocks.load.current = listing({ "/A": [renamed] });
+    const explorer = explorerAt("/A", [original]);
+    const rekeyPath = vi.spyOn(clipboardStore, "rekeyPath");
+    explorer.selectEntry(original);
+
+    explorer.startRename(original);
+    const pending = explorer.rename(renamed.name);
+    request.resolve({ ok: true, data: { path: renamed.path, entry: null } });
+    expect(await pending).toBeNull();
+
+    await vi.waitFor(() => {
+      expect(explorer.displayEntries.map(({ path }) => path)).toEqual([renamed.path]);
+    });
+    expect([...explorer.selectedPaths]).toEqual([renamed.path]);
+    expect(explorer.focusedEntry?.path).toBe(renamed.path);
+    expect(history.port.push).toHaveBeenCalledWith({
+      type: "rename",
+      path: renamed.path,
+      oldName: original.name,
+      newName: renamed.name,
+    }, false);
+    expect(rekeyPath).toHaveBeenCalledWith(original.path, renamed.path, null);
+    expect(dialogStore.isRenameOpen).toBe(false);
   });
 });
 
@@ -185,11 +303,16 @@ describe("deferred delete ownership", () => {
       expect(dialogStore.isDeleteOpen).toBe(true);
       expect(dialogStore.deletingEntry?.path).toBe(secondVictim.path);
       expect(changes).toEqual([["/A"]]);
+      const action: UndoAction = { type: "delete", paths: [victim.path], parentDir: "/A" };
+      expect(history.port.push).toHaveBeenCalledWith(action, false);
 
+      const expectedEntryId = history.currentUndoId();
+      expect(expectedEntryId).not.toBeNull();
+      history.queueExecution(action);
       changes.length = 0;
       expect(await explorer.undo()).toBeNull();
-      expect(mocks.restoreFromTrash).toHaveBeenCalledWith([victim.path]);
-      expect(changes).toEqual([["/A"]]);
+      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
+      expect(changes).toEqual([]);
       expect(explorer.currentPath).toBe("/B");
     } finally {
       unsubscribe();
@@ -220,11 +343,16 @@ describe("deferred delete ownership", () => {
       expect(dialogStore.deletingEntry?.path).toBe(other.path);
       expect(changes).toEqual([["/A"]]);
       expect(undoStore.canUndo).toBe(true);
+      const action: UndoAction = { type: "delete", paths: [victim.path], parentDir: "/A" };
+      expect(history.port.push).toHaveBeenCalledWith(action, false);
 
+      const expectedEntryId = history.currentUndoId();
+      expect(expectedEntryId).not.toBeNull();
+      history.queueExecution(action);
       changes.length = 0;
       expect(await surviving.undo()).toBeNull();
-      expect(mocks.restoreFromTrash).toHaveBeenCalledWith([victim.path]);
-      expect(changes).toEqual([["/A"]]);
+      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
+      expect(changes).toEqual([]);
     } finally {
       unsubscribe();
     }
@@ -260,11 +388,20 @@ describe("deferred delete ownership", () => {
       expect(await explorer.confirmDelete([external], false)).toBeNull();
       expect(explorer.displayEntries.map(({ path }) => path)).toEqual([current.path]);
       expect(changes).toEqual([["/Miller"]]);
+      const action: UndoAction = {
+        type: "delete",
+        paths: [external.path],
+        parentDir: "/Miller",
+      };
+      expect(history.port.push).toHaveBeenCalledWith(action, false);
 
+      const expectedEntryId = history.currentUndoId();
+      expect(expectedEntryId).not.toBeNull();
+      history.queueExecution(action);
       changes.length = 0;
       expect(await explorer.undo()).toBeNull();
-      expect(mocks.restoreFromTrash).toHaveBeenCalledWith([external.path]);
-      expect(changes).toEqual([["/Miller"]]);
+      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
+      expect(changes).toEqual([]);
     } finally {
       unsubscribe();
     }
@@ -284,13 +421,23 @@ describe("deferred delete ownership", () => {
       expect(await explorer.confirmDelete([first, second], false)).toBeNull();
       expect(mocks.deleteMultipleEntries).toHaveBeenCalledWith([first.path, second.path]);
       expect(changes).toEqual([["/A", "/B"]]);
+      const action: UndoAction = {
+        type: "batch",
+        actions: [
+          { type: "delete", paths: [first.path], parentDir: "/A" },
+          { type: "delete", paths: [second.path], parentDir: "/B" },
+        ],
+        label: "Delete",
+      };
+      expect(history.port.push).toHaveBeenCalledWith(action, false);
 
+      const expectedEntryId = history.currentUndoId();
+      expect(expectedEntryId).not.toBeNull();
+      history.queueExecution(action);
       changes.length = 0;
       expect(await explorer.undo()).toBeNull();
-      expect(mocks.restoreFromTrash).toHaveBeenCalledTimes(2);
-      expect(mocks.restoreFromTrash).toHaveBeenCalledWith([first.path]);
-      expect(mocks.restoreFromTrash).toHaveBeenCalledWith([second.path]);
-      expect(changes).toEqual([["/A", "/B"]]);
+      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
+      expect(changes).toEqual([]);
     } finally {
       unsubscribe();
     }
@@ -311,6 +458,7 @@ describe("deferred delete ownership", () => {
       expect(explorer.displayEntries).toEqual([]);
       expect(changes).toEqual([["/A"]]);
       expect(undoStore.canUndo).toBe(false);
+      expect(history.port.push).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
     }
@@ -356,11 +504,21 @@ describe("bulk trash receipts", () => {
       expect(error).toContain("Permission denied");
       expect(explorer.displayEntries).toEqual([]);
       expect(changes).toEqual([["/A"]]);
+      const action: UndoAction = {
+        type: "delete",
+        paths: [removed.path],
+        parentDir: "/A",
+      };
+      expect(history.port.push).toHaveBeenCalledWith(action, false);
+      const expectedEntryId = history.currentUndoId();
+      expect(expectedEntryId).not.toBeNull();
+      history.queueExecution(action);
       changes.length = 0;
       mocks.load.current = listing({ "/A": [removed] });
       expect(await explorer.undo()).toBeNull();
-      expect(mocks.restoreFromTrash).toHaveBeenCalledWith([removed.path]);
-      expect(changes).toEqual([["/A"]]);
+      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
+      expect(changes).toEqual([]);
+      expect(explorer.displayEntries.map(({ path }) => path)).toEqual([removed.path]);
     } finally {
       unsubscribe();
     }

@@ -193,8 +193,14 @@ describe("explorer selection and focus cursor", () => {
     const explorer = explorerWith([a, c]);
     const folder = entry("b", { kind: "directory" });
     const file = entry("d");
-    mocks.createDirectory.mockResolvedValueOnce({ ok: true, data: folder });
-    mocks.createEmptyFile.mockResolvedValueOnce({ ok: true, data: file });
+    mocks.createDirectory.mockResolvedValueOnce({
+      ok: true,
+      data: { path: folder.path, entry: folder },
+    });
+    mocks.createEmptyFile.mockResolvedValueOnce({
+      ok: true,
+      data: { path: file.path, entry: file },
+    });
 
     expect(await explorer.createFolder("b")).toBeNull();
     expect(selectedNames(explorer)).toEqual(["b"]);
@@ -216,7 +222,10 @@ describe("explorer selection and focus cursor", () => {
     explorer.selectEntry(entries[0]);
     explorer.selectEntry(entries[1], { ctrlKey: true });
     const renamed = entry("bb");
-    mocks.renameEntry.mockResolvedValueOnce({ ok: true, data: renamed });
+    mocks.renameEntry.mockResolvedValueOnce({
+      ok: true,
+      data: { path: renamed.path, entry: renamed },
+    });
     explorer.startRename(entries[1]);
 
     expect(await explorer.rename("bb")).toBeNull();
@@ -237,7 +246,10 @@ describe("explorer selection and focus cursor", () => {
     const renamed = entry("bb");
     let finishRename!: () => void;
     mocks.renameEntry.mockImplementationOnce(() => new Promise((resolve) => {
-      finishRename = () => resolve({ ok: true, data: renamed });
+      finishRename = () => resolve({
+        ok: true,
+        data: { path: renamed.path, entry: renamed },
+      });
     }));
     explorer.startRename(entries[1]);
 

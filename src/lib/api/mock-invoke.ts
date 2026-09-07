@@ -4,11 +4,14 @@
  */
 
 import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
-import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/file-history";
+import { createMockFileHistory } from "./mock-file-history";
+import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
+import { broadcastFileChange } from "$lib/state/file-events";
 import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/git";
 
 // Deterministic, varied timestamps: each created entry gets a distinct
@@ -48,6 +51,8 @@ function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boole
     ...(is_git_repo ? { is_git_repo: true } : {}),
   };
 }
+
+const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 
 interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][] }
 const mockTrash = new Map<string, MockTrashItem[]>();
@@ -1326,6 +1331,7 @@ if (typeof window !== "undefined") {
   };
 }
 
+const mockFileHistory = createMockFileHistory((command, args) => mockInvoke(command, args), broadcastFileChange);
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
@@ -1493,7 +1499,7 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
     mockFiles[newPath] = [];
-    return entry;
+    return mutationReceipt(entry);
   },
 
   create_empty_file: (args) => {
@@ -1510,7 +1516,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const entry = file(name, newPath, 0);
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
-    return entry;
+    return mutationReceipt(entry);
   },
 
   rename_entry: (args) => {
@@ -1524,7 +1530,7 @@ const mockCommands: Record<string, CommandHandler> = {
       const newPath = `${parentPath}/${newName}`;
       const newEntry: FileEntry = { ...oldEntry, name: newName, path: newPath };
       entries[entryIndex] = newEntry;
-      return newEntry;
+      return mutationReceipt(newEntry);
     }
     throw new Error("Entry not found");
   },
@@ -1568,7 +1574,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const existingIdx = dest.findIndex((e) => e.name === finalName);
     if (existingIdx >= 0) dest[existingIdx] = newEntry;
     else dest.push(newEntry);
-    return newEntry;
+    return mutationReceipt(newEntry);
   },
 
   move_entry: (args) => {
@@ -1587,7 +1593,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const newEntry: FileEntry = { ...entry, path: newPath };
     if (!mockFiles[destDir]) mockFiles[destDir] = [];
     mockFiles[destDir].push(newEntry);
-    return newEntry;
+    return mutationReceipt(newEntry);
   },
 
   write_text_file: (args) => {
@@ -1600,7 +1606,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const entry = file(basename(path), path, content.length);
     if (existingIndex >= 0) entries[existingIndex] = entry;
     else entries.push(entry);
-    return entry;
+    return mutationReceipt(entry);
   },
 
   read_text_file: (args) => {
@@ -2148,7 +2154,10 @@ if (typeof window !== "undefined") {
     if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
     return [...lines, ""].join("\n");
   },
-  native_resource_session: () => "0",
+  native_resource_session: ({ historyChannel }) => mockFileHistory.register(historyChannel as (summary: HistorySummary) => void),
+  file_history_push: ({ action }) => mockFileHistory.push(action as UndoAction),
+  file_history_clear: () => mockFileHistory.clear(),
+  file_history_execute: ({ direction, expectedEntryId }) => mockFileHistory.execute(direction as HistoryDirection, expectedEntryId as number),
   git_watch_repo: ({ repoPath }) => ({ id: crypto.randomUUID(), repoRoot: repoPath }),
   git_unwatch_repo: () => null,
 
@@ -2739,7 +2748,7 @@ if (typeof window !== "undefined") {
     };
     const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
     entries.push(entry);
-    return entry;
+    return mutationReceipt(entry);
   },
 
   // ----- File-picker portal -----

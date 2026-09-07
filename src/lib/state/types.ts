@@ -8,7 +8,7 @@ import type { ViewMode } from "$lib/domain/file";
 export type { ViewMode } from "$lib/domain/file";
 
 /** Undoable action types — canonical definition lives in domain (#278). */
-export type { UndoAction } from "$lib/domain/undo-operations";
+export type { UndoAction } from "$lib/domain/file-history";
 
 /** Selection options for click handlers */
 export interface SelectOptions {

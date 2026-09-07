@@ -41,7 +41,7 @@ import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
 import { createPaneRefresh } from "./pane-refresh";
 import { createPaneMutations } from "./pane-mutations";
-import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
+import { undoActionLabel } from "./undo-helpers";
 import { broadcastFileChange } from "./file-events";
 
 import type { ExplorerSeed } from "$lib/domain/window-input";
@@ -722,7 +722,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (!origin.current()) return "Pane is closed";
     const result = await undoStore[direction]();
     if (result.action) {
-      broadcastFileChange(getAffectedDirs(result.action));
+      // Native history publishes confirmed effects even if this pane closes.
       if (!result.error) toastStore.show(`${direction === "undo" ? "Undo" : "Redo"}: ${undoActionLabel(result.action)}`, "info");
       if (origin.current()) await refresh({ silent: true });
     }

@@ -122,14 +122,14 @@ export async function handleFileDropMany(
     }
     affectedDirs.add(parentDir(sourcePath));
     // Later items in this batch sharing the landed name must still conflict.
-    options.existingNames?.add(basename(result.entry!.path));
+    options.existingNames?.add(basename(result.path));
     actions.push(
       isCopy
-        ? { type: "copy", copiedPath: result.entry!.path, parentDir: targetDir }
+        ? { type: "copy", copiedPath: result.path, parentDir: targetDir }
         : {
             type: "move",
             sourcePath,
-            destPath: result.entry!.path,
+            destPath: result.path,
             originalDir: parentDir(sourcePath),
           },
     );
@@ -141,9 +141,9 @@ export async function handleFileDropMany(
     const action: UndoAction =
       actions.length === 1 ? actions[0] : { type: "batch", actions, label };
     if (options.broadcastToOtherWindows) {
-      undoStore.pushAndBroadcast(action);
+      await undoStore.pushAndBroadcast(action);
     } else {
-      undoStore.push(action);
+      await undoStore.push(action);
     }
 
     const message = `${verb} ${actions.length} item${actions.length === 1 ? "" : "s"} to ${basename(targetDir)}`;
@@ -165,4 +165,3 @@ export async function handleFileDropMany(
     );
   }
 }
-

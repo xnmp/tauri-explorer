@@ -7,6 +7,7 @@ vi.mock("$lib/api/common", () => ({
   extractError: (error: unknown) => String(error),
   virtualPathGuard: () => null,
   dataUriToBlobUrl: () => "blob:test",
+  isTauri: () => false,
 }));
 vi.mock("$lib/plugins/fs-providers", () => ({ providerFor: () => undefined }));
 vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
@@ -75,6 +76,9 @@ describe("directory listing Tauri E2E probe", () => {
     acceptWatch({ id: "lease", path: "/watched" });
     await watching;
 
+    expect(invokeMock).toHaveBeenCalledWith("native_resource_session", {
+      historyChannel: expect.any(Function),
+    });
     expect(invokeMock).toHaveBeenCalledWith("watch_directory", { path: "/watched", sessionId: "session" });
     expect(
       JSON.parse(document.documentElement.dataset.e2eReadyDirectoryWatches ?? "[]"),

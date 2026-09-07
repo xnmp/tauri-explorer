@@ -9,6 +9,7 @@ pub mod external_apps;
 pub mod file_ops;
 pub mod fs_watcher;
 pub mod git_status;
+pub(crate) mod mutation;
 pub mod shortcuts;
 pub mod trash;
 mod watch_observation;

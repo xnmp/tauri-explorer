@@ -8,9 +8,13 @@ const f = vi.hoisted(() => ({
   setupDrop: vi.fn(), cleanupDrop: vi.fn(), setupWatch: vi.fn(), cleanupWatch: vi.fn(),
   setupLifecycle: vi.fn(), cleanupLifecycle: vi.fn(), stopKeyboard: vi.fn(),
   config: vi.fn(), stopConfig: vi.fn(), transfer: vi.fn(), stopTransfer: vi.fn(),
-  syncSize: vi.fn(), probe: vi.fn(), mode: "off", warmEnabled: true,
+  syncSize: vi.fn(), probe: vi.fn(), nativeSession: vi.fn(async () => "session"),
+  mode: "off", warmEnabled: true,
 }));
 vi.mock("$lib/api/common", () => ({ isTauri: () => true }));
+vi.mock("$lib/api/native-resource-session", () => ({
+  getNativeResourceSession: f.nativeSession,
+}));
 vi.mock("$lib/domain/e2e-hooks", () => ({ E2E_WARM_WINDOW_PRIMING_DISABLED: false }));
 vi.mock("$lib/state/theme.svelte", () => ({ themeStore: { initTheme: async () => {}, syncFromSettings() {} } }));
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { init: f.settings, get warmWindow() { return f.warmEnabled; } } }));
@@ -49,6 +53,7 @@ beforeEach(() => {
   f.title.mockReturnValue(f.stopTitle); f.nativeClose.mockReturnValue(f.stopNativeClose);
   f.config.mockReturnValue(f.stopConfig); f.transfer.mockReturnValue(f.stopTransfer);
   f.setupWatch.mockReset(); f.cleanupDrop.mockReset();
+  f.nativeSession.mockResolvedValue("session");
   host = Object.assign(new EventTarget(), { location: { search: "?path=%2Fchild&viewMode=tiles" } });
   vi.stubGlobal("window", host);
 });
@@ -86,10 +91,13 @@ describe("page session ownership", () => {
     const session = startWindowSession(options());
     await vi.advanceTimersByTimeAsync(5000);
     expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.nativeSession).not.toHaveBeenCalled();
     resolveSettings();
     await Promise.resolve();
     session.markCoreReady();
     session.markCoreReady();
+    await Promise.resolve();
+    expect(f.nativeSession).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1500);
     expect(f.spawn).toHaveBeenCalledOnce();
     session.dispose();
@@ -144,6 +152,7 @@ describe("page session ownership", () => {
     expect(f.commands).not.toHaveBeenCalled();
     expect(f.plugins).not.toHaveBeenCalled();
     expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.nativeSession).not.toHaveBeenCalled();
     session.dispose();
   });
 });

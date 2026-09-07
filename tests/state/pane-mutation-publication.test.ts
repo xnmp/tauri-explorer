@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiResult } from "$lib/api/common";
-import type { FileEntry } from "$lib/domain/file";
+import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import type {
   DirectoryListingCallbacks,
   DirectoryListingResult,
@@ -76,7 +76,7 @@ const mutationKinds = ["folder", "file", "symlink"] as const;
 type MutationKind = (typeof mutationKinds)[number];
 
 function beginMutation(explorer: ExplorerInstance, kind: MutationKind) {
-  const completion = deferred<ApiResult<FileEntry>>();
+  const completion = deferred<ApiResult<FileMutationReceipt>>();
   if (kind === "folder") {
     const created = entry("created-folder", { kind: "directory" });
     mocks.createDirectory.mockReturnValueOnce(completion.promise);
@@ -169,7 +169,7 @@ describe("pane mutation publication ownership", () => {
     expect(mutation.api).toHaveBeenCalledWith(...mutation.expectedCall);
     const bEntries = await navigateToB(explorer);
 
-    mutation.completion.resolve({ ok: true, data: mutation.created });
+    mutation.completion.resolve({ ok: true, data: { path: mutation.created.path, entry: mutation.created } });
     await mutation.pending;
 
     expect.soft(explorer.currentPath).toBe("/b");
@@ -189,7 +189,7 @@ describe("pane mutation publication ownership", () => {
 
     await explorer.destroy();
     explorers = explorers.filter((candidate) => candidate !== explorer);
-    mutation.completion.resolve({ ok: true, data: mutation.created });
+    mutation.completion.resolve({ ok: true, data: { path: mutation.created.path, entry: mutation.created } });
     await mutation.pending;
 
     expect.soft(explorer.displayEntries.map(({ path }) => path)).toEqual(originalPaths);
@@ -206,7 +206,7 @@ describe("pane mutation publication ownership", () => {
     const bEntries = await navigateToB(explorer);
     explorer.startInlineNewFile();
 
-    mutation.completion.resolve({ ok: true, data: mutation.created });
+    mutation.completion.resolve({ ok: true, data: { path: mutation.created.path, entry: mutation.created } });
     await mutation.pending;
 
     expect.soft(explorer.currentPath).toBe("/b");
@@ -227,7 +227,7 @@ describe("pane mutation publication ownership", () => {
     expect(await explorer.navigateTo("/a", { autoEnterSingleSubdir: false })).toBe(true);
     explorer.selectEntry(newerAEntries[1]);
 
-    mutation.completion.resolve({ ok: true, data: mutation.created });
+    mutation.completion.resolve({ ok: true, data: { path: mutation.created.path, entry: mutation.created } });
     await mutation.pending;
 
     expect.soft(explorer.currentPath).toBe("/a");
@@ -247,7 +247,7 @@ describe("pane mutation publication ownership", () => {
     await explorer.refresh({ silent: true });
     expect(explorer.displayEntries.filter(({ path }) => path === mutation.created.path)).toHaveLength(1);
 
-    mutation.completion.resolve({ ok: true, data: mutation.created });
+    mutation.completion.resolve({ ok: true, data: { path: mutation.created.path, entry: mutation.created } });
     await mutation.pending;
 
     expect.soft(explorer.displayEntries.filter(({ path }) => path === mutation.created.path)).toHaveLength(1);
@@ -265,7 +265,7 @@ describe("pane mutation publication ownership", () => {
     const newerSelection = explorer.displayEntries[0];
     explorer.selectEntry(newerSelection);
 
-    mutation.completion.resolve({ ok: true, data: mutation.created });
+    mutation.completion.resolve({ ok: true, data: { path: mutation.created.path, entry: mutation.created } });
     await mutation.pending;
 
     expect.soft(explorer.displayEntries.filter(({ path }) => path === mutation.created.path)).toHaveLength(1);
@@ -274,5 +274,24 @@ describe("pane mutation publication ownership", () => {
     expect.soft(selectedPaths(explorer)).toEqual([newerSelection.path]);
     expect.soft(explorer.focusedEntry?.path).toBe(newerSelection.path);
     expect.soft(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
+  });
+
+  it("reconciles a committed create whose receipt has no entry metadata", async () => {
+    const explorer = explorerAtA();
+    const mutation = beginMutation(explorer, "folder");
+    serveListing([...explorer.displayEntries, mutation.created]);
+
+    mutation.completion.resolve({
+      ok: true,
+      data: { path: mutation.created.path, entry: null },
+    });
+    expect(await mutation.pending).toBeNull();
+
+    await vi.waitFor(() => {
+      expect(explorer.displayEntries.some(({ path }) => path === mutation.created.path)).toBe(true);
+    });
+    expect(selectedPaths(explorer)).toEqual([mutation.created.path]);
+    expect(explorer.focusedEntry?.path).toBe(mutation.created.path);
+    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
   });
 });

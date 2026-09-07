@@ -153,6 +153,7 @@ backend for E2E/browser).
 - `components/ProgressDialog.svelte`, `components/JobsPanel.svelte`, `state/jobs.svelte.ts` — progress UI
 - `components/ConflictDialog.svelte`, `state/conflict-resolver.svelte.ts` — overwrite/rename prompts
 - `api/files.ts` (copyEntry, moveEntry, estimateSize, checkPathsExist), `api/os-clipboard.ts`
+- `domain/file.ts` (`FileMutationReceipt`) + `src-tauri/src/files/mutation.rs` — committed path separate from optional entry metadata; missing snapshots reconcile through the existing pane refresh.
 - `src-tauri/src/files/file_ops.rs` (copy/move/create), `src-tauri/src/progress.rs`, `src-tauri/src/clipboard.rs`
 - FLOW: paste → estimate → conflict check → invoke copy with progress events → operationsManager updates ProgressDialog; on done `broadcastFileChange` + refresh.
 
@@ -171,8 +172,12 @@ backend for E2E/browser).
 
 - `components/DeleteDialog.svelte` — confirms explicit permanent deletion and explains mixed local/UNC disposition.
 - `state/pane-mutations.ts` — publishes only confirmed deleted paths, groups their actual parents and excludes permanently removed UNC paths from undo.
-- `state/undo.svelte.ts` — renderer-local history and exact-entry undo/redo reservation; settles completed and remaining work without consuming newer history.
-- `state/undo-helpers.ts`, `domain/undo-operations.ts` — invertible descriptors, ordered batch execution and per-path completed/remaining partitions.
+- `domain/file-history.ts`, `api/file-history.ts`, `api/native-resource-session.ts` — typed native history requests and ordered revisioned summary channel on the existing renderer acknowledgement.
+- `state/undo.svelte.ts` — window projection captures expected native entry IDs, including the exact receipt of already queued local writes.
+- `state/undo-helpers.ts` — action labels.
+- `src-tauri/src/file_history/mod.rs`, `file_history/model.rs` — native admission and execution survive invoking renderer closure; shared entries settle surviving participants once.
+- `src-tauri/src/file_history/action.rs`, `file_history/execution.rs` — host capability normalization, affected parents and ordered partial inverse receipts.
+- `api/mock-file-history.ts`, `api/mock-file-history-execution.ts` — browser-only history simulation, never native acceptance evidence.
 - `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed` receipts for `deleteMultipleEntries` and `restoreFromTrash`.
 - `src-tauri/src/files/trash.rs` — trash/restore commands, UNC removal and Linux `renameat2(RENAME_NOREPLACE)` restore boundary; `files/file_ops.rs` owns explicit permanent deletion.
 - FLOW: delete → native per-path outcome → publish/push inverse for confirmed successes → Ctrl+Z reserves the exact history entry → restore outcome moves completed paths to redo and retains only unfinished paths for retry (ADR 0017).

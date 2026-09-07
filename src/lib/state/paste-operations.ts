@@ -13,7 +13,7 @@ import { operationsManager } from "./operations.svelte";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { broadcastFileChange } from "./file-events";
-import { parentDir, sameDirectory } from "$lib/domain/path";
+import { basename, parentDir, sameDirectory } from "$lib/domain/path";
 import { toastStore } from "./toast.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { performFileTransfer } from "./file-transfer";
@@ -62,6 +62,8 @@ export async function pasteEntries(
   const errors: string[] = [];
   const newEntries: FileEntry[] = [];
   const undoActions: import("./types").UndoAction[] = [];
+  const affectedDirs = new Set<string>();
+  let committedCount = 0;
   let bytesProcessed = 0;
   let cancelledByUser = false;
 
@@ -156,27 +158,32 @@ export async function pasteEntries(
         jobId: currentJobId,
       });
 
-      if (result.ok && result.entry) {
-        newEntries.push(result.entry);
-        // Each pasted entry appears in the listing the moment its transfer
-        // finishes instead of after the whole batch (#388); onEntriesAdded
-        // dedupes by path, so the final batch call below stays safe.
-        onEntriesAdded([result.entry]);
+      if (result.ok) {
+        committedCount++;
+        affectedDirs.add(destPath);
+        affectedDirs.add(sourceDir);
+        if (result.entry) {
+          newEntries.push(result.entry);
+          // Each pasted entry appears in the listing the moment its transfer
+          // finishes instead of after the whole batch (#388); onEntriesAdded
+          // dedupes by path, so the final batch call below stays safe.
+          onEntriesAdded([result.entry]);
+        }
         // Track the pasted name so later sources in this batch with the same
         // name are detected as conflicts (the snapshot taken before the loop
         // doesn't know about entries created during the batch).
-        existingNames.add(result.entry.name);
+        existingNames.add(basename(result.path));
         if (isCut) {
           undoActions.push({
             type: "move",
             sourcePath: source.path,
-            destPath: result.entry.path,
+            destPath: result.path,
             originalDir: sourceDir,
           });
         } else {
           undoActions.push({
             type: "copy",
-            copiedPath: result.entry.path,
+            copiedPath: result.path,
             parentDir: destPath,
           });
         }
@@ -208,9 +215,9 @@ export async function pasteEntries(
 
   // Push undo action(s) — batch if multiple files
   if (undoActions.length === 1) {
-    undoStore.push(undoActions[0]);
+    await undoStore.push(undoActions[0]);
   } else if (undoActions.length > 1) {
-    undoStore.push({
+    await undoStore.push({
       type: "batch",
       actions: undoActions,
       label: `${isCut ? "Moved" : "Copied"} ${undoActions.length} items`,
@@ -222,19 +229,14 @@ export async function pasteEntries(
   // Finalize operation tracking
   if (operationsManager.isOperationCancelled(op.id) || cancelledByUser) {
     operationsManager.cancelOperation(op.id);
-  } else if (errors.length > 0 && newEntries.length === 0) {
+  } else if (errors.length > 0 && committedCount === 0) {
     operationsManager.failOperation(op.id, errors.join("; "));
   } else {
     operationsManager.completeOperation(op.id);
   }
 
-  if (newEntries.length > 0) {
-    onEntriesAdded(newEntries);
-    const affectedDirs = new Set([destPath]);
-    for (const source of sources) {
-      const dir = parentDir(source.path);
-      affectedDirs.add(dir);
-    }
+  if (committedCount > 0) {
+    if (newEntries.length > 0) onEntriesAdded(newEntries);
     broadcastFileChange([...affectedDirs]);
     frecencyStore.pruneNonExistent();
   }

@@ -145,7 +145,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window file clipboard (cut/copy paths).
 - `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
-- `undo.svelte.ts` — renderer-local undo/redo history with one exact-entry reservation, branch/clear retirement and partial-progress settlement, including unfinished admitted redo work (ADR 0017).
+- `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure undo/redo helpers.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
@@ -208,10 +208,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin-jobs.ts` — accepted plugin job result types and image/provider job IPC.
 
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
-- `native-resource-session.ts` — one acknowledged renderer generation shared by directory and Git IPC; only failed acknowledgement retries.
+- `native-resource-session.ts` — one acknowledged renderer generation shared by directory/Git IPC and the ordered history-summary channel; only failed acknowledgement retries.
+- `file-history.ts` — typed native history push/clear/execute IPC and revisioned summary subscription.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
+- `mock-file-history.ts` — browser-only fixture history for UI tests; native policy lives in Rust.
+- `mock-file-history-execution.ts` — browser-only fixture inverse execution against mock filesystem commands.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
 - `git.ts` — git status decoration + SCM (stage/commit/diff) IPC.
 - `git-log.ts` — git history / commit-graph IPC (#57), including mutation snapshots and authoritative graph undo (#513).
@@ -296,7 +299,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `diff.ts` — unified-diff parser (#55).
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
-- `undo-operations.ts` — pure undo/redo execution with completed/remaining action partitions for partial retries.
+- `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
@@ -397,6 +400,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
+- `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
+- `file_history/model.rs` — pure per-client/shared history admission, partial settlement, branch/clear retirement and retained-history bounds.
+- `file_history/action.rs` — action shape/capability admission and affected-parent projection.
+- `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
 - `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
@@ -419,6 +426,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
+- `mutation.rs` — committed-path receipt with an optional subsequent FileEntry snapshot; presentation metadata cannot revoke a committed mutation.
 - `trash.rs` — single/bulk trash and restore commands; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.

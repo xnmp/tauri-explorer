@@ -1,10 +1,11 @@
+/** Browser-fixture execution contracts; native policy is tested in Rust. */
 import { describe, it, expect, vi } from "vitest";
 import {
   executeUndo,
   executeRedo,
   type UndoApiDeps,
-} from "$lib/domain/undo-operations";
-import type { UndoAction } from "$lib/state/types";
+} from "$lib/api/mock-file-history-execution";
+import type { UndoAction } from "$lib/domain/file-history";
 
 /** Build a mock API where every function resolves to { ok: true }. */
 function mockApi(): UndoApiDeps {

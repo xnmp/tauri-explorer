@@ -92,10 +92,15 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "native-session" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
+      if (op === "native-session") {
+        // Reuse the realm's production acknowledgement and summary channel.
+        const { getNativeResourceSession } = await whileActive(import("$lib/api/native-resource-session"));
+        return getNativeResourceSession();
+      }
       if (op === "open-picker") {
         const [{ WebviewWindow }, { explorerWindowAppearance }] = await whileActive(Promise.all([
           import("@tauri-apps/api/webviewWindow"),

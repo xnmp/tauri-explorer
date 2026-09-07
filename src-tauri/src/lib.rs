@@ -10,6 +10,7 @@ pub mod config_watch;
 mod content_search;
 mod crash_report;
 pub mod error;
+mod file_history;
 mod fal;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -321,6 +322,9 @@ pub fn run(launch_dir: Option<String>) {
             git::git_diff,
             git::git_commit,
             renderer_owner::native_resource_session,
+            file_history::file_history_push,
+            file_history::file_history_clear,
+            file_history::file_history_execute,
             git_watch::git_watch_repo,
             git_watch::git_unwatch_repo,
             git_log::git_log,

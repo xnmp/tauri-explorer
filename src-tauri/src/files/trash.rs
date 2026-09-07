@@ -4,16 +4,16 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct FileFailure {
-    path: String,
-    error: String,
+    pub(crate) path: String,
+    pub(crate) error: String,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct FileBatchOutcome {
-    succeeded: Vec<String>,
-    failed: Vec<FileFailure>,
+    pub(crate) succeeded: Vec<String>,
+    pub(crate) failed: Vec<FileFailure>,
 }
 
 impl FileBatchOutcome {

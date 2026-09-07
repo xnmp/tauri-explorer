@@ -13,7 +13,13 @@ is the current requirement-by-requirement ledger; the earlier verification and
 handover below describe the initial foundation checkpoint, not final acceptance
 of the ongoing pass. macOS half-bounce measurements remain outstanding.
 
-The latest file-operation checkpoint returns per-path trash/restore outcomes and
+The working tree now adds native shared-history admission and committed-path
+mutation receipts with optional metadata. That migration remains in progress;
+[proposed ADR 0018](adr/0018-native-file-history.md) records the outstanding
+transaction and native acceptance boundaries. The ledger separates these
+current checks from its preserved historical checkpoint archive.
+
+The preceding committed file-operation checkpoint returns per-path trash/restore outcomes and
 keeps completed effects separate from retryable work. Renderer-local undo/redo
 reserves an exact history entry, preserving newer commands and partial progress.
 Linux restore uses atomic no-replace rename and treats metadata cleanup after the

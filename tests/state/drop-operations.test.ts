@@ -23,6 +23,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   transfer.mockImplementation(async (sourcePath: string, targetDir: string) => ({
     ok: true,
+    path: `${targetDir}/${sourcePath.split("/").pop()}`,
     entry: { path: `${targetDir}/${sourcePath.split("/").pop()}`, name: sourcePath.split("/").pop() },
   }));
 });
@@ -69,7 +70,7 @@ describe("handleFileDropMany", () => {
   it("unwraps to a single action when all but one item is skipped", async () => {
     transfer
       .mockResolvedValueOnce({ ok: false, error: "skipped" })
-      .mockResolvedValueOnce({ ok: true, entry: { path: "/dest/b.txt", name: "b.txt" } });
+      .mockResolvedValueOnce({ ok: true, path: "/dest/b.txt", entry: { path: "/dest/b.txt", name: "b.txt" } });
 
     await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", false, opts());
 
@@ -90,9 +91,31 @@ describe("handleFileDropMany", () => {
     expect(toast.broadcast).toHaveBeenCalledTimes(1);
   });
 
+  it("records committed paths and refreshes when batch metadata is unavailable", async () => {
+    transfer
+      .mockResolvedValueOnce({ ok: true, path: "/dest/a.txt", entry: null })
+      .mockResolvedValueOnce({ ok: true, path: "/dest/b.txt", entry: null });
+    const options = { onRefresh: vi.fn(), existingNames: new Set<string>() };
+
+    await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", true, options);
+
+    expect(undo.push).toHaveBeenCalledWith({
+      type: "batch",
+      actions: [
+        { type: "copy", copiedPath: "/dest/a.txt", parentDir: "/dest" },
+        { type: "copy", copiedPath: "/dest/b.txt", parentDir: "/dest" },
+      ],
+      label: "Copied 2 items",
+    });
+    expect(options.existingNames).toEqual(new Set(["a.txt", "b.txt"]));
+    expect(options.onRefresh).toHaveBeenCalledOnce();
+    expect(broadcast).toHaveBeenCalledWith(expect.arrayContaining(["/src", "/dest"]));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("reports failures once without recording undo for failed items", async () => {
     transfer
-      .mockResolvedValueOnce({ ok: true, entry: { path: "/dest/a.txt", name: "a.txt" } })
+      .mockResolvedValueOnce({ ok: true, path: "/dest/a.txt", entry: { path: "/dest/a.txt", name: "a.txt" } })
       .mockResolvedValueOnce({ ok: false, error: "disk full" })
       .mockResolvedValueOnce({ ok: false, error: "disk full" });
 

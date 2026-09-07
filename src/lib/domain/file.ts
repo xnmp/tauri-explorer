@@ -31,6 +31,13 @@ export interface DirectoryListing {
   readonly listing_id: number | null;
 }
 
+/** A committed mutation and an optional, subsequent presentation snapshot.
+ * Missing metadata never changes whether the filesystem mutation succeeded. */
+export interface FileMutationReceipt {
+  readonly path: string;
+  readonly entry: FileEntry | null;
+}
+
 export type SortField = "name" | "size" | "modified" | "type";
 
 function fileExtension(name: string): string {

@@ -14,7 +14,7 @@ import { toastStore } from "./toast.svelte";
 import { broadcastFileChange } from "./file-events";
 import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import { frecencyStore } from "./frecency.svelte";
-import type { FileEntry } from "$lib/domain/file";
+import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
 
 export interface FileTransferOptions {
   onRefresh: () => void;
@@ -35,12 +35,15 @@ export interface FileTransferOptions {
   jobId?: number;
 }
 
-export interface FileTransferResult {
-  ok: boolean;
-  error?: string;
-  /** The resulting FileEntry from the backend, available on success. */
-  entry?: FileEntry;
-}
+export type FileTransferResult =
+  | {
+      ok: true;
+      /** Committed destination path, independent of presentation metadata. */
+      path: string;
+      /** Optional presentation snapshot captured after the mutation. */
+      entry: FileEntry | null;
+    }
+  | { ok: false; error: string };
 
 /**
  * Transfer a single file: detect conflicts, resolve them, execute move/copy,
@@ -128,7 +131,7 @@ export async function performFileTransfer(
   }
 
   // --- Execute move or copy ---
-  const result: ApiResult<FileEntry> = isCopy
+  const result: ApiResult<FileMutationReceipt> = isCopy
     ? await copyEntry(sourcePath, targetDir, overwrite, jobId)
     : await moveEntry(sourcePath, targetDir, overwrite);
 
@@ -158,9 +161,9 @@ export async function performFileTransfer(
           originalDir: sourceDir,
         };
     if (broadcastToOtherWindows) {
-      undoStore.pushAndBroadcast(action);
+      await undoStore.pushAndBroadcast(action);
     } else {
-      undoStore.push(action);
+      await undoStore.push(action);
     }
   }
 
@@ -182,5 +185,5 @@ export async function performFileTransfer(
     frecencyStore.pruneNonExistent();
   }
 
-  return { ok: true, entry: result.data };
+  return { ok: true, path: result.data.path, entry: result.data.entry };
 }

@@ -2,8 +2,12 @@
 
 Status: Accepted
 
+Implementation transition: [ADR 0018](0018-native-file-history.md) moves the
+execution and reservation policy into the native application. Its acceptance
+is still pending; this record describes the preceding verified checkpoint.
+
 Governs: `src-tauri/src/files/trash.rs`, `src/lib/domain/file-batch-outcome.ts`,
-`src/lib/domain/undo-operations.ts`, `src/lib/state/pane-mutations.ts`,
+`src-tauri/src/file_history/execution.rs`, `src/lib/state/pane-mutations.ts`,
 `src/lib/state/undo.svelte.ts`, `src/lib/api/files.ts`.
 
 ## Context

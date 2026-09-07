@@ -11,7 +11,7 @@ import { createDirectory, createEmptyFile, renameEntry as apiRenameEntry, delete
 import { extractArchive as apiExtractArchive, compressToZip as apiCompressToZip, cancelCompress as apiCancelCompress, cancelExtract as apiCancelExtract, type ZipProgressEvent } from "$lib/api/archive";
 import { type ApiResult } from "$lib/api/common";
 import { operationsManager } from "./operations.svelte";
-import type { FileEntry } from "$lib/domain/file";
+import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { fileBatchError } from "$lib/domain/file-batch-outcome";
 import type { ExplorerCoreState, UndoAction } from "./types";
 import { broadcastFileChange } from "./file-events";
@@ -51,7 +51,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
 
   async function createEntry(
     name: string,
-    create: (path: string, name: string) => Promise<ApiResult<FileEntry>>,
+    create: (path: string, name: string) => Promise<ApiResult<FileMutationReceipt>>,
   ): Promise<string | null> {
     const origin = ctx.capture();
     if (!origin.current()) return "Pane is closed";
@@ -59,16 +59,21 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const result = await create(origin.path, name);
     if (!result.ok) return result.error;
 
+    const { path, entry } = result.data;
     if (origin.current()) {
-      // The watcher may have observed the new entry before the IPC reply.
-      coreState.entries = [...coreState.entries.filter((entry) => entry.path !== result.data.path), result.data];
+      if (entry) {
+        // The watcher may have observed the new entry before the IPC reply.
+        coreState.entries = [...coreState.entries.filter((candidate) => candidate.path !== path), entry];
+      } else {
+        ctx.refreshSilent();
+      }
       if (origin.selectionCurrent()) {
-        ctx.setSelection([result.data.path]);
-        coreState.selectionAnchorPath = result.data.path;
-        coreState.cursorPath = result.data.path;
+        ctx.setSelection([path]);
+        coreState.selectionAnchorPath = path;
+        coreState.cursorPath = path;
       }
     }
-    broadcastFileChange([parentDir(result.data.path)]);
+    broadcastFileChange([parentDir(path)]);
     return null;
   }
 
@@ -87,21 +92,25 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const result = await apiRenameEntry(oldPath, newName);
 
     if (result.ok) {
-      undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
-      renameThumbnailCache(oldPath, result.data.path);
+      const { path, entry } = result.data;
+      await undoStore.push({ type: "rename", path, oldName, newName });
+      renameThumbnailCache(oldPath, path);
       if (origin.current()) {
-        coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
+        if (entry) {
+          coreState.entries = coreState.entries.map((candidate) => candidate.path === oldPath ? entry : candidate);
+        }
         // Preserve identity through a rename without restoring selection or focus
         // that the user changed while the filesystem operation was pending.
         if (coreState.selectedPaths.has(oldPath)) {
-          ctx.setSelection([...coreState.selectedPaths].map((path) => path === oldPath ? result.data.path : path));
+          ctx.setSelection([...coreState.selectedPaths].map((selectedPath) => selectedPath === oldPath ? path : selectedPath));
         }
-        if (coreState.selectionAnchorPath === oldPath) coreState.selectionAnchorPath = result.data.path;
-        if (coreState.cursorPath === oldPath) coreState.cursorPath = result.data.path;
+        if (coreState.selectionAnchorPath === oldPath) coreState.selectionAnchorPath = path;
+        if (coreState.cursorPath === oldPath) coreState.cursorPath = path;
+        if (!entry) ctx.refreshSilent();
       }
-      clipboardStore.updatePath(oldPath, result.data);
+      clipboardStore.rekeyPath(oldPath, path, entry);
       dialogStore.cancelRename(session);
-      broadcastFileChange([...new Set([parentDir(oldPath), parentDir(result.data.path)])]);
+      broadcastFileChange([...new Set([parentDir(oldPath), parentDir(path)])]);
       frecencyStore.pruneNonExistent();
       return null;
     }
@@ -160,7 +169,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
           else groups.set(parent, [path]);
         }
         const actions: UndoAction[] = [...groups].map(([parentDir, paths]) => ({ type: "delete", paths, parentDir }));
-        if (actions.length) undoStore.push(actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" });
+        if (actions.length) await undoStore.push(actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" });
       }
       const deletedPaths = new Set(removed);
       if (origin.current()) {
@@ -185,10 +194,15 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const linkPath = joinPath(origin.path, linkName);
     const result = await apiCreateSymlink(path, linkPath);
     if (result.ok) {
+      const { path: createdPath, entry } = result.data;
       if (origin.current()) {
-        coreState.entries = [...coreState.entries.filter((entry) => entry.path !== result.data.path), result.data];
+        if (entry) {
+          coreState.entries = [...coreState.entries.filter((candidate) => candidate.path !== createdPath), entry];
+        } else {
+          ctx.refreshSilent();
+        }
       }
-      broadcastFileChange([parentDir(result.data.path)]);
+      broadcastFileChange([parentDir(createdPath)]);
     } else {
       toastStore.show(`Symlink failed: ${result.error}`, "error");
     }

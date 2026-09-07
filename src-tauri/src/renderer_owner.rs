@@ -75,6 +75,7 @@ fn retire(owner: Option<Owner>) {
         owner.retire();
         crate::git_watch::retire_owner(&owner);
         crate::files::fs_watcher::retire_owners();
+        crate::file_history::retire_owners();
     }
 }
 
@@ -100,13 +101,31 @@ pub fn on_window_destroyed<R: Runtime>(window: &Window<R>) {
 /// A renderer acknowledges its generation before sending any watch commands.
 /// Its JS realm caches the result; a replaced document cannot adopt a late reply.
 #[tauri::command]
-pub async fn native_resource_session(webview: tauri::Webview) -> Result<String, AppError> {
+pub async fn native_resource_session(
+    webview: tauri::Webview,
+    history_channel: tauri::ipc::Channel<crate::file_history::HistorySummary>,
+) -> Result<String, AppError> {
     let slot = resource_owner(&mut webview.window().resources_table());
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    termination::ensure(&webview, &slot).await?;
-    // A load/close may have occurred while registration waited on the UI thread.
-    let session = slot.scope.lock().unwrap().session();
-    session.ok_or_else(|| AppError::Other("Native window is closed".into()))
+    let (session, owner) = acknowledge_session(&slot, async {
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        termination::ensure(&webview, &slot).await?;
+        Ok(())
+    }).await?;
+    crate::file_history::register(owner, history_channel)?;
+    Ok(session)
+}
+
+async fn acknowledge_session(
+    slot: &WindowOwner,
+    ensure: impl std::future::Future<Output = Result<(), AppError>>,
+) -> Result<(String, Owner), AppError> {
+    // Capture the requesting document before the UI-thread installation can
+    // yield. A delayed old invocation must never adopt its replacement.
+    let session = slot.scope.lock().unwrap().session()
+        .ok_or_else(|| AppError::Other("Native window is closed".into()))?;
+    ensure.await?;
+    let owner = slot.watch_owner(&session)?;
+    Ok((session, owner))
 }
 
 /// Acquire authority only after the current renderer acknowledged native coverage.

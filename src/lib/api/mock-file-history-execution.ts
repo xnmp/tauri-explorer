@@ -1,22 +1,10 @@
-/**
- * Pure execution logic for undo/redo operations.
- * Issue: #116
- *
- * Maps each UndoAction variant to the appropriate API call.
- * API dependencies are injected to keep this module framework-free and testable.
- */
+/** Browser-only filesystem simulation for history UI tests.
+ * Native windows execute and settle history in Rust. */
 
-import { parentDir, basename, joinPath } from "./path";
-import { fileBatchError, type FileBatchResult } from "./file-batch-outcome";
+import { parentDir, basename, joinPath } from "$lib/domain/path";
+import { fileBatchError, type FileBatchResult } from "$lib/domain/file-batch-outcome";
 
-/** Undoable action types. Lives in domain — these describe invertible
- *  filesystem operations, independent of any store (#278). */
-export type UndoAction =
-  | { type: "rename"; path: string; oldName: string; newName: string }
-  | { type: "move"; sourcePath: string; destPath: string; originalDir: string }
-  | { type: "copy"; copiedPath: string; parentDir: string }
-  | { type: "batch"; actions: UndoAction[]; label: string }
-  | { type: "delete"; paths: string[]; parentDir: string };
+import type { UndoAction } from "$lib/domain/file-history";
 
 /** Minimal result type matching the API contract (data is irrelevant for undo/redo). */
 export type UndoResult = { ok: true } | { ok: false; error: string };

@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use super::{metadata_to_entry_probed, run_blocking, FileEntry, SizeEstimate};
+use super::{mutation::FileMutationReceipt, run_blocking, SizeEstimate};
 use crate::error::AppError;
 use crate::progress::ProgressTracker;
 use crate::task_registry::TaskRegistry;
@@ -210,7 +210,7 @@ pub async fn get_home_directory() -> Result<String, AppError> {
 
 /// Create a new directory.
 #[tauri::command]
-pub async fn create_directory(parent_path: String, name: String) -> Result<FileEntry, AppError> {
+pub async fn create_directory(parent_path: String, name: String) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&name)?;
 
     run_blocking(move || {
@@ -232,15 +232,14 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileE
         fs::create_dir(&new_path)?;
         log::info!("Created directory: {:?}", name);
 
-        let metadata = fs::symlink_metadata(&new_path)?;
-        Ok(metadata_to_entry_probed(&new_path, &metadata))
+        Ok(FileMutationReceipt::committed(&new_path))
     })
     .await
 }
 
 /// Create a new empty file (touch). Fails if a file/dir already exists there.
 #[tauri::command]
-pub async fn create_empty_file(parent_path: String, name: String) -> Result<FileEntry, AppError> {
+pub async fn create_empty_file(parent_path: String, name: String) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&name)?;
 
     run_blocking(move || {
@@ -265,8 +264,7 @@ pub async fn create_empty_file(parent_path: String, name: String) -> Result<File
             .open(&new_path)?;
         log::info!("Created empty file: {:?}", name);
 
-        let metadata = fs::symlink_metadata(&new_path)?;
-        Ok(metadata_to_entry_probed(&new_path, &metadata))
+        Ok(FileMutationReceipt::committed(&new_path))
     })
     .await
 }
@@ -284,7 +282,7 @@ fn is_case_only_rename(source: &Path, target: &Path, new_name: &str) -> bool {
 
 /// Rename a file or directory.
 #[tauri::command]
-pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, AppError> {
+pub async fn rename_entry(path: String, new_name: String) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&new_name)?;
 
     run_blocking(move || {
@@ -306,8 +304,7 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, A
 
         fs::rename(&source, &target)?;
 
-        let metadata = fs::symlink_metadata(&target)?;
-        Ok(metadata_to_entry_probed(&target, &metadata))
+        Ok(FileMutationReceipt::committed(&target))
     })
     .await
 }
@@ -368,7 +365,7 @@ pub async fn copy_entry(
     dest_dir: String,
     overwrite: Option<bool>,
     job_id: Option<u64>,
-) -> Result<FileEntry, AppError> {
+) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || copy_entry_impl(Some(&app), source, dest_dir, overwrite, job_id)).await
 }
 
@@ -385,7 +382,7 @@ fn copy_entry_impl(
     dest_dir: String,
     overwrite: Option<bool>,
     job_id: Option<u64>,
-) -> Result<FileEntry, AppError> {
+) -> Result<FileMutationReceipt, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
@@ -451,7 +448,7 @@ fn copy_entry_inner(
     overwrite: Option<bool>,
     source: &str,
     tracker: &mut ProgressTracker,
-) -> Result<FileEntry, AppError> {
+) -> Result<FileMutationReceipt, AppError> {
     let mut target = dest_dir_path.join(source_name);
 
     if entry_exists(&target) {
@@ -487,8 +484,7 @@ fn copy_entry_inner(
         source_path.is_dir(),
         overwrite.unwrap_or(false)
     );
-    let metadata = fs::symlink_metadata(&target)?;
-    Ok(metadata_to_entry_probed(&target, &metadata))
+    Ok(FileMutationReceipt::committed(&target))
 }
 
 /// Overwrite-copy transactionally: stage the copy under a temp name in the
@@ -501,7 +497,7 @@ fn copy_entry_overwriting(
     target: &Path,
     source_name: &str,
     tracker: &mut ProgressTracker,
-) -> Result<FileEntry, AppError> {
+) -> Result<FileMutationReceipt, AppError> {
     let staging = unique_staging_path(dest_dir, source_name);
     if let Err(e) = copy_recursively(source, &staging, tracker) {
         let _ = remove_entry_at(&staging);
@@ -521,8 +517,7 @@ fn copy_entry_overwriting(
     let _ = remove_entry_at(&displaced);
 
     log::info!("Copied entry over existing target (overwrite=true)");
-    let metadata = fs::symlink_metadata(target)?;
-    Ok(metadata_to_entry_probed(target, &metadata))
+    Ok(FileMutationReceipt::committed(target))
 }
 
 /// Move a file or directory.
@@ -532,7 +527,7 @@ pub async fn move_entry(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
-) -> Result<FileEntry, AppError> {
+) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || move_entry_impl(source, dest_dir, overwrite)).await
 }
 
@@ -540,7 +535,7 @@ fn move_entry_impl(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
-) -> Result<FileEntry, AppError> {
+) -> Result<FileMutationReceipt, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
@@ -605,8 +600,7 @@ fn move_entry_impl(
         }
     }
 
-    let metadata = fs::symlink_metadata(&target)?;
-    Ok(metadata_to_entry_probed(&target, &metadata))
+    Ok(FileMutationReceipt::committed(&target))
 }
 
 /// Move `source` to `target`: rename when possible, staged copy+delete for
@@ -828,7 +822,7 @@ fn mime_for_extension(path: &Path) -> &'static str {
 
 /// Write text content to a new file.
 #[tauri::command]
-pub async fn write_text_file(path: String, content: String) -> Result<FileEntry, AppError> {
+pub async fn write_text_file(path: String, content: String) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || {
         let file_path = PathBuf::from(&path);
 
@@ -837,8 +831,7 @@ pub async fn write_text_file(path: String, content: String) -> Result<FileEntry,
         }
 
         fs::write(&file_path, content.as_bytes())?;
-        let metadata = fs::symlink_metadata(&file_path)?;
-        Ok(metadata_to_entry_probed(&file_path, &metadata))
+        Ok(FileMutationReceipt::committed(&file_path))
     })
     .await
 }
@@ -863,7 +856,7 @@ pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
 
 /// Create a symbolic link.
 #[tauri::command]
-pub async fn create_symlink(target_path: String, link_path: String) -> Result<FileEntry, AppError> {
+pub async fn create_symlink(target_path: String, link_path: String) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || {
         let target = PathBuf::from(&target_path);
         let link = PathBuf::from(&link_path);
@@ -888,8 +881,7 @@ pub async fn create_symlink(target_path: String, link_path: String) -> Result<Fi
             }
         }
 
-        let metadata = fs::symlink_metadata(&link)?;
-        Ok(metadata_to_entry_probed(&link, &metadata))
+        Ok(FileMutationReceipt::committed(&link))
     })
     .await
 }
@@ -964,8 +956,8 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(result.name, "new_folder");
-        assert!(matches!(result.kind, super::super::FileKind::Directory));
+        assert_eq!(result.entry.as_ref().unwrap().name, "new_folder");
+        assert!(matches!(result.entry.as_ref().unwrap().kind, super::super::FileKind::Directory));
         assert!(dir.path().join("new_folder").exists());
     }
 
@@ -978,8 +970,8 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(result.name, "notes.txt");
-        assert!(matches!(result.kind, super::super::FileKind::File));
+        assert_eq!(result.entry.as_ref().unwrap().name, "notes.txt");
+        assert!(matches!(result.entry.as_ref().unwrap().kind, super::super::FileKind::File));
         let created = dir.path().join("notes.txt");
         assert!(created.exists());
         assert_eq!(std::fs::metadata(&created).unwrap().len(), 0);
@@ -1010,7 +1002,7 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(result.name, "new_name.txt");
+        assert_eq!(result.entry.as_ref().unwrap().name, "new_name.txt");
         assert!(!file_path.exists());
         assert!(dir.path().join("new_name.txt").exists());
     }
@@ -1043,12 +1035,12 @@ mod tests {
         .unwrap();
 
         // Shape: returned entry carries the new name, full new path, and kind.
-        assert_eq!(entry.name, new_name);
+        assert_eq!(entry.entry.as_ref().unwrap().name, new_name);
         assert_eq!(
             entry.path,
             dir.path().join(new_name).to_string_lossy().to_string()
         );
-        let kind = match serde_json::to_value(&entry.kind).unwrap() {
+        let kind = match serde_json::to_value(&entry.entry.as_ref().unwrap().kind).unwrap() {
             serde_json::Value::String(s) => s,
             other => panic!("kind did not serialize to a string: {other:?}"),
         };
@@ -1178,7 +1170,7 @@ mod tests {
 
         assert!(result.is_ok(), "copy_entry failed: {:?}", result.err());
         let entry = result.unwrap();
-        assert_eq!(entry.name, "my_folder");
+        assert_eq!(entry.entry.as_ref().unwrap().name, "my_folder");
 
         let copied = dest_dir.join("my_folder");
         assert!(copied.exists());
@@ -1214,7 +1206,7 @@ mod tests {
             result.err()
         );
         let entry = result.unwrap();
-        assert_eq!(entry.name, "my_folder - Copy");
+        assert_eq!(entry.entry.as_ref().unwrap().name, "my_folder - Copy");
 
         let copied = dir.path().join("my_folder - Copy");
         assert!(copied.exists());

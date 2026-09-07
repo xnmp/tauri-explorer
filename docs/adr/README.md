@@ -23,3 +23,4 @@ decision during review.
 | [0015](0015-file-list-keyboard-cursor.md) | File-list keyboard cursor and virtualized focus ownership | Accepted |
 | [0016](0016-file-mutation-publication.md) | File mutation publication and editor ownership | Accepted |
 | [0017](0017-file-batch-outcomes.md) | File batch outcomes and undo progress | Accepted |
+| [0018](0018-native-file-history.md) | Native file history and committed mutation receipts | Proposed |

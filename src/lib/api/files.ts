@@ -7,7 +7,7 @@
  */
 
 import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
-import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import {
   invoke,
@@ -137,16 +137,16 @@ export async function isDirectoryEmpty(
  *
  * @param parentPath - Path to parent directory
  * @param name - Name of new directory
- * @returns Result with created FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function createDirectory(
   parentPath: string,
   name: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(parentPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("create_directory", {
+    const data = await invoke<FileMutationReceipt>("create_directory", {
       parentPath,
       name,
     });
@@ -161,16 +161,16 @@ export async function createDirectory(
  * Create a new empty file (touch) inside a parent directory.
  * @param parentPath - Path to parent directory
  * @param name - Name of new file
- * @returns Result with created FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function createEmptyFile(
   parentPath: string,
   name: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(parentPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("create_empty_file", {
+    const data = await invoke<FileMutationReceipt>("create_empty_file", {
       parentPath,
       name,
     });
@@ -185,16 +185,16 @@ export async function createEmptyFile(
  *
  * @param path - Full path to file/directory
  * @param newName - New name (just the name, not full path)
- * @returns Result with renamed FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function renameEntry(
   path: string,
   newName: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(path);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("rename_entry", { path, newName });
+    const data = await invoke<FileMutationReceipt>("rename_entry", { path, newName });
     if (fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("rename_entry", path, data.path);
     return { ok: true, data };
   } catch (err) {
@@ -271,18 +271,18 @@ export async function restoreFromTrash(paths: string[]): Promise<ApiResult<FileB
  *
  * @param source - Full path to source file/directory
  * @param destDir - Destination directory path
- * @returns Result with copied FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function copyEntry(
   source: string,
   destDir: string,
   overwrite = false,
   jobId?: number,
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(source, destDir);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("copy_entry", { source, destDir, overwrite, jobId });
+    const data = await invoke<FileMutationReceipt>("copy_entry", { source, destDir, overwrite, jobId });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -305,17 +305,17 @@ export async function cancelCopy(jobId: number): Promise<void> {
  *
  * @param source - Full path to source file/directory
  * @param destDir - Destination directory path
- * @returns Result with moved FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function moveEntry(
   source: string,
   destDir: string,
   overwrite = false
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(source, destDir);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("move_entry", { source, destDir, overwrite });
+    const data = await invoke<FileMutationReceipt>("move_entry", { source, destDir, overwrite });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -344,9 +344,9 @@ export async function resolveShortcut(path: string): Promise<ShortcutTarget | nu
 /**
  * Write text content to a new file.
  */
-export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileEntry>> {
+export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileMutationReceipt>> {
   try {
-    const data = await invoke<FileEntry>("write_text_file", { path, content });
+    const data = await invoke<FileMutationReceipt>("write_text_file", { path, content });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -647,16 +647,16 @@ export async function unwatchDirectory(lease: DirectoryWatchLease): Promise<void
  *
  * @param targetPath - Path that the symlink points to
  * @param linkPath - Path where the symlink will be created
- * @returns Result with the created symlink entry or error
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function createSymlink(
   targetPath: string,
   linkPath: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(targetPath, linkPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("create_symlink", { targetPath, linkPath });
+    const data = await invoke<FileMutationReceipt>("create_symlink", { targetPath, linkPath });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };

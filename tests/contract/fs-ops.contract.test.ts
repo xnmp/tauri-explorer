@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { DirectoryListing, FileEntry } from "../../src/lib/domain/file";
+import type { DirectoryListing, FileMutationReceipt } from "../../src/lib/domain/file";
 
 vi.stubGlobal("window", {} as unknown as Window & typeof globalThis);
 const { mockInvoke } = await import("../../src/lib/api/mock-invoke");
@@ -27,7 +27,7 @@ const fx = JSON.parse(
 let counter = 0;
 async function freshDir(): Promise<string> {
   const name = `contract-${Date.now()}-${counter++}`;
-  await mockInvoke<FileEntry>("create_directory", { parentPath: "/home/user", name });
+  await mockInvoke<FileMutationReceipt>("create_directory", { parentPath: "/home/user", name });
   return `/home/user/${name}`;
 }
 
@@ -47,17 +47,17 @@ describe("fs-ops contract — mock agrees with real backend (fixtures)", () => {
     expect(entries.map((e) => e.name)).toEqual(fx.listing_order.expected_order);
   });
 
-  it("rename_entry: returns the renamed entry and the listing reflects it", async () => {
+  it("rename_entry: returns the committed path and snapshot, and the listing reflects it", async () => {
     const parent = await freshDir();
     await mockInvoke("write_text_file", { path: `${parent}/${fx.rename.original}`, content: "x" });
 
-    const renamed = await mockInvoke<FileEntry>("rename_entry", {
+    const renamed = await mockInvoke<FileMutationReceipt>("rename_entry", {
       path: `${parent}/${fx.rename.original}`,
       newName: fx.rename.new_name,
     });
-    expect(renamed.name).toBe(fx.rename.new_name);
+    expect(renamed.entry?.name).toBe(fx.rename.new_name);
     expect(renamed.path).toBe(`${parent}/${fx.rename.new_name}`);
-    expect(renamed.kind).toBe(fx.rename.expected_kind);
+    expect(renamed.entry?.kind).toBe(fx.rename.expected_kind);
 
     const names = (await list(parent)).entries.map((e) => e.name);
     expect(names).toContain(fx.rename.new_name);

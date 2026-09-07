@@ -104,6 +104,10 @@ function entry(name: string, dir = "/a"): FileEntry {
   };
 }
 
+function transferSuccess(created: FileEntry) {
+  return { ok: true as const, path: created.path, entry: created };
+}
+
 function explorerAtA(): ExplorerInstance {
   const entries = [entry("a-first.txt"), entry("a-second.txt")];
   const explorer = createExplorerState({
@@ -168,10 +172,9 @@ describe("paste and undo publication ownership", () => {
     const sources = [entry("one.txt", "/source"), entry("two.txt", "/source")];
     const pasted = sources.map(({ name }) => entry(name));
     mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: sources.map(({ path }) => path) });
-    mocks.transfer.mockImplementation(async (sourcePath: string, destination: string) => ({
-      ok: true,
-      entry: entry(sourcePath.split("/").pop()!, destination),
-    }));
+    mocks.transfer.mockImplementation(async (sourcePath: string, destination: string) =>
+      transferSuccess(entry(sourcePath.split("/").pop()!, destination))
+    );
     serveListing([...explorer.displayEntries, ...pasted]);
 
     expect(await explorer.paste()).toBeNull();
@@ -184,15 +187,35 @@ describe("paste and undo publication ownership", () => {
     expect(mocks.broadcastFileChange).toHaveBeenCalledWith(expect.arrayContaining(["/a", "/source"]));
   });
 
+  it("reconciles a committed paste without metadata and records its durable path", async () => {
+    const explorer = explorerAtA();
+    const previousSelection = selectedPaths(explorer);
+    const source = entry("external.txt", "/source");
+    const pasted = entry(source.name);
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [source.path] });
+    mocks.transfer.mockResolvedValueOnce({ ok: true, path: pasted.path, entry: null });
+    serveListing([...explorer.displayEntries, pasted]);
+
+    expect(await explorer.paste()).toBeNull();
+
+    expect(explorer.displayEntries.some(({ path }) => path === pasted.path)).toBe(true);
+    expect(selectedPaths(explorer)).toEqual(previousSelection);
+    expect(mocks.undoPush).toHaveBeenCalledWith({
+      type: "copy",
+      copiedPath: pasted.path,
+      parentDir: "/a",
+    });
+    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a", "/source"]);
+  });
+
   it("keeps the A destination captured while the OS clipboard read is pending", async () => {
     const explorer = explorerAtA();
     const source = entry("external.txt", "/source");
     const clipboardRead = deferred<ApiResult<string[]>>();
     mocks.osReadFiles.mockReturnValueOnce(clipboardRead.promise);
-    mocks.transfer.mockImplementation(async (_path: string, destination: string) => ({
-      ok: true,
-      entry: entry(source.name, destination),
-    }));
+    mocks.transfer.mockImplementation(async (_path: string, destination: string) =>
+      transferSuccess(entry(source.name, destination))
+    );
 
     const pending = explorer.paste();
     const bEntries = await navigateToB(explorer);
@@ -214,7 +237,7 @@ describe("paste and undo publication ownership", () => {
   it("does not publish a completed A transfer into a newer B view", async () => {
     const explorer = explorerAtA();
     const source = entry("external.txt", "/source");
-    const transfer = deferred<{ ok: true; entry: FileEntry }>();
+    const transfer = deferred<{ ok: true; path: string; entry: FileEntry }>();
     mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [source.path] });
     mocks.transfer.mockReturnValueOnce(transfer.promise);
 
@@ -222,7 +245,7 @@ describe("paste and undo publication ownership", () => {
     await waitForCall(mocks.transfer);
     expect(mocks.transfer.mock.calls[0][1]).toBe("/a");
     const bEntries = await navigateToB(explorer);
-    transfer.resolve({ ok: true, entry: entry(source.name) });
+    transfer.resolve(transferSuccess(entry(source.name)));
     expect(await pending).toBeNull();
 
     expect.soft(explorer.displayEntries.map(({ path }) => path)).toEqual(bEntries.map(({ path }) => path));
@@ -234,7 +257,7 @@ describe("paste and undo publication ownership", () => {
   it("does not publish an A transfer after its pane is destroyed", async () => {
     const explorer = explorerAtA();
     const source = entry("external.txt", "/source");
-    const transfer = deferred<{ ok: true; entry: FileEntry }>();
+    const transfer = deferred<{ ok: true; path: string; entry: FileEntry }>();
     mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [source.path] });
     mocks.transfer.mockReturnValueOnce(transfer.promise);
     const pending = explorer.paste();
@@ -243,7 +266,7 @@ describe("paste and undo publication ownership", () => {
 
     await explorer.destroy();
     explorers = explorers.filter((candidate) => candidate !== explorer);
-    transfer.resolve({ ok: true, entry: entry(source.name) });
+    transfer.resolve(transferSuccess(entry(source.name)));
     expect(await pending).toBeNull();
 
     expect.soft(explorer.currentPath).toBe("/b");
@@ -259,13 +282,13 @@ describe("paste and undo publication ownership", () => {
     const newerCopy = entry("newer-copy.txt", "/newer");
     await clipboardStore.cut([oldCut]);
     mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [oldCut.path] });
-    const transfer = deferred<{ ok: true; entry: FileEntry }>();
+    const transfer = deferred<{ ok: true; path: string; entry: FileEntry }>();
     mocks.transfer.mockReturnValueOnce(transfer.promise);
 
     const pending = explorer.paste();
     await waitForCall(mocks.transfer);
     await clipboardStore.copy([newerCopy]);
-    transfer.resolve({ ok: true, entry: entry(oldCut.name) });
+    transfer.resolve(transferSuccess(entry(oldCut.name)));
     expect(await pending).toBeNull();
 
     expect.soft(clipboardStore.content).toEqual({ entries: [newerCopy], operation: "copy" });
@@ -292,7 +315,7 @@ describe("paste and undo publication ownership", () => {
     expect.soft(explorer.focusedEntry?.path).toBe(bEntries[1].path);
   });
 
-  it("does not refresh or reselect B when an A undo finishes late", async () => {
+  it("does not refresh, reselect, or duplicate-publish when an A undo finishes late", async () => {
     const explorer = explorerAtA();
     const undone = deferred<{ action: UndoAction }>();
     mocks.undo.mockReturnValueOnce(undone.promise);
@@ -307,10 +330,10 @@ describe("paste and undo publication ownership", () => {
     expect.soft(explorer.displayEntries.map(({ path }) => path)).toEqual(bEntries.map(({ path }) => path));
     expect.soft(selectedPaths(explorer)).toEqual([bEntries[1].path]);
     expect.soft(explorer.focusedEntry?.path).toBe(bEntries[1].path);
-    expect.soft(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
+    expect.soft(mocks.broadcastFileChange).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])("publishes completed undo effects despite a sibling failure (navigate away: %s)", async (navigateAway) => {
+  it.each([false, true])("refreshes a current pane for a partial undo without duplicate publication (navigate away: %s)", async (navigateAway) => {
     const explorer = explorerAtA();
     const undone = deferred<{ action: UndoAction; error: string }>();
     mocks.undo.mockReturnValueOnce(undone.promise);
@@ -325,7 +348,7 @@ describe("paste and undo publication ownership", () => {
     });
 
     expect(await pending).toContain("permission denied");
-    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
+    expect(mocks.broadcastFileChange).not.toHaveBeenCalled();
     expect(explorer.displayEntries.map(({ path }) => path).sort()).toEqual(expected.map(({ path }) => path).sort());
     expect(selectedPaths(explorer)).toEqual([navigateAway ? "/b/b-newer.txt" : "/a/a-second.txt"]);
   });

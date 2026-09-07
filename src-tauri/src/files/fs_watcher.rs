@@ -142,6 +142,16 @@ pub(crate) fn invalidate_directory_caches_for_change(path: &Path) {
     invalidate_search_cache_for_change(path);
 }
 
+/// Confirmed native inverse effects outlive their invoking renderer. Publish
+/// through the existing cache invalidation and watcher scheduling boundary.
+pub(crate) fn publish_file_changes(paths: &[String]) {
+    for path in paths {
+        let path = Path::new(path);
+        invalidate_directory_caches_for_change(path);
+        queue_directory_change(path);
+    }
+}
+
 fn queue_directory_change(path: &Path) {
     if let Ok(mut pending) = pending_changes().lock() {
         pending.insert(

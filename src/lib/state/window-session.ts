@@ -1,6 +1,7 @@
 /** Page-session composition. Window stores retain their own data lifetimes;
  * this owner acquires and retires the page's subscriptions and delayed work. */
 import { isTauri } from "$lib/api/common";
+import { getNativeResourceSession } from "$lib/api/native-resource-session";
 import { E2E_WARM_WINDOW_PRIMING_DISABLED } from "$lib/domain/e2e-hooks";
 import { planWindowLaunch } from "$lib/domain/window-launch-plan";
 import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
@@ -106,6 +107,10 @@ export function startWindowSession(options: WindowSessionOptions) {
     const markCoreReady = () => {
       if (coreReady || lifetime.signal.aborted) return;
       coreReady = true;
+      // Ordinary directory panes already acknowledged this session. Virtual-
+      // only windows also participate in shared history, without adding work
+      // to the configured foreground-readiness path or acquiring a watcher.
+      if (isTauri()) void getNativeResourceSession().catch(reportError);
       // The page reports configured commands + a loaded listing after its
       // paint opportunity. Optional warming cannot compete with that work.
       if (mode === "off" && !E2E_WARM_WINDOW_PRIMING_DISABLED) {

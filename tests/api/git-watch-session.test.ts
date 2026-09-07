@@ -4,6 +4,7 @@ const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("$lib/api/common", () => ({
   invoke,
   extractError: (error: unknown) => String(error),
+  isTauri: () => false,
   virtualPathGuard: () => null,
   dataUriToBlobUrl: () => "blob:test",
 }));
@@ -24,7 +25,10 @@ it("shares one lazy session across concurrent Git and directory watches and thei
   expect(invoke).not.toHaveBeenCalled();
   const first = git.gitWatchRepo("/a");
   const second = files.watchDirectory("/b");
-  expect(invoke.mock.calls).toEqual([["native_resource_session"]]);
+  expect(invoke.mock.calls).toEqual([[
+    "native_resource_session",
+    { historyChannel: expect.any(Function) },
+  ]]);
   acknowledge("7");
   expect(await first).toEqual({ ok: true, data: { id: "/a", repoRoot: "/a" } });
   expect(await second).toEqual({ id: "directory:/b", path: "/b" });
@@ -41,7 +45,10 @@ it("retries a failed acknowledgement without sending an unscoped watch", async (
   invoke.mockRejectedValueOnce("session unavailable");
   const api = await import("$lib/api/git");
   expect(await api.gitWatchRepo("/a")).toEqual({ ok: false, error: "session unavailable" });
-  expect(invoke.mock.calls).toEqual([["native_resource_session"]]);
+  expect(invoke.mock.calls).toEqual([[
+    "native_resource_session",
+    { historyChannel: expect.any(Function) },
+  ]]);
   invoke.mockResolvedValueOnce("8").mockResolvedValueOnce({ id: "lease", repoRoot: "/a" });
   expect((await api.gitWatchRepo("/a")).ok).toBe(true);
   expect(invoke).toHaveBeenLastCalledWith("git_watch_repo", { repoPath: "/a", sessionId: "8" });
@@ -54,7 +61,7 @@ it("does not re-acknowledge after stale Git or directory commands are rejected",
   expect((await git.gitWatchRepo("/a")).ok).toBe(false);
   await expect(files.watchDirectory("/b")).rejects.toBe("renderer replaced");
   expect(invoke.mock.calls).toEqual([
-    ["native_resource_session"],
+    ["native_resource_session", { historyChannel: expect.any(Function) }],
     ["git_watch_repo", { repoPath: "/a", sessionId: "9" }],
     ["watch_directory", { path: "/b", sessionId: "9" }],
   ]);

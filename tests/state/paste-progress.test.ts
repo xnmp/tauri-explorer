@@ -69,6 +69,7 @@ beforeEach(() => {
   estimate.mockResolvedValue({ ok: true, data: { totalBytes: 50 * 1024 } });
   transfer.mockImplementation(async (path: string) => ({
     ok: true,
+    path: `/dest/${path.split("/").pop()}`,
     entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
   }));
 });
@@ -81,6 +82,7 @@ describe("large paste progress", () => {
       if (op) progressSeen.push(op.progress);
       return {
         ok: true,
+        path: `/dest/${path.split("/").pop()}`,
         entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
       };
     });
@@ -117,6 +119,7 @@ describe("large paste progress", () => {
       }
       return {
         ok: true,
+        path: `/dest/${path.split("/").pop()}`,
         entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
       };
     });
@@ -135,6 +138,7 @@ describe("large paste progress", () => {
       if (i % 2 === 0) return { ok: false, error: "disk full" };
       return {
         ok: true,
+        path: `/dest/${path.split("/").pop()}`,
         entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
       };
     });
@@ -168,7 +172,7 @@ describe("large paste progress", () => {
           payload: { jobId: opts.jobId, bytesDone: 512, bytesTotal: 1024, currentFile: "/src/a" },
         });
         seenMidFile = operationsManager.operations[0].progress;
-        return { ok: true, entry: { path: "/dest/a", name: "a" } };
+        return { ok: true, path: "/dest/a", entry: { path: "/dest/a", name: "a" } };
       },
     );
 
@@ -203,6 +207,29 @@ describe("large paste progress", () => {
 
     expect(cancelCopy).toHaveBeenCalledWith(capturedJobId);
     // A cancelled copy is not reported as a failure toast.
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("counts a committed copy without metadata as success and records its path", async () => {
+    transfer.mockResolvedValue({ ok: true, path: "/dest/a", entry: null });
+    const ctx = context();
+
+    const error = await pasteEntries(
+      [{ name: "a", path: "/src/a", size: 1 }],
+      false,
+      ctx,
+    );
+
+    expect(error).toBeNull();
+    expect(operationsManager.operations[0].status).toBe("completed");
+    expect(undo.push).toHaveBeenCalledWith({
+      type: "copy",
+      copiedPath: "/dest/a",
+      parentDir: "/dest",
+    });
+    expect(ctx.onEntriesAdded).not.toHaveBeenCalled();
+    expect(ctx.onRefresh).toHaveBeenCalledOnce();
+    expect(toast.success).toHaveBeenCalledWith("Pasted successfully");
     expect(toast.error).not.toHaveBeenCalled();
   });
 

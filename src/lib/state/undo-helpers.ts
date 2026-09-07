@@ -4,23 +4,7 @@
  */
 
 import type { UndoAction } from "./types";
-import { parentDir, basename } from "$lib/domain/path";
-
-/** Compute directories affected by an undo/redo action for broadcasting. */
-export function getAffectedDirs(action: UndoAction): string[] {
-  switch (action.type) {
-    case "rename":
-      return [parentDir(action.path)];
-    case "move":
-      return [action.originalDir, parentDir(action.destPath)];
-    case "copy":
-      return [action.parentDir];
-    case "batch":
-      return action.actions.flatMap(getAffectedDirs);
-    case "delete":
-      return [action.parentDir];
-  }
-}
+import { basename } from "$lib/domain/path";
 
 export function undoActionLabel(action: UndoAction): string {
   switch (action.type) {

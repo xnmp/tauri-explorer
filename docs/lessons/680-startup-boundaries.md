@@ -801,3 +801,23 @@ Returning an application receipt with an own `error` field directly from
 the encoded JSON string and parse it in the runner, so an expected per-file
 failure remains assertion data. Keep token/status checks on the application-side
 DOM receipt; transport retries must never redispatch accepted filesystem work.
+
+## Native history and mutation receipts
+
+A successful filesystem mutation must not become an error because its later
+`FileEntry` lookup failed. Carry the committed path separately from nullable
+presentation metadata; make the post-commit receipt constructor infallible.
+Consumers must record paths and count successes even when no snapshot can be
+inserted optimistically. Rename clipboard bookkeeping can rekey its last-known
+snapshot without inventing new metadata.
+
+Capture a renderer generation before awaiting native listener installation.
+Reading it afterward lets an old realm adopt its replacement and overwrite the
+replacement's history channel. Likewise, Undo waiting on a local history push
+must use that push's exact receipt: a later shared channel update can already
+name an unrelated newer entry before the awaiting continuation runs.
+
+Browser history simulation cannot verify the native admission authority. The
+Linux compatibility fixture here covers ordinary file commands, delayed create
+navigation and partial Delete/Undo/Redo. Shared-window inverse ownership and
+composite transaction recovery remain separate required acceptance cases.

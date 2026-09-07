@@ -64,8 +64,8 @@ const noop = () => {};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  moveEntryMock.mockResolvedValue({ ok: true, data: resultEntry });
-  copyEntryMock.mockResolvedValue({ ok: true, data: resultEntry });
+  moveEntryMock.mockResolvedValue({ ok: true, data: { path: resultEntry.path, entry: resultEntry } });
+  copyEntryMock.mockResolvedValue({ ok: true, data: { path: resultEntry.path, entry: resultEntry } });
   fetchDirectoryMock.mockResolvedValue({ ok: true, data: { entries: [] } });
 });
 
@@ -79,6 +79,8 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected a successful transfer");
+    expect(result.path).toBe(resultEntry.path);
     expect(result.entry).toEqual(resultEntry);
     expect(moveEntryMock).toHaveBeenCalledWith("/src/file.txt", "/dest", false);
     expect(copyEntryMock).not.toHaveBeenCalled();
@@ -104,6 +106,7 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a failed transfer");
     expect(result.error).toBe("permission denied");
   });
 
@@ -160,6 +163,7 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a skipped transfer");
     expect(result.error).toBe("skipped");
     expect(moveEntryMock).not.toHaveBeenCalled();
   });
@@ -176,6 +180,7 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a skipped transfer");
     expect(result.error).toBe("skipped");
     expect(moveEntryMock).not.toHaveBeenCalled();
   });
@@ -261,6 +266,29 @@ describe("performFileTransfer", () => {
     });
   });
 
+  it("records and publishes a committed move when entry metadata is unavailable", async () => {
+    moveEntryMock.mockResolvedValue({
+      ok: true,
+      data: { path: "/dest/file.txt", entry: null },
+    });
+    const refreshMock = vi.fn();
+
+    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+      onRefresh: refreshMock,
+    });
+
+    expect(result).toEqual({ ok: true, path: "/dest/file.txt", entry: null });
+    expect(undoPushMock).toHaveBeenCalledWith({
+      type: "move",
+      sourcePath: "/src/file.txt",
+      destPath: "/dest/file.txt",
+      originalDir: "/src",
+    });
+    expect(refreshMock).toHaveBeenCalledOnce();
+    expect(broadcastMock).toHaveBeenCalledWith(["/src", "/dest"]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
   // --- Same-parent guard ---
 
   it("treats a move into the source's own parent as a no-op skip", async () => {
@@ -269,6 +297,7 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a skipped transfer");
     expect(result.error).toBe("skipped");
     expect(moveEntryMock).not.toHaveBeenCalled();
     expect(conflictPromptMock).not.toHaveBeenCalled();

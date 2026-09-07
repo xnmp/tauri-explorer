@@ -58,6 +58,9 @@ describe("page session ownership", () => {
   it("starts requested navigation synchronously without waiting for settings or plugins", async () => {
     const callbacks = options();
     const session = startWindowSession(callbacks);
+    expect(f.setupWatch.mock.invocationCallOrder[0]).toBeLessThan(
+      f.initTabs.mock.invocationCallOrder[0],
+    );
     expect(f.initTabs).toHaveBeenCalledWith("/child", true, undefined);
     expect(f.view).toHaveBeenCalledWith("tiles");
     expect(callbacks.settingsReady).not.toHaveBeenCalled();
@@ -110,7 +113,8 @@ describe("page session ownership", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => startWindowSession(options())).toThrow("watch setup");
     expect(f.cleanupWatch).toHaveBeenCalledOnce();
-    expect(f.stopTitle).toHaveBeenCalledOnce();
+    expect(f.initTabs).not.toHaveBeenCalled();
+    expect(f.stopTitle).not.toHaveBeenCalled();
     expect(f.stopNativeClose).toHaveBeenCalledOnce();
     resolveSettings();
     await vi.advanceTimersByTimeAsync(5000);

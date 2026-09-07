@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, PartialEq, Eq)]
 enum Observation {
     Watch(String),
+    Observe(String),
     Unwatch(String),
     Replace(Vec<String>),
     Uncovered(String),
@@ -31,6 +32,7 @@ struct FakeObserver {
     unavailable: HashSet<String>,
     observations: Vec<Observation>,
     watch_failures: VecDeque<Failure>,
+    observe_failures: VecDeque<Failure>,
     unwatch_failures: VecDeque<Failure>,
     replace_failures: VecDeque<Failure>,
     watch_gate: Option<WatchGate>,
@@ -82,15 +84,27 @@ impl Observer for FakeObserver {
         Ok(())
     }
 
+    fn observe(&mut self, path: &str) -> NotifyResult<()> {
+        self.observations.push(Observation::Observe(path.into()));
+        if let Some(failure) = self.observe_failures.pop_front() {
+            self.unavailable.insert(path.into());
+            return Err(Self::error(failure));
+        }
+        self.unavailable.remove(path);
+        self.registrations.insert(path.into());
+        Ok(())
+    }
+
     fn unwatch(&mut self, path: &str) -> NotifyResult<()> {
         self.observations.push(Observation::Unwatch(path.into()));
         if let Some(failure) = self.unwatch_failures.pop_front() {
             if matches!(failure, Failure::Missing) {
                 self.registrations.remove(path);
+                self.unavailable.remove(path);
             }
             return Err(Self::error(failure));
         }
-        if self.registrations.remove(path) {
+        if self.registrations.remove(path) || self.unavailable.remove(path) {
             Ok(())
         } else {
             Err(Error::watch_not_found())
@@ -103,6 +117,7 @@ impl Observer for FakeObserver {
             return Err(Self::error(failure));
         }
         self.registrations = paths.iter().cloned().collect();
+        self.unavailable.clear();
         Ok(())
     }
 
@@ -643,4 +658,249 @@ fn owner_retirement_revokes_coverage_before_maintenance_runs() {
     assert!(watches.observer.registrations.contains("/immediate"));
     watches.maintain(Instant::now());
     assert!(!watches.observer.registrations.contains("/immediate"));
+}
+
+#[test]
+fn observed_registration_failure_keeps_owned_demand_without_claiming_coverage() {
+    let mut observer = FakeObserver::default();
+    observer.observe_failures.push_back(Failure::Generic);
+    let mut watches = DirectoryWatches::new(observer);
+    let browsing = Owner::default();
+    let strict = Owner::default();
+
+    let lease = watches.observe(&browsing, "/degraded".into()).unwrap();
+
+    assert!(!watches.covered("/degraded"));
+    assert!(!watches.observer.callback("/degraded"));
+    assert!(!watches.needs_cleanup());
+    assert!(watches.acquire(&strict, "/degraded".into()).is_err());
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Observe("/degraded".into())),
+        1
+    );
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Watch("/degraded".into())),
+        0,
+        "strict acquisition must not replace retained recovery demand"
+    );
+
+    watches.observer.unavailable.remove("/degraded");
+    watches.observer.registrations.insert("/degraded".into());
+    assert!(watches.covered("/degraded"));
+    assert!(watches.observer.callback("/degraded"));
+
+    watches.release(&browsing, &lease.id).unwrap();
+    assert!(!watches.covered("/degraded"));
+    assert!(!watches.observer.callback("/degraded"));
+}
+
+#[test]
+fn degraded_observed_path_does_not_disturb_a_healthy_shared_root() {
+    let mut watches = watches();
+    let healthy_owner = Owner::default();
+    let degraded_owner = Owner::default();
+    let healthy = watches.acquire(&healthy_owner, "/healthy".into()).unwrap();
+    watches
+        .observer
+        .observe_failures
+        .push_back(Failure::Generic);
+
+    let degraded = watches
+        .observe(&degraded_owner, "/degraded-sibling".into())
+        .unwrap();
+
+    assert!(watches.covered("/healthy"));
+    assert!(watches.observer.callback("/healthy"));
+    assert!(!watches.covered("/degraded-sibling"));
+    watches.release(&degraded_owner, &degraded.id).unwrap();
+    assert!(watches.covered("/healthy"));
+    assert!(watches.observer.callback("/healthy"));
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Unwatch("/healthy".into())),
+        0
+    );
+
+    watches.release(&healthy_owner, &healthy.id).unwrap();
+}
+
+#[test]
+fn observed_lease_waits_for_failed_cleanup_then_replaces_only_retired_authority() {
+    let mut watches = watches();
+    let old_owner = Owner::default();
+    let new_owner = Owner::default();
+    let old = watches.acquire(&old_owner, "/handoff".into()).unwrap();
+    watches.observer.fail_unwatch(1);
+    assert!(watches.release(&old_owner, &old.id).is_err());
+
+    let next = watches.observe(&new_owner, "/handoff".into()).unwrap();
+    assert_ne!(old.id, next.id);
+    assert!(!watches.covered("/handoff"));
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Observe("/handoff".into())),
+        0,
+        "a waiting owner must not overlap ambiguous physical cleanup"
+    );
+
+    watches.maintain(Instant::now() + Duration::from_secs(60));
+    assert!(watches.covered("/handoff"));
+    assert!(watches.observer.callback("/handoff"));
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Observe("/handoff".into())),
+        1
+    );
+
+    watches.release(&old_owner, &old.id).unwrap();
+    assert!(watches.covered("/handoff"));
+    watches.release(&new_owner, &next.id).unwrap();
+    assert!(!watches.covered("/handoff"));
+}
+
+#[test]
+fn failed_observation_during_waiting_promotion_remains_owned_and_can_recover() {
+    let mut watches = watches();
+    let old_owner = Owner::default();
+    let waiting_owner = Owner::default();
+    let old = watches
+        .acquire(&old_owner, "/promote-degraded".into())
+        .unwrap();
+    watches.observer.fail_unwatch(1);
+    assert!(watches.release(&old_owner, &old.id).is_err());
+    let waiting = watches
+        .observe(&waiting_owner, "/promote-degraded".into())
+        .unwrap();
+    watches
+        .observer
+        .observe_failures
+        .push_back(Failure::Generic);
+
+    watches.maintain(Instant::now() + Duration::from_secs(60));
+
+    assert!(!watches.covered("/promote-degraded"));
+    assert!(!watches.needs_cleanup());
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Observe("/promote-degraded".into())),
+        1
+    );
+    watches.observer.unavailable.remove("/promote-degraded");
+    watches
+        .observer
+        .registrations
+        .insert("/promote-degraded".into());
+    assert!(watches.covered("/promote-degraded"));
+
+    watches.release(&waiting_owner, &waiting.id).unwrap();
+    assert!(!watches.covered("/promote-degraded"));
+}
+
+#[test]
+fn abandoned_waiting_lease_is_not_promoted_after_cleanup() {
+    let mut watches = watches();
+    let old_owner = Owner::default();
+    let waiting_owner = Owner::default();
+    let old = watches
+        .acquire(&old_owner, "/abandon-waiting".into())
+        .unwrap();
+    watches.observer.fail_unwatch(1);
+    assert!(watches.release(&old_owner, &old.id).is_err());
+    let waiting = watches
+        .observe(&waiting_owner, "/abandon-waiting".into())
+        .unwrap();
+
+    watches.abandon(&waiting.id);
+    watches.maintain(Instant::now() + Duration::from_secs(60));
+
+    assert!(!watches.covered("/abandon-waiting"));
+    assert!(!watches.needs_cleanup());
+    assert!(!watches.observer.callback("/abandon-waiting"));
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Observe("/abandon-waiting".into())),
+        0
+    );
+}
+
+#[test]
+fn foreign_release_cannot_cancel_a_waiting_observed_lease() {
+    let mut watches = watches();
+    let old_owner = Owner::default();
+    let waiting_owner = Owner::default();
+    let foreign = Owner::default();
+    let old = watches
+        .acquire(&old_owner, "/foreign-waiting".into())
+        .unwrap();
+    watches.observer.fail_unwatch(1);
+    assert!(watches.release(&old_owner, &old.id).is_err());
+    let waiting = watches
+        .observe(&waiting_owner, "/foreign-waiting".into())
+        .unwrap();
+
+    watches.release(&foreign, &waiting.id).unwrap();
+    watches.maintain(Instant::now() + Duration::from_secs(60));
+
+    assert!(watches.covered("/foreign-waiting"));
+    assert!(watches.observer.callback("/foreign-waiting"));
+    watches.release(&waiting_owner, &waiting.id).unwrap();
+    assert!(!watches.covered("/foreign-waiting"));
+}
+
+#[test]
+fn waiting_owner_retirement_is_filtered_before_live_waiters_are_promoted() {
+    let mut watches = watches();
+    let old_owner = Owner::default();
+    let retired_owner = Owner::default();
+    let survivor = Owner::default();
+    let old = watches
+        .acquire(&old_owner, "/retired-waiting".into())
+        .unwrap();
+    watches.observer.fail_unwatch(1);
+    assert!(watches.release(&old_owner, &old.id).is_err());
+    let retired = watches
+        .observe(&retired_owner, "/retired-waiting".into())
+        .unwrap();
+    let live = watches
+        .observe(&survivor, "/retired-waiting".into())
+        .unwrap();
+    retired_owner.retire();
+
+    watches.maintain(Instant::now() + Duration::from_secs(60));
+
+    assert!(watches.covered("/retired-waiting"));
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Observe("/retired-waiting".into())),
+        1
+    );
+    watches.release(&retired_owner, &retired.id).unwrap();
+    assert!(watches.covered("/retired-waiting"));
+    watches.release(&survivor, &live.id).unwrap();
+    assert!(!watches.covered("/retired-waiting"));
+}
+
+#[test]
+fn observed_id_exhaustion_does_not_create_recovery_demand() {
+    let mut watches = watches();
+    watches.next_id = u64::MAX;
+    let owner = Owner::default();
+
+    assert!(watches
+        .observe(&owner, "/observed-exhausted".into())
+        .is_err());
+    assert!(!watches.covered("/observed-exhausted"));
+    assert!(watches.observer.registrations.is_empty());
+    assert!(watches.observer.unavailable.is_empty());
+    assert!(watches.observer.observations.is_empty());
 }

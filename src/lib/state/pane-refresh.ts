@@ -20,7 +20,7 @@ export interface PaneRefreshContext {
   coreState: ExplorerCoreState;
   dirListing: ReturnType<typeof createDirectoryListing>;
   inMutationCooldown: () => boolean;
-  updateWatch: (path: string) => void;
+  allowRefresh: (path: string) => boolean;
   /** Fallback when the current directory no longer exists. */
   navigateToParent: () => Promise<void>;
 }
@@ -47,6 +47,7 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     }
 
     const refreshPath = coreState.currentPath;
+    if (!ctx.allowRefresh(refreshPath)) return;
     const oldEntries = coreState.entries;
     const oldFingerprint = entriesFingerprint(oldEntries);
 
@@ -71,7 +72,7 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
 
     if (!result.ok) {
       // The pane navigated away while the fetch was in flight — not our call.
-      if (coreState.currentPath !== refreshPath) return;
+      if (coreState.currentPath !== refreshPath || !ctx.allowRefresh(refreshPath)) return;
       // Directory no longer exists — fall back to parent
       await ctx.navigateToParent();
       return;
@@ -80,7 +81,7 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     if (result.streaming) await donePromise;
 
     // Bail if superseded: a navigation cancelled the listing or changed path.
-    if (cancelled || coreState.currentPath !== refreshPath) return;
+    if (cancelled || coreState.currentPath !== refreshPath || !ctx.allowRefresh(refreshPath)) return;
 
     // We now hold a complete listing for the pane's current path. If this
     // refresh interrupted a still-streaming navigation to the same path
@@ -104,7 +105,6 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     }
 
     coreState.entries = allEntries;
-    ctx.updateWatch(result.path);
 
     if (!silent) {
       toastStore.show("Refreshed", "info", { duration: 1500 });

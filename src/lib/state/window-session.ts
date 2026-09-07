@@ -74,6 +74,9 @@ export function startWindowSession(options: WindowSessionOptions) {
 
     const plan = planWindowLaunch(window.location.search,
       (window as Window & { __LAUNCH_DATA__?: unknown }).__LAUNCH_DATA__, options.homePath);
+    const watchers = useFileWatchers({ getAllExplorers: () => windowTabsManager.getAllExplorers() });
+    stops.push(() => watchers.cleanup());
+    watchers.setup();
     const tab = windowTabsManager.init(plan.initialPath, plan.skipRestore, plan.overridePath);
     stops.push(startWindowTitleSync(() => windowTabsManager.getActiveExplorer()?.currentPath, plan.homePath));
     if (plan.viewMode && tab) windowTabsManager.getActiveExplorer()?.setViewMode(plan.viewMode);
@@ -114,9 +117,8 @@ export function startWindowSession(options: WindowSessionOptions) {
 
     const getActiveExplorer = () => windowTabsManager.getActiveExplorer();
     const nativeDrop = useNativeDropHandler({ getActiveExplorer, refreshAllPanes: () => windowTabsManager.refreshAllPanes() });
-    const watchers = useFileWatchers({ getAllExplorers: () => windowTabsManager.getAllExplorers() });
     const lifecycle = useWindowLifecycle({ getActiveExplorer, saveTabs: () => windowTabsManager.save() });
-    for (const service of [nativeDrop, watchers, lifecycle]) {
+    for (const service of [nativeDrop, lifecycle]) {
       stops.push(() => service.cleanup());
       service.setup();
     }

@@ -437,6 +437,40 @@ pub async fn start_streaming_directory(
     })
 }
 
+#[derive(Serialize)]
+pub struct ObservedDirectoryListing {
+    #[serde(flatten)]
+    listing: DirectoryListing,
+    watch_lease: super::directory_watches::Lease,
+}
+
+/// Establish owned observation before scanning. The pending lease remains
+/// guarded across the scan, so failed or canceled reads cannot leak demand.
+/// The frontend retains its old directory lease until it accepts this result.
+#[tauri::command]
+pub async fn start_observed_directory(
+    window: tauri::Window,
+    app: AppHandle,
+    path: String,
+    session_id: String,
+) -> Result<ObservedDirectoryListing, AppError> {
+    let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
+    let pending = super::fs_watcher::observe_directory(owner.clone(), path.clone()).await?;
+    let listing = start_streaming_directory(app, path).await?;
+    if !owner.active() {
+        if let Some(id) = listing.listing_id {
+            LISTINGS.cancel(id);
+        }
+        return Err(AppError::Other(
+            "Native resource renderer was replaced".into(),
+        ));
+    }
+    Ok(ObservedDirectoryListing {
+        listing,
+        watch_lease: pending.take(),
+    })
+}
+
 /// Cancel an active directory listing.
 #[tauri::command]
 pub async fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {

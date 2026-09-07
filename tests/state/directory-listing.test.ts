@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
+import type { DirectoryWatchLease } from "$lib/api/files";
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
@@ -69,7 +70,15 @@ async function settleMicrotasks() {
 }
 
 type StartResult =
-  | { ok: true; data: { path: string; entries: FileEntry[]; listing_id: number | null } }
+  | {
+      ok: true;
+      data: {
+        path: string;
+        entries: FileEntry[];
+        listing_id: number | null;
+        watch_lease?: DirectoryWatchLease;
+      };
+    }
   | { ok: false; error: string };
 
 const apiMocks = vi.hoisted(() => ({
@@ -101,14 +110,41 @@ vi.mock(import("../../src/lib/api/files"), async (importOriginal) => {
   };
 });
 
-import { createDirectoryListing } from "../../src/lib/state/directory-listing";
+import {
+  createDirectoryListing,
+  type DirectoryObservation,
+} from "../../src/lib/state/directory-listing";
 
 function entry(name: string): FileEntry {
   return { name, path: `/d/${name}`, kind: "file", size: 0, modified: "" };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
+}
+
 function emit(ev: EntriesEvent) {
   listenState.handler?.({ payload: ev });
+}
+
+function observation(
+  ready: Promise<void> = Promise.resolve(),
+  accepted = true,
+): DirectoryObservation & {
+  accept: ReturnType<typeof vi.fn<DirectoryObservation["accept"]>>;
+  discard: ReturnType<typeof vi.fn<DirectoryObservation["discard"]>>;
+} {
+  return {
+    ready,
+    accept: vi.fn(() => accepted),
+    discard: vi.fn<DirectoryObservation["discard"]>(),
+  };
 }
 
 /** Let the persistent listener's listen() promise resolve. */
@@ -133,6 +169,183 @@ afterEach(() => {
 });
 
 describe("createDirectoryListing — persistent listener", () => {
+  it.each(["listener", "observation"] as const)(
+    "waits for both readiness owners when %s resolves first",
+    async (firstReady) => {
+      listenState.deferNext = true;
+      const listing = createDirectoryListing();
+      const observedReady = deferred<void>();
+      const observed = observation(observedReady.promise);
+      const load = listing.load(
+        "/d",
+        { onEntries: vi.fn(), onDone: vi.fn() },
+        observed,
+      );
+      await settleMicrotasks();
+
+      if (firstReady === "listener") listenState.resolvePending!();
+      else observedReady.resolve();
+      await settleMicrotasks();
+      expect(apiMocks.startStreamingDirectory).not.toHaveBeenCalled();
+
+      if (firstReady === "listener") observedReady.resolve();
+      else listenState.resolvePending!();
+      await settleMicrotasks();
+      expect(apiMocks.startStreamingDirectory).toHaveBeenCalledExactlyOnceWith(
+        "/d",
+        observed,
+      );
+
+      apiMocks.resolveStart!({
+        ok: true,
+        data: { path: "/d", entries: [], listing_id: null },
+      });
+      await expect(load).resolves.toMatchObject({ ok: true, streaming: false });
+      expect(observed.accept).toHaveBeenCalledExactlyOnceWith(null);
+      await listing.cleanup();
+    },
+  );
+
+  it("transfers the exact observation lease before publishing stream callbacks", async () => {
+    const listing = createDirectoryListing();
+    await settleMicrotasks();
+    const lease = { id: "lease-accepted", path: "/d" };
+    const observed = observation();
+    const onEntries = vi.fn(() => {
+      expect(observed.accept).toHaveBeenCalledExactlyOnceWith(lease);
+      expect(observed.discard).not.toHaveBeenCalled();
+    });
+    const onDone = vi.fn();
+    const load = listing.load("/d", { onEntries, onDone }, observed);
+    await settleMicrotasks();
+
+    apiMocks.resolveStart!({
+      ok: true,
+      data: {
+        path: "/d",
+        entries: [entry("first")],
+        listing_id: 81,
+        watch_lease: lease,
+      },
+    });
+    await expect(load).resolves.toMatchObject({ ok: true, streaming: true });
+    expect(observed.accept).toHaveBeenCalledExactlyOnceWith(lease);
+
+    emit({ listingId: 81, entries: [entry("later")], done: true });
+    expect(onEntries).toHaveBeenCalledExactlyOnceWith([entry("later")]);
+    expect(onDone).toHaveBeenCalledOnce();
+    await listing.cleanup();
+  });
+
+  it("discards and cancels a streamed response whose observation owner rejects transfer", async () => {
+    const listing = createDirectoryListing();
+    await settleMicrotasks();
+    const lease = { id: "lease-stale", path: "/stale" };
+    const observed = observation(Promise.resolve(), false);
+    const onEntries = vi.fn();
+    const onDone = vi.fn();
+    const load = listing.load("/stale", { onEntries, onDone }, observed);
+    await settleMicrotasks();
+
+    apiMocks.resolveStart!({
+      ok: true,
+      data: {
+        path: "/stale",
+        entries: [entry("stale")],
+        listing_id: 82,
+        watch_lease: lease,
+      },
+    });
+
+    await expect(load).resolves.toEqual({
+      ok: false,
+      error: "Directory navigation was superseded",
+    });
+    expect(observed.accept).toHaveBeenCalledExactlyOnceWith(lease);
+    expect(observed.discard).toHaveBeenCalledExactlyOnceWith(lease);
+    expect(apiMocks.cancelDirectoryListing).toHaveBeenCalledExactlyOnceWith(82);
+    emit({ listingId: 82, entries: [entry("late")], done: true });
+    expect(onEntries).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    await listing.cleanup();
+  });
+
+  it("discards the exact late lease and stream when cleanup seals a pending observed load", async () => {
+    const listing = createDirectoryListing();
+    await settleMicrotasks();
+    const lease = { id: "lease-after-cleanup", path: "/d" };
+    const observed = observation();
+    const onEntries = vi.fn();
+    const onDone = vi.fn();
+    const load = listing.load("/d", { onEntries, onDone }, observed);
+    await settleMicrotasks();
+
+    const cleanup = listing.cleanup();
+    apiMocks.resolveStart!({
+      ok: true,
+      data: {
+        path: "/d",
+        entries: [entry("late")],
+        listing_id: 83,
+        watch_lease: lease,
+      },
+    });
+
+    await expect(load).resolves.toEqual({
+      ok: false,
+      error: "Directory listing has been destroyed",
+    });
+    await cleanup;
+    expect(observed.accept).not.toHaveBeenCalled();
+    expect(observed.discard).toHaveBeenCalledExactlyOnceWith(lease);
+    expect(apiMocks.cancelDirectoryListing).toHaveBeenCalledExactlyOnceWith(83);
+    expect(onEntries).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke when observation readiness fails", async () => {
+    const listing = createDirectoryListing();
+    await settleMicrotasks();
+    const observed = observation(Promise.reject(new Error("observation unavailable")));
+
+    await expect(listing.load(
+      "/d",
+      { onEntries: vi.fn(), onDone: vi.fn() },
+      observed,
+    )).resolves.toEqual({ ok: false, error: "observation unavailable" });
+    expect(apiMocks.startStreamingDirectory).not.toHaveBeenCalled();
+    expect(observed.accept).not.toHaveBeenCalled();
+    expect(observed.discard).not.toHaveBeenCalled();
+    await listing.cleanup();
+  });
+
+  it("does not invoke for an observation that became stale while awaiting readiness", async () => {
+    const listing = createDirectoryListing();
+    await settleMicrotasks();
+    const observedReady = deferred<void>();
+    const observed = {
+      ...observation(observedReady.promise),
+      current: vi.fn(() => false),
+    };
+    const load = listing.load(
+      "/stale",
+      { onEntries: vi.fn(), onDone: vi.fn() },
+      observed,
+    );
+    await settleMicrotasks();
+
+    observedReady.resolve();
+    await expect(load).resolves.toEqual({
+      ok: false,
+      error: "Directory navigation was superseded",
+    });
+    expect(observed.current).toHaveBeenCalledOnce();
+    expect(apiMocks.startStreamingDirectory).not.toHaveBeenCalled();
+    expect(observed.accept).not.toHaveBeenCalled();
+    expect(observed.discard).not.toHaveBeenCalled();
+    await listing.cleanup();
+  });
+
   it("registers the listener once and reuses it across loads (no per-load listen/unlisten)", async () => {
     const listing = createDirectoryListing();
     await flush(); // eager ensureListener() resolves

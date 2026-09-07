@@ -31,7 +31,8 @@ fn bench_scan_directory_parallel(c: &mut Criterion) {
 
     c.bench_function("scan_directory_parallel/10k_files", |b| {
         b.iter(|| {
-            scan_directory_parallel(std::hint::black_box(&dir_path)).expect("scan fixture directory")
+            scan_directory_parallel(std::hint::black_box(&dir_path))
+                .expect("scan fixture directory")
         });
     });
 }

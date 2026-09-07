@@ -5,27 +5,27 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-08): ordinary directory snapshots now have bounded,
-request-owned publication authority. Invalidated or superseded scans cannot
-restore stale cache entries. Root filesystem work runs inside the blocking scan
-adapter; unreadable/disappearing roots return typed errors and partial listings
-stay uncached. Frontend listing ownership rejects failed listener registration
-and post-teardown data, including reentrant event delivery. The preceding shared
-directory observation/recovery architecture is retained.
+Current checkpoint (2026-09-08): directory navigation establishes renderer-owned
+observation before scanning. One shared event listener is ready before navigation;
+pane tickets retain the prior lease until the new snapshot commits and replay
+changes received during that handoff. Degraded OS observation retains recovery
+demand without granting cache coverage or preventing readable directory access.
 
-Ten Linux native outcomes across five specs pass, including an actual permission
-error and retry, root replacement, preview updates, lifetime and refresh coalescing.
-The permission regression fails with its fix reverted. All 502 Rust unit tests
-plus nine integration tests pass serially (seven ignored), along with 2,165
-frontend tests (three skipped), 30 performance cases, strict Clippy, Svelte/native
-TypeScript, architecture lint and source-map coverage. The 10,000-file Criterion
-scan estimate is 5.78 ms; this is not a startup measurement or a speedup claim.
-See [the acceptance artifact](reviews/directory-listing-acceptance-2026-09-08.json)
-for failing-before evidence and verification limits.
+Twelve Linux native outcomes across six specs pass in 52 seconds. The strengthened
+handoff case additionally passes with three causal writes before publication, all
+markers visible, and exactly two instrumented pane-listing calls after a
+2.5-second settling window; a quiet first observed pane load stays at one
+instrumented call. Independent review exposed two cross-pane refresh
+suppression races, both reproduced before correction. Full Rust (510 unit plus
+nine integration, seven ignored), frontend (2,183 plus 30 performance, three
+skipped), strict Clippy, Svelte/native TypeScript, architecture lint and source
+maps pass. Startup JavaScript is 214,125 gzip bytes, 1,448 bytes above the prior
+checkpoint; this is not a startup speedup claim. See
+[the acceptance artifact](reviews/directory-handoff-acceptance-2026-09-08.json).
 
-The initial listing/watch handoff gap, Tab-driven focus/selection consistency, broader platform/product/soak
-acceptance and actual Mac half-bounce measurements remain open. The comprehensive
-review is **not complete**.
+Tab-driven focus/selection consistency, broader platform/product/soak acceptance
+and actual Mac half-bounce measurements remain open. The comprehensive review
+is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -2159,3 +2159,27 @@ under its mutex and simultaneous scan memory still need profiling under load.
 Initial listing/watch handoff, platform startup measurements and the broader
 release matrix remain open; these changes do not establish the macOS half-bounce
 target.
+
+
+### Observed navigation and refresh admission — 2026-09-08
+
+ADR 0014 makes the initial listing and its observation one owned handoff. The
+native command retains a pending lease through the blocking scan; frontend
+transport transfers it before callbacks, while the pane holds its old committed
+lease until publication. Failure or supersession releases only the new lease.
+The pane watcher retains pending-target and rollback events and routes their
+replay through the existing scheduler. Refreshes use their committed observation.
+
+A shared in-flight directory cannot suppress updates for another pane that was
+not in that scan. Per-subscriber keys alone were insufficient: a pane declining
+its scheduled callback during navigation was still credited with coverage.
+An explicit false return now declines participation; real-pane and scheduler
+regressions failed before the correction and pass afterward.
+
+The native handoff regression verifies actual filesystem writes made after the
+initial scan but before response publication, causal receipt timestamps, visible
+markers, and a settled foreground listing count. Quiet navigation does not add
+a catch-up scan. Unit contracts cover degraded registration and queued physical
+cleanup; the dedicated native descriptor/failure interleavings listed in the
+acceptance artifact remain opportunities to strengthen coverage. No native
+startup target or cross-platform release gate is closed by this checkpoint.

@@ -10,6 +10,7 @@ import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import {
   invoke,
+  isTauri,
   extractError,
   virtualPathGuard,
   dataUriToBlobUrl,
@@ -480,9 +481,14 @@ export interface DirectoryEntriesEvent {
  * @param path - Absolute path to directory
  * @returns Result with initial DirectoryListing (path may include listing ID for event correlation)
  */
+export interface ObservedDirectoryListing extends DirectoryListing {
+  watch_lease?: DirectoryWatchLease;
+}
+
 export async function startStreamingDirectory(
-  path: string
-): Promise<ApiResult<DirectoryListing>> {
+  path: string,
+  observation?: { discard(lease: DirectoryWatchLease): void },
+): Promise<ApiResult<ObservedDirectoryListing>> {
   const startedAt = Date.now();
   console.debug("[navigation] start_streaming_directory requested", { path });
   // Virtual paths never stream: the provider returns the full listing inline
@@ -524,8 +530,15 @@ export async function startStreamingDirectory(
     publishDirectoryListingE2EProbe();
   }
 
+  let acquired: ObservedDirectoryListing | undefined;
   try {
-    const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
+    const data = observation && isTauri()
+      ? await invoke<ObservedDirectoryListing>("start_observed_directory", {
+          path, sessionId: await getNativeResourceSession(),
+        })
+      : await invoke<ObservedDirectoryListing>("start_streaming_directory", { path });
+    acquired = data;
+    if (data.watch_lease) publishReadyDirectoryWatch(path);
     if (e2eProbe) {
       // Keep the literal build flag at this import: the bundler discovers
       // dynamic chunks before folding imported constants, leaving an orphan
@@ -556,6 +569,10 @@ export async function startStreamingDirectory(
     });
     return { ok: true, data };
   } catch (err) {
+    // The optional native probe can fail after acquisition. Keep the same
+    // owner responsible for releasing late leases, including release retries.
+    if (acquired?.watch_lease) observation?.discard(acquired.watch_lease);
+    if (acquired?.listing_id != null) await cancelDirectoryListing(acquired.listing_id);
     const error = extractError(err);
     console.warn("[navigation] start_streaming_directory failed", {
       path,

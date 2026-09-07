@@ -29,15 +29,50 @@ vi.mock("$lib/state/git-status.svelte", () => ({
 }));
 
 import { useFileWatchers } from "$lib/composables/use-file-watchers";
+import { createPaneWatch } from "$lib/state/pane-watch";
 import { cancelPendingRefreshes } from "$lib/state/refresh-manager";
 
 type TauriDirectoryEvent = { payload: { path: string; observed_at_ms?: number } };
+type PaneWatch = ReturnType<typeof createPaneWatch>;
+
+async function commitPath(watch: PaneWatch, path: string): Promise<void> {
+  const navigation = watch.begin(path);
+  await navigation.ready;
+  expect(navigation.accept(null)).toBe(true);
+  expect(navigation.commit()).toBe(true);
+}
 
 describe("useFileWatchers refresh coalescing", () => {
   let broadcastHandler: ((dirs: string[]) => void) | undefined;
   let tauriHandler: ((event: TauriDirectoryEvent) => void) | undefined;
   let localChangeHandler: ((dirs: string[]) => void) | undefined;
   let gitChangeHandler: ((change: { repoRoot: string | null }) => void) | undefined;
+  let paneWatches: PaneWatch[];
+  let watcherCleanups: Array<() => void>;
+
+  function setupWatchers(explorers: ExplorerInstance[]) {
+    const watchers = useFileWatchers({ getAllExplorers: () => explorers });
+    watchers.setup();
+    watcherCleanups.push(watchers.cleanup);
+    return watchers;
+  }
+
+  async function observedExplorer(
+    path: string,
+    refresh: ExplorerInstance["refresh"],
+  ): Promise<{ explorer: ExplorerInstance; watch: PaneWatch }> {
+    const watch = createPaneWatch({
+      refresh,
+      prepare: async () => {},
+      release: async () => {},
+    });
+    paneWatches.push(watch);
+    await commitPath(watch, path);
+    return {
+      explorer: { directoryChanged: watch.changed } as unknown as ExplorerInstance,
+      watch,
+    };
+  }
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -53,6 +88,8 @@ describe("useFileWatchers refresh coalescing", () => {
     tauriHandler = undefined;
     localChangeHandler = undefined;
     gitChangeHandler = undefined;
+    paneWatches = [];
+    watcherCleanups = [];
     mocks.initFileChangeListener.mockImplementation((handler) => {
       broadcastHandler = handler;
     });
@@ -71,8 +108,7 @@ describe("useFileWatchers refresh coalescing", () => {
   });
 
   it("invalidates repository probes through filesystem and git lifecycle buses", async () => {
-    const watchers = useFileWatchers({ getAllExplorers: () => [] });
-    watchers.setup();
+    const watchers = setupWatchers([]);
     await Promise.resolve();
 
     localChangeHandler?.(["/repo/a", "/repo/b"]);
@@ -90,7 +126,9 @@ describe("useFileWatchers refresh coalescing", () => {
     watchers.cleanup();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    for (const cleanup of watcherCleanups) cleanup();
+    await Promise.all(paneWatches.map((watch) => watch.destroy()));
     cancelPendingRefreshes();
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -109,12 +147,8 @@ describe("useFileWatchers refresh coalescing", () => {
         }),
       )
       .mockResolvedValue(undefined);
-    const explorer = {
-      currentPath: "/slow",
-      refresh,
-    } as unknown as ExplorerInstance;
-    const watchers = useFileWatchers({ getAllExplorers: () => [explorer] });
-    watchers.setup();
+    const { explorer } = await observedExplorer("/slow", refresh);
+    const watchers = setupWatchers([explorer]);
 
     emitEvent();
     await vi.advanceTimersByTimeAsync(150);
@@ -148,13 +182,9 @@ describe("useFileWatchers refresh coalescing", () => {
           finishTrailingListing = resolve;
         }),
       );
-    const explorer = {
-      currentPath: "/slow",
-      refresh,
-    } as unknown as ExplorerInstance;
-    const watchers = useFileWatchers({ getAllExplorers: () => [explorer] });
+    const { explorer } = await observedExplorer("/slow", refresh);
+    const watchers = setupWatchers([explorer]);
     const epoch = Date.now();
-    watchers.setup();
 
     tauriHandler?.({ payload: { path: "/slow", observed_at_ms: epoch } });
     await vi.advanceTimersByTimeAsync(150);
@@ -176,6 +206,37 @@ describe("useFileWatchers refresh coalescing", () => {
     watchers.cleanup();
   });
 
+  it("replays a pending pane's newer event when its queued callback did not start a scan", async () => {
+    let finishPaneA!: () => void;
+    const refreshA = vi.fn<ExplorerInstance["refresh"]>(() =>
+      new Promise<void>((resolve) => {
+        finishPaneA = resolve;
+      }),
+    );
+    const refreshB = vi.fn<ExplorerInstance["refresh"]>().mockResolvedValue(undefined);
+    const paneA = await observedExplorer("/shared", refreshA);
+    const paneB = await observedExplorer("/shared", refreshB);
+    const watchers = setupWatchers([paneA.explorer, paneB.explorer]);
+    const epoch = Date.now();
+
+    tauriHandler?.({ payload: { path: "/shared", observed_at_ms: epoch } });
+    const navigatingB = paneB.watch.begin("/shared");
+    await navigatingB.ready;
+    tauriHandler?.({ payload: { path: "/shared", observed_at_ms: epoch + 100 } });
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(refreshA).toHaveBeenCalledOnce();
+    expect(refreshB).not.toHaveBeenCalled();
+
+    expect(navigatingB.accept(null)).toBe(true);
+    expect(navigatingB.commit()).toBe(true);
+    finishPaneA();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(refreshB).toHaveBeenCalledOnce();
+    watchers.cleanup();
+  });
+
   it("publishes application-side listener readiness and watcher receipts", async () => {
     vi.stubGlobal("document", { documentElement: { dataset: {} } });
     vi.stubGlobal("window", new EventTarget());
@@ -183,9 +244,8 @@ describe("useFileWatchers refresh coalescing", () => {
     window.addEventListener("e2e-directory-watcher-receipt", (event) => {
       received.push((event as CustomEvent).detail);
     });
-    const watchers = useFileWatchers({ getAllExplorers: () => [] });
-    watchers.setup();
-    await Promise.resolve();
+    const watchers = setupWatchers([]);
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(document.documentElement.dataset.e2eDirectoryWatcherListenerReady).toBe("true");
     tauriHandler?.({
@@ -213,22 +273,15 @@ describe("useFileWatchers refresh coalescing", () => {
         }),
       )
       .mockResolvedValue(undefined);
-    let currentPath = "/old";
-    const explorer = {
-      get currentPath() {
-        return currentPath;
-      },
-      refresh,
-    } as unknown as ExplorerInstance;
-    const watchers = useFileWatchers({ getAllExplorers: () => [explorer] });
-    watchers.setup();
+    const { explorer, watch } = await observedExplorer("/old", refresh);
+    const watchers = setupWatchers([explorer]);
 
     emitEvent();
     await vi.advanceTimersByTimeAsync(150);
     expect(refresh).toHaveBeenCalledTimes(1);
 
     emitEvent();
-    currentPath = "/new";
+    await commitPath(watch, "/new");
     finishOldListing();
     await vi.advanceTimersByTimeAsync(2000);
 

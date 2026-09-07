@@ -238,6 +238,9 @@ impl Observer for NativeObserver {
     fn watch(&mut self, path: &str) -> notify::Result<()> {
         self.direct.add(Path::new(path), false)
     }
+    fn observe(&mut self, path: &str) -> notify::Result<()> {
+        self.direct.add(Path::new(path), true)
+    }
     fn unwatch(&mut self, path: &str) -> notify::Result<()> {
         self.direct.remove(Path::new(path))
     }
@@ -334,7 +337,13 @@ where
 
 /// A result owns its lease until the awaiting command takes it. This also
 /// covers cancellation after a successful oneshot send but before consumption.
-struct PendingLease(Option<Lease>);
+pub(super) struct PendingLease(Option<Lease>);
+
+impl PendingLease {
+    pub fn take(mut self) -> Lease {
+        self.0.take().expect("pending directory lease")
+    }
+}
 impl Drop for PendingLease {
     fn drop(&mut self) {
         if let Some(lease) = self.0.take() {
@@ -352,18 +361,40 @@ impl Drop for PendingLease {
 /// Registration runs off the async executor. An undelivered result reclaims
 /// its lease even if cancellation races the command's reply.
 pub(crate) async fn acquire_directory(owner: Owner, path: String) -> Result<Lease, AppError> {
+    acquire_pending_directory(owner, path, false)
+        .await
+        .map(PendingLease::take)
+}
+
+pub(super) async fn observe_directory(
+    owner: Owner,
+    path: String,
+) -> Result<PendingLease, AppError> {
+    acquire_pending_directory(owner, path, true).await
+}
+
+async fn acquire_pending_directory(
+    owner: Owner,
+    path: String,
+    observed: bool,
+) -> Result<PendingLease, AppError> {
     let (send, receive) = tokio::sync::oneshot::channel();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = with_watcher(|watcher| watcher.acquire(&owner, path))
-            .map(|lease| PendingLease(Some(lease)));
+        let result = with_watcher(|watcher| {
+            if observed {
+                watcher.observe(&owner, path)
+            } else {
+                watcher.acquire(&owner, path)
+            }
+        })
+        .map(|lease| PendingLease(Some(lease)));
         let _ = send.send(result);
         // Also schedules retries if retirement raced a blocked registration.
         retire_owners();
     });
-    let mut pending = receive
+    receive
         .await
-        .map_err(|_| AppError::Other("Directory watch registration interrupted".into()))??;
-    Ok(pending.0.take().expect("pending directory lease"))
+        .map_err(|_| AppError::Other("Directory watch registration interrupted".into()))?
 }
 
 pub(crate) async fn release_directory(owner: Owner, id: String) -> Result<(), AppError> {

@@ -4,7 +4,7 @@
  * Extracted from explorer.svelte.ts.
  */
 
-import { startStreamingDirectory, cancelDirectoryListing, type DirectoryEntriesEvent } from "$lib/api/files";
+import { startStreamingDirectory, cancelDirectoryListing, type DirectoryEntriesEvent, type DirectoryWatchLease } from "$lib/api/files";
 import { extractError, isTauri } from "$lib/api/common";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { FileEntry } from "$lib/domain/file";
@@ -27,6 +27,13 @@ export interface DirectoryListingCallbacks {
   /** Invoked when the listing is cancelled before completing (superseded by
    *  a newer load or torn down via cleanup). Lets awaiting callers bail out. */
   onCancelled?: () => void;
+}
+
+export interface DirectoryObservation {
+  ready: Promise<void>;
+  current?(): boolean;
+  accept(lease: DirectoryWatchLease | null): boolean;
+  discard(lease: DirectoryWatchLease): void;
 }
 
 export function createDirectoryListing() {
@@ -123,6 +130,7 @@ export function createDirectoryListing() {
   async function doLoad(
     path: string,
     callbacks: DirectoryListingCallbacks,
+    observation?: DirectoryObservation,
   ): Promise<DirectoryListingResult> {
     if (destroyed) return { ok: false, error: DESTROYED_ERROR };
     await cancelActive();
@@ -144,24 +152,33 @@ export function createDirectoryListing() {
       }
     }
 
+    try {
+      await observation?.ready;
+    } catch (error) {
+      return { ok: false, error: extractError(error) };
+    }
     if (destroyed) return { ok: false, error: DESTROYED_ERROR };
+    if (observation?.current && !observation.current()) {
+      return { ok: false, error: "Directory navigation was superseded" };
+    }
 
     awaitingListingId = true;
     earlyBuffer.length = 0;
 
-    const result = await startStreamingDirectory(path);
+    const result = await startStreamingDirectory(path, observation);
 
     // cleanup() can seal this owner while the start IPC is pending. Discard
     // both inline data and buffered events in that case. A backend stream was
     // already created before its id reached us, so retire it here; doDestroy
     // cannot see an id that was never published as active.
-    if (destroyed) {
+    if (destroyed || (result.ok && observation && !observation.accept(result.data.watch_lease ?? null))) {
+      if (result.ok && result.data.watch_lease) observation?.discard(result.data.watch_lease);
       awaitingListingId = false;
       earlyBuffer.length = 0;
       if (result.ok && result.data.listing_id !== null) {
         await cancelDirectoryListing(result.data.listing_id);
       }
-      return { ok: false, error: DESTROYED_ERROR };
+      return { ok: false, error: destroyed ? DESTROYED_ERROR : "Directory navigation was superseded" };
     }
 
     if (!result.ok) {
@@ -230,8 +247,8 @@ export function createDirectoryListing() {
   });
 
   return {
-    load: (path: string, callbacks: DirectoryListingCallbacks) =>
-      enqueue(() => doLoad(path, callbacks)),
+    load: (path: string, callbacks: DirectoryListingCallbacks, observation?: DirectoryObservation) =>
+      enqueue(() => doLoad(path, callbacks, observation)),
     cleanup: () => {
       destroyed = true;
       return enqueue(() => doDestroy());

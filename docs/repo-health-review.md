@@ -678,3 +678,21 @@ successful reply and a final directory-release failure whose component never
 retries. Request lifetime and backend cleanup now cover those cases, preserving
 other owners and disabling cache reuse during uncertain coverage. The completion
 ledger records current validation and remaining platform/product/performance gates.
+
+
+### Observed directory navigation checkpoint — 2026-09-08
+
+Navigation now establishes renderer-owned observation before its initial scan,
+using the shared native directory-event listener and a combined IPC command.
+A pane ticket retains the previous lease until the new snapshot commits and
+replays changes received during that handoff through the existing refresh policy.
+Temporary OS observation failure retains recovery demand without making a
+readable directory inaccessible or granting cache coverage.
+
+A real Linux reproduction lost a write made after the initial scan; the new
+native test receives three causally acknowledged writes before publication,
+displays all three markers, and settles at two instrumented pane-listing calls.
+A quiet first observed pane load settles at one instrumented call. Independent review also exposed cross-pane event suppression,
+including a pane falsely credited for a refresh it deferred; explicit scheduler
+participation fixes both failing-before interleavings. See ADR 0014 and the
+completion ledger for evidence and remaining native/platform measurement gaps.

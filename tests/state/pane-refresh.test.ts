@@ -73,18 +73,18 @@ function fakeListing(opts: FakeListingOptions): DirListing {
 function makeRefresh(
   state: ExplorerCoreState,
   listing: DirListing,
-  overrides?: { inCooldown?: boolean }
+  overrides?: { inCooldown?: boolean; allowRefresh?: (path: string) => boolean }
 ) {
-  const updateWatch = vi.fn();
+  const allowRefresh = vi.fn(overrides?.allowRefresh ?? (() => true));
   const navigateToParent = vi.fn(async () => {});
   const refresh = createPaneRefresh({
     coreState: state,
     dirListing: listing,
     inMutationCooldown: () => overrides?.inCooldown ?? false,
-    updateWatch,
+    allowRefresh,
     navigateToParent,
   });
-  return { refresh, updateWatch, navigateToParent };
+  return { refresh, allowRefresh, navigateToParent };
 }
 
 beforeEach(() => {
@@ -104,7 +104,7 @@ describe("entriesFingerprint", () => {
 describe("createPaneRefresh", () => {
   it("replaces entries when the listing changed, accumulating streamed chunks", async () => {
     const state = coreState([entry("old")]);
-    const { refresh, updateWatch } = makeRefresh(
+    const { refresh } = makeRefresh(
       state,
       fakeListing({ entries: [entry("a")], streamed: [[entry("b")], [entry("c")]] })
     );
@@ -112,7 +112,6 @@ describe("createPaneRefresh", () => {
     await refresh();
 
     expect(state.entries.map((e) => e.name)).toEqual(["a", "b", "c"]);
-    expect(updateWatch).toHaveBeenCalledWith("/d");
     expect(toastShow).toHaveBeenCalledWith("Refreshed", "info", { duration: 1500 });
   });
 
@@ -120,7 +119,7 @@ describe("createPaneRefresh", () => {
     const unchanged = [entry("a"), entry("b")];
     const state = coreState(unchanged);
     const sameReference = state.entries;
-    const { refresh, updateWatch } = makeRefresh(
+    const { refresh } = makeRefresh(
       state,
       fakeListing({ entries: [entry("a")], streamed: [[entry("b")]] })
     );
@@ -128,7 +127,40 @@ describe("createPaneRefresh", () => {
     await refresh({ silent: true });
 
     expect(state.entries).toBe(sameReference);
-    expect(updateWatch).not.toHaveBeenCalled();
+    expect(toastShow).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch while pending navigation denies watcher refreshes", async () => {
+    const state = coreState([entry("old")]);
+    const load = vi.fn();
+    const listing = { load, cleanup: async () => {} } as unknown as DirListing;
+    const { refresh, allowRefresh } = makeRefresh(state, listing, {
+      allowRefresh: () => false,
+    });
+
+    await refresh({ silent: true });
+
+    expect(allowRefresh).toHaveBeenCalledWith("/d");
+    expect(load).not.toHaveBeenCalled();
+    expect(state.entries.map((e) => e.name)).toEqual(["old"]);
+  });
+
+  it("discards an old refresh result when navigation becomes pending mid-fetch", async () => {
+    const state = coreState([entry("old")]);
+    let allowed = true;
+    const { refresh, allowRefresh } = makeRefresh(
+      state,
+      fakeListing({
+        entries: [entry("new")],
+        beforeStream: () => { allowed = false; },
+      }),
+      { allowRefresh: () => allowed },
+    );
+
+    await refresh();
+
+    expect(allowRefresh).toHaveBeenCalledTimes(2);
+    expect(state.entries.map((e) => e.name)).toEqual(["old"]);
     expect(toastShow).not.toHaveBeenCalled();
   });
 

@@ -94,7 +94,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
-- `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, panes, thumbnails, Miller columns and drives.
+- `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop.
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
@@ -117,7 +117,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `panel-resize.ts` — fixed/live automatic width preference adapter over the scalar gesture owner.
 - `scalar-resize.ts` — captured scalar drafts, frame identity, durable retirement and external-source supersession.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
-- `pane-watch.ts` — per-pane fs-watch + local-mutation cooldown (pure).
+- `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and local-mutation cooldown.
+- `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `directory-listing.ts` — streaming/event-based incremental dir load management.
 - `navigation.ts` — pure back/forward history utilities.
 - `selection.ts` — pure selection math (range/toggle/anchor).

@@ -103,7 +103,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   let onNavigateCallback: (() => void) | null = null;
 
   // Filesystem watcher + local-mutation cooldown
-  const watch = createPaneWatch();
+  const watch = createPaneWatch({ refresh: (options) => refresh(options) });
   const markLocalMutation = watch.markLocalMutation;
 
   // Read-only state accessor for components that need the raw state bag.
@@ -157,92 +157,101 @@ function createExplorerState(seed?: ExplorerSeed) {
     // `/` on non-Windows, where a backslash is a legal filename character.
     const path = toNativeSeparators(rawPath, isWindows ? "\\" : "/");
     const gen = ++navGeneration;
+    const observation = watch.begin(path);
+    try {
+      // If we already have entries for this path (e.g. seeded from another tab),
+      // don't show loading state — the existing entries stay visible while we refresh.
+      const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
+      if (!isSeeded) {
+        coreState.loading = true;
+      }
+      coreState.error = null;
+      filterQuery = "";
+      showFilter = false;
 
-    // If we already have entries for this path (e.g. seeded from another tab),
-    // don't show loading state — the existing entries stay visible while we refresh.
-    const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
-    if (!isSeeded) {
-      coreState.loading = true;
-    }
-    coreState.error = null;
-    filterQuery = "";
-    showFilter = false;
+      // Accumulate streamed continuation batches off the reactive graph. Writing
+      // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
+      // each write copies the growing array AND re-runs the `displayEntries`
+      // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
+      // dir). Instead we push into a private buffer and commit a snapshot on a
+      // throttle (preserving progressive fill-in) plus once at done. See
+      // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
+      // `result.entries` assignment below, which always runs before the first
+      // streaming callback (the continuation between them is synchronous).
+      const FLUSH_INTERVAL_MS = 100;
+      let streamBuffer: FileEntry[] | null = null;
+      let pendingFlush: ReturnType<typeof setTimeout> | null = null;
 
-    // Accumulate streamed continuation batches off the reactive graph. Writing
-    // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
-    // each write copies the growing array AND re-runs the `displayEntries`
-    // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
-    // dir). Instead we push into a private buffer and commit a snapshot on a
-    // throttle (preserving progressive fill-in) plus once at done. See
-    // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
-    // `result.entries` assignment below, which always runs before the first
-    // streaming callback (the continuation between them is synchronous).
-    const FLUSH_INTERVAL_MS = 100;
-    let streamBuffer: FileEntry[] | null = null;
-    let pendingFlush: ReturnType<typeof setTimeout> | null = null;
+      const commitBuffer = () => {
+        pendingFlush = null;
+        if (gen !== navGeneration || streamBuffer === null) return;
+        coreState.entries = streamBuffer.slice();
+      };
 
-    const commitBuffer = () => {
-      pendingFlush = null;
-      if (gen !== navGeneration || streamBuffer === null) return;
-      coreState.entries = streamBuffer.slice();
-    };
-
-    const result = await dirListing.load(path, {
-      onEntries: (entries) => {
-        if (gen !== navGeneration) return;
-        if (streamBuffer === null) streamBuffer = coreState.entries.slice();
-        for (const e of entries) streamBuffer.push(e);
-        if (pendingFlush === null) {
-          pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
-        }
-      },
-      onDone: () => {
-        if (gen !== navGeneration) return;
-        if (pendingFlush !== null) {
-          clearTimeout(pendingFlush);
+      const result = await dirListing.load(path, {
+        onEntries: (entries) => {
+          if (gen !== navGeneration) return;
+          if (streamBuffer === null) streamBuffer = coreState.entries.slice();
+          for (const e of entries) streamBuffer.push(e);
+          if (pendingFlush === null) {
+            pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
+          }
+        },
+        onCancelled: () => {
+          if (pendingFlush !== null) clearTimeout(pendingFlush);
           pendingFlush = null;
+          streamBuffer = null;
+        },
+        onDone: () => {
+          if (gen !== navGeneration) return;
+          if (pendingFlush !== null) {
+            clearTimeout(pendingFlush);
+            pendingFlush = null;
+          }
+          if (streamBuffer !== null) {
+            coreState.entries = streamBuffer.slice();
+          }
+          coreState.loading = false;
+        },
+      }, observation);
+
+      // A newer navigation started while this one was in flight — discard.
+      if (gen !== navGeneration) return "stale";
+
+      if (result.ok) {
+        coreState.currentPath = result.path;
+        coreState.entries = result.entries;
+        observation.commit();
+
+        const savedSort = getSortPref(result.path);
+        if (savedSort) {
+          coreState.sortBy = savedSort.sortBy;
+          coreState.sortAscending = savedSort.sortAscending;
         }
-        if (streamBuffer !== null) {
-          coreState.entries = streamBuffer.slice();
+
+        // Auto-select first item when navigating to a new directory
+        // Issue: tauri-explorer-130a
+        if (displayEntries.length > 0) {
+          setSelection([displayEntries[0].path]);
+          coreState.selectionAnchorIndex = 0;
+        } else {
+          setSelection([]);
+          coreState.selectionAnchorIndex = null;
         }
-        coreState.loading = false;
-      },
-    });
 
-    // A newer navigation started while this one was in flight — discard.
-    if (gen !== navGeneration) return "stale";
+        onNavigateCallback?.();
 
-    if (result.ok) {
-      coreState.currentPath = result.path;
-      coreState.entries = result.entries;
-      watch.update(result.path);
-
-      const savedSort = getSortPref(result.path);
-      if (savedSort) {
-        coreState.sortBy = savedSort.sortBy;
-        coreState.sortAscending = savedSort.sortAscending;
-      }
-
-      // Auto-select first item when navigating to a new directory
-      // Issue: tauri-explorer-130a
-      if (displayEntries.length > 0) {
-        setSelection([displayEntries[0].path]);
-        coreState.selectionAnchorIndex = 0;
+        if (!result.streaming) {
+          coreState.loading = false;
+        }
+        return "ok";
       } else {
-        setSelection([]);
-        coreState.selectionAnchorIndex = null;
-      }
-
-      onNavigateCallback?.();
-
-      if (!result.streaming) {
+        coreState.error = result.error;
         coreState.loading = false;
+        return "error";
       }
-      return "ok";
-    } else {
-      coreState.error = result.error;
-      coreState.loading = false;
-      return "error";
+    } finally {
+      observation.close();
     }
   }
 
@@ -407,7 +416,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     coreState,
     dirListing,
     inMutationCooldown: watch.inMutationCooldown,
-    updateWatch: watch.update,
+    allowRefresh: watch.allowRefresh,
     navigateToParent,
   });
 
@@ -870,10 +879,12 @@ function createExplorerState(seed?: ExplorerSeed) {
     set onNavigate(cb: (() => void) | null) {
       onNavigateCallback = cb;
     },
+    directoryChanged: watch.changed,
     // Cleanup
     destroy: async (): Promise<void> => {
       // Tear down the streaming listener and any in-flight listing,
       // otherwise each closed tab leaks a Tauri event listener.
+      navGeneration += 1;
       const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup()]);
       const failure = results.find((result) => result.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;

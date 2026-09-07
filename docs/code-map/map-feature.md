@@ -48,20 +48,21 @@ backend for E2E/browser).
 - `src-tauri/src/git_watch.rs`, `git_watch/service.rs`, `git_watch/target.rs` — acknowledged unique native leases scoped to concrete windows and renderer generations; page replacement, renderer termination and native destruction reclaim them, while delayed old-session IPC is rejected; one worker owns shared observers and recovery/debounce deadlines; parent watches detect root replacement while filtering sibling activity.
 - Native crash acceptance: `e2e-tauri/renderer-recovery.ts` controls two renderer terminations; `src-tauri/test_support/renderer_recovery.rs` retains the same GTK WebView and verifies reclaimed/reacquired ownership and working navigation after reload. `src-tauri/test_support/git_observation_probe.rs` attaches causal observation metadata to real Git events only in the opt-in recovery build.
 - `api/native-resource-session.ts` + `src-tauri/src/renderer_owner.rs`, `renderer_owner/scope.rs`, `renderer_owner/termination.rs` — one acknowledged renderer incarnation shared by directory and Git leases; concrete native lifecycle retires both without blocking the UI thread.
-- `state/directory-watch.ts` — generic ordered path-lease owner plus the directory adapter used by pane-watch, FolderThumbnail, MillerColumns and drives; teardown retains exact release identity and drains late acquisition.
+- `state/directory-watch.ts` — generic ordered path-lease owner plus the directory adapter used by FolderThumbnail, MillerColumns and drives; teardown retains exact release identity and drains late acquisition.
 - `src-tauri/src/files/directory_watches.rs` — pure directory lease/retirement policy with injected OS observation; shares registrations and retries/rebuilds failed forced cleanup without granting cache coverage to retired owners.
 
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
 - `state/pane-refresh.ts` — `createPaneRefresh`: re-list without UI flash (fingerprint diff)
 - `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
-- `state/pane-watch.ts` — per-pane watcher gate + local-mutation cooldown
+- `state/pane-watch.ts` — observed navigation tickets keep the old directory lease until commit, replay pending-target changes and gate refresh during navigation; mutation cooldown.
+- `state/directory-events.ts` — shared ready-before-scan native event hub with acquisition retry and late-listener retirement.
 - `composables/use-file-watchers.ts` — subscribes to `directory-changed` + cross-window channel
 - `state/file-events.ts` — BroadcastChannel `explorer-file-changes` between windows
-- `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `listDirectory`, `startStreamingDirectory`
+- `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `listDirectory`, `startStreamingDirectory` (observed navigation or ordinary refresh)
 - `src-tauri/src/files/fs_watcher.rs` — notify watcher → emits event; `files/dir_listing.rs` — listing + streaming
 - `src-tauri/src/files/directory_cache.rs` — pure snapshot retention/publication policy, bounded by path count and retained allocation estimate; checked blocking scans in `dir_listing.rs` publish only complete results.
 - `src-tauri/src/files/watch_observation.rs` — injected native observation generations and recovery; nonrecursive parent/root sharing, lazy recursive coverage, immediate fault invalidation and deadline-based retries (ADR 0013).
-- FLOW: `directory-changed` (fs_watcher.rs → use-file-watchers.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
+- FLOW: `start_observed_directory` establishes renderer-owned demand before scanning; the pane stages its returned lease before publishing entries. `directory-changed` (fs_watcher.rs → directory-events.ts → pane-watch.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
 
 ## Navigation, address bar, breadcrumb, autocomplete
 

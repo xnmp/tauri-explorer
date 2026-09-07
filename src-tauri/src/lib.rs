@@ -241,6 +241,7 @@ pub fn run(launch_dir: Option<String>) {
             files::dir_listing::invalidate_dir_cache,
             files::dir_listing::is_directory_empty,
             files::dir_listing::start_streaming_directory,
+            files::dir_listing::start_observed_directory,
             files::dir_listing::cancel_directory_listing,
             // File operations — CRUD
             files::file_ops::get_home_directory,

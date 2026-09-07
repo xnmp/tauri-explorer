@@ -35,7 +35,8 @@ const SLOW_LISTING_MULTIPLIER = 3;
 const MAX_INTERVAL_MS = 8000;
 const MAX_RETAINED_DIRECTORIES = 1024;
 
-type RefreshCallback = (opts: { silent: boolean }) => void | Promise<void>;
+/** false declines this flush without claiming that a listing covered events. */
+type RefreshCallback = (opts: { silent: boolean }) => void | false | Promise<void>;
 
 interface PendingRefresh {
   timer: ReturnType<typeof setTimeout> | null;
@@ -45,7 +46,7 @@ interface PendingRefresh {
 
 const pendingRefreshes = new Map<string, PendingRefresh>();
 const lastRefreshAt = new Map<string, number>();
-const inFlightRefreshes = new Map<string, number>();
+const inFlightRefreshes = new Map<string, { startedAt: number; subscribers: Set<unknown> }>();
 const listingBaselines = new Map<string, number>();
 const refreshIntervals = new Map<string, number>();
 let refreshGeneration = 0;
@@ -147,11 +148,14 @@ function flush(dirPath: string): void {
   // Map insertion order is the LRU order used by metadata pruning.
   lastRefreshAt.delete(dirPath);
   lastRefreshAt.set(dirPath, startedAt);
-  inFlightRefreshes.set(dirPath, startedAt);
+  const subscribers = new Set<unknown>();
+  inFlightRefreshes.set(dirPath, { startedAt, subscribers });
   const completions: Promise<void>[] = [];
-  for (const { cb, silent } of pending.callbacks.values()) {
+  for (const [key, { cb, silent }] of pending.callbacks) {
     try {
       const result = cb({ silent });
+      if (result === false) continue;
+      subscribers.add(key);
       if (result) completions.push(Promise.resolve(result).catch(() => undefined));
     } catch {
       // A refresh failure is already handled at the pane boundary. Keep the
@@ -176,8 +180,10 @@ export function requestRefresh(
    *  observed before the current listing began is already covered by it. */
   observedAt: number = Date.now(),
 ): void {
-  const inFlightStartedAt = inFlightRefreshes.get(dirPath);
-  if (inFlightStartedAt != null && observedAt < inFlightStartedAt) return;
+  const inFlight = inFlightRefreshes.get(dirPath);
+  // A scan covers only the panes participating in that fan-out. A newly
+  // committed navigation may still need the same older event replayed.
+  if (inFlight?.subscribers.has(subscriberKey) && observedAt < inFlight.startedAt) return;
 
   const existing = pendingRefreshes.get(dirPath);
   if (existing) {

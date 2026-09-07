@@ -13,6 +13,9 @@ pub struct Lease {
 pub(super) trait Observer {
     fn healthy(&self, path: &str) -> bool;
     fn watch(&mut self, path: &str) -> notify::Result<()>;
+    /// Retain observation demand even if initial registration is unavailable.
+    /// Recovery must eventually report restoration through the usual events.
+    fn observe(&mut self, path: &str) -> notify::Result<()>;
     fn unwatch(&mut self, path: &str) -> notify::Result<()>;
     /// Install all surviving paths before dropping the old watcher.
     fn replace(&mut self, paths: &[String]) -> notify::Result<()>;
@@ -23,6 +26,9 @@ pub(super) trait Observer {
 #[derive(Default)]
 struct Entry {
     leases: HashMap<String, Owner>,
+    /// New observed reads may wait behind committed physical cleanup. Their
+    /// identities remain independent of the retired leases being reclaimed.
+    waiting: HashMap<String, Owner>,
     retry_at: Option<Instant>,
     failures: u32,
     uncovered: bool,
@@ -101,7 +107,46 @@ impl<W: Observer> DirectoryWatches<W> {
         Ok(Lease { id, path })
     }
 
+    /// Browsing owns demand, not a promise that the OS watcher is healthy.
+    /// Unlike strict acquisition, transient observation failure cannot make a
+    /// readable directory inaccessible. Coverage still checks actual health.
+    pub fn observe(&mut self, owner: &Owner, path: String) -> Result<Lease, AppError> {
+        if !owner.active() {
+            return Err(closed());
+        }
+        self.maintain(Instant::now());
+        let next = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| AppError::Other("Directory watch lease IDs exhausted".into()))?;
+        let id = self.next_id.to_string();
+        self.next_id = next;
+        if !self.entries.contains_key(&path) {
+            if let Err(error) = self.observer.observe(&path) {
+                log::warn!("Directory observation will retry for {path}: {error}");
+            }
+        }
+        let entry = self.entries.entry(path.clone()).or_default();
+        let leases = if entry.uncovered {
+            &mut entry.waiting
+        } else {
+            &mut entry.leases
+        };
+        leases.insert(id.clone(), owner.clone());
+        if !owner.active() {
+            self.maintain(Instant::now());
+            return Err(closed());
+        }
+        Ok(Lease { id, path })
+    }
+
     pub fn release(&mut self, owner: &Owner, id: &str) -> Result<(), AppError> {
+        for entry in self.entries.values_mut() {
+            if entry.waiting.get(id).is_some_and(|held| held.same(owner)) {
+                entry.waiting.remove(id);
+                return Ok(());
+            }
+        }
         let Some(path) = self.entries.iter().find_map(|(path, entry)| {
             entry
                 .leases
@@ -126,7 +171,7 @@ impl<W: Observer> DirectoryWatches<W> {
                     .retry_after_failure(Instant::now());
                 return Err(watch_error(&path, error));
             }
-            self.entries.remove(&path);
+            self.complete_cleanup(&path);
         } else {
             self.entries.get_mut(&path).unwrap().leases.remove(id);
         }
@@ -136,7 +181,7 @@ impl<W: Observer> DirectoryWatches<W> {
     /// A canceled acquisition must not leave a lease that no renderer received.
     pub fn abandon(&mut self, id: &str) {
         for entry in self.entries.values_mut() {
-            if entry.leases.remove(id).is_some() {
+            if entry.leases.remove(id).is_some() || entry.waiting.remove(id).is_some() {
                 break;
             }
         }
@@ -159,6 +204,7 @@ impl<W: Observer> DirectoryWatches<W> {
     pub fn maintain(&mut self, now: Instant) {
         for (path, entry) in &mut self.entries {
             entry.leases.retain(|_, owner| owner.active());
+            entry.waiting.retain(|_, owner| owner.active());
             if entry.leases.is_empty() && !entry.uncovered {
                 self.observer.uncovered(path);
                 entry.uncovered = true;
@@ -176,7 +222,7 @@ impl<W: Observer> DirectoryWatches<W> {
             }
             match self.unwatch(&path) {
                 Ok(()) => {
-                    self.entries.remove(&path);
+                    self.complete_cleanup(&path);
                 }
                 Err(error) => {
                     let entry = self.entries.get_mut(&path).unwrap();
@@ -191,7 +237,15 @@ impl<W: Observer> DirectoryWatches<W> {
                             .collect();
                         match self.observer.replace(&surviving) {
                             Ok(()) => {
-                                self.entries.retain(|_, entry| !entry.uncovered);
+                                let cleaned: Vec<_> = self
+                                    .entries
+                                    .iter()
+                                    .filter(|(_, entry)| entry.uncovered)
+                                    .map(|(path, _)| path.clone())
+                                    .collect();
+                                for path in cleaned {
+                                    self.complete_cleanup(&path);
+                                }
                             }
                             Err(error) => log::warn!("Directory watcher rebuild failed: {error}"),
                         }
@@ -206,6 +260,26 @@ impl<W: Observer> DirectoryWatches<W> {
             Err(error) if matches!(error.kind, notify::ErrorKind::WatchNotFound) => Ok(()),
             result => result,
         }
+    }
+
+    fn complete_cleanup(&mut self, path: &str) {
+        let Some(mut entry) = self.entries.remove(path) else {
+            return;
+        };
+        entry.waiting.retain(|_, owner| owner.active());
+        if entry.waiting.is_empty() {
+            return;
+        }
+        if let Err(error) = self.observer.observe(path) {
+            log::warn!("Directory observation will retry for {path}: {error}");
+        }
+        self.entries.insert(
+            path.into(),
+            Entry {
+                leases: entry.waiting,
+                ..Entry::default()
+            },
+        );
     }
 }
 

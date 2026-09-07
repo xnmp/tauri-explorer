@@ -695,3 +695,18 @@ knows the error kind but does not carry the path passed to `fs::metadata`.
 Failed navigation retains the prior breadcrumb, so omitting the requested path
 also removes the user's only context for the error. Assert both typed failure
 and target context, then verify recovery after recreating the directory.
+
+Initial directory navigation needs observation before its snapshot read. Installing
+an OS watch after listing, or the window event listener after tab initialization,
+leaves a write that can stay invisible until an unrelated later change. A combined
+native observed-listing command keeps its lease under a drop guard during the scan;
+the pane stages that lease before callbacks and retires the prior lease only when
+its new path commits. Pending changes belong in the existing pane watcher policy,
+with commit/rollback replay through the common refresh scheduler.
+
+A scheduler's in-flight directory is not coverage for every pane showing that
+path. Only subscribers that actually accepted that flush can suppress older
+notifications. A pane deferring refresh for navigation explicitly returns `false`;
+crediting it with a sibling's scan loses the deferred change. The real-pane
+interleaving regression failed even after adding per-subscriber keys, until
+participation itself became explicit.

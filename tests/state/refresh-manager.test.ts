@@ -119,6 +119,55 @@ describe("refresh-manager", () => {
     expect(loudPane).toHaveBeenCalledWith({ silent: false });
   });
 
+  it("does not let another pane's in-flight refresh consume a newly subscribed pane's event", async () => {
+    let finishPaneA!: () => void;
+    const paneA = vi.fn(() => new Promise<void>((resolve) => {
+      finishPaneA = resolve;
+    }));
+    const paneB = vi.fn();
+    const epoch = Date.now();
+
+    requestRefresh(paneA, "/home/user/docs", true, "pane-a", epoch);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(paneA).toHaveBeenCalledOnce();
+
+    // Pane B commits its own snapshot while pane A is refreshing the same
+    // path. Pane A cannot cover B's deferred navigation event.
+    requestRefresh(paneB, "/home/user/docs", true, "pane-b", epoch + 100);
+    finishPaneA();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(paneB).toHaveBeenCalledOnce();
+  });
+
+  it("does not attribute an in-flight scan to a subscriber that declined its callback", async () => {
+    let finishPaneA!: () => void;
+    const paneA = vi.fn(() => new Promise<void>((resolve) => {
+      finishPaneA = resolve;
+    }));
+    const declinedPaneB = vi.fn(() => false as const);
+    const replayedPaneB = vi.fn();
+    const beforeFlush = Date.now();
+
+    requestRefresh(paneA, "/home/user/docs", true, "pane-a", beforeFlush);
+    requestRefresh(declinedPaneB, "/home/user/docs", true, "pane-b", beforeFlush);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(paneA).toHaveBeenCalledOnce();
+    expect(declinedPaneB).toHaveBeenCalledOnce();
+
+    requestRefresh(
+      replayedPaneB,
+      "/home/user/docs",
+      true,
+      "pane-b",
+      beforeFlush + 100,
+    );
+    finishPaneA();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(replayedPaneB).toHaveBeenCalledOnce();
+  });
+
   it("rate-limits consecutive refreshes to the same directory", () => {
     const refresh = vi.fn();
 

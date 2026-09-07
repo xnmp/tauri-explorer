@@ -508,3 +508,16 @@ one existing WebKit graph-filter failure before resize input; three isolated
 repetitions pass but its wider-run cause remains open. ADR0012 and the completion
 ledger record finite bounds, session-local widths and remaining Preview, platform,
 startup and broader release acceptance work.
+
+
+Preview checkpoint (2026-09-07): the final focused resize migration composes pure
+dock policy with the shared scalar and DOM owners. Frame drafts avoid per-pointer
+settings persistence. Source-zero normalization, immediate superseded projection,
+conditional post-teardown persistence and reentrant lifecycle guards prevent
+obsolete dimensions and historical settings rollback. All 148 integrated browser
+cases, 2,127 units plus 30 performance cases, and the real Linux zoom/dock/fullscreen
+scenario pass; maps376/376 and bundle budgets pass. ADR0012 and the completion
+ledger record the evidence and limits. Native setup also exposed a separate palette
+availability defect now reproduced in both browser engines. Full review completion,
+renderer retention, wider integration/platform acceptance and actual Mac half-bounce
+measurements remain outstanding.

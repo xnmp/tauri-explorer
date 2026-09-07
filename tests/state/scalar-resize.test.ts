@@ -99,3 +99,127 @@ it("an omitted axis captures x even when the source options change before reconc
   expect(f.owner.axis).toBe("x");
   f.owner.reconcile(); expect(f.owner.axis).toBe("y");
 });
+
+it("keeps a raw zero preference until adjusted and detects an external explicit-default change", () => {
+  const f = fixture();
+  f.setOptions({ min: 96, max: 800, default: 240, zeroIsDefault: true });
+  f.setSource(0);
+  expect(f.owner.value).toBe(240);
+  f.owner.start(100, 1); f.owner.finish();
+  expect(f.source()).toBe(0); expect(f.commits).toEqual([]);
+  f.owner.start(100, 1); f.owner.move(130); f.frames[0]();
+  expect(f.owner.value).toBe(270); expect(f.source()).toBe(0);
+  f.setSource(240); f.owner.finish();
+  expect(f.owner.value).toBe(240); expect(f.commits).toEqual([]);
+});
+
+it("changing source decoding supersedes a gesture even when its current numeric value is unchanged", () => {
+  const f = fixture();
+  f.setOptions({ min: 96, max: 800, default: 240 });
+  f.owner.start(100, 1); f.owner.move(130); f.frames[0]();
+  f.setOptions({ min: 96, max: 800, default: 240, zeroIsDefault: true });
+  f.owner.finish();
+  expect(f.source()).toBe(240); expect(f.commits).toEqual([]);
+});
+
+it("immediately projects a superseding source without retiring or committing from a read", () => {
+  const f = fixture();
+  f.owner.start(400, 1); f.owner.move(370); f.frames[0]();
+  f.setSource(320);
+  expect(f.owner.value).toBe(320);
+  expect(f.events).toEqual([]); expect(f.commits).toEqual([]);
+  f.owner.reconcile();
+  expect(f.events).toEqual(["retire"]); expect(f.commits).toEqual([]);
+});
+
+it("immediately projects the current source for a superseding geometry before reactive reconciliation", () => {
+  const f = fixture();
+  f.owner.start(400, 1); f.owner.move(370); f.frames[0]();
+  f.setOptions({ min: 300, max: 600, default: 320, axis: "x" });
+  expect(f.owner.value).toBe(300);
+  expect(f.events).toEqual([]); expect(f.commits).toEqual([]);
+  f.owner.finish();
+  expect(f.events).toEqual(["retire"]); expect(f.commits).toEqual([]);
+});
+
+it("disposal releases resources synchronously and finalizes only published work once without reopening input", () => {
+  const f = fixture();
+  f.owner.start(400, 1); f.owner.move(370); f.frames[0](); f.owner.move(300);
+  const finalize = f.owner.dispose()!;
+  expect(f.events).toEqual(["retire"]); expect(f.commits).toEqual([]);
+  expect(f.owner.start(400, 1)).toBe(false); expect(f.owner.key("ArrowUp")).toBe(false);
+  f.frames[1](); f.owner.move(100); f.owner.finish();
+  finalize(); finalize(); f.owner.dispose();
+  expect(f.source()).toBe(270); expect(f.commits).toEqual([270]);
+});
+
+for (const supersession of ["source", "geometry"] as const) {
+  it(`a ${supersession} change after disposal prevents a deferred write`, () => {
+    const f = fixture();
+    f.owner.start(400, 1); f.owner.move(370); f.frames[0]();
+    const finalize = f.owner.dispose()!;
+    if (supersession === "source") f.setSource(320);
+    else f.setOptions({ min: 160, max: 600, default: 280, axis: "x", invert: true });
+    finalize(); expect(f.commits).toEqual([]);
+    expect(f.source()).toBe(supersession === "source" ? 320 : 240);
+  });
+}
+
+it("retiring just a handle allows replacement input which supersedes its deferred write", () => {
+  const f = fixture();
+  f.owner.start(400, 1); f.owner.move(370); f.frames[0]();
+  const finalize = f.owner.retire()!;
+  expect(f.owner.start(400, 1)).toBe(true);
+  finalize(); expect(f.commits).toEqual([]);
+  f.owner.move(390); f.owner.finish(); expect(f.source()).toBe(250);
+});
+
+it("parent disposal can follow handle retirement without losing or repeating its final write", () => {
+  const f = fixture();
+  f.owner.start(400, 1); f.owner.move(370); f.frames[0]();
+  const finalize = f.owner.retire()!;
+  f.owner.dispose(); finalize(); finalize();
+  expect(f.commits).toEqual([270]); expect(f.events).toEqual(["retire", "commit"]);
+});
+
+for (const action of ["restart", "keyboard"] as const) {
+  it(`disposal during input retirement prevents ${action} from reopening or committing`, () => {
+    const commits: number[] = [];
+    let disposeOnRetire = false;
+    const owner = createScalarResize({ read: () => 240,
+      options: () => ({ min: 96, max: 800, default: 240 }),
+      schedule: () => () => {}, publish: () => {}, commit: value => commits.push(value),
+      retire: () => { if (disposeOnRetire) owner.dispose(); },
+    });
+    owner.start(100, 1); disposeOnRetire = true;
+    if (action === "restart") expect(owner.start(100, 1)).toBe(false);
+    else owner.key("ArrowRight");
+    owner.move(200); owner.finish();
+    expect(commits).toEqual([]);
+  });
+}
+
+it("start does not report live ownership if publication disposes it synchronously", () => {
+  const owner = createScalarResize({ read: () => 240,
+    options: () => ({ min: 96, max: 800, default: 240 }),
+    schedule: () => () => {}, retire: () => {}, commit: () => {},
+    publish: (_value, active) => { if (active) owner.dispose(); },
+  });
+  expect(owner.start(100, 1)).toBe(false);
+});
+
+for (const replacement of ["dispose", "start"] as const) {
+  it(`keyboard commit which triggers ${replacement} cannot publish stale inactive state`, () => {
+    let source = 240;
+    const publications: [number, boolean][] = [];
+    const owner = createScalarResize({ read: () => source,
+      options: () => ({ min: 96, max: 800, default: 240 }),
+      schedule: () => () => {}, retire: () => {},
+      publish: (value, active) => publications.push([value, active]),
+      commit: value => { source = value; if (replacement === "dispose") owner.dispose(); else owner.start(100, 1); },
+    });
+    expect(owner.key("ArrowRight")).toBe(true);
+    expect(source).toBe(250);
+    expect(publications).toEqual(replacement === "dispose" ? [] : [[250, true]]);
+  });
+}

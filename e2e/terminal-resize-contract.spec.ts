@@ -85,3 +85,22 @@ test("disabling Terminal unmounts and releases a live drag", async ({ page }) =>
   await page.mouse.move(x, y - 60); await page.mouse.up();
   expect(await savedHeight(page)).toBe(initial);
 });
+
+test("disabling Terminal after a published drag preserves the size without re-enabling the feature", async ({ page }) => {
+  await openTerminal(page);
+  const initial = await savedHeight(page), { x, y } = await begin(page);
+  await page.mouse.move(x, y - 30);
+  await expect.poll(async () => (await page.locator(".terminal-panel").boundingBox())!.height).toBeCloseTo(initial + 30, 0);
+  await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/state/settings.svelte.ts')");
+    (await load()).settingsStore.toggleEnableTerminal();
+  });
+  await expect(page.locator(".terminal-panel")).toHaveCount(0);
+  await page.mouse.move(x, y - 90); await page.mouse.up();
+  await expect.poll(() => savedHeight(page)).toBe(initial + 30);
+  const enabled = await page.evaluate(async () => {
+    const load = new Function("return import('/src/lib/state/settings.svelte.ts')");
+    return (await load()).settingsStore.enableTerminal;
+  });
+  expect(enabled).toBe(false);
+});

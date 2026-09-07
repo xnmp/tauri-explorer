@@ -7,7 +7,8 @@ Governs: `domain/resize-size.ts`, `state/scalar-resize.ts`, `state/panel-resize.
 `composables/use-panel-resize.svelte.ts`, `components/PanelResizeHandle.svelte`,
 `state/pane-viewport.svelte.ts`, `composables/use-inline-panel-width.svelte.ts`,
 `state/resize-activity.svelte.ts`, `domain/detail-columns.ts`,
-`composables/use-column-resize.svelte.ts`
+`composables/use-column-resize.svelte.ts`, `domain/preview-size.ts`,
+`components/PreviewPane.svelte`
 
 The base file-pane minimum cannot include a fixed assumption about optional
 panels. Their presence depends on actual render conditions: Miller columns can
@@ -64,7 +65,7 @@ No-op movement and cancellation before a published manual adjustment keep
 automatic mode, while an effective pointer or keyboard adjustment establishes a
 persisted manual preference. The source can change during a drag without changing
 its captured origin. Author/date and ordinary panels keep
-their fixed default widths. Other custom resize surfaces remain separate audit work.
+their fixed default widths.
 
 
 The scalar owner holds only a gesture draft. Width preference adapters own the
@@ -90,8 +91,7 @@ The DOM owner accepts an explicit model-to-visual scale. Ordinary widths derive
 it from the controlled element's rect/computed size; Terminal passes app zoom
 because its counter-zoomed element has net CSS zoom one while its styled height
 is the model height multiplied by app zoom. Blur, root style changes, scrolling,
-window resizing, hide and unmount retire its gesture. Preview remains a separate
-migration; this architecture does not claim it already uses the core.
+window resizing, hide and unmount retire its gesture.
 
 Details composes one controlled owner with session-local committed column widths.
 Selecting a different column synchronously retires the current owner before
@@ -107,3 +107,31 @@ handle captures the same pointer. Clear both identifiers before releasing captur
 require both for move/release/cancellation. Global interruption remains independent
 of target identity. A browser test establishes real capture, requests a replacement
 capture, and verifies browser-generated old loss cannot cancel the replacement.
+
+
+Preview uses the controlled adapter with a pure dock-to-dimension policy. Right
+controls width; top/bottom control height with opposite growth directions. Stored
+zero encodes the default only at source normalization. Calculated pointer/key
+values at or below zero clamp to the minimum; they must not decode as defaults.
+Raw source identity distinguishes zero from an explicit default of the same size.
+Superseded drafts project the current source immediately without mutating on read.
+Fullscreen retires the gesture before removing its handle. Interactive descendants
+are excluded from the pane's fullscreen double-click action.
+
+Teardown has two phases. The owner synchronously cancels frames and releases input
+and activity, then returns an idempotent finalizer for the last published value.
+The Svelte adapter invokes that finalizer after `tick()`, outside the framework's
+historical teardown read context. Calling a settings setter inside `onDestroy`
+can otherwise build a whole-object update from historical state and undo the very
+dock/visibility change that caused destruction. Finalization rereads live source
+and options before writing: a changed dock/source discards the draft; hiding an
+unchanged panel preserves its published size without restoring visibility. These
+callbacks must read live settings, not cached derived values from a destroyed view.
+
+Handle-only retirement leaves a mounted owner available for replacement input.
+Owner disposal permanently closes admission. New accepted input invalidates a
+pending handle finalizer, while parent disposal after child retirement preserves
+exactly-once completion. Reentrant disposal/replacement during effect callbacks
+cannot admit further input or publish obsolete inactive presentation. Ordinary
+live-input interruption remains synchronous; only framework teardown crosses the
+public flush boundary.

@@ -5,13 +5,13 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): fixed/automatic panel widths, Terminal height
-and keyed Details columns now compose over shared scalar drafts and DOM input
-lifetime. All 20 new Details browser outcomes and 2,108 unit tests plus 30
-performance cases pass. The combined browser run passes 92, skips one and fails
-one existing WebKit graph-filter setup; that case passes 3/3 isolated repetitions
-but its wider-run cause remains unresolved. Preview resizing, wider WebKit
-integration and full platform/startup acceptance remain open.
+Current checkpoint (2026-09-07): Preview now joins fixed/automatic panels,
+Terminal and keyed Details on the shared scalar/DOM resize owner. All 148 targeted
+Chromium/WebKit outcomes, 2,127 unit tests and 30 performance cases pass; typecheck
+has zero errors/warnings. Teardown regressions exposed and fixed historical
+settings rollback across dock/hide changes. The real Linux Preview scenario and
+normal bundle budgets also pass. Wider integration, native renderer
+retention and full platform/startup acceptance remain open.
 The full review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
@@ -33,7 +33,7 @@ limitations and must not be read as current status.
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
 | 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Wider theme/native interaction matrix pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
-| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. Other custom resize surfaces and the wider themes/accessibility/platform matrix remain outstanding |
+| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. The focused resize migration is implemented; the wider themes/accessibility/platform matrix remains outstanding |
 | Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
 
 Every completion update must name the actual production seam, regression or
@@ -1337,3 +1337,70 @@ before any resize input. Three isolated repetitions pass in 16.7 seconds. This d
 cause of the wider-run failure; it remains an integration acceptance item.
 Preview still has its private resize implementation. Native Windows/macOS,
 measured macOS half-bounce startup and full release acceptance remain outstanding.
+
+
+## Preview sizing and teardown-safe persistence checkpoint — 2026-09-07
+
+Preview now composes the shared controlled-size adapter with pure dock policy.
+Right controls width; top/bottom control height with opposite growth directions.
+Raw zero keeps its default encoding until an effective adjustment. Pointer and
+keyboard calculations clamp to bounds without reinterpreting calculated zero as
+that source sentinel. Drafts publish once per frame without per-pointer settings
+writes; release commits final input, interruption keeps only published movement,
+and source/options changes synchronously discard obsolete work. The separator
+supports keyboard bounds, range semantics and immediate pointer feedback.
+Fullscreen removes it after retirement; links and other interactive descendants
+do not also trigger pane fullscreen on double-click.
+
+Cross-axis docking and hiding after a published drag exposed a shared framework
+boundary defect. Svelte teardown read historical settings, and the size setter's
+whole-object update restored the old dock/visibility. Resource release now stays
+synchronous while a returned, idempotent finalizer validates live source/options
+after `tick()`. Handle retirement allows replacement input; owner disposal closes
+admission. Input identity and reentrant callback checks prevent stale completion
+or publication. This also fixes Terminal disable after a published drag. ADR0012
+and lesson680 record the exact contract and demonstrated failure mechanism.
+
+Before-fix evidence: 28 valid Preview contract cases failed against the private
+implementation; six later dock/hide cases exposed the shared teardown defect;
+the Terminal disable regression fails in both engines with the old teardown hook
+restored. Source sentinel, superseded projection and reentrant disposal/publication
+unit regressions also failed before their corresponding fixes. Fixture-only failures
+from a nonexistent mock file and reload reseeding were corrected separately and
+are not counted as product defects.
+
+Final integrated browser acceptance passes all 148 cases across Chromium/WebKit,
+including 38 Preview contract cases plus existing media, dock/fullscreen, Terminal,
+Details, graph-gutter and panel outcomes. Full units pass 2,127 in 239 files (three
+skipped) plus 30 performance cases. Typecheck has zero errors/warnings; architecture
+lint is clean; maps cover 376/376 source files. Independent adversarial code review
+accepts the final lifecycle and reentrant publication guards. Normal startup payload
+is 44 chunks / 651,947 raw bytes / 212,210 gzip bytes, within budget. This is not
+macOS launch-time evidence. Logs: `/tmp/preview-acceptance-browser.log`,
+`/tmp/preview-acceptance-units.log`, `/tmp/preview-acceptance-check.log`,
+`/tmp/preview-arch.log`, `/tmp/preview-bundle.log`.
+
+The focused resize migration is implemented. Existing intermittent WebKit graph
+filter and PR/CI detail failures remain wider integration items; a passing targeted
+run does not establish their cause. Renderer crash/reload retention, broader
+product/load/platform acceptance and actual Mac half-bounce measurements remain
+open. The comprehensive review is not complete.
+
+
+Native Preview acceptance passes one real Linux scenario in four seconds against
+the rebuilt binary (`/tmp/preview-resize-native-run6.log`). It verifies continuous
+30/60px visual growth at 150% zoom, independent dock dimensions, a published bottom
+draft interrupted by keyboard-selected docking while the pointer remains held,
+inert late input, fullscreen filling the 1280×900 viewport, exact restoration,
+keyboard bounds and readable real markdown throughout. The inspected screenshot
+is `screenshots/refactor/repo-health-cleanup/native-preview-resize.png`. Active hide
+is covered in the browser suite, not this native scenario. Earlier native retries
+exposed a test-only root-rect assumption (GTK's fixed-layout html has zero height)
+and the separate Preview command availability bug below; the fullscreen pane itself
+matched the actual viewport.
+
+The native setup also exposed a remaining command-policy defect: Preview's command
+`when` rejects focused text inputs, including the palette's own search. A browser
+regression now fails in Chromium and WebKit; ordinary Space editing passes. This
+will be fixed separately by removing the duplicate input gate, retaining shared
+keyboard routing as the input-ownership boundary.

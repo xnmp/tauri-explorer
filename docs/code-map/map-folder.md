@@ -301,6 +301,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
+- `preview-size.ts` — pure dock-to-setting resize policy; source-zero defaults and bounded width/height options.
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
 - `syntax-highlight.ts` — highlight.js wrapper for preview.

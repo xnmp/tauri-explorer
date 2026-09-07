@@ -7,17 +7,24 @@ export interface ResizeSizeOptions {
   /** Left/top handles grow the controlled size in the negative direction. */
   invert?: boolean;
   integer?: boolean;
+  /** Source encoding only: zero means the configured default, never a drag value. */
+  zeroIsDefault?: boolean;
+}
+
+function boundSize(value: number, options: ResizeSizeOptions): number {
+  return Math.max(options.min, Math.min(options.max, options.integer ? Math.round(value) : value));
 }
 
 export function clampResizeSize(value: unknown, options: ResizeSizeOptions): number {
-  const finite = typeof value === "number" && Number.isFinite(value) ? value : options.default;
-  return Math.max(options.min, Math.min(options.max, options.integer ? Math.round(finite) : finite));
+  const finite = typeof value === "number" && Number.isFinite(value)
+    && !(options.zeroIsDefault && value === 0) ? value : options.default;
+  return boundSize(finite, options);
 }
 
 /** Scale converts model units to visual pixels; counter-zoomed surfaces supply it explicitly. */
 export function draggedResizeSize(initial: number, delta: number, scale: number, options: ResizeSizeOptions): number {
   if (!Number.isFinite(delta) || !Number.isFinite(scale) || scale <= 0) return initial;
-  return clampResizeSize(initial + delta / scale * (options.invert ? -1 : 1), options);
+  return boundSize(initial + delta / scale * (options.invert ? -1 : 1), options);
 }
 
 export function resizeSizeFromKey(value: number, key: string, options: ResizeSizeOptions): number | undefined {
@@ -25,5 +32,5 @@ export function resizeSizeFromKey(value: number, key: string, options: ResizeSiz
   if (key === "End") return options.max;
   const [negative, positive] = options.axis === "y" ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight"];
   if (key !== negative && key !== positive) return undefined;
-  return clampResizeSize(value + (key === positive ? 10 : -10) * (options.invert ? -1 : 1), options);
+  return boundSize(value + (key === positive ? 10 : -10) * (options.invert ? -1 : 1), options);
 }

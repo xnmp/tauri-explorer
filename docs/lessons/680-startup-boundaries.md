@@ -418,3 +418,23 @@ after the replacement captures that same pointer. Clear pointer and handle befor
 release; check both against each incoming move/up/cancel/lost-capture event. The
 regression needs an initial real move to establish the old capture: transferring
 before that first move has no old capture to lose and misses the defect.
+
+
+### Framework teardown can read historical settings
+
+A published Preview drag followed by a cross-axis dock change restored the old
+dock. Hiding Preview or disabling Terminal similarly restored visibility. Browser
+regressions reproduced this in Chromium and WebKit. Instrumentation showed the new
+settings were applied and persisted before teardown's size commit read the old
+snapshot. Svelte's destruction context deliberately exposes historical signal
+values; the settings setter's whole-object read/modify/write then restored them.
+
+Release capture, listeners, frames and activity synchronously, but return a
+conditional, exactly-once persistence finalizer. Run it after Svelte's public
+`tick()` boundary and reread live settings/options. Changed source/dock means
+obsolete work; unchanged size source on hide preserves the last published draft.
+Do not retain a component-derived dock selector in this callback. Keep separate
+handle retirement and permanent owner disposal, and invalidate pending completion
+on replacement input. Tests must assert the requested dock/hidden state survives,
+not merely that cleanup ran. The Terminal regression also fails with the old
+teardown hook restored and passes with the shared finalizer.

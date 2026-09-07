@@ -4,6 +4,8 @@
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
+  import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { readTextFile, fetchDirectory, readImageAsBlobUrl } from "$lib/api/files";
 import { gitDiff } from "$lib/api/git";
@@ -55,28 +57,18 @@ import { openFile } from "$lib/api/open";
     return () => observer.disconnect();
   });
 
-  // Resize handle state
-  const DEFAULT_WIDTH = 280;
-  const MIN_WIDTH = 160;
-  const MAX_WIDTH = 600;
-  const DEFAULT_HEIGHT = 240;
-  const MIN_HEIGHT = 120;
-  const MAX_HEIGHT = 600;
-  // This frame is also the fullscreen source, so keep it separate from the
-  // 96–256px frames requested by the virtualized tile views.
+  // This frame is also the fullscreen source, separate from the tile thumbnails.
   const VIDEO_PREVIEW_SIZE = 1024;
-  let resizing = $state(false);
-  let startX = 0;
-  let startY = 0;
-  let startWidth = 0;
-  let startHeight = 0;
-
-  const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
-  const paneHeight = $derived(settingsStore.previewPaneHeight || DEFAULT_HEIGHT);
-  // Dock edge — resolved concrete edge (settingsStore already resolves "auto"
-  // via window size, #467), read directly like other settings this consumes.
+  const paneId = $props.id();
   const position = $derived(settingsStore.resolvedPreviewPanePosition);
-  const isVertical = $derived(position === "top" || position === "bottom");
+  const isVertical = $derived(position !== "right");
+  // The final write can run after destruction. Read live settings directly;
+  // a derived captured by the destroyed view is not a durable source of truth.
+  const readSizeSpec = () => previewResizeSpec(settingsStore.resolvedPreviewPanePosition);
+  const resize = useControlledSize(() => settingsStore[readSizeSpec().setting], value => {
+    if (readSizeSpec().setting === "previewPaneWidth") settingsStore.setPreviewPaneWidth(value);
+    else settingsStore.setPreviewPaneHeight(value);
+  }, () => readSizeSpec().options);
 
   // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
   // The image fits the screen (object-fit: contain). Zoom with +/- or Ctrl+wheel;
@@ -112,8 +104,17 @@ import { openFile } from "$lib/api/open";
   }
 
   function toggleFullscreen(): void {
+    resize.cancel();
     fullscreen = !fullscreen;
     resetZoom();
+  }
+
+  function handlePaneDoubleClick(event: MouseEvent): void {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(
+      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, video, audio, iframe',
+    )) return;
+    toggleFullscreen();
   }
 
   /** Step to the previous/next previewable (non-directory) sibling file. */
@@ -254,38 +255,6 @@ import { openFile } from "$lib/api/open";
       return () => document.documentElement.removeAttribute("data-preview-fullscreen");
     }
   });
-
-  function handleResizeStart(event: MouseEvent): void {
-    event.preventDefault();
-    resizing = true;
-    startX = event.clientX;
-    startY = event.clientY;
-    startWidth = paneWidth;
-    startHeight = paneHeight;
-    document.addEventListener("mousemove", handleResizeMove);
-    document.addEventListener("mouseup", handleResizeEnd);
-  }
-
-  function handleResizeMove(event: MouseEvent): void {
-    if (isVertical) {
-      // Bottom dock: handle on the top edge, dragging up grows the pane.
-      // Top dock: handle on the bottom edge, dragging down grows the pane.
-      const delta = position === "bottom" ? startY - event.clientY : event.clientY - startY;
-      const newHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, startHeight + delta));
-      settingsStore.setPreviewPaneHeight(newHeight);
-    } else {
-      // Right dock: handle on the left edge, dragging left grows the pane.
-      const delta = startX - event.clientX;
-      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
-      settingsStore.setPreviewPaneWidth(newWidth);
-    }
-  }
-
-  function handleResizeEnd(): void {
-    resizing = false;
-    document.removeEventListener("mousemove", handleResizeMove);
-    document.removeEventListener("mouseup", handleResizeEnd);
-  }
 
   /** Currently selected file from the active explorer */
   const selectedFile = $derived.by((): FileEntry | null => {
@@ -821,26 +790,34 @@ import { openFile } from "$lib/api/open";
   }
 
   onDestroy(() => {
-    handleResizeEnd();
     previewLifetime.dispose();
   });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+  id={paneId}
   class="preview-pane"
-  class:resizing
+  class:resizing={resize.isResizing}
   class:fullscreen
   class:vertical={isVertical}
   class:dock-bottom={position === "bottom"}
   class:dock-top={position === "top"}
   style={isVertical
-    ? `height: ${paneHeight}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
-    : `width: ${paneWidth}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
-  ondblclick={toggleFullscreen}
+    ? `height: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
+    : `width: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
+  ondblclick={handlePaneDoubleClick}
 >
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="resize-handle" onmousedown={handleResizeStart}></div>
+  {#if !fullscreen}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
+    <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize preview"
+      aria-orientation={isVertical ? "horizontal" : "vertical"} aria-controls={paneId}
+      aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.value}
+      aria-valuetext={`${Math.round(resize.value)} pixels`}
+      onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
+      onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
+      onkeydown={resize.keydown}></div>
+  {/if}
   {#if fullscreen}
     <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen = false; }} title="Exit full screen (Esc)" aria-label="Exit full screen">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -958,9 +935,8 @@ import { openFile } from "$lib/api/open";
           <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
         </div>
       {:else if previewImageUrl}
-        <!-- Click brings the image front and center (fullscreen); clicking
-             again reverts (#219). stopPropagation so the pane's dblclick
-             toggle can't double-fire on the same gesture. -->
+        <!-- This surface owns click/pan/zoom; the pane's double-click policy
+             leaves it alone. Clicking at fit zoom toggles fullscreen (#219). -->
         <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
         <div
           class="preview-image-container"
@@ -968,7 +944,6 @@ import { openFile } from "$lib/api/open";
           bind:this={imageContainerEl}
           onwheel={handleFullscreenWheel}
           onclick={handleImageClick}
-          ondblclick={(e) => e.stopPropagation()}
           onpointerdown={handleImagePointerDown}
           onpointermove={handleImagePointerMove}
           onpointerup={handleImagePointerUp}
@@ -1150,7 +1125,12 @@ import { openFile } from "$lib/api/open";
     width: 4px;
     cursor: col-resize;
     z-index: 10;
-    transition: background var(--transition-normal);
+    touch-action: none;
+  }
+
+  .resize-handle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   /* Bottom dock: handle spans the top edge (row-resize). */

@@ -1,4 +1,4 @@
-import { onDestroy } from "svelte";
+import { onDestroy, tick } from "svelte";
 import { resizeActivity } from "$lib/state/resize-activity.svelte";
 import type { ResizeEffects, ScalarResize } from "$lib/state/scalar-resize";
 
@@ -29,7 +29,12 @@ export function useResizeOwner(create: (effects: ResizeEffects) => ScalarResize,
     },
   });
   const value = $derived.by(() => { revision; return owner.value; });
-  onDestroy(owner.cancel);
+  // Svelte teardown reads the state from before the change which destroyed the
+  // view. Release resources synchronously, but validate/persist after that scope.
+  function finalizeAfterTeardown(finalize: (() => void) | undefined) {
+    if (finalize) void tick().then(finalize);
+  }
+  onDestroy(() => finalizeAfterTeardown(owner.dispose()));
 
   function startResize(event: PointerEvent) {
     if (!event.isPrimary || event.button !== 0) return;
@@ -75,6 +80,7 @@ export function useResizeOwner(create: (effects: ResizeEffects) => ScalarResize,
   }
   return { get value() { return value; }, get isResizing() { return isResizing; },
     get axis() { return owner.axis; }, get min() { return owner.min; }, get max() { return owner.max; },
-    startResize, move, finish, cancelPointer, keydown, cancel: owner.cancel, reconcile: owner.reconcile };
+    startResize, move, finish, cancelPointer, keydown, cancel: owner.cancel,
+    retire: () => finalizeAfterTeardown(owner.retire()), reconcile: owner.reconcile };
 }
 export type ResizeController = ReturnType<typeof useResizeOwner>;

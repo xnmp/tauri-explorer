@@ -2,7 +2,7 @@
   import { onDestroy, untrack } from "svelte";
   import type { ResizeController } from "$lib/composables/use-resize-owner.svelte";
   let { resize, label, controls, outset = false }: { resize: ResizeController; label: string; controls: string; outset?: boolean } = $props();
-  onDestroy(untrack(() => resize.cancel));
+  onDestroy(untrack(() => resize.retire));
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->

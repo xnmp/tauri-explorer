@@ -182,7 +182,8 @@ backend for E2E/browser).
 
 - `state/preview-lifetime.ts` — revision tokens and blob ownership across text/image/archive/directory/video loads and unmount.
 
-- `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; hand-rolled resize (width when docked right, height when docked top/bottom, #460); reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
+- `components/PreviewPane.svelte` — text/image/diff/archive/CSV preview + syntax highlight; CSV uses shared column sizing, a single outer horizontal scroll surface, and virtualized data rows; shared controlled resize (width at right, height at top/bottom); pointer capture, dock-aware keyboard bounds and fullscreen retirement; reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
+- `domain/preview-size.ts` — resolved dock selects the raw dimension setting and bounded resize options; zero decodes only at the source.
 - `domain/preview-pane-position.ts` — pure dock-position validate/cycle (right/bottom/top, #460); `+page.svelte` column-stacks the pane for top/bottom. Also: `PreviewPanePositionMode` ("auto" | right/bottom/top), `resolveAutoDockPosition(width, height)` (aspect-ratio heuristic: wide → right, narrow-tall → top, else bottom) and `resolveEffectivePreviewPanePosition(mode, width, height)` (#467)
 - `state/window-size.svelte.ts` — reactive `window.innerWidth/innerHeight` (`windowSizeStore`); `+page.svelte` syncs it on mount + `resize`. Feeds `settingsStore.resolvedPreviewPanePosition` for auto-dock (#467)
 - `state/settings.svelte.ts` — `previewPanePosition` (raw stored mode, may be "auto") vs `resolvedPreviewPanePosition` (concrete right/bottom/top, the one layout code reads; #467)
@@ -301,7 +302,7 @@ backend for E2E/browser).
 - `domain/drives.ts`; `api/files.ts` (listDrives); `src-tauri/src/files/drives.rs`
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)
-- `domain/resize-size.ts` → `state/scalar-resize.ts` → `composables/use-resize-owner.svelte.ts` — bounded scalar drafts with captured axis/scale, frame identity and shared DOM lifetime; `state/panel-resize.ts` + `composables/use-panel-resize.svelte.ts` adapt fixed/automatic localStorage widths, while `composables/use-controlled-size.svelte.ts` adapts Terminal settings with final-only persistence and source supersession
+- `domain/resize-size.ts` → `state/scalar-resize.ts` → `composables/use-resize-owner.svelte.ts` — bounded scalar drafts with captured axis/scale, frame identity and shared DOM lifetime; `state/panel-resize.ts` + `composables/use-panel-resize.svelte.ts` adapt fixed/automatic localStorage widths, while `composables/use-controlled-size.svelte.ts` adapts Terminal/Preview settings and keyed Details sizes with final-only persistence, source supersession and conditional post-teardown finalization
 - `state/resize-activity.svelte.ts` — owns active panel gesture leases so geometry updates cannot trigger automatic reveal and cancel the resize that caused them
 - `components/PanelResizeHandle.svelte` — shared Sidebar/SCM/Miller keyboard/pointer separator
 - FLOW: sidebar sections read their stores; drives polled from `listDrives` (drives.rs); bookmarks/recent persisted in localStorage; drop-onto-sidebar adds bookmark.

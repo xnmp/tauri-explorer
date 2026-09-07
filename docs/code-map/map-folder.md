@@ -399,6 +399,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 
-## src/test-support/ — browser fixtures; never imported by the application.
+## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
 
+- `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.

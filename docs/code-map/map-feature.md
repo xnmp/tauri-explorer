@@ -41,6 +41,8 @@ backend for E2E/browser).
 
 ## Directory listing & refresh/watcher events
 
+- `src/test-support/watcher-listing-probe.ts` — E2E-only real-write/receipt protocol holds a listing without relying on WebDriver mid-flight observations.
+
 - `state/git-repo-watch.ts` — shares ordered native lease acquisition/release across graph and SCM, retaining failed releases for retry.
 - `state/git-graph-coverage.ts` — shares acknowledged observation across graph writers and retained snapshots, independent of mounted views; network polling roots read fresh.
 - `src-tauri/src/git_watch.rs`, `git_watch/service.rs`, `git_watch/target.rs` — acknowledged unique native leases and shared observers; one worker owns recovery/debounce deadlines; parent watches detect root replacement while filtering sibling activity.

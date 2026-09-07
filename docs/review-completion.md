@@ -847,3 +847,34 @@ window remains separate from acknowledged frontend cleanup and process shutdown.
 Large or remote native registration can still delay that dedicated worker until
 the OS call returns. Actual macOS release startup recordings remain outstanding.
 Keep PR #684 draft and issue #680 open.
+
+## Native watcher coalescing acceptance — 2026-09-07
+
+The coalescing fixture now holds the first real directory-listing result while
+an E2E-only application-side coordinator performs three sequential real backend
+writes. Each write subscribes before IPC and requires a fresh same-directory
+frontend receipt with a backend observation timestamp at or after that write.
+The driver verifies distinct acknowledgements inside the held interval, exactly
+one trailing listing, and all three filenames in the rendered result. WebDriver
+no longer has to observe the app during an arbitrary five-second hold.
+
+The protocol has a 15-second deadline, explicit cancellation on probe replacement,
+and listener/timer cleanup. A stalled IPC response cannot retain the hold after
+its receipt arrives. Already-running backend write IPC is not cancellable; timeout
+releases the fixture and reports failure rather than claiming the mutation stopped.
+Production refresh policy is unchanged. Receipt timestamps are captured in the
+application callback; receipt-count increases alone cannot acknowledge older
+backend events.
+
+Validation: 43 focused watcher/refresh/protocol contracts pass across six files;
+typecheck and architecture lint pass. Both real Linux native watcher cases pass
+on the final rebuilt fixture (`/tmp/watcher-protocol-native-final.log`), including
+adaptive cadence recovery. Independent review confirmed ordering and cleanup.
+A normal build excludes the helper entirely (a literal build flag prevents an
+otherwise orphaned dynamic chunk); startup remains 44 chunks and 640,144 raw bytes
+/ 207,954 gzip bytes, within budgets (`/tmp/watcher-protocol-bundle-final.log`).
+These are local Linux outcomes, not Windows/macOS acceptance or launch measurements.
+
+The review remains open. Next native work is isolated child-window creation and
+failure/reclamation diagnostics, followed by page-session ownership and the
+remaining retention, viewport, product/platform and macOS startup gates.

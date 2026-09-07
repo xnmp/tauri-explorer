@@ -41,6 +41,9 @@ function publishWatcherReceipt(path: string, observedAt: number | undefined): vo
   document.documentElement.dataset.e2eDirectoryWatcherReceipts = JSON.stringify(
     Object.fromEntries(watcherReceipts),
   );
+  window.dispatchEvent(new CustomEvent("e2e-directory-watcher-receipt", {
+    detail: { path, ...watcherReceipts.get(path) },
+  }));
 }
 
 export function useFileWatchers(deps: FileWatcherDeps) {

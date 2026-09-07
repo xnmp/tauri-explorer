@@ -24,6 +24,9 @@ interface DirectoryListingE2EProbe {
   calls: number;
   completed: number;
   starts: number[];
+  finishes: number[];
+  writeOperation?: string;
+  abort: AbortController;
 }
 
 let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
@@ -43,6 +46,7 @@ function publishDirectoryListingE2EProbe(): void {
       calls: directoryListingE2EProbe.calls,
       completed: directoryListingE2EProbe.completed,
       starts: directoryListingE2EProbe.starts,
+      finishes: directoryListingE2EProbe.finishes,
     });
   } else {
     delete document.documentElement.dataset.e2eDirectoryListingProbe;
@@ -55,8 +59,10 @@ function publishDirectoryListingE2EProbe(): void {
 // configures deterministic timing around the real backend listing invocation.
 if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
   window.addEventListener("e2e-directory-listing-probe", ((
-    event: CustomEvent<{ targetPath?: string; delays?: number[] }>,
+    event: CustomEvent<{ targetPath?: string; delays?: number[]; writeOperation?: string }>,
   ) => {
+    directoryListingE2EProbe?.abort.abort();
+    delete document.documentElement.dataset.e2eWatcherWriteOperation;
     const targetPath = event.detail?.targetPath;
     directoryListingE2EProbe = targetPath
       ? {
@@ -65,6 +71,9 @@ if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
           calls: 0,
           completed: 0,
           starts: [],
+          finishes: [],
+          writeOperation: event.detail.writeOperation,
+          abort: new AbortController(),
         }
       : null;
     publishDirectoryListingE2EProbe();
@@ -517,11 +526,25 @@ export async function startStreamingDirectory(
   try {
     const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
     if (e2eProbe) {
+      // Keep the literal build flag at this import: the bundler discovers
+      // dynamic chunks before folding imported constants, leaving an orphan
+      // test asset in release builds if this uses E2E_HOOKS_ENABLED alone.
+      if ((import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1") &&
+          e2eCallIndex === 0 && e2eProbe.writeOperation) {
+        const { holdListingForWatcherWrites } = await import("../../test-support/watcher-listing-probe");
+        await holdListingForWatcherWrites({
+          path,
+          operation: e2eProbe.writeOperation,
+          signal: e2eProbe.abort.signal,
+          write: (filePath, content) => invoke("write_text_file", { path: filePath, content }),
+        });
+      }
       const delay = e2eProbe.delays[e2eCallIndex] ?? 0;
       if (delay > 0) {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
       e2eProbe.completed += 1;
+      e2eProbe.finishes.push(Date.now());
       publishDirectoryListingE2EProbe();
     }
     console.debug("[navigation] start_streaming_directory completed", {

@@ -421,3 +421,9 @@ windows, causing every Explorer to adopt. Explicit listener targets now preserve
 unrelated windows. Unit, Chromium/WebKit pointer and real Tauri adoption/watcher
 outcomes pass; see `review-completion.md` for exact evidence and remaining gates.
 This continuation remains local; it does not establish full review completion.
+
+Continuation checkpoint (2026-09-07): native watcher coalescing acceptance now
+uses an application-side real-write/receipt protocol instead of a timed WebDriver
+interleaving. Both Linux native watcher cases and 43 focused contracts pass;
+production cadence is unchanged and the coordinator is absent from release assets.
+See `review-completion.md` for evidence and remaining platform/release gates.

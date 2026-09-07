@@ -178,6 +178,11 @@ describe("useFileWatchers refresh coalescing", () => {
 
   it("publishes application-side listener readiness and watcher receipts", async () => {
     vi.stubGlobal("document", { documentElement: { dataset: {} } });
+    vi.stubGlobal("window", new EventTarget());
+    const received: unknown[] = [];
+    window.addEventListener("e2e-directory-watcher-receipt", (event) => {
+      received.push((event as CustomEvent).detail);
+    });
     const watchers = useFileWatchers({ getAllExplorers: () => [] });
     watchers.setup();
     await Promise.resolve();
@@ -190,6 +195,7 @@ describe("useFileWatchers refresh coalescing", () => {
       document.documentElement.dataset.e2eDirectoryWatcherReceipts ?? "{}",
     );
     expect(receipts["/watched"]).toEqual({ count: 1, observedAt: 1234 });
+    expect(received).toEqual([{ path: "/watched", count: 1, observedAt: 1234 }]);
 
     watchers.cleanup();
   });

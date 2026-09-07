@@ -27,7 +27,7 @@
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { getAlwaysActiveTerminalCommandId, isShellReservedKey, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { getTerminalCommand, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -66,6 +66,10 @@
   let queueToastShown = false;
 
   const visible = $derived(terminalPanelStore.visible);
+
+  function focusOnRequest(): void {
+    if (term && terminalPanelStore.consumeFocus()) term.focus();
+  }
 
   /** Resolve a CSS variable to a computed color, inside the theme cascade. */
   function resolveThemeColor(varName: string): string {
@@ -106,13 +110,14 @@
   }
 
   async function restartShell(): Promise<void> {
+    // The user's restart action owns focus; PTY completion does not.
+    term?.focus();
     await terminalSession.stop();
     stopQueuePoll();
     pendingCd = null;
     lastShellCwd = null;
     term?.clear();
     await spawnShell();
-    term?.focus();
   }
 
   /**
@@ -123,14 +128,13 @@
   // Insertions typed before the PTY finished spawning; flushed by spawnShell.
   const pendingInsertions: string[] = [];
 
-  /** Type paths into the prompt (space-delimited, shell-quoted, no Enter)
-   *  and focus the terminal — drop-onto-terminal and Alt+T (#265). */
+  /** Type paths into the prompt (space-delimited, shell-quoted, no Enter).
+   * Opening focus belongs to the store, including queued cold insertions. */
   function insertPaths(paths: string[]): void {
     const data = buildPathsInsertion(paths, shellProfile);
     const id = terminalSession.id;
     if (id !== null) terminalWrite(id, data);
     else pendingInsertions.push(data);
-    term?.focus();
   }
 
   // Targets of cds we injected whose OSC 7 echo hasn't arrived yet
@@ -327,26 +331,10 @@
       }
       // Availability-aware: an unavailable core command does not claim the
       // key, so the terminal application still receives it.
-      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
-      const coreCommandAvailable =
-        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
-          if (id !== coreCommandId) return false;
-          const cmd = getCommand(id);
-          return !cmd?.when || cmd.when();
-        });
-      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
-        event,
-        "general.openTerminal",
-      );
-      const terminalToggleChordActive = keybindingsStore.isChordActiveForCommand(
-        event,
-        "general.openTerminal",
-      );
-      const shellReserved = isShellReservedKey(event, {
-        coreCommandAvailable,
-        terminalToggleChordPrefix,
-        terminalToggleChordActive,
-      });
+      const shellReserved = getTerminalCommand(event, keybindingsStore, (id) => {
+        const command = getCommand(id);
+        return command !== undefined && (!command.when || command.when());
+      }) === undefined;
       // xterm keeps terminal-owned keys from reaching the page handler, so
       // consume a pending Explorer chord here when its suffix did not match.
       if (shellReserved && keybindingsStore.isChordActive) keybindingsStore.cancelChord();
@@ -354,6 +342,9 @@
     });
 
     term.open(termEl!);
+    // Initial effects can precede onMount; the plain xterm reference does not
+    // retrigger them. Consume the same guarded request once its input exists.
+    focusOnRequest();
     fitAddon.fit();
 
     term.onData((data) => {
@@ -377,7 +368,7 @@
     });
     resizeObserver.observe(termEl!);
 
-    spawnShell().then(() => term?.focus());
+    void spawnShell();
 
     const unregisterSink = terminalPanelStore.registerPathsSink(insertPaths);
 
@@ -443,20 +434,24 @@
     const factor = zoomFactor;
     if (!term) return;
     term.options.fontSize = Math.round(BASE_FONT_SIZE * factor);
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       if (terminalPanelStore.visible) fitAddon?.fit();
     });
+    return () => cancelAnimationFrame(frame);
   });
 
-  // Refit + refocus when the panel is re-shown (it keeps running while hidden;
+  // Refit when the panel is re-shown (it keeps running while hidden;
   // display:none gives xterm a 0×0 box it must recover from).
   $effect(() => {
     if (visible && term) {
-      requestAnimationFrame(() => {
-        fitAddon?.fit();
-        term?.focus();
-      });
+      const frame = requestAnimationFrame(() => fitAddon?.fit());
+      return () => cancelAnimationFrame(frame);
     }
+  });
+
+  $effect(() => {
+    terminalPanelStore.focusRevision;
+    focusOnRequest();
   });
 
   // ── Drag-resize via the top edge ──────────────────────────────────────────

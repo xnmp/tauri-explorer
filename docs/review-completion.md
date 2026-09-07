@@ -5,8 +5,10 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Latest checkpoint (2026-09-07): page dialogs now have a typed host and owned lazy
-imports; CI retention coverage uses bounded fake-clock bursts. Warm activation and
+Latest checkpoint (2026-09-07): window keyboard routing and terminal opening focus
+have explicit owners; graph mutations invalidate caches before publishing fresh
+history. Page dialogs have a typed host and owned lazy imports; CI retention
+coverage uses bounded fake-clock bursts. Warm activation and
 native pool retirement have explicit ownership and acknowledgements; terminal
 readiness polling no longer holds the control mutex while waiting. Validation below supersedes earlier
 checkpoint counts. The foundation is published in **[draft PR #684](https://github.com/xnmp/tauri-explorer/pull/684)**
@@ -20,7 +22,7 @@ below record the state at their own checkpoint.
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
 | 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Workspace/plugin churn, scaled soak and native retention acceptance remain outstanding |
-| 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Keyboard/session page orchestration remains open |
+| 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Window-session page orchestration remains open |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
@@ -615,3 +617,117 @@ Remaining page work: keyboard routing and window-session setup/teardown still
 live in `+page.svelte`; inspect their ownership before extracting them. Dense pane
 viewport policy, workspace/plugin/native retention, platform and product matrices,
 and actual Mac launch measurement remain open as specified by the table above.
+
+
+## Keyboard ownership, deferred focus and graph mutation publication — 2026-09-07
+
+The page composes `state/window-keyboard.ts`; `domain/window-keys.ts` owns the
+ordered routing policy. Both xterm and the window use `getTerminalCommand` from
+`domain/terminal-keys.ts`, and dispatch retains the exact eligible command ID.
+Previously an unrelated earlier-registered command could steal an allowed
+terminal shortcut during a second broad lookup. Missing/unavailable commands
+now leave the key with the terminal. Blur, disposal, editable/modal ownership and
+pointer interaction retire unfinished chords. The listener owner observes command
+failures and releases every subscription and tracked modifier on disposal.
+
+Four original routing regressions failed on the mechanically extracted old page
+handler; three further ownership-transition regressions failed before their
+correction. The production matcher is exercised directly, not transcribed.
+The 19 routing cases cover conflicting shortcuts/chords, availability, surface
+precedence, terminal-owned suffixes, focus transitions and disposal.
+
+Terminal opening focus is a one-shot request in `state/deferred-focus.ts`, owned
+by `TerminalPanelStore`. New keyboard/pointer input or window blur cancels it;
+consumption also defers to any modal that opened programmatically. The initial mounted
+xterm consumes the same request as subsequent visible-panel opens. Queued path
+insertions still arrive even when focus permission has expired. Restart claims
+focus at the action, while asynchronous shell completion and layout callbacks
+never claim it. Deferred fitting is cancelled on effect teardown.
+
+The held-animation-frame regression failed in both Chromium and WebKit before
+the fix. Independent review then found the same race across the first lazy import:
+all four delayed-import dialog/filter cases failed before request ownership.
+Existing Alt+T acceptance caught two additional boundaries: the initial effect
+can run before xterm mount, and older navigation can restore listing focus during
+the import. The consumer also runs immediately after `term.open`; eligibility
+tracks newer input and modal ownership, not DOM-element identity. These are
+separate failure modes and tests, not a blanket autofocus suppression.
+
+Published CI at `2c2a8121` confirmed unit, type, architecture, bundle, Rust,
+macOS launch-smoke and performance checks. Its wider frontend suite exposed a
+persistent detached-HEAD cached-remount failure. Diagnosis reproduced the exact
+failure: graph handlers reloaded and published fresh history, then sent a local
+notification that evicted it. All seven graph mutation refresh paths now use
+`refreshAfterGitMutation`, invalidating old snapshots/writers before refresh.
+The existing delayed-backend remount test and a real-cache behavior test verify
+that post-mutation history remains immediately available. Local invalidation
+from other surfaces remains enabled.
+
+CI also exposed unresolved native acceptance work:
+
+- The coalescing test's first WebDriver observation returned after its held
+  listing completed. Its fourth filesystem event was observed after the trailing
+  listing started, correctly requiring a third listing. Backend observation times
+  prove the fixture interleaving; production coalescing must not discard it.
+  Rewrite the test's write/acknowledgement protocol before claiming acceptance.
+- The transfer suite returned `[null, null]` from opening two children; subsequent
+  null-label failures cascade from that setup. Diagnose launch/pool outcomes and
+  test setup before asserting native transfer acceptance.
+- Windows hidden-graph acceptance retained history after an external commit.
+  Graph roots and watcher event keys both derive from the backend workdir key;
+  an 8.3-alias mismatch is not established. Registration/readiness and watcher
+  coverage during hidden-cache retention need actual event/owner instrumentation.
+  Seeing the new file in a directory listing does not prove Git-event delivery.
+- Windows warm/transfer failures include WebView2 creation HRESULT `0x8007139F`;
+  subsequent missing-window failures cascade from those creation failures.
+  Isolate native resource pressure before attributing them to application logic.
+  WebKit's remaining tab-reorder failure passed retry; retain it as an intermittent
+  interaction issue rather than counting a retry as proof of absence.
+
+Final validation and publication details follow below. The full-review goal
+remains active; native CI failures, page session orchestration, dense layout,
+long-session/platform/product matrices and actual Mac half-bounce measurement
+remain outstanding. Preserve the user's unrelated files as above.
+
+
+Validation for this batch:
+
+- **224 unit files, 2,027 passed / 3 skipped**, plus **30 performance checks**
+  (`/tmp/window-keyboard-integrated-unit-final.log`). Final type check reports
+  zero errors/warnings; architecture lint and whitespace checks pass. Source maps
+  cover **355/355** files. The focus owner has 11 behavior cases in addition to
+  19 routing cases and the new graph mutation/cache contract.
+- **38/38 final terminal/keyboard outcomes** across Chromium and WebKit
+  (`/tmp/window-keyboard-focus-final.log`), including six delayed layout/import
+  cases. The formerly intermittent cold Alt+T opening passes **20/20 repeats**
+  (`/tmp/window-keyboard-opening-repeat.log`).
+- The integrated 74-case browser matrix passed graph detached/remount, pagination,
+  modal-input and all three file-view filter cases; its one cold Alt+T failure
+  led to the final correction and repeat run above
+  (`/tmp/window-keyboard-graph-browser-final.log`). An earlier run was interrupted
+  by a dev-server reload during Svelte sync; the stable rerun passed 62/62 before
+  the subsequent cold-import work. These overlapping runs are not additive.
+- **4/4 stage/unstage/commit browser outcomes** across Chromium/WebKit
+  (`/tmp/graph-mutation-commit-browser.log`). The inspected
+  `graph-mutation-remount.png` captures the retained detached indicator.
+- Rebuilt real Tauri acceptance: **9 passed / 1 skipped across three suites**
+  (`/tmp/window-keyboard-native-final.log`, build log
+  `/tmp/window-keyboard-native-build-final.log`). This covers real PTY byte/input,
+  conflicting terminal shortcuts, retained shell session and cwd sync, hidden
+  graph external invalidation on Linux, deep Git pagination, and independent
+  staged/unstaged diffs. The native screenshot shows the terminal-toggle result
+  with both tabs and the sidebar preserved. Browser screenshots prove routing
+  against the mock; they do not establish shell startup.
+- Normal startup graph: **44 chunks, 638,654 B raw / 207,363 B gzip**, within
+  enforced budgets (`/tmp/window-keyboard-bundle-final.log`). This is a payload
+  measurement, not launch latency or proof of the Mac half-bounce target.
+- Independent review confirmed final exact-command dispatch, chord retirement,
+  deferred focus/modal priority and cleanup, plus all seven graph mutation
+  refresh placements and their cache/query-generation behavior.
+
+Continuation priority: fix the native coalescing fixture with an acknowledged
+write protocol; instrument Windows Git watch readiness and coverage during hidden
+cache retention; isolate native window creation failures. Then resume page session
+ownership, dense-layout policy and the outstanding long-session/platform/product
+matrix. Mac hardware preference is still unanswered; local work does not depend
+on it. Keep the PR draft and #680 open. No merge/release acceptance is implied.

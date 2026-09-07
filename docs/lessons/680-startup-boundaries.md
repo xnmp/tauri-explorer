@@ -199,3 +199,16 @@
 - Large fake-clock timer bursts can dominate a retention test under CI contention.
   Churn across repeated bursts above the production retention cap, preserving total
   keys and per-burst eviction/callback assertions, rather than extending timeouts.
+
+- Terminal exceptions must retain the exact command ID from ownership through
+  dispatch; a second broad lookup can select an unrelated conflicting binding.
+  Retire chord prefixes when ownership moves to an editable/modal surface, pointer
+  interaction, another window or a disposed listener owner.
+- Lazy terminal mounting, shell completion and animation frames are asynchronous
+  work, not permission to take focus. Own a one-shot opening request and cancel
+  it on newer input. Consume after xterm creates its input as well as on later
+  opening revisions: an initial Svelte effect can run before onMount assigns a
+  nonreactive resource. Queued path insertion must not carry its own late focus.
+- Git graph mutation notifications invalidate the shared snapshot cache, even
+  when emitted locally. Notify before reloading/publishing post-mutation history;
+  notifying afterward evicts the fresh snapshot and breaks immediate tab remount.

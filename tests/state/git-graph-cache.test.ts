@@ -11,6 +11,7 @@ import {
   type GraphSnapshot,
 } from "$lib/state/git-graph-cache";
 import { emitWatcherGitChange, notifyLocalGitChange } from "$lib/state/git-refresh";
+import { refreshAfterGitMutation } from "$lib/state/git-graph-refresh";
 
 const snap = (): GraphSnapshot => ({
   commits: [],
@@ -42,6 +43,17 @@ describe("git-graph-cache", () => {
     expect(getSnapshot(key)).toBeUndefined();
     cacheSnapshot(key, snap());
     expect(getSnapshot(key)).toBeDefined();
+  });
+
+  it("retains post-mutation history for immediate remount after invalidating old history", async () => {
+    const key = snapshotKey(repo, null, false);
+    cacheSnapshot(key, { ...snap(), detached: false });
+    await refreshAfterGitMutation(repo, async () => {
+      // A fresh request cannot join the pre-mutation snapshot.
+      expect(getSnapshot(key)).toBeUndefined();
+      cacheSnapshot(key, { ...snap(), detached: true });
+    });
+    expect(getSnapshot(key)?.detached).toBe(true);
   });
 
   it("evicts every filter variant for a repo but leaves other repos", () => {

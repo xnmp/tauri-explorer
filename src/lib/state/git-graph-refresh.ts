@@ -13,6 +13,14 @@
  */
 
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
+import { notifyLocalGitChange } from "./git-refresh";
+
+/** Invalidate old snapshots and writers before publishing a mutation's fresh
+ * graph. Local notifications also reach caches while the graph is unmounted. */
+export function refreshAfterGitMutation(repoPath: string, refresh: () => Promise<void>): Promise<void> {
+  notifyLocalGitChange(repoPath);
+  return refresh();
+}
 
 type RefreshFn = () => void;
 

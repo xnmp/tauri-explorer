@@ -75,6 +75,36 @@ export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContex
   );
 }
 
+export type TerminalCommandId = AlwaysActiveTerminalCommandId | "general.openTerminal";
+
+interface TerminalCommandBindings {
+  matchesAnyBinding(event: KeyboardEvent, isAvailable: (id: string) => boolean): boolean;
+  matchesChordPrefixForCommand(event: KeyboardEvent, commandId: string): boolean;
+  isChordActiveForCommand(event: KeyboardEvent, commandId: string): boolean;
+}
+
+/** Resolve ownership to an exact command identity. Both xterm and the window
+ * router use this decision; later matching must retain this identity rather
+ * than letting an unrelated command with a conflicting binding claim the key. */
+export function getTerminalCommand(
+  event: KeyboardEvent,
+  bindings: TerminalCommandBindings,
+  isAvailable: (id: string) => boolean,
+): TerminalCommandId | undefined {
+  const core = getAlwaysActiveTerminalCommandId(event);
+  const coreCommandAvailable = core !== undefined && bindings.matchesAnyBinding(
+    event, (id) => id === core && isAvailable(id),
+  );
+  const toggle = "general.openTerminal";
+  const toggleAvailable = isAvailable(toggle);
+  const context = {
+    coreCommandAvailable,
+    terminalToggleChordPrefix: toggleAvailable && bindings.matchesChordPrefixForCommand(event, toggle),
+    terminalToggleChordActive: toggleAvailable && bindings.isChordActiveForCommand(event, toggle),
+  };
+  return isShellReservedKey(event, context) ? undefined : coreCommandAvailable ? core : toggle;
+}
+
 // ─── Configurable line-editing shortcuts (#375) ─────────────────────────────
 
 import { matchesShortcutString } from "./keybinding-parser";

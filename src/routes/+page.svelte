@@ -6,7 +6,7 @@
   import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
   import { isTauri } from "$lib/api/common";
-  import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
+  import { startWindowKeyboard } from "$lib/state/window-keyboard";
   import { E2E_HOOKS_ENABLED, E2E_WARM_WINDOW_PRIMING_DISABLED } from "$lib/domain/e2e-hooks";
   import { isViewMode } from "$lib/domain/file";
   import { isWindowPath, normalizeLaunchData } from "$lib/domain/window-input";
@@ -92,149 +92,6 @@
     getActiveExplorer,
     saveTabs: () => windowTabsManager.save(),
   });
-
-  async function handleKeydown(event: KeyboardEvent): Promise<void> {
-    // Track the Super key's held state before any early return — WebKitGTK
-    // never maps Super into event.metaKey, the store overlays it (#244).
-    keybindingsStore.trackModifierKey(event, true);
-    const isModifier = event.ctrlKey || event.metaKey;
-
-    // Skip if focus is in an input field (except for special cases)
-    const target = event.target as HTMLElement;
-    const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-    const isTerminalFocus = !!target.closest?.(".terminal-panel");
-
-    // Ctrl+` owns the terminal surface itself, rather than being an Explorer
-    // app-level shortcut. Keep it ahead of terminal key ownership so it can
-    // hide a focused terminal while leaving every terminal-app binding alone.
-    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
-      if (!settingsStore.enableTerminal) return; // feature flag (#175)
-      event.preventDefault();
-      terminalPanelStore.toggle();
-      return;
-    }
-
-    // A terminal-hosted application owns every key except the small,
-    // availability-aware core-navigation allowlist in isShellReservedKey.
-    // This must run before every page-level app shortcut (including Ctrl+F
-    // and Escape) so a new global shortcut cannot accidentally steal input
-    // from a focused terminal application.
-    if (isTerminalFocus) {
-      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
-      const coreCommandAvailable =
-        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
-          if (id !== coreCommandId) return false;
-          const cmd = getCommand(id);
-          return !cmd?.when || cmd.when();
-        });
-      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
-        event,
-        "general.openTerminal",
-      );
-      const terminalToggleChordActive = keybindingsStore.isChordActiveForCommand(
-        event,
-        "general.openTerminal",
-      );
-      if (
-        isShellReservedKey(event, {
-          coreCommandAvailable,
-          terminalToggleChordPrefix,
-          terminalToggleChordActive,
-        })
-      ) {
-        // A terminal-owned key still consumes any pending Explorer chord,
-        // just as findMatchingCommand does for a non-matching suffix. Without
-        // this, a later terminal key could complete the stale chord (#608).
-        if (keybindingsStore.isChordActive) keybindingsStore.cancelChord();
-        return;
-      }
-    }
-
-    // Escape closes any open modal dialog
-    if (event.key === "Escape" && dialogStore.hasModalOpen) {
-      event.preventDefault();
-      dialogStore.closeAll();
-      return;
-    }
-
-    // Ctrl+F: open the directory filter. Handled explicitly *before* the
-    // input-field early-return so pressing it again while the filter input is
-    // focused is swallowed — this stops the WebView's native find bar — and is
-    // a no-op rather than a toggle. (Ctrl+Shift+F = Search in Files is excluded.)
-    if (
-      (event.key === "f" || event.key === "F") &&
-      isModifier &&
-      !event.shiftKey &&
-      !event.altKey &&
-      !dialogStore.hasModalOpen
-    ) {
-      event.preventDefault();
-      const explorer = getActiveExplorer();
-      if (explorer && !explorer.showFilter) explorer.openFilter();
-      return;
-    }
-
-    // Escape exits the directory filter from anywhere. The filter input handles
-    // its own Escape (and stops propagation); this covers the case where focus
-    // is on the file list or elsewhere outside an input.
-    if (event.key === "Escape" && !isInputField) {
-      const explorer = getActiveExplorer();
-      if (explorer?.showFilter) {
-        event.preventDefault();
-        explorer.closeFilter();
-        return;
-      }
-    }
-
-    // Skip shortcut handling (including hardcoded shortcuts below) if in an
-    // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
-    // rename input must not open the jobs panel. Terminal focus has already
-    // been filtered through the ownership gate above.
-    if ((isInputField && !isTerminalFocus) || dialogStore.hasModalOpen) {
-      return;
-    }
-
-    // Ctrl+J: Open jobs panel (hardcoded)
-    if (event.key === "j" && isModifier) {
-      event.preventDefault();
-      dialogStore.openJobsPanel();
-      return;
-    }
-
-    // Ctrl+,: Open settings (hardcoded, not customizable)
-    if (event.key === "," && isModifier) {
-      event.preventDefault();
-      dialogStore.openSettings();
-      return;
-    }
-
-    // Ctrl+\ or Ctrl+|: Toggle dual pane (hardcoded due to special key handling)
-    const isBackslash = event.key === "\\" || event.key === "|" || event.code === "Backslash";
-    if (isBackslash && isModifier) {
-      event.preventDefault();
-      windowTabsManager.toggleDualPane();
-      return;
-    }
-
-    // Find matching command from keybindings store, skipping commands whose `when` guard fails.
-    // This ensures that when multiple commands share a shortcut (e.g. F5 for refresh vs copy-to-other-pane),
-    // the first available one is selected rather than the first registered one.
-    // Chord shortcuts (e.g., "Alt+M T") return "chord:waiting" when the prefix is matched.
-    const matchingCommandId = keybindingsStore.findMatchingCommand(event, (id) => {
-      const cmd = getCommand(id);
-      return !cmd?.when || cmd.when();
-    });
-
-    if (matchingCommandId === "chord:waiting") {
-      event.preventDefault();
-      return;
-    }
-    if (matchingCommandId) {
-      event.preventDefault();
-      await executeCommand(matchingCommandId);
-      return;
-    }
-  }
 
   // Update localStorage whenever the active explorer's path or viewMode changes
   $effect(() => {
@@ -582,14 +439,11 @@
     fileWatchers.setup();
     windowLifecycle.setup();
 
-    // Global keyboard shortcuts
-    window.addEventListener("keydown", handleKeydown);
-    // Super-key held tracking (#244): keyup releases, blur resets (keyups
-    // are lost when focus leaves the window with the modifier held).
-    const handleKeyup = (e: KeyboardEvent) => keybindingsStore.trackModifierKey(e, false);
-    const handleBlur = () => keybindingsStore.resetTrackedModifiers();
-    window.addEventListener("keyup", handleKeyup);
-    window.addEventListener("blur", handleBlur);
+    const stopKeyboard = startWindowKeyboard(window, {
+      bindings: keybindingsStore, getCommand, executeCommand, dialogs: dialogStore,
+      terminal: { get enabled() { return settingsStore.enableTerminal; }, toggle: () => terminalPanelStore.toggle() },
+      toggleDualPane: () => windowTabsManager.toggleDualPane(), getActiveExplorer,
+    });
 
     // Window size tracking (#467): feeds the preview pane's "auto" dock mode
     // (settingsStore.resolvedPreviewPanePosition derives from this on every
@@ -602,9 +456,7 @@
     return () => {
       void startup.dispose();
       clearTimeout(warmPrimeTimer);
-      window.removeEventListener("keydown", handleKeydown);
-      window.removeEventListener("keyup", handleKeyup);
-      window.removeEventListener("blur", handleBlur);
+      stopKeyboard();
       window.removeEventListener("resize", handleResize);
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();

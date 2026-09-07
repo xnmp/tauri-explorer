@@ -49,6 +49,7 @@
     shouldReloadGraphForChange,
     subscribeGitNetworkOperation,
     type GitNetworkOperation,
+    refreshAfterGitMutation,
   } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
   import { MAX_GIT_PALETTE_COMMIT_TARGETS, registerGitPaletteTargets } from "$lib/state/git-palette";
@@ -56,7 +57,7 @@
   import { clientToFixed } from "$lib/domain/zoom";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { compactRelativeTimeToday } from "$lib/domain/git";
-  import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
+  import { subscribeGitChanges } from "$lib/state/git-refresh";
   import { directoryKey, splitPathForDisplay } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitStage, gitUnstage, gitCommit } from "$lib/api/git";
@@ -310,9 +311,10 @@
    *  until a watcher event (#466). Routes through the same refresh channels as
    *  every other graph action; no private refresh machinery. */
   async function afterStageChange(selection: DetailSelectionToken | null): Promise<void> {
-    await detailSession.refreshUncommittedFiles(selection);
-    await reload();
-    notifyLocalGitChange(repoPath);
+    await refreshAfterGitMutation(repoPath, async () => {
+      await detailSession.refreshUncommittedFiles(selection);
+      await reload();
+    });
   }
 
   async function stagePaths(paths: string[]): Promise<void> {
@@ -356,12 +358,10 @@
     }
     commitPanelStore.succeed();
     toastStore.success("Changes committed");
-    // Standard refresh policy: reload the graph (new commit row + refreshed
-    // working-changes count), rebuild the still-open panel's file list, and
-    // announce the change so badges + an open SCM panel update (#102, #432).
-    await reload();
+    // Invalidate old graph data and notify badges/SCM before publishing the
+    // post-commit graph, then rebuild the still-open panel (#102, #432).
+    await refreshAfterGitMutation(repoPath, reload);
     const refreshed = await detailSession.refreshUncommittedFiles(selection);
-    notifyLocalGitChange(repoPath);
     if (scmStore.repoRoot && directoryKey(scmStore.repoRoot) === directoryKey(repoPath)) {
       void scmStore.refresh();
     }
@@ -1031,8 +1031,7 @@
       } catch (err) {
         toastStore.error(err instanceof Error ? err.message : String(err));
       } finally {
-        await reload();
-        notifyLocalGitChange(repoPath);
+        await refreshAfterGitMutation(repoPath, reload);
       }
     })();
   }
@@ -1093,11 +1092,10 @@
         toastStore.error(message);
       }
     } finally {
-      // Reload through the single entry point, then notify OTHER consumers
-      // (SCM panel, badges); the graph's own subscriber filters `local` so
-      // this notify doesn't echo back into a redundant second reload (#432).
-      await reload();
-      notifyLocalGitChange(repoPath);
+      // Invalidate before reloading; notification after publication would
+      // evict the freshly cached snapshot. The mounted graph ignores its
+      // local event, so the shared reload remains the only refresh (#432).
+      await refreshAfterGitMutation(repoPath, reload);
     }
   }
 
@@ -1125,8 +1123,7 @@
       } catch (err) {
         toastStore.error(err instanceof Error ? err.message : String(err));
       } finally {
-        await reload();
-        notifyLocalGitChange(repoPath);
+        await refreshAfterGitMutation(repoPath, reload);
       }
     })();
   }
@@ -1252,8 +1249,7 @@
     } catch (err) {
       toastStore.error(err instanceof Error ? err.message : String(err));
     } finally {
-      await reload();
-      notifyLocalGitChange(repoPath);
+      await refreshAfterGitMutation(repoPath, reload);
     }
   }
 
@@ -1349,8 +1345,7 @@
       }
     } finally {
       fetching = false;
-      await reload();
-      notifyLocalGitChange(repoPath);
+      await refreshAfterGitMutation(repoPath, reload);
     }
   }
 

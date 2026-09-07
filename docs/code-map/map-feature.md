@@ -261,7 +261,9 @@ backend for E2E/browser).
 
 ## Keyboard shortcuts
 
-- `+page.svelte` — global keydown dispatch
+- `domain/window-keys.ts`, `state/window-keyboard.ts` — window-key policy and owned subscriptions; terminal exceptions retain their exact command identity through dispatch. `domain/terminal-keys.ts` resolves that identity for both xterm and window routing.
+- `state/deferred-focus.ts`, `state/terminal.svelte.ts` — cancellable terminal-opening focus across lazy loading; new interactions retire obsolete focus requests while queued insertions still arrive.
+- `+page.svelte` — composes the window keyboard owner with active explorer and surface commands
 - `state/keybindings.svelte.ts` — `keybindingsStore`: binding map, resolve
 - `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event
 - `domain/keyboard.ts` — key event normalization

@@ -18,7 +18,11 @@ refresh metadata, config-watch retarget cleanup, draining native plugin workers,
 validated native window inputs, acknowledged tab handoffs, inactive-tab lazy
 restoration, window startup ownership, interaction consistency, and graph query/PR/branch
 and commit-detail state ownership with immutable shared snapshots. Numeric
-settings now share consumer constraints across validation and setters. Each remains
+settings now share consumer constraints across validation and setters. Window
+keyboard dispatch now composes pure routing with an owned listener lifetime,
+terminal exceptions preserve command identity, and terminal opening owns a
+cancellable focus request across lazy loading. Graph mutation refresh invalidates
+old cache entries before publishing fresh history. Each remains
 subject to the integration and platform evidence recorded in that ledger.
 
 ## Product and architectural direction

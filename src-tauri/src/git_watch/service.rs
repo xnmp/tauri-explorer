@@ -288,15 +288,19 @@ impl Worker {
         let sender = sender.clone();
         let watched = target.clone();
         let callback = Box::new(move |event: notify::Result<notify::Event>| {
-            let bits = match event {
-                Ok(event) if watched.lost_root(&event) => DIRTY | BROKEN,
-                Ok(event) if watched.relevant(&event) => DIRTY,
+            let bits = match &event {
+                Ok(event) if watched.lost_root(event) => DIRTY | BROKEN,
+                Ok(event) if watched.relevant(event) => DIRTY,
                 Ok(_) => return,
                 Err(error) => {
                     log::warn!("git watch {}: {error}", watched.key);
                     DIRTY | BROKEN
                 }
             };
+            #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+            if let Ok(event) = &event {
+                crate::git_observation_probe::record(&watched.key, event);
+            }
             if event_flags.fetch_or(bits, Ordering::AcqRel) == 0 {
                 let _ = sender.try_send(Command::Wake);
             }

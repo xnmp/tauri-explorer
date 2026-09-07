@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { navigateTo } from "./helpers";
+import { exactApplicationPid, isolatedProcessEnvironment, terminateRendererDescendants } from "../native-process";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-renderer-crash-"));
 const repository = path.join(scratch, "repository");
@@ -30,55 +31,6 @@ function readLogs(directory: string): string {
     .map(name => fs.readFileSync(path.join(directory, name), "utf8")).join("\n");
 }
 
-function processIds(): number[] {
-  return fs.readdirSync("/proc").filter(name => /^\d+$/.test(name)).map(Number);
-}
-
-function processEnvironment(pid: number): string[] {
-  try { return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); }
-  catch { return []; }
-}
-
-function processExecutable(pid: number): string | null {
-  try { return fs.realpathSync(`/proc/${pid}/exe`); }
-  catch { return null; }
-}
-
-function parentPid(pid: number): number | null {
-  try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    return Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[1]);
-  } catch { return null; }
-}
-
-function descendants(root: number): number[] {
-  const parents = new Map(processIds().map(pid => [pid, parentPid(pid)]));
-  const result: number[] = [];
-  const queue = [root];
-  while (queue.length > 0) {
-    const parent = queue.shift()!;
-    for (const [pid, ppid] of parents) {
-      if (ppid !== parent || result.includes(pid)) continue;
-      result.push(pid);
-      queue.push(pid);
-    }
-  }
-  return result;
-}
-
-function exactApplicationPid(): number {
-  const application = fs.realpathSync(path.resolve("src-tauri/target/debug/tauri-explorer"));
-  const config = process.env.XDG_CONFIG_HOME;
-  if (!config) throw new Error("renderer crash test requires an isolated XDG_CONFIG_HOME");
-  const matches = processIds().filter(pid =>
-    processExecutable(pid) === application
-    && processEnvironment(pid).includes(`XDG_CONFIG_HOME=${config}`));
-  if (matches.length !== 1) {
-    throw new Error(`expected one exact test application, found ${matches.length}: ${matches.join(",")}`);
-  }
-  return matches[0];
-}
-
 (process.platform === "linux" ? describe : describe.skip)("Git observation renderer crash ownership", () => {
   before(() => {
     execFileSync("git", ["init", "--quiet", repository]);
@@ -96,10 +48,7 @@ function exactApplicationPid(): number {
 
     const before = count();
     const applicationPid = exactApplicationPid();
-    const renderers = descendants(applicationPid).filter(pid =>
-      path.basename(processExecutable(pid) ?? "") === "WebKitWebProcess");
-    if (renderers.length === 0) throw new Error("exact test application had no WebKitWebProcess descendant");
-    for (const pid of renderers) process.kill(pid, "SIGKILL");
+    const renderers = terminateRendererDescendants(applicationPid, isolatedProcessEnvironment(process.env));
     process.kill(applicationPid, 0);
 
     // Do not issue a DOM/WebDriver command after the renderer is blank.

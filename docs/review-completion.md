@@ -5,18 +5,16 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): native window rollback now requires a successful
-creation event before addressing a window label. A real duplicate-label creation
-regression reproduced unintended closure of the existing window before this fix.
-Timeout, failed handoff and listener failure retain surviving creation observers;
-a late owned child is destroyed once, while native errors clear seeds without
-closing an unrelated window. Focused launcher/transfer/warm/probe contracts pass
-66 cases. Independent review accepts the ownership fix and native evidence:
-all five rejection cases pass, alongside eight existing transfer/warm cases on
-the same binary. Details and limitations are recorded below. This follows graph
-geometry and keyboard checkpoint `1cf4e04b`. The comprehensive review is
-**not complete**: same-process crash recovery, broader product/native integration
-and soak, the wider product matrix, Windows/Mac acceptance and actual Mac
+Current checkpoint (2026-09-07): Linux same-process renderer-crash recovery now
+passes two real SIGKILL cycles with one retained native GTK WebView. Each cycle
+reclaims its old Git lease before reload, creates a fresh renderer session,
+rejects obsolete acquisition, preserves the new lease after stale release, and
+observes and displays a file written after recovery. The opt-in controller
+performs the reload; this adds acceptance coverage, not automatic production
+recovery behavior. Existing native destruction/reload/blank-crash tests also
+pass (three cases). Independent source and runtime review is recorded below.
+The comprehensive review is **not complete**: Windows/Mac equivalents, broader
+product/native integration and soak, the wider product matrix, and actual Mac
 half-bounce measurements remain open.
 
 The branch has unpublished local commits after the published draft PR #684 tip
@@ -31,7 +29,7 @@ limitations and must not be read as current status.
 | Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
-| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; same-process crash recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
+| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; two-cycle same-process Linux crash recovery now passes with controlled reload; other-platform recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during real handoff receipt, unready native targets with later app initialization, and duplicate-label asynchronous creation failure now pass Linux binary acceptance; Windows/Mac equivalents remain open |
@@ -1870,3 +1868,53 @@ Production bundle verification passes at 44 startup chunks / 652,465 raw /
 (`/tmp/window-creation-bundle.log`). The new native failure probe strings are
 absent from normal production output. This is +117 raw / +51 gzip startup bytes
 from the preceding checkpoint and carries no native launch-time claim.
+
+
+## Same-process Linux renderer-crash recovery — 2026-09-07
+
+The opt-in `e2e-renderer-recovery` feature retains the original GTK WebView while
+an external controller signals verified renderer descendants through Linux
+pidfds. WebKitWebDriver loses its session on renderer death; this controller
+therefore owns the same native view throughout both crashes and reloads.
+It does not add automatic recovery policy to normal application builds.
+
+Acceptance passed two cycles in native PID 55829 and GTK object
+`0x55b0ee989d30`. Renderer sessions advanced 0 → 2 → 4 and leases 1 → 2 → 3.
+For each cycle, the repository-qualified old-owner reclamation diagnostic
+preceded reload. Fresh-realm readiness, the exact obsolete-session rejection,
+stale-release success, and continued new-owner observation were required.
+The new marker appeared after navigation through the actual address control.
+
+The opt-in native observer records the backend observation time and exact
+notify paths before waking its worker. The real Git notification carries this
+metadata only in the recovery fixture; ordinary subscribers still receive the
+existing `GitChange` contract. Acceptance requires the unique written marker's
+absolute path and backend observation time at or after that write began.
+A delayed earlier notification cannot satisfy this predicate.
+
+Evidence:
+
+- [Structured two-cycle result](reviews/renderer-recovery-acceptance-2026-09-07.json).
+- [Inspected recovered listing](../screenshots/refactor/repo-health-cleanup/native-renderer-crash-recovery.png)
+  shows `observed-after-crash-2.txt` in repository-2.
+- Native acceptance exits 0; existing native window destruction, ordinary
+  reload, and blank-renderer crash tests pass 3/3 on the same binary.
+- Git notification contracts pass 7/7; Rust Git observation contracts pass
+  20 cases (one ignored). Typecheck has zero errors/warnings, architecture lint
+  is clean, and maps cover 378/378 source files.
+- Feature-build Clippy passes with warnings denied. Independent Sol source and
+  runtime review confirms the controlled Linux recovery outcomes.
+- Normal startup payload: 44 chunks, 652,471 raw / 212,413 gzip bytes;
+  main chunk 302,764 raw / 89,965 gzip. All 65 built JavaScript files exclude
+  recovery probe markers. These are payload measurements, not launch timing.
+
+The initial feature build exposed an unsupported Tauri lookup; the public
+`get_webview_window` API fixes it. The first runtime run reached renewed watch
+coverage but failed its navigation assertion because the harness assumed the
+single pane had the split-mode `.active` class. Requiring a single pane and
+selecting its actual controls corrected the fixture; no production navigation
+change was needed. Independent Sol review confirmed the source correction.
+
+Scope remains Linux debug-binary controlled recovery. This does not establish
+Windows/macOS behavior, hours-long native retention, a user-facing automatic
+recovery experience, or Mac half-bounce startup. Those release gates remain open.

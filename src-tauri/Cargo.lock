@@ -5198,6 +5198,7 @@ dependencies = [
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
+ "gtk",
  "hex",
  "icns",
  "ignore",

@@ -631,3 +631,15 @@ layout) and `b2c720a4` (rejected native transfer targets). Native platform soak,
 the full product/accessibility/theme/DPI/preview matrix, same-process crash
 recovery, Windows/macOS acceptance and actual Mac half-bounce measurements remain
 open. The full architectural review is **not complete**.
+
+
+Same-process recovery checkpoint (2026-09-07): the opt-in Linux harness passes
+two actual renderer SIGKILL cycles in one retained native GTK WebView. Native
+Git owner reclamation occurs before controlled reload; fresh sessions reject
+obsolete work and preserve new leases against stale release. Exact native
+watcher paths/timestamps prove post-recovery writes, and actual address-bar
+navigation displays both markers. Existing native destruction/reload/crash
+regressions pass 3/3. The completion ledger links structured results and the
+inspected screenshot. This adds controlled recovery acceptance, not automatic
+production recovery policy; platform equivalents, native soak, the wider product
+matrix and measured Mac half-bounce startup remain open.

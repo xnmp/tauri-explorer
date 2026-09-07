@@ -97,3 +97,36 @@ WebKitWebDriver deletes its automation session when the renderer crashes, so thi
 spec cannot assert recovery of the same application. The normal reload scenario
 in `git-watch-window-lifetime.spec.ts` separately exercises renewed ownership and
 real mutation delivery; it must not be presented as crash-recovery acceptance.
+
+## Linux renderer-recovery acceptance
+
+This opt-in acceptance harness is the controlled test for renderer recovery. It
+requires Python 3.9+ and Linux pidfd support, so renderer signals use pinned process
+handles instead of reusable numeric PIDs. Build
+the debug binary with the test feature and embedded hooks:
+
+```bash
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery
+```
+
+Run it under the existing isolated Xvfb/openbox wrapper:
+
+```bash
+xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  bash e2e-tauri/with-window-manager.sh bun run test:e2e:recovery
+```
+
+The runner retains one native GTK WebView and one application PID while it drives
+two actual WebKit renderer `SIGKILL` cycles. WebDriver cannot perform this check:
+its session dies with the renderer, so the controller reloads the same retained
+view and verifies each fresh JavaScript realm. Acceptance requires fresh
+repository-qualified Git leases, rejection of old-generation acquisition, and
+preservation of the new lease after a stale release. A real watcher receipt must
+contain the exact marker path and a backend observation time at or after the
+filesystem write began; the expected repository listing verifies navigation.
+
+Each run uses isolated runtime directories and writes the protocol state, native
+application log, and final recovery screenshot there (the runner copies the
+screenshot into the branch's evidence path on success). This is controlled test
+reload coverage; it does not ship automatic crash-recovery behavior and is not a
+Windows or macOS acceptance path.

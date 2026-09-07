@@ -20,6 +20,9 @@ pub mod git_actions;
 mod git_common;
 pub mod git_log;
 mod git_watch;
+#[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+#[path = "../test_support/git_observation_probe.rs"]
+mod git_observation_probe;
 mod github;
 mod nano_banana;
 mod palette;
@@ -28,6 +31,9 @@ mod plugin_job;
 mod portal;
 mod process_ext;
 mod progress;
+#[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+#[path = "../test_support/renderer_recovery.rs"]
+mod renderer_recovery;
 mod update_check;
 mod upscale;
 mod user_report;
@@ -506,6 +512,8 @@ pub fn run(launch_dir: Option<String>) {
 
             builder.build()?;
             let t_window_built = std::time::Instant::now();
+            #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+            renderer_recovery::start(app.handle())?;
 
             // WARM_MEASURE=1: also spawn a hidden measure-mode warm window
             // (see runWarmWindow in warm-window.ts). It boots, self-fires one

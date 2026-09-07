@@ -44,6 +44,12 @@ fn service(app: &AppHandle) -> Result<&'static Service, AppError> {
             Service::spawn(
                 Box::new(native_observer),
                 Box::new(move |key| {
+                    #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+                    if let Some(observation) = crate::git_observation_probe::payload(key) {
+                        return app
+                            .emit("git-status-changed", observation)
+                            .map_err(|error| error.to_string());
+                    }
                     app.emit("git-status-changed", key)
                         .map_err(|error| error.to_string())
                 }),

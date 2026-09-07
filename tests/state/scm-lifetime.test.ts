@@ -27,7 +27,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
   api.root.mockImplementation(async (path: string) => ({ ok: true, data: path }));
-  api.watch.mockResolvedValue({ ok: true });
+  api.watch.mockImplementation(async (path: string) => ({ ok: true, data: path }));
   api.unwatch.mockResolvedValue({ ok: true });
   api.summary.mockResolvedValue({ ok: false, error: "cancelled" });
   api.subscribe.mockResolvedValue(vi.fn());
@@ -35,7 +35,7 @@ beforeEach(() => {
 
 describe("SCM pane lifetime", () => {
   it("drains a temporary panel release already in progress when the pane is destroyed", async () => {
-    const unwatching = deferred<{ ok: true }>();
+    const unwatching = deferred<{ ok: true; data?: string }>();
     api.unwatch.mockReturnValue(unwatching.promise);
     const { getScmStore, disposeScmStore } = await import("$lib/state/scm.svelte");
     const store = getScmStore("pane");
@@ -46,14 +46,14 @@ describe("SCM pane lifetime", () => {
     void disposed.then(() => { settled = true; });
     await flush();
     const settledBeforeUnwatch = settled;
-    unwatching.resolve({ ok: true });
+    unwatching.resolve({ ok: true, data: "/resolved-repository" });
     await Promise.all([released, disposed]);
     expect(settledBeforeUnwatch).toBe(false);
     expect(api.unwatch).toHaveBeenCalledOnce();
   });
 
   it("drains a late watcher registration and detaches it after pane disposal", async () => {
-    const watching = deferred<{ ok: true }>();
+    const watching = deferred<{ ok: true; data?: string }>();
     api.watch.mockReturnValue(watching.promise);
     const { getScmStore, disposeScmStore } = await import("$lib/state/scm.svelte");
     const store = getScmStore("pane");
@@ -65,10 +65,10 @@ describe("SCM pane lifetime", () => {
     void disposed.then(() => { settled = true; });
     await flush();
     const settledBeforeWatch = settled;
-    watching.resolve({ ok: true });
+    watching.resolve({ ok: true, data: "/resolved-repository" });
     await Promise.all([activation, disposed]);
     expect(settledBeforeWatch).toBe(false);
-    expect(api.unwatch).toHaveBeenCalledWith("/repo");
+    expect(api.unwatch).toHaveBeenCalledWith("/resolved-repository");
     expect(api.summary).not.toHaveBeenCalled();
     expect(store.repoRoot).toBeNull();
   });
@@ -102,15 +102,15 @@ describe("SCM pane lifetime", () => {
   });
 
   it("keeps the latest repository when an earlier watch finishes last", async () => {
-    const firstWatch = deferred<{ ok: true }>();
+    const firstWatch = deferred<{ ok: true; data?: string }>();
     api.watch.mockImplementation((root: string) => root === "/first"
-      ? firstWatch.promise : Promise.resolve({ ok: true }));
+      ? firstWatch.promise : Promise.resolve({ ok: true, data: root }));
     const { getScmStore, disposeScmStore } = await import("$lib/state/scm.svelte");
     const store = getScmStore("pane");
     const previous = store.setActivePath("/first");
     await flush();
     await store.setActivePath("/second");
-    firstWatch.resolve({ ok: true });
+    firstWatch.resolve({ ok: true, data: "/first" });
     await previous;
     expect(store.repoRoot).toBe("/second");
     expect(api.unwatch).toHaveBeenCalledWith("/first");
@@ -119,15 +119,15 @@ describe("SCM pane lifetime", () => {
   });
 
   it("retains a watch on same-repository navigation while the first watch is pending", async () => {
-    const firstWatch = deferred<{ ok: true }>();
+    const firstWatch = deferred<{ ok: true; data?: string }>();
     api.root.mockResolvedValue({ ok: true, data: "/repo" });
-    api.watch.mockReturnValueOnce(firstWatch.promise).mockResolvedValue({ ok: true });
+    api.watch.mockReturnValueOnce(firstWatch.promise).mockResolvedValue({ ok: true, data: "/repo" });
     const { getScmStore, disposeScmStore } = await import("$lib/state/scm.svelte");
     const store = getScmStore("pane");
     const previous = store.setActivePath("/repo/first");
     await flush();
     await store.setActivePath("/repo/second");
-    firstWatch.resolve({ ok: true });
+    firstWatch.resolve({ ok: true, data: "/repo" });
     await previous;
     // One old watch is compensated; the current one lasts until disposal.
     expect(api.watch).toHaveBeenCalledTimes(2);

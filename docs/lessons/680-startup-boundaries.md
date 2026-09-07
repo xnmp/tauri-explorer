@@ -212,3 +212,21 @@
 - Git graph mutation notifications invalidate the shared snapshot cache, even
   when emitted locally. Notify before reloading/publishing post-mutation history;
   notifying afterward evicts the fresh snapshot and breaks immediate tab remount.
+- A cache regression must prove its cache precondition. Visible graph rows did
+  not prove snapshot publication: Linux Access notifications invalidated the
+  read itself. Requiring the actual snapshot exposed both that loop and missing
+  observation while hidden. Disable unrelated SCM coverage in this native case.
+- [notify Access events](https://docs.rs/notify/latest/notify/enum.EventKind.html)
+  describe non-mutating access. Ignore them for Git refresh; honor
+  [rescan flags](https://docs.rs/notify/latest/notify/struct.Event.html#method.need_rescan)
+  even without paths. A linked worktree needs its common Git directory for
+  shared refs as well as private HEAD/index. Every registration must succeed
+  before acknowledging cache coverage.
+- Snapshot retention owns observation independently of mounted components.
+  Subscribe and acquire before reading, transfer the same lease on publication,
+  and revoke pending writers on delivered changes. Native coalescing still
+  permits a delivery interval; a browser mock cannot establish native timing.
+- Release a native watch by the identity returned at acquisition. Rediscovering
+  a deleted/moved repository during release can produce a different key and
+  leak the old recursive watch. Keep display/navigation paths separate from
+  resource identity, including SCM's late-acquisition compensation.

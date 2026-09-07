@@ -113,7 +113,7 @@ function createScmStore() {
   /** A COMMIT file diff routed to the preview pane from the git graph
    *  (#366); mutually exclusive with `activeDiff` (working-tree). */
   let commitDiff = $state<{ repoPath: string; oid: string; path: string; baseOid?: string } | null>(null);
-  let watcherPath: string | null = null;
+  let watcher: { path: string; key: string } | null = null;
   let subscription: Promise<void> | null = null;
   let unsubscribe: (() => void) | undefined;
   let destroyed = false;
@@ -196,7 +196,7 @@ function createScmStore() {
       return;
     }
     detecting = false;
-    if (detected === repoRoot && (!detected || watcherPath === detected)) {
+    if (detected === repoRoot && (!detected || watcher?.path === detected)) {
       if (summaryWasLoading) {
         // The old path's owned request was cancelled above. A same-repository
         // navigation still needs a replacement request; otherwise the store
@@ -210,10 +210,10 @@ function createScmStore() {
 
     // Take ownership before awaiting: another activation/release must never
     // detach this same watch or mistake it for the next repository's watch.
-    const previousWatch = watcherPath;
-    watcherPath = null;
+    const previousWatch = watcher;
+    watcher = null;
     if (previousWatch) {
-      try { await gitUnwatchRepo(previousWatch); } catch { /* non-Tauri */ }
+      try { await gitUnwatchRepo(previousWatch.key); } catch { /* non-Tauri */ }
       if (generation !== pathGeneration) return;
     }
     repoRoot = detected;
@@ -227,10 +227,10 @@ function createScmStore() {
       const watched = await gitWatchRepo(detected);
       if (generation !== pathGeneration) {
         // A watch acquired after release still owns one backend reference.
-        if (watched?.ok) await gitUnwatchRepo(detected);
+        if (watched?.ok) await gitUnwatchRepo(watched.data);
         return;
       }
-      if (watched?.ok) watcherPath = detected;
+      if (watched?.ok) watcher = { path: detected, key: watched.data };
     }
     await refreshSummary();
   }
@@ -256,9 +256,9 @@ function createScmStore() {
     repoRoot = null;
     detecting = false;
     loading = false;
-    const watch = watcherPath;
-    watcherPath = null;
-    const unwatch = watch ? gitUnwatchRepo(watch) : Promise.resolve();
+    const watch = watcher;
+    watcher = null;
+    const unwatch = watch ? gitUnwatchRepo(watch.key) : Promise.resolve();
     // Snapshot now: a subsequent panel mount has a separate activation and
     // must not be cancelled or waited on by the previous mount's release.
     await Promise.allSettled([unwatch, ...pendingWork]);

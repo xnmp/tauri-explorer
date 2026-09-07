@@ -43,6 +43,7 @@ export function createGitGraphQuerySession(options: {
   let error = $state<string | null>(null);
   let disposed = false;
   let appendOwner: object | null = null;
+  let activeWriter: ReturnType<typeof beginSnapshotWrite> | undefined;
 
   const reloader = createReloader(async ({ isCurrent }) => {
     const query = captureQuery();
@@ -58,7 +59,10 @@ export function createGitGraphQuerySession(options: {
       if (!current()) return;
       const walk = branchWalkQuery(options.readBranches(), query.branches, query.hideRemoteOnly);
       const { branches, excludeBranches } = walk;
-      writer = dependencies.beginSnapshotWrite(key);
+      writer = dependencies.beginSnapshotWrite(key, options.repoPath);
+      activeWriter = writer;
+      await writer.ready;
+      if (!current()) return;
       const result = await dependencies.fetchPage0Snapshot(options.repoPath, branches, (partial) => {
         if (!current()) return;
         snapshot = ownGraphSnapshot({ ...snapshot, ...partial, walk });
@@ -75,6 +79,7 @@ export function createGitGraphQuerySession(options: {
       if (current()) error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       writer?.dispose();
+      if (activeWriter === writer) activeWriter = undefined;
       if (current()) initialLoading = false;
       accepting = false;
     }
@@ -122,6 +127,8 @@ export function createGitGraphQuerySession(options: {
 
   function reload(): Promise<void> {
     if (disposed) return Promise.resolve();
+    activeWriter?.dispose();
+    activeWriter = undefined;
     // Invalidate an append immediately, even if the existing page-zero
     // read still has a queued reload to drain. Old finally blocks cannot
     // clear a replacement's busy state.
@@ -151,6 +158,8 @@ export function createGitGraphQuerySession(options: {
       initialLoading = false;
       loadingMore = false;
       reloader.dispose();
+      activeWriter?.dispose();
+      activeWriter = undefined;
     },
   };
 }

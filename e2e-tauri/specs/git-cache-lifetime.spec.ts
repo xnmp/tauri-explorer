@@ -5,10 +5,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { navigateTo, domText, domTexts } from "./helpers";
+import { directoryKey } from "../../src/lib/domain/path";
 
 const repository = fs.mkdtempSync(path.join(os.tmpdir(), process.platform === "win32" ? "explorer-cache-" : "explorer-cache-|"));
 function git(...args: string[]) {
   return execFileSync("git", ["-c", "user.name=Cache Test", "-c", "user.email=cache@example.test", ...args], { cwd: repository });
+}
+async function cacheProbe() {
+  return browser.execute(() => ({
+    snapshots: JSON.parse(document.documentElement.dataset.e2eGraphSnapshots ?? "[]") as { key: string; headOid: string | null }[],
+    watches: JSON.parse(document.documentElement.dataset.e2eGitWatches ?? "{}") as Record<string, number>,
+    changes: JSON.parse(document.documentElement.dataset.e2eGitChanges ?? "[]") as { repoRoot: string; source: string; receivedAt: number }[],
+  }));
 }
 async function toggleGraph() {
   await browser.keys(["Control", "Shift", "p"]);
@@ -29,10 +37,22 @@ async function toggleGraph() {
 }
 
 describe("native graph cache lifetime", () => {
-  before(() => {
+  before(async () => {
     git("init", "--quiet");
     fs.writeFileSync(path.join(repository, "initial.txt"), "initial");
     git("add", "."); git("commit", "--quiet", "-m", "cache initial commit");
+    // A retained graph must own its invalidation coverage; an independently
+    // mounted SCM panel must not accidentally keep this regression green.
+    await $(".file-list").waitForExist({ timeout: 15_000 });
+    await browser.keys(["Control", ","]);
+    await $(".settings-dialog .settings-search").waitForDisplayed();
+    await $(".settings-dialog .settings-search").setValue("Git Status Indicators");
+    const setting = $("//div[contains(@class,'setting-row')][.//span[normalize-space()='Git Status Indicators']]");
+    const checkbox = setting.$("input[type=checkbox]");
+    if (await checkbox.isSelected()) await setting.$(".toggle-slider").click();
+    await expect(checkbox).not.toBeSelected();
+    await $("button[aria-label='Close settings']").click();
+    await $(".settings-dialog").waitForDisplayed({ reverse: true });
   });
   after(() => fs.rmSync(repository, { recursive: true, force: true }));
   it("reopening a hidden graph includes an external commit in a path containing a delimiter", async () => {
@@ -40,19 +60,36 @@ describe("native graph cache lifetime", () => {
     await toggleGraph();
     await $('[data-testid="git-graph-view"]').waitForExist({ timeout: 15_000 });
     await browser.waitUntil(async () => (await domTexts(".commit-row .summary")).map((text) => text.trim()).includes("cache initial commit"), { timeout: 20_000 });
+    const initialHead = git("rev-parse", "HEAD").toString().trim();
+    await browser.waitUntil(async () => (await cacheProbe()).snapshots.some((snapshot) => snapshot.headOid === initialHead), {
+      timeout: 10_000, timeoutMsg: "the initial graph never published a snapshot for the hidden-cache regression",
+    });
+    const retained = (await cacheProbe()).snapshots.find((snapshot) => snapshot.headOid === initialHead)!;
+    const repoKey = (JSON.parse(retained.key) as [string])[0];
     await toggleGraph();
     await $(".file-list").waitForExist();
+    const hidden = await cacheProbe();
+    expect(hidden.snapshots.some((snapshot) => snapshot.key === retained.key && snapshot.headOid === initialHead)).toBe(true);
+    expect(hidden.watches[repoKey]).toBeGreaterThan(0);
+    const mutationStartedAt = Date.now();
 
     fs.writeFileSync(path.join(repository, "external.txt"), "external");
     git("add", "."); git("commit", "--quiet", "-m", "cache external commit");
     // Observe the actual filesystem change before opening the graph. The
     // assertion below verifies real history; no mock invalidation is injected.
     await browser.waitUntil(async () => (await domTexts(".entry-name")).includes("external.txt"), { timeout: 20_000 });
+    await browser.waitUntil(async () => {
+      const probe = await cacheProbe();
+      return !probe.snapshots.some((snapshot) => snapshot.key === retained.key)
+        && probe.changes.some((change) => directoryKey(change.repoRoot) === repoKey
+          && change.source === "watcher" && change.receivedAt >= mutationStartedAt);
+    }, { timeout: 20_000, timeoutMsg: "hidden snapshot was not invalidated by real Git watcher delivery" });
     await toggleGraph();
     await $('[data-testid="git-graph-view"]').waitForExist({ timeout: 15_000 });
     await browser.waitUntil(async () => (await domTexts(".commit-row .summary")).map((text) => text.trim()).includes("cache external commit"), {
       timeout: 20_000, timeoutMsg: "hidden graph retained history from before the real Git commit",
     });
+    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-graph-cache-invalidated.png");
     await toggleGraph();
     await $(".file-list").waitForExist();
   });

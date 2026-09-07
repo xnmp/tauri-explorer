@@ -91,6 +91,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
 
 - `git-repo-watch.ts` — Git graph adapter over the ordered directory-watch owner; failed acquisition never releases another consumer’s reference.
+- `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — one refcounted native watch owner; orders acquisition/release and drains late registration on destruction; reused by panes, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop.

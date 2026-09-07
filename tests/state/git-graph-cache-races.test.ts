@@ -1,3 +1,4 @@
+import { cacheSnapshot } from "../helpers/git-graph-cache";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({ log: vi.fn(), summary: vi.fn() }));
 vi.mock("$lib/api/git-log", () => ({ gitLog: api.log }));
@@ -30,6 +31,7 @@ describe("graph snapshot publication", () => {
     api.log.mockReturnValue(new Promise((done) => { resolve = done; }));
     const cache = await import("$lib/state/git-graph-cache");
     const warming = cache.warmGraphSnapshot("/repo");
+    await vi.waitFor(() => expect(api.log).toHaveBeenCalledOnce());
     cache.evictRepoSnapshots("/repo");
     resolve(page);
     await warming;
@@ -42,7 +44,8 @@ describe("graph snapshot publication", () => {
     const cache = await import("$lib/state/git-graph-cache");
     const key = cache.snapshotKey("/repo", null, false);
     const warming = cache.warmGraphSnapshot("/repo");
-    cache.cacheSnapshot(key, snapshot);
+    await vi.waitFor(() => expect(api.log).toHaveBeenCalledOnce());
+    await cacheSnapshot(key, snapshot);
     resolve(page);
     await warming;
     expect(cache.getSnapshot(key)?.headBranch).toBe("new");
@@ -52,7 +55,7 @@ describe("graph snapshot publication", () => {
     const cache = await import("$lib/state/git-graph-cache");
     const { notifyLocalGitChange } = await import("$lib/state/git-refresh");
     const key = cache.snapshotKey("/repo", null, false);
-    cache.cacheSnapshot(key, snapshot);
+    await cacheSnapshot(key, snapshot);
     notifyLocalGitChange("/repo");
     expect(cache.getSnapshot(key)).toBeUndefined();
   });
@@ -60,7 +63,7 @@ describe("graph snapshot publication", () => {
   it("invalidates repository paths containing key delimiters", async () => {
     const cache = await import("$lib/state/git-graph-cache");
     const key = cache.snapshotKey("/repo|with-pipe", null, false);
-    cache.cacheSnapshot(key, snapshot);
+    await cacheSnapshot(key, snapshot);
     cache.evictRepoSnapshots("/repo|with-pipe");
     expect(cache.getSnapshot(key)).toBeUndefined();
   });

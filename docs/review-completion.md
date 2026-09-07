@@ -5,6 +5,52 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+Git cache observation checkpoint (2026-09-07, continuing locally): the previous
+Linux hidden-cache test did **not** prove cached-state invalidation. Its target
+snapshot was absent, so reopening fetched fresh history. Requiring a published
+snapshot first exposed Linux read-access invalidation; after correcting that,
+the test reproduced a retained snapshot with zero Git watch references while
+SCM was disabled. An external commit then remained absent on reopening.
+
+The cache now acquires acknowledged listener/watch coverage before reading,
+transfers the lease into retained snapshots, shares coverage among query
+variants, and releases it on invalidation/LRU eviction. Disposed or superseded
+queries release pending ownership immediately. UNC snapshots stay uncached:
+their 15-second recursive polling does not justify persistent hidden-tree scans.
+Native registration rejects unavailable repositories and partial registrations,
+covers shared linked-worktree refs, and runs blocking registration/teardown off
+the async runtime. Watch release carries the identity returned at acquisition,
+so repository deletion cannot change its release key.
+
+Independent review confirmed the conditional lease lifecycle and delivered-event
+writer rejection, and exposed the registration/identity defects corrected here.
+This is eventual invalidation: native coalescing/delivery can lag a mutation.
+The 16-entry cache bounds completed retention, not simultaneous pending writers
+or the number of OS directory watches inside each recursive repository watch.
+Remaining native watcher work includes recovery after a callback error while
+another mounted consumer holds a reference, mutation filtering for worktree
+files ending in `.lock`/`~`, and resource/latency measurements on large repositories.
+Unhealthy watches now invalidate snapshots and reject new cache coverage; this
+fails closed for retention but is not automatic recovery of live observation.
+
+Final batch evidence: 2,040 unit outcomes plus 30 performance cases passed;
+the full Rust library run passed 436 tests (six ignored) with loopback access.
+The rebuilt Linux native cache suite passed all three cases after the final
+watch-key IPC change, including real hidden-cache invalidation with SCM disabled,
+cached pagination and partial-file diffs. Chromium passed 18 graph-remount,
+detached-HEAD and SCM outcomes. Typecheck has zero errors/warnings. The normal
+startup graph is 44 chunks / 640,220 raw bytes / 208,010 gzip bytes, within budget;
+this is a size check, not launch-time evidence. The new native screenshot shows
+the external commit after reopening. macOS/Windows acceptance and the overall
+architectural review remain open.
+
+The final independent identity review confirmed native/API/graph/SCM key flow,
+including SCM late-acquisition compensation. It also identified a pre-existing
+SCM cleanup gap to consolidate next: direct SCM unwatch calls discard failed
+`ApiResult`s and their identities, whereas the ordered graph watch adapter
+retains identity after release failure. This batch fixes the acquired identity
+contract; it does not claim comprehensive release-error recovery.
+
 Latest checkpoint (2026-09-07): window keyboard routing and terminal opening focus
 have explicit owners; graph mutations invalidate caches before publishing fresh
 history. Page dialogs have a typed host and owned lazy imports; CI retention

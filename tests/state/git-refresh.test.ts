@@ -26,6 +26,20 @@ beforeEach(() => {
 });
 
 describe("git-refresh", () => {
+  it("joins pending listener attachment and retries a rejected acknowledgement", async () => {
+    let reject!: (cause: Error) => void;
+    listen.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+    const { ensureGitWatcherListener } = await freshModule();
+    const first = ensureGitWatcherListener();
+    const second = ensureGitWatcherListener();
+    expect(listen).toHaveBeenCalledOnce();
+    reject(new Error("event transport unavailable"));
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(false);
+    await expect(ensureGitWatcherListener()).resolves.toBe(true);
+    expect(listen).toHaveBeenCalledTimes(2);
+  });
+
   it("attaches exactly one Tauri listener no matter how many subscribers", async () => {
     const { subscribeGitChanges } = await freshModule();
 

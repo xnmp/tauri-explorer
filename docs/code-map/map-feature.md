@@ -42,6 +42,7 @@ backend for E2E/browser).
 ## Directory listing & refresh/watcher events
 
 - `state/git-repo-watch.ts` — adapts Git watch results to ordered acquisition/release for the graph.
+- `state/git-graph-coverage.ts` — shares acknowledged observation across graph writers and retained snapshots, independent of mounted views; network polling roots read fresh.
 - `state/directory-watch.ts` — serialized refcount ownership used by pane-watch, FolderThumbnail, MillerColumns and drives; destroy drains late acquisition without changing refresh policy.
 
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation

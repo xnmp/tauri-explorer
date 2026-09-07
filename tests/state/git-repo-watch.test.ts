@@ -4,7 +4,7 @@ vi.mock("$lib/api/git", () => ({ gitWatchRepo: api.watch, gitUnwatchRepo: api.un
 import { createGitRepoWatch } from "$lib/state/git-repo-watch";
 it("closing during Git watch acquisition releases the late native reference", async () => {
   let acquired!: () => void; let refs = 0;
-  api.watch.mockImplementation(() => new Promise((resolve) => { acquired = () => { refs++; resolve({ ok: true }); }; }));
+  api.watch.mockImplementation(() => new Promise((resolve) => { acquired = () => { refs++; resolve({ ok: true, data: "/canonical-repo" }); }; }));
   api.unwatch.mockImplementation(async () => { refs = Math.max(0, refs - 1); return { ok: true }; });
   const owner = createGitRepoWatch();
   const loading = owner.update("/repo");
@@ -13,6 +13,7 @@ it("closing during Git watch acquisition releases the late native reference", as
   acquired();
   await Promise.all([loading, closing]);
   expect(refs).toBe(0);
+  expect(api.unwatch).toHaveBeenCalledWith("/canonical-repo");
 });
 it("failed acquisition does not release another owner's native reference", async () => {
   vi.clearAllMocks();

@@ -13,6 +13,7 @@
  */
 
 import { listen } from "@tauri-apps/api/event";
+import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 
 export interface GitChange {
   /** Repo root the change belongs to; null when unknown. */
@@ -25,27 +26,34 @@ type Subscriber = (change: GitChange) => void;
 
 const subscribers = new Set<Subscriber>();
 let listenerAttached = false;
+let listenerPending: Promise<boolean> | null = null;
 
-async function ensureWatcherListener(): Promise<void> {
-  if (listenerAttached) return;
-  listenerAttached = true;
-  try {
-    await listen<string>("git-status-changed", (event) => {
+/** Cache readers need acknowledged event delivery before acquiring coverage.
+ * A failed attachment is retryable; local subscribers remain usable meanwhile. */
+export function ensureGitWatcherListener(): Promise<boolean> {
+  if (listenerAttached) return Promise.resolve(true);
+  if (listenerPending) return listenerPending;
+  listenerPending = listen<string>("git-status-changed", (event) => {
       dispatch({ repoRoot: event.payload ?? null, source: "watcher" });
-    });
-  } catch {
-    // Listener attach fails gracefully in non-Tauri contexts (E2E browser).
-  }
+    }).then(() => { listenerAttached = true; return true; }, () => false)
+    .finally(() => { listenerPending = null; });
+  return listenerPending;
 }
 
 function dispatch(change: GitChange): void {
+  if (E2E_HOOKS_ENABLED && typeof document !== "undefined") {
+    const node = document.documentElement;
+    const receipts = JSON.parse(node.dataset.e2eGitChanges ?? "[]") as unknown[];
+    receipts.push({ ...change, receivedAt: Date.now() });
+    node.dataset.e2eGitChanges = JSON.stringify(receipts.slice(-32));
+  }
   for (const fn of [...subscribers]) fn(change);
 }
 
 /** Subscribe to git changes (watcher + local). Returns an unsubscribe fn. */
 export async function subscribeGitChanges(fn: Subscriber): Promise<() => void> {
   subscribers.add(fn);
-  await ensureWatcherListener();
+  await ensureGitWatcherListener();
   return () => subscribers.delete(fn);
 }
 

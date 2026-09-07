@@ -5,6 +5,19 @@
 
 import { invoke, extractError, type ApiResult } from "./common";
 import type { GitFileEntry, GitStatusCode, GitOpState } from "$lib/domain/git";
+import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { directoryKey } from "$lib/domain/path";
+
+function recordWatchAcknowledgement(repoPath: string, delta: number): void {
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
+  const node = document.documentElement;
+  const watches: Record<string, number> = JSON.parse(node.dataset.e2eGitWatches ?? "{}");
+  const key = directoryKey(repoPath);
+  const count = (watches[key] ?? 0) + delta;
+  if (count > 0) watches[key] = count;
+  else delete watches[key];
+  node.dataset.e2eGitWatches = JSON.stringify(watches);
+}
 
 export type { GitFileEntry, GitStatusCode, GitOpState };
 
@@ -216,18 +229,20 @@ export async function gitCommit(
   }
 }
 
-export async function gitWatchRepo(repoPath: string): Promise<ApiResult<void>> {
+export async function gitWatchRepo(repoPath: string): Promise<ApiResult<string>> {
   try {
-    await invoke<void>("git_watch_repo", { repoPath });
-    return { ok: true, data: undefined };
+    const key = await invoke<string>("git_watch_repo", { repoPath });
+    recordWatchAcknowledgement(key, 1);
+    return { ok: true, data: key };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
 }
 
-export async function gitUnwatchRepo(repoPath: string): Promise<ApiResult<void>> {
+export async function gitUnwatchRepo(watchKey: string): Promise<ApiResult<void>> {
   try {
-    await invoke<void>("git_unwatch_repo", { repoPath });
+    await invoke<void>("git_unwatch_repo", { watchKey });
+    recordWatchAcknowledgement(watchKey, -1);
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: extractError(err) };

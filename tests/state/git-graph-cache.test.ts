@@ -1,3 +1,4 @@
+import { cacheSnapshot } from "../helpers/git-graph-cache";
 /**
  * git-graph snapshot cache (#433 / arch Finding 7): keying, LRU insert, and
  * watcher-driven eviction so a remounted graph never paints stale history.
@@ -5,7 +6,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   snapshotKey,
-  cacheSnapshot,
   getSnapshot,
   evictRepoSnapshots,
   type GraphSnapshot,
@@ -38,31 +38,31 @@ describe("git-graph-cache", () => {
     expect(snapshotKey(repo, ["a", "b"], false)).toBe(snapshotKey(repo, ["a", "b"], false));
   });
 
-  it("stores and retrieves a snapshot by key", () => {
+  it("stores and retrieves a snapshot by key", async () => {
     const key = snapshotKey(repo, null, false);
     expect(getSnapshot(key)).toBeUndefined();
-    cacheSnapshot(key, snap());
+    await cacheSnapshot(key, snap());
     expect(getSnapshot(key)).toBeDefined();
   });
 
   it("retains post-mutation history for immediate remount after invalidating old history", async () => {
     const key = snapshotKey(repo, null, false);
-    cacheSnapshot(key, { ...snap(), detached: false });
+    await cacheSnapshot(key, { ...snap(), detached: false });
     await refreshAfterGitMutation(repo, async () => {
       // A fresh request cannot join the pre-mutation snapshot.
       expect(getSnapshot(key)).toBeUndefined();
-      cacheSnapshot(key, { ...snap(), detached: true });
+      await cacheSnapshot(key, { ...snap(), detached: true });
     });
     expect(getSnapshot(key)?.detached).toBe(true);
   });
 
-  it("evicts every filter variant for a repo but leaves other repos", () => {
+  it("evicts every filter variant for a repo but leaves other repos", async () => {
     const unfiltered = snapshotKey(repo, null, false);
     const filtered = snapshotKey(repo, ["main"], false);
     const other = snapshotKey("/other/repo", null, false);
-    cacheSnapshot(unfiltered, snap());
-    cacheSnapshot(filtered, snap());
-    cacheSnapshot(other, snap());
+    await cacheSnapshot(unfiltered, snap());
+    await cacheSnapshot(filtered, snap());
+    await cacheSnapshot(other, snap());
 
     evictRepoSnapshots(repo);
 
@@ -71,14 +71,14 @@ describe("git-graph-cache", () => {
     expect(getSnapshot(other)).toBeDefined();
   });
 
-  it("evicts on local and external changes", () => {
+  it("evicts on local and external changes", async () => {
     const localKey = snapshotKey(repo, null, false);
-    cacheSnapshot(localKey, snap());
+    await cacheSnapshot(localKey, snap());
 
     // Another surface can mutate a repository while this graph is hidden.
     notifyLocalGitChange(repo);
     expect(getSnapshot(localKey)).toBeUndefined();
-    cacheSnapshot(localKey, snap());
+    await cacheSnapshot(localKey, snap());
 
     // An external change invalidates it so the next remount refetches.
     emitWatcherGitChange(repo);

@@ -13,6 +13,16 @@ is the current requirement-by-requirement ledger; the earlier verification and
 handover below describe the initial foundation checkpoint, not final acceptance
 of the ongoing pass. macOS half-bounce measurements remain outstanding.
 
+The latest cache pass corrected a misleading native acceptance precondition:
+the hidden-graph test had reopened without ever retaining its target snapshot.
+Snapshot-first verification exposed read-triggered invalidation on Linux and
+missing observation while graphs were hidden. Pending reads and retained
+snapshots now own shared acknowledged repository watches; native registration
+requires complete worktree/shared-ref coverage and release uses the acquired
+identity. UNC graphs read fresh without adding hidden recursive polls. See the
+completion ledger for evidence and outstanding native error-recovery/resource
+work; these changes do not establish the macOS startup target.
+
 The ongoing pass has implemented feature-owned API wrappers, bounded inactive
 refresh metadata, config-watch retarget cleanup, draining native plugin workers,
 validated native window inputs, acknowledged tab handoffs, inactive-tab lazy

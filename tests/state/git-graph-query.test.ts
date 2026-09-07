@@ -1,6 +1,7 @@
+import { cacheSnapshot } from "../helpers/git-graph-cache";
 import { describe, expect, it, vi } from "vitest";
 import { createGitGraphQuerySession, type GraphQuery } from "$lib/state/git-graph-query.svelte";
-import { type GraphSnapshot, fetchPage0Snapshot, cacheSnapshot, getSnapshot, snapshotKey, evictRepoSnapshots } from "$lib/state/git-graph-cache";
+import { type GraphSnapshot, fetchPage0Snapshot, getSnapshot, snapshotKey, evictRepoSnapshots } from "$lib/state/git-graph-cache";
 import { type CommitInfo, type GitLogPage, gitLog } from "$lib/api/git-log";
 
 function deferred<T>() {
@@ -27,7 +28,7 @@ function fixture(seed: GraphSnapshot | null = snapshot("seed"), initialQuery: Pa
   const dependencies = {
     gitLog: vi.fn<typeof gitLog>(async () => page("append")),
     getSnapshot: vi.fn(() => seed ?? undefined),
-    beginSnapshotWrite: vi.fn(() => ({ publish: (value: GraphSnapshot) => { writes.push(value); return true; }, dispose: vi.fn() })),
+    beginSnapshotWrite: vi.fn(() => ({ ready: Promise.resolve(true), publish: (value: GraphSnapshot): boolean => { writes.push(value); return true; }, dispose: vi.fn() })),
     fetchPage0Snapshot: vi.fn<typeof fetchPage0Snapshot>(async (_repo, _branches, onLog) => {
       const result = snapshot("fresh");
       onLog?.(result);
@@ -42,11 +43,35 @@ function fixture(seed: GraphSnapshot | null = snapshot("seed"), initialQuery: Pa
 }
 
 describe("mounted graph query", () => {
-  it("cannot mutate another mounted graph through a shared cached snapshot", () => {
+  it("does not start reading before coverage is acknowledged or after disposal during acquisition", async () => {
+    const { session, dependencies } = fixture(null);
+    const acquired = deferred<boolean>();
+    const dispose = vi.fn();
+    dependencies.beginSnapshotWrite.mockReturnValue({ ready: acquired.promise, publish: vi.fn(() => false), dispose });
+    const loading = session.reload();
+    expect(dependencies.fetchPage0Snapshot).not.toHaveBeenCalled();
+    session.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+    acquired.resolve(true);
+    await loading;
+    expect(dependencies.fetchPage0Snapshot).not.toHaveBeenCalled();
+  });
+
+  it("still displays fresh history when cache observation is unavailable", async () => {
+    const { session, dependencies } = fixture(null);
+    const publish = vi.fn(() => false);
+    dependencies.beginSnapshotWrite.mockReturnValue({ ready: Promise.resolve(false), publish, dispose: vi.fn() });
+    await session.reload();
+    expect(session.commits.map((row) => row.oid)).toEqual(["fresh"]);
+    expect(session.error).toBeNull();
+    session.dispose();
+  });
+
+  it("cannot mutate another mounted graph through a shared cached snapshot", async () => {
     const repoPath = "/shared-query-owner";
     const key = snapshotKey(repoPath, null, false);
     const seed = { ...snapshot("seed"), refs: { seed: [{ name: "main", kind: "LocalBranch" as const }] } };
-    cacheSnapshot(key, seed);
+    await cacheSnapshot(key, seed);
     const create = () => createGitGraphQuerySession({
       repoPath, summaryConsumerId: "test", readQuery: () => ({ branches: null, localOnly: false, hideRemoteOnly: false, filePath: "" }),
       readBranches: () => [], refreshBranches: async () => {},
@@ -83,8 +108,8 @@ describe("mounted graph query", () => {
       return summary.promise;
     });
     const loading = session.reload();
+    await vi.waitFor(() => expect(session.commits.map((row) => row.oid)).toEqual(["first"]));
     expect(session.loading).toBe(false);
-    expect(session.commits.map((row) => row.oid)).toEqual(["first"]);
     expect(writes).toHaveLength(0);
     await session.loadMore();
     expect(dependencies.gitLog).toHaveBeenCalledWith("/repo", { limit: 300, cursor: "first" });
@@ -105,6 +130,7 @@ describe("mounted graph query", () => {
     });
     dependencies.gitLog.mockReturnValue(append.promise);
     const loading = session.reload();
+    await vi.waitFor(() => expect(session.commits.map((row) => row.oid)).toEqual(["first"]));
     const paging = session.loadMore();
     summary.resolve(snapshot("first"));
     await loading;
@@ -125,6 +151,7 @@ describe("mounted graph query", () => {
       return first.promise;
     });
     const old = session.reload();
+    await vi.waitFor(() => expect(dependencies.fetchPage0Snapshot).toHaveBeenCalledOnce());
     const current = session.reload();
     publishOld(snapshot("stale"));
     expect(session.commits.map((row) => row.oid)).toEqual(["seed"]);
@@ -215,6 +242,7 @@ describe("mounted graph query", () => {
     });
     const loading = session.reload();
     expect(session.error).toBeNull();
+    await vi.waitFor(() => expect(dependencies.fetchPage0Snapshot).toHaveBeenCalledTimes(2));
     session.dispose();
     onLog(snapshot("late"));
     later.resolve(snapshot("late"));

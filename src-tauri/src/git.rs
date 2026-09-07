@@ -1577,11 +1577,31 @@ pub async fn git_commit(
 
 // ----- File watcher ----- //
 
+fn git_event_requires_refresh(event: &notify::Event) -> bool {
+    // notify classifies Access as non-mutating. Git reads must not invalidate
+    // their own query, or Linux continually reloads and never retains a cache.
+    // Overflow/rescan can omit paths, and always revokes the previous result.
+    if event.need_rescan() {
+        return true;
+    }
+    if event.kind.is_access() {
+        return false;
+    }
+    if event.paths.is_empty() {
+        return true;
+    }
+    event.paths.iter().any(|path| {
+        let value = path.to_string_lossy();
+        !value.ends_with(".lock") && !value.ends_with('~')
+    })
+}
+
 struct WatcherEntry {
     _watcher: Box<dyn Watcher + Send>,
     /// Refcount (#334): multiple panes (or windows) can watch the same repo;
     /// the OS watcher is dropped only when the last consumer unwatches.
     count: usize,
+    healthy: Arc<AtomicBool>,
 }
 
 static WATCHERS: OnceLock<Mutex<std::collections::HashMap<String, WatcherEntry>>> = OnceLock::new();
@@ -1590,28 +1610,55 @@ fn watchers_map() -> &'static Mutex<std::collections::HashMap<String, WatcherEnt
     WATCHERS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
+fn git_watch_target(repo_path: &str) -> Result<(String, Vec<PathBuf>), AppError> {
+    let repo = open_repo(Path::new(repo_path))?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| AppError::Other("git: bare repo cannot be watched".into()))?;
+    // Linked worktrees keep HEAD/index in their private git dir and refs in
+    // the common dir. Keep only non-overlapping recursive roots.
+    let candidates = [workdir, repo.path(), repo.commondir()];
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for candidate in candidates {
+        if roots.iter().any(|root| candidate.starts_with(root)) {
+            continue;
+        }
+        roots.retain(|root| !root.starts_with(candidate));
+        roots.push(candidate.to_path_buf());
+    }
+    let key = workdir_key(&repo).ok_or_else(|| AppError::Other("git: missing workdir".into()))?;
+    Ok((key, roots))
+}
+
+fn install_git_watches(
+    roots: &[PathBuf],
+    mut watch: impl FnMut(&Path) -> notify::Result<()>,
+) -> Result<(), AppError> {
+    for root in roots {
+        watch(root).map_err(|e| AppError::Other(format!("git watch {}: {e}", root.display())))?;
+    }
+    Ok(())
+}
+
 /// Start watching a repo for index/worktree changes. Emits `git-status-changed`
 /// with the repo root path. Idempotent per-repo.
 #[tauri::command]
-pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), AppError> {
-    let (repo_root, git_dir) = match open_repo(Path::new(&repo_path)) {
-        Ok(r) => {
-            let root = r
-                .workdir()
-                .map(|p| p.to_path_buf())
-                .ok_or_else(|| AppError::Other("git: bare repo cannot be watched".into()))?;
-            (root, r.path().to_path_buf())
-        }
-        Err(_) => return Ok(()), // silently no-op when not a repo
-    };
-    let key = watch_key_for(&repo_path);
+pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<String, AppError> {
+    run_blocking(move |_| start_git_watch(app, &repo_path)).await
+}
+
+fn start_git_watch(app: AppHandle, repo_path: &str) -> Result<String, AppError> {
+    let (key, roots) = git_watch_target(repo_path)?;
 
     let mut map = watchers_map()
         .lock()
         .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
     if let Some(entry) = map.get_mut(&key) {
+        if !entry.healthy.load(Ordering::SeqCst) {
+            return Err(AppError::Other("git watcher lost coverage".into()));
+        }
         entry.count += 1;
-        return Ok(());
+        return Ok(key);
     }
 
     let app_for_watcher = app.clone();
@@ -1619,14 +1666,26 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     let last_emit: Arc<Mutex<Instant>> =
         Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
     let trailing_pending = Arc::new(AtomicBool::new(false));
+    let healthy = Arc::new(AtomicBool::new(true));
+    let handler_health = Arc::clone(&healthy);
     let handler = move |res: notify::Result<notify::Event>| {
-        if let Ok(event) = res {
+        let event = match res {
+            Ok(event) => event,
+            Err(error) => {
+                handler_health.store(false, Ordering::SeqCst);
+                log::warn!("git watcher lost coverage for {key_for_event}: {error}");
+                let _ = app_for_watcher.emit("git-status-changed", &key_for_event);
+                return;
+            }
+        };
+        {
+            log::debug!(
+                "gitstat: observed {:?} {:?} for {key_for_event}",
+                event.kind,
+                event.paths
+            );
             // Ignore ephemeral lock files; coalesce emits to at most once per 200ms.
-            let relevant = event.paths.iter().any(|p| {
-                let s = p.to_string_lossy();
-                !s.ends_with(".lock") && !s.ends_with("~")
-            });
-            if !relevant {
+            if !git_event_requires_refresh(&event) {
                 return;
             }
             let mut last = last_emit.lock().unwrap_or_else(|poisoned| {
@@ -1694,48 +1753,39 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
         )
     };
 
-    watcher
-        .watch(&repo_root, RecursiveMode::Recursive)
-        .map_err(|e| AppError::Other(format!("git watch: {e}")))?;
-    // The recursive worktree watch above already covers `.git` when it lives
-    // inside the work tree; watching it again would double every event. Only
-    // watch the git dir separately when it lives elsewhere (linked worktrees).
-    if !git_dir.starts_with(&repo_root) {
-        let _ = watcher.watch(&git_dir, RecursiveMode::Recursive);
+    install_git_watches(&roots, |root| watcher.watch(root, RecursiveMode::Recursive))?;
+    if !healthy.load(Ordering::SeqCst) {
+        return Err(AppError::Other(
+            "git watcher lost coverage during registration".into(),
+        ));
     }
     map.insert(
-        key,
+        key.clone(),
         WatcherEntry {
             _watcher: watcher,
             count: 1,
+            healthy,
         },
     );
-    Ok(())
+    Ok(key)
 }
 
-/// The watcher-map key for a repo path: the normalized workdir (via
-/// `workdir_key`) or the path itself when it isn't a repo. Watch AND unwatch
-/// must derive keys identically — unwatch previously kept git2's trailing
-/// slash while watch stripped it, so refcounts never decremented and
-/// watchers leaked (#387).
-fn watch_key_for(repo_path: &str) -> String {
-    match open_repo(Path::new(repo_path)) {
-        Ok(r) => workdir_key(&r).unwrap_or_else(|| repo_path.to_string()),
-        Err(_) => repo_path.to_string(),
-    }
-}
-
+/// Release the identity returned at acquisition. Never rediscover a repository
+/// which may have been deleted or moved since it was watched.
 #[tauri::command]
-pub async fn git_unwatch_repo(repo_path: String) -> Result<(), AppError> {
-    let key = watch_key_for(&repo_path);
+pub async fn git_unwatch_repo(watch_key: String) -> Result<(), AppError> {
+    run_blocking(move |_| stop_git_watch(&watch_key)).await
+}
+
+fn stop_git_watch(key: &str) -> Result<(), AppError> {
     let mut map = watchers_map()
         .lock()
         .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
-    if let Some(entry) = map.get_mut(&key) {
+    if let Some(entry) = map.get_mut(key) {
         if entry.count > 1 {
             entry.count -= 1;
         } else {
-            map.remove(&key);
+            map.remove(key);
         }
     }
     Ok(())
@@ -1747,6 +1797,106 @@ mod tests {
     use std::fs;
     use std::process::Command;
     use tempfile::TempDir;
+
+    #[test]
+    fn git_watcher_ignores_non_mutating_access() {
+        use notify::event::{AccessKind, AccessMode};
+        for kind in [
+            AccessKind::Read,
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Close(AccessMode::Read),
+        ] {
+            let event = notify::Event::new(notify::EventKind::Access(kind))
+                .add_path(PathBuf::from("/repo/.git/HEAD"));
+            assert!(!git_event_requires_refresh(&event), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn git_watcher_honors_rescan_without_paths() {
+        let event =
+            notify::Event::new(notify::EventKind::Other).set_flag(notify::event::Flag::Rescan);
+        assert!(git_event_requires_refresh(&event));
+    }
+
+    #[test]
+    fn git_watcher_keeps_mutations_and_final_lock_renames() {
+        use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+        for kind in [
+            notify::EventKind::Create(CreateKind::File),
+            notify::EventKind::Modify(ModifyKind::Any),
+            notify::EventKind::Remove(RemoveKind::File),
+            notify::EventKind::Any,
+        ] {
+            let event = notify::Event::new(kind).add_path(PathBuf::from("/repo/changed.txt"));
+            assert!(git_event_requires_refresh(&event), "{kind:?}");
+        }
+        let rename = notify::Event::new(notify::EventKind::Modify(ModifyKind::Name(
+            RenameMode::Both,
+        )))
+        .add_path(PathBuf::from("/repo/.git/index.lock"))
+        .add_path(PathBuf::from("/repo/.git/index"));
+        assert!(git_event_requires_refresh(&rename));
+        let lock = notify::Event::new(notify::EventKind::Create(CreateKind::File))
+            .add_path(PathBuf::from("/repo/.git/index.lock"));
+        assert!(!git_event_requires_refresh(&lock));
+        assert!(git_event_requires_refresh(
+            &lock.set_flag(notify::event::Flag::Rescan)
+        ));
+    }
+
+    #[test]
+    fn git_watch_rejects_missing_repository_coverage() {
+        let dir = TempDir::new().unwrap();
+        assert!(git_watch_target(dir.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn git_watch_requires_every_registration() {
+        let roots = vec![PathBuf::from("/worktree"), PathBuf::from("/external/git")];
+        let result = install_git_watches(&roots, |root| {
+            if root == Path::new("/external/git") {
+                Err(notify::Error::generic("denied"))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn git_watch_covers_shared_refs_of_linked_worktrees() {
+        let dir = init_repo();
+        fs::write(dir.path().join("initial"), "initial").unwrap();
+        let git = |args: &[&str]| {
+            assert!(Command::new("git")
+                .current_dir(dir.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        };
+        git(&["add", "."]);
+        git(&["commit", "--quiet", "-m", "initial"]);
+        let target = TempDir::new().unwrap();
+        let linked = target.path().join("linked");
+        git(&[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ]);
+        let repo = open_repo(&linked).unwrap();
+        let (_, roots) = git_watch_target(linked.to_str().unwrap()).unwrap();
+        for required in [repo.workdir().unwrap(), repo.path(), repo.commondir()] {
+            assert!(
+                roots.iter().any(|root| required.starts_with(root)),
+                "missing {required:?}: {roots:?}"
+            );
+        }
+    }
 
     fn init_repo() -> TempDir {
         let dir = TempDir::new().unwrap();
@@ -1937,7 +2087,7 @@ mod tests {
     }
 
     #[test]
-    fn watch_and_unwatch_derive_identical_keys() {
+    fn watch_acquisition_resolves_equivalent_repository_paths() {
         // Unwatch used git2's raw (trailing-slash) workdir while watch
         // stripped it — refcounts never decremented, watchers leaked (#387).
         let dir = init_repo();
@@ -1947,18 +2097,18 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         let from_subdir = sub.to_str().unwrap().to_string();
 
-        let key = watch_key_for(&plain);
+        let key = git_watch_target(&plain).unwrap().0;
         assert!(!key.ends_with('/') && !key.ends_with('\\'), "key: {key}");
-        assert_eq!(watch_key_for(&slashed), key);
+        assert_eq!(git_watch_target(&slashed).unwrap().0, key);
         assert_eq!(
-            watch_key_for(&from_subdir),
+            git_watch_target(&from_subdir).unwrap().0,
             key,
             "subdir resolves to the same repo key"
         );
-        // Non-repo path: passes through unchanged.
+        // A missing repository never acknowledges coverage.
         let other = TempDir::new().unwrap();
         let p = other.path().to_str().unwrap().to_string();
-        assert_eq!(watch_key_for(&p), p);
+        assert!(git_watch_target(&p).is_err());
     }
 
     #[test]

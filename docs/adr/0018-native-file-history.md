@@ -64,6 +64,42 @@ prove native admission, watcher timing or renderer-independent completion.
 
 ## Acceptance still required
 
+### Publication prerequisite
+
+`files/publication.rs` owns newly created, unpublished payloads in an exclusive
+destination-local staging directory. Unix staging is created with mode 0700.
+Ordinary copies and new text writes publish only after their contents are ready.
+The shared no-replace rename uses Linux `renameat2(RENAME_NOREPLACE)`, macOS
+`renamex_np(RENAME_EXCL)`, and Windows `MoveFileExW` without replacement or
+cross-volume-copy flags. Unsupported filesystems fail rather than emulate the
+contract with a check followed by a replacing rename. Linux trash restore reuses
+the same primitive. Recursive copy creates each destination entry exclusively.
+
+These are OS namespace guarantees, not durable transaction recovery. See the
+[Linux rename contract](https://man7.org/linux/man-pages/man2/renameat2.2.html),
+[Apple's rename contract](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/man/man2/rename.2),
+and [Windows MoveFileEx contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).
+In particular, NFS can report an error after a rename took effect. This requires
+artifact identity and an indeterminate publication outcome before an error can
+universally be interpreted as proof of no mutation. A case-only rename still
+uses the existing platform rename branch after its same-entry check.
+
+Staging cleanup never intentionally owns displaced originals. Old overwrite
+displacement/rollback paths still require migration to explicitly retained
+artifacts. Staging itself is still addressed by path: a process running as the
+same user can replace the staging directory or one of its ancestors between
+operations. Mode 0700 does not provide identity anchoring against that actor;
+publication and cleanup need native handles/identity before claiming protection
+against arbitrary external namespace replacement.
+Cross-device publication now uses exclusive staging, but deleting
+the source afterward can still fail partially: Rust's
+[`remove_dir_all` contract](https://doc.rust-lang.org/std/fs/fn.remove_dir_all.html)
+does not promise all-or-nothing removal. The transaction continuation must
+separate committed effects, cleanup warnings, retained originals and available
+inverses, then combine native forward completion and history admission.
+
+### Remaining acceptance
+
 - Real multiwindow inverse admission, passive peer settlement and initiating
   renderer closure while an inverse is accepted.
 - Structured outcomes for cross-device source cleanup, failed copy cleanup and

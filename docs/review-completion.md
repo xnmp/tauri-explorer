@@ -5,6 +5,36 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Exclusive publication prerequisite
+
+Ordinary copies and new text writes now build their complete payload in an
+exclusively created destination-local staging directory. Shared native
+no-replace rename protects the final destination for ordinary publication,
+move, rename and Linux trash restore; recursive copy no longer truncates
+existing files, merges existing directories or follows destination symlinks.
+Four real-filesystem regression cases failed before this change and pass after
+it. The complete Rust suite passes 566 library and nine integration tests
+(seven ignored), including eight new staging/publication contracts and five
+collision regressions. No frontend or startup payload change is involved;
+no performance improvement is claimed.
+
+All-targets Clippy is clean and source maps cover 398/398 files. A freshly
+rebuilt Linux binary passes five native outcomes across ordinary create/rename/
+trash, delayed create across navigation with a causal watcher update, and
+partial Delete/Undo/Redo. These are compatibility checks; injected construction
+failure and destination races are verified through actual Rust filesystem
+tests. They do not verify cross-device cleanup recovery or native multiwindow
+history ownership.
+See [the publication checkpoint evidence](reviews/file-publication-checkpoint-2026-09-08.json).
+
+This is a transaction prerequisite. Case-only renames retain the old platform
+branch. Overwrite displacement, partial cross-device source cleanup, NFS
+indeterminate publication, external staging-namespace replacement, artifact
+identity and combined native forward/history admission remain open. Independent
+review confirms ordinary destination protection and specifically identifies
+the path-based staging ownership limit. Platform API inspection does not replace
+Windows/macOS runtime acceptance. See ADR 0018 for the continuation.
+
 ## In-progress native history and mutation receipts
 
 The current working tree moves shared file history into the native process and

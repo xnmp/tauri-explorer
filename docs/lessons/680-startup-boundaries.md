@@ -821,3 +821,20 @@ Browser history simulation cannot verify the native admission authority. The
 Linux compatibility fixture here covers ordinary file commands, delayed create
 navigation and partial Delete/Undo/Redo. Shared-window inverse ownership and
 composite transaction recovery remain separate required acceptance cases.
+
+## Exclusive publication is a prerequisite, not a complete transaction
+
+An absent-path check does not grant ownership. The old recursive copy could
+truncate an occupied file, merge an occupied directory, or follow an occupied
+directory symlink; `rename` could replace a destination created after preflight.
+Four actual-filesystem tests reproduced these failures. Create new payloads
+exclusively in reserved destination-local staging, then publish with the native
+no-replace primitive. Share that primitive with Linux trash restore.
+
+Keep displaced user originals out of auto-deleting staging. A cross-device move
+can publish its destination and then partially delete its source before failing;
+that is not an unapplied operation. Also distinguish final-name collision
+protection from identity ownership: another same-user process can replace the
+staging namespace, and NFS can report a failed rename after committing it.
+Those cases require explicit artifact identity and indeterminate/retained
+outcomes before claiming complete recovery.

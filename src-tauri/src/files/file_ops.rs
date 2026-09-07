@@ -4,6 +4,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use super::publication::{rename_noreplace, StagedEntry};
 use super::{mutation::FileMutationReceipt, run_blocking, SizeEstimate};
 use crate::error::AppError;
 use crate::progress::ProgressTracker;
@@ -130,7 +131,7 @@ fn copy_recursively(
         // Count the link itself, exactly as estimate_path_size does.
         tracker.advance(meta.len(), source)?;
     } else if file_type.is_dir() {
-        fs::create_dir_all(target)?;
+        fs::create_dir(target)?;
         for entry in fs::read_dir(source)? {
             let entry = entry?;
             tracker.check_cancelled()?;
@@ -155,7 +156,10 @@ fn copy_file_streamed(
     tracker: &mut ProgressTracker,
 ) -> Result<(), AppError> {
     let mut reader = fs::File::open(source)?;
-    let mut writer = fs::File::create(target)?;
+    let mut writer = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)?;
     let mut buf = vec![0u8; COPY_BUF_SIZE];
     loop {
         tracker.check_cancelled()?;
@@ -296,13 +300,19 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<FileMutation
         })?;
 
         let target = parent.join(&new_name);
-        if entry_exists(&target) && !is_case_only_rename(&source, &target, &new_name) {
+        let target_exists = entry_exists(&target);
+        let case_only = target_exists && is_case_only_rename(&source, &target, &new_name);
+        if target_exists && !case_only {
             return Err(AppError::AlreadyExists(
                 target.to_string_lossy().to_string(),
             ));
         }
 
-        fs::rename(&source, &target)?;
+        if case_only {
+            fs::rename(&source, &target)?;
+        } else {
+            rename_noreplace(&source, &target)?;
+        }
 
         Ok(FileMutationReceipt::committed(&target))
     })
@@ -471,13 +481,10 @@ fn copy_entry_inner(
         }
     }
 
-    // On failure or mid-file cancellation, don't leave a half-written copy
-    // behind. `target` didn't exist before this call (existence was checked
-    // above), so anything present now was created by us.
-    if let Err(e) = copy_recursively(source_path, &target, tracker) {
-        let _ = remove_entry_at(&target);
-        return Err(e);
-    }
+    StagedEntry::prepare(dest_dir_path, |payload| {
+        copy_recursively(source_path, payload, tracker)
+    })?
+    .publish(&target)?;
 
     log::info!(
         "Copied entry (is_dir={}) overwrite={}",
@@ -585,7 +592,7 @@ fn move_entry_impl(
         displaced = Some(tmp);
     }
 
-    match perform_move(&source_path, &dest_dir_path, &target, &source_name) {
+    match perform_move(&source_path, &dest_dir_path, &target) {
         Ok(()) => {
             if let Some(tmp) = displaced {
                 let _ = remove_entry_at(&tmp);
@@ -609,7 +616,6 @@ fn perform_move(
     source_path: &Path,
     dest_dir_path: &Path,
     target: &Path,
-    source_name: &str,
 ) -> Result<(), AppError> {
     // Raw OS error for a cross-filesystem rename, as a fallback for platforms
     // where std hasn't categorized the code into `ErrorKind::CrossesDevices`.
@@ -624,7 +630,7 @@ fn perform_move(
     const CROSS_DEVICE_ERRNO: i32 = -1;
 
     // Try a simple rename first (works if same filesystem)
-    match fs::rename(source_path, target) {
+    match rename_noreplace(source_path, target) {
         Ok(()) => Ok(()),
         Err(e) => {
             // Only fall back to copy+delete for cross-filesystem moves.
@@ -640,15 +646,10 @@ fn perform_move(
             log::info!("Cross-device move detected, falling back to copy+delete");
             // Stage the copy in the destination dir, swap it into place once
             // complete, and only then delete the source.
-            let staging = unique_staging_path(dest_dir_path, source_name);
-            if let Err(e) = copy_recursively(source_path, &staging, &mut detached_tracker()) {
-                let _ = remove_entry_at(&staging);
-                return Err(e);
-            }
-            if let Err(e) = fs::rename(&staging, target) {
-                let _ = remove_entry_at(&staging);
-                return Err(AppError::from(e));
-            }
+            StagedEntry::prepare(dest_dir_path, |payload| {
+                copy_recursively(source_path, payload, &mut detached_tracker())
+            })?
+            .publish(target)?;
             remove_entry_at(source_path)?;
             Ok(())
         }
@@ -830,7 +831,19 @@ pub async fn write_text_file(path: String, content: String) -> Result<FileMutati
             return Err(AppError::AlreadyExists(path));
         }
 
-        fs::write(&file_path, content.as_bytes())?;
+        let parent = file_path
+            .parent()
+            .ok_or_else(|| AppError::InvalidPath(path.clone()))?;
+        StagedEntry::prepare(parent, |payload| {
+            let mut writer = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(payload)?;
+            writer.write_all(content.as_bytes())?;
+            writer.flush()?;
+            Ok(())
+        })?
+        .publish(&file_path)?;
         Ok(FileMutationReceipt::committed(&file_path))
     })
     .await
@@ -940,6 +953,10 @@ fn estimate_path_size(path: &Path, file_count: &mut u64, total_bytes: &mut u64) 
         *total_bytes += metadata.len();
     }
 }
+
+#[cfg(test)]
+#[path = "../../test_support/file_publication_regressions.rs"]
+mod publication_regressions;
 
 #[cfg(test)]
 mod tests {

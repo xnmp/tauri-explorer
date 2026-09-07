@@ -154,6 +154,7 @@ backend for E2E/browser).
 - `components/ConflictDialog.svelte`, `state/conflict-resolver.svelte.ts` — overwrite/rename prompts
 - `api/files.ts` (copyEntry, moveEntry, estimateSize, checkPathsExist), `api/os-clipboard.ts`
 - `domain/file.ts` (`FileMutationReceipt`) + `src-tauri/src/files/mutation.rs` — committed path separate from optional entry metadata; missing snapshots reconcile through the existing pane refresh.
+- `src-tauri/src/files/publication.rs` — exclusive staging of new copy/write payloads and native atomic no-replace publication; destructive overwrite recovery and artifact identity remain separate transaction concerns.
 - `src-tauri/src/files/file_ops.rs` (copy/move/create), `src-tauri/src/progress.rs`, `src-tauri/src/clipboard.rs`
 - FLOW: paste → estimate → conflict check → invoke copy with progress events → operationsManager updates ProgressDialog; on done `broadcastFileChange` + refresh.
 

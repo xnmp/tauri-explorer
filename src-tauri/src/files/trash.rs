@@ -80,33 +80,13 @@ fn trashed_payload(item: &trash::TrashItem) -> Result<PathBuf, AppError> {
 
 #[cfg(target_os = "linux")]
 fn restore_item(item: trash::TrashItem) -> Result<(), AppError> {
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
-
     let payload = trashed_payload(&item)?;
     let original = item.original_path();
-    let native_path = |path: &Path| {
-        CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| AppError::InvalidPath("Path contains a NUL byte".into()))
-    };
-    let source = native_path(&payload)?;
-    let destination = native_path(&original)?;
     std::fs::create_dir_all(&item.original_parent)?;
     // Atomically refuse every existing target, including broken symlinks and
     // empty directories. A check followed by rename can overwrite a racing
     // creation; reserving a placeholder can strand it when the move fails.
-    // SAFETY: both C strings remain alive and NUL-terminated for this call.
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            libc::AT_FDCWD,
-            destination.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result != 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
+    super::publication::rename_noreplace(&payload, &original)?;
     // The payload is already restored. Metadata cleanup cannot turn that
     // durable success into a failed inverse that history would retry.
     if let Err(error) = std::fs::remove_file(&item.id) {

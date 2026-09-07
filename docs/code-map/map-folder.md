@@ -427,6 +427,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
 - `mutation.rs` — committed-path receipt with an optional subsequent FileEntry snapshot; presentation metadata cannot revoke a committed mutation.
+- `publication.rs` — owns unpublished copy/write payloads in an exclusive staging directory; shared native no-replace rename for ordinary publication, move, rename and Linux trash restore.
 - `trash.rs` — single/bulk trash and restore commands; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.

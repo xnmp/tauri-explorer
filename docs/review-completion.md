@@ -5,23 +5,25 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-08): directory observation now recovers from native
-callback faults, overflow/rescan and root replacement, and observes existing-file
-content/metadata changes. Both visible failures were reproduced against
-`c1791a9a` before the fix. Two shared, lazy native observation sources retain
-renderer-owned leases, isolate partial recursive registrations, preserve healthy
-siblings and retry unavailable coverage through the existing flush worker.
+Current checkpoint (2026-09-08): ordinary directory snapshots now have bounded,
+request-owned publication authority. Invalidated or superseded scans cannot
+restore stale cache entries. Root filesystem work runs inside the blocking scan
+adapter; unreadable/disappearing roots return typed errors and partial listings
+stay uncached. Frontend listing ownership rejects failed listener registration
+and post-teardown data, including reentrant event delivery. The preceding shared
+directory observation/recovery architecture is retained.
 
-Eleven Linux native outcomes across six specs pass, including replacement,
-preview updates, refresh coalescing and window/reload/crash reclamation. All 485
-Rust unit tests plus nine integration tests pass serially (seven ignored), and
-strict Clippy, native test TypeScript and architecture lint pass. Two unchanged
-parallel Rust tests failed but pass individually; their nondeterminism is recorded
-in the acceptance artifact. The preceding 2,159 frontend tests and 30 performance
-cases were not rerun for this backend-only change.
+Ten Linux native outcomes across five specs pass, including an actual permission
+error and retry, root replacement, preview updates, lifetime and refresh coalescing.
+The permission regression fails with its fix reverted. All 502 Rust unit tests
+plus nine integration tests pass serially (seven ignored), along with 2,165
+frontend tests (three skipped), 30 performance cases, strict Clippy, Svelte/native
+TypeScript, architecture lint and source-map coverage. The 10,000-file Criterion
+scan estimate is 5.78 ms; this is not a startup measurement or a speedup claim.
+See [the acceptance artifact](reviews/directory-listing-acceptance-2026-09-08.json)
+for failing-before evidence and verification limits.
 
-The initial listing/watch handoff gap, ordinary directory-cache publication
-races, Tab-driven focus/selection consistency, broader platform/product/soak
+The initial listing/watch handoff gap, Tab-driven focus/selection consistency, broader platform/product/soak
 acceptance and actual Mac half-bounce measurements remain open. The comprehensive
 review is **not complete**.
 
@@ -2103,3 +2105,57 @@ adapter. The initial listing also precedes native watch registration, leaving an
 unobserved handoff gap. These need reproducible, domain-level contracts before
 claiming comprehensive directory consistency. Windows/macOS equivalents, large
 native-tree/long-session measurements and final release acceptance remain open.
+
+## Directory snapshot publication and listing ownership — 2026-09-08
+
+This subsequent checkpoint replaces the ordinary cache's unconditional insertion
+with importable publication policy. An opaque permit belongs to each cache miss;
+invalidation, eviction and a newer same-path miss revoke it. Abandoned requests
+leave weak identities that capacity/expiry reconciliation can reclaim, without
+an unbounded revision history. Hits retain shared immutable `Arc` entries. Cache
+retention is capped at 50 paths and a 32 MiB estimate of retained Vec/String
+allocations, with the existing five-second TTL and access-based eviction. The
+byte limit excludes live caller responses, in-flight scans, allocator overhead
+and process RSS. Eviction still drops retained snapshots under the cache mutex;
+this is not a hard contention/latency bound.
+
+Real directory scans gated before publication reproduced both invalidation races
+and older-completion rollback. Both now pass. Root metadata and allocation
+accounting run inside the blocking scan adapter. Metadata errors retain the
+requested root as well as their error kind, because failed navigation preserves
+the previous breadcrumb; a failing-before regression guards that context. Missing and unreadable roots
+return typed errors; jwalk's separately attached root read error must be checked
+as well as iterator errors. Valid partial results remain usable but are not
+cached. The existing parallel scan and streaming transport remain in place.
+
+The frontend listing owner now requires successful native listener registration
+before starting a stream, exposes a failed attempt to its caller and permits a
+later load to retry. Browser inline listings retain their fallback. Teardown
+revokes late registration and IPC-result publication, releasing late stream IDs.
+Focused regressions reproduced the old listener and late-result failures.
+
+Linux acceptance passes ten native outcomes in 47 seconds. The new permission
+case failed with attached-error propagation reverted and passes with it restored;
+its screenshot shows the actual error and the test then verifies the marker after
+access is restored. The initial pre-fix-binary attempt never reached page startup
+and is excluded from behavioral evidence. Its exact bootstrap failure was not
+diagnosed; a fresh explicit embedded build reached the intended assertion.
+
+Full serial Rust (502 unit + nine integration), frontend (2,165 + 30 performance),
+strict Clippy, Svelte/native TypeScript, architecture lint and 383/383 source-map
+coverage pass. The 10,000-file Criterion estimate is 5.7837 ms with a 5.5936–6.0049
+ms interval, comparable in magnitude to the historical 5.7472 ms estimate. This
+is neither a paired speedup measurement nor native startup acceptance.
+
+Independent Sol reviews accept cache policy and frontend ownership within their
+tested scopes. A listener still pending at eager teardown releases eventually;
+the cleanup promise does not guarantee that acquisition has drained. Stream
+cancellation tests prove one attempt, not native reclamation after IPC failure.
+Browser fallback and serialized supersession have source review but no direct
+new tests. Partial-result cache admission is tested; a real child metadata race
+through the parallel scanner is not injected deterministically. Cache deallocation
+under its mutex and simultaneous scan memory still need profiling under load.
+
+Initial listing/watch handoff, platform startup measurements and the broader
+release matrix remain open; these changes do not establish the macOS half-bounce
+target.

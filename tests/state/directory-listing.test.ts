@@ -10,7 +10,7 @@
  * cancelled.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
 
 // ── Mocks ────────────────────────────────────────────────────────────────
@@ -23,18 +23,50 @@ const listenState = vi.hoisted(() => ({
   handler: null as ((e: { payload: EntriesEvent }) => void) | null,
   listenCalls: 0,
   unlistenCalls: 0,
+  rejectNext: null as Error | null,
+  deferNext: false,
+  resolvePending: null as (() => void) | null,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_name: string, cb: (e: { payload: EntriesEvent }) => void) => {
+  listen: vi.fn((_name: string, cb: (e: { payload: EntriesEvent }) => void) => {
     listenState.listenCalls++;
-    listenState.handler = cb;
-    return () => {
-      listenState.unlistenCalls++;
-      listenState.handler = null;
+    if (listenState.rejectNext) {
+      const error = listenState.rejectNext;
+      listenState.rejectNext = null;
+      return Promise.reject(error);
+    }
+
+    const install = () => {
+      listenState.handler = cb;
+      return () => {
+        listenState.unlistenCalls++;
+        if (listenState.handler === cb) listenState.handler = null;
+      };
     };
+
+    if (listenState.deferNext) {
+      listenState.deferNext = false;
+      return new Promise<() => void>((resolve) => {
+        listenState.resolvePending = () => resolve(install());
+      });
+    }
+
+    return Promise.resolve(install());
   }),
 }));
+
+function markNativeRuntime() {
+  vi.stubGlobal("window", {
+    __TAURI_INTERNALS__: {},
+  });
+}
+
+async function settleMicrotasks() {
+  for (let i = 0; i < 4; i++) {
+    await Promise.resolve();
+  }
+}
 
 type StartResult =
   | { ok: true; data: { path: string; entries: FileEntry[]; listing_id: number | null } }
@@ -42,7 +74,14 @@ type StartResult =
 
 const apiMocks = vi.hoisted(() => ({
   resolveStart: null as ((r: StartResult) => void) | null,
-  cancelDirectoryListing: vi.fn(async () => {}),
+  deferCancel: false,
+  resolveCancel: null as (() => void) | null,
+  cancelDirectoryListing: vi.fn(() => {
+    if (!apiMocks.deferCancel) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      apiMocks.resolveCancel = resolve;
+    });
+  }),
   startStreamingDirectory: vi.fn(
     () =>
       new Promise<StartResult>((resolve) => {
@@ -79,9 +118,18 @@ beforeEach(() => {
   listenState.handler = null;
   listenState.listenCalls = 0;
   listenState.unlistenCalls = 0;
+  listenState.rejectNext = null;
+  listenState.deferNext = false;
+  listenState.resolvePending = null;
   apiMocks.resolveStart = null;
+  apiMocks.deferCancel = false;
+  apiMocks.resolveCancel = null;
   apiMocks.startStreamingDirectory.mockClear();
   apiMocks.cancelDirectoryListing.mockClear();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("createDirectoryListing — persistent listener", () => {
@@ -177,5 +225,159 @@ describe("createDirectoryListing — persistent listener", () => {
     await listing.cleanup();
     expect(apiMocks.cancelDirectoryListing).toHaveBeenCalledWith(3);
     expect(listenState.unlistenCalls).toBe(1);
+  });
+
+  it.each([false, true])("seals active-stream teardown (inside entry callback: %s)", async (fromCallback) => {
+    const listing = createDirectoryListing();
+    let cleanup: Promise<void> | undefined;
+    const onEntries = vi.fn(() => {
+      if (fromCallback) cleanup = listing.cleanup();
+    });
+    const onDone = vi.fn();
+    const onCancelled = vi.fn();
+    const load = listing.load("/d", { onEntries, onDone, onCancelled });
+    await flush();
+    apiMocks.resolveStart!({ ok: true, data: { path: "/d", entries: [], listing_id: 61 } });
+    await load;
+
+    if (!fromCallback) cleanup = listing.cleanup();
+    // Delivery can precede the queued teardown's first microtask.
+    emit({ listingId: 61, entries: [entry("after-cleanup")], done: true });
+    await cleanup;
+    await listing.cleanup();
+
+    expect(onEntries).toHaveBeenCalledTimes(fromCallback ? 1 : 0);
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onCancelled).toHaveBeenCalledOnce();
+    expect(apiMocks.cancelDirectoryListing).toHaveBeenCalledExactlyOnceWith(61);
+    expect(listenState.unlistenCalls).toBe(1);
+  });
+
+  it("does not start a native stream when listener registration fails and retries on the next load", async () => {
+    markNativeRuntime();
+    listenState.rejectNext = new Error("listener unavailable");
+    const listing = createDirectoryListing();
+
+    const firstLoad = listing.load("/d", { onEntries: vi.fn(), onDone: vi.fn() });
+    await settleMicrotasks();
+    apiMocks.resolveStart?.({
+      ok: true,
+      data: { path: "/d", entries: [], listing_id: null },
+    });
+    const first = await firstLoad;
+
+    expect(first).toEqual({ ok: false, error: "listener unavailable" });
+    expect(apiMocks.startStreamingDirectory).not.toHaveBeenCalled();
+
+    const onEntries = vi.fn();
+    const onDone = vi.fn();
+    const retry = listing.load("/d", { onEntries, onDone });
+    await settleMicrotasks();
+    apiMocks.resolveStart!({
+      ok: true,
+      data: { path: "/d", entries: [entry("first")], listing_id: 41 },
+    });
+
+    const result = await retry;
+    expect(result).toMatchObject({ ok: true, streaming: true });
+    emit({ listingId: 41, entries: [entry("later")], done: true });
+    expect(onEntries).toHaveBeenCalledWith([entry("later")]);
+    expect(onDone).toHaveBeenCalledOnce();
+    expect(listenState.listenCalls).toBe(2);
+    expect(apiMocks.startStreamingDirectory).toHaveBeenCalledOnce();
+  });
+
+  it("releases a listener that resolves after teardown starts during a retry", async () => {
+    markNativeRuntime();
+    listenState.rejectNext = new Error("listener unavailable");
+    const listing = createDirectoryListing();
+    const firstLoad = listing.load("/d", { onEntries: vi.fn(), onDone: vi.fn() });
+    await settleMicrotasks();
+    apiMocks.resolveStart?.({
+      ok: true,
+      data: { path: "/d", entries: [], listing_id: null },
+    });
+    await firstLoad;
+
+    listenState.deferNext = true;
+    const retry = listing.load("/d", { onEntries: vi.fn(), onDone: vi.fn() });
+    await settleMicrotasks();
+    expect(listenState.resolvePending).not.toBeNull();
+
+    const cleanup = listing.cleanup();
+    listenState.resolvePending!();
+
+    await expect(retry).resolves.toEqual({
+      ok: false,
+      error: "Directory listing has been destroyed",
+    });
+    await cleanup;
+    expect(apiMocks.startStreamingDirectory).not.toHaveBeenCalled();
+    expect(listenState.unlistenCalls).toBe(1);
+    expect(listenState.handler).toBeNull();
+  });
+
+  it("rejects an inline listing that resolves after cleanup seals its owner", async () => {
+    const listing = createDirectoryListing();
+    await settleMicrotasks();
+    const onEntries = vi.fn();
+    const onDone = vi.fn();
+    const onCancelled = vi.fn();
+    const load = listing.load("/d", { onEntries, onDone, onCancelled });
+    await settleMicrotasks();
+
+    const cleanup = listing.cleanup();
+    emit({ listingId: 61, entries: [entry("during-teardown")], done: true });
+    apiMocks.resolveStart!({
+      ok: true,
+      data: { path: "/d", entries: [entry("late-inline")], listing_id: null },
+    });
+
+    await expect(load).resolves.toEqual({
+      ok: false,
+      error: "Directory listing has been destroyed",
+    });
+    await cleanup;
+    expect(apiMocks.cancelDirectoryListing).not.toHaveBeenCalled();
+    expect(onEntries).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onCancelled).not.toHaveBeenCalled();
+  });
+
+  it("cancels one late stream and ignores events while teardown is pending", async () => {
+    const listing = createDirectoryListing();
+    await settleMicrotasks();
+    const onEntries = vi.fn();
+    const onDone = vi.fn();
+    const onCancelled = vi.fn();
+    const load = listing.load("/d", { onEntries, onDone, onCancelled });
+    await settleMicrotasks();
+
+    apiMocks.deferCancel = true;
+    const cleanup = listing.cleanup();
+    emit({ listingId: 62, entries: [entry("buffered-after-cleanup")], done: false });
+    apiMocks.resolveStart!({
+      ok: true,
+      data: { path: "/d", entries: [entry("late-first")], listing_id: 62 },
+    });
+    await settleMicrotasks();
+
+    expect(apiMocks.cancelDirectoryListing).toHaveBeenCalledOnce();
+    expect(apiMocks.cancelDirectoryListing).toHaveBeenCalledWith(62);
+    emit({ listingId: 62, entries: [entry("during-cancel")], done: true });
+    expect(onEntries).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onCancelled).not.toHaveBeenCalled();
+
+    apiMocks.resolveCancel!();
+    await expect(load).resolves.toEqual({
+      ok: false,
+      error: "Directory listing has been destroyed",
+    });
+    await cleanup;
+    expect(apiMocks.cancelDirectoryListing).toHaveBeenCalledOnce();
+    expect(onEntries).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onCancelled).not.toHaveBeenCalled();
   });
 });

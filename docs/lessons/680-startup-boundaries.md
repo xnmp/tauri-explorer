@@ -673,3 +673,25 @@ Generation faults must revoke cache eligibility before asynchronous recovery.
 Latch valid callbacks during registration as well as errors, so a mutation
 observed before activation still triggers a catch-up refresh. An explicit cache
 epoch invalidation precedes coverage; restoration follows successful activation.
+
+Removing a directory cache entry does not invalidate an in-flight scan's right to
+publish. Give each miss an opaque permit, replace that authority on a newer miss,
+and remove it on invalidation or eviction. A gated real scan must demonstrate
+both invalidation-before-publication and older-completion-after-newer-read;
+testing only a cache hit after an explicit removal misses both races. Weak permit
+identities allow canceled requests to be reclaimed without historical tombstones.
+Count retained Vec/String allocations as well as paths, and prepare that weight
+on the blocking pool before taking the cache lock. This bounds cached snapshots,
+not response ownership, in-flight scans, allocator overhead or process RSS.
+
+With jwalk 0.9, opening the root can fail inside a successful root entry's
+`read_children.error()`; checking iterator `Err` alone still reports unreadable
+folders as empty. Preserve the underlying error kind, and keep root metadata
+inside the blocking scan boundary. Entry-level errors can produce a useful
+partial result, but that result must not enter the ordinary listing cache.
+
+Preserve the requested root when converting metadata errors: `std::io::Error`
+knows the error kind but does not carry the path passed to `fs::metadata`.
+Failed navigation retains the prior breadcrumb, so omitting the requested path
+also removes the user's only context for the error. Assert both typed failure
+and target context, then verify recovery after recreating the directory.

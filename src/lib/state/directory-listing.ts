@@ -5,8 +5,11 @@
  */
 
 import { startStreamingDirectory, cancelDirectoryListing, type DirectoryEntriesEvent } from "$lib/api/files";
+import { extractError, isTauri } from "$lib/api/common";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { FileEntry } from "$lib/domain/file";
+
+const DESTROYED_ERROR = "Directory listing has been destroyed";
 
 export type DirectoryListingResult = {
   ok: true;
@@ -29,6 +32,7 @@ export interface DirectoryListingCallbacks {
 export function createDirectoryListing() {
   let activeListingId: number | null = null;
   let activeCallbacks: DirectoryListingCallbacks | null = null;
+  let destroyed = false;
 
   // Single persistent `directory-entries` listener, registered once and reused
   // across every load. Previously each load did `await listen(...)` before
@@ -61,6 +65,7 @@ export function createDirectoryListing() {
   }
 
   const handleEvent = (payload: DirectoryEntriesEvent) => {
+    if (destroyed) return;
     // A load is mid-flight and hasn't recorded its id yet — buffer and let
     // doLoad flush the ones matching its id once the invoke resolves.
     if (awaitingListingId) {
@@ -70,6 +75,8 @@ export function createDirectoryListing() {
     // Ignore events from superseded/cancelled listings.
     if (payload.listingId !== activeListingId) return;
     activeCallbacks?.onEntries(payload.entries);
+    // An entry callback can synchronously tear down its owner.
+    if (destroyed) return;
     if (payload.done) {
       activeListingId = null;
       const cb = activeCallbacks;
@@ -78,22 +85,26 @@ export function createDirectoryListing() {
     }
   };
 
-  // Register the persistent listener once. Outside Tauri (browser/mock mode)
-  // the event system is unavailable and listen() rejects; the mock returns the
-  // complete listing in the invoke result (listing_id null), so we proceed
-  // without a listener. The rejection is cached as a resolved promise so we
-  // don't retry listen() on every load.
+  // Register the persistent listener once. A rejected native registration
+  // stays attached to the first load that observes it; that load fails before
+  // starting a stream, then clears the attempt so a later load can retry.
   function ensureListener(): Promise<void> {
     if (listenerReady) return listenerReady;
-    listenerReady = listen<DirectoryEntriesEvent>("directory-entries", (event) =>
+    if (destroyed) return Promise.reject(new Error(DESTROYED_ERROR));
+
+    const pending = listen<DirectoryEntriesEvent>("directory-entries", (event) =>
       handleEvent(event.payload),
-    )
-      .then((un) => {
-        unlisten = un;
-      })
-      .catch(() => {
-        unlisten = null;
-      });
+    ).then((un) => {
+      // cleanup() seals the instance synchronously. If registration finishes
+      // after that point, release the late resource instead of publishing it
+      // into an already-destroyed owner.
+      if (destroyed) {
+        un();
+        throw new Error(DESTROYED_ERROR);
+      }
+      unlisten = un;
+    });
+    listenerReady = pending;
     return listenerReady;
   }
 
@@ -113,13 +124,45 @@ export function createDirectoryListing() {
     path: string,
     callbacks: DirectoryListingCallbacks,
   ): Promise<DirectoryListingResult> {
+    if (destroyed) return { ok: false, error: DESTROYED_ERROR };
     await cancelActive();
-    await ensureListener();
+
+    const ready = ensureListener();
+    try {
+      await ready;
+    } catch (error) {
+      if (listenerReady === ready) listenerReady = null;
+      if (destroyed) return { ok: false, error: DESTROYED_ERROR };
+
+      // Browser/mock listings are returned inline and cannot stream. Retain
+      // that existing fallback while refusing to invoke the native streaming
+      // command unless its receiving listener is ready.
+      if (!isTauri()) {
+        listenerReady = Promise.resolve();
+      } else {
+        return { ok: false, error: extractError(error) };
+      }
+    }
+
+    if (destroyed) return { ok: false, error: DESTROYED_ERROR };
 
     awaitingListingId = true;
     earlyBuffer.length = 0;
 
     const result = await startStreamingDirectory(path);
+
+    // cleanup() can seal this owner while the start IPC is pending. Discard
+    // both inline data and buffered events in that case. A backend stream was
+    // already created before its id reached us, so retire it here; doDestroy
+    // cannot see an id that was never published as active.
+    if (destroyed) {
+      awaitingListingId = false;
+      earlyBuffer.length = 0;
+      if (result.ok && result.data.listing_id !== null) {
+        await cancelDirectoryListing(result.data.listing_id);
+      }
+      return { ok: false, error: DESTROYED_ERROR };
+    }
 
     if (!result.ok) {
       awaitingListingId = false;
@@ -182,11 +225,16 @@ export function createDirectoryListing() {
   // init and the first navigateTo happen after this, so the listen() promise
   // has usually resolved by the first load — making even the first navigation
   // skip the round-trip.
-  void ensureListener();
+  void ensureListener().catch(() => {
+    // The first load observes the cached failure and owns retry publication.
+  });
 
   return {
     load: (path: string, callbacks: DirectoryListingCallbacks) =>
       enqueue(() => doLoad(path, callbacks)),
-    cleanup: () => enqueue(() => doDestroy()),
+    cleanup: () => {
+      destroyed = true;
+      return enqueue(() => doDestroy());
+    },
   };
 }

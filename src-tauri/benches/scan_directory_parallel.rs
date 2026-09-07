@@ -30,7 +30,9 @@ fn bench_scan_directory_parallel(c: &mut Criterion) {
     let dir_path = PathBuf::from(fixture.path());
 
     c.bench_function("scan_directory_parallel/10k_files", |b| {
-        b.iter(|| scan_directory_parallel(std::hint::black_box(&dir_path)));
+        b.iter(|| {
+            scan_directory_parallel(std::hint::black_box(&dir_path)).expect("scan fixture directory")
+        });
     });
 }
 

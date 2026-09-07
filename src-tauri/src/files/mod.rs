@@ -2,6 +2,7 @@
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s, tauri-explorer-9djf.6
 
 pub mod dir_listing;
+mod directory_cache;
 mod directory_watches;
 pub mod drives;
 pub mod external_apps;

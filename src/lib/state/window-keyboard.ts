@@ -3,7 +3,7 @@ import { resolveWindowKey } from "$lib/domain/window-keys";
 import type { keybindingsStore as bindingsType } from "./keybindings.svelte";
 
 export interface WindowKeyboardDependencies {
-  bindings: Pick<typeof bindingsType, "trackModifierKey" | "resetTrackedModifiers" | "matchesAnyBinding" | "matchesChordPrefixForCommand" | "isChordActiveForCommand" | "isChordActive" | "cancelChord" | "findMatchingCommand">;
+  bindings: Pick<typeof bindingsType, "trackModifierKey" | "trackedMetaHeld" | "resetTrackedModifiers" | "matchesAnyBinding" | "matchesChordPrefixForCommand" | "isChordActiveForCommand" | "isChordActive" | "cancelChord" | "findMatchingCommand">;
   getCommand(id: string): { when?: () => boolean } | undefined;
   executeCommand(id: string): Promise<unknown>;
   dialogs: { readonly hasModalOpen: boolean; closeAll(): void; openJobsPanel(): void; openSettings(): void };
@@ -23,8 +23,10 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
   const inputContext = (event: Event) => {
     const element = event.target as HTMLElement | null;
     return {
+      nativeButton: element?.tagName === "BUTTON",
       input: element?.tagName === "INPUT" || element?.tagName === "TEXTAREA" || !!element?.isContentEditable,
       terminal: !!element?.closest?.(".terminal-panel"),
+      customButton: !!element?.closest?.('[role="button"]'),
       separator: !!element?.closest?.('[role="separator"]'),
     };
   };
@@ -35,17 +37,21 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const event = raw as KeyboardEvent;
     // WebKitGTK reports Super separately from metaKey; track before routing.
     bindings.trackModifierKey(event, true);
-    const { input, terminal: terminalFocus, separator } = inputContext(event);
-    // A focused splitter owns its handled resize keys. Unhandled commands keep
-    // normal routing; accepted local input terminates an unfinished chord.
-    if (separator && event.defaultPrevented) { bindings.cancelChord(); return; }
+    const { input, nativeButton, terminal: terminalFocus, separator, customButton } = inputContext(event);
+    // Custom controls own keys they explicitly accept. Unhandled commands
+    // keep normal routing; accepted local input retires an unfinished chord.
+    if ((separator || customButton) && event.defaultPrevented) { bindings.cancelChord(); return; }
     const terminalCommand = terminalFocus ? getTerminalCommand(event, bindings, isAvailable) : undefined;
     const explorer = dependencies.getActiveExplorer();
     const action = resolveWindowKey(event, {
-      input, terminal: terminalFocus, terminalCommand,
+      input, nativeButton, trackedMetaHeld: bindings.trackedMetaHeld, terminal: terminalFocus, terminalCommand,
       modal: dialogs.hasModalOpen, filterOpen: explorer?.showFilter ?? false,
       terminalEnabled: terminal.enabled,
     });
+    if (action === "native-activation") {
+      bindings.cancelChord();
+      return;
+    }
     if (action === "pass") {
       if (input || dialogs.hasModalOpen) bindings.cancelChord();
       return;

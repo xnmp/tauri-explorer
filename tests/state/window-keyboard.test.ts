@@ -210,3 +210,64 @@ it("handled splitter input retires chords while unhandled global shortcuts remai
   f.press("p", { ctrlKey: true });
   expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openQuickOpen");
 });
+
+describe("native button keyboard ownership", () => {
+  it.each([
+    ["Enter", "Enter"],
+    [" ", "Space"],
+  ])("leaves unmodified %s activation with the button", (key, shortcut) => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "BUTTON" });
+    f.bind("plugin.buttonConflict", shortcut);
+
+    expect(f.press(key).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("retires a pending chord when the button accepts native activation", () => {
+    const f = fixture();
+    f.bind("plugin.chord", "Alt+M T");
+    f.press("m", { altKey: true });
+    Object.assign(f.target, { tagName: "BUTTON" });
+
+    expect(f.press("Enter").defaultPrevented).toBe(false);
+    Object.assign(f.target, { tagName: "DIV" });
+    expect(f.press("t").defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("retains modified global shortcuts from a focused button", () => {
+    const f = fixture();
+    Object.assign(f.target, { tagName: "BUTTON" });
+    f.bind("general.openQuickOpen", "Ctrl+P");
+
+    expect(f.press("p", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openQuickOpen");
+  });
+});
+
+it.each([false, true])("honors accepted custom-button activation (pending chord: %s) without blocking unhandled shortcuts", (pendingChord) => {
+  const f = fixture();
+  Object.assign(f.target, { closest: (selector: string) => selector === '[role="button"]' ? f.target : null });
+  f.bind("file.openSelected", "Enter");
+  f.bind("general.openQuickOpen", "Ctrl+P");
+  f.bind("plugin.chord", "Alt+M T");
+  if (pendingChord) f.press("m", { altKey: true });
+  const event = new Event("keydown", { cancelable: true });
+  Object.assign(event, { key: "Enter", code: "Enter", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false });
+  event.preventDefault(); // The row accepted Enter as its own activation.
+  f.target.dispatchEvent(event);
+  f.press("t");
+  expect(f.executeCommand).not.toHaveBeenCalled();
+  f.press("p", { ctrlKey: true });
+  expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openQuickOpen");
+});
+
+it("preserves Super-modified button shortcuts when WebKitGTK omits metaKey", () => {
+  const f = fixture();
+  Object.assign(f.target, { tagName: "BUTTON" });
+  f.bind("plugin.modifiedActivation", "Cmd+Enter");
+  f.press("Super");
+  expect(f.press("Enter").defaultPrevented).toBe(true);
+  expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("plugin.modifiedActivation");
+});

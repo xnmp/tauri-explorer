@@ -523,7 +523,21 @@
   // scrolling needs no reflow of siblings.
   const OVERSCAN = 12;
   let scrollTop = $state(0);
+  let scrollLeft = $state(0);
   let viewportHeight = $state(0);
+  let viewportWidth = $state(0);
+  // One message cell contains every ref and the subject. Preserve a usable
+  // message region and configured metadata widths; narrow panes scroll the
+  // table horizontally instead of allowing badges to displace its columns.
+  const minimumTableWidth = $derived(
+    effectiveGraphWidth + 20 + 14 + 160
+    + (shownColumns.author ? authorCol.value + 8 : 0)
+    + (shownColumns.date ? dateCol.value + 8 : 0)
+    + (shownColumns.commit ? 60 + 8 + 8 : 0)
+    + (shownColumns.parent ? 120 + 8 + 8 : 0),
+  );
+  const tableWidth = $derived(Math.max(viewportWidth, minimumTableWidth));
+  const headerScrollLeft = $derived(Math.min(scrollLeft, Math.max(0, tableWidth - viewportWidth)));
 
   /** Row index at a given scroll offset, accounting for the inline expansion. */
   function rowAtY(y: number): number {
@@ -542,6 +556,12 @@
   /** The scroll viewport, so a jumped-to row can be brought into view — it may
    *  be outside the render window entirely (#530). */
   let scrollerEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    // Filtering can replace the viewport. Its new native position owns both
+    // the virtual row window and the header offset, never the retired element.
+    scrollTop = scrollerEl?.scrollTop ?? 0;
+    scrollLeft = scrollerEl?.scrollLeft ?? 0;
+  });
 
   /** Scroll the minimum distance that puts `index` fully in the viewport. */
   function scrollRowIntoView(index: number): void {
@@ -868,6 +888,8 @@
   function handleScroll(event: Event): void {
     const el = event.target as HTMLElement;
     scrollTop = el.scrollTop;
+    scrollLeft = el.scrollLeft;
+    if (menu?.trigger) closeMenu();
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 20) {
       // loadMore() resumes from the cursor (unfiltered) or the real-commit
       // count (filtered); both are immune to the woven-stash off-by-N (#432).
@@ -922,10 +944,14 @@
 
   // ----- Commit context menu (VSCode "Git Graph"-parity actions) -----
 
-  interface Menu {
+  interface MenuAnchor {
     x: number;
     y: number;
     commit: CommitInfo;
+    trigger?: HTMLElement;
+  }
+  interface ActionMenu extends MenuAnchor {
+    kind: "actions";
     /** Branch to attach on Checkout, or null → detached checkout of the OID. */
     checkoutBranch: string | null;
     /** Set when the menu was opened from a specific branch badge (#405):
@@ -937,6 +963,7 @@
     /** Set when opened directly from a tag chip. */
     scopedTag: string | null;
   }
+  type Menu = ActionMenu | (MenuAnchor & { kind: "references" });
   let menu = $state<Menu | null>(null);
   // Inline name prompt for Create Branch / Create Tag.
   let prompt = $state<{ kind: "branch" | "tag"; oid: string; value: string } | null>(null);
@@ -986,7 +1013,10 @@
     // clientToFixed: the menu is position:fixed, so cursor coordinates must be
     // converted into fixed-CSS space or the menu drifts under CSS zoom (same
     // transform ContextMenu uses — see domain/zoom.ts).
+    const trigger = menuEl?.contains(event.currentTarget as Node) ? menu?.trigger : undefined;
     menu = {
+      kind: "actions",
+      trigger,
       x: clientToFixed(event.clientX),
       y: clientToFixed(event.clientY),
       commit,
@@ -996,6 +1026,25 @@
       scopedTag,
     };
   }
+
+  function openReferences(event: MouseEvent, commit: CommitInfo): void {
+    event.stopPropagation();
+    const trigger = event.currentTarget as HTMLElement;
+    const rect = trigger.getBoundingClientRect();
+    event.preventDefault();
+    prompt = null;
+    menu = { kind: "references", commit, trigger,
+      x: clientToFixed(rect.left), y: clientToFixed(rect.bottom) };
+  }
+
+  $effect(() => {
+    if (!menu?.trigger) return;
+    if (!visibleRows.some(({ commit }) => commit.oid === menu!.commit.oid)) {
+      closeMenu();
+      return;
+    }
+    menuEl?.querySelector<HTMLButtonElement>("button")?.focus();
+  });
 
   /** Tracking checkout of a remote-only branch (#432): create/switch to a
    *  local branch tracking `<remote>/<branch>`. */
@@ -1079,7 +1128,7 @@
   // Pull offer after checking out a branch whose upstream is ahead (#377).
   let pullOffer = $state<{ branch: string; behind: number } | null>(null);
 
-  function checkout(m: Menu): void {
+  function checkout(m: ActionMenu): void {
     const branch = m.checkoutBranch;
     closeMenu();
     void (async () => {
@@ -1119,7 +1168,7 @@
   function revert(oid: string): void {
     void runAction("Revert", () => gitRevert(repoPath, oid));
   }
-  function merge(m: Menu): void {
+  function merge(m: ActionMenu): void {
     void runAction("Merge", () => gitMerge(repoPath, m.checkoutBranch ?? m.commit.oid));
   }
   function rebase(oid: string): void {
@@ -1331,6 +1380,12 @@
   // window binding was invisible to the keybindings registry and the terminal
   // key-ownership gate, and fired for every mounted graph tab, active or not.
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && menu?.trigger) {
+      const trigger = menu.trigger;
+      closeMenu();
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      return;
+    }
     if (event.key === "Escape" && branchPopoverOpen) {
       branchPopoverOpen = false;
       return;
@@ -1389,8 +1444,16 @@
         {/if}
       </div>
     {/if}
+    <!-- Match the row viewport after native scrollbar space, while keeping
+         overflow visible for the branch-filter popover below this header. -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- right-click opens the column-visibility menu; not reachable by keyboard by design (parity with the row context menu) -->
-    <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
+    <div
+      class="graph-header" role="row" tabindex="-1"
+      style:width="{tableWidth}px"
+      style:margin-left="{-headerScrollLeft}px"
+      style:padding-left="{effectiveGraphWidth + 20}px"
+      oncontextmenu={openColumnMenu}
+    >
       <button
         class="branch-filter-btn"
         class:filtered={branchFilter !== null || localOnly || hideRemoteOnly || !!filePathFilter.trim()}
@@ -1647,8 +1710,11 @@
     {:else if commits.length === 0}
       <div class="graph-status">No commits.</div>
     {:else}
-    <div class="graph-scroller" onscroll={handleScroll} bind:this={scrollerEl} bind:clientHeight={viewportHeight}>
-      <div class="graph-body" style:height="{graphHeight}px">
+    <div
+      class="graph-scroller" onscroll={handleScroll} bind:this={scrollerEl}
+      bind:clientHeight={viewportHeight} bind:clientWidth={viewportWidth}
+    >
+      <div class="graph-body" style:width="{tableWidth}px" style:height="{graphHeight}px">
         <!-- Clip window for the lane SVG: when the user narrows the graph
              column below the lane-derived width, overflow is cut (#341). -->
         <div bind:this={graphClip} id={`${resizeRegionId}-graph`} class="graph-clip" style:width="{effectiveGraphWidth}px">
@@ -1765,60 +1831,75 @@
             onclick={() => void selectCommit(commit)}
             onpointerenter={() => { hoveredTraceOid = commit.oid; }}
             onpointerleave={() => { if (hoveredTraceOid === commit.oid) hoveredTraceOid = null; }}
-            onkeydown={(e) => { if (e.key === "Enter") void selectCommit(commit); }}
+            onkeydown={(e) => {
+              if (e.key === "Enter" && e.target === e.currentTarget) {
+                e.preventDefault();
+                void selectCommit(commit);
+              }
+            }}
             oncontextmenu={(e) => { if (!synthetic) openMenu(e, commit); else e.preventDefault(); }}
           >
             {#if synthetic}
               <span class="summary uncommitted-label">{commit.summary}</span>
             {:else}
-              {#if commit.stash}
-                <span class="ref ref-stash">{commit.stash}</span>
-              {/if}
               <!-- PR numbers already badged by a local-branch chip this row, so the
                    remote-only loop below can skip them (#448) — a branch with an
                    in-sync remote never needs the same PR badged twice. -->
               {@const rowPrNumbers = new Set(
                 chips.heads.map((h) => prForHead(h.name)?.number).filter((n) => n !== undefined),
               )}
-              {#each chips.heads as head (head.name)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this badge (#405); the row itself stays the keyboard target -->
-                <span
-                  class="ref ref-branch"
-                  class:ref-active={head.active}
-                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, head.name); }}
-                >
-                  {head.name}
-                  {#each head.remotes as remote (remote)}
-                    <span class="ref-remote-sub" title="{remote}/{head.name} is at this commit">{remote}</span>
+              <span class="message-cell">
+                <span class="message-content">
+                  {#if commit.stash}
+                    <span class="ref ref-stash">{commit.stash}</span>
+                  {/if}
+                  {#each chips.heads as head (head.name)}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this badge (#405); the row itself stays the keyboard target -->
+                    <span
+                      class="ref ref-branch"
+                      class:ref-active={head.active}
+                      oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, head.name); }}
+                    >
+                      {head.name}
+                      {#each head.remotes as remote (remote)}
+                        <span class="ref-remote-sub" title="{remote}/{head.name} is at this commit">{remote}</span>
+                      {/each}
+                    </span>
+                    {#if prForHead(head.name)}
+                      {@render prBadge(commit, prForHead(head.name)!)}
+                    {/if}
                   {/each}
+                  {#each chips.remotes as remote (remote.name)}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this remote branch for a tracking checkout (#432); the row itself stays the keyboard target -->
+                    <span
+                      class="ref ref-remote"
+                      title="Remote-only branch — no local branch tracks {remote.name}. Right-click to checkout."
+                      oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, null, remote); }}
+                    >
+                      <svg class="remote-cloud" width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.8-.9 2.9 2.9 0 0 1-.5 5.9z" />
+                      </svg>{remote.name}
+                    </span>
+                    {#if prForRemote(remote) && !rowPrNumbers.has(prForRemote(remote)!.number)}
+                      {@render prBadge(commit, prForRemote(remote)!)}
+                    {/if}
+                  {/each}
+                  {#each chips.tags as tag (tag)}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes tag actions to this ref -->
+                    <span
+                      class="ref ref-tag"
+                      oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, null, null, tag); }}
+                    >{tag}</span>
+                  {/each}
+                  <span class="summary" title={commit.summary}>{commit.summary}</span>
                 </span>
-                {#if prForHead(head.name)}
-                  {@render prBadge(commit, prForHead(head.name)!)}
+                {#if commit.stash || chips.heads.length || chips.remotes.length || chips.tags.length}
+                  <button type="button" class="references-button"
+                    title="Show all references" aria-label="Show all references for {commit.short_oid}"
+                    aria-haspopup="menu" aria-expanded={menu?.kind === "references" && menu.commit.oid === commit.oid}
+                    onclick={(event) => openReferences(event, commit)}>···</button>
                 {/if}
-              {/each}
-              {#each chips.remotes as remote (remote.name)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this remote branch for a tracking checkout (#432); the row itself stays the keyboard target -->
-                <span
-                  class="ref ref-remote"
-                  title="Remote-only branch — no local branch tracks {remote.name}. Right-click to checkout."
-                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, null, remote); }}
-                >
-                  <svg class="remote-cloud" width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.8-.9 2.9 2.9 0 0 1-.5 5.9z" />
-                  </svg>{remote.name}
-                </span>
-                {#if prForRemote(remote) && !rowPrNumbers.has(prForRemote(remote)!.number)}
-                  {@render prBadge(commit, prForRemote(remote)!)}
-                {/if}
-              {/each}
-              {#each chips.tags as tag (tag)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes tag actions to this ref -->
-                <span
-                  class="ref ref-tag"
-                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, null, null, tag); }}
-                >{tag}</span>
-              {/each}
-              <span class="summary" title={commit.summary}>{commit.summary}</span>
+              </span>
               {#if shownColumns.author}<span class="author" style:width="{authorCol.value}px">{commit.author_name}</span>{/if}
               {#if shownColumns.date}<span class="date" style:width="{dateCol.value}px">{formatDate(commit.author_time)}</span>{/if}
               {#if shownColumns.commit}<span class="oid">{commit.short_oid}</span>{/if}
@@ -2180,97 +2261,133 @@
     <!-- Badge-scoped menu (#405): opened from a branch chip, only that
          branch's delete entry shows; opened from the row, all of them do. -->
     {@const deletableHeads = menuChips.heads.filter(
-      (h) => !h.active && (m.scopedBranch === null || h.name === m.scopedBranch),
+      (h) => !h.active && (m.kind === "actions" && (m.scopedBranch === null || h.name === m.scopedBranch)),
     )}
     <div
-      class="commit-menu"
+      class="commit-menu" class:references-menu={m.kind === "references"}
       data-testid="git-graph-menu"
       role="menu"
       tabindex="-1"
       bind:this={menuEl}
       style="left: {m.x}px; top: {m.y}px;"
     >
-      <button class="menu-item" role="menuitem" onclick={() => startPrompt("branch", m.commit.oid)}>
-        Create Branch…
-      </button>
-      <button class="menu-item" role="menuitem" onclick={() => startPrompt("tag", m.commit.oid)}>
-        Create Tag…
-      </button>
-      <div class="menu-sep"></div>
-      {#if m.remote}
-        <!-- Tracking checkout of a remote-only branch (#432): create/switch to
-             a local branch tracking <remote>/<branch>. -->
+      {#if m.kind === "references"}
+        {@const rowPrNumbers = new Set(menuChips.heads.map((head) => prForHead(head.name)?.number))}
+        {#if m.commit.stash}
+          <button class="menu-item" role="menuitem" onclick={(event) => openMenu(event, m.commit)}>
+            Stash: {m.commit.stash}
+          </button>
+        {/if}
+        {#each menuChips.heads as head (head.name)}
+          <button class="menu-item" role="menuitem" onclick={(event) => openMenu(event, m.commit, head.name)}>
+            Branch: {head.name}{head.remotes.length ? ` (${head.remotes.map(remote => `${remote}/${head.name}`).join(", ")})` : ""}
+          </button>
+          {#if prForHead(head.name)}
+            {@const pr = prForHead(head.name)!}
+            <button class="menu-item" role="menuitem" onclick={(event) => { togglePrDetail(event, m.commit, pr); closeMenu(); }}>
+              PR #{pr.number}: {pr.title}
+            </button>
+          {/if}
+        {/each}
+        {#each menuChips.remotes as remote (remote.name)}
+          <button class="menu-item" role="menuitem" onclick={(event) => openMenu(event, m.commit, null, remote)}>
+            Remote: {remote.name}
+          </button>
+          {#if prForRemote(remote) && !rowPrNumbers.has(prForRemote(remote)!.number)}
+            {@const pr = prForRemote(remote)!}
+            <button class="menu-item" role="menuitem" onclick={(event) => { togglePrDetail(event, m.commit, pr); closeMenu(); }}>
+              PR #{pr.number}: {pr.title}
+            </button>
+          {/if}
+        {/each}
+        {#each menuChips.tags as tag (tag)}
+          <button class="menu-item" role="menuitem" onclick={(event) => openMenu(event, m.commit, null, null, tag)}>
+            Tag: {tag}
+          </button>
+        {/each}
+      {:else}
+        <button class="menu-item" role="menuitem" onclick={() => startPrompt("branch", m.commit.oid)}>
+          Create Branch…
+        </button>
+        <button class="menu-item" role="menuitem" onclick={() => startPrompt("tag", m.commit.oid)}>
+          Create Tag…
+        </button>
+        <div class="menu-sep"></div>
+        {#if m.remote}
+          <!-- Tracking checkout of a remote-only branch (#432): create/switch to
+               a local branch tracking <remote>/<branch>. -->
+          <button
+            class="menu-item"
+            role="menuitem"
+            data-testid="git-graph-checkout-tracking"
+            onclick={() => checkoutTracking(m.remote!)}
+          >
+            Checkout {m.remote.branch} (tracking {m.remote.name})
+          </button>
+        {/if}
+        <button class="menu-item" role="menuitem" onclick={() => checkout(m)}>
+          Checkout{m.checkoutBranch ? ` ${m.checkoutBranch}` : " (detached)"}
+        </button>
+        <button class="menu-item" role="menuitem" onclick={() => cherryPick(m.commit.oid)}>
+          Cherry-pick
+        </button>
+        <button class="menu-item" role="menuitem" onclick={() => revert(m.commit.oid)}>
+          Revert
+        </button>
+        <div class="menu-sep"></div>
+        <button class="menu-item" role="menuitem" onclick={() => merge(m)}>
+          Merge into current branch
+        </button>
+        <button class="menu-item" role="menuitem" onclick={() => rebase(m.commit.oid)}>
+          Rebase current branch on this Commit
+        </button>
+        <!-- Suboptions open a modal, not a cascading submenu (#406). -->
         <button
           class="menu-item"
           role="menuitem"
-          data-testid="git-graph-checkout-tracking"
-          onclick={() => checkoutTracking(m.remote!)}
+          onclick={() => openActionModal({ kind: "reset", oid: m.commit.oid, summary: m.commit.summary })}
         >
-          Checkout {m.remote.branch} (tracking {m.remote.name})
+          Reset current branch to this Commit…
         </button>
-      {/if}
-      <button class="menu-item" role="menuitem" onclick={() => checkout(m)}>
-        Checkout{m.checkoutBranch ? ` ${m.checkoutBranch}` : " (detached)"}
-      </button>
-      <button class="menu-item" role="menuitem" onclick={() => cherryPick(m.commit.oid)}>
-        Cherry-pick
-      </button>
-      <button class="menu-item" role="menuitem" onclick={() => revert(m.commit.oid)}>
-        Revert
-      </button>
-      <div class="menu-sep"></div>
-      <button class="menu-item" role="menuitem" onclick={() => merge(m)}>
-        Merge into current branch
-      </button>
-      <button class="menu-item" role="menuitem" onclick={() => rebase(m.commit.oid)}>
-        Rebase current branch on this Commit
-      </button>
-      <!-- Suboptions open a modal, not a cascading submenu (#406). -->
-      <button
-        class="menu-item"
-        role="menuitem"
-        onclick={() => openActionModal({ kind: "reset", oid: m.commit.oid, summary: m.commit.summary })}
-      >
-        Reset current branch to this Commit…
-      </button>
-      {#if m.scopedBranch}
-        <button class="menu-item" role="menuitem" onclick={() => startRenameBranch(m.scopedBranch!)}>
-          Rename Branch '{m.scopedBranch}'…
-        </button>
-      {/if}
-      {#if deletableHeads.length > 0 || menuChips.remotes.length > 0 || m.scopedTag}
-        <div class="menu-sep"></div>
-        {#each deletableHeads as head (head.name)}
-          <button
-            class="menu-item"
-            role="menuitem"
-            onclick={() => openActionModal({ kind: "deleteBranch", name: head.name, remotes: head.remotes })}
-          >
-            Delete Branch '{head.name}'…
-          </button>
-        {/each}
-        {#each menuChips.remotes as remoteChip (remoteChip.name)}
-          <button class="menu-item" role="menuitem" onclick={() => deleteRemoteChip(remoteChip)}>
-            Delete Remote Branch '{remoteChip.name}'
-          </button>
-        {/each}
-        {#if m.scopedTag}
-          <button
-            class="menu-item"
-            role="menuitem"
-            onclick={() => openActionModal({ kind: "deleteTag", name: m.scopedTag! })}
-          >
-            Delete Tag '{m.scopedTag}'…
+        {#if m.scopedBranch}
+          <button class="menu-item" role="menuitem" onclick={() => startRenameBranch(m.scopedBranch!)}>
+            Rename Branch '{m.scopedBranch}'…
           </button>
         {/if}
+        {#if deletableHeads.length > 0 || menuChips.remotes.length > 0 || m.scopedTag}
+          <div class="menu-sep"></div>
+          {#each deletableHeads as head (head.name)}
+            <button
+              class="menu-item"
+              role="menuitem"
+              onclick={() => openActionModal({ kind: "deleteBranch", name: head.name, remotes: head.remotes })}
+            >
+              Delete Branch '{head.name}'…
+            </button>
+          {/each}
+          {#each menuChips.remotes as remoteChip (remoteChip.name)}
+            <button class="menu-item" role="menuitem" onclick={() => deleteRemoteChip(remoteChip)}>
+              Delete Remote Branch '{remoteChip.name}'
+            </button>
+          {/each}
+          {#if m.scopedTag}
+            <button
+              class="menu-item"
+              role="menuitem"
+              onclick={() => openActionModal({ kind: "deleteTag", name: m.scopedTag! })}
+            >
+              Delete Tag '{m.scopedTag}'…
+            </button>
+          {/if}
+        {/if}
+        <div class="menu-sep"></div>
+        <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.oid, "commit hash")}>
+          Copy Commit Hash
+        </button>
+        <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.summary, "commit subject")}>
+          Copy Commit Subject
+        </button>
       {/if}
-      <div class="menu-sep"></div>
-      <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.oid, "commit hash")}>
-        Copy Commit Hash
-      </button>
-      <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.summary, "commit subject")}>
-        Copy Commit Subject
-      </button>
     </div>
   {/if}
 
@@ -2437,6 +2554,9 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+    /* The measured header must follow the pane, not retain its previous
+       width as this flex item's intrinsic minimum during a pane resize. */
+    min-width: 0;
     min-height: 0;
     /* No own background: the host .explorer-pane already paints the pane surface
        (content-opacity modulated, transparent under vibrancy). */
@@ -2996,7 +3116,8 @@
     text-align: right;
   }
 
-  .gh-oid {
+  .gh-oid,
+  .oid {
     flex-shrink: 0;
     width: 60px;
     margin-left: 8px;
@@ -3295,12 +3416,7 @@
   .oid {
     font-family: var(--font-mono, monospace);
     color: var(--text-tertiary);
-    flex-shrink: 0;
-    margin-left: 8px;
     font-variant-numeric: tabular-nums;
-    /* Fixed so the header's "Commit" label stays aligned (#341). */
-    width: 60px;
-    text-align: right;
     overflow: hidden;
   }
 
@@ -3600,6 +3716,44 @@
     white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.4;
+  }
+
+  .message-cell,
+  .message-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .references-button {
+    flex-shrink: 0;
+    padding: 0 3px;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    background: none;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .references-button:hover,
+  .references-button[aria-expanded="true"] {
+    color: var(--text-primary);
+    background: var(--subtle-fill-secondary);
+  }
+
+  .references-menu {
+    max-width: min(420px, calc(100vw - 16px));
+    max-height: min(400px, calc(100vh - 16px));
+    overflow: auto;
+  }
+
+  .references-menu .menu-item {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .summary {

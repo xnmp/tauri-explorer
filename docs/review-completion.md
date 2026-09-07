@@ -5,15 +5,19 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): a reproduced WebKit graph layout feedback loop
-is fixed by reserving the existing scrollbar's width. No new observer, timer or
-JavaScript state is introduced. Reverting the CSS reproduces the error; restoring
-it passes four commit/PR geometry cases across Chromium/WebKit. The integrated
-graph/filter/panel/preview run passes 154 cases, skips two and emits no ResizeObserver
-warnings. Ten Linux native rejection/transfer/warm-window cases also pass in the
-preceding checkpoint. The comprehensive review is **not complete**: same-process
-crash recovery, broader product/native integration and Windows/Mac acceptance,
-including actual Mac startup measurements, remain open.
+Current checkpoint (2026-09-07): graph rows and their header now share one table
+geometry across pane resize, filtering, column changes and horizontal scrolling.
+The compact message cell retains access to every branch, remote, tag, stash and
+PR through the existing menu owner. Native buttons retain unmodified Enter/Space,
+and accepted custom role-button keys retire pending Explorer chords. Focused
+acceptance passes 78 keyboard units, 22 Chromium/WebKit graph cases and four
+post-Super browser keyboard cases. Expanded
+integration passes 172 cases with two skips across both engines and emits no
+ResizeObserver warnings. This follows completed scrollbar-layout commit `8654e3ab` and
+native rejected-transfer-target commit `b2c720a4`. The comprehensive review is
+**not complete**: same-process crash recovery, broader product/native integration
+and soak, the wider product matrix, Windows/Mac acceptance and actual Mac
+half-bounce measurements remain open.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -32,7 +36,7 @@ limitations and must not be read as current status.
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during handoff, unready targets and native asynchronous creation failure remain open |
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
-| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Graph detail expansion now has a reproduced/fixed WebKit scrollbar feedback loop and Chromium/WebKit geometry acceptance. Wider theme/native interaction matrix pending |
+| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Graph detail expansion has a reproduced/fixed WebKit scrollbar feedback loop. The following checkpoint aligns the full graph header and metadata table, preserves complete reference access and restores native/custom button keyboard ownership in focused Chromium/WebKit, unit and integrated browser acceptance. The wider theme/native interaction matrix remains pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
 | Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. The focused resize migration is implemented; the wider themes/accessibility/platform matrix remains outstanding |
 | Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
@@ -1738,3 +1742,72 @@ architecture lint and source-map coverage 378/378.
 Startup payload validation remains within budget: 44 chunks / 651,983 raw /
 212,259 gzip bytes (`/tmp/graph-scrollbar-bundle-final.log`); the main chunk is
 302,314 raw / 89,815 gzip bytes. These are build payload sizes, not launch latency.
+
+## Graph header, reference access and button keyboard checkpoint — 2026-09-07
+
+`GitGraphView.svelte` now derives one full table width from the graph gutter,
+message minimum and every visible metadata column. Rows and header use that same
+geometry, including the complete Parent column; the parent flex container can
+shrink with its pane, and the header projects the scroller's horizontal offset.
+Filtering transfers vertical and horizontal ownership to the replacement
+scroller, while hiding columns clamps the retained scroll position. This removes
+the previous intrinsic-width/ResizeObserver feedback path without adding a private
+observer or timer. Before the fix, three WebKit basic-alignment cases missed by
+8–12 physical pixels (`/tmp/graph-header-before.log`); the separate Chromium 150%
+failure was fixture backdrop-click interference, not a geometry reproduction.
+All six Parent-column cases then failed their initial alignment check before any
+horizontal scroll, by 48–90 physical pixels, corresponding to the same 60 CSS-pixel
+width difference at 80%, 100% and 150% zoom
+(`/tmp/graph-header-scroll-acceptance.log`).
+
+The message cell still clips visual overflow to protect the metadata columns, but
+its compact “all references” button exposes the complete branch, remote, tag,
+stash and PR set through the existing single menu owner. Reference entries lead
+into the existing scoped action menu or PR detail. The owner retains its trigger,
+focuses the first item, restores trigger focus on Escape, and retires on row
+virtualization or horizontal scroll. Long names wrap within a bounded scrolling
+menu rather than changing row geometry.
+
+The shared keyboard policy now gives an actual `BUTTON` unmodified Enter/Space
+activation before Explorer command routing and cancels a pending chord. The
+exception requires both the event modifiers and the keybinding store's existing
+tracked-Super state to be clear, because WebKitGTK can report a held Super key
+without setting `metaKey` on Enter. Modified shortcuts therefore continue through
+the ordinary command matcher. The window listener also recognizes an accepted key
+on `[role="button"]` through `defaultPrevented`, using the same retirement contract
+already used for separators. The failing-before native
+button run records two failures (`/tmp/window-keyboard-button-before.log`); the
+custom-role regression records one (`/tmp/window-keyboard-custom-before-2.log`).
+The WebKitGTK Super regression records one failure with 26 passing cases before
+the tracked-modifier guard (`/tmp/window-keyboard-super-before.log`). Independent
+read-only review found the final policy, listener and regression consistent with
+the modified-shortcut preservation claim.
+
+Focused evidence is **78/78 keyboard units** across three files
+(`/tmp/graph-keyboard-final-units-2.log`) and **22/22 targeted browser cases** across
+Chromium and WebKit (`/tmp/graph-header-targeted-frozen.log`). The browser cases
+cover 80%, 100% and 150% zoom; resize and filter scroller replacement; column
+hide/show and horizontal clamping; complete reference disclosure and scoped
+actions; trigger focus/retirement; and commit-row Enter selection. Independent
+read-only reviewers accepted the source and requested an explicit row-focus and
+unchanged status-path assertion; both are present in the final test. Typecheck has
+zero errors/warnings (`/tmp/graph-header-check-final-2.log`), architecture lint is
+clean (`/tmp/graph-header-arch-final-2.log`), and maps cover 378/378 source files
+(`/tmp/graph-header-maps-final-2.log`). The inspected `graph-header-layout.png` and
+`graph-references-access.png` show aligned metadata and access to a clipped PR.
+
+The integrated Chromium/WebKit matrix passes **172 cases with two skips** in 5.1
+minutes (`/tmp/graph-header-integrated-final.log`) without ResizeObserver warnings.
+It covers the graph, filter, panel and preview resize surfaces represented by that
+matrix; it is not the full product matrix. The post-Super browser keyboard rerun
+passes **4/4 cases** in 9.6 seconds (`/tmp/graph-keyboard-browser-final.log`).
+This does not provide fresh native Windows/macOS runtime acceptance. Native
+platform soak, the full accessibility /
+theme / DPI / preview product matrix, final integration and actual Mac half-bounce
+measurements remain outstanding; the architectural review is **not complete**.
+
+The completed production bundle remains within budget: 44 chunks / 652,348 raw /
+212,367 gzip bytes, with the main chunk at 302,647 raw / 89,908 gzip
+(`/tmp/graph-header-bundle-final.log`). Relative to checkpoint `8654e3ab`, this is
++365 raw and +108 gzip bytes. It is a payload measurement, not native launch
+latency or evidence for the Mac half-bounce target.

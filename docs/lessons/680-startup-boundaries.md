@@ -542,3 +542,45 @@ establish that the wider intermittent PR/filter failures have been explained.
 
 References: [CSS overflow scrolling](https://www.w3.org/TR/css-overflow/#valdef-overflow-scroll)
 and [ResizeObserver processing](https://www.w3.org/TR/resize-observer/#html-event-loop).
+
+
+### Share graph column geometry and retain control ownership
+
+A graph header outside its scroller must account for the native scrollbar's
+width. Binding the header to that viewport alone introduced another WebKit loop:
+its last measured width became the parent flex item's intrinsic minimum, and a
+pane shrink converged one scrollbar-width per observer delivery. `min-width: 0`
+on the graph removes that intrinsic constraint. Keep the header overflow visible
+for the existing filter popup and project horizontal scrolling with a margin;
+a transform would change the fixed backdrop's containing block.
+
+Refs, stash labels and subjects must occupy one message cell. Independent flex
+siblings displace metadata after the subject shrinks to zero. Share the derived
+table minimum between header and body, including every visible metadata column,
+and retain a usable message region through native horizontal table overflow.
+Share OID geometry too: the former Parent header was 120px, while a later `.oid`
+rule silently overrode its row cells to 60px. Compare all visible rows and both
+edges of all metadata cells, including Parent, at several zoom levels.
+
+Clipping that message cell makes a later PR unreachable even if the whole table
+scrolls. An all-reference disclosure reuses the existing menu owner, coordinates,
+backdrop and scoped actions. It lists stashes, attached remote labels, remote-only
+refs, tags, branches and PRs without per-row measurement or scrollbars. Retain the
+original trigger through reference-to-action transitions; Escape restores it,
+while scrolling or virtual-row retirement closes the anchored menu.
+
+Do not classify native buttons as generic text inputs to fix Enter interception:
+that would suppress modified shortcuts too. Native unmodified Enter/Space must
+reach the browser's activation default and retire a pending Explorer chord.
+For custom controls, accept only their directly handled keys with preventDefault;
+the window owner then honors that acceptance just as it does splitter input.
+Without both boundaries, graph buttons lose their native click and commit-row
+Enter can also activate the explorer's retained file selection. Production-owner
+regressions reproduced both conflicts before the fixes.
+
+Freeze generated SvelteKit output as well as source during browser acceptance.
+Vitest startup also regenerates that output: an independent unit rerun reloaded
+an active WebKit page and detached its graph. That run is not product evidence.
+
+References: [Flexbox automatic minimum size](https://www.w3.org/TR/css-flexbox-1/#min-size-auto)
+and [WAI button keyboard interaction](https://www.w3.org/WAI/ARIA/apg/patterns/button/).

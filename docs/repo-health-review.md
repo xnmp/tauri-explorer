@@ -35,7 +35,10 @@ settings now share consumer constraints across validation and setters. Window
 keyboard dispatch now composes pure routing with an owned listener lifetime,
 terminal exceptions preserve command identity, and terminal opening owns a
 cancellable focus request across lazy loading. Graph mutation refresh invalidates
-old cache entries before publishing fresh history. Each remains
+old cache entries before publishing fresh history. The current local checkpoint
+also gives graph headers and rows shared full-table geometry, preserves complete
+reference access through the existing menu owner, and restores native/custom
+button activation ownership. Each remains
 subject to the integration and platform evidence recorded in that ledger.
 
 ## Product and architectural direction
@@ -585,3 +588,43 @@ the error; four final commit/PR geometry cases pass, followed by 154 integrated
 Chromium/WebKit graph/filter/panel/preview cases (two skipped) without observer
 warnings. Independent review accepts the fix. Earlier intermittent interaction
 failures, platform/startup measurements and comprehensive acceptance remain open.
+
+
+Graph header/reference/keyboard checkpoint (2026-09-07): the graph header and
+virtual rows now consume one full table width, including the complete Parent
+column, and project horizontal scrolling through the header. Parent flex shrink,
+replacement-scroller ownership and column-removal clamping prevent stale width and
+ResizeObserver feedback without a private observer or timer. Before the fix, three
+WebKit basic-alignment cases missed by 8–12 physical pixels; a separate Chromium
+failure was fixture interference. All six Parent cases failed their initial,
+pre-scroll alignment check by 48–90 physical pixels, representing the same 60
+CSS-pixel width difference across the three zoom levels. Clipped inline badges
+remain fully available through a compact disclosure that reuses the existing menu/action owner, including
+PRs, long branches, remotes, tags and stashes; focus returns to its trigger and
+scroll or row retirement closes it.
+
+The pure window-key policy also reserves unmodified Enter/Space for native buttons,
+while the listener treats accepted custom role-button activation as owned input and
+retires pending chords. That native exception also checks the keybinding store's
+tracked-Super state, preserving modified shortcuts when WebKitGTK omits `metaKey`
+from the Enter event. A dedicated production-owner regression failed before this
+guard, and independent read-only review found no defect in the final three-file
+change. Focused verification passes 78 keyboard units and 22
+Chromium/WebKit graph cases across three zoom levels, resizing, filtering,
+horizontal overflow, column changes, reference actions and commit-row Enter. The
+row regression asserts selection, retained focus and an unchanged Explorer status
+path. Independent reviewers accepted the source after requesting that assertion;
+typecheck is clean, architecture lint is clean and maps cover 378/378 source files.
+The inspected graph-header and reference-access screenshots show the intended
+results. Expanded integration passes 172 cases with two skips in 5.1 minutes
+across Chromium/WebKit, with no ResizeObserver warnings. This covers the included
+graph/filter/panel/preview matrix, not comprehensive product acceptance. The
+post-Super browser keyboard rerun passes all four cases in 9.6 seconds.
+The completed bundle remains within budget at 44 chunks / 652,348 raw / 212,367
+gzip bytes, with the main chunk at 302,647 raw / 89,908 gzip. This is +365 raw /
++108 gzip bytes relative to `8654e3ab`, not launch-latency evidence. This
+checkpoint follows `8654e3ab` (scrollbar
+layout) and `b2c720a4` (rejected native transfer targets). Native platform soak,
+the full product/accessibility/theme/DPI/preview matrix, same-process crash
+recovery, Windows/macOS acceptance and actual Mac half-bounce measurements remain
+open. The full architectural review is **not complete**.

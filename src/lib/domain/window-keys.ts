@@ -4,6 +4,8 @@ type WindowKey = Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "a
 
 export interface WindowKeyContext {
   input: boolean;
+  nativeButton: boolean;
+  trackedMetaHeld: boolean;
   terminal: boolean;
   terminalCommand?: TerminalCommandId;
   modal: boolean;
@@ -11,7 +13,7 @@ export interface WindowKeyContext {
   terminalEnabled: boolean;
 }
 
-export type WindowKeyAction = "pass" | "terminal" | "toggle-terminal" | "close-dialogs"
+export type WindowKeyAction = "native-activation" | "pass" | "terminal" | "toggle-terminal" | "close-dialogs"
   | "open-filter" | "close-filter" | "open-jobs" | "open-settings" | "toggle-dual-pane" | "command";
 
 /** Ordered window shortcut policy, independent of DOM, stores and dispatch.
@@ -19,6 +21,10 @@ export type WindowKeyAction = "pass" | "terminal" | "toggle-terminal" | "close-d
  * modals and editable controls retain their established ownership boundaries. */
 export function resolveWindowKey(event: WindowKey, context: WindowKeyContext): WindowKeyAction {
   const primary = event.ctrlKey || event.metaKey;
+  // Native controls generate their click after key dispatch. Consuming Enter
+  // or Space as an Explorer command would prevent that activation entirely.
+  if (context.nativeButton && !context.trackedMetaHeld && !primary && !event.altKey && !event.shiftKey
+    && (event.key === "Enter" || event.key === " ")) return "native-activation";
   if ((event.key === "`" || event.code === "Backquote") && primary && !context.modal) {
     return context.terminalEnabled ? "toggle-terminal" : "pass";
   }

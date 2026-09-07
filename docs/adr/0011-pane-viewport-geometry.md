@@ -51,7 +51,8 @@ window listeners exclude separator targets, so resize keys cannot move selection
 
 This policy preserves the entire saved layout rather than silently hiding or
 removing panes when it cannot fit. The minimum is a base file-pane constraint;
-wide optional SCM/Miller panels and custom chrome require additional combination
-acceptance and potentially per-pane minimum contributions. It does not establish
+inline SCM/Miller width contributions and shared resize activity are now defined
+by ADR 0012. Custom chrome and further surface combinations need their own
+acceptance. It does not establish
 assistive-technology certification, native platform zoom equivalence, constant-time
 large-layout rendering, OS resource bounds or the macOS startup target.

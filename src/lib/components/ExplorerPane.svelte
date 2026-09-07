@@ -41,6 +41,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // capturing it at init is safe. Consumed by GitStatusBadge to resolve the
   // directory its entry is rendered in.
   setPaneIdContext(untrack(() => paneId));
+  const mountedPaneId = untrack(() => paneId);
+  const reserveInlineWidth = () => windowTabsManager.paneViewport.reserveInlineWidth(mountedPaneId);
 
   // Repo whose commit graph this pane shows instead of the file listing
   // (#272). Toggled per-pane via git.showGraph (Ctrl+Alt+G).
@@ -386,7 +388,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
            available while the graph has the pane (#333). Per-pane visibility
            (#434). -->
       {#if settingsStore.showGitStatus && paneScmVisible}
-        <ScmPanel />
+        <ScmPanel {reserveInlineWidth} />
       {/if}
       <!-- Keyed so switching between graphs of different repos recreates the
            view — no selected-commit/state bleed or in-flight races (#167). -->
@@ -417,14 +419,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
            keyed off the single `islandMode` derived — not one platform's flag —
            or the columns double-mount inline AND as the island (#434). -->
       {#if paneExplorer.millerLayers > 0 && !millerHoistedToIsland}
-        <MillerColumns explorer={paneExplorer} />
+        <MillerColumns explorer={paneExplorer} {reserveInlineWidth} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);
            per pane (#334, #434) — each pane's panel follows its own explorer
            and its own visibility toggle, so two panes show independent git
            panels and can be opened/closed independently. -->
       {#if settingsStore.showGitStatus && paneScmVisible}
-        <ScmPanel />
+        <ScmPanel {reserveInlineWidth} />
       {/if}
       <FileList explorer={paneExplorer} bind:scrollToEntry={fileListScrollToEntry} />
     </div>

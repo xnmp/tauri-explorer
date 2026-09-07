@@ -8,8 +8,11 @@
   (0=off; per-pane since #229, defaulting from settings).
 -->
 <script lang="ts">
+  import { useInlinePanelWidth } from "$lib/composables/use-inline-panel-width.svelte";
+  import type { ReserveInlineWidth } from "$lib/state/pane-viewport.svelte";
+  import PanelResizeHandle from "./PanelResizeHandle.svelte";
   import { untrack, onMount } from "svelte";
-import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
+  import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory, isDirectoryEmpty } from "$lib/api/files";
@@ -27,13 +30,17 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
   import { subscribeToLocalFileChanges } from "$lib/state/file-events";
   import type { FileEntry } from "$lib/domain/file";
   import { isSystemHidden } from "$lib/domain/file";
+  import { isTauri } from "$lib/api/common";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+  const panelId = $props.id();
+
   interface Props {
+    reserveInlineWidth?: ReserveInlineWidth;
     explorer: ExplorerInstance;
   }
 
-  let { explorer }: Props = $props();
+  let { explorer, reserveInlineWidth }: Props = $props();
 
   interface MillerColumn {
     path: string;
@@ -207,7 +214,7 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
     const unsubscribeLocalChanges = subscribeToLocalFileChanges((affectedDirs) => {
       for (const path of affectedDirs) invalidateColumn(path);
     });
-    listen<{ path: string }>("directory-changed", (event) => {
+    if (isTauri()) void listen<{ path: string }>("directory-changed", (event) => {
       invalidateColumn(event.payload.path);
     }).then((fn) => {
       // If the component was destroyed before registration resolved,
@@ -217,7 +224,7 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
         return;
       }
       unlisten = fn;
-    });
+    }).catch(error => console.error("Miller directory listener failed:", error));
 
     return () => {
       disposed = true;
@@ -306,10 +313,11 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
     max: 600,
     default: 200,
   });
+  useInlinePanelWidth(untrack(() => reserveInlineWidth), () => columns.length ? resize.width : 0);
 </script>
 
 {#if columns.length > 0}
-  <div class="miller-columns" class:resizing={resize.isResizing} style="width: {resize.width}px">
+  <div id={panelId} class="miller-columns" class:resizing={resize.isResizing} style="width: {resize.width}px">
     {#each columns as column (column.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -357,14 +365,7 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
         </div>
       </div>
     {/each}
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handle; role=separator conveys the correct semantics to AT, keyboard resize is a separate unimplemented feature -->
-    <div
-      class="resize-handle"
-      onmousedown={resize.startResize}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize miller columns"
-    ></div>
+    <PanelResizeHandle {resize} label="Resize miller columns" controls={panelId} />
   </div>
 {/if}
 
@@ -397,23 +398,6 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
 
   .miller-col.bg-drop-target.bg-copy-drop {
     background: rgba(16, 185, 129, 0.1);
-  }
-
-  .resize-handle {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    cursor: ew-resize;
-    background: transparent;
-    z-index: 1;
-    transition: background 150ms;
-  }
-
-  .resize-handle:hover,
-  .miller-columns.resizing .resize-handle {
-    background: var(--accent);
   }
 
   .miller-col:last-child {

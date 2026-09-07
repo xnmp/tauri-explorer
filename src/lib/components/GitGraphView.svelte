@@ -407,6 +407,7 @@
   // (on their left edge → inverted drag) and persisted. The graph gutter is
   // auto (lane-derived) until first dragged, then a fixed width that clips
   // the lane overflow — deep histories can't squeeze the message column out.
+  const resizeRegionId = $props.id();
   const authorCol = usePersistedPanelWidth("git-graph-col-author", { min: 60, max: 320, default: 120, invert: true });
   const dateCol = usePersistedPanelWidth("git-graph-col-date", { min: 56, max: 220, default: 84, invert: true });
   const GRAPH_COL_KEY = "git-graph-col-graph";
@@ -497,6 +498,8 @@
     event.preventDefault();
     columnMenu = { x: clientToFixed(event.clientX), y: clientToFixed(event.clientY) };
   }
+
+  $effect(() => { if (!shownColumns.author) untrack(authorCol.cancel); if (!shownColumns.date) untrack(dateCol.cancel); });
 
   function startGraphColResize(event: MouseEvent): void {
     event.preventDefault();
@@ -1548,12 +1551,17 @@
         {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
       </span>
       {#if shownColumns.author}
-        <span class="gh-author" style:width="{authorCol.width}px">
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <span id={`${resizeRegionId}-author`} class="gh-author" style:width="{authorCol.width}px">
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
           <span
             class="col-handle handle-in-cell"
             class:active={authorCol.isResizing}
-            onmousedown={authorCol.startResize}
+            onpointerdown={authorCol.startResize}
+            onpointermove={authorCol.move} onpointerup={authorCol.finish}
+            onpointercancel={authorCol.cancelPointer} onlostpointercapture={authorCol.cancelPointer}
+            onkeydown={authorCol.keydown} tabindex="0"
+            aria-controls={`${resizeRegionId}-author`}
+            aria-valuemin={authorCol.min} aria-valuemax={authorCol.max} aria-valuenow={authorCol.width}
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize author column"
@@ -1563,12 +1571,17 @@
         </span>
       {/if}
       {#if shownColumns.date}
-        <span class="gh-date" style:width="{dateCol.width}px">
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <span id={`${resizeRegionId}-date`} class="gh-date" style:width="{dateCol.width}px">
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
           <span
             class="col-handle handle-in-cell"
             class:active={dateCol.isResizing}
-            onmousedown={dateCol.startResize}
+            onpointerdown={dateCol.startResize}
+            onpointermove={dateCol.move} onpointerup={dateCol.finish}
+            onpointercancel={dateCol.cancelPointer} onlostpointercapture={dateCol.cancelPointer}
+            onkeydown={dateCol.keydown} tabindex="0"
+            aria-controls={`${resizeRegionId}-date`}
+            aria-valuemin={dateCol.min} aria-valuemax={dateCol.max} aria-valuenow={dateCol.width}
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize date column"
@@ -3043,8 +3056,11 @@
     width: 2px;
   }
 
+  .handle-in-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
   /* Author/date handles sit on the cell's left edge, in the flex gap. */
   .handle-in-cell {
+    touch-action: none;
     left: -9px;
   }
 

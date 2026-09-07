@@ -461,3 +461,14 @@ performance tests, 46 Chromium/WebKit cases and six real Linux window outcomes
 pass. ADR 0011 and `review-completion.md` record evidence and scope; wide optional
 SCM/Miller panels, broader product/platform acceptance and measured Mac startup
 remain open. The comprehensive review is still incomplete.
+
+
+Optional-panel checkpoint (2026-09-07): mounted inline SCM/Miller width leases
+now feed shared viewport minima. A window-wide resize-activity owner coordinates
+manual Sidebar/SCM/Miller/Git-column sizing with automatic workspace reveal.
+Zoom conversion, keyboard sizing, capture rollback, stale frames and cleanup have
+regressions and independent review. 2,089 unit tests +30 performance tests and
+seven real Linux outcomes pass. All new browser scenarios pass in both engines;
+two existing WebKit detail failures in the wider run pass repeated isolation but
+leave that wider acceptance gate open. ADR0012 and the completion ledger retain
+scope, evidence and remaining graph-gutter/platform/startup work.

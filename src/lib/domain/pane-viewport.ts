@@ -16,11 +16,15 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 /** Fit preferences to descendant constraints without changing the saved tree.
  * Two linear passes; minima add along splits rather than expanding inversely
  * with ratios, so a deeply unbalanced tree cannot require exponential space. */
-export function paneGeometry(root: PaneNode, viewport: PaneSize, divider = 6): PaneGeometry {
+export function paneGeometry(root: PaneNode, viewport: PaneSize, divider = 6, inlineWidths: ReadonlyMap<string, number> = new Map()): PaneGeometry {
   const gap = nonnegative(divider);
   const minima = new Map<PaneNode, PaneSize>();
   function measure(node: PaneNode): PaneSize {
-    if (node.type === "leaf") return MIN_PANE_SIZE;
+    if (node.type === "leaf") {
+      const minimum = { ...MIN_PANE_SIZE, width: MIN_PANE_SIZE.width + nonnegative(inlineWidths.get(node.id) ?? 0) };
+      minima.set(node, minimum);
+      return minimum;
+    }
     const a = measure(node.first), b = measure(node.second);
     const size = node.direction === "row"
       ? { width: a.width + gap + b.width, height: Math.max(a.height, b.height) }

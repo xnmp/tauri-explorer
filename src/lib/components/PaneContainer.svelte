@@ -8,6 +8,7 @@
   import { untrack } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { resizeActivity } from "$lib/state/resize-activity.svelte";
   import { revealPane } from "$lib/domain/pane-viewport";
   import { usePaneDividers } from "$lib/composables/use-pane-dividers.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
@@ -35,7 +36,7 @@
   });
   $effect(() => { geometry; dividers.reconcile(); });
   $effect(() => {
-    if (dividers.activeId) return;
+    if (dividers.activeId || resizeActivity.active) return;
     const pane = geometry?.panes.get(windowTabsManager.activePaneId);
     if (!viewport || !pane || width <= 0 || height <= 0) return;
     const next = revealPane({ left: viewport.scrollLeft, top: viewport.scrollTop }, { width, height }, pane);

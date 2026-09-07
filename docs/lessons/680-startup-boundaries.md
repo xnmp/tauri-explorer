@@ -335,3 +335,28 @@ For zoomed pointer tests, wait for the canvas measurement to change after zoom
 and settle before sampling rectangles. WebKit scrollbar accounting can make the
 settled canvas smaller than clientWidth/clientHeight, so equality is not portable. The ratio can remain 50% across two different
 measurement generations, so waiting for that ratio does not establish readiness.
+
+
+### Optional width and manual resize must share the workspace policy
+
+A leaf minimum alone does not protect its file list. In the reproduced narrow
+pane, 200px Miller plus 280px SCM consumed all 275px of available pane content,
+leaving a zero-width file list. Fixed inline panels must contribute their actual
+width to the window-owned presentation model. Use mount-scoped tokens, so stale
+cleanup cannot erase replacement contributions. Hoisted panels are already
+subtracted from the viewport and must not contribute again.
+
+Manual resize also needs coordination with automatic reveal. A 15px pointer move
+expanded the inline panel and canvas, then reveal reset scrollLeft from 332 to 0;
+the owner's scroll listener correctly cancelled the gesture. The same bug occurs
+when resizing the global Sidebar. A shared gesture activity lease pauses automatic
+reveal until release/cancel; removing scroll cancellation would conceal the race
+and allow stale captured geometry. Keep contribution and activity separate: global
+panels affect viewport size without contributing to a leaf minimum.
+
+Test actual visual drag distance at multiple CSS zoom levels, continuous moves
+with a frame accepted between them, pointer-capture failure, and file visibility
+before clicking (Playwright clicks can scroll hidden content into view). In a
+fixture that manually scrolls after resizing the viewport, first wait for the new
+canvas measurement: otherwise late automatic reveal can undo the fixture's scroll
+before the drag even starts.

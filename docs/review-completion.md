@@ -5,12 +5,13 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): dense split layouts now use shared constrained
-viewport geometry, local workspace scrolling and one divider gesture owner.
-Saved ratios remain preferences; rendering, directional focus and dwindle use
-the same measured rectangles. Unit, Chromium/WebKit and real Linux window
-regressions pass. Wide optional panels and broader release/platform acceptance
-remain open. The full review is **not complete**.
+Current checkpoint (2026-09-07): inline SCM/Miller width contributions and
+window-wide resize activity now keep optional panels composable with constrained
+pane geometry. Shared panel resize ownership handles zoom, keyboard input and
+retirement across Sidebar/SCM/Miller/Git author/date columns. Unit and native
+Linux acceptance pass; new browser scenarios pass in both engines. Two existing
+WebKit detail cases failed in the wider run and passed repeated isolation; the
+wider-run cause remains open. The full review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -31,7 +32,7 @@ limitations and must not be read as current status.
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
 | 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Wider theme/native interaction matrix pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
-| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Wide SCM/Miller combinations, wider themes/accessibility/platform matrix remain outstanding |
+| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. Other custom resize surfaces and the wider themes/accessibility/platform matrix remain outstanding |
 | Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
 
 Every completion update must name the actual production seam, regression or
@@ -1099,3 +1100,88 @@ native platform zoom equivalence, or satisfy the macOS half-bounce target.
 Publication, merge, full review completion and the remaining ledger gates remain
 open. Existing generated native screenshots were restored after the regression
 run; the new dense viewport screenshot is retained.
+
+
+## Optional panels and resize ownership — 2026-09-07
+
+Mounted inline SCM/Miller panels now contribute their CSS width through unique
+leases in the window-owned pane viewport model. Their widths add to the base
+file-content minimum, and hidden/empty/hoisted panels release their contribution.
+No visibility rules or persisted widths are duplicated in the manager, and no
+presentation constraint rewrites saved tab ratios.
+
+`domain/panel-width.ts` contains normalization, zoom conversion and keyboard
+policy. `state/panel-resize.ts` owns coalesced publication and persistence;
+`use-panel-resize.svelte.ts` adapts pointer capture and temporary global listeners.
+Sidebar/SCM/Miller share one focusable handle component; Git author/date columns
+retain their compact styling with the same owner. Capture failure rolls back;
+blur, scroll, resize, root style/zoom changes and teardown retire captured work.
+Cancellation retains only already-rendered width; release flushes the final move.
+
+`resize-activity.svelte.ts` separately owns window-wide gesture leases. Automatic
+workspace reveal pauses during manual resize, then reconciles after the gesture's
+scroll listener and pointer capture have retired. This is separate from inline
+width contribution because global Sidebar and hoisted panels change the measured
+viewport without occupying space inside a pane.
+
+Reproductions and independent findings:
+
+- Original zoom tests failed in both engines: a 60px visual drag moved the Sidebar
+  48px at 80% zoom and 90px at 150%. Blur left the old drag active; panel separators
+  lacked keyboard sizing. `/tmp/panel-resize-before.log` records 12 failures.
+- Optional-width regressions failed in all three views in both engines. An
+  independent 800×600 repro measured Miller200 + SCM280 against275px of pane
+  content: the file list was0px and a real click failed. `/tmp/panel-width-before.log`.
+- Continuous inline resizing initially stopped after one frame. Instrumentation
+  proved that the first panel width update grew canvas720→730, automatic reveal
+  changed scrollLeft332→0, and captured scroll cancellation correctly retired the
+  owner. The same issue reproduced for the global Sidebar. Shared activity fixes
+  the coordination without suppressing real scroll cancellation.
+- Independent review found a pointer-capture exception rollback gap, now fixed.
+  Final review finds no remaining concrete ownership/layering defect;
+  `/tmp/panels-independent-review.md`, 17 focused tests passed.
+- Strengthened browser assertions check file names are in the viewport after
+  explicit pane focus and before clicking; clicks cannot supply hidden scrolling
+  assistance. Tests also cover unmount/hoist geometry shrink, malformed storage,
+  stale leases/frames, capture failure, zoom mutation, continuous narrow-workspace
+  drags and inverted Git columns.
+
+Validation:
+
+- **235 unit files: 2,089 passed / 3 skipped**, plus **30 performance tests**
+  (`/tmp/panels-all-units-accepted.log`). The final identity guard keeps an old
+  finish callback from cancelling a replacement started during publication;
+  its reentrant behavior regression also passed independent review.
+- The **160-case affected browser run** had **156 passed / 2 skipped / 2 failed**
+  (`/tmp/panels-browser-final.log`). All 32 new panel cases and existing pane
+  viewport scenarios pass across Chromium/WebKit, including all three file views.
+  The two failures were existing WebKit PR/CI detail interactions; both passed
+  once and then all six repeated isolated executions. A separate probe observed
+  no reload from writing the evidence screenshot. This does not establish the
+  wider-run cause or rule out an intermittent application defect. Keep the wider
+  WebKit acceptance gate open (`/tmp/panels-webkit-diagnosis.md`). A ResizeObserver
+  loop warning was also logged in the wider Git graph run; no clean full-run
+  console or unconditional full-suite pass is claimed.
+- **Seven real Linux outcomes pass**: narrow split/Miller/SCM/real-file interaction
+  and keyboard selection, plus six window chrome/transfer regressions
+  (`/tmp/panels-native.log`). The new test also passes independently with a
+  contained fixture for its screenshot (`/tmp/panels-native-proof.log`). Native
+  Windows/macOS and native zoom equivalence remain unverified.
+- Typecheck: zero errors/warnings; strict architecture lint clean; source-map
+  coverage **371/371**. Normal startup: **42 chunks, 648,778 raw / 210,727 gzip bytes**,
+  within budgets (`/tmp/panels-bundle.log`), up 3,719 raw / 1,371 gzip from the prior
+  checkpoint. No launch latency improvement is inferred from these sizes.
+- New browser panel scenarios assert no page errors. Exercising Miller outside
+  Tauri exposed its unguarded native event registration; it now checks the runtime
+  and reports native registration rejection instead of leaving an unhandled
+  promise. Local mutation subscriptions retain their existing ownership.
+- Inspected screenshots: `inline-panels-{details,list,tiles}.png` and
+  `native-inline-panels.png` in `screenshots/refactor/repo-health-cleanup/`.
+  Previously committed images regenerated by the suites were restored.
+
+
+Remaining scope: the Git graph gutter still uses its own automatic-width/mouse
+resize path, and other custom resize surfaces need separate audit. Larger theme,
+DPI and assistive-technology combinations, native Windows/macOS acceptance and
+actual macOS half-bounce measurements remain open. No startup speedup or full
+review completion is claimed. See ADR0012.

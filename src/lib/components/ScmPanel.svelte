@@ -6,10 +6,17 @@
   the sidebar and the pane container. Toggled via Alt+M G.
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
+  import { useInlinePanelWidth } from "$lib/composables/use-inline-panel-width.svelte";
+  import type { ReserveInlineWidth } from "$lib/state/pane-viewport.svelte";
+  import PanelResizeHandle from "./PanelResizeHandle.svelte";
   import ScmSidebarView from "./ScmSidebarView.svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
 
+  const panelId = $props.id();
+
   interface Props {
+    reserveInlineWidth?: ReserveInlineWidth;
     /** When true, render with floating-island chrome (radius/stroke/glow) for
      *  use as a standalone island surface. Default false: the panel is an
      *  integrated section of the explorer pane and renders docked & flat, like
@@ -18,30 +25,24 @@
     island?: boolean;
   }
 
-  let { island = false }: Props = $props();
+  let { island = false, reserveInlineWidth }: Props = $props();
 
   const resize = usePersistedPanelWidth("explorer-scm-panel-width", {
     min: 200,
     max: 500,
     default: 280,
   });
+  useInlinePanelWidth(untrack(() => reserveInlineWidth), () => resize.width);
 </script>
 
 <div
-  class="scm-panel"
+  id={panelId} class="scm-panel"
   class:island
   class:resizing={resize.isResizing}
   style="width: {resize.width}px"
 >
   <ScmSidebarView />
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handle; role=separator conveys the correct semantics to AT, keyboard resize is a separate unimplemented feature -->
-  <div
-    class="resize-handle"
-    onmousedown={resize.startResize}
-    role="separator"
-    aria-orientation="vertical"
-    aria-label="Resize source control panel"
-  ></div>
+  <PanelResizeHandle {resize} label="Resize source control panel" controls={panelId} />
 </div>
 
 <style>
@@ -62,23 +63,6 @@
   .scm-panel :global(.sidebar-view) {
     flex: 1;
     min-height: 0;
-  }
-
-  .resize-handle {
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    cursor: ew-resize;
-    background: transparent;
-    z-index: 1;
-    transition: background 150ms;
-  }
-
-  .resize-handle:hover,
-  .scm-panel.resizing .resize-handle {
-    background: var(--accent);
   }
 
   /* Vibrancy, integrated (default): flatten into the pane like the miller bar

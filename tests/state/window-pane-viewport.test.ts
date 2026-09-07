@@ -19,3 +19,25 @@ it("focus follows constrained visible neighbors and viewport changes preserve sa
   expect(manager.activePaneId).toBe("c");
   expect(manager.captureState().tabs[0].layout).toEqual(layout);
 });
+
+it("inline width leases add independently and stale cleanup cannot erase a replacement", () => {
+  const manager = createWindowTabsManager(); managers.push(manager);
+  manager.restoreFromState({ version: 3, activeTabId: "tab", tabs: [{ id: "tab", kind: "explorer", activePaneId: "pane",
+    layout: { type: "leaf", id: "pane", path: "/home/user" } }] });
+  manager.paneViewport.measure(240, 200, 6);
+  const saved = manager.captureState();
+  const miller = manager.paneViewport.reserveInlineWidth("pane");
+  const scm = manager.paneViewport.reserveInlineWidth("pane");
+  miller.update(200); scm.update(280);
+  expect(manager.paneViewport.geometry?.width).toBe(720);
+  miller.update(300); expect(manager.paneViewport.geometry?.width).toBe(820);
+  miller.update(0); expect(manager.paneViewport.geometry?.width).toBe(520);
+  const replacement = manager.paneViewport.reserveInlineWidth("pane");
+  replacement.update(200); miller.dispose(); miller.update(600);
+  expect(manager.paneViewport.geometry?.width).toBe(720);
+  scm.update(NaN); scm.update(Infinity); scm.update(-1);
+  expect(manager.paneViewport.geometry?.width).toBe(720);
+  scm.dispose(); replacement.dispose();
+  expect(manager.paneViewport.geometry?.width).toBe(240);
+  expect(manager.captureState()).toEqual(saved);
+});

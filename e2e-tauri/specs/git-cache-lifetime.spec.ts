@@ -170,4 +170,39 @@ describe("native graph cache lifetime", () => {
     await toggleGraph();
     await $(".file-list").waitForExist();
   });
+
+  it("recovers observation after the repository root is replaced while its graph stays mounted", async () => {
+    git("add", "."); git("commit", "--quiet", "-m", "before observer replacement");
+    await navigateTo(repository);
+    await toggleGraph();
+    const summaries = async () => (await domTexts(".commit-row .summary")).map((text) => text.trim());
+    await browser.waitUntil(async () => (await summaries()).includes("before observer replacement"), { timeout: 20_000 });
+    const oldRoot = `${repository}-retired`;
+    try {
+      fs.renameSync(repository, oldRoot);
+      // A new inode at the same path cannot inherit the old native watch.
+      fs.cpSync(oldRoot, repository, { recursive: true });
+      fs.writeFileSync(path.join(repository, "Cargo.lock"), "first replacement change");
+      git("add", "."); git("commit", "--quiet", "-m", "observer replacement recovered");
+      await browser.waitUntil(async () => (await summaries()).includes("observer replacement recovered"), {
+        timeout: 20_000, timeoutMsg: "mounted graph did not recover after root replacement",
+      });
+      // A second mutation after recovery proves ongoing observation, rather
+      // than a single read triggered by a delayed removal notification.
+      fs.writeFileSync(path.join(repository, "Cargo.lock"), "second replacement change");
+      git("add", "."); git("commit", "--quiet", "-m", "observer remains live");
+      await browser.waitUntil(async () => (await summaries()).includes("observer remains live"), {
+        timeout: 20_000, timeoutMsg: "recovered graph did not observe the next real Git mutation",
+      });
+      await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-graph-observation-recovered.png");
+    } finally {
+      fs.rmSync(oldRoot, { recursive: true, force: true });
+    }
+    await toggleGraph();
+    await $(".file-list").waitForExist();
+    await browser.waitUntil(async () => (await domTexts(".entry-name")).includes("Cargo.lock"), {
+      timeout: 20_000, timeoutMsg: "returning to the listing retained entries from the replaced repository",
+    });
+  });
+
 });

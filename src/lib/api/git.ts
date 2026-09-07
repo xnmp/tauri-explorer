@@ -8,14 +8,15 @@ import type { GitFileEntry, GitStatusCode, GitOpState } from "$lib/domain/git";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import { directoryKey } from "$lib/domain/path";
 
-function recordWatchAcknowledgement(repoPath: string, delta: number): void {
+function recordWatchAcknowledgement(lease: GitWatchLease, acquired: boolean): void {
   if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
   const node = document.documentElement;
-  const watches: Record<string, number> = JSON.parse(node.dataset.e2eGitWatches ?? "{}");
-  const key = directoryKey(repoPath);
-  const count = (watches[key] ?? 0) + delta;
-  if (count > 0) watches[key] = count;
-  else delete watches[key];
+  const leases: Record<string, string> = JSON.parse(node.dataset.e2eGitLeases ?? "{}");
+  if (acquired) leases[lease.id] = directoryKey(lease.repoRoot);
+  else delete leases[lease.id];
+  const watches: Record<string, number> = {};
+  for (const key of Object.values(leases)) watches[key] = (watches[key] ?? 0) + 1;
+  node.dataset.e2eGitLeases = JSON.stringify(leases);
   node.dataset.e2eGitWatches = JSON.stringify(watches);
 }
 
@@ -229,20 +230,22 @@ export async function gitCommit(
   }
 }
 
-export async function gitWatchRepo(repoPath: string): Promise<ApiResult<string>> {
+export interface GitWatchLease { id: string; repoRoot: string }
+
+export async function gitWatchRepo(repoPath: string): Promise<ApiResult<GitWatchLease>> {
   try {
-    const key = await invoke<string>("git_watch_repo", { repoPath });
-    recordWatchAcknowledgement(key, 1);
-    return { ok: true, data: key };
+    const lease = await invoke<GitWatchLease>("git_watch_repo", { repoPath });
+    recordWatchAcknowledgement(lease, true);
+    return { ok: true, data: lease };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
 }
 
-export async function gitUnwatchRepo(watchKey: string): Promise<ApiResult<void>> {
+export async function gitUnwatchRepo(lease: GitWatchLease): Promise<ApiResult<void>> {
   try {
-    await invoke<void>("git_unwatch_repo", { watchKey });
-    recordWatchAcknowledgement(watchKey, -1);
+    await invoke<void>("git_unwatch_repo", { leaseId: lease.id });
+    recordWatchAcknowledgement(lease, false);
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: extractError(err) };

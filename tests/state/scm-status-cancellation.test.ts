@@ -16,8 +16,8 @@ vi.mock("$lib/api/git", () => ({
   gitUnstage: vi.fn(async () => ({ ok: true })),
   gitDiscard: vi.fn(async () => ({ ok: true })),
   gitCommit: vi.fn(async () => ({ ok: true })),
-  gitWatchRepo: vi.fn(async () => {}),
-  gitUnwatchRepo: vi.fn(async () => {}),
+  gitWatchRepo: vi.fn(async (path: string) => ({ ok: true, data: { id: path, repoRoot: path } })),
+  gitUnwatchRepo: vi.fn(async () => ({ ok: true, data: undefined })),
 }));
 vi.mock("$lib/state/git-refresh", () => ({
   subscribeGitChanges: vi.fn(async () => () => {}),

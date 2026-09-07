@@ -19,9 +19,12 @@ Snapshot-first verification exposed read-triggered invalidation on Linux and
 missing observation while graphs were hidden. Pending reads and retained
 snapshots now own shared acknowledged repository watches; native registration
 requires complete worktree/shared-ref coverage and release uses the acquired
-identity. UNC graphs read fresh without adding hidden recursive polls. See the
-completion ledger for evidence and outstanding native error-recovery/resource
-work; these changes do not establish the macOS startup target.
+identity. UNC graphs read fresh without adding hidden recursive polls. The
+following native service pass adds unique, idempotent leases, owned recovery and
+debounce deadlines, failed-emission retries and parent coverage for root replacement.
+SCM now shares the ordered watch owner. A local 12-repository measurement confirms
+observer sharing and final cleanup; see the ledger for its scope and remaining
+resource/platform work. These changes do not establish the macOS startup target.
 
 The ongoing pass has implemented feature-owned API wrappers, bounded inactive
 refresh metadata, config-watch retarget cleanup, draining native plugin workers,

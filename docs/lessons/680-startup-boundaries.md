@@ -230,3 +230,18 @@
   a deleted/moved repository during release can produce a different key and
   leak the old recursive watch. Keep display/navigation paths separate from
   resource identity, including SCM's late-acquisition compensation.
+- A shared repository key cannot make release retries idempotent: an earlier
+  caller's duplicate release can decrement a later caller. Return unique native
+  lease IDs, and keep the repository root separately for display and events.
+- Native watcher errors need recovery while existing consumers remain mounted.
+  Own observers, retries and debounce deadlines in one service; callbacks only
+  mark their generation dirty/broken and wake a bounded inbox. Retire old
+  generation flags, retry failed invalidation delivery, and release the observer
+  and timers with the final lease. SCM must reuse the ordered owner rather than
+  discard failed `ApiResult` cleanup responses.
+- Root replacement requires watching its parent as well as the tree itself.
+  Keep parent watches non-recursive and filter unrelated siblings. A real native
+  regression must replace the root with a new inode, observe subsequent changes
+  without remounting, and verify the listing when returning from the graph.
+- Temporary Git lock filtering must be scoped to metadata. Worktree `Cargo.lock`
+  and backup-named files remain user data and must invalidate summaries.

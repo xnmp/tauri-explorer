@@ -5,6 +5,11 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+Latest continuation: the native Git observation service below supersedes the
+earlier cache checkpoint's open callback-recovery, SCM release and worktree-lock
+filtering findings. The comprehensive review and platform/startup gates remain
+open.
+
 Git cache observation checkpoint (2026-09-07, continuing locally): the previous
 Linux hidden-cache test did **not** prove cached-state invalidation. Its target
 snapshot was absent, so reopening fetched fresh history. Requiring a published
@@ -777,3 +782,68 @@ cache retention; isolate native window creation failures. Then resume page sessi
 ownership, dense-layout policy and the outstanding long-session/platform/product
 matrix. Mac hardware preference is still unanswered; local work does not depend
 on it. Keep the PR draft and #680 open. No merge/release acceptance is implied.
+
+## Native Git observation service — 2026-09-07
+
+The old native watcher registry combined a global mutex, per-burst timer threads
+and callbacks which could become permanently unhealthy while another panel still
+held a reference. SCM separately discarded failed unwatch results. A repository
+key also could not make retried releases idempotent across ownership generations.
+
+`git_watch.rs` now adapts Tauri to a lazy service; `git_watch/service.rs` owns a
+bounded command inbox, unique lease IDs, shared native observers and all debounce
+and recovery deadlines on one dedicated worker. Callbacks set per-generation
+atomic flags and attempt a nonblocking wake only when those flags become dirty.
+The worker scans entries in place, retries failed invalidation delivery, and
+re-discovers/reinstalls failed observation with bounded exponential delay while
+leases remain. Final release removes observation and its deadlines. Shutdown
+rejects late acknowledgements and joins the worker. SCM now uses the same ordered
+frontend owner as graph/cache consumers, retaining failed releases for retry.
+[ADR 0009](adr/0009-git-observation-leases.md) records the contracts and limits.
+
+`git_watch/target.rs` separates discovery and event policy. Worktree `Cargo.lock`
+and backup-named files now invalidate normally; only temporary Git metadata is
+filtered. Non-recursive parent watches detect root movement/replacement and
+exclude unrelated siblings. Private/shared worktree metadata coverage and complete
+registration acknowledgement remain required. The native cache test replaces a
+repository with a new inode while its graph stays mounted, verifies two subsequent
+real commits, then verifies the new lockfile appears when returning to the listing.
+
+Evidence:
+
+- Both SCM release-failure regressions fail against the prior implementation
+  (`/tmp/scm-release-before.log`). The worktree-lock regression fails against
+  the actual previous Rust predicate (`/tmp/git-worktree-lock-before.log`).
+- Ten service/target contracts pass, including failure during registration,
+  cancellation during blocked acquisition, shared-reference recovery, stale
+  callbacks, emission retry, idempotent release across recreated observers,
+  real directory movement, linked worktrees and final cleanup.
+- Full frontend suite: 2,042 passed, three skipped, plus 30 performance tests.
+  Full final Rust library suite: 439 passed, seven ignored. The extra ignored
+  case is the explicit native cost measurement below, run independently.
+- Rebuilt Linux native suite: four passed, including root replacement and
+  returning to the file listing (`/tmp/git-service-listing-outcomes.log`).
+  Chromium: 18 graph/SCM outcomes passed (`/tmp/git-service-browser-outcomes.log`).
+- Typecheck zero errors/warnings; `cargo clippy --all-targets -- -D warnings`
+  and formatting pass. Normal startup graph: 44 chunks, 640,144 raw bytes /
+  207,956 gzip bytes, within budgets. This is payload evidence, not launch time.
+- Independent review found no concrete defect in the final lease, callback,
+  queue, recovery, parent-watch, shutdown and SCM ownership contracts.
+
+The independent verifier ran `cargo test --manifest-path src-tauri/Cargo.toml
+measure_retained_observation_fanout --lib -- --ignored --nocapture`: 12 real
+repositories with 1,000 directories each. Initial acquisition p50/p95 was
+10.886/11.703 ms; shared acquisition 0.116/0.158 ms. All 24 leases released in
+0.602 ms, retaining zero observer objects. Service spawn returned in 0.076 ms.
+This one Linux debug run used hot metadata and sequential requests; its 12-sample
+p95 is effectively the maximum. Observer objects are not kernel watch descriptors.
+It establishes sharing/cleanup and this fixture's cost, not memory, idle CPU,
+event throughput, queue contention, cold disk, UNC or other-platform performance.
+
+Next: repair the native coalescing fixture's write/receipt protocol, finish native
+window failure/reclamation acceptance, and resume page-session, dense-layout and
+long-session/product/platform work. Native Git lease reclamation on a crashed
+window remains separate from acknowledged frontend cleanup and process shutdown.
+Large or remote native registration can still delay that dedicated worker until
+the OS call returns. Actual macOS release startup recordings remain outstanding.
+Keep PR #684 draft and issue #680 open.

@@ -19,6 +19,7 @@ pub mod git;
 pub mod git_actions;
 mod git_common;
 pub mod git_log;
+mod git_watch;
 mod github;
 mod nano_banana;
 mod palette;
@@ -283,8 +284,8 @@ pub fn run(launch_dir: Option<String>) {
             git::git_discard,
             git::git_diff,
             git::git_commit,
-            git::git_watch_repo,
-            git::git_unwatch_repo,
+            git_watch::git_watch_repo,
+            git_watch::git_unwatch_repo,
             git_log::git_log,
             git_log::git_refs,
             git_log::git_commit_files,
@@ -542,6 +543,7 @@ pub fn run(launch_dir: Option<String>) {
                 }
             }
         });
+    git_watch::shutdown();
 }
 
 #[cfg(test)]

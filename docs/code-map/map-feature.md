@@ -41,8 +41,9 @@ backend for E2E/browser).
 
 ## Directory listing & refresh/watcher events
 
-- `state/git-repo-watch.ts` — adapts Git watch results to ordered acquisition/release for the graph.
+- `state/git-repo-watch.ts` — shares ordered native lease acquisition/release across graph and SCM, retaining failed releases for retry.
 - `state/git-graph-coverage.ts` — shares acknowledged observation across graph writers and retained snapshots, independent of mounted views; network polling roots read fresh.
+- `src-tauri/src/git_watch.rs`, `git_watch/service.rs`, `git_watch/target.rs` — acknowledged unique native leases and shared observers; one worker owns recovery/debounce deadlines; parent watches detect root replacement while filtering sibling activity.
 - `state/directory-watch.ts` — serialized refcount ownership used by pane-watch, FolderThumbnail, MillerColumns and drives; destroy drains late acquisition without changing refresh policy.
 
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
@@ -198,7 +199,7 @@ backend for E2E/browser).
 - `state/git-status.svelte.ts` — `gitStatusStore`: path→status map, `refresh()`
 - `state/git-refresh.ts` — debounced git-status refresh
 - `api/git.ts` (getGitStatus), `src-tauri/src/files/git_status.rs`
-- FLOW: `git-status-changed` (git.rs emit) + `directory-changed` → gitStatusStore.refresh → badges re-derive; gated on `settings.showGitStatus`. For `\\wsl.localhost\…` dirs the badge path (`get_git_status`) delegates rev-parse+status to the distro's native git via `wsl.exe --exec` instead of shelling Git-for-Windows over 9P (#425); `gitStatusStore` dedups concurrent identical fetches (#426).
+- FLOW: `git-status-changed` (git_watch.rs emit) + `directory-changed` → gitStatusStore.refresh → badges re-derive; gated on `settings.showGitStatus`. For `\\wsl.localhost\…` dirs the badge path (`get_git_status`) delegates rev-parse+status to the distro's native git via `wsl.exe --exec` instead of shelling Git-for-Windows over 9P (#425); `gitStatusStore` dedups concurrent identical fetches (#426).
 
 ## Git SCM panel
 
@@ -376,7 +377,7 @@ backend for E2E/browser).
 
 - **IPC pattern**: frontend `invoke("cmd", {args})` wrapped in `api/*.ts`; outside Tauri, `api/mock-invoke.ts` intercepts (detects `__TAURI_INTERNALS__`). Rust `#[tauri::command] async fn` registered in `src-tauri/src/lib.rs`.
 - **Refresh manager** (`state/refresh-manager.ts`): single choke point. WHEN=refresh-manager, WHETHER=pane-watch, HOW=pane-refresh. Don't add a 4th gate.
-- **Key event names**: `directory-changed` (fs_watcher.rs → use-file-watchers.ts → refresh), `git-status-changed` (git.rs → git-status.svelte.ts). Cross-window: BroadcastChannel `explorer-file-changes` (file-events.ts) and `explorer-drag-data` in localStorage (drag.svelte.ts).
+- **Key event names**: `directory-changed` (fs_watcher.rs → use-file-watchers.ts → refresh), `git-status-changed` (git_watch.rs → git-status.svelte.ts). Cross-window: BroadcastChannel `explorer-file-changes` (file-events.ts) and `explorer-drag-data` in localStorage (drag.svelte.ts).
 - **Persistence**: UI/prefs via `state/persisted.ts` (localStorage: settings, keybindings, bookmarks, recent, tabs, drag). Durable config via `api/config.ts` → `config.rs` JSON files.
 - **Cancellable backend tasks**: `src-tauri/src/task_registry.rs` — search/listing/copy/compress use cancel_* commands.
 - **Warm pool**: pre-spawned windows (`warm_pool.rs` + `state/warm-window.ts`) for instant new window/tab.

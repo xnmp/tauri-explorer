@@ -521,3 +521,11 @@ ledger record the evidence and limits. Native setup also exposed a separate pale
 availability defect now reproduced in both browser engines. Full review completion,
 renderer retention, wider integration/platform acceptance and actual Mac half-bounce
 measurements remain outstanding.
+
+
+Preview command follow-up (2026-09-07): removing a redundant DOM-focus availability
+guard restores the command to palette search. Shared keyboard routing retains
+editing/modal ownership. Both browser engines reproduce the failure before the
+fix; 14 command/address outcomes and 44 targeted units pass afterward. Independent
+review confirms the layer boundary. This closes the palette defect found during
+native resize acceptance; broader release gates remain in the completion ledger.

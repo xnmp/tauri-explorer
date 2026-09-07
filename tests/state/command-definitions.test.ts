@@ -18,14 +18,6 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// A couple of view guards read `document.activeElement` (e.g. Space preview) to
-// avoid firing while typing in an input. The node test env has no document;
-// stub the single property those guards touch so getAvailableCommands can
-// evaluate every guard without an environment crash.
-if (typeof (globalThis as { document?: unknown }).document === "undefined") {
-  (globalThis as { document?: unknown }).document = { activeElement: null };
-}
-
 // --- Controllable fakes for the stores the guards read ---------------------
 // The command `when`/handler closures read these lazily, so a mutable holder
 // lets each test set the world and then exercise the REAL guard.

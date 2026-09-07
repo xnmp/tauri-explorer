@@ -830,11 +830,8 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
     id: "view.togglePreviewPane",
     label: "Toggle Preview Pane",
     shortcut: "Space",
-    when: () => {
-      const active = document.activeElement;
-      const tag = active?.tagName;
-      return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
-    },
+    // Typing ownership belongs to window keyboard routing. A focus guard here
+    // also hides the command from the palette's own focused search input.
   },
   { key: "showPreviewInfo", id: "view.togglePreviewInfo", label: "Toggle Preview Info" },
   { key: "showStatusBar", id: "view.toggleStatusBar", label: "Toggle Status Bar", shortcut: "Alt+M U" },

@@ -12,7 +12,8 @@ has zero errors/warnings. Teardown regressions exposed and fixed historical
 settings rollback across dock/hide changes. The real Linux Preview scenario and
 normal bundle budgets also pass. Wider integration, native renderer
 retention and full platform/startup acceptance remain open.
-The full review is **not complete**.
+The follow-up palette fix passes 14 focused browser cases, 44 targeted unit
+contracts and the rebuilt native scenario. The full review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -1399,8 +1400,38 @@ exposed a test-only root-rect assumption (GTK's fixed-layout html has zero heigh
 and the separate Preview command availability bug below; the fullscreen pane itself
 matched the actual viewport.
 
-The native setup also exposed a remaining command-policy defect: Preview's command
+The native setup also exposed a command-policy defect (fixed in the following checkpoint): Preview's command
 `when` rejects focused text inputs, including the palette's own search. A browser
-regression now fails in Chromium and WebKit; ordinary Space editing passes. This
-will be fixed separately by removing the duplicate input gate, retaining shared
+regression now fails in Chromium and WebKit; ordinary Space editing passes. The following checkpoint removes the duplicate input gate, retaining shared
 keyboard routing as the input-ownership boundary.
+
+
+## Preview command availability checkpoint — 2026-09-07
+
+Removed Preview's DOM-focus condition from command metadata. Palette search and
+explicit execution now remain available while the palette's own input has focus.
+Shared `resolveWindowKey` still protects text inputs, contenteditable, modals and
+terminal-owned input before keybinding lookup, including custom bindings. No second
+availability or input-routing abstraction was introduced. Removed the obsolete
+unit-test document stub that existed only to satisfy this predicate.
+
+The new browser regression fails in Chromium and WebKit before the fix; its Space
+editing/file-toggle companion already passes. After the fix all 14 command/address
+cases pass across both engines, and 44 command-registry/definition/keyboard unit
+contracts pass. Typecheck has zero errors/warnings. Independent review confirms
+availability and input-ownership contracts. Logs: `/tmp/preview-command-before.log`,
+`/tmp/preview-command-after.log`, `/tmp/preview-command-units.log`,
+`/tmp/preview-command-check.log`. The earlier full resize/unit acceptance remains
+recorded in the preceding checkpoint; these focused counts do not represent a new
+full-suite run.
+
+
+The rebuilt native scenario also passes (one scenario, 4.9 seconds,
+`/tmp/preview-resize-native-final.log`). Initial opening uses normal Space;
+full-word palette search then hides and reopens Preview after all zoom/dock/
+fullscreen/keyboard checks, with the real markdown marker restored. The earlier
+native setup failed this exact palette search before guard removal. Architecture
+lint and 376/376 map coverage remain clean. Final normal startup payload is
+44 chunks / 651,836 raw bytes / 212,142 gzip bytes, within budget
+(`/tmp/preview-command-bundle.log`). These results do not establish Mac startup
+latency or complete the remaining release gates.

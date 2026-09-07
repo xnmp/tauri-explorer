@@ -438,3 +438,15 @@ handle retirement and permanent owner disposal, and invalidate pending completio
 on replacement input. Tests must assert the requested dock/hidden state survives,
 not merely that cleanup ran. The Terminal regression also fails with the old
 teardown hook restored and passes with the shared finalizer.
+
+
+### Command availability must not depend on the palette's input focus
+
+Preview's command metadata rejected INPUT/TEXTAREA/contenteditable focus to protect
+its Space shortcut. The same predicate was used by palette discovery/execution,
+so searching for the command hid it precisely when the user wanted to invoke it.
+Remove the metadata focus guard: the shared window-key policy already rejects
+ordinary shortcuts while editing or inside a modal. Keep `when` for feature/model
+availability. The regression opens and closes readable Preview content through the
+focused palette, then verifies Space edits a path and toggles Preview after focus
+returns to files. It fails in both browser engines before the guard removal.

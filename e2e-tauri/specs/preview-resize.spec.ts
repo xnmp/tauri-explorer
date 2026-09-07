@@ -178,5 +178,9 @@ async function expectContent(): Promise<void> {
     await browser.waitUntil(async () => Number(await bottomHandle.getAttribute("aria-valuenow")) === 600,
       { timeoutMsg: "preview keyboard maximum was not 600 pixels" });
     await expectContent();
+    await command("Toggle Preview Pane");
+    await $(".preview-pane").waitForDisplayed({ reverse: true });
+    await command("Toggle Preview Pane");
+    await expectContent();
   });
 });

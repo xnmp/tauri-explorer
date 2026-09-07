@@ -565,3 +565,13 @@ frozen source/generated output, with post-GC JS-heap deltas of +3.45 MiB (worksp
 +4.5 MiB (tab churn), and +2.2 MiB (toggle). The ledger records intermediate samples and
 limits: these bounded browser workloads do not establish native-resource retention,
 all plugin/platform combinations, hours-long soak or Mac half-bounce performance.
+
+
+Rejected-transfer checkpoint (2026-09-07): real Linux routing now verifies missing,
+destroyed, parked hidden and picker targets retain the source tab, both panes and
+continued filesystem updates. The same hidden destination remains unmodified when
+activated later. Two native cases and 81 focused window/session tests pass, with
+independent review and unchanged normal release payload scope. The completion ledger
+records exclusions: portal registration, destination closure during handoff, unready
+routing, native asynchronous creation failure and other-platform acceptance remain
+open. This checkpoint adds acceptance coverage, not new production handoff behavior.

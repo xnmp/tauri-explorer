@@ -418,6 +418,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
 
-- `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import dispatch retirement.
+- `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import dispatch retirement and rejected-target/picker fixtures.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.

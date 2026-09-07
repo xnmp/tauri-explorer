@@ -5,18 +5,16 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): plugin lifecycle teardown now handles synchronous
-reentrancy during active deactivation, activation failure and shutdown. The registry
-publishes real activation/shutdown completion before invoking external hooks and
-retires old contributions before re-enable/retry. Four production-registry tests
-reproduced the failures before their fixes; mixed-plugin churn verifies 5,001
-activations without retained or duplicate contributions. Full frontend validation
-passes 2,135 tests plus 30 performance cases; typecheck, architecture lint and bundle
-budgets pass. Native Git blank-crash cleanup remains implemented and Linux-verified.
-All seven bounded browser load cases pass, with workspace and graph churn scaled
-to 150 cycles. The comprehensive review is **not complete**: same-process crash
-recovery, broader product/native integration and Windows/Mac
-acceptance, including actual Mac startup measurements, remain open.
+Current checkpoint (2026-09-07): real Linux tab-transfer rejection now covers
+missing, destroyed, hidden warm and picker destinations. All four retain the
+source tab and its functioning split; revealing the same hidden warm destination
+also proves it did not adopt the rejected payload. Ten native cases across rejection, transfer and warm-window suites, plus 81 focused
+window/session contracts, pass; typecheck, architecture lint, source maps and normal
+startup payload budgets pass. The preceding plugin reentrancy fixes and bounded
+150-cycle browser load acceptance remain valid checkpoints. The comprehensive
+review is **not complete**: same-process crash recovery, broader product/native
+integration and Windows/Mac acceptance, including actual Mac startup measurements,
+remain open.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -33,7 +31,7 @@ limitations and must not be read as current status.
 | 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; same-process crash recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
-| 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
+| 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during handoff, unready targets and native asynchronous creation failure remain open |
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
 | 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Wider theme/native interaction matrix pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
@@ -1632,3 +1630,63 @@ closure, pane restoration and saved-workspace reopening. These are details-view
 checks; broader view/theme/accessibility/native matrices remain open. Backend source
 is unchanged by this checkpoint, so prior Rust/native evidence is retained rather
 than represented as a fresh native integration run.
+
+
+## Rejected native tab-transfer destinations — 2026-09-07
+
+`e2e-tauri/specs/window-transfer-rejection.spec.ts` exercises the existing
+`sendTabToWindow` / `beginTabTransfer` handoff through actual Tauri routing and its
+normal acknowledgement timeout. It never supplies a synthetic acknowledgement.
+The rebuilt Linux binary passes both cases (four destination scenarios) in 47.5
+seconds (`/tmp/window-transfer-rejection-native-final-5.log`):
+
+- A nonexistent label rejects the transfer.
+- A real child is destroyed, confirmed absent by native lookup, and rejects it.
+- A ready parked warm window is confirmed present and natively invisible. It
+  rejects the transfer; activating that exact label afterward still reveals just
+  its one original warm-directory tab/pane.
+- A real native Webview running the picker route lists the requested directory,
+  has no Explorer tabs and remains unchanged after the transfer times out.
+
+After every rejection, the source retains its stable active tab ID, active path,
+two panes and both original file listings. A unique file written afterward appears
+without an explicit refresh. This establishes continued automatic listing updates;
+it does not attribute watcher cadence to backend observation timestamps. The
+inspected `native-window-transfer-rejection.png` shows both preserved panes and
+all post-rejection markers.
+
+The page-owned opt-in probe adds native destination lookup and picker creation;
+normal release assets contain neither operation. Picker creation exercises the
+actual picker page, not a desktop portal request or pending portal-token registry.
+No native permissions or production handoff behavior changed. Independent review
+accepts the bounded ownership assertions. Initial fixture runs corrected a wrong
+picker-title expectation and an overly broad ancestor-listing query that caused
+thousands of WebDriver property requests. The final query reads only the requested
+column in one DOM operation, and the picker has its own test deadline. Those
+failures did not establish a product regression or justify a relaxed timeout.
+
+All 81 focused window/session contracts pass
+(`/tmp/review-rejected-target-units.log`). Typecheck reports zero errors/warnings;
+architecture lint and map coverage 378/378 pass. The ordinary startup graph remains
+44 chunks / 651,987 raw / 212,255 gzip bytes
+(`/tmp/review-rejected-target-bundle.log`), within existing budgets. Source changes
+are confined to opt-in test support; these are not new startup latency measurements.
+
+This closes the four named Linux destination scenarios. Exact split geometry,
+destination closure during receipt/adoption, unready destination routing, native
+asynchronous creation failure and Windows/macOS acceptance remain separate gaps.
+
+
+The same rebuilt binary also passes all five existing transfer/close scenarios
+(`/tmp/window-transfer-lifetime-regression.log`) and all three warm-window lifecycle
+scenarios (`/tmp/warm-window-lifetime-regression.log`): functional concurrent
+children, acknowledged last-tab removal, split/large-layout adoption, isolated
+closure, warm navigation, fresh fallback and abandoned-claim expiry. Thus this
+checkpoint passes ten native cases across three sequential isolated suites.
+Historical screenshots regenerated by the regression runs are restored unchanged.
+
+A separate integrated WebKit graph/filter/panel/preview run passes 74 cases with
+two skips (`/tmp/graph-panels-webkit-integrated.log`). It does not reproduce the
+earlier interaction failures, and it still emits ResizeObserver loop warnings.
+Neither the intermittent-failure cause nor the observer warning is considered
+resolved by this passing run.

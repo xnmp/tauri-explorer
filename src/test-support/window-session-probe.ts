@@ -64,10 +64,36 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "native-destroy"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "native-destroy" | "target-state" | "open-picker"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
+      if (op === "open-picker") {
+        const [{ WebviewWindow }, { explorerWindowAppearance }] = await whileActive(Promise.all([
+          import("@tauri-apps/api/webviewWindow"),
+          import("$lib/state/window-appearance"),
+        ]));
+        const pickerToken = crypto.randomUUID();
+        const label = `picker-${pickerToken}`;
+        // Exercise the actual picker page and native event routing. This fixture
+        // does not emulate a desktop portal request or register a portal token.
+        const params = new URLSearchParams({ picker: "open", token: pickerToken, folder: target ?? "/" });
+        const child = new WebviewWindow(label, {
+          url: `${window.location.origin}${window.location.pathname}?${params}`,
+          width: 900, height: 560,
+          ...explorerWindowAppearance("Select a file"),
+        });
+        await new Promise<void>((resolve, reject) => {
+          void child.once("tauri://created", () => resolve()).catch(reject);
+          void child.once("tauri://error", ({ payload }) => reject(new Error(String(payload)))).catch(reject);
+        });
+        return { label, token: pickerToken };
+      }
+      if (op === "target-state") {
+        const { Window } = await whileActive(import("@tauri-apps/api/window"));
+        const destination = target ? await Window.getByLabel(target) : null;
+        return { exists: destination !== null, visible: destination ? await destination.isVisible() : false };
+      }
       if (op === "watch-acquire") {
         const { invoke } = await whileActive(import("@tauri-apps/api/core"));
         // Intentionally no frontend lease owner or cleanup: this fixture checks

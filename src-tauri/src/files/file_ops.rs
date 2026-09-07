@@ -200,7 +200,6 @@ pub async fn get_home_directory() -> Result<String, AppError> {
 }
 
 /// Create a new directory.
-#[tauri::command]
 pub async fn create_directory(parent_path: String, name: String) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&name)?;
 
@@ -229,7 +228,6 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileM
 }
 
 /// Create a new empty file (touch). Fails if a file/dir already exists there.
-#[tauri::command]
 pub async fn create_empty_file(parent_path: String, name: String) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&name)?;
 
@@ -272,7 +270,6 @@ fn is_case_only_rename(source: &Path, target: &Path, new_name: &str) -> bool {
 }
 
 /// Rename a file or directory.
-#[tauri::command]
 pub async fn rename_entry(path: String, new_name: String) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&new_name)?;
 
@@ -811,7 +808,6 @@ fn mime_for_extension(path: &Path) -> &'static str {
 }
 
 /// Write text content to a new file.
-#[tauri::command]
 pub async fn write_text_file(path: String, content: String) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || {
         let file_path = PathBuf::from(&path);
@@ -857,7 +853,6 @@ pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
 }
 
 /// Create a symbolic link.
-#[tauri::command]
 pub async fn create_symlink(target_path: String, link_path: String) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || {
         let target = PathBuf::from(&target_path);

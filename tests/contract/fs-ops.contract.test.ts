@@ -51,7 +51,7 @@ describe("fs-ops contract — mock agrees with real backend (fixtures)", () => {
     const parent = await freshDir();
     await mockInvoke("write_text_file", { path: `${parent}/${fx.rename.original}`, content: "x" });
 
-    const renamed = await mockInvoke<FileMutationReceipt>("rename_entry", {
+    const { result: renamed } = await mockInvoke<{ result: FileMutationReceipt }>("rename_entry", {
       path: `${parent}/${fx.rename.original}`,
       newName: fx.rename.new_name,
     });

@@ -5,6 +5,41 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Native forward ownership checkpoint
+
+Five commands (create directory/file, rename, write new text, symlink) now reserve
+native history before filesystem work and settle independently of the invoking
+renderer. Explicit pending/reserved positions preserve admission order and
+protect retained history capacity. Same-name rename preserves Redo, shared Undo
+availability reflects pending participant work, and overlapping partial Redo
+retains only its unfinished work. Typed worker uncertainty now reaches both
+forward and inverse settlement; it cannot silently become a retryable no-effect
+failure. Real filesystem regressions reproduce the classification and ordering
+failures before their fixes.
+
+Current focused evidence: 47 Rust history contracts, five forward filesystem
+classification cases, 2,286 frontend tests plus 30 performance cases, and 74
+Chromium outcomes across all file views. Source-map coverage is 403/403. Normal
+startup JavaScript is 665,578 raw / 217,281 gzip bytes (47 gzip bytes above the
+last checkpoint), within budget; no startup latency improvement is claimed.
+The rebuilt Linux binary passes nine outcomes across four specs: the three new
+forward cases plus shared inverse and ordinary/partial file-operation compatibility.
+Native history exists before renderer publication, exact same-name rename preserves
+Redo, and an accepted child rename completes after native window destruction with
+exact bytes and the surviving window listing. Fresh normal builds exclude all
+acceptance probes. See [the evidence record](reviews/native-forward-ownership-2026-09-08.json).
+
+The full Rust suite now passes 599 library and nine integration tests (seven
+ignored), with controlled Bash and isolated XDG data; all-targets recovery-feature
+Clippy is clean. A reproduced crash-report overwrite now uses private staging,
+complete no-replace publication and identities retained across consumption.
+Five focused crash-report contracts pass, with independent review of the
+publication and inverse-uncertainty boundaries. Independent GPT-5.6 Sol review
+accepts the native evidence and its scoped lifetime claims.
+This is acceptance of the five-command boundary. Remaining native batches,
+durable recovery, identity, supported-platform acceptance and actual Mac startup
+measurements remain required by the full review.
+
 ## Linux shared-history lifetime acceptance
 
 Native acceptance now verifies shared inverse admission and settlement across

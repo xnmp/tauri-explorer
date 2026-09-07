@@ -30,9 +30,7 @@ where
 {
     match tauri::async_runtime::spawn_blocking(f).await {
         Ok(result) => result,
-        Err(e) => Err(crate::error::AppError::Other(format!(
-            "Background task failed: {e}"
-        ))),
+        Err(e) => Err(crate::error::AppError::WorkerFailed(e.to_string())),
     }
 }
 

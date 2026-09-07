@@ -163,3 +163,13 @@ inverse ownership; it does not establish forward mutation/history atomicity or
 native-process crash recovery. The barrier and DOM probes are absent from normal
 builds. A gate timeout fails the test instead of proceeding with an unobserved
 filesystem operation.
+
+`file-forward-history.spec.ts` uses the same opt-in build and gate directory.
+It performs real pane renames: native Undo is visible while renderer result
+publication is held, one Undo consumes that entry without a duplicate, and a
+successful exact same-name rename preserves an existing Redo. A forward gate
+(`next-forward.arm`, matched to its fixture parent) also admits a child rename
+before native window destruction; external release then verifies exact committed
+bytes and the survivor's actual listing. The child's local history intentionally
+retires, so this is accepted forward-work lifetime coverage, not shared local
+Undo persistence or recovery after native-process termination.

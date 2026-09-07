@@ -1331,7 +1331,7 @@ if (typeof window !== "undefined") {
   };
 }
 
-const mockFileHistory = createMockFileHistory((command, args) => mockInvoke(command, args), broadcastFileChange);
+const mockFileHistory = createMockFileHistory((command, args) => invokeMockCommand(command, args), broadcastFileChange);
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
@@ -2970,7 +2970,25 @@ function loadMockConfigSeed(): Record<string, string> {
 /**
  * Mock invoke function for browser-based testing.
  */
+/** Match the native application boundary; inverse execution calls the raw
+ * fixture command below so it cannot recursively record forward history. */
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const result = await invokeMockCommand<unknown>(cmd, args);
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink"].includes(cmd)) {
+    const receipt = result as FileMutationReceipt;
+    if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
+      return { result, history: mockFileHistory.summary() } as T;
+    }
+    const action: UndoAction | null = cmd === "rename_entry"
+      ? { type: "rename", path: receipt.path, oldName: basename(args!.path as string), newName: args!.newName as string }
+      : null;
+    const history = mockFileHistory.push(action);
+    return { result, history: history.summary } as T;
+  }
+  return result as T;
+}
+
+async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const testWindow = globalThis as { __mockInvokeCounts?: Record<string, number> };
   if (typeof window !== "undefined") {
     testWindow.__mockInvokeCounts ??= {};

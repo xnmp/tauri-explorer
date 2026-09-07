@@ -862,3 +862,22 @@ handle, publish without replacement, then restore exact permissions through the
 handle. Do not make the source writable to get a cleanup-failure test to pass.
 The real Linux cross-device acceptance caught this before source cleanup ran;
 `file_publication` now reproduces the original failure independently.
+
+- Forward history must reserve its order before starting native work. A completed
+  older Redo cannot append above a newer admitted forward merely because its
+  filesystem operation finished later. Active positions must also be excluded
+  from retained-history eviction, or a no-effect attempt can discard valid Undo.
+- Partial Redo needs a fresh public retry ID and causal lineage to its original
+  reservation. Only forwards admitted during that reservation preserve its
+  unfinished work; subsequent independent forwards invalidate the retry.
+- A blocking-worker panic can already have changed files. Converting JoinError
+  to an ordinary string error hides uncertainty from outer async supervision.
+  Preserve typed worker failure through forward and inverse adapters, consume
+  uncertain inverses without retry, and reconcile both confirmed and potential
+  affected parents. Exact same-name rename is a separate successful no-effect
+  outcome and must preserve Redo after normal filesystem validation.
+- Crash-report filenames are publication identities, not just timestamps.
+  Whole-second names let concurrent caught panics overwrite diagnostics. Stage
+  complete private content before exposing a discoverable name; reserve its
+  identity across both unseen and consumed states so later reports cannot
+  replace earlier `.seen` evidence.

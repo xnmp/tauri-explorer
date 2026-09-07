@@ -1,4 +1,4 @@
-use super::{Action, Direction, Execution, Histories};
+use super::{Action, Direction, Execution, ForwardEffect, Histories};
 
 const FIRST: u64 = 11;
 const SECOND: u64 = 22;
@@ -23,6 +23,7 @@ fn deleted(paths: &[&str]) -> Action {
 
 fn completed(action: &Action, opposite: Option<Action>) -> Execution {
     Execution {
+        uncertain: None,
         completed: Some(action.clone()),
         opposite,
         remaining: None,
@@ -180,6 +181,7 @@ fn partial_path_subsets_retry_only_remaining_work_and_redo_in_lifo_order() {
     histories.finish(
         first,
         &Execution {
+            uncertain: None,
             completed: Some(a.clone()),
             opposite: Some(a.clone()),
             remaining: Some(b.clone()),
@@ -243,6 +245,7 @@ fn admitted_partial_redo_retains_its_remaining_work_after_a_new_push() {
     histories.finish(
         redo,
         &Execution {
+            uncertain: None,
             completed: Some(a.clone()),
             opposite: Some(a),
             remaining: Some(b.clone()),
@@ -256,6 +259,529 @@ fn admitted_partial_redo_retains_its_remaining_work_after_a_new_push() {
         .begin(FIRST, Direction::Redo, summary.redo_id.unwrap())
         .unwrap();
     assert_eq!(retry.action, b);
+}
+
+#[test]
+fn admitted_redo_settles_below_a_newer_local_action() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    let shared = copy("/ordered/shared.txt", true);
+    histories.push(FIRST, Some(shared.clone()), false).unwrap();
+
+    let undo = histories
+        .begin(
+            FIRST,
+            Direction::Undo,
+            histories.summary(FIRST).undo_id.unwrap(),
+        )
+        .unwrap();
+    assert_eq!(undo.action, shared);
+    histories.finish(undo, &completed(&shared, Some(shared.clone())));
+
+    let redo = histories
+        .begin(
+            FIRST,
+            Direction::Redo,
+            histories.summary(FIRST).redo_id.unwrap(),
+        )
+        .unwrap();
+    assert_eq!(redo.action, shared);
+
+    let later = copy("/ordered/later.txt", true);
+    histories.push(FIRST, Some(later.clone()), false).unwrap();
+    histories.finish(redo, &completed(&shared, Some(shared.clone())));
+
+    let undo_later = histories
+        .begin(
+            FIRST,
+            Direction::Undo,
+            histories.summary(FIRST).undo_id.unwrap(),
+        )
+        .unwrap();
+    assert_eq!(undo_later.action, later);
+    histories.finish(undo_later, &completed(&later, Some(later.clone())));
+
+    let undo_shared = histories
+        .begin(
+            FIRST,
+            Direction::Undo,
+            histories.summary(FIRST).undo_id.unwrap(),
+        )
+        .unwrap();
+    assert_eq!(undo_shared.action, shared);
+}
+
+#[test]
+fn forward_slots_preserve_admission_order_when_work_finishes_out_of_order() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    let older_action = copy("/forward/older.txt", true);
+    let newer_action = copy("/forward/newer.txt", true);
+    let older = histories.begin_forward(FIRST, false).unwrap();
+    let newer = histories.begin_forward(FIRST, false).unwrap();
+
+    let pending = histories.summary(FIRST);
+    assert!(pending.busy);
+    assert_eq!(pending.undo_id, None);
+    assert_eq!(pending.stack_size, 0);
+
+    histories.finish_forward(newer, ForwardEffect::Committed(Some(newer_action.clone())));
+    let newer_id = histories.summary(FIRST).undo_id.unwrap();
+    assert!(histories
+        .begin(FIRST, Direction::Undo, newer_id)
+        .unwrap_err()
+        .contains("still in progress"));
+
+    histories.finish_forward(older, ForwardEffect::Committed(Some(older_action.clone())));
+    assert!(!histories.summary(FIRST).busy);
+    let undo_newer = histories.begin(FIRST, Direction::Undo, newer_id).unwrap();
+    assert_eq!(undo_newer.action, newer_action);
+    histories.finish(
+        undo_newer,
+        &completed(&newer_action, Some(newer_action.clone())),
+    );
+    let undo_older = histories
+        .begin(
+            FIRST,
+            Direction::Undo,
+            histories.summary(FIRST).undo_id.unwrap(),
+        )
+        .unwrap();
+    assert_eq!(undo_older.action, older_action);
+}
+
+#[test]
+fn legacy_push_after_forward_admission_remains_the_newer_undo_intent() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    let older_action = copy("/forward/reserved.txt", true);
+    let newer_action = copy("/forward/legacy-push.txt", true);
+    let older = histories.begin_forward(FIRST, false).unwrap();
+    histories
+        .push(FIRST, Some(newer_action.clone()), false)
+        .unwrap();
+    let newer_id = histories.summary(FIRST).undo_id.unwrap();
+    assert!(histories.summary(FIRST).busy);
+
+    histories.finish_forward(older, ForwardEffect::Committed(Some(older_action.clone())));
+    let undo_newer = histories.begin(FIRST, Direction::Undo, newer_id).unwrap();
+    assert_eq!(undo_newer.action, newer_action);
+    histories.finish(
+        undo_newer,
+        &completed(&newer_action, Some(newer_action.clone())),
+    );
+    let undo_older = histories
+        .begin(
+            FIRST,
+            Direction::Undo,
+            histories.summary(FIRST).undo_id.unwrap(),
+        )
+        .unwrap();
+    assert_eq!(undo_older.action, older_action);
+}
+
+#[test]
+fn unchanged_forward_preserves_redo_but_committed_without_inverse_clears_it() {
+    for committed in [false, true] {
+        let mut histories = Histories::default();
+        histories.register(FIRST);
+        let action = copy("/forward/redo.txt", true);
+        histories.push(FIRST, Some(action.clone()), false).unwrap();
+        let undo = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        histories.finish(undo, &completed(&action, Some(action.clone())));
+        let redo_id = histories.summary(FIRST).redo_id.unwrap();
+
+        let forward = histories.begin_forward(FIRST, false).unwrap();
+        histories.finish_forward(
+            forward,
+            if committed {
+                ForwardEffect::Committed(None)
+            } else {
+                ForwardEffect::Unchanged
+            },
+        );
+
+        if committed {
+            let summary = histories.summary(FIRST);
+            assert_eq!(summary.redo_id, None);
+            assert_eq!(summary.undo_id, None);
+        } else {
+            assert_eq!(histories.summary(FIRST).redo_id, Some(redo_id));
+            let redo = histories.begin(FIRST, Direction::Redo, redo_id).unwrap();
+            assert_eq!(redo.action, action);
+        }
+    }
+}
+
+#[test]
+fn shared_forward_tracks_only_captured_live_participants() {
+    const LATE: u64 = 33;
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    histories.register(SECOND);
+    let action = copy("/forward/shared.txt", true);
+    let forward = histories.begin_forward(FIRST, true).unwrap();
+    assert!(histories.summary(FIRST).busy);
+    assert!(histories.summary(SECOND).busy);
+
+    histories.clear(FIRST);
+    histories.retire(SECOND);
+    histories.register(LATE);
+    assert!(!histories.summary(LATE).busy);
+    histories.finish_forward(forward, ForwardEffect::Committed(Some(action)));
+
+    for client in [FIRST, LATE] {
+        let summary = histories.summary(client);
+        assert!(!summary.busy);
+        assert_eq!(summary.undo_id, None);
+        assert_eq!(summary.stack_size, 0);
+    }
+}
+
+#[test]
+fn peer_summary_is_busy_only_when_its_shared_top_entry_has_a_pending_participant() {
+    const UNRELATED: u64 = 33;
+    for direction in [Direction::Undo, Direction::Redo] {
+        let mut histories = Histories::default();
+        histories.register(FIRST);
+        histories.register(SECOND);
+        let shared = copy("/forward/shared-top.txt", true);
+        histories.push(FIRST, Some(shared.clone()), true).unwrap();
+        if direction == Direction::Redo {
+            let undo = histories
+                .begin(
+                    FIRST,
+                    Direction::Undo,
+                    histories.summary(FIRST).undo_id.unwrap(),
+                )
+                .unwrap();
+            histories.finish(undo, &completed(&shared, Some(shared.clone())));
+        }
+        let shared_id = match direction {
+            Direction::Undo => histories.summary(SECOND).undo_id.unwrap(),
+            Direction::Redo => histories.summary(SECOND).redo_id.unwrap(),
+        };
+
+        histories.register(UNRELATED);
+        let unrelated = copy("/forward/unrelated.txt", true);
+        histories
+            .push(UNRELATED, Some(unrelated.clone()), false)
+            .unwrap();
+        let forward = histories.begin_forward(FIRST, false).unwrap();
+
+        assert!(histories.summary(SECOND).busy);
+        assert!(!histories.summary(UNRELATED).busy);
+        let unrelated_undo = histories
+            .begin(
+                UNRELATED,
+                Direction::Undo,
+                histories.summary(UNRELATED).undo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(unrelated_undo.action, unrelated);
+        histories.finish(
+            unrelated_undo,
+            &completed(&unrelated, Some(unrelated.clone())),
+        );
+        assert!(histories
+            .begin(SECOND, direction, shared_id)
+            .unwrap_err()
+            .contains("still in progress"));
+
+        histories.finish_forward(forward, ForwardEffect::Unchanged);
+        let restored = histories.summary(SECOND);
+        assert!(!restored.busy);
+        assert_eq!(
+            match direction {
+                Direction::Undo => restored.undo_id,
+                Direction::Redo => restored.redo_id,
+            },
+            Some(shared_id)
+        );
+        let shared_operation = histories.begin(SECOND, direction, shared_id).unwrap();
+        assert_eq!(shared_operation.action, shared);
+    }
+}
+
+#[test]
+fn duplicate_forward_settlement_cannot_publish_an_action_twice() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    let action = copy("/forward/once.txt", true);
+    let forward = histories.begin_forward(FIRST, false).unwrap();
+    histories.finish_forward(
+        forward.clone(),
+        ForwardEffect::Committed(Some(action.clone())),
+    );
+    histories.finish_forward(forward, ForwardEffect::Committed(Some(action.clone())));
+
+    let summary = histories.summary(FIRST);
+    assert_eq!(summary.stack_size, 1);
+    let undo = histories
+        .begin(FIRST, Direction::Undo, summary.undo_id.unwrap())
+        .unwrap();
+    assert_eq!(undo.action, action);
+    histories.finish(undo, &completed(&action, Some(action.clone())));
+    assert_eq!(histories.summary(FIRST).undo_id, None);
+}
+
+#[test]
+fn pending_forward_count_is_bounded_and_capacity_is_reclaimed() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    let reservations = (0..128)
+        .map(|_| histories.begin_forward(FIRST, false).unwrap())
+        .collect::<Vec<_>>();
+    assert!(histories.summary(FIRST).busy);
+    assert!(histories
+        .begin_forward(FIRST, false)
+        .unwrap_err()
+        .contains("Too many"));
+
+    for reservation in reservations {
+        histories.finish_forward(reservation, ForwardEffect::Unchanged);
+    }
+    assert!(!histories.summary(FIRST).busy);
+    let recovered = histories.begin_forward(FIRST, false).unwrap();
+    histories.finish_forward(recovered, ForwardEffect::Unchanged);
+}
+
+#[test]
+fn unchanged_forward_at_undo_capacity_preserves_every_ready_action() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    let actions = (0..256)
+        .map(|index| copy(&format!("/capacity/undo-{index}.txt"), true))
+        .collect::<Vec<_>>();
+    for action in &actions {
+        histories.push(FIRST, Some(action.clone()), false).unwrap();
+    }
+    let before = histories.summary(FIRST);
+    assert_eq!(before.stack_size, 256);
+
+    let forward = histories.begin_forward(FIRST, false).unwrap();
+    histories.finish_forward(forward, ForwardEffect::Unchanged);
+    let after = histories.summary(FIRST);
+    assert_eq!(after.stack_size, 256);
+    assert_eq!(after.undo_id, before.undo_id);
+
+    for expected in actions.iter().rev() {
+        let reservation = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(&reservation.action, expected);
+        histories.finish(reservation, &completed(expected, None));
+    }
+    assert_eq!(histories.summary(FIRST).undo_id, None);
+}
+
+#[test]
+fn unchanged_forward_at_redo_capacity_preserves_exact_sequence() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    let actions = (0..256)
+        .map(|index| copy(&format!("/capacity/redo-{index}.txt"), true))
+        .collect::<Vec<_>>();
+    for action in &actions {
+        histories.push(FIRST, Some(action.clone()), false).unwrap();
+    }
+    for expected in actions.iter().rev() {
+        let reservation = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(&reservation.action, expected);
+        histories.finish(reservation, &completed(expected, Some(expected.clone())));
+    }
+    let redo_id = histories.summary(FIRST).redo_id.unwrap();
+
+    let forward = histories.begin_forward(FIRST, false).unwrap();
+    histories.finish_forward(forward, ForwardEffect::Unchanged);
+    assert_eq!(histories.summary(FIRST).redo_id, Some(redo_id));
+
+    for expected in &actions {
+        let reservation = histories
+            .begin(
+                FIRST,
+                Direction::Redo,
+                histories.summary(FIRST).redo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(&reservation.action, expected);
+        histories.finish(reservation, &completed(expected, None));
+    }
+    assert_eq!(histories.summary(FIRST).redo_id, None);
+}
+
+#[test]
+fn admitted_redo_opposite_stays_below_a_newer_forward_in_both_finish_orders() {
+    for forward_finishes_first in [false, true] {
+        let mut histories = Histories::default();
+        histories.register(FIRST);
+        let older_action = copy("/ordered/redo.txt", true);
+        histories
+            .push(FIRST, Some(older_action.clone()), false)
+            .unwrap();
+        let undo = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        histories.finish(undo, &completed(&older_action, Some(older_action.clone())));
+        let redo = histories
+            .begin(
+                FIRST,
+                Direction::Redo,
+                histories.summary(FIRST).redo_id.unwrap(),
+            )
+            .unwrap();
+
+        let newer_action = copy("/ordered/forward.txt", true);
+        let forward = histories.begin_forward(FIRST, false).unwrap();
+        if forward_finishes_first {
+            histories.finish_forward(
+                forward,
+                ForwardEffect::Committed(Some(newer_action.clone())),
+            );
+            histories.finish(redo, &completed(&older_action, Some(older_action.clone())));
+        } else {
+            histories.finish(redo, &completed(&older_action, Some(older_action.clone())));
+            histories.finish_forward(
+                forward,
+                ForwardEffect::Committed(Some(newer_action.clone())),
+            );
+        }
+
+        let undo_newer = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(undo_newer.action, newer_action);
+        histories.finish(
+            undo_newer,
+            &completed(&newer_action, Some(newer_action.clone())),
+        );
+        let undo_older = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(undo_older.action, older_action);
+    }
+}
+
+#[test]
+fn admitted_partial_redo_keeps_its_retry_and_opposite_below_a_newer_forward() {
+    for forward_finishes_first in [false, true] {
+        let mut histories = Histories::default();
+        histories.register(FIRST);
+        let original = deleted(&["/ordered/a.txt", "/ordered/b.txt"]);
+        histories
+            .push(FIRST, Some(original.clone()), false)
+            .unwrap();
+        let undo = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        histories.finish(undo, &completed(&original, Some(original.clone())));
+
+        let original_redo_id = histories.summary(FIRST).redo_id.unwrap();
+        let redo = histories
+            .begin(FIRST, Direction::Redo, original_redo_id)
+            .unwrap();
+        let newer_action = copy("/ordered/forward-after-partial-redo.txt", true);
+        let forward = histories.begin_forward(FIRST, false).unwrap();
+        let completed_subset = deleted(&["/ordered/a.txt"]);
+        let remaining_subset = deleted(&["/ordered/b.txt"]);
+        let partial = Execution {
+            uncertain: None,
+            completed: Some(completed_subset.clone()),
+            opposite: Some(completed_subset.clone()),
+            remaining: Some(remaining_subset.clone()),
+            error: Some("b failed".into()),
+        };
+
+        if forward_finishes_first {
+            histories.finish_forward(
+                forward,
+                ForwardEffect::Committed(Some(newer_action.clone())),
+            );
+            histories.finish(redo, &partial);
+        } else {
+            histories.finish(redo, &partial);
+            histories.finish_forward(
+                forward,
+                ForwardEffect::Committed(Some(newer_action.clone())),
+            );
+        }
+
+        let retry = histories
+            .begin(
+                FIRST,
+                Direction::Redo,
+                histories.summary(FIRST).redo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(retry.action, remaining_subset);
+        histories.finish(
+            retry,
+            &Execution {
+                uncertain: None,
+                completed: None,
+                opposite: None,
+                remaining: Some(remaining_subset.clone()),
+                error: Some("still unavailable".into()),
+            },
+        );
+        assert!(histories
+            .begin(FIRST, Direction::Redo, original_redo_id)
+            .unwrap_err()
+            .contains("changed"));
+
+        let undo_newer = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(undo_newer.action, newer_action);
+        histories.finish(
+            undo_newer,
+            &completed(&newer_action, Some(newer_action.clone())),
+        );
+        let undo_completed_subset = histories
+            .begin(
+                FIRST,
+                Direction::Undo,
+                histories.summary(FIRST).undo_id.unwrap(),
+            )
+            .unwrap();
+        assert_eq!(undo_completed_subset.action, completed_subset);
+    }
 }
 
 #[test]

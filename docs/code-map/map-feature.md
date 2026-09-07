@@ -148,7 +148,7 @@ backend for E2E/browser).
 - `state/clipboard.svelte.ts` — in-app cut/copy path set
 - `state/paste-operations.ts` — paste orchestration (conflict, dest); explorer captures destination before clipboard waits and guards pane callbacks by navigation/lifetime.
 - `state/pane-mutations.ts` — `createPaneMutations`: durable affected-parent/undo effects; navigation/lifetime-owned entry updates and exact editor-session completion
-- Native history lifetime acceptance: `src/test-support/file-history-probe.ts` observes the production summary channel and dispatches real IPC; `src-tauri/test_support/file_history_gate.rs` holds accepted native work before filesystem execution only in opt-in recovery builds. `e2e-tauri/specs/file-history-lifetime.spec.ts` verifies actual shared inverse outcomes across windows.
+- Native history lifetime acceptance: `src/test-support/file-history-probe.ts` observes the production summary channel and dispatches real IPC; `src-tauri/test_support/file_history_gate.rs` holds accepted native work before filesystem execution only in opt-in recovery builds. `e2e-tauri/specs/file-history-lifetime.spec.ts` verifies actual shared inverse outcomes across windows; `e2e-tauri/specs/file-forward-history.spec.ts` verifies native rename history before renderer completion and accepted forward work after native window destruction.
 - `src/test-support/file-mutation-probe.ts` — opt-in native hold between successful file IPC and renderer publication, with tokened release and teardown.
 - `state/operations.svelte.ts` — `operationsManager`: tracked long ops, `formatBytes`
 - `components/ProgressDialog.svelte`, `components/JobsPanel.svelte`, `state/jobs.svelte.ts` — progress UI
@@ -167,7 +167,7 @@ backend for E2E/browser).
 - `components/BulkRenameDialog.svelte` — multi-file pattern rename
 - `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
-- `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `src-tauri/src/files/file_ops.rs` (`create_directory`, `create_empty_file`)
+- `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `api/file-mutations.ts`, `src-tauri/src/file_mutation.rs` — native forward admission and settled history receipts; reusable filesystem primitives remain in `files/file_ops.rs`.
 - FLOW: inline-rename commits → `renameEntry` → pane-mutations renames entry + `renameThumbnailCache` so thumb doesn't flash.
 - New-entry FLOW: context menu / `file.newFolder`|`file.newFile` command → `explorer.startInlineNewFolder`|`startInlineNewFile` (opens an independently owned creation session) → InlineNewFolder row → `createFolder`|`createFile` → pane-mutations optimistic add + `broadcastFileChange`.
 
@@ -179,6 +179,7 @@ backend for E2E/browser).
 - `state/undo.svelte.ts` — window projection captures expected native entry IDs, including the exact receipt of already queued local writes.
 - `state/undo-helpers.ts` — action labels.
 - `src-tauri/src/file_history/mod.rs`, `file_history/model.rs` — native admission and execution survive invoking renderer closure; shared entries settle surviving participants once.
+- `src-tauri/src/file_history/forward.rs`, `src-tauri/src/file_mutation.rs`, `api/file-mutations.ts` — accepted create/rename/new-text/symlink work settles native history before IPC results; forward and inverse slots preserve admission order across out-of-order completions. Other forward batches still require migration.
 - `src-tauri/src/file_history/action.rs`, `file_history/execution.rs` — host capability normalization, affected parents and ordered partial inverse receipts.
 - `api/mock-file-history.ts`, `api/mock-file-history-execution.ts` — browser-only history simulation, never native acceptance evidence.
 - `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed` receipts for `deleteMultipleEntries` and `restoreFromTrash`.

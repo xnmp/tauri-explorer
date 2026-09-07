@@ -11,6 +11,7 @@ use std::{
 #[derive(serde::Deserialize)]
 struct Request {
     token: String,
+    directory: Option<String>,
 }
 
 fn publish(path: &Path, value: serde_json::Value) -> io::Result<()> {
@@ -20,6 +21,25 @@ fn publish(path: &Path, value: serde_json::Value) -> io::Result<()> {
 }
 
 pub(super) async fn after_admission(entry_id: EntryId, direction: Direction) -> Result<(), String> {
+    let direction = match direction {
+        Direction::Undo => "undo",
+        Direction::Redo => "redo",
+    };
+    wait_for_release(entry_id, direction, None).await
+}
+
+pub(super) async fn after_forward_admission(
+    entry_id: EntryId,
+    directories: Vec<String>,
+) -> Result<(), String> {
+    wait_for_release(entry_id, "forward", Some(directories)).await
+}
+
+async fn wait_for_release(
+    entry_id: EntryId,
+    direction: &'static str,
+    affected: Option<Vec<String>>,
+) -> Result<(), String> {
     let Some(directory) = std::env::var_os("TAURI_E2E_HISTORY_GATE_DIR") else {
         return Ok(());
     };
@@ -27,18 +47,23 @@ pub(super) async fn after_admission(entry_id: EntryId, direction: Direction) -> 
     // history lock, UI thread, or async runtime worker.
     tauri::async_runtime::spawn_blocking(move || -> io::Result<()> {
         let directory = Path::new(&directory);
-        let direction = match direction { Direction::Undo => "undo", Direction::Redo => "redo" };
         let stem = format!("{entry_id}-{direction}");
-        let request = match fs::read(directory.join(format!("{stem}.arm"))) {
+        let request_stem = if affected.is_some() { "next-forward" } else { &stem };
+        let request = match fs::read(directory.join(format!("{request_stem}.arm"))) {
             Ok(bytes) => serde_json::from_slice::<Request>(&bytes)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
         };
+        if let Some(affected) = affected {
+            if !request.directory.as_ref().is_some_and(|target| affected.contains(target)) {
+                return Ok(());
+            }
+        }
         if request.token.is_empty() || request.token.len() > 128 || !request.token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid history gate token"));
         }
-        fs::remove_file(directory.join(format!("{stem}.arm")))?;
-        publish(&directory.join(format!("{stem}.accepted.json")), serde_json::json!({
+        fs::remove_file(directory.join(format!("{request_stem}.arm")))?;
+        publish(&directory.join(format!("{request_stem}.accepted.json")), serde_json::json!({
             "token": request.token, "entryId": entry_id, "direction": direction, "pid": std::process::id(),
         }))?;
         let release = directory.join(format!("{stem}.{}.release", request.token));

@@ -20,6 +20,7 @@ import {
 import { providerFor } from "$lib/plugins/fs-providers";
 import { logFrontendDiagnostic } from "./frontend-log";
 import { getNativeResourceSession } from "./native-resource-session";
+import { invokeFileMutation } from "./file-mutations";
 
 // Vite must erase this import before extracting dynamic chunks. An imported
 // constant folds too late and leaves an orphan test chunk in release assets.
@@ -146,12 +147,12 @@ export async function createDirectory(
   const guard = virtualPathGuard(parentPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileMutationReceipt>("create_directory", {
+    const result = await invokeFileMutation<FileMutationReceipt>("create_directory", {
       parentPath,
       name,
     });
-    if (fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("create_directory", parentPath, data.path);
-    return { ok: true, data };
+    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("create_directory", parentPath, result.data.path);
+    return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -170,11 +171,10 @@ export async function createEmptyFile(
   const guard = virtualPathGuard(parentPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileMutationReceipt>("create_empty_file", {
+    return await invokeFileMutation<FileMutationReceipt>("create_empty_file", {
       parentPath,
       name,
     });
-    return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -194,9 +194,9 @@ export async function renameEntry(
   const guard = virtualPathGuard(path);
   if (guard) return guard;
   try {
-    const data = await invoke<FileMutationReceipt>("rename_entry", { path, newName });
-    if (fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("rename_entry", path, data.path);
-    return { ok: true, data };
+    const result = await invokeFileMutation<FileMutationReceipt>("rename_entry", { path, newName });
+    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("rename_entry", path, result.data.path);
+    return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -346,8 +346,7 @@ export async function resolveShortcut(path: string): Promise<ShortcutTarget | nu
  */
 export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileMutationReceipt>> {
   try {
-    const data = await invoke<FileMutationReceipt>("write_text_file", { path, content });
-    return { ok: true, data };
+    return await invokeFileMutation<FileMutationReceipt>("write_text_file", { path, content });
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -656,8 +655,7 @@ export async function createSymlink(
   const guard = virtualPathGuard(targetPath, linkPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileMutationReceipt>("create_symlink", { targetPath, linkPath });
-    return { ok: true, data };
+    return await invokeFileMutation<FileMutationReceipt>("create_symlink", { targetPath, linkPath });
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

@@ -61,6 +61,7 @@ export function createMockFileHistory(invoke: Invoke, publishEffects: (directori
     restoreFromTrash: (paths) => batch("restore_from_trash", paths),
   };
   return {
+    summary,
     register(listener: (summary: HistorySummary) => void) { receive = listener; publish(); return "0"; },
     push(action: UndoAction | null) {
       if (action) undo = [...undo, entry(prepare(structuredClone(action)))].slice(-256);

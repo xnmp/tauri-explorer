@@ -11,6 +11,7 @@ mod content_search;
 mod crash_report;
 pub mod error;
 mod file_history;
+mod file_mutation;
 mod fal;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
@@ -246,17 +247,17 @@ pub fn run(launch_dir: Option<String>) {
             files::dir_listing::cancel_directory_listing,
             // File operations — CRUD
             files::file_ops::get_home_directory,
-            files::file_ops::create_directory,
-            files::file_ops::create_empty_file,
-            files::file_ops::rename_entry,
+            file_mutation::create_directory,
+            file_mutation::create_empty_file,
+            file_mutation::rename_entry,
             files::file_ops::copy_entry,
             files::file_ops::cancel_copy,
             files::file_ops::move_entry,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
-            files::file_ops::write_text_file,
+            file_mutation::write_text_file,
             files::file_ops::delete_entry_permanent,
-            files::file_ops::create_symlink,
+            file_mutation::create_symlink,
             files::file_ops::estimate_size,
             files::file_ops::check_paths_exist,
             // Filesystem watcher

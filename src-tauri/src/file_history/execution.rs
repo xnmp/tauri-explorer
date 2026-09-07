@@ -3,23 +3,37 @@ use super::model::{Action, Direction, Execution};
 use crate::files::trash::FileBatchOutcome;
 use std::{collections::HashSet, future::Future, path::Path, pin::Pin};
 
+#[derive(Debug)]
+pub enum OperationError {
+    Unchanged(String),
+    Uncertain(String),
+}
+impl From<String> for OperationError {
+    fn from(error: String) -> Self {
+        Self::Unchanged(error)
+    }
+}
+
 pub trait Operations: Sync {
-    fn rename(&self, path: String, name: String)
-        -> impl Future<Output = Result<(), String>> + Send;
+    fn rename(
+        &self,
+        path: String,
+        name: String,
+    ) -> impl Future<Output = Result<(), OperationError>> + Send;
     fn move_entry(
         &self,
         path: String,
         destination: String,
-    ) -> impl Future<Output = Result<Option<String>, String>> + Send;
-    fn trash(&self, path: String) -> impl Future<Output = Result<(), String>> + Send;
+    ) -> impl Future<Output = Result<Option<String>, OperationError>> + Send;
+    fn trash(&self, path: String) -> impl Future<Output = Result<(), OperationError>> + Send;
     fn trash_many(
         &self,
         paths: Vec<String>,
-    ) -> impl Future<Output = Result<FileBatchOutcome, String>> + Send;
+    ) -> impl Future<Output = Result<FileBatchOutcome, OperationError>> + Send;
     fn restore(
         &self,
         paths: Vec<String>,
-    ) -> impl Future<Output = Result<FileBatchOutcome, String>> + Send;
+    ) -> impl Future<Output = Result<FileBatchOutcome, OperationError>> + Send;
 }
 
 pub async fn execute(
@@ -72,12 +86,14 @@ fn execute_inner<'a, O: Operations>(
                     }),
                 };
                 match request {
-                    Ok((path, destination)) => match operations.move_entry(path, destination).await {
+                    Ok((path, destination)) => match operations.move_entry(path, destination).await
+                    {
                         Ok(Some(recovery)) => Execution {
                             // The destination committed and the source may
                             // be partially removed. Retrying this Move, or
                             // offering its opposite, can destroy surviving data.
                             completed: Some(action),
+                            uncertain: None,
                             opposite: None,
                             remaining: None,
                             error: Some(recovery),
@@ -100,7 +116,9 @@ fn execute_inner<'a, O: Operations>(
                 ),
                 Direction::Redo if !restore_supported => failed(
                     action,
-                    "Cannot redo copy because restoring this item is unsupported".into(),
+                    OperationError::Unchanged(
+                        "Cannot redo copy because restoring this item is unsupported".into(),
+                    ),
                 ),
                 Direction::Redo => match operations.restore(vec![copied_path.clone()]).await {
                     Ok(outcome) if outcome.succeeded.iter().any(|path| path == copied_path) => {
@@ -136,6 +154,7 @@ async fn execute_batch<O: Operations>(
 ) -> Execution {
     let mut completed = vec![None; actions.len()];
     let mut opposite = vec![None; actions.len()];
+    let mut uncertain = vec![None; actions.len()];
     let mut remaining = actions.iter().cloned().map(Some).collect::<Vec<_>>();
     let indices = match direction {
         Direction::Undo => (0..actions.len()).rev().collect::<Vec<_>>(),
@@ -146,6 +165,7 @@ async fn execute_batch<O: Operations>(
     for index in indices {
         let result = execute_inner(actions[index].clone(), operations, direction).await;
         completed[index] = result.completed;
+        uncertain[index] = result.uncertain;
         opposite[index] = result.opposite;
         remaining[index] = result.remaining;
         if result.error.is_some() {
@@ -156,13 +176,14 @@ async fn execute_batch<O: Operations>(
 
     Execution {
         completed: batch_action(completed, &label),
+        uncertain: batch_action(uncertain, &label),
         opposite: batch_action(opposite, &label),
         remaining: batch_action(remaining, &label),
         error,
     }
 }
 
-fn settled(action: Action, result: Result<(), String>, has_opposite: bool) -> Execution {
+fn settled(action: Action, result: Result<(), OperationError>, has_opposite: bool) -> Execution {
     match result {
         Ok(()) => Execution {
             completed: Some(action.clone()),
@@ -196,6 +217,7 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome) -> Execution {
 
     Execution {
         opposite: completed.clone(),
+        uncertain: None,
         completed,
         remaining: (!remaining_paths.is_empty()).then_some(Action::Delete {
             paths: remaining_paths,
@@ -205,11 +227,16 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome) -> Execution {
     }
 }
 
-fn failed(action: Action, error: String) -> Execution {
-    Execution {
-        remaining: Some(action),
-        error: Some(error),
-        ..Execution::default()
+fn failed(action: Action, error: impl Into<OperationError>) -> Execution {
+    match error.into() {
+        OperationError::Unchanged(error) => Execution {
+            remaining: Some(action), error: Some(error), ..Execution::default()
+        },
+        OperationError::Uncertain(error) => Execution {
+            uncertain: Some(action),
+            error: Some(format!("The file operation may have completed. Inspect the affected files before continuing: {error}")),
+            ..Execution::default()
+        },
     }
 }
 

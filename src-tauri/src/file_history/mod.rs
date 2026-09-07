@@ -1,7 +1,11 @@
 //! Application-owned file history and inverse execution.
 mod action;
 mod execution;
+mod forward;
 mod model;
+pub(crate) use forward::{run_forward, MutationOutcome, MutationReply};
+pub(crate) use model::Action;
+pub(crate) use model::ForwardEffect;
 #[cfg(feature = "e2e-renderer-recovery")]
 #[path = "../../test_support/file_history_gate.rs"]
 mod acceptance_gate;
@@ -11,9 +15,12 @@ use crate::{
     error::AppError,
     renderer_owner::{self, Owner},
 };
-use model::{Action, ClientId, Direction, EntryId, Execution, Histories, Summary};
+use model::{ClientId, Direction, EntryId, Execution, Histories, Summary};
 use serde::Serialize;
-use std::{future::Future, sync::{Mutex, OnceLock}};
+use std::{
+    future::Future,
+    sync::{Mutex, OnceLock},
+};
 use tauri::ipc::Channel;
 
 struct Client {
@@ -158,50 +165,73 @@ pub async fn file_history_clear(
 
 struct NativeOperations;
 
+fn operation_error(error: AppError) -> execution::OperationError {
+    match error {
+        AppError::WorkerFailed(_) => execution::OperationError::Uncertain(error.to_string()),
+        _ => execution::OperationError::Unchanged(error.to_string()),
+    }
+}
+
+fn execution_affected(result: &Execution) -> Vec<String> {
+    let mut affected: Vec<_> = result
+        .completed
+        .iter()
+        .chain(&result.uncertain)
+        .flat_map(action::affected_dirs)
+        .collect();
+    affected.sort_unstable();
+    affected.dedup();
+    affected
+}
+
 /// Join a separately owned worker so a panic cannot strand the application's
 /// reservation. Its effects are unknown: consume this inverse without retry
 /// and invalidate all potentially affected directories for reconciliation.
-async fn supervise(
-    work: impl Future<Output = Execution> + Send + 'static,
-) -> Result<Execution, String> {
+async fn supervise<T: Send + 'static>(
+    work: impl Future<Output = T> + Send + 'static,
+) -> Result<T, String> {
     tauri::async_runtime::spawn(work)
         .await
         .map_err(|error| format!("Native file history execution was interrupted; inspect the affected files before continuing: {error}"))
 }
 
 impl execution::Operations for NativeOperations {
-    async fn rename(&self, path: String, name: String) -> Result<(), String> {
+    async fn rename(&self, path: String, name: String) -> Result<(), execution::OperationError> {
         crate::files::file_ops::rename_entry(path, name)
             .await
             .map(|_| ())
-            .map_err(|error| error.to_string())
+            .map_err(operation_error)
     }
-    async fn move_entry(&self, path: String, destination: String) -> Result<Option<String>, String> {
+    async fn move_entry(
+        &self,
+        path: String,
+        destination: String,
+    ) -> Result<Option<String>, execution::OperationError> {
         crate::files::file_ops::move_entry(path, destination, Some(false))
             .await
             .map(|receipt| receipt.recovery.map(|recovery| recovery.message()))
-            .map_err(|error| error.to_string())
+            .map_err(operation_error)
     }
-    async fn trash(&self, path: String) -> Result<(), String> {
+    async fn trash(&self, path: String) -> Result<(), execution::OperationError> {
         crate::files::trash::move_to_trash(path)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(operation_error)
     }
     async fn trash_many(
         &self,
         paths: Vec<String>,
-    ) -> Result<crate::files::trash::FileBatchOutcome, String> {
+    ) -> Result<crate::files::trash::FileBatchOutcome, execution::OperationError> {
         crate::files::trash::move_multiple_to_trash(paths)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(operation_error)
     }
     async fn restore(
         &self,
         paths: Vec<String>,
-    ) -> Result<crate::files::trash::FileBatchOutcome, String> {
+    ) -> Result<crate::files::trash::FileBatchOutcome, execution::OperationError> {
         crate::files::trash::restore_from_trash(paths)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(operation_error)
     }
 }
 
@@ -236,12 +266,20 @@ pub async fn file_history_execute(
                 .await
                 .expect("Native history acceptance gate failed");
             execution::execute(action, &NativeOperations, direction).await
-        }).await {
+        })
+        .await
+        {
             Ok(result) => {
-                let affected = result.completed.as_ref().map(action::affected_dirs).unwrap_or_default();
+                let affected = execution_affected(&result);
                 (result, affected)
             }
-            Err(error) => (Execution { error: Some(error), ..Execution::default() }, action::affected_dirs(&reservation.action)),
+            Err(error) => (
+                Execution {
+                    error: Some(error),
+                    ..Execution::default()
+                },
+                action::affected_dirs(&reservation.action),
+            ),
         };
         let mut service = service().lock().unwrap();
         service.histories.finish(reservation, &result);
@@ -254,3 +292,7 @@ pub async fn file_history_execute(
     .await
     .map_err(|error| AppError::Other(format!("Native file history task failed: {error}")))
 }
+
+#[cfg(test)]
+#[path = "../../test_support/file_history_uncertainty.rs"]
+mod uncertainty_tests;

@@ -4,7 +4,8 @@ Status: Proposed — implementation in progress; native acceptance and transacti
 
 Governs: `src-tauri/src/file_history/`, `src-tauri/src/files/mutation.rs`,
 `src/lib/domain/file-history.ts`, `src/lib/api/file-history.ts`,
-`src/lib/api/native-resource-session.ts`, `src/lib/state/undo.svelte.ts`.
+`src/lib/api/native-resource-session.ts`, `src/lib/api/file-mutations.ts`,
+`src-tauri/src/file_mutation.rs`, `src/lib/state/undo.svelte.ts`.
 
 ## Context
 
@@ -172,6 +173,55 @@ real rename effects through the production history port, so it establishes the
 inverse boundary and does not establish forward mutation/history atomicity.
 See [the acceptance record](../reviews/file-history-lifetime-2026-09-08.json).
 
+### Initial forward mutation ownership and Linux acceptance
+
+Five application commands now enter native history before filesystem work:
+create directory, create empty file, rename, write new text and create symlink.
+Their filesystem primitives remain history-free so inverse execution cannot
+recursively record a forward action. An application-owned task settles history
+and publishes affected parents before returning the mutation receipt, with a
+revisioned summary consumed by the frontend before it exposes the result.
+Rename derives its inverse from the committed path. The other four commands
+retain their existing non-undoable semantics but invalidate superseded Redo.
+
+Admission reserves explicit positions; completion fills those positions instead
+of appending in filesystem completion order. Pending forwards and reserved
+inverse sources are separate from retained ready entries, so starting a no-effect
+operation cannot evict valid history. Pending forwards are capped at 128 across
+the application. Shared history availability accounts for participating windows
+with pending work while unrelated local histories remain available.
+
+An inverse reserves its opposite position at admission too. Partial Redo receives
+a fresh retry ID with its original admission lineage; forwards admitted during
+that Redo preserve its unfinished work regardless of completion order. A later
+forward admitted after partial settlement clears the ordinary retry. Clear and
+renderer retirement still prevent obsolete reservations from resurrecting history.
+
+Successful exact same-name rename is unchanged; missing sources still fail and
+case-only spelling changes remain committed. Worker join failure is explicitly
+uncertain through both forward and inverse adapters. Uncertain inverse children
+are consumed without a retry/opposite and publish their potentially affected
+parents; known batch effects and unstarted siblings remain distinct. Real
+filesystem write/rename-then-panic regressions cover these adapter boundaries.
+This does not resolve indeterminate ordinary filesystem errors on network mounts.
+
+The current migration covers those five commands only. Delete, permanent delete,
+copy/move, paste/drop and grouped rename still require native logical-batch
+ownership. It does not establish a durable transaction journal, artifact identity,
+or recovery after native-process termination. Existing per-renderer history
+retirement policy remains in force; local history does not migrate to another
+window when its owner closes.
+
+The Linux binary now verifies native rename history before held renderer
+publication, single-entry Undo without a duplicate renderer push, and existing
+Redo after exact same-name rename. A third gated case destroys the native child
+window after forward admission but before its filesystem work; external release
+then verifies exact committed bytes and the surviving window's actual listing.
+The survivor retains no local child history, as required by the existing owner
+retirement policy. These cases and ordinary/shared/partial compatibility pass
+nine outcomes in four specs. Fresh normal builds exclude all acceptance probes.
+See [the evidence record](../reviews/native-forward-ownership-2026-09-08.json).
+
 ### Remaining acceptance
 
 - Same-native-window renderer replacement/crash during accepted history work,
@@ -181,8 +231,9 @@ See [the acceptance record](../reviews/file-history-lifetime-2026-09-08.json).
   effects, but do not reconcile them automatically or after native-process loss.
 - Recorded native artifact identity before path-based destructive inverses;
   retained displaced artifacts for complete overwrite recovery.
-- Native forward mutation/history admission ownership: the current separate
-  push leaves a renderer-loss and concurrent-ordering gap.
+- Complete native forward logical-batch ownership for delete/copy/move/paste/drop
+  and grouped rename; the remaining separate pushes retain a renderer-loss gap.
+  The initial five-command boundary has Linux native acceptance, described above.
 - Windows/macOS restore and lifecycle acceptance, final browser/native
   integration, and actual macOS startup measurements.
 

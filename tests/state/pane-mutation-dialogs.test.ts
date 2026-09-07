@@ -208,12 +208,7 @@ describe("deferred rename dialog ownership", () => {
 
     expect(dialogStore.isRenameOpen).toBe(true);
     expect(dialogStore.renamingEntry?.path).toBe(second.path);
-    expect(history.port.push).toHaveBeenCalledWith({
-      type: "rename",
-      path: renamed.path,
-      oldName: first.name,
-      newName: renamed.name,
-    }, false);
+    expect(history.port.push).not.toHaveBeenCalled();
   });
 
   it("does not close a newer rename session when the same path is reopened", async () => {
@@ -233,12 +228,7 @@ describe("deferred rename dialog ownership", () => {
 
     expect(dialogStore.isRenameOpen).toBe(true);
     expect(dialogStore.renamingEntry?.modified).toBe(reopened.modified);
-    expect(history.port.push).toHaveBeenCalledWith({
-      type: "rename",
-      path: renamed.path,
-      oldName: original.name,
-      newName: renamed.name,
-    }, false);
+    expect(history.port.push).not.toHaveBeenCalled();
   });
 
   it("reconciles a committed rename without metadata and retains its selection identity", async () => {
@@ -261,12 +251,7 @@ describe("deferred rename dialog ownership", () => {
     });
     expect([...explorer.selectedPaths]).toEqual([renamed.path]);
     expect(explorer.focusedEntry?.path).toBe(renamed.path);
-    expect(history.port.push).toHaveBeenCalledWith({
-      type: "rename",
-      path: renamed.path,
-      oldName: original.name,
-      newName: renamed.name,
-    }, false);
+    expect(history.port.push).not.toHaveBeenCalled();
     expect(rekeyPath).toHaveBeenCalledWith(original.path, renamed.path, null);
     expect(dialogStore.isRenameOpen).toBe(false);
   });

@@ -58,6 +58,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (!origin.path) return "No current directory";
     const result = await create(origin.path, name);
     if (!result.ok) return result.error;
+    if (result.warning) toastStore.error(result.warning);
 
     const { path, entry } = result.data;
     if (origin.current()) {
@@ -87,13 +88,12 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const renamingEntry = dialogStore.renamingEntry;
     if (!renamingEntry) return "No entry selected for rename";
 
-    const oldName = renamingEntry.name;
     const oldPath = renamingEntry.path;
     const result = await apiRenameEntry(oldPath, newName);
 
     if (result.ok) {
       const { path, entry } = result.data;
-      await undoStore.push({ type: "rename", path, oldName, newName });
+      if (result.warning) toastStore.error(result.warning);
       renameThumbnailCache(oldPath, path);
       if (origin.current()) {
         if (entry) {
@@ -195,6 +195,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const result = await apiCreateSymlink(path, linkPath);
     if (result.ok) {
       const { path: createdPath, entry } = result.data;
+      if (result.warning) toastStore.error(result.warning);
       if (origin.current()) {
         if (entry) {
           coreState.entries = [...coreState.entries.filter((candidate) => candidate.path !== createdPath), entry];

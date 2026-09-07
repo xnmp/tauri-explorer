@@ -210,6 +210,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `native-resource-session.ts` — one acknowledged renderer generation shared by directory/Git IPC and the ordered history-summary channel; only failed acknowledgement retries.
 - `file-history.ts` — typed native history push/clear/execute IPC and revisioned summary subscription.
+- `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
@@ -401,7 +402,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
 - `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
-- `file_history/model.rs` — pure per-client/shared history admission, partial settlement, branch/clear retirement and retained-history bounds.
+- `file_history/model.rs` — pure per-client/shared history admission, reserved forward/opposite ordering, partial settlement, branch/clear retirement and retained-history bounds.
+- `file_history/forward.rs` — native forward admission and supervised settlement independent of the invoking renderer.
+- `file_mutation.rs` — typed create/rename/new-text/symlink commands classify committed, unchanged and uncertain filesystem outcomes before history publication.
 - `file_history/action.rs` — action shape/capability admission and affected-parent projection.
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
@@ -449,5 +452,5 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src-tauri/test_support/ — opt-in native recovery acceptance
 
 - `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; bounded ownership/recovery/navigation assertions and native snapshot.
-- `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native inverse admission; an external runner releases work independently of its invoking renderer.
+- `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.

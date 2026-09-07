@@ -1,4 +1,4 @@
-use super::{execute, Operations};
+use super::{execute, OperationError, Operations};
 use crate::{
     file_history::model::{Action, Direction},
     files::trash::{FileBatchOutcome, FileFailure},
@@ -85,28 +85,32 @@ impl FakeOperations {
 }
 
 impl Operations for FakeOperations {
-    async fn rename(&self, path: String, name: String) -> Result<(), String> {
+    async fn rename(&self, path: String, name: String) -> Result<(), OperationError> {
         self.unit(Call::Rename(path, name))
+            .map_err(OperationError::from)
     }
 
     async fn move_entry(
         &self,
         path: String,
         destination: String,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, OperationError> {
         self.move_entry(Call::Move(path, destination))
+            .map_err(OperationError::from)
     }
 
-    async fn trash(&self, path: String) -> Result<(), String> {
-        self.unit(Call::Trash(path))
+    async fn trash(&self, path: String) -> Result<(), OperationError> {
+        self.unit(Call::Trash(path)).map_err(OperationError::from)
     }
 
-    async fn trash_many(&self, paths: Vec<String>) -> Result<FileBatchOutcome, String> {
+    async fn trash_many(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
         self.batch(Call::TrashMany(paths))
+            .map_err(OperationError::from)
     }
 
-    async fn restore(&self, paths: Vec<String>) -> Result<FileBatchOutcome, String> {
+    async fn restore(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
         self.batch(Call::Restore(paths))
+            .map_err(OperationError::from)
     }
 }
 

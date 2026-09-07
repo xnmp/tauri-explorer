@@ -30,6 +30,13 @@ participant's history. A single application-wide inverse reservation prevents
 duplicate execution; ordinary local pushes remain local. Clear generations
 and push branches govern how partial results settle into surviving histories.
 
+Histories are selective across windows, not one globally linear stack: a peer
+can retain a local Undo entry while receiving the opposite of a shared action.
+Admission checks the requesting client's top entry; settlement finds that shared
+entry in every participating history. The branch guard distinguishes forward
+work arriving after admission. This policy does not establish dependency or
+artifact-identity safety between actions; native identity remains required.
+
 Registration uses the existing native resource-session acknowledgement with
 an ordered summary channel. The requesting renderer generation is captured
 before asynchronous native listener installation. A delayed old request cannot
@@ -146,10 +153,29 @@ Linux native cross-device case also verifies both exact copies, the destination
 listing, an incomplete-paste error and absence of an unsafe Undo. Read-only
 nested staging cleanup and arbitrary namespace substitution remain open.
 
+### Linux inverse lifetime acceptance
+
+The real binary now passes two gated shared-history cases. Both windows receive
+the same native entry ID; after native admission a second window's duplicate
+request is rejected. External release executes the real rename, preserves exact
+bytes, publishes the same opposite entry to passive peers, rejects the stale
+original ID and allows Redo from the peer. A second case destroys the initiating
+native window while its accepted inverse is held, then releases it externally:
+the surviving window receives settlement, performs Redo and displays the result.
+
+The barrier runs inside the separately owned task after admission and outside
+the history mutex. The task uses the runtime's detached ownership semantics
+([Tokio JoinHandle](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html)).
+Only the opt-in recovery build includes the bounded filesystem gate; fresh normal
+frontend and native builds contain none of its probe strings. The fixture seeds
+real rename effects through the production history port, so it establishes the
+inverse boundary and does not establish forward mutation/history atomicity.
+See [the acceptance record](../reviews/file-history-lifetime-2026-09-08.json).
+
 ### Remaining acceptance
 
-- Real multiwindow inverse admission, passive peer settlement and initiating
-  renderer closure while an inverse is accepted.
+- Same-native-window renderer replacement/crash during accepted history work,
+  and Windows/macOS equivalents of the Linux shared inverse cases.
 - Durable recovery for cross-device source cleanup, failed staging cleanup and
   overwrite rollback. Current receipts and retained paths expose partial
   effects, but do not reconcile them automatically or after native-process loss.

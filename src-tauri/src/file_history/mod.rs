@@ -2,6 +2,9 @@
 mod action;
 mod execution;
 mod model;
+#[cfg(feature = "e2e-renderer-recovery")]
+#[path = "../../test_support/file_history_gate.rs"]
+mod acceptance_gate;
 pub(crate) use model::Summary as HistorySummary;
 
 use crate::{
@@ -228,6 +231,10 @@ pub async fn file_history_execute(
     tauri::async_runtime::spawn(async move {
         let action = reservation.action.clone();
         let (result, affected) = match supervise(async move {
+            #[cfg(feature = "e2e-renderer-recovery")]
+            acceptance_gate::after_admission(expected_entry_id, direction)
+                .await
+                .expect("Native history acceptance gate failed");
             execution::execute(action, &NativeOperations, direction).await
         }).await {
             Ok(result) => {

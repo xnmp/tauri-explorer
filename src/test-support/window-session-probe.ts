@@ -3,9 +3,11 @@ import { windowTabsManager } from "../lib/state/window-tabs.svelte";
 import { spawnWarmWindow } from "../lib/state/warm-window";
 import type { FileEntry } from "../lib/domain/file";
 import type { ExplorerInstance } from "../lib/state/explorer.svelte";
+import { startFileHistoryProbe } from "./file-history-probe";
 
 export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise<boolean>): void {
   if (signal.aborted) return;
+  startFileHistoryProbe(signal);
   // Lazy dispatch belongs to this session. Once a domain operation accepts
   // work, its own navigation/transfer/launch lifetime handles completion.
   const whileActive = async <T>(pending: Promise<T>): Promise<T> => {

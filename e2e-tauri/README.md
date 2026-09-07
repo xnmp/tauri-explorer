@@ -138,3 +138,28 @@ application log, and final recovery screenshot there (the runner copies the
 screenshot into the branch's evidence path on success). This is controlled test
 reload coverage; it does not ship automatic crash-recovery behavior and is not a
 Windows or macOS acceptance path.
+
+## Native shared file-history acceptance
+
+`file-history-lifetime.spec.ts` runs on Linux when `TAURI_E2E_HISTORY_GATE_DIR`
+is set. It uses the same `e2e-renderer-recovery` build above, an isolated
+`XDG_CONFIG_HOME`, and a writable, empty gate directory shared by the runner
+and application. For example, with the isolated XDG profile already configured:
+
+```bash
+history_gate_dir=$(mktemp -d)
+TAURI_E2E_HISTORY_GATE_DIR="$history_gate_dir" \
+  xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri \
+  --spec e2e-tauri/specs/file-history-lifetime.spec.ts
+```
+
+The runner records real precreated rename effects through the production history
+port. A native gate pauses only after the history reservation is admitted and
+before the actual filesystem inverse. External tokened release lets the test
+close the invoking window while the accepted task remains held. Exact file
+contents and passive peer history summaries establish the outcome. This isolates
+inverse ownership; it does not establish forward mutation/history atomicity or
+native-process crash recovery. The barrier and DOM probes are absent from normal
+builds. A gate timeout fails the test instead of proceeding with an unobserved
+filesystem operation.

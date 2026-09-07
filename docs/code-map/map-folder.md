@@ -441,6 +441,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
 
 - `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
+- `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
 - `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
@@ -448,4 +449,5 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src-tauri/test_support/ — opt-in native recovery acceptance
 
 - `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; bounded ownership/recovery/navigation assertions and native snapshot.
+- `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native inverse admission; an external runner releases work independently of its invoking renderer.
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.

@@ -5,6 +5,32 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Linux shared-history lifetime acceptance
+
+Native acceptance now verifies shared inverse admission and settlement across
+real windows. A second window cannot execute an already reserved inverse; both
+receive matching passive Redo summaries after completion, and a stale entry ID
+cannot execute again. Destroying the initiating native window after acceptance
+does not abandon the inverse: the survivor receives settlement, performs Redo
+and renders the actual renamed file. Both cases assert exact bytes and correlate
+an external release with the admitted entry ID, direction, token and native PID.
+
+The Linux run passes six outcomes across three specs, including the two new
+cases and ordinary create/rename/trash plus partial Delete/Undo/Redo compatibility.
+Focused validation passes 33 native history contracts and 21 frontend lifetime
+contracts. Svelte, architecture and all-targets recovery-feature Clippy pass;
+source maps cover 400/400 files. Independent GPT-5.6 Sol review accepts the
+scoped native evidence and its stated limits.
+Fresh normal frontend/native builds exclude the probes; startup JavaScript remains
+665,401 raw bytes / 217,234 gzip bytes (two gzip bytes of build variance).
+No startup latency improvement is claimed. See
+[the acceptance record](reviews/file-history-lifetime-2026-09-08.json).
+
+This closes the Linux native-window inverse-lifetime gate, not the full history
+or architectural review. Same-window renderer replacement/crash, forward
+mutation/history atomicity, artifact identity, durable transaction recovery,
+Windows/macOS and the wider release acceptance matrix remain open.
+
 ## Partial-move recovery checkpoint
 
 Cross-device moves now return a committed destination with an explicit recovery

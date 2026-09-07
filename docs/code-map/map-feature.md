@@ -148,6 +148,7 @@ backend for E2E/browser).
 - `state/clipboard.svelte.ts` — in-app cut/copy path set
 - `state/paste-operations.ts` — paste orchestration (conflict, dest); explorer captures destination before clipboard waits and guards pane callbacks by navigation/lifetime.
 - `state/pane-mutations.ts` — `createPaneMutations`: durable affected-parent/undo effects; navigation/lifetime-owned entry updates and exact editor-session completion
+- Native history lifetime acceptance: `src/test-support/file-history-probe.ts` observes the production summary channel and dispatches real IPC; `src-tauri/test_support/file_history_gate.rs` holds accepted native work before filesystem execution only in opt-in recovery builds. `e2e-tauri/specs/file-history-lifetime.spec.ts` verifies actual shared inverse outcomes across windows.
 - `src/test-support/file-mutation-probe.ts` — opt-in native hold between successful file IPC and renderer publication, with tokened release and teardown.
 - `state/operations.svelte.ts` — `operationsManager`: tracked long ops, `formatBytes`
 - `components/ProgressDialog.svelte`, `components/JobsPanel.svelte`, `state/jobs.svelte.ts` — progress UI

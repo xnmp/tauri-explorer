@@ -1,0 +1,81 @@
+{
+  "date": "2026-09-08",
+  "base": "17f14461",
+  "scope": "Real Linux shared inverse admission and settlement after invoking native window destruction",
+  "native_linux": {
+    "passed": 6,
+    "spec_files_passed": 3,
+    "skipped": 0,
+    "exit_code": 0,
+    "specs": [
+      "file-history-lifetime.spec.ts",
+      "file-ops.spec.ts",
+      "file-batch-outcome.spec.ts"
+    ],
+    "history_cases_passed": 2,
+    "log": "/tmp/file-history-lifetime-native.log",
+    "sha256": "244ac6abac7923f890fd0055ce72af94ef3bae4aa98f932233db9243cae64ca7",
+    "build": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery; after Rust-only formatting, cargo build --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol,e2e-renderer-recovery",
+    "screenshot": "screenshots/refactor/repo-health-cleanup/native-file-history-lifetime.png"
+  },
+  "focused_checks": {
+    "frontend_passed": 21,
+    "frontend_log": "/tmp/file-history-lifetime-frontend.log",
+    "native_history_passed": 33,
+    "rust_log": "/tmp/file-history-lifetime-rust.log",
+    "svelte_errors": 0,
+    "svelte_warnings": 0,
+    "architecture_passed": true,
+    "all_targets_recovery_feature_clippy_passed": true,
+    "clippy_log": "/tmp/file-history-lifetime-clippy.log",
+    "source_map_coverage": {
+      "covered": 400,
+      "total": 400
+    }
+  },
+  "ordinary_build_exclusion": {
+    "frontend_probe_hits": {
+      "e2e-history-operation": [],
+      "e2eHistorySummary": [],
+      "e2eHistoryReady": [],
+      "file-history-probe": []
+    },
+    "native": {
+      "sha256": "89d975a2ceabcddf35f489afa7e2790cde593a9b2a88e5a8a9890a037aac2e58",
+      "tokens": {
+        "TAURI_E2E_HISTORY_GATE_DIR": false,
+        "Native history acceptance gate failed": false,
+        "History admission gate was not released": false
+      }
+    }
+  },
+  "startup": {
+    "raw_bytes": 665401,
+    "gzip_bytes": 217234,
+    "raw_delta": 0,
+    "gzip_delta": -2,
+    "interpretation": "Build variance; no latency improvement claimed",
+    "log": "/tmp/file-history-lifetime-bundle.log"
+  },
+  "independent_review": {
+    "model": "GPT-5.6 Sol",
+    "verdict": "ACCEPT bounded native shared inverse admission and invoking-window-loss settlement",
+    "confirmed": [
+      "Both windows receive same native shared entry ID",
+      "Gate correlates token/entry/direction/native PID after real admission and before any filesystem effect",
+      "Duplicate admission and stale old ID are rejected",
+      "Exact bytes survive Undo/Redo and passive peers receive matching opposite IDs",
+      "Invoking native window destroyed before external release; survivor receives settlement and successfully redoes",
+      "Native and frontend probes excluded from fresh ordinary builds"
+    ],
+    "refuted": []
+  },
+  "outstanding": [
+    "Same-window renderer-only reload/crash during accepted history work",
+    "Native-process restart durability and transaction reconciliation",
+    "Atomic forward mutation and history admission",
+    "Artifact identity and complete overwrite Undo",
+    "Hung platform inverse timeout recovery",
+    "Windows/macOS and full architecture release matrix"
+  ]
+}

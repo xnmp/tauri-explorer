@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import type { PanelResize } from "$lib/composables/use-panel-resize.svelte";
-  let { resize, label, controls, outset = false }: { resize: PanelResize; label: string; controls: string; outset?: boolean } = $props();
+  import type { ResizeController } from "$lib/composables/use-resize-owner.svelte";
+  let { resize, label, controls, outset = false }: { resize: ResizeController; label: string; controls: string; outset?: boolean } = $props();
   onDestroy(untrack(() => resize.cancel));
 </script>
 
@@ -9,7 +9,7 @@
 <div class="resize-handle" class:outset class:resizing={resize.isResizing}
   role="separator" tabindex="0" aria-orientation="vertical" aria-label={label}
   aria-controls={controls} aria-valuemin={resize.min} aria-valuemax={resize.max}
-  aria-valuenow={resize.width} aria-valuetext={`${Math.round(resize.width)} pixels`}
+  aria-valuenow={resize.value} aria-valuetext={`${Math.round(resize.value)} pixels`}
   onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
   onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
   onkeydown={resize.keydown}></div>

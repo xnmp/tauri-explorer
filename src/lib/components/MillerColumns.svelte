@@ -313,11 +313,11 @@
     max: 600,
     default: 200,
   });
-  useInlinePanelWidth(untrack(() => reserveInlineWidth), () => columns.length ? resize.width : 0);
+  useInlinePanelWidth(untrack(() => reserveInlineWidth), () => columns.length ? resize.value : 0);
 </script>
 
 {#if columns.length > 0}
-  <div id={panelId} class="miller-columns" class:resizing={resize.isResizing} style="width: {resize.width}px">
+  <div id={panelId} class="miller-columns" class:resizing={resize.isResizing} style="width: {resize.value}px">
     {#each columns as column (column.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div

@@ -378,3 +378,28 @@ A handle's DOM parent is not always its controlled surface: the graph gutter
 handle lives in the header, while the sized clip is in the body. Pass that sized
 element explicitly when measuring zoom scale. Also install capture cleanup before
 calling setPointerCapture and roll back on failure, including pane dividers.
+
+
+### A reactive effect cannot guard an external value at pointer release
+
+Terminal's counter-zoom cancels the element's visual CSS zoom, but its model
+height is still multiplied by app zoom. A 60px drag previously grew it by 48px at
+80% and 90px at 150%. Supply the model-to-visual scale explicitly instead of
+inferring it from the counter-zoomed element. Keep the draft out of settings and
+commit only on retirement; otherwise every pointer sample replaces and saves the
+whole settings object.
+
+An external size can arrive after a published draft and immediately before
+pointer release, blur, restart or a key. Waiting for a Svelte effect to cancel the
+gesture lets those synchronous paths commit the old draft over the new value.
+Check source/options before queued publication and at the commit boundary after
+releasing DOM/activity ownership. Keyboard must first retire superseded ownership,
+then decide whether the current axis handles the key and derive its step from
+the current value. An old-axis key must retire the obsolete gesture even if the
+new axis rejects that key. Keep automatic graph topology's captured-origin policy
+explicit so external settings protection does not break automatic/manual sizing.
+
+Native xterm scrollback must be verified through visible history navigation.
+xterm 6 owns its scroll model internally, so `.xterm-viewport.scrollTop` and
+`scrollHeight` do not establish whether shell history exists. Populate real PTY
+output, use Shift+PageUp, and assert that earlier output replaces the latest rows.

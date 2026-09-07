@@ -114,7 +114,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.
 - `pane-viewport.svelte.ts` — window-owned viewport measurements and derived pane geometry; never persists rendered ratios.
 - `resize-activity.svelte.ts` — window-wide, token-owned resize activity; automatic workspace reveal pauses until all gestures retire.
-- `panel-resize.ts` — importable panel width gesture owner; fixed/live automatic modes, coalesced updates, cancellation and persistence contracts.
+- `panel-resize.ts` — fixed/live automatic width preference adapter over the scalar gesture owner.
+- `scalar-resize.ts` — captured scalar drafts, frame identity, durable retirement and external-source supersession.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane fs-watch + local-mutation cooldown (pure).
 - `directory-listing.ts` — streaming/event-based incremental dir load management.
@@ -248,7 +249,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
 - `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
 - `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
-- `use-panel-resize.svelte.ts` — pointer/keyboard DOM adapter for persisted panel widths; Sidebar, SCM, Miller and all Git columns; optional explicit controlled-element geometry.
+- `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
+- `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
+- `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
@@ -288,7 +291,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `undo-operations.ts` — pure undo/redo execution logic.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
-- `panel-width.ts` — pure width normalization, visual-to-CSS drag conversion and keyboard sizing policy.
+- `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.

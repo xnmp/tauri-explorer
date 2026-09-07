@@ -415,7 +415,7 @@
     automaticWidth: () => graphWidth,
     element: () => graphClip ?? null,
   });
-  const effectiveGraphWidth = $derived(graphCol.width);
+  const effectiveGraphWidth = $derived(graphCol.value);
 
   // Column visibility (#372): author/date/commit are hideable via the
   // header's right-click menu; message and the graph itself always show.
@@ -1519,7 +1519,7 @@
         onpointercancel={graphCol.cancelPointer} onlostpointercapture={graphCol.cancelPointer}
         onkeydown={graphCol.keydown} tabindex="0"
         aria-controls={`${resizeRegionId}-graph`}
-        aria-valuemin={graphCol.min} aria-valuemax={graphCol.max} aria-valuenow={graphCol.width}
+        aria-valuemin={graphCol.min} aria-valuemax={graphCol.max} aria-valuenow={graphCol.value}
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize graph column"
@@ -1529,7 +1529,7 @@
         {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
       </span>
       {#if shownColumns.author}
-        <span id={`${resizeRegionId}-author`} class="gh-author" style:width="{authorCol.width}px">
+        <span id={`${resizeRegionId}-author`} class="gh-author" style:width="{authorCol.value}px">
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
           <span
             class="col-handle handle-in-cell"
@@ -1539,7 +1539,7 @@
             onpointercancel={authorCol.cancelPointer} onlostpointercapture={authorCol.cancelPointer}
             onkeydown={authorCol.keydown} tabindex="0"
             aria-controls={`${resizeRegionId}-author`}
-            aria-valuemin={authorCol.min} aria-valuemax={authorCol.max} aria-valuenow={authorCol.width}
+            aria-valuemin={authorCol.min} aria-valuemax={authorCol.max} aria-valuenow={authorCol.value}
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize author column"
@@ -1549,7 +1549,7 @@
         </span>
       {/if}
       {#if shownColumns.date}
-        <span id={`${resizeRegionId}-date`} class="gh-date" style:width="{dateCol.width}px">
+        <span id={`${resizeRegionId}-date`} class="gh-date" style:width="{dateCol.value}px">
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
           <span
             class="col-handle handle-in-cell"
@@ -1559,7 +1559,7 @@
             onpointercancel={dateCol.cancelPointer} onlostpointercapture={dateCol.cancelPointer}
             onkeydown={dateCol.keydown} tabindex="0"
             aria-controls={`${resizeRegionId}-date`}
-            aria-valuemin={dateCol.min} aria-valuemax={dateCol.max} aria-valuenow={dateCol.width}
+            aria-valuemin={dateCol.min} aria-valuemax={dateCol.max} aria-valuenow={dateCol.value}
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize date column"
@@ -1819,8 +1819,8 @@
                 >{tag}</span>
               {/each}
               <span class="summary" title={commit.summary}>{commit.summary}</span>
-              {#if shownColumns.author}<span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>{/if}
-              {#if shownColumns.date}<span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>{/if}
+              {#if shownColumns.author}<span class="author" style:width="{authorCol.value}px">{commit.author_name}</span>{/if}
+              {#if shownColumns.date}<span class="date" style:width="{dateCol.value}px">{formatDate(commit.author_time)}</span>{/if}
               {#if shownColumns.commit}<span class="oid">{commit.short_oid}</span>{/if}
               {#if shownColumns.parent}<span class="oid parent-col">{commit.parents.map((p) => p.slice(0, 7)).join(" ") || "—"}</span>{/if}
             {/if}

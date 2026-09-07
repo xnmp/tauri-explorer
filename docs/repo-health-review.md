@@ -484,3 +484,15 @@ rebuilt Linux inline-panel baseline pass. Normal startup payload is 42 chunks /
 ledger describe the semantics, evidence and remaining Terminal/Preview/Details
 resize migrations. macOS half-bounce measurements and full release acceptance
 remain outstanding; this checkpoint does not complete the architectural review.
+
+
+Scalar-resize checkpoint (2026-09-07): fixed/automatic widths and externally
+controlled Terminal height now compose over shared bounded geometry, gesture
+ownership and DOM capture. Terminal drafts avoid per-pointer settings writes;
+synchronous source/options checks prevent late drafts overwriting external sizes.
+All 80 browser outcomes, 2,105 unit tests, 30 performance cases and six native Linux
+Terminal outcomes pass (one OSC7 case skipped). The native resize case measures
+real visual growth at 150% zoom and verifies subsequent shell command execution.
+Startup payload remains within budget at 43 chunks / 650,380 raw bytes / 211,520 gzip
+bytes. ADR0012 and the completion ledger retain exact semantics, evidence and the
+remaining Preview/Details, platform, wider integration and Mac startup work.

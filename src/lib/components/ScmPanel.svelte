@@ -32,14 +32,14 @@
     max: 500,
     default: 280,
   });
-  useInlinePanelWidth(untrack(() => reserveInlineWidth), () => resize.width);
+  useInlinePanelWidth(untrack(() => reserveInlineWidth), () => resize.value);
 </script>
 
 <div
   id={panelId} class="scm-panel"
   class:island
   class:resizing={resize.isResizing}
-  style="width: {resize.width}px"
+  style="width: {resize.value}px"
 >
   <ScmSidebarView />
   <PanelResizeHandle {resize} label="Resize source control panel" controls={panelId} />

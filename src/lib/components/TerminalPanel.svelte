@@ -20,7 +20,9 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
+  import { NUMERIC_SETTINGS } from "$lib/domain/settings-numbers";
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
@@ -454,21 +456,15 @@
     focusOnRequest();
   });
 
-  // ── Drag-resize via the top edge ──────────────────────────────────────────
-  function startResize(event: PointerEvent): void {
-    event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = settingsStore.terminalPanelHeight;
-    const onMove = (e: PointerEvent) => {
-      settingsStore.setTerminalPanelHeight(startHeight + (startY - e.clientY));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
+  const resizeRegionId = $props.id();
+  const resize = useControlledSize(
+    () => settingsStore.terminalPanelHeight,
+    value => settingsStore.setTerminalPanelHeight(value),
+    () => ({ ...NUMERIC_SETTINGS.terminalPanelHeight, default: 240, axis: "y", invert: true, integer: true }),
+    { scale: () => zoomFactor },
+  );
+  $effect(() => { if (!visible) untrack(resize.cancel); });
+
 </script>
 
 <!-- Counter-zoom (#419): net zoom 1.0 inside the panel so xterm's pointer
@@ -478,15 +474,22 @@
   class="terminal-panel"
   class:hidden={!visible}
   style:zoom={1 / zoomFactor}
-  style:height="{settingsStore.terminalPanelHeight * zoomFactor}px"
+  style:height="{resize.value * zoomFactor}px"
+  id={resizeRegionId}
+  class:resizing={resize.isResizing}
   bind:this={panelEl}
 >
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
   <div
     class="resize-handle"
     role="separator"
     aria-orientation="horizontal"
     aria-label="Resize terminal"
-    onpointerdown={startResize}
+    tabindex="0" aria-controls={resizeRegionId}
+    aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.value}
+    onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
+    onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
+    onkeydown={resize.keydown}
   ></div>
   <div class="terminal-header">
     <span class="terminal-title" role="img" aria-label="Terminal" title="Terminal">
@@ -545,10 +548,13 @@
     right: 0;
     height: 6px;
     cursor: ns-resize;
+    touch-action: none;
     z-index: 2;
   }
 
-  .resize-handle:hover {
+  .resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .resize-handle:hover, .resizing .resize-handle {
     background: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 

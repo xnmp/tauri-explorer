@@ -5,13 +5,13 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): the Git graph gutter now shares panel resize
-ownership, including live automatic sizing until an effective manual adjustment.
-Zoom, keyboard input, saved preference restoration and capture rollback pass in
-both browser engines. All 58 combined resize cases, 2,092 unit tests, 30 performance
-cases and the rebuilt Linux inline-panel regression pass. Terminal, Preview and
-Details resize owners remain to migrate; the prior wider WebKit detail failures
-and native platform/startup acceptance remain open. The full review is **not complete**.
+Current checkpoint (2026-09-07): fixed/automatic panel widths and Terminal height
+now compose over a shared scalar draft owner and DOM input lifetime. Controlled
+settings have synchronous supersession checks and final-only persistence. All 80
+browser outcomes, 2,105 unit tests, 30 performance cases and six native Linux
+Terminal outcomes pass (one OSC7 case skipped). Preview and Details resizing,
+prior wider WebKit detail failures and full platform/startup acceptance remain
+open. The full review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -1234,3 +1234,60 @@ a shared bounded scalar gesture pattern with captured axis/model scale and a
 separate durable commit; their existing implementations are not claimed migrated.
 The wider WebKit PR/CI detail run failures from the preceding checkpoint, native
 Windows/macOS matrices and measured macOS half-bounce startup remain open.
+
+
+## Scalar resize ownership and controlled Terminal height — 2026-09-07
+
+The former width-only implementation now composes three layers: pure bounded
+scalar geometry (`resize-size`), captured gesture/draft ownership (`scalar-resize`),
+and DOM capture/activity lifetime (`use-resize-owner`). Persisted fixed/automatic
+widths adapt the core through `panel-resize` / `use-panel-resize`; externally owned
+sizes use `use-controlled-size`. Existing Sidebar/SCM/Miller/Git controls consume
+the same value contract. No compatibility copy of the old width geometry remains.
+
+Terminal now uses the controlled adapter. Its counter-zoomed element has net CSS
+zoom one, but its model height is multiplied by app zoom. The adapter therefore
+supplies that app zoom as visual pixels per model unit. Integer normalization
+happens before rendering as well as persistence. Primary pointer capture, blur,
+zoom/scroll/resize cancellation, hiding, unmount, keyboard arrows and range bounds
+share the same lifetime. Draft frames no longer replace the settings object or
+save the whole configuration on every pointer sample; accepted retirement commits
+once. A keyboard step during an active pointer gesture first retires that gesture,
+then commits the distinct keyboard adjustment.
+
+Controlled source/options supersession is checked synchronously before queued
+publication, after DOM retirement before committing, and before key ownership is
+interpreted. The reactive effect makes idle presentation reconcile promptly but is
+not the correctness gate: an external value delivered just before pointer release
+cannot be overwritten by an old draft. Automatic topology sources deliberately
+retain captured-origin semantics. Source supersession is value-based; an external
+A→B→A update coalesced before observation is not claimed as a distinct revision.
+
+Before implementation, all 12 Terminal browser cases failed in Chromium/WebKit:
+60px pointer movement became 48px at 80% and 90px at 150%, stale gestures survived
+blur/hide, old pointer input overwrote an external height, and keyboard sizing was
+unavailable. A later feature-disable/unmount regression also failed against the
+actual pre-fix component in both engines. Independent review exposed four
+synchronous source-retirement races and an axis-before-key ownership gap; their
+new regressions failed before the core fixes and now pass.
+
+Current verification: 236 unit files / 2,105 tests pass (three skipped), plus 30
+performance cases. All 80 final Chromium/WebKit scenarios pass, including shared
+panel/graph/pane resize contracts, Terminal feature-disable/unmount and existing
+theme/close behavior. Typecheck has zero errors/warnings; architecture lint is
+clean and maps cover 374/374 source files.
+
+The rebuilt Linux binary passes a real-PTY resize case: populated scrollback,
+two continuous pointer steps at 150% zoom, 60px measured visual growth, keyboard
+geometry change and a subsequent command's echo plus executed output. Five
+existing native Terminal behavior cases also pass; the OSC7 case is skipped
+under bash. The new native case is Linux-only, not Windows/macOS acceptance.
+The normal startup graph is 43 chunks / 650,380 raw bytes / 211,520 gzip bytes, within
+budget. This is payload acceptance, not launch-time evidence. The inspected native
+screenshot shows a live resized shell and executed command; browser mock-shell
+screenshots are not used as proof of native terminal functionality.
+Independent adversarial review accepts the final core and Terminal integration.
+
+Preview and Details retain their custom resize implementations and remain next
+migration work. Full release acceptance, prior wider WebKit detail failures,
+Windows/macOS native acceptance and measured Mac half-bounce startup remain open.

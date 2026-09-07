@@ -19,7 +19,7 @@
   const activeId = $derived(sidebarViewsStore.activeId);
 </script>
 
-<div id={panelId} class="sidebar-container" class:resizing={resize.isResizing} style="width: {resize.width}px">
+<div id={panelId} class="sidebar-container" class:resizing={resize.isResizing} style="width: {resize.value}px">
   <div class="sidebar">
     {#each views as view (view.id)}
       {@const ViewComponent = SIDEBAR_VIEW_PRESENTATION[view.id].component}

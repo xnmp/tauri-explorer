@@ -1,8 +1,9 @@
-# Inline panel sizing and resize ownership
+# Panel sizing and resize ownership
 
 Status: Accepted
 
-Governs: `domain/panel-width.ts`, `state/panel-resize.ts`,
+Governs: `domain/resize-size.ts`, `state/scalar-resize.ts`, `state/panel-resize.ts`,
+`composables/use-resize-owner.svelte.ts`, `composables/use-controlled-size.svelte.ts`,
 `composables/use-panel-resize.svelte.ts`, `components/PanelResizeHandle.svelte`,
 `state/pane-viewport.svelte.ts`, `composables/use-inline-panel-width.svelte.ts`,
 `state/resize-activity.svelte.ts`
@@ -32,14 +33,15 @@ Actual user scroll still cancels the gesture. Activity ownership is separate fro
 width contribution, because a global panel changes the available viewport without
 adding to any leaf minimum.
 
-The panel-width domain normalizes persisted input and converts visual pointer
+The resize-size domain normalizes persisted input and converts visual pointer
 delta through a captured CSS scale. Options are trusted finite constants with
 0 < min <= default <= max. The state owner accepts the latest pointer position
 once per animation frame and invalidates queued frames by gesture identity.
 Release flushes the final accepted pointer position; cancellation discards pending
-movement but retains and persists the last published width. Keyboard arrows move
-by 10 CSS pixels, Home/End choose bounds, and a left-side handle reverses arrow
-and pointer growth direction.
+movement but retains and persists the last published width. Keyboard arrows follow the captured/current axis and move by 10 model units;
+Home/End choose bounds. Left/top handles reverse arrow and pointer growth
+direction. Integer sizes are rounded before publication, so release does not
+change the geometry merely to match the durable setter.
 
 The DOM adapter captures the pointer and the sized parent rectangle when the
 gesture begins. Callers place the handle inside its explicitly sized, nonshrinking
@@ -62,3 +64,30 @@ automatic mode, while an effective pointer or keyboard adjustment establishes a
 persisted manual preference. The source can change during a drag without changing
 its captured origin. Author/date and ordinary panels keep
 their fixed default widths. Other custom resize surfaces remain separate audit work.
+
+
+The scalar owner holds only a gesture draft. Width preference adapters own the
+committed fixed/automatic choice; controlled-size adapters read an external
+committed value and publish drafts without writing through that source. Terminal
+uses the latter, avoiding full settings replacement/persistence on each pointer
+sample. Ordinary retirement commits accepted published work once after releasing
+pointer/activity ownership. Pointer release first accepts the final pending
+sample; interruption discards that pending sample. A keyboard input during a
+compatible pointer gesture retires its published work before applying the new
+atomic key step.
+
+For controlled values, a different committed source or axis/bounds supersedes the
+gesture and discards its draft. The core checks synchronously before queued
+publication, immediately before committing, and before interpreting a key. A
+Svelte effect also reconciles presentation, but is not the correctness boundary:
+external input may arrive just before pointer release, before that effect runs.
+These checks compare values/options, not revisions of every external write;
+a coalesced A→B→A is treated as unchanged. Automatic graph topology explicitly
+opts out of source-value supersession so its captured origin remains stable.
+
+The DOM owner accepts an explicit model-to-visual scale. Ordinary widths derive
+it from the controlled element's rect/computed size; Terminal passes app zoom
+because its counter-zoomed element has net CSS zoom one while its styled height
+is the model height multiplied by app zoom. Blur, root style changes, scrolling,
+window resizing, hide and unmount retire its gesture. Preview and Details remain
+separate migrations; this architecture does not claim they already use the core.

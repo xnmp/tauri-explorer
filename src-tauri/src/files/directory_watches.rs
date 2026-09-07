@@ -11,6 +11,7 @@ pub struct Lease {
 }
 
 pub(super) trait Observer {
+    fn healthy(&self, path: &str) -> bool;
     fn watch(&mut self, path: &str) -> notify::Result<()>;
     fn unwatch(&mut self, path: &str) -> notify::Result<()>;
     /// Install all surviving paths before dropping the old watcher.
@@ -51,9 +52,11 @@ impl<W: Observer> DirectoryWatches<W> {
     }
 
     pub fn covered(&self, path: &str) -> bool {
-        self.entries
-            .get(path)
-            .is_some_and(|entry| !entry.uncovered && entry.leases.values().any(Owner::active))
+        self.entries.get(path).is_some_and(|entry| {
+            !entry.uncovered
+                && entry.leases.values().any(Owner::active)
+                && self.observer.healthy(path)
+        })
     }
 
     pub fn acquire(&mut self, owner: &Owner, path: String) -> Result<Lease, AppError> {
@@ -68,6 +71,11 @@ impl<W: Observer> DirectoryWatches<W> {
         {
             return Err(AppError::Other(format!(
                 "Directory watch cleanup is pending: {path}"
+            )));
+        }
+        if self.entries.contains_key(&path) && !self.observer.healthy(&path) {
+            return Err(AppError::Other(format!(
+                "Directory observation is recovering: {path}"
             )));
         }
         let next = self
@@ -135,10 +143,17 @@ impl<W: Observer> DirectoryWatches<W> {
         self.maintain(Instant::now());
     }
 
+    #[cfg(test)]
     pub fn needs_cleanup(&self) -> bool {
+        self.next_cleanup_at(Instant::now()).is_some()
+    }
+
+    pub fn next_cleanup_at(&self, now: Instant) -> Option<Instant> {
         self.entries
             .values()
-            .any(|entry| entry.uncovered || entry.leases.is_empty())
+            .filter(|entry| entry.uncovered || entry.leases.is_empty())
+            .map(|entry| entry.retry_at.unwrap_or(now))
+            .min()
     }
 
     pub fn maintain(&mut self, now: Instant) {

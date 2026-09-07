@@ -652,3 +652,24 @@ Cache tests additionally need real overlapping/shared watches and a gated cold
 walk across retirement. Tauri's [resource table](https://docs.rs/tauri/2.11.2/tauri/struct.ResourceTable.html)
 provides the concrete native ownership boundary; notify's [watcher contract](https://docs.rs/notify/8.2.0/notify/trait.Watcher.html)
 is implemented behind the testable directory lease policy.
+
+Directory lease ownership does not establish continued observation health. Native
+root watches follow an inode: rename the directory away, recreate the same path,
+and the pane can stay on the displaced tree forever. Register the root's parent
+non-recursively, share physical parent/root roles, and rebuild after root lifecycle
+changes. Preserve a separate healthy sibling and the displaced tree in native
+acceptance so navigation, fixture deletion and broad refreshes cannot mask failure.
+
+Ignoring Modify(Data/Metadata) also leaves selected previews and entry metadata
+stale. The native regression overwrites an existing Markdown file, requires a
+watcher timestamp at or after that write, then checks new visible content. A file
+creation test cannot prove this contract.
+
+Treat every recursive watch failure as potentially partial, including
+PathNotFound: a descendant can disappear after earlier watches were installed.
+Discard the candidate and exclude its failed root for that attempt. Try untested
+roots before rewalking successful trees, then restore failed roots incrementally.
+Generation faults must revoke cache eligibility before asynchronous recovery.
+Latch valid callbacks during registration as well as errors, so a mutation
+observed before activation still triggers a catch-up refresh. An explicit cache
+epoch invalidation precedes coverage; restoration follows successful activation.

@@ -414,6 +414,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
+- `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
 - `drives.rs` — enumerate drives/volumes cross-platform.
 - `external_apps.rs` — open files / image viewers / terminals externally.

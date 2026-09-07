@@ -9,6 +9,7 @@ pub mod file_ops;
 pub mod fs_watcher;
 pub mod git_status;
 pub mod shortcuts;
+mod watch_observation;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};

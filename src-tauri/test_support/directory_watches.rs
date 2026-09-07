@@ -28,6 +28,7 @@ struct WatchGate {
 #[derive(Default)]
 struct FakeObserver {
     registrations: HashSet<String>,
+    unavailable: HashSet<String>,
     observations: Vec<Observation>,
     watch_failures: VecDeque<Failure>,
     unwatch_failures: VecDeque<Failure>,
@@ -65,6 +66,9 @@ impl FakeObserver {
 }
 
 impl Observer for FakeObserver {
+    fn healthy(&self, path: &str) -> bool {
+        self.registrations.contains(path) && !self.unavailable.contains(path)
+    }
     fn watch(&mut self, path: &str) -> NotifyResult<()> {
         self.observations.push(Observation::Watch(path.into()));
         if let Some(gate) = self.watch_gate.take() {
@@ -172,6 +176,50 @@ fn retiring_one_shared_owner_preserves_the_survivors_coverage_and_callbacks() {
 
     watches.release(&survivor, &live.id).unwrap();
     assert!(!watches.covered("/shared-retire"));
+}
+
+#[test]
+fn recovering_shared_observation_withholds_new_leases_and_reuses_existing_authority() {
+    let mut watches = watches();
+    let owner = Owner::default();
+    let joining = Owner::default();
+    let held = watches.acquire(&owner, "/recovering".into()).unwrap();
+    watches.observer.unavailable.insert("/recovering".into());
+    assert!(!watches.covered("/recovering"));
+    assert!(watches.acquire(&joining, "/recovering".into()).is_err());
+
+    watches.observer.unavailable.clear();
+    assert!(watches.covered("/recovering"));
+    let joined = watches.acquire(&joining, "/recovering".into()).unwrap();
+    assert_ne!(held.id, joined.id);
+    assert_eq!(
+        watches
+            .observer
+            .count(&Observation::Watch("/recovering".into())),
+        1
+    );
+    watches.release(&owner, &held.id).unwrap();
+    assert!(watches.covered("/recovering"));
+    watches.release(&joining, &joined.id).unwrap();
+    assert!(!watches.covered("/recovering"));
+}
+
+#[test]
+fn cleanup_deadline_waits_for_retry_and_clears_after_reclamation() {
+    let mut watches = watches();
+    let owner = Owner::default();
+    let lease = watches.acquire(&owner, "/retry-deadline".into()).unwrap();
+    let before = Instant::now();
+    assert_eq!(watches.next_cleanup_at(before), None);
+    watches.observer.fail_unwatch(1);
+    assert!(watches.release(&owner, &lease.id).is_err());
+    let at = watches.next_cleanup_at(before).expect("scheduled cleanup");
+    assert!(at > before);
+    watches.maintain(at - Duration::from_nanos(1));
+    assert!(watches.observer.callback("/retry-deadline"));
+    watches.maintain(at);
+    assert!(!watches.observer.callback("/retry-deadline"));
+    assert_eq!(watches.next_cleanup_at(at), None);
 }
 
 #[test]

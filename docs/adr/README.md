@@ -16,3 +16,6 @@ decision during review.
 | [0008](0008-resource-and-contribution-ownership.md) | Asynchronous resource and contribution ownership | Accepted |
 | [0009](0009-git-observation-leases.md) | Git observation leases, recovery and event ownership | Accepted |
 | [0010](0010-page-session-and-core-readiness.md) | Page-session ownership and foreground readiness | Accepted |
+| [0011](0011-pane-viewport-geometry.md) | Pane viewport geometry | Accepted |
+| [0012](0012-inline-panel-sizing.md) | Inline panel sizing | Accepted |
+| [0013](0013-directory-observation-recovery.md) | Directory observation generations, recovery and cache eligibility | Accepted |

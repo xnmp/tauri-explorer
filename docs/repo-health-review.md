@@ -13,6 +13,15 @@ is the current requirement-by-requirement ledger; the earlier verification and
 handover below describe the initial foundation checkpoint, not final acceptance
 of the ongoing pass. macOS half-bounce measurements remain outstanding.
 
+The latest directory checkpoint separates renderer lease ownership from native
+observation health. Parent/root sharing detects replaced directories, callback
+faults and partial recursive failures recover through shared generations, and
+content/metadata events refresh existing-file previews. Both native failures were
+reproduced before the fix; eleven Linux native outcomes and the full serial Rust
+suite pass. Initial listing/watch handoff and ordinary cache publication remain
+explicit follow-ups. See the current ledger for parallel-test limitations and
+platform acceptance still outstanding.
+
 The latest cache pass corrected a misleading native acceptance precondition:
 the hidden-graph test had reopened without ever retaining its target snapshot.
 Snapshot-first verification exposed read-triggered invalidation on Linux and

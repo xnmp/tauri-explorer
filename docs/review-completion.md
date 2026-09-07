@@ -5,22 +5,25 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-08): directory and Git observations now share one
-concrete-window renderer lifetime. The reproduced directory-watch leak is fixed:
-three child destruction cycles remove exact Linux inotify registrations, reload
-reclaims an unmanaged lease, and actual renderer termination reclaims both Git
-and directory observations while the native application survives. Shared owners
-continue observing. Two additional adversarial regressions—Git cancellation after
-a queued successful reply and failed final directory release without a frontend
-retry—failed before their fixes and now pass.
+Current checkpoint (2026-09-08): directory observation now recovers from native
+callback faults, overflow/rescan and root replacement, and observes existing-file
+content/metadata changes. Both visible failures were reproduced against
+`c1791a9a` before the fix. Two shared, lazy native observation sources retain
+renderer-owned leases, isolate partial recursive registrations, preserve healthy
+siblings and retry unavailable coverage through the existing flush worker.
 
-The preceding selected-file Enter/Space fix remains integrated. Current validation
-is 2,159 frontend tests plus 30 performance cases, 470 Rust tests (seven ignored),
-five native outcomes, zero typecheck errors/warnings, and clean strict Clippy and
-architecture lint. These are scoped ownership/integration results. Tab-driven
-file focus/selection consistency, callback-error recovery in directory observation,
-broader platform/product/soak acceptance and actual Mac half-bounce measurements
-remain open. The comprehensive review is **not complete**.
+Eleven Linux native outcomes across six specs pass, including replacement,
+preview updates, refresh coalescing and window/reload/crash reclamation. All 485
+Rust unit tests plus nine integration tests pass serially (seven ignored), and
+strict Clippy, native test TypeScript and architecture lint pass. Two unchanged
+parallel Rust tests failed but pass individually; their nondeterminism is recorded
+in the acceptance artifact. The preceding 2,159 frontend tests and 30 performance
+cases were not rerun for this backend-only change.
+
+The initial listing/watch handoff gap, ordinary directory-cache publication
+races, Tab-driven focus/selection consistency, broader platform/product/soak
+acceptance and actual Mac half-bounce measurements remain open. The comprehensive
+review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -34,7 +37,7 @@ limitations and must not be read as current status.
 | Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
-| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; two-cycle same-process Linux crash recovery now passes with controlled reload; directory observations now share renderer ownership with exact Linux destruction/reload/crash reclamation, real cache-retirement contracts, canceled-reply cleanup and backend retries after failed final release; other-platform recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
+| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; two-cycle same-process Linux crash recovery now passes with controlled reload; directory observations now share renderer ownership with exact Linux destruction/reload/crash reclamation, real cache-retirement contracts, canceled-reply cleanup and backend retries after failed final release; directory observation now recovers native faults and replaced roots with Linux UI acceptance and injected recursive-failure contracts; other-platform recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during real handoff receipt, unready native targets with later app initialization, and duplicate-label asynchronous creation failure now pass Linux binary acceptance; Windows/Mac equivalents remain open |
@@ -2039,3 +2042,64 @@ Windows/macOS native equivalents, wider product acceptance and final release
 integration remain open. The controlled same-WebView two-crash recovery harness
 was updated for the shared session/log contract but has not been rerun in this
 checkpoint; ordinary reload and actual blank-crash cleanup were tested directly.
+
+## Directory observation recovery — 2026-09-08
+
+`watch_observation.rs` separates desired roots, physical registrations, native
+generations and health from renderer lease identity. `fs_watcher.rs` adapts its
+notices to existing cache epochs and trailing refresh delivery. Direct roots
+share nonrecursive parent registrations; recursive Quick Open observation starts
+only on demand. A callback fault or rescan immediately disables healthy coverage.
+Recovery uses the existing worker, and future retry deadlines avoid repeated
+filesystem mutex acquisition during an outage.
+
+Every failed recursive registration can be partial, including a descendant's
+PathNotFound. Recovery discards the candidate and excludes that root for the
+attempt; untested roots precede successful trees to limit repeated healthy-tree
+walks under stable registration outcomes. Changing failures can require more walks. Later successful incremental additions
+invalidate only the restored root. Overlapping-root removal still reconstructs
+survivors. Valid events received during registration are latched for a catch-up
+refresh after activation, while faults prevent activation. A callback accepted before retirement can finish
+a conservative invalidation; it cannot publish data or restore replacement health.
+ADR 0013 records the boundary and its limits.
+
+Evidence in [the acceptance artifact](reviews/directory-recovery-acceptance-2026-09-08.json):
+
+- Before: moving the watched directory and recreating its path left replacement
+  contents absent after 27.6 seconds. An independent same-file Markdown overwrite
+  produced no causal watcher receipt after 25.6 seconds.
+- After: the same mounted pane shows the replacement inode's files, observes later
+  writes, excludes a ghost file written into the retained displaced tree, and
+  preserves a separate window's causal refresh. Existing-file overwrite updates
+  the selected Markdown preview and its 8 KiB metadata.
+- Six native specs / eleven outcomes pass in 51 seconds, including the existing
+  refresh/coalescing and directory/Git lifetime regressions. A second two-case run
+  passes and captures inspected [replacement](../screenshots/refactor/repo-health-cleanup/native-directory-replacement.png)
+  and [updated preview](../screenshots/refactor/repo-health-cleanup/native-directory-content-update.png)
+  screenshots. These are correctness outcomes, not startup benchmarks.
+- Thirteen injected observation contracts cover faults, rescans, stale callbacks,
+  registration interleavings, parent sharing, partial recursive installation,
+  overlap, deadline backoff and bounded healthy-tree re-registration. Two added
+  lease contracts cover health gating and cleanup deadlines.
+- Full serial Rust: 485 unit plus nine integration tests pass, seven ignored.
+  The default parallel run failed unchanged panic-report and active-rev-parse
+  cancellation tests; both pass in isolation. Their nondeterminism remains open.
+  An earlier sandbox run denied the two relay tests' loopback sockets; the final
+  run permits local sockets and uses isolated XDG roots with Bash.
+- All-target Clippy with warnings denied, native test TypeScript, strict
+  architecture lint and 382/382 source-map coverage pass. Frontend source and
+  its preceding unit/performance/payload measurements are unchanged in scope;
+  no new launch-time or memory benchmark is claimed.
+
+Independent Sol review accepts this Linux/backend checkpoint with no blocking
+defect. It confirmed the core contracts and evidence, and required the callback
+interleaving and stable-registration qualifications recorded above. Native
+error/rescan injection and large-tree recovery cost remain unmeasured.
+
+Follow-up inspection identified two ordinary listing boundaries outside this
+checkpoint: its five-second cache can accept an old in-flight scan after
+invalidation, and path existence/type probes still run before the blocking scan
+adapter. The initial listing also precedes native watch registration, leaving an
+unobserved handoff gap. These need reproducible, domain-level contracts before
+claiming comprehensive directory consistency. Windows/macOS equivalents, large
+native-tree/long-session measurements and final release acceptance remain open.

@@ -59,6 +59,7 @@ backend for E2E/browser).
 - `state/file-events.ts` — BroadcastChannel `explorer-file-changes` between windows
 - `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `listDirectory`, `startStreamingDirectory`
 - `src-tauri/src/files/fs_watcher.rs` — notify watcher → emits event; `files/dir_listing.rs` — listing + streaming
+- `src-tauri/src/files/watch_observation.rs` — injected native observation generations and recovery; nonrecursive parent/root sharing, lazy recursive coverage, immediate fault invalidation and deadline-based retries (ADR 0013).
 - FLOW: `directory-changed` (fs_watcher.rs → use-file-watchers.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
 
 ## Navigation, address bar, breadcrumb, autocomplete

@@ -3188,7 +3188,11 @@
 
   .graph-scroller {
     flex: 1;
-    overflow-y: auto;
+    /* Inline-detail height stretches the graph. Reserve the scrollbar space
+       so that stretch cannot also narrow/reflow the measured detail during
+       the same ResizeObserver delivery. WebKit does not reserve our custom
+       scrollbar with scrollbar-gutter: stable alone. */
+    overflow-y: scroll;
     min-height: 0;
   }
 

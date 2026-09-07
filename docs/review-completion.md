@@ -5,16 +5,15 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): real Linux tab-transfer rejection now covers
-missing, destroyed, hidden warm and picker destinations. All four retain the
-source tab and its functioning split; revealing the same hidden warm destination
-also proves it did not adopt the rejected payload. Ten native cases across rejection, transfer and warm-window suites, plus 81 focused
-window/session contracts, pass; typecheck, architecture lint, source maps and normal
-startup payload budgets pass. The preceding plugin reentrancy fixes and bounded
-150-cycle browser load acceptance remain valid checkpoints. The comprehensive
-review is **not complete**: same-process crash recovery, broader product/native
-integration and Windows/Mac acceptance, including actual Mac startup measurements,
-remain open.
+Current checkpoint (2026-09-07): a reproduced WebKit graph layout feedback loop
+is fixed by reserving the existing scrollbar's width. No new observer, timer or
+JavaScript state is introduced. Reverting the CSS reproduces the error; restoring
+it passes four commit/PR geometry cases across Chromium/WebKit. The integrated
+graph/filter/panel/preview run passes 154 cases, skips two and emits no ResizeObserver
+warnings. Ten Linux native rejection/transfer/warm-window cases also pass in the
+preceding checkpoint. The comprehensive review is **not complete**: same-process
+crash recovery, broader product/native integration and Windows/Mac acceptance,
+including actual Mac startup measurements, remain open.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -33,7 +32,7 @@ limitations and must not be read as current status.
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during handoff, unready targets and native asynchronous creation failure remain open |
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
-| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Wider theme/native interaction matrix pending |
+| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Graph detail expansion now has a reproduced/fixed WebKit scrollbar feedback loop and Chromium/WebKit geometry acceptance. Wider theme/native interaction matrix pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
 | Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. The focused resize migration is implemented; the wider themes/accessibility/platform matrix remains outstanding |
 | Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
@@ -1690,3 +1689,52 @@ two skips (`/tmp/graph-panels-webkit-integrated.log`). It does not reproduce the
 earlier interaction failures, and it still emits ResizeObserver loop warnings.
 Neither the intermittent-failure cause nor the observer warning is considered
 resolved by this passing run.
+
+
+## Graph detail scrollbar feedback checkpoint — 2026-09-07
+
+The wider WebKit run reproduced a concrete layout issue: expanding commit metadata
+publishes its measured height into the absolute graph canvas, makes the vertical
+scrollbar appear, and narrows the same measured detail from 928 to 920 pixels during
+one ResizeObserver delivery. The browser defers a notification and reports a loop
+error. The instrumented observer trace at `/tmp/graph-ro-probe.log` identifies the
+Svelte size binding and both measurements.
+
+`GitGraphView.svelte` now uses `overflow-y: scroll` on its existing graph scroller,
+reserving scrollbar space before expansion. There is no new observer, timer, state
+owner or deferred SVG/row update. A three-candidate browser probe
+(`/tmp/graph-scrollbar-candidates.log`) refutes `scrollbar-gutter: stable` alone in
+the tested WebKit with this custom scrollbar: it and the original auto overflow
+both still narrow the detail and emit the warning. Scroll overflow establishes
+920-pixel width before expansion and emits none. The header retains visible
+overflow so its branch-filter popover remains usable. Classic scrollbars now keep
+their track space even in short graphs; header column alignment against that space
+is an existing separate concern, not claimed fixed here.
+
+`e2e/git-graph-detail-layout.spec.ts` exercises actual commit metadata and PR details
+at 1280px/100% and 900px/150%. It compares physical panel/row rectangles and the full
+ordered row/SVG-vertex center sequence, with same-center stash rings deduplicated.
+It also captures browser errors before navigation. Reverting only the CSS makes
+the WebKit commit-metadata case fail on the reproduced error; the narrow PR case
+still passes, so it is complementary geometry coverage rather than an independent
+reproduction (`/tmp/graph-scrollbar-regression-before.log`). The restored final fix
+passes all four cases (`/tmp/graph-scrollbar-regression-after.log`). Independent
+review accepts both the causal fix and strengthened geometry assertions.
+
+Integrated Chromium/WebKit acceptance passes **154 cases / two skipped** in 3.7
+minutes (`/tmp/graph-scrollbar-integrated-final.log`), with all-view-mode graph,
+filter, panel and preview resize coverage. No ResizeObserver loop warning appears
+in that run. This supersedes the observer-warning gap in the preceding checkpoint;
+it does not establish the cause of the earlier intermittent PR/CI/filter interaction
+failures or general WebKit stability. The inspected `graph-detail-layout.png` shows
+expanded rendered commit metadata with subsequent rows and graph vertices aligned. Historical
+images regenerated by the integrated suite are restored unchanged.
+
+The production change is CSS only. Native platform timing, filesystem and Rust
+acceptance remain the prior checkpoints; no new native startup or throughput claim
+is made. The final verification also retains zero typecheck errors/warnings, clean
+architecture lint and source-map coverage 378/378.
+
+Startup payload validation remains within budget: 44 chunks / 651,983 raw /
+212,259 gzip bytes (`/tmp/graph-scrollbar-bundle-final.log`); the main chunk is
+302,314 raw / 89,815 gzip bytes. These are build payload sizes, not launch latency.

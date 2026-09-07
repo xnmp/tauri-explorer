@@ -575,3 +575,13 @@ independent review and unchanged normal release payload scope. The completion le
 records exclusions: portal registration, destination closure during handoff, unready
 routing, native asynchronous creation failure and other-platform acceptance remain
 open. This checkpoint adds acceptance coverage, not new production handoff behavior.
+
+
+Graph layout checkpoint (2026-09-07): a reproduced WebKit ResizeObserver loop came
+from inline-detail growth introducing a scrollbar and narrowing the measured block
+within the same delivery. Reserving scrollbar width on the existing scroller removes
+that dependency without adding JS or delayed state. Reverting the CSS reproduces
+the error; four final commit/PR geometry cases pass, followed by 154 integrated
+Chromium/WebKit graph/filter/panel/preview cases (two skipped) without observer
+warnings. Independent review accepts the fix. Earlier intermittent interaction
+failures, platform/startup measurements and comprehensive acceptance remain open.

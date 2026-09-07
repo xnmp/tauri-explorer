@@ -517,3 +517,28 @@ outros retain closed tab elements temporarily. Freeze source **and generated**
 SvelteKit output during browser retention measurements. A concurrent `bun run check`
 runs `svelte-kit sync`, which can invalidate the page and make a test's navigation
 failure look like a product lifecycle defect.
+
+
+### Break resize feedback at the layout dependency
+
+The wider WebKit graph suite emitted ResizeObserver loop errors when commit
+metadata expanded. Instrumenting each observer's creation, targets and deliveries
+identified Svelte's inline-detail size binding: publishing the detail height grows
+the absolute graph canvas, introduces its vertical scrollbar and narrows the same
+measured detail from 928 to 920 pixels during one delivery. This is an actual
+layout dependency, not evidence that every ResizeObserver needs a timer.
+
+Reserve the graph's scrollbar width with `overflow-y: scroll`. A three-candidate
+browser probe found that `scrollbar-gutter: stable` alone did not reserve this
+custom scrollbar in the tested WebKit; both it and the original `auto` overflow
+still changed width and emitted the warning. `scroll` made the width stable before
+expansion. Keep the existing height binding and immediate SVG/row updates.
+
+Do not mirror overflow onto the graph header: its nested branch-filter popover
+extends below the header and would be clipped. The header's existing scrollbar
+column offset is a separate alignment concern. Verify actual panel/row geometry
+and capture page errors in both engines; an isolated passing click test does not
+establish that the wider intermittent PR/filter failures have been explained.
+
+References: [CSS overflow scrolling](https://www.w3.org/TR/css-overflow/#valdef-overflow-scroll)
+and [ResizeObserver processing](https://www.w3.org/TR/resize-observer/#html-event-loop).

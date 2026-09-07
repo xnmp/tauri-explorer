@@ -1,0 +1,112 @@
+{
+  "date": "2026-09-08",
+  "scope": "File-list composite keyboard focus and selection; Details, List and Tiles",
+  "status": "Verified Linux/browser checkpoint; comprehensive release review remains incomplete",
+  "baseline": "12e16165",
+  "implementation": [
+    "Pure keyboard movement intents; independent path cursor and path-based range anchor",
+    "One roving gridcell Tab stop with viewport fallback for an unmounted cursor",
+    "View-owned exact entry reveal, synchronous virtual scroll and guarded deferred focus",
+    "Conditional rename identity migration preserves newer user selection",
+    "FileList owns keyboard editor focus return across row replacement; blur does not request focus"
+  ],
+  "before": [
+    {
+      "outcome": "Tab focused Archive while Enter opened selected Downloads in Details",
+      "log": "/tmp/file-list-focus-before.log",
+      "qualification": "Other pre-fix view attempts failed their helper and are excluded"
+    },
+    {
+      "outcome": "Empty-directory Yazi Left returned no parent intent",
+      "log": "/tmp/file-list-empty-yazi-before.log"
+    },
+    {
+      "outcome": "Renaming a selected entry removed its selection identity",
+      "log": "/tmp/file-list-rename-before.log"
+    },
+    {
+      "outcome": "Successful rename left the renamed gridcell unfocused in all three views",
+      "result": "18 passed / 3 failed in the strict browser run",
+      "qualification": "Original Playwright result directories were overwritten by subsequent runs; agent execution output records the failure. The final spec retains the strict focus assertion."
+    }
+  ],
+  "verification": {
+    "frontend": {
+      "passed": 2223,
+      "skipped": 3,
+      "performance_cases": 30,
+      "log": "/tmp/file-list-focus-frontend-final.log"
+    },
+    "chromium": {
+      "passed": 111,
+      "seconds": 42.2,
+      "log": "/tmp/file-list-focus-browser-integration.log"
+    },
+    "focused_chromium": {
+      "passed": 24,
+      "seconds": 14.2,
+      "log": "/tmp/file-list-focus-editor-final.log"
+    },
+    "svelte_check": {
+      "errors": 0,
+      "warnings": 0,
+      "log": "/tmp/file-list-editor-check.log"
+    },
+    "startup_payload": {
+      "chunks": 44,
+      "raw_bytes": 662141,
+      "gzip_bytes": 215583,
+      "main_gzip_bytes": 90243,
+      "log": "/tmp/file-list-focus-bundle-final.log",
+      "qualification": "Payload budget passes; not a launch-time measurement"
+    },
+    "native": {
+      "binary_sha256": "c2ebed5922449a98502f9a42a289035f6485237ad07ff1735e18418b819d144e",
+      "initial_log": "/tmp/file-list-focus-native.log",
+      "passed": 4,
+      "failed": 0,
+      "scope": "Three keyboard scenarios each span Details/List/Tiles: trusted forward Tab departure/return and real folder Open; repeated range extension; F2/Escape focus. The fourth scenario exercises real Markdown preview.",
+      "tab_delivery": {
+        "diagnostic_log": "/tmp/file-list-focus-native-diagnostic.log",
+        "shift_tab": {
+          "key": "Unidentified",
+          "shiftKey": true,
+          "trusted": true,
+          "defaultPrevented": false,
+          "focus_changed": false
+        },
+        "plain_tab": {
+          "key": "Tab",
+          "shiftKey": false,
+          "trusted": true,
+          "defaultPrevented": false,
+          "focus_changed": true
+        },
+        "qualification": "Native backward traversal remains unverified. Final forward cycle uses measured visible tabstop inventory plus two, capped at256, and fails on an early repeated outside target; Details used35 stops, List/Tiles28. Earlier fixed32 limit was insufficient for Details."
+      },
+      "final_log": "/tmp/file-list-focus-native-acceptance.log",
+      "seconds": 18
+    },
+    "playwright_webkit": "Browser downloaded, but host dependency validation reports missing libicu74, libxml2 and libflite; no passing WebKit browser claim",
+    "screenshot": "screenshots/refactor/repo-health-cleanup/file-list-keyboard-cursor.png",
+    "source_maps": {
+      "covered": 386,
+      "total": 386,
+      "log": "/tmp/file-list-focus-maps.log"
+    },
+    "architecture_lint": "clean",
+    "native_types": "Standalone TypeScript check passes with explicit bundler resolution (project config uses a TS6-deprecated node10 setting)."
+  },
+  "independent_review": {
+    "model": "GPT-5.6 Sol",
+    "verdict": "No blocker found in inspected focus, cursor, virtual scroll and editor-return ownership",
+    "qualification": "Assistive-technology announcements remain static review only. Ordinary navigation focus concern was refuted by loading teardown and browser outcomes."
+  },
+  "remaining": [
+    "macOS half-bounce startup measurements",
+    "Windows/macOS native acceptance",
+    "Broader release and long-session acceptance",
+    "Unexpected rejected rename Promise can leave its existing submitting flag set; returned API errors follow the existing error-string contract",
+    "Pending local mutation publication across navigation/disposal and newer editor sessions; source review findings are recorded in the completion ledger."
+  ]
+}

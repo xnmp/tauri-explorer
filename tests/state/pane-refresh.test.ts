@@ -34,7 +34,8 @@ function coreState(entries: FileEntry[]): ExplorerCoreState {
     sortAscending: true,
     viewMode: "details",
     selectedPaths: new Set(),
-    selectionAnchorIndex: null,
+    selectionAnchorPath: null,
+    cursorPath: null,
   };
 }
 

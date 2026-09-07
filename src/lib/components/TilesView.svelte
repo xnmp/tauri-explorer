@@ -25,7 +25,7 @@
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import FolderThumbnail from "./FolderThumbnail.svelte";
   import InlineNewFolder, { isNewFolderSentinel } from "./InlineNewFolder.svelte";
-  import ItemButton from "./ItemButton.svelte";
+  import EntryCell from "./EntryCell.svelte";
   import VirtualList from "./VirtualList.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -37,9 +37,11 @@
     onitemdblclick: (entry: FileEntry) => void;
     /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
+    containsIndex?: (index: number) => boolean;
+    fallbackTabStop: boolean;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
 
   // Reserved fixed name height: two lines at line-height 1.4 * 13px font.
   const NAME_HEIGHT = 37;
@@ -72,6 +74,7 @@
   });
   const { interactions, pointerDrag } = grid;
   scrollToIndex = grid.scrollToIndex;
+  containsIndex = grid.containsIndex;
 
   // Folder previews only render at large/xlarge tile sizes (smaller tiles
   // keep the plain folder icon, like Windows Explorer).
@@ -145,6 +148,10 @@
 >
   <VirtualList
     class="tiles-scroller file-rows"
+    role="grid" aria-label="Files" aria-multiselectable={true}
+    aria-rowcount={grid.rows.length} aria-colcount={tileColumns}
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={grid.rowContainsIndex}
     items={grid.rows}
     itemHeight={tileRowHeight}
     itemOverflow="visible"
@@ -152,14 +159,14 @@
     getKey={(row) => row.startIndex}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
-    {#snippet children(row)}
-      <div class="tile-row" style="grid-template-columns: repeat({tileColumns}, minmax(0, 1fr)); gap: var(--tile-gap);">
+    {#snippet children(row, rowIndex)}
+      <div role="row" aria-rowindex={rowIndex + 1} class="tile-row" style="grid-template-columns: repeat({tileColumns}, minmax(0, 1fr)); gap: var(--tile-gap);">
         {#each row.items as entry, col (entry.path)}
           {#if isNewFolderSentinel(entry)}
-            <InlineNewFolder {explorer} variant="tiles" />
+            <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
           {:else}
           {@const iconColor = getFileIconColor(entry)}
-          <ItemButton class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          <EntryCell column={col + 1} class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
             <div class="tile-icon" style:color={iconColor} data-drag-icon>
               {#if isImageFile(entry)}
                 <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
@@ -175,7 +182,7 @@
             </div>
             <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
             <GitStatusBadge entryName={entry.name} />
-          </ItemButton>
+          </EntryCell>
           {/if}
         {/each}
       </div>

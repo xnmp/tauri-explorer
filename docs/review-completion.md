@@ -5,27 +5,25 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-08): directory navigation establishes renderer-owned
-observation before scanning. One shared event listener is ready before navigation;
-pane tickets retain the prior lease until the new snapshot commits and replay
-changes received during that handoff. Degraded OS observation retains recovery
-demand without granting cache coverage or preventing readable directory access.
+Current checkpoint (2026-09-08): file-list navigation uses a separate path cursor
+and path-based range anchor. All three views provide one roving gridcell Tab stop,
+an off-screen viewport fallback and exact virtualized focus. Rename preserves
+matching selection identities, and keyboard editor completion borrows FileList's
+focus owner across row teardown.
 
-Twelve Linux native outcomes across six specs pass in 52 seconds. The strengthened
-handoff case additionally passes with three causal writes before publication, all
-markers visible, and exactly two instrumented pane-listing calls after a
-2.5-second settling window; a quiet first observed pane load stays at one
-instrumented call. Independent review exposed two cross-pane refresh
-suppression races, both reproduced before correction. Full Rust (510 unit plus
-nine integration, seven ignored), frontend (2,183 plus 30 performance, three
-skipped), strict Clippy, Svelte/native TypeScript, architecture lint and source
-maps pass. Startup JavaScript is 214,125 gzip bytes, 1,448 bytes above the prior
-checkpoint; this is not a startup speedup claim. See
-[the acceptance artifact](reviews/directory-handoff-acceptance-2026-09-08.json).
+Frontend tests pass 2,223 cases plus 30 performance cases (three skipped).
+Chromium passes 111 integrated outcomes. Linux native focus acceptance passes
+forward Tab departure/return and real folder Open, range selection and F2/Escape
+in all three views. Native Shift+Tab is limited by WebKitGTK driver delivery of
+`Unidentified`; browser backward traversal remains separately covered. Startup
+JavaScript is 215,583 gzip bytes, 1,458 above the prior checkpoint; this is not a
+startup speedup claim. See
+[the acceptance artifact](reviews/file-list-focus-acceptance-2026-09-08.json).
 
-Tab-driven focus/selection consistency, broader platform/product/soak acceptance
-and actual Mac half-bounce measurements remain open. The comprehensive review
-is **not complete**.
+Independent review has identified pending local-mutation publication across
+navigation/destruction and newer editor sessions as the next ownership boundary.
+Broader platform/product/soak acceptance and actual Mac half-bounce measurements
+remain open. The comprehensive review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -44,7 +42,7 @@ limitations and must not be read as current status.
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during real handoff receipt, unready native targets with later app initialization, and duplicate-label asynchronous creation failure now pass Linux binary acceptance; Windows/Mac equivalents remain open |
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
-| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Graph detail expansion has a reproduced/fixed WebKit scrollbar feedback loop. The following checkpoint aligns the full graph header and metadata table, preserves complete reference access and restores native/custom button keyboard ownership in focused Chromium/WebKit, unit and integrated browser acceptance. The wider theme/native interaction matrix remains pending |
+| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Graph detail expansion has a reproduced/fixed WebKit scrollbar feedback loop. The following checkpoint aligns the full graph header and metadata table, preserves complete reference access and restores native/custom button keyboard ownership in focused Chromium/WebKit, unit and integrated browser acceptance. File-list cursor/selection separation, off-screen Tab recovery and keyboard inline-editor return now have 111 Chromium outcomes and four Linux native outcomes, with backward native traversal limited by driver delivery. The wider theme/native interaction matrix remains pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
 | Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. The focused resize migration is implemented; the wider themes/accessibility/platform matrix remains outstanding |
 | Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
@@ -2183,3 +2181,68 @@ a catch-up scan. Unit contracts cover degraded registration and queued physical
 cleanup; the dedicated native descriptor/failure interleavings listed in the
 acceptance artifact remain opportunities to strengthen coverage. No native
 startup target or cross-platform release gate is closed by this checkpoint.
+
+## File-list composite cursor and inline editor return — 2026-09-08
+
+The main listing now has an independent path cursor and a path-based selection
+anchor. Pure movement intents replace component-local keyboard branching. All
+three views expose a roving gridcell Tab stop; an unmounted cursor transfers that
+stop to the viewport, whose focus handler reveals the exact entry. The shared
+virtualizer synchronizes programmatic scroll and cancels an older queued scroll
+before focus is attempted. FileList owns deferred focus across selection and
+inline editor completion, using current pane/path/view and interaction guards.
+
+The original Details reproduction focused Archive with Tab but opened selected
+Downloads with Enter. Current browser acceptance verifies the selected target,
+repeated range extension, multi-selection preservation and genuine off-screen
+cursor recovery. A rename regression also exposed lost path identity; matching
+selection, anchor and cursor paths now migrate to the result without replacing
+newer user changes. Strict browser tests then exposed focus falling to body after
+rename in every view. Enter/Escape completion now borrows FileList's existing
+focus owner across editor teardown; blur commits do not request focus.
+
+Current verification: 2,223 frontend tests and 30 performance cases pass, with
+three unit skips. Chromium passes 111 integrated outcomes across the three view
+modes, including Open/Preview, Miller keyboard ownership, pane focus, inline
+creation and bounded rendering of 5,000 entries. The focused 24-case suite covers
+rename success, Escape, unchanged Enter and empty-name validation. Svelte reports
+zero errors/warnings. The inspected screenshot shows two selected entries and
+an independent keyboard cursor. Startup remains 44 chunks / 662,141 raw bytes /
+215,583 gzip bytes; main chunk is 90,243 gzip bytes. This passes payload budgets
+and adds 1,458 startup gzip bytes to the prior checkpoint, without establishing
+a launch-time improvement.
+
+Linux native focus acceptance passes three scenarios, each spanning all views:
+forward Tab departure/return followed by real folder Open, repeated range
+extension, and F2/Escape editor focus. The same embedded binary passes the existing
+real Markdown preview scenario. Initial Shift+Tab attempts failed because the
+WebKitGTK driver delivered trusted, unprevented `Unidentified` keydown. Plain Tab
+worked; its first bounded cycle failed because Details had 35 tab stops and the
+test allowed only 32. The final fixture measures the actual inventory, caps it at
+256 and fails if it repeats the first outside target before returning. It uses
+real keyboard events and retains the exact selected-cursor assertion. Details
+returned after 35 stops, List/Tiles after 28. No app routing workaround was added.
+Playwright WebKit downloaded but lacks this host's libicu74/libxml2/libflite
+requirements. Native backward traversal, assistive-technology announcements and
+Windows/macOS acceptance remain unverified. See
+`reviews/file-list-focus-acceptance-2026-09-08.json`.
+
+### Next confirmed source-review boundary: local mutation publication
+
+Independent review of `pane-mutations.ts` identifies a separate ownership gap:
+create-file/folder and symlink requests capture a destination for IPC but publish
+entries and cooldown/broadcast effects against the pane's state at completion.
+Navigating A→B while a request is pending can therefore apply A's result to B.
+Create-editor state is also shared across navigation, and successful rename/delete
+completion unconditionally closes the current global dialog, which may belong to
+a newer operation. Delete undo records the current pane directory after awaiting
+instead of the actual affected parent. Pane destruction revokes listing requests
+but does not revoke pending mutation UI publication.
+
+These are source-confirmed reachable paths, not yet failing-before runtime
+contracts or implemented fixes. The next work must separate durable filesystem
+success effects from navigation/lifetime-owned pane effects, retain newer editor
+sessions, preserve navigation out of an actually deleted current directory, and
+make cooldown/broadcast/undo paths refer to the operation's affected directories.
+Deferred-promise behavior tests should establish these interleavings before
+changing the ownership boundary. They remain part of the comprehensive review.

@@ -13,15 +13,13 @@ is the current requirement-by-requirement ledger; the earlier verification and
 handover below describe the initial foundation checkpoint, not final acceptance
 of the ongoing pass. macOS half-bounce measurements remain outstanding.
 
-The latest directory checkpoint gives ordinary cached snapshots request-owned
-publication authority and bounds retained allocations. Invalidated and superseded
-scans cannot restore stale entries, filesystem probes run inside the blocking
-adapter, unreadable roots report errors, and partial results stay uncached. The
-frontend listing owner rejects failed listener registration and late teardown
-results/events. Ten Linux native outcomes and the full unit suites pass, retaining
-the preceding observation recovery/lifetime contracts. Initial listing/watch
-handoff remains an explicit follow-up. See the current ledger for evidence and
-remaining platform acceptance; no macOS startup target is established.
+The latest file-list checkpoint separates cursor and path-based range selection,
+provides one virtualized Tab stop in each view, and preserves focus across inline
+rename. Unit, Chromium and Linux native focus outcomes pass within the scopes
+recorded in the ledger. Observed directory navigation also closes the prior
+initial-list/watch handoff gap. Pending local file mutations can still publish
+against a changed pane or newer editor session; that is the next ownership pass.
+Platform startup, long-session and full release acceptance remain outstanding.
 
 The latest cache pass corrected a misleading native acceptance precondition:
 the hidden-graph test had reopened without ever retaining its target snapshot.

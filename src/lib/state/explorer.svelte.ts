@@ -16,6 +16,7 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { resolveFileCursor } from "$lib/domain/file-list-navigation";
 import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { toastStore } from "./toast.svelte";
@@ -67,7 +68,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     // .has(path) then subscribes per-key, so a selection change re-renders
     // only the rows whose membership actually changed, not every visible row.
     selectedPaths: new SvelteSet<string>(),
-    selectionAnchorIndex: null,
+    selectionAnchorPath: null,
+    cursorPath: null,
   });
 
   /** Replace the selection contents, mutating the reactive Set in place.
@@ -233,10 +235,11 @@ function createExplorerState(seed?: ExplorerSeed) {
         // Issue: tauri-explorer-130a
         if (displayEntries.length > 0) {
           setSelection([displayEntries[0].path]);
-          coreState.selectionAnchorIndex = 0;
+          coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
+          coreState.cursorPath = coreState.selectionAnchorPath;
         } else {
           setSelection([]);
-          coreState.selectionAnchorIndex = null;
+          coreState.selectionAnchorPath = null;
         }
 
         onNavigateCallback?.();
@@ -470,16 +473,19 @@ function createExplorerState(seed?: ExplorerSeed) {
       displayEntries,
       entry,
       coreState.selectedPaths,
-      coreState.selectionAnchorIndex,
+      coreState.selectionAnchorPath,
       options
     );
     setSelection(result.selectedPaths);
-    coreState.selectionAnchorIndex = result.anchorIndex;
+    coreState.selectionAnchorPath = result.anchorPath;
+    coreState.cursorPath = entry.path;
   }
+
+  const focusedEntry = $derived(resolveFileCursor(displayEntries, coreState.cursorPath, coreState.selectedPaths));
 
   function clearSelection() {
     setSelection([]);
-    coreState.selectionAnchorIndex = null;
+    coreState.selectionAnchorPath = null;
   }
 
   function isSelected(entry: FileEntry): boolean {
@@ -509,7 +515,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   function selectAll() {
     setSelection(displayEntries.map((e) => e.path));
-    coreState.selectionAnchorIndex = 0;
+    coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
   }
 
   // ===================
@@ -546,9 +552,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
       setSelection([entry.path]);
-      coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
+      coreState.selectionAnchorPath = entry.path;
+      coreState.cursorPath = entry.path;
     }
-    contextMenuExternalEntry = entry && coreState.selectionAnchorIndex === -1 ? entry : null;
+    contextMenuExternalEntry = entry && !displayEntries.some((item) => item.path === entry.path) ? entry : null;
     contextMenuStore.open(x, y, contextMenuOwner);
   }
 
@@ -817,14 +824,17 @@ function createExplorerState(seed?: ExplorerSeed) {
       const first = displayEntries[0];
       if (first) {
         setSelection([first.path]);
-        coreState.selectionAnchorIndex = 0;
+        coreState.selectionAnchorPath = first.path;
+        coreState.cursorPath = first.path;
       } else {
         setSelection([]);
-        coreState.selectionAnchorIndex = null;
+        coreState.selectionAnchorPath = null;
       }
     },
     clearFilter() { filterQuery = ""; },
-    // Selection
+    // Selection and independent keyboard cursor
+    get focusedEntry() { return focusedEntry; },
+    focusEntry(entry: FileEntry) { coreState.cursorPath = entry.path; },
     selectEntry,
     clearSelection,
     isSelected,

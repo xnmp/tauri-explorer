@@ -4,6 +4,7 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
+  import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
   import { setPaneIdContext } from "$lib/state/pane-context";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -138,9 +139,9 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     tick().then(() => {
       if (!paneRef?.isConnected || windowTabsManager.getActiveExplorer() !== paneExplorer
         || document.activeElement !== active) return;
-      const selected = paneRef.querySelector<HTMLElement>(".selected");
+      const selected = paneExplorer.focusedEntry;
       if (selected) {
-        selected.focus({ preventScroll: false });
+        fileListScrollToEntry?.(selected);
       } else {
         paneRef.focus({ preventScroll: true });
       }
@@ -199,171 +200,38 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     fileListScrollToEntry?.(entry);
   }
 
-  /** Compute how many indices to jump for an arrow key in the current view.
-   *  Returns 0 if the arrow key doesn't apply to this view mode.
-   *
-   *  Layout summary (List and Tiles are both row-major since #128 — items fill
-   *  left→right then top→down — so they navigate identically):
-   *  - details: single column, up/down only
-   *  - list/tiles: left/right = ±1, up/down = ±columns_per_row
-   *
-   *  The view exposes its live column count via a `data-columns` attribute on
-   *  the `.list-view` / `.tiles-view` container (the grid itself is now split
-   *  across per-row elements, so there is no single grid to measure).
-   */
   function gridColumns(viewMode: string): number {
     const gridEl = paneRef?.querySelector<HTMLElement>(`.${viewMode}-view`);
     const cols = gridEl ? parseInt(gridEl.dataset.columns ?? "") : NaN;
     return Number.isFinite(cols) && cols > 0 ? cols : 1;
   }
 
-  function getArrowStep(key: string, viewMode: string, _totalItems: number): number {
-    const isVertical = key === "ArrowUp" || key === "ArrowDown";
-    const isHorizontal = key === "ArrowLeft" || key === "ArrowRight";
-
-    if (viewMode === "details") {
-      return isVertical ? 1 : 0;
-    }
-
-    if (viewMode === "list" || viewMode === "tiles") {
-      // Row-major: horizontal moves one item, vertical moves a whole row.
-      if (isHorizontal) return 1;
-      return gridColumns(viewMode);
-    }
-
-    return isVertical ? 1 : 0;
-  }
-
-  function isYaziNavView(): boolean {
-    if (!settingsStore.yaziNavigation) return false;
-    if (paneExplorer.viewMode === "details") return true;
-    if (paneExplorer.viewMode === "list") {
-      return gridColumns("list") === 1;
-    }
-    return false;
-  }
-
   function handleKeydown(event: KeyboardEvent): void {
-    // Don't process keyboard shortcuts when a dialog is open
-    if (dialogStore.hasModalOpen) return;
-
-    // While the pane shows the commit graph the file listing isn't rendered at
-    // all, so none of this navigation has a visible target — but it still ran,
-    // silently drifting the pane's file selection and stealing DOM focus onto
-    // whatever `.selected` matched (the graph's own selected commit row). It
-    // also double-handled Ctrl+Up/Down with the graph's branch-line jump
-    // (#530). The graph owns the keyboard while it is on screen.
-    if (paneGitGraph) return;
-
-    // Ignore events from interactive elements (e.g. path input, rename input)
-    const tag = (event.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || (event.target as HTMLElement)?.closest?.('[role="separator"]')) return;
-
-    // Arrow key navigation in file list (not in global command system
-    // because it needs current selection context and shift-key handling)
-    const isArrow = event.key === "ArrowUp" || event.key === "ArrowDown"
-      || event.key === "ArrowLeft" || event.key === "ArrowRight";
-    if (isArrow) {
-      event.preventDefault();
-
-      // ArrowLeft goes up one level in details view, or list view with single column (yazi-style)
-      if (event.key === "ArrowLeft" && isYaziNavView()) {
-        paneExplorer.goUp();
-        return;
-      }
-
-      const entries = paneExplorer.displayEntries;
-      if (entries.length === 0) return;
-
-      const selected = paneExplorer.getSelectedEntries()[0];
-      const currentIndex = selected
-        ? entries.findIndex((e) => e.path === selected.path)
-        : -1;
-
-      // If nothing is selected, any arrow key selects the first item
-      if (currentIndex < 0) {
-        selectAndReveal(entries[0], { ctrlKey: false, shiftKey: false });
-        tick().then(() => {
-          const el = paneRef?.querySelector<HTMLElement>(".selected");
-          if (el && el !== document.activeElement) el.focus({ preventScroll: false });
-        });
-        return;
-      }
-
-      // ArrowRight on a folder navigates into it (yazi-style)
-      if (event.key === "ArrowRight" && isYaziNavView()) {
-        if (selected?.kind === "directory") {
-          paneExplorer.navigateTo(selected.path);
-          return;
-        }
-      }
-
-      const step = getArrowStep(event.key, paneExplorer.viewMode, entries.length);
-      if (step === 0) return; // Arrow key not applicable in this view
-
-      const isForward = event.key === "ArrowDown" || event.key === "ArrowRight";
-      let newIndex: number;
-      if (isForward) {
-        newIndex = currentIndex + step;
-        if (newIndex >= entries.length) return; // Already at edge
-      } else {
-        newIndex = currentIndex - step;
-        if (newIndex < 0) return; // Already at edge
-      }
-
-      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
-
-      // Move DOM focus to the newly selected element so focus-visible
-      // tracks selection (avoids stale focus ring on the old item)
-      tick().then(() => {
-        const el = paneRef?.querySelector<HTMLElement>(".selected");
-        if (el && el !== document.activeElement) {
-          el.focus({ preventScroll: false });
-        }
-      });
+    if (event.defaultPrevented || dialogStore.hasModalOpen || paneGitGraph) return;
+    const target = event.target as HTMLElement | null;
+    if (!target || target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    // File navigation belongs to the collection. Ordinary controls, Miller
+    // columns and sidebar widgets retain their own arrow keys. A pane-switch
+    // command changes active-pane state before the old collection loses focus.
+    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport[role="grid"], .explorer-pane, body')) return;
+    const entries = paneExplorer.displayEntries;
+    const cursor = paneExplorer.focusedEntry;
+    const move = resolveFileListMove(event, {
+      viewMode: paneExplorer.viewMode, columns: gridColumns(paneExplorer.viewMode),
+      count: entries.length, cursorIndex: cursor ? entries.indexOf(cursor) : -1,
+      directory: cursor?.kind === "directory", yazi: settingsStore.yaziNavigation,
+    });
+    if (!move) return;
+    event.preventDefault();
+    if (move.kind === "parent") { void paneExplorer.goUp(); return; }
+    if (move.kind === "open") { void paneExplorer.navigateTo(entries[move.index].path); return; }
+    const entry = entries[move.index];
+    if (move.selection === "preserve") {
+      paneExplorer.focusEntry(entry);
+      fileListScrollToEntry?.(entry);
+    } else {
+      selectAndReveal(entry, { ctrlKey: false, shiftKey: move.selection === "extend" });
     }
-    // Ctrl+Home/Ctrl+End select the list boundaries instead of letting the
-    // browser scroll the pane without changing the file-list selection.
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
-      && (event.key === "Home" || event.key === "End")) {
-      event.preventDefault();
-      const entries = paneExplorer.displayEntries;
-      if (entries.length === 0) return;
-
-      const newIndex = event.key === "Home" ? 0 : entries.length - 1;
-      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: false });
-    }
-    // PageUp/PageDown: jump by PAGE_STEP items (skip if any modifier held — likely a command shortcut)
-    const PAGE_STEP = 8;
-    if ((event.key === "PageUp" || event.key === "PageDown") && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      const entries = paneExplorer.displayEntries;
-      if (entries.length === 0) return;
-
-      const selected = paneExplorer.getSelectedEntries()[0];
-      const currentIndex = selected
-        ? entries.findIndex((e) => e.path === selected.path)
-        : -1;
-
-      let newIndex: number;
-      if (currentIndex < 0) {
-        newIndex = 0;
-      } else if (event.key === "PageDown") {
-        newIndex = Math.min(currentIndex + PAGE_STEP, entries.length - 1);
-      } else {
-        newIndex = Math.max(currentIndex - PAGE_STEP, 0);
-      }
-
-      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
-      tick().then(() => {
-        const el = paneRef?.querySelector<HTMLElement>(".selected");
-        if (el && el !== document.activeElement) {
-          el.focus({ preventScroll: false });
-        }
-      });
-    }
-    // All other shortcuts (Ctrl+C/X/V/Z/A, Delete, F2, F5, F6, Enter, etc.)
-    // are handled by the global keybinding system in command-definitions.ts
   }
 
   // Note: Tab initialization is handled at page level by windowTabsManager
@@ -379,7 +247,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   class:inactive={isInactive}
   aria-label="file browser pane"
   tabindex="0"
-  onfocus={handleFocus}
+  onfocusin={handleFocus}
   onclick={handleFocus}
 >
   {#if paneGitGraph}

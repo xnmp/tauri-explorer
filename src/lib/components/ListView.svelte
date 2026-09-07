@@ -19,7 +19,7 @@
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder, { isNewFolderSentinel } from "./InlineNewFolder.svelte";
-  import ItemButton from "./ItemButton.svelte";
+  import EntryCell from "./EntryCell.svelte";
   import VirtualList from "./VirtualList.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -31,9 +31,11 @@
     onitemdblclick: (entry: FileEntry) => void;
     /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
+    containsIndex?: (index: number) => boolean;
+    fallbackTabStop: boolean;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
 
   // Fixed row height: a single-line list item (16px icon / one text line +
   // 4px vertical padding + border) plus the 4px inter-row gap. List names are
@@ -56,11 +58,16 @@
   });
   const { interactions, pointerDrag } = grid;
   scrollToIndex = grid.scrollToIndex;
+  containsIndex = grid.containsIndex;
 </script>
 
 <div class="list-view" data-columns={effectiveListColumns}>
   <VirtualList
     class="list-scroller file-rows"
+    role="grid" aria-label="Files" aria-multiselectable={true}
+    aria-rowcount={grid.rows.length} aria-colcount={effectiveListColumns}
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={grid.rowContainsIndex}
     items={grid.rows}
     itemHeight={LIST_ROW_HEIGHT}
     itemOverflow="visible"
@@ -68,19 +75,19 @@
     getKey={(row) => row.startIndex}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
-    {#snippet children(row)}
-      <div class="list-row" style="grid-template-columns: repeat({effectiveListColumns}, minmax(0, 1fr));">
+    {#snippet children(row, rowIndex)}
+      <div role="row" aria-rowindex={rowIndex + 1} class="list-row" style="grid-template-columns: repeat({effectiveListColumns}, minmax(0, 1fr));">
         {#each row.items as entry, col (entry.path)}
           {#if isNewFolderSentinel(entry)}
-            <InlineNewFolder {explorer} variant="list" />
+            <div role="gridcell"><InlineNewFolder {explorer} variant="list" /></div>
           {:else}
-          <ItemButton class="list-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          <EntryCell column={col + 1} class="list-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
             <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
               <FileIcon {entry} size="small" />
             </span>
             <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
             <GitStatusBadge entryName={entry.name} />
-          </ItemButton>
+          </EntryCell>
           {/if}
         {/each}
       </div>

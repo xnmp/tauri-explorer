@@ -39,7 +39,8 @@ export interface ExplorerCoreState {
 
   // Selection
   selectedPaths: Set<string>;
-  selectionAnchorIndex: number | null;
+  selectionAnchorPath: string | null;
+  cursorPath: string | null;
 }
 
 /**

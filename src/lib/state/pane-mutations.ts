@@ -60,8 +60,8 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];
       ctx.setSelection([result.data.path]);
-      const idx = ctx.displayEntries().findIndex((e) => e.path === result.data.path);
-      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
+      coreState.selectionAnchorPath = result.data.path;
+      coreState.cursorPath = result.data.path;
       ctx.markLocalMutation();
       broadcastFileChange([coreState.currentPath]);
       return null;
@@ -78,8 +78,8 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];
       ctx.setSelection([result.data.path]);
-      const idx = ctx.displayEntries().findIndex((e) => e.path === result.data.path);
-      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
+      coreState.selectionAnchorPath = result.data.path;
+      coreState.cursorPath = result.data.path;
       ctx.markLocalMutation();
       broadcastFileChange([coreState.currentPath]);
       return null;
@@ -100,6 +100,13 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
       renameThumbnailCache(oldPath, result.data.path);
       coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
+      // Preserve identity through a rename without restoring selection or focus
+      // that the user changed while the filesystem operation was pending.
+      if (coreState.selectedPaths.has(oldPath)) {
+        ctx.setSelection([...coreState.selectedPaths].map((path) => path === oldPath ? result.data.path : path));
+      }
+      if (coreState.selectionAnchorPath === oldPath) coreState.selectionAnchorPath = result.data.path;
+      if (coreState.cursorPath === oldPath) coreState.cursorPath = result.data.path;
       clipboardStore.updatePath(oldPath, result.data);
       ctx.markLocalMutation();
       dialogStore.cancelRename();

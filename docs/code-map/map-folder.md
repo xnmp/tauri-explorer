@@ -28,7 +28,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `VirtualList.svelte` — variable-height windowed scroller used by views. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
-- `ItemButton.svelte` — shared entry button wrapper wiring drag-drop + interaction handlers.
+- `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
 - `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
@@ -75,6 +75,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
+
+- `file-list-focus-context.ts` — typed borrowed focus-return seam from inline editors to the FileList owner.
 
 - `window-keyboard.ts` — owns window input listeners, exact terminal command dispatch, main-list command versus native-button activation, accepted local input and modifier/chord release on blur or teardown.
 - `deferred-focus.ts` — one-shot focus requests cancelled by newer interaction, with a consumer availability check before delayed surface mounting.
@@ -257,6 +259,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
+
+- `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
 - `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts.
 - `window-launch-plan.ts` — pure initial-directory/view and restoration policy across main and child windows.

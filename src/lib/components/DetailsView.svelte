@@ -22,9 +22,16 @@
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     scrollToIndex?: (index: number) => void;
+    containsIndex?: (index: number) => boolean;
+    fallbackTabStop: boolean;
   }
 
-  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
+
+  let rowScrollToIndex = $state<((index: number) => void) | undefined>();
+  scrollToIndex = (index) => rowScrollToIndex?.(index + (explorer.isCreatingFolder ? 1 : 0));
+  let rowContainsIndex = $state<((index: number) => boolean) | undefined>();
+  containsIndex = (index) => rowContainsIndex?.(index + (explorer.isCreatingFolder ? 1 : 0)) ?? false;
 
   const viewId = $props.id();
 
@@ -158,17 +165,22 @@
     </div>
   {/if}
 
-  <VirtualList
+  <VirtualList class="file-rows"
+    role="grid" aria-label="Files" aria-multiselectable={true}
+    aria-rowcount={listItems.length} aria-colcount={1}
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={rowContainsIndex}
     items={listItems}
     itemHeight={32}
     getKey={(entry) => entry.path}
-    bind:scrollToIndex
+    bind:scrollToIndex={rowScrollToIndex}
   >
-    {#snippet children(entry)}
+    {#snippet children(entry, index)}
+      <div role="row" aria-rowindex={index + 1}>
       {#if isNewFolderSentinel(entry)}
-        <InlineNewFolder {explorer} variant="details" />
+        <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
       {:else}
-        <FileItem
+        <FileItem index={index - (explorer.isCreatingFolder ? 1 : 0)}
           {entry}
           {explorer}
           onclick={(event) => onitemclick(entry, event)}
@@ -176,6 +188,7 @@
           selected={explorer.isSelected(entry)}
         />
       {/if}
+      </div>
     {/snippet}
   </VirtualList>
 </div>

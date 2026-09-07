@@ -1,6 +1,6 @@
 <!--
-  ItemButton - Shared entry button wrapper with drag-drop and interaction handler wiring.
-  Eliminates duplicated event handlers and class bindings across ListView and TilesView.
+  EntryCell - Shared file-grid cell with drag-drop and interaction handler wiring.
+  Owns roving focus attributes and eliminates duplicated event handlers and class bindings across ListView and TilesView.
   Issue: #109
 -->
 <script lang="ts">
@@ -28,6 +28,7 @@
     /** Global index in displayEntries — exposed as data-index so marquee
      *  selection maps a rendered (virtualized) tile/row back to its entry. */
     index?: number;
+    column: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     children: Snippet;
@@ -40,6 +41,7 @@
     pointerDrag,
     class: className = "",
     index,
+    column,
     onitemclick,
     onitemdblclick,
     children,
@@ -58,10 +60,15 @@
   );
 </script>
 
-<button
+<!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
+<div
+  role="gridcell"
+  tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
+  aria-selected={explorer.isSelected(entry)}
   class="{className} entry-item"
   data-path={entry.path}
   data-index={index}
+  aria-colindex={column}
   class:directory={entry.kind === "directory"}
   class:selected={explorer.isSelected(entry)}
   class:cut={isClipboardCut(entry)}
@@ -89,7 +96,7 @@
       </svg>
     </div>
   {/if}
-</button>
+</div>
 
 <style>
   /* Symlink badge — mirrors the Details view (FileItem) indicator */

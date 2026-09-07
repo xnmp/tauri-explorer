@@ -6,6 +6,14 @@ const stops: (() => void)[] = [];
 beforeEach(() => keybindingsStore._clearForTesting());
 afterEach(() => { stops.splice(0).forEach((stop) => stop()); keybindingsStore._clearForTesting(); });
 
+/** Minimal Element.matches behavior for comma-separated selector lists. */
+function matchesAny(...matchedSelectors: string[]): (selectorList: string) => boolean {
+  const matched = new Set(matchedSelectors);
+  return (selectorList) => selectorList
+    .split(",")
+    .some((selector) => matched.has(selector.trim()));
+}
+
 function fixture(terminalFocus = false) {
   const target = new EventTarget();
   // Exercise real EventTarget dispatch and the production binding matcher.
@@ -277,15 +285,72 @@ describe("file-entry keyboard commands", () => {
   it.each([
     [" ", "Space", "view.togglePreviewPane"],
     ["Enter", "Enter", "file.openSelected"],
-  ])("routes focused file-entry %s to its Explorer command", (key, shortcut, command) => {
+  ])("routes focused file-entry gridcell %s to its Explorer command", (key, shortcut, command) => {
     const f = fixture();
     Object.assign(f.target, {
       tagName: "BUTTON",
-      matches: (selector: string) => selector === ".file-list .entry-item",
+      role: "gridcell",
+      matches: matchesAny(".file-list .entry-item"),
     });
     f.bind(command, shortcut);
     expect(f.press(key).defaultPrevented).toBe(true);
     expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith(command);
+  });
+
+  it.each([
+    [" ", "Space", "view.togglePreviewPane"],
+    ["Enter", "Enter", "file.openSelected"],
+  ])("routes unmounted-cursor grid viewport %s to its Explorer command", (key, shortcut, command) => {
+    const f = fixture();
+    Object.assign(f.target, {
+      tagName: "DIV",
+      role: "grid",
+      matches: matchesAny('.file-list .virtual-viewport[role="grid"]'),
+    });
+    f.bind(command, shortcut);
+
+    expect(f.press(key).defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith(command);
+  });
+
+  it.each([
+    ["mounted gridcell", "BUTTON", ".file-list .entry-item"],
+    ["unmounted-cursor viewport", "DIV", '.file-list .virtual-viewport[role="grid"]'],
+  ])("does not redispatch a locally consumed arrow from the %s", (_surface, tagName, selector) => {
+    const f = fixture();
+    Object.assign(f.target, { tagName, matches: matchesAny(selector) });
+    f.bind("plugin.arrow", "ArrowDown");
+    const event = new Event("keydown", { cancelable: true });
+    Object.assign(event, {
+      key: "ArrowDown",
+      code: "ArrowDown",
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+    });
+    event.preventDefault();
+
+    f.target.dispatchEvent(event);
+
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("leaves keys from a nested entry editor with the editor", () => {
+    const f = fixture();
+    Object.assign(f.target, {
+      tagName: "INPUT",
+      matches: matchesAny(),
+      closest: (selector: string) => selector === ".entry-item" ? {} : null,
+    });
+    f.bind("plugin.arrow", "ArrowDown");
+    f.bind("file.openSelected", "Enter");
+    f.bind("view.togglePreviewPane", "Space");
+
+    for (const key of ["ArrowDown", "Enter", " "]) {
+      expect(f.press(key).defaultPrevented).toBe(false);
+    }
+    expect(f.executeCommand).not.toHaveBeenCalled();
   });
 });
 
@@ -325,7 +390,7 @@ it("keeps a file-entry Space accepted by type-ahead local", () => {
   const f = fixture();
   Object.assign(f.target, {
     tagName: "BUTTON",
-    matches: (selector: string) => selector === ".file-list .entry-item",
+    matches: matchesAny(".file-list .entry-item"),
   });
   f.bind("view.togglePreviewPane", "Space");
   const event = new Event("keydown", { cancelable: true });

@@ -710,3 +710,32 @@ notifications. A pane deferring refresh for navigation explicitly returns `false
 crediting it with a sibling's scan loses the deferred change. The real-pane
 interleaving regression failed even after adding per-subscriber keys, until
 participation itself became explicit.
+
+### File-list cursor and selected entries have different identities
+
+Making every file row a native Tab stop allowed focus and command targets to
+separate: Tab focused Archive while Enter opened selected Downloads. A collection
+needs one cursor Tab stop and internal arrow navigation. Keep the selected set
+independent so returning with Tab does not destroy multi-selection. Range anchors
+must identify paths, not display indices, or sorting/insertion changes the anchor.
+Rename must migrate matching selected, cursor and anchor paths while preserving
+newer user changes made during the asynchronous operation.
+
+For virtualized focus, reveal the exact entry through the view-owned scroller,
+synchronize its rendered window, then focus a verified index/path target after
+render. Cancel stale coalesced scroll work before the programmatic jump. The
+viewport supplies a Tab fallback when the cursor row is unmounted. A `.selected`
+query cannot identify the moving endpoint of a multi-selection.
+
+Browser focus helpers must target the body collection boundary. Details has
+independent sort/resize controls inside FileList but before its body grid; Tab
+from before the whole component correctly visits those controls first. Assert
+actual focus before executing Open so a test does not mistake a sort-header
+activation for failed file navigation.
+
+WebKitGTK WebDriver can deliver trusted Shift+Tab keydown as `Unidentified`, with
+`shiftKey=true` and `defaultPrevented=false`. Both the convenience chord helper
+and explicit Shift-held action order reproduced it; plain Tab delivered `Tab`
+and moved DOM focus. Capture actual keyboard/focus events before changing app
+routing to compensate for an automation failure. Native forward Tab traversal
+and browser backward traversal have distinct evidence scopes.

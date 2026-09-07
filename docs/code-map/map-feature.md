@@ -15,7 +15,8 @@ backend for E2E/browser).
 
 ## View modes & virtualization
 
-- `components/FileList.svelte` — dispatches to Details/List/Tiles by view mode
+- `components/FileList.svelte` — dispatches to Details/List/Tiles; owns exact deferred cursor focus through each virtualized view
+- `components/EntryCell.svelte` — shared List/Tiles gridcell interaction and roving focus attributes
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
 - `components/ListView.svelte` — CSS-grid columns view
 - `components/TilesView.svelte` — auto-fill tile grid
@@ -25,7 +26,7 @@ backend for E2E/browser).
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
 - `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence
-- `components/FileIcon.svelte` — shared icon renderer used by all 3 views (via `FileItem.svelte` for Details/List, `TilesView.svelte` for Tiles); linked-folder and git-repo-folder badge overlays live here so a display feature added once covers all views automatically
+- `components/FileIcon.svelte` — shared icon renderer used by all 3 views (via `FileItem.svelte` for Details and directly from List/Tiles); linked-folder and git-repo-folder badge overlays live here so a display feature added once covers all views automatically
 - `domain/file-types.ts` — `isGitRepoFolder` (icon-selection predicate for the git-repo folder badge, #463); backend flag set in `src-tauri/src/files/mod.rs::metadata_to_entry` (`FileEntry.is_git_repo`, one `.git`-exists stat per directory entry)
 - `domain/relative-time.ts` — shared compact relative labels for file metadata, today's git commits, and PR comments
 - FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features. Since Details/List/Tiles all route icons through `FileIcon.svelte`, icon-only features (like the git-repo badge) don't need per-view changes — the shared component is the single seam.
@@ -34,9 +35,11 @@ backend for E2E/browser).
 
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
-- `state/selection.ts` — pure selection-set helpers (range, toggle)
+- `domain/file-list-navigation.ts` — pure cursor resolution and keyboard movement/selection intents
+- `state/file-list-focus-context.ts` — inline editor keyboard completion borrows FileList focus ownership across row replacement
+- `state/selection.ts` — pure selection-set helpers (path-anchored range, toggle)
 - `composables/use-type-ahead.svelte.ts` — type-to-select by name prefix
-- selection state stored on `explorer.svelte.ts` (`selectedPaths`, anchor)
+- selection state stored on `explorer.svelte.ts` (`selectedPaths`, path anchor, independent path cursor)
 - FLOW: pointer events in item-interactions/marquee → mutate explorer selection set → views highlight via `selectedPaths`.
 
 ## Directory listing & refresh/watcher events

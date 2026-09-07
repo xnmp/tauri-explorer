@@ -20,3 +20,4 @@ decision during review.
 | [0012](0012-inline-panel-sizing.md) | Inline panel sizing | Accepted |
 | [0013](0013-directory-observation-recovery.md) | Directory observation generations, recovery and cache eligibility | Accepted |
 | [0014](0014-observed-directory-navigation.md) | Observed directory navigation and snapshot handoff | Accepted |
+| [0015](0015-file-list-keyboard-cursor.md) | File-list keyboard cursor and virtualized focus ownership | Accepted |

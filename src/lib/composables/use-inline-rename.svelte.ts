@@ -6,6 +6,7 @@
  */
 
 import { tick } from "svelte";
+import { getFileListFocusReturn } from "$lib/state/file-list-focus-context";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -19,6 +20,7 @@ export interface InlineRenameState {
 }
 
 export function useInlineRename(getExplorer: () => ExplorerInstance) {
+  const captureFocusReturn = getFileListFocusReturn();
   let renameInputRef = $state<HTMLInputElement | HTMLTextAreaElement | null>(null);
   let editedName = $state("");
   let renameError = $state<string | null>(null);
@@ -45,16 +47,16 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     });
   }
 
-  async function confirmRename(currentName: string) {
-    if (submittingRename) return;
+  async function confirmRename(currentName: string): Promise<boolean> {
+    if (submittingRename) return false;
     const trimmed = editedName.trim();
     if (!trimmed) {
       renameError = "Name cannot be empty";
-      return;
+      return false;
     }
     if (trimmed === currentName) {
       dialogStore.cancelRename();
-      return;
+      return true;
     }
     submittingRename = true;
     renameError = null;
@@ -62,6 +64,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     submittingRename = false;
     if (result) renameError = result;
     else renameSuggestionStore.clear();
+    return !result;
   }
 
   function cancelRename() {
@@ -101,11 +104,14 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     if (event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
-      confirmRename(currentName);
+      const complete = captureFocusReturn?.();
+      void confirmRename(currentName).then((accepted) => complete?.(accepted), () => complete?.(false));
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      const complete = captureFocusReturn?.();
       cancelRename();
+      complete?.(true);
     } else if ((event.ctrlKey || event.metaKey) && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
       const input = renameInputRef;

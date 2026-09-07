@@ -19,10 +19,10 @@ pub mod git;
 pub mod git_actions;
 mod git_common;
 pub mod git_log;
-mod git_watch;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
 #[path = "../test_support/git_observation_probe.rs"]
 mod git_observation_probe;
+mod git_watch;
 mod github;
 mod nano_banana;
 mod palette;
@@ -31,6 +31,7 @@ mod plugin_job;
 mod portal;
 mod process_ext;
 mod progress;
+mod renderer_owner;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
 #[path = "../test_support/renderer_recovery.rs"]
 mod renderer_recovery;
@@ -166,7 +167,7 @@ pub fn run(launch_dir: Option<String>) {
     let builder = tauri::Builder::default();
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     let builder = builder.on_web_content_process_terminate(|webview| {
-        git_watch::on_page_started(&webview.window());
+        renderer_owner::on_page_started(&webview.window());
     });
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
@@ -208,12 +209,12 @@ pub fn run(launch_dir: Option<String>) {
         .plugin(tauri_plugin_clipboard_x::init())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                git_watch::on_window_destroyed(window);
+                renderer_owner::on_window_destroyed(window);
             }
         })
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
-                git_watch::on_page_started(&webview.window());
+                renderer_owner::on_page_started(&webview.window());
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -318,7 +319,7 @@ pub fn run(launch_dir: Option<String>) {
             git::git_discard,
             git::git_diff,
             git::git_commit,
-            git_watch::git_watch_session,
+            renderer_owner::native_resource_session,
             git_watch::git_watch_repo,
             git_watch::git_unwatch_repo,
             git_log::git_log,

@@ -1,6 +1,6 @@
 //! Renderer generations within one concrete native window. No worker or OS
 //! resources are created by advancing a document boundary.
-use super::service::Owner;
+use super::Owner;
 
 pub(super) struct RendererScope {
     generation: u64,
@@ -17,6 +17,14 @@ impl Default for RendererScope {
 }
 
 impl RendererScope {
+    #[cfg(test)]
+    pub(super) fn at_generation(generation: u64) -> Self {
+        Self {
+            generation,
+            owner: Some(Owner::default()),
+        }
+    }
+
     pub fn session(&self) -> Option<String> {
         self.owner.as_ref().map(|_| self.generation.to_string())
     }

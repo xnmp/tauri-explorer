@@ -1,4 +1,4 @@
-//! Native renderer lifetime signals, installed only when a page requests Git
+//! Native renderer lifetime signals, installed only when a page requests resource
 //! ownership. Each application window contains one native Webview for its life.
 use super::{retire, WindowOwner};
 use crate::error::AppError;
@@ -50,7 +50,7 @@ fn install(
 ) -> Result<(), AppError> {
     use webkit2gtk::WebViewExt;
     // The native Webview owns the handler until destruction; the weak capture
-    // cannot keep either the window or its Git owner alive.
+    // cannot keep either the window or its resource owner alive.
     native
         .inner()
         .connect_web_process_terminated(move |_, _| terminated(&slot));

@@ -94,7 +94,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
-- `directory-watch.ts` — one refcounted native watch owner; orders acquisition/release and drains late registration on destruction; reused by panes, thumbnails, Miller columns and drives.
+- `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, panes, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop.
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
@@ -205,6 +205,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin-jobs.ts` — accepted plugin job result types and image/provider job IPC.
 
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
+- `native-resource-session.ts` — one acknowledged renderer generation shared by directory and Git IPC; only failed acknowledgement retries.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
@@ -389,9 +390,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
-- `git_watch.rs` — lazy Tauri observation adapter; concrete-window resource-table identity, acknowledged renderer sessions, page/destruction retirement, native factory and process shutdown.
-- `git_watch/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
-- `git_watch/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
+- `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
+- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
+- `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
+- `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
 - `git_watch/service.rs` — dedicated worker owns window-scoped leases, shared observers, cancellation/reclamation, coalesced event flags, debounce/recovery deadlines and invalidation delivery retries.
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
@@ -410,7 +412,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
-- `fs_watcher.rs` — filesystem watcher → directory-changed events.
+- `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
+- `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `git_status.rs` — per-entry git status indicators.
 - `drives.rs` — enumerate drives/volumes cross-platform.
 - `external_apps.rs` — open files / image viewers / terminals externally.

@@ -2,7 +2,7 @@ use super::{
     cancel_search, install_stream_gate_for_test, start_streaming_search_with_runtime,
     stream_walk_count_for_test, SEARCH_ENTRY_CACHE,
 };
-use crate::files::fs_watcher::{init_watcher, unwatch_directory, watch_directory};
+use crate::files::fs_watcher::{acquire_directory, init_watcher, release_directory, retire_owners};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -57,6 +57,9 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let app = tauri::test::mock_app();
     let app_handle = app.handle().clone();
     init_watcher(&app_handle);
+    let owner = crate::renderer_owner::Owner::default();
+    let watch_directory = |path| acquire_directory(owner.clone(), path);
+    let unwatch_directory = |id| release_directory(owner.clone(), id);
     let (sender, receiver) = mpsc::channel();
     app_handle.listen("search-results", move |event| {
         sender
@@ -111,7 +114,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         .expect("overlapping nested fixture");
     let overlap_parent_path = overlap_parent.path().to_string_lossy().into_owned();
     let overlap_child_path = overlap_child.to_string_lossy().into_owned();
-    tauri::async_runtime::block_on(watch_directory(overlap_parent_path.clone()))
+    let parent_lease = tauri::async_runtime::block_on(watch_directory(overlap_parent_path.clone()))
         .expect("watch overlapping parent root");
     tauri::async_runtime::block_on(watch_directory(overlap_child_path.clone()))
         .expect("watch overlapping child root");
@@ -136,7 +139,7 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         "establishing child coverage must not evict the unchanged parent listing"
     );
 
-    tauri::async_runtime::block_on(unwatch_directory(overlap_parent_path))
+    tauri::async_runtime::block_on(unwatch_directory(parent_lease.id))
         .expect("remove overlapping parent watch");
     let child_recache_id = start_search(&app_handle, &overlap_child, "before-overlap");
     assert!(wait_for_done(&receiver, child_recache_id).contains(&"before-overlap.txt".to_string()));
@@ -166,13 +169,13 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let rewatched = tempfile::tempdir().expect("rewatched search root");
     fs::write(rewatched.path().join("before-gap.txt"), "before").expect("pre-unwatch fixture");
     let rewatched_path = rewatched.path().to_string_lossy().into_owned();
-    tauri::async_runtime::block_on(watch_directory(rewatched_path.clone()))
+    let gap_lease = tauri::async_runtime::block_on(watch_directory(rewatched_path.clone()))
         .expect("watch cache epoch root");
     let before_gap_id = start_search(&app_handle, rewatched.path(), "before-gap");
     assert!(wait_for_done(&receiver, before_gap_id).contains(&"before-gap.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(rewatched.path()), 1);
 
-    tauri::async_runtime::block_on(unwatch_directory(rewatched_path.clone()))
+    tauri::async_runtime::block_on(unwatch_directory(gap_lease.id))
         .expect("remove final cache epoch watch");
     fs::remove_file(rewatched.path().join("before-gap.txt")).expect("remove pre-unwatch fixture");
     fs::write(rewatched.path().join("after-gap.txt"), "after").expect("post-unwatch fixture");
@@ -189,6 +192,81 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         2,
         "a fresh watch epoch must force a fresh recursive walk"
     );
+
+    let retired = tempfile::tempdir().expect("retired-owner search root");
+    fs::write(retired.path().join("before-owner-retirement.txt"), "before")
+        .expect("pre-retirement fixture");
+    let retired_path = retired.path().to_string_lossy().into_owned();
+    let first_owner = crate::renderer_owner::Owner::default();
+    let final_owner = crate::renderer_owner::Owner::default();
+    tauri::async_runtime::block_on(acquire_directory(first_owner.clone(), retired_path.clone()))
+        .expect("watch retirement root for first owner");
+    tauri::async_runtime::block_on(acquire_directory(final_owner.clone(), retired_path.clone()))
+        .expect("share retirement root with final owner");
+
+    let before_retirement_id = start_search(&app_handle, retired.path(), "owner-retirement");
+    assert!(wait_for_done(&receiver, before_retirement_id)
+        .contains(&"before-owner-retirement.txt".to_string()));
+    assert_eq!(stream_walk_count_for_test(retired.path()), 1);
+
+    first_owner.retire();
+    retire_owners();
+    // acquire() performs maintenance while holding the real watcher lock. The
+    // additional shared lease makes the first retirement deterministic here
+    // without introducing another init_watcher singleton or a timing sleep.
+    let maintenance_lease = tauri::async_runtime::block_on(acquire_directory(
+        final_owner.clone(),
+        retired_path.clone(),
+    ))
+    .expect("maintain the shared watch after first-owner retirement");
+    tauri::async_runtime::block_on(release_directory(final_owner.clone(), maintenance_lease.id))
+        .expect("release maintenance lease");
+    let shared_reuse_id = start_search(&app_handle, retired.path(), "owner-retirement");
+    assert!(wait_for_done(&receiver, shared_reuse_id)
+        .contains(&"before-owner-retirement.txt".to_string()));
+    assert_eq!(
+        stream_walk_count_for_test(retired.path()),
+        1,
+        "retiring one of two owners must preserve the shared root's cached listing"
+    );
+
+    let revision = SEARCH_ENTRY_CACHE.begin_load(retired.path());
+    fs::write(retired.path().join("cold-trigger.txt"), "trigger").expect("cold retirement fixture");
+    wait_for_revision_change(retired.path(), revision);
+    let gate = install_stream_gate_for_test(retired.path());
+    let cold_revision = SEARCH_ENTRY_CACHE.begin_load(retired.path());
+    let retiring_walk_id = start_search(&app_handle, retired.path(), "owner-retirement");
+    gate.started.wait();
+
+    final_owner.retire();
+    retire_owners();
+    wait_for_revision_change(retired.path(), cold_revision);
+    fs::remove_file(retired.path().join("before-owner-retirement.txt"))
+        .expect("remove pre-retirement fixture");
+    fs::write(retired.path().join("after-owner-retirement.txt"), "after")
+        .expect("post-retirement fixture");
+    gate.release.wait();
+    let _ = wait_for_done(&receiver, retiring_walk_id);
+    assert!(
+        SEARCH_ENTRY_CACHE.completed(retired.path()).is_none(),
+        "a cold walk that overlaps final-owner retirement must not publish into the retired epoch"
+    );
+
+    let replacement_owner = crate::renderer_owner::Owner::default();
+    let replacement_lease =
+        tauri::async_runtime::block_on(acquire_directory(replacement_owner.clone(), retired_path))
+            .expect("rewatch after final-owner retirement");
+    let after_retirement_id = start_search(&app_handle, retired.path(), "owner-retirement");
+    let after_retirement = wait_for_done(&receiver, after_retirement_id);
+    assert!(after_retirement.contains(&"after-owner-retirement.txt".to_string()));
+    assert!(!after_retirement.contains(&"before-owner-retirement.txt".to_string()));
+    assert_eq!(
+        stream_walk_count_for_test(retired.path()),
+        3,
+        "rewatching after retirement must walk the current filesystem instead of reusing old cache"
+    );
+    tauri::async_runtime::block_on(release_directory(replacement_owner, replacement_lease.id))
+        .expect("release replacement retirement-root watch");
 
     let cancelled_root = tempfile::tempdir().expect("cancelled search root");
     for index in 0..100 {

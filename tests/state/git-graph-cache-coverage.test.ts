@@ -3,10 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const native = vi.hoisted(() => ({ watch: vi.fn(), unwatch: vi.fn() }));
 vi.mock("$lib/state/git-graph-coverage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("$lib/state/git-graph-coverage")>();
-  const { createDirectoryWatch } = await import("$lib/state/directory-watch");
+  const { createPathWatch } = await import("$lib/state/directory-watch");
   return { ...actual, gitGraphCoverage: actual.createGitGraphCoverage({
     listen: async () => true,
-    createWatch: () => createDirectoryWatch(native),
+    createWatch: () => createPathWatch(native),
   }) };
 });
 const snapshot = { commits: [], refs: {}, hasMore: false, headOid: "head",
@@ -14,7 +14,7 @@ const snapshot = { commits: [], refs: {}, hasMore: false, headOid: "head",
 
 beforeEach(() => {
   vi.resetModules();
-  native.watch.mockReset().mockResolvedValue(undefined);
+  native.watch.mockReset().mockImplementation(async (path: string) => path);
   native.unwatch.mockReset().mockResolvedValue(undefined);
 });
 
@@ -52,7 +52,7 @@ describe("retained graph observation", () => {
 
   it("rejects publication before acknowledgement and after delivered invalidation", async () => {
     let acknowledge!: () => void;
-    native.watch.mockReturnValue(new Promise<void>((resolve) => { acknowledge = resolve; }));
+    native.watch.mockReturnValue(new Promise<string>((resolve) => { acknowledge = () => resolve("/repo"); }));
     const cache = await import("$lib/state/git-graph-cache");
     const key = cache.snapshotKey("/repo", null, false);
     const writer = cache.beginSnapshotWrite(key, "/repo");

@@ -1,0 +1,206 @@
+//! Owner-bound directory leases. The adapter owns OS observation and cache
+//! coverage; this state machine owns identity, sharing, retirement and retries.
+use crate::{error::AppError, renderer_owner::Owner};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Lease {
+    pub id: String,
+    pub path: String,
+}
+
+pub(super) trait Observer {
+    fn watch(&mut self, path: &str) -> notify::Result<()>;
+    fn unwatch(&mut self, path: &str) -> notify::Result<()>;
+    /// Install all surviving paths before dropping the old watcher.
+    fn replace(&mut self, paths: &[String]) -> notify::Result<()>;
+    /// End cache eligibility before attempting physical cleanup.
+    fn uncovered(&mut self, path: &str);
+}
+
+#[derive(Default)]
+struct Entry {
+    leases: HashMap<String, Owner>,
+    retry_at: Option<Instant>,
+    failures: u32,
+    uncovered: bool,
+}
+
+impl Entry {
+    fn retry_after_failure(&mut self, now: Instant) -> u32 {
+        self.failures = self.failures.saturating_add(1);
+        self.retry_at = Some(now + Duration::from_millis(100 * (1u64 << self.failures.min(8))));
+        self.failures
+    }
+}
+
+pub(super) struct DirectoryWatches<W> {
+    pub observer: W,
+    entries: HashMap<String, Entry>,
+    next_id: u64,
+}
+
+impl<W: Observer> DirectoryWatches<W> {
+    pub fn new(observer: W) -> Self {
+        Self {
+            observer,
+            entries: HashMap::new(),
+            next_id: 0,
+        }
+    }
+
+    pub fn covered(&self, path: &str) -> bool {
+        self.entries
+            .get(path)
+            .is_some_and(|entry| !entry.uncovered && entry.leases.values().any(Owner::active))
+    }
+
+    pub fn acquire(&mut self, owner: &Owner, path: String) -> Result<Lease, AppError> {
+        if !owner.active() {
+            return Err(closed());
+        }
+        self.maintain(Instant::now());
+        if self
+            .entries
+            .get(&path)
+            .is_some_and(|entry| entry.uncovered || entry.leases.is_empty())
+        {
+            return Err(AppError::Other(format!(
+                "Directory watch cleanup is pending: {path}"
+            )));
+        }
+        let next = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| AppError::Other("Directory watch lease IDs exhausted".into()))?;
+        let id = self.next_id.to_string();
+        self.next_id = next;
+        if !self.entries.contains_key(&path) {
+            self.observer
+                .watch(&path)
+                .map_err(|error| watch_error(&path, error))?;
+        }
+        self.entries
+            .entry(path.clone())
+            .or_default()
+            .leases
+            .insert(id.clone(), owner.clone());
+        if !owner.active() {
+            self.maintain(Instant::now());
+            return Err(closed());
+        }
+        Ok(Lease { id, path })
+    }
+
+    pub fn release(&mut self, owner: &Owner, id: &str) -> Result<(), AppError> {
+        let Some(path) = self.entries.iter().find_map(|(path, entry)| {
+            entry
+                .leases
+                .get(id)
+                .filter(|held| held.same(owner))
+                .map(|_| path.clone())
+        }) else {
+            return Ok(());
+        };
+        let entry = &self.entries[&path];
+        if entry.leases.len() == 1 {
+            // Failed release retains authority for retry, but cannot advertise
+            // known cache coverage after an ambiguous native unwatch failure.
+            if !entry.uncovered {
+                self.observer.uncovered(&path);
+                self.entries.get_mut(&path).unwrap().uncovered = true;
+            }
+            if let Err(error) = self.unwatch(&path) {
+                self.entries
+                    .get_mut(&path)
+                    .unwrap()
+                    .retry_after_failure(Instant::now());
+                return Err(watch_error(&path, error));
+            }
+            self.entries.remove(&path);
+        } else {
+            self.entries.get_mut(&path).unwrap().leases.remove(id);
+        }
+        Ok(())
+    }
+
+    /// A canceled acquisition must not leave a lease that no renderer received.
+    pub fn abandon(&mut self, id: &str) {
+        for entry in self.entries.values_mut() {
+            if entry.leases.remove(id).is_some() {
+                break;
+            }
+        }
+        self.maintain(Instant::now());
+    }
+
+    pub fn needs_cleanup(&self) -> bool {
+        self.entries
+            .values()
+            .any(|entry| entry.uncovered || entry.leases.is_empty())
+    }
+
+    pub fn maintain(&mut self, now: Instant) {
+        for (path, entry) in &mut self.entries {
+            entry.leases.retain(|_, owner| owner.active());
+            if entry.leases.is_empty() && !entry.uncovered {
+                self.observer.uncovered(path);
+                entry.uncovered = true;
+            }
+        }
+        let due: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.uncovered && entry.retry_at.is_none_or(|at| at <= now))
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in due {
+            if !self.entries.contains_key(&path) {
+                continue;
+            }
+            match self.unwatch(&path) {
+                Ok(()) => {
+                    self.entries.remove(&path);
+                }
+                Err(error) => {
+                    let entry = self.entries.get_mut(&path).unwrap();
+                    let failures = entry.retry_after_failure(now);
+                    log::warn!("Directory watch cleanup failed for {path}: {error}");
+                    if failures >= 3 {
+                        let surviving: Vec<String> = self
+                            .entries
+                            .iter()
+                            .filter(|(_, entry)| !entry.uncovered)
+                            .map(|(path, _)| path.clone())
+                            .collect();
+                        match self.observer.replace(&surviving) {
+                            Ok(()) => {
+                                self.entries.retain(|_, entry| !entry.uncovered);
+                            }
+                            Err(error) => log::warn!("Directory watcher rebuild failed: {error}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn unwatch(&mut self, path: &str) -> notify::Result<()> {
+        match self.observer.unwatch(path) {
+            Err(error) if matches!(error.kind, notify::ErrorKind::WatchNotFound) => Ok(()),
+            result => result,
+        }
+    }
+}
+
+fn closed() -> AppError {
+    AppError::Other("Native resource renderer was replaced".into())
+}
+fn watch_error(path: &str, error: notify::Error) -> AppError {
+    AppError::Other(format!("Directory observation failed for {path}: {error}"))
+}
+
+#[cfg(test)]
+#[path = "../../test_support/directory_watches.rs"]
+mod tests;

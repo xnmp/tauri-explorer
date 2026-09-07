@@ -1,8 +1,9 @@
 use super::{
-    service::{Callback, Observer, Owner, Service, Timing},
+    service::{Callback, Observer, Service, Timing},
     target::{install, Target},
 };
 use crate::error::AppError;
+use crate::renderer_owner::Owner;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -320,6 +321,59 @@ fn canceled_acquisition_drains_the_late_native_observer() {
 }
 
 #[test]
+fn cancellation_after_successful_reply_reclaims_the_unreceived_lease() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let dir = repo();
+    let f = fixture();
+    let mut pending = Box::pin(
+        f.service
+            .acquire(&f.owner, dir.path().to_string_lossy().into_owned()),
+    );
+    let mut context = Context::from_waker(Waker::noop());
+
+    assert!(matches!(pending.as_mut().poll(&mut context), Poll::Pending));
+    let observer = receive(&f.observers);
+    // This command is queued after acquisition. Its reply proves the worker
+    // successfully sent the lease while the acquisition receiver was live.
+    run(f.service.release(&f.owner, "unknown".into())).unwrap();
+
+    drop(pending);
+    receive(&observer.dropped);
+}
+
+#[test]
+fn canceling_one_successful_reply_preserves_a_shared_owners_other_lease() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let dir = repo();
+    let path = dir.path().to_string_lossy().into_owned();
+    let f = fixture();
+    let mut canceled = Box::pin(f.service.acquire(&f.owner, path.clone()));
+    let mut context = Context::from_waker(Waker::noop());
+
+    assert!(matches!(
+        canceled.as_mut().poll(&mut context),
+        Poll::Pending
+    ));
+    let observer = receive(&f.observers);
+    let surviving = run(f.service.acquire(&f.owner, path)).unwrap();
+    assert!(f.observers.try_recv().is_err());
+
+    drop(canceled);
+    // This round trip establishes that request retirement was processed.
+    run(f.service.release(&f.owner, "unknown".into())).unwrap();
+    assert!(observer.dropped.try_recv().is_err());
+    (observer.callback.lock().unwrap())(Ok(notify::Event::new(notify::EventKind::Any)));
+    assert_eq!(receive(&f.emitted), surviving.repo_root);
+
+    run(f.service.release(&f.owner, surviving.id)).unwrap();
+    receive(&observer.dropped);
+}
+
+#[test]
 fn native_observer_recovers_after_root_moves_and_observes_worktree_lock_files() {
     let dir = repo();
     let destination = TempDir::new().unwrap();
@@ -570,189 +624,4 @@ fn retirement_with_a_saturated_inbox_rejects_queued_and_waiting_acquisitions() {
             "retired queued work installed another observer"
         );
     });
-}
-
-#[test]
-fn concrete_native_windows_keep_retirement_with_old_handles() {
-    use tauri::Manager;
-    let f = fixture();
-    let dir = repo();
-    let path = dir.path().to_string_lossy().into_owned();
-    let app = tauri::test::mock_builder()
-        .build(tauri::test::mock_context(tauri::test::noop_assets()))
-        .unwrap();
-    let window = tauri::WebviewWindowBuilder::new(&app, "owner-test", Default::default())
-        .build()
-        .unwrap()
-        .as_ref()
-        .window();
-    let old_handle = window.clone();
-    let slot = super::resource_owner(&mut window.resources_table());
-    let session = slot.scope.lock().unwrap().session().unwrap();
-    let owner = slot.scope.lock().unwrap().owner(&session).unwrap();
-    let lease = run(f.service.acquire(&owner, path.clone())).unwrap();
-    let observer = receive(&f.observers);
-    // Looking up through a clone must retain release authority.
-    let clone_owner = super::resource_owner(&mut old_handle.resources_table())
-        .scope
-        .lock()
-        .unwrap()
-        .owner(&session)
-        .unwrap();
-    run(f.service.release(&clone_owner, lease.id)).unwrap();
-    receive(&observer.dropped);
-    super::on_window_destroyed(&window);
-    assert!(super::resource_owner(&mut old_handle.resources_table())
-        .scope
-        .lock()
-        .unwrap()
-        .owner(&session)
-        .is_none());
-    assert!(run(f.service.acquire(&owner, path.clone())).is_err());
-
-    // The mock dispatcher cannot destroy/remove a window; a separate app can
-    // create the same native label with a fresh resource table.
-    let replacement_app = tauri::test::mock_builder()
-        .build(tauri::test::mock_context(tauri::test::noop_assets()))
-        .unwrap();
-    let replacement =
-        tauri::WebviewWindowBuilder::new(&replacement_app, "owner-test", Default::default())
-            .build()
-            .unwrap()
-            .as_ref()
-            .window();
-    let replacement_slot = super::resource_owner(&mut replacement.resources_table());
-    let replacement_session = replacement_slot.scope.lock().unwrap().session().unwrap();
-    let replacement_owner = replacement_slot
-        .scope
-        .lock()
-        .unwrap()
-        .owner(&replacement_session)
-        .unwrap();
-    let lease = run(f.service.acquire(&replacement_owner, path.clone())).unwrap();
-    let replacement_observer = receive(&f.observers);
-    // A delayed destruction notification for an old handle cannot retire it.
-    super::on_window_destroyed(&old_handle);
-    let subsequent = run(f.service.acquire(&replacement_owner, path)).unwrap();
-    run(f.service.release(&replacement_owner, lease.id)).unwrap();
-    assert!(replacement_observer.dropped.try_recv().is_err());
-    run(f.service.release(&replacement_owner, subsequent.id)).unwrap();
-    receive(&replacement_observer.dropped);
-}
-
-#[test]
-fn native_destruction_before_first_command_keeps_admission_closed() {
-    use tauri::Manager;
-    let app = tauri::test::mock_builder()
-        .build(tauri::test::mock_context(tauri::test::noop_assets()))
-        .unwrap();
-    let window = tauri::WebviewWindowBuilder::new(&app, "never-acquired", Default::default())
-        .build()
-        .unwrap()
-        .as_ref()
-        .window();
-    super::on_window_destroyed(&window);
-    let slot = super::resource_owner(&mut window.resources_table());
-    assert!(slot.scope.lock().unwrap().session().is_none());
-    super::on_page_started(&window);
-    assert!(
-        slot.scope.lock().unwrap().session().is_none(),
-        "late page load reopened a destroyed window"
-    );
-}
-
-#[test]
-fn renderer_generations_reclaim_old_leases_and_reject_delayed_work() {
-    let f = fixture();
-    let dir = repo();
-    let path = dir.path().to_string_lossy().into_owned();
-    let mut scope = super::scope::RendererScope::default();
-    let session = scope.session().unwrap();
-    let old = scope.owner(&session).unwrap();
-    let old_lease = run(f.service.acquire(&old, path.clone())).unwrap();
-    let observer = receive(&f.observers);
-    let retired = scope.advance().unwrap();
-    f.service.retire(&retired);
-    receive(&observer.dropped);
-    assert!(scope.owner(&session).is_none());
-    assert!(run(f.service.acquire(&old, path.clone())).is_err());
-    let next_session = scope.session().unwrap();
-    assert_ne!(next_session, session);
-    let next = scope.owner(&next_session).unwrap();
-    let lease = run(f.service.acquire(&next, path.clone())).unwrap();
-    let replacement = receive(&f.observers);
-    run(f.service.release(&old, lease.id.clone())).unwrap();
-    run(f.service.release(&next, old_lease.id)).unwrap();
-    assert!(replacement.dropped.try_recv().is_err());
-    run(f.service.release(&next, lease.id)).unwrap();
-    receive(&replacement.dropped);
-    scope.close();
-    assert!(scope.advance().is_none());
-    assert!(scope.session().is_none());
-    assert!(scope.owner(&next_session).is_none());
-}
-
-#[test]
-fn page_loads_rotate_only_the_concrete_window_with_existing_ownership() {
-    use tauri::Manager;
-    let app = tauri::test::mock_builder()
-        .build(tauri::test::mock_context(tauri::test::noop_assets()))
-        .unwrap();
-    let left = tauri::WebviewWindowBuilder::new(&app, "left", Default::default())
-        .build()
-        .unwrap()
-        .as_ref()
-        .window();
-    let right = tauri::WebviewWindowBuilder::new(&app, "right", Default::default())
-        .build()
-        .unwrap()
-        .as_ref()
-        .window();
-    super::on_page_started(&left);
-    assert!(
-        super::existing_owner(&left.resources_table()).is_none(),
-        "unused Git ownership was allocated on startup"
-    );
-    let left_slot = super::resource_owner(&mut left.resources_table());
-    let right_slot = super::resource_owner(&mut right.resources_table());
-    let first = left_slot.scope.lock().unwrap().session().unwrap();
-    let right_session = right_slot.scope.lock().unwrap().session().unwrap();
-    super::on_page_started(&left);
-    let second = left_slot.scope.lock().unwrap().session().unwrap();
-    assert_ne!(first, second);
-    assert!(left_slot.scope.lock().unwrap().owner(&first).is_none());
-    assert!(right_slot
-        .scope
-        .lock()
-        .unwrap()
-        .owner(&right_session)
-        .is_some());
-    // Same URL / no Finished event does not weaken the replacement boundary.
-    super::on_page_started(&left);
-    assert_ne!(left_slot.scope.lock().unwrap().session().unwrap(), second);
-    super::on_window_destroyed(&left);
-    super::on_page_started(&left);
-    assert!(left_slot.scope.lock().unwrap().session().is_none());
-    assert!(right_slot
-        .scope
-        .lock()
-        .unwrap()
-        .owner(&right_session)
-        .is_some());
-}
-
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-#[test]
-fn direct_watch_cannot_bypass_native_renderer_registration() {
-    let slot = super::WindowOwner::default();
-    // A predictable current generation is not enough to acquire native work.
-    assert!(slot.watch_owner("0").is_err());
-    // This is set only by successful native registration on the UI thread.
-    slot.termination.set(()).unwrap();
-    assert!(slot.watch_owner("0").is_ok());
-    slot.scope.lock().unwrap().advance();
-    assert!(slot.watch_owner("0").is_err());
-    assert!(slot.watch_owner("1").is_ok());
-    slot.scope.lock().unwrap().close();
-    assert!(slot.watch_owner("1").is_err());
 }

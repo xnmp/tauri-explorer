@@ -10,7 +10,7 @@ it("stopping during discovery cannot acquire watches or listeners afterward", as
   vi.stubGlobal("navigator", { userAgent: "Mac OS" });
   let resolve!: (value: unknown) => void;
   mocks.list.mockImplementation(() => new Promise((r) => { resolve = r; }));
-  mocks.watch.mockResolvedValue(undefined);
+  mocks.watch.mockImplementation(async (path: string) => ({ id: `lease:${path}`, path }));
   const unlisten = vi.fn(); mocks.listen.mockResolvedValue(unlisten);
   const starting = drivesStore.startPolling();
   await vi.waitFor(() => expect(resolve).toBeDefined());
@@ -25,7 +25,9 @@ it("a watch acquired after stop is released before teardown resolves", async () 
   vi.useFakeTimers(); vi.stubGlobal("navigator", { userAgent: "Mac OS" });
   mocks.list.mockResolvedValue({ ok: true, data: [] });
   let acquire!: () => void; let held = 0;
-  mocks.watch.mockImplementation(() => new Promise<void>((resolve) => { acquire = () => { held++; resolve(); }; }));
+  mocks.watch.mockImplementation((path: string) => new Promise((resolve) => {
+    acquire = () => { held++; resolve({ id: `lease:${path}`, path }); };
+  }));
   mocks.unwatch.mockImplementation(async () => { held--; });
   mocks.listen.mockResolvedValue(() => {});
   const starting = drivesStore.startPolling();

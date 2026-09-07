@@ -1,16 +1,13 @@
 //! Tauri adapter for the lazily started Git observation service.
-mod scope;
 mod service;
 mod target;
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-mod termination;
 
 use crate::error::AppError;
 use notify::Watcher;
-use service::{Lease, Owner, Service, Timing};
-use std::sync::{Arc, Mutex, OnceLock};
+use service::{Lease, Service, Timing};
+use std::sync::OnceLock;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
+use tauri::{AppHandle, Emitter, Window};
 
 static SERVICE: OnceLock<Result<Service, String>> = OnceLock::new();
 
@@ -61,83 +58,11 @@ fn service(app: &AppHandle) -> Result<&'static Service, AppError> {
         .map_err(|error| AppError::Other(error.clone()))
 }
 
-// Window-local resources distinguish native incarnations even when a label is
-// reused. A retired slot stays with old Window clones, not in a global tombstone
-// registry. Lookup/creation and destruction share the resource-table lock.
-#[derive(Default)]
-struct WindowOwner {
-    scope: Mutex<scope::RendererScope>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    termination: OnceLock<()>,
-}
-impl WindowOwner {
-    fn watch_owner(&self, session_id: &str) -> Result<Owner, AppError> {
-        // Enforce native coverage even for callers that bypass the JS wrapper.
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
-        if self.termination.get().is_none() {
-            return Err(AppError::Other(
-                "Git observation renderer session was not acknowledged".into(),
-            ));
-        }
-        self.scope
-            .lock()
-            .unwrap()
-            .owner(session_id)
-            .ok_or_else(|| AppError::Other("Git observation renderer was replaced".into()))
+/// Native lifetime callbacks only wake an existing observation worker.
+pub(crate) fn retire_owner(owner: &crate::renderer_owner::Owner) {
+    if let Some(Ok(service)) = SERVICE.get() {
+        service.retire(owner);
     }
-}
-
-impl tauri::Resource for WindowOwner {}
-
-fn existing_owner(resources: &tauri::ResourceTable) -> Option<Arc<WindowOwner>> {
-    resources
-        .names()
-        .find_map(|(id, _)| resources.get::<WindowOwner>(id).ok())
-}
-
-fn resource_owner(resources: &mut tauri::ResourceTable) -> Arc<WindowOwner> {
-    existing_owner(resources).unwrap_or_else(|| {
-        let owner = Arc::new(WindowOwner::default());
-        resources.add_arc(owner.clone());
-        owner
-    })
-}
-
-fn retire(owner: Option<Owner>) {
-    if let (Some(owner), Some(Ok(service))) = (owner, SERVICE.get()) {
-        service.retire(&owner);
-    }
-}
-
-/// Started is emitted at committed document loading, including same-URL reload.
-/// Do not allocate an owner or start observation for windows that never use Git.
-pub fn on_page_started<R: Runtime>(window: &Window<R>) {
-    let resources = window.resources_table();
-    let retired = existing_owner(&resources).and_then(|slot| slot.scope.lock().unwrap().advance());
-    drop(resources);
-    retire(retired);
-}
-
-/// Called with the concrete native window, including windows which never
-/// acquired a watch. A delayed first command therefore sees a retired owner.
-pub fn on_window_destroyed<R: Runtime>(window: &Window<R>) {
-    let owner = {
-        let mut resources = window.resources_table();
-        resource_owner(&mut resources).scope.lock().unwrap().close()
-    };
-    retire(owner);
-}
-
-/// A renderer acknowledges its generation before sending any watch commands.
-/// Its JS realm caches the result; a replaced document cannot adopt a late reply.
-#[tauri::command]
-pub async fn git_watch_session(webview: tauri::Webview) -> Result<String, AppError> {
-    let slot = resource_owner(&mut webview.window().resources_table());
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
-    termination::ensure(&webview, &slot).await?;
-    // A load/close may have occurred while registration waited on the UI thread.
-    let session = slot.scope.lock().unwrap().session();
-    session.ok_or_else(|| AppError::Other("Native window is closed".into()))
 }
 
 #[tauri::command]
@@ -147,7 +72,7 @@ pub async fn git_watch_repo(
     repo_path: String,
     session_id: String,
 ) -> Result<Lease, AppError> {
-    let owner = resource_owner(&mut window.resources_table()).watch_owner(&session_id)?;
+    let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
     service(&app)?.acquire(&owner, repo_path).await
 }
 
@@ -158,11 +83,7 @@ pub async fn git_unwatch_repo(
     lease_id: String,
     session_id: String,
 ) -> Result<(), AppError> {
-    let owner = resource_owner(&mut window.resources_table())
-        .scope
-        .lock()
-        .unwrap()
-        .owner(&session_id);
+    let owner = crate::renderer_owner::release_owner(&window, &session_id);
     match owner {
         Some(owner) => service(&app)?.release(&owner, lease_id).await,
         None => Ok(()), // Native retirement already owns old-generation cleanup.

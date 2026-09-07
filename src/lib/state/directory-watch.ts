@@ -1,30 +1,31 @@
-/** One owner of a refcounted native directory watch. Native acquisition and
+/** One owner of a leased native directory watch. Native acquisition and
  * release are ordered; obsolete navigation requests never acquire a watch. */
 import { watchDirectory, unwatchDirectory } from "$lib/api/files";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 
-interface WatchCommands {
-  watch(path: string): Promise<void>;
-  unwatch(path: string): Promise<void>;
+export interface PathWatchCommands<L> {
+  watch(path: string): Promise<L>;
+  unwatch(lease: L): Promise<void>;
 }
 
-export function createDirectoryWatch(commands: WatchCommands = { watch: watchDirectory, unwatch: unwatchDirectory }) {
-  let held: string | null = null;
+export function createPathWatch<L>(commands: PathWatchCommands<L>) {
+  let held: { path: string; lease: L } | null = null;
   let revision = 0;
   let tail: Promise<void> = Promise.resolve();
+  let destroyed = false;
   let disposal: Promise<void> | undefined;
 
   function transition(path: string | null): Promise<void> {
     const requested = ++revision;
     const task = tail.then(async () => {
-      if (requested !== revision || held === path) return;
+      if (requested !== revision || held?.path === path) return;
       if (held) {
-        await commands.unwatch(held);
+        await commands.unwatch(held.lease);
         held = null;
       }
       if (requested !== revision || !path) return;
-      await commands.watch(path);
-      held = path;
+      const lease = await commands.watch(path);
+      held = { path, lease };
     });
     // Keep the queue usable after failure and observe fire-and-forget callers.
     // The returned task still rejects for callers requiring a teardown result.
@@ -34,11 +35,23 @@ export function createDirectoryWatch(commands: WatchCommands = { watch: watchDir
 
   return {
     update(path: string): Promise<void> {
-      if (disposal) return disposal;
+      if (destroyed) return disposal ?? Promise.resolve();
       return transition(!path || isVirtualPath(path) ? null : path);
     },
     destroy(): Promise<void> {
-      return disposal ??= transition(null);
+      destroyed = true;
+      if (disposal) return disposal;
+
+      const attempt = transition(null);
+      disposal = attempt;
+      void attempt.then(undefined, () => {
+        if (disposal === attempt) disposal = undefined;
+      });
+      return attempt;
     },
   };
+}
+
+export function createDirectoryWatch() {
+  return createPathWatch({ watch: watchDirectory, unwatch: unwatchDirectory });
 }

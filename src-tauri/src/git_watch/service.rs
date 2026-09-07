@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::target::Target;
 use crate::error::AppError;
+use crate::renderer_owner::Owner;
 
 pub(super) type Observer = Box<dyn Send>;
 pub(super) type Callback = Box<dyn Fn(notify::Result<notify::Event>) + Send + 'static>;
@@ -27,28 +28,10 @@ pub struct Lease {
     pub repo_root: String,
 }
 
-/// An incarnation, not a window label. Clones carry cancellation state without
-/// retaining the native window. Only its native lifetime owner retires it.
-#[derive(Clone, Default)]
-pub(super) struct Owner(Arc<AtomicBool>);
-
-impl Owner {
-    pub fn retire(&self) {
-        self.0.store(true, Ordering::Release);
-    }
-
-    fn active(&self) -> bool {
-        !self.0.load(Ordering::Acquire)
-    }
-
-    fn same(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
 enum Command {
     Acquire {
         owner: Owner,
+        request: Owner,
         path: String,
         reply: oneshot::Sender<Result<Lease, AppError>>,
     },
@@ -99,6 +82,20 @@ fn closed() -> AppError {
     AppError::Other("Git watch service stopped".into())
 }
 
+/// Until the caller consumes its reply, this request owns any resulting lease.
+/// Cancellation is coalesced through the worker's existing retirement scan.
+struct PendingRequest<'a> {
+    service: &'a Service,
+    scope: Option<Owner>,
+}
+impl Drop for PendingRequest<'_> {
+    fn drop(&mut self) {
+        if let Some(scope) = &self.scope {
+            self.service.retire(scope);
+        }
+    }
+}
+
 impl Service {
     pub fn spawn(factory: Factory, emit: Emit, timing: Timing) -> Result<Self, AppError> {
         let (sender, receiver) = mpsc::channel(64);
@@ -144,16 +141,23 @@ impl Service {
         if !owner.active() {
             return Err(owner_closed());
         }
+        let mut pending = PendingRequest {
+            service: self,
+            scope: Some(Owner::default()),
+        };
         let (reply, result) = oneshot::channel();
         self.sender
             .send(Command::Acquire {
                 owner: owner.clone(),
+                request: pending.scope.as_ref().unwrap().clone(),
                 path,
                 reply,
             })
             .await
             .map_err(|_| closed())?;
-        result.await.map_err(|_| closed())?
+        let lease = result.await.map_err(|_| closed())??;
+        pending.scope.take();
+        Ok(lease)
     }
 
     pub async fn release(&self, owner: &Owner, id: String) -> Result<(), AppError> {
@@ -198,6 +202,7 @@ fn owner_closed() -> AppError {
 struct HeldLease {
     key: String,
     owner: Owner,
+    request: Owner,
 }
 
 struct Worker {
@@ -238,18 +243,23 @@ impl Worker {
                 break;
             }
             match command {
-                Some(Command::Acquire { owner, path, reply }) => {
+                Some(Command::Acquire {
+                    owner,
+                    request,
+                    path,
+                    reply,
+                }) => {
                     if reply.is_closed() {
                         continue;
                     }
-                    let mut result = self.acquire(&owner, &path);
+                    let mut result = self.acquire(&owner, &request, &path);
                     if self.stopped.load(Ordering::Acquire) {
                         let _ = reply.send(Err(closed()));
                         break;
                     }
                     // Registration is synchronous. Closure while it blocks must
                     // drain its result, even if the IPC receiver still exists.
-                    if !owner.active() {
+                    if !owner.active() || !request.active() {
                         if let Ok(lease) = &result {
                             self.release(&lease.id);
                         }
@@ -314,8 +324,8 @@ impl Worker {
         Ok((observer, flags))
     }
 
-    fn acquire(&mut self, owner: &Owner, path: &str) -> Result<Lease, AppError> {
-        if !owner.active() {
+    fn acquire(&mut self, owner: &Owner, request: &Owner, path: &str) -> Result<Lease, AppError> {
+        if !owner.active() || !request.active() {
             return Err(owner_closed());
         }
         // Allocate before installing an observer so exhaustion cannot leave an
@@ -362,6 +372,7 @@ impl Worker {
             HeldLease {
                 key: key.clone(),
                 owner: owner.clone(),
+                request: request.clone(),
             },
         );
         Ok(Lease { id, repo_root: key })
@@ -383,7 +394,7 @@ impl Worker {
         if self.retired_owners.swap(false, Ordering::AcqRel) {
             // Reclaim before recovery, without allocating on the callback path.
             self.leases.retain(|id, lease| {
-                if lease.owner.active() {
+                if lease.owner.active() && lease.request.active() {
                     return true;
                 }
                 if let Some(entry) = self.entries.get_mut(&lease.key) {
@@ -393,7 +404,7 @@ impl Worker {
             });
             self.entries.retain(|key, entry| {
                 if entry.leases.is_empty() {
-                    log::info!("Reclaimed Git observation for closed native owner: {key}");
+                    log::info!("Reclaimed Git observation for retired ownership: {key}");
                     false
                 } else {
                     true

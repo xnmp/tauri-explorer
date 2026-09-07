@@ -64,7 +64,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
@@ -117,6 +117,12 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
         const { Window } = await whileActive(import("@tauri-apps/api/window"));
         const destination = target ? await Window.getByLabel(target) : null;
         return { exists: destination !== null, visible: destination ? await destination.isVisible() : false };
+      }
+      if (op === "directory-watch-acquire") {
+        // Intentionally leave the lease unmanaged by JS so reload acceptance
+        // can distinguish native reclamation from ordinary frontend teardown.
+        const { watchDirectory } = await whileActive(import("$lib/api/files"));
+        return watchDirectory(target ?? "");
       }
       if (op === "watch-acquire") {
         const { invoke } = await whileActive(import("@tauri-apps/api/core"));

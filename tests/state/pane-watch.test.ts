@@ -18,7 +18,7 @@ import { createPaneWatch, MUTATION_COOLDOWN_MS } from "../../src/lib/state/pane-
 describe("createPaneWatch", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    watchDirectory.mockReset().mockResolvedValue(undefined);
+    watchDirectory.mockReset().mockImplementation(async (path: string) => ({ id: `lease:${path}`, path }));
     unwatchDirectory.mockReset().mockResolvedValue(undefined);
   });
 
@@ -34,7 +34,7 @@ describe("createPaneWatch", () => {
     expect(unwatchDirectory).not.toHaveBeenCalled();
 
     await watch.update("/b");
-    expect(unwatchDirectory).toHaveBeenCalledWith("/a");
+    expect(unwatchDirectory).toHaveBeenCalledWith({ id: "lease:/a", path: "/a" });
     expect(watchDirectory).toHaveBeenCalledWith("/b");
   });
 
@@ -52,7 +52,7 @@ describe("createPaneWatch", () => {
     await watch.destroy();
     await watch.destroy();
     expect(unwatchDirectory).toHaveBeenCalledTimes(1);
-    expect(unwatchDirectory).toHaveBeenCalledWith("/a");
+    expect(unwatchDirectory).toHaveBeenCalledWith({ id: "lease:/a", path: "/a" });
   });
 
   it("destroy without a watch is a no-op", () => {
@@ -64,8 +64,8 @@ describe("createPaneWatch", () => {
   it("waits for an acquired watch before releasing it during destruction", async () => {
     let acquire!: () => void;
     let held = 0;
-    watchDirectory.mockImplementation(() => new Promise<void>((resolve) => {
-      acquire = () => { held++; resolve(); };
+    watchDirectory.mockImplementation((path: string) => new Promise((resolve) => {
+      acquire = () => { held++; resolve({ id: `lease:${path}`, path }); };
     }));
     unwatchDirectory.mockImplementation(async () => { held = Math.max(0, held - 1); });
     const watch = createPaneWatch();
@@ -87,7 +87,7 @@ describe("createPaneWatch", () => {
     await watch.update("/late");
     expect(watchDirectory).toHaveBeenCalledTimes(1);
     expect(watchDirectory).toHaveBeenCalledWith("/c");
-    expect(unwatchDirectory).toHaveBeenCalledWith("/c");
+    expect(unwatchDirectory).toHaveBeenCalledWith({ id: "lease:/c", path: "/c" });
   });
 
   it("cooldown is active right after a mutation and expires after the window", () => {

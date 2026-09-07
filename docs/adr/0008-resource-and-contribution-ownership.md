@@ -22,7 +22,7 @@ it does not implement a private cache or refresh policy.
   not silently abandoned.
 - Teardown detaches synchronously and drains already-started cleanup. A
   replacement can become interactive while the old owner drains independently.
-- Native refcounted watch acquisition and release are serialized within an
+- Native leased watch acquisition and release are serialized within an
   owner. Sharing a native watch does not mean sharing frontend ownership.
 - Cache publication requires a captured writer registration. Invalidation
   revokes pending writers as well as stored values. An old finally block may

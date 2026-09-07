@@ -17,6 +17,7 @@ import {
 } from "./common";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { logFrontendDiagnostic } from "./frontend-log";
+import { getNativeResourceSession } from "./native-resource-session";
 
 interface DirectoryListingE2EProbe {
   targetPath: string;
@@ -591,19 +592,23 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
 // ===================
 
 /**
- * Start watching a directory for external changes.
- * Refcounted — safe to call multiple times for the same path.
+ * Start watching a directory for external changes and return its release lease.
  */
-export async function watchDirectory(path: string): Promise<void> {
-  await invoke("watch_directory", { path });
+export interface DirectoryWatchLease { id: string; path: string }
+
+export async function watchDirectory(path: string): Promise<DirectoryWatchLease> {
+  const sessionId = await getNativeResourceSession();
+  const lease = await invoke<DirectoryWatchLease>("watch_directory", { path, sessionId });
   publishReadyDirectoryWatch(path);
+  return lease;
 }
 
 /**
- * Stop watching a directory. Decrements refcount; OS watch removed at zero.
+ * Release the directory watch identified by an earlier acquisition.
  */
-export async function unwatchDirectory(path: string): Promise<void> {
-  await invoke("unwatch_directory", { path });
+export async function unwatchDirectory(lease: DirectoryWatchLease): Promise<void> {
+  const sessionId = await getNativeResourceSession();
+  await invoke("unwatch_directory", { leaseId: lease.id, sessionId });
 }
 
 // ===================

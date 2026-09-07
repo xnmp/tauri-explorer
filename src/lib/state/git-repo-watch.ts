@@ -1,21 +1,18 @@
 /** Git repository watches use the same ordered ownership as directory watches,
  * while preserving their separate native registration and refresh policy. */
 import { gitWatchRepo, gitUnwatchRepo, type GitWatchLease } from "$lib/api/git";
-import { createDirectoryWatch } from "./directory-watch";
+import { createPathWatch } from "./directory-watch";
 
 export function createGitRepoWatch() {
-  let lease: GitWatchLease | null = null;
-  return createDirectoryWatch({
+  return createPathWatch<GitWatchLease>({
     async watch(path) {
       const result = await gitWatchRepo(path);
       if (!result.ok) throw new Error(result.error);
-      lease = result.data;
+      return result.data;
     },
-    async unwatch() {
-      if (lease === null) return;
+    async unwatch(lease) {
       const result = await gitUnwatchRepo(lease);
       if (!result.ok) throw new Error(result.error);
-      lease = null;
     },
   });
 }

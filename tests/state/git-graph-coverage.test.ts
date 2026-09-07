@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createGitGraphCoverage } from "$lib/state/git-graph-coverage";
-import { createDirectoryWatch } from "$lib/state/directory-watch";
+import { createPathWatch } from "$lib/state/directory-watch";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -9,9 +9,9 @@ function deferred<T>() {
 }
 
 function fixture(listen = vi.fn(async () => true)) {
-  const watch = vi.fn(async (_path: string) => {});
-  const unwatch = vi.fn(async (_path: string) => {});
-  const coverage = createGitGraphCoverage({ listen, createWatch: () => createDirectoryWatch({ watch, unwatch }) });
+  const watch = vi.fn(async (path: string) => path);
+  const unwatch = vi.fn(async (_lease: string) => {});
+  const coverage = createGitGraphCoverage({ listen, createWatch: () => createPathWatch({ watch, unwatch }) });
   return { coverage, listen, watch, unwatch };
 }
 
@@ -29,7 +29,7 @@ describe("graph cache observation ownership", () => {
 
   it("acknowledges event delivery before watching, and native acquisition before readiness", async () => {
     const delivery = deferred<boolean>();
-    const acquisition = deferred<void>();
+    const acquisition = deferred<string>();
     const { coverage, watch, unwatch } = fixture(vi.fn(() => delivery.promise));
     watch.mockReturnValue(acquisition.promise);
     const lease = coverage.retain("/repo");
@@ -40,7 +40,7 @@ describe("graph cache observation ownership", () => {
     delivery.resolve(true);
     await vi.waitFor(() => expect(watch).toHaveBeenCalledWith("/repo"));
     expect(ready).not.toHaveBeenCalled();
-    acquisition.resolve();
+    acquisition.resolve("/repo");
     await expect(lease.ready).resolves.toBe(true);
     lease.release();
     await vi.waitFor(() => expect(unwatch).toHaveBeenCalledWith("/repo"));
@@ -71,7 +71,7 @@ describe("graph cache observation ownership", () => {
   });
 
   it("drains an abandoned acquisition without releasing its replacement", async () => {
-    const acquisition = deferred<void>();
+    const acquisition = deferred<string>();
     const { coverage, watch, unwatch } = fixture();
     watch.mockReturnValueOnce(acquisition.promise);
     const abandoned = coverage.retain("/repo");
@@ -79,7 +79,7 @@ describe("graph cache observation ownership", () => {
     abandoned.release();
     const replacement = coverage.retain("/repo");
     await expect(replacement.ready).resolves.toBe(true);
-    acquisition.resolve();
+    acquisition.resolve("/repo");
     await expect(abandoned.ready).resolves.toBe(false);
     await vi.waitFor(() => expect(unwatch).toHaveBeenCalledOnce());
     replacement.release();

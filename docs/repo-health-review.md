@@ -654,3 +654,17 @@ A separate actual inotify test now reproduces retained directory watches after
 native child destruction. Directory-watch native lifetime ownership is therefore
 still required; existing Git lease acceptance does not cover it. The ledger also
 tracks Tab focus/selection consistency and the remaining release gates.
+
+### Native directory ownership checkpoint — 2026-09-08
+
+The directory watcher now uses explicit renderer-owned leases, sharing Git's
+concrete native-window lifetime and acknowledged session. The path-count leak
+on native child destruction was reproduced with exact Linux inotify identities,
+then corrected. Blocking watch/unwatch work runs on the blocking pool; native
+lifecycle callbacks only retire ownership and wake existing maintenance.
+
+Adversarial review also reproduced Git acquisition cancellation after a queued
+successful reply and a final directory-release failure whose component never
+retries. Request lifetime and backend cleanup now cover those cases, preserving
+other owners and disabling cache reuse during uncertain coverage. The completion
+ledger records current validation and remaining platform/product/performance gates.

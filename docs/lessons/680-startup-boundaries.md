@@ -630,3 +630,25 @@ continues a nonempty filename type-ahead buffer and must not also open Preview.
 Verify all three views and real native input, alongside the graph/button
 regressions that motivated the exemption. Two production routing contracts and
 the native preview case failed before this correction.
+
+Native observation must outlive ordinary page cleanup safely. Directory watch
+counts keyed only by path leaked exact Linux inotify registrations when a child
+window was destroyed; JavaScript disposal never ran. Directory and Git leases
+now share one renderer incarnation stored in the concrete Tauri Window resource
+table, with one acknowledged native termination listener. Page replacement,
+native destruction and renderer termination revoke the token before asynchronously
+reclaiming resources. Window labels and raw path counts are not release authority.
+
+Acquisition cancellation also includes a reply successfully queued but never
+consumed. Git's old send-error cleanup missed that interleaving; request ownership
+must remain revocable until the awaiting caller consumes the lease. Filesystem
+replies similarly retain a drop guard until consumption. A failed final release
+commits cleanup intent: revoke cache eligibility, retain identity for idempotent
+retry, and schedule backend cleanup even if the frontend owner disappears.
+
+Retirement tests must keep watched directories present until exact descriptor
+absence is proven; deleting fixtures first allows the kernel to hide leaks.
+Cache tests additionally need real overlapping/shared watches and a gated cold
+walk across retirement. Tauri's [resource table](https://docs.rs/tauri/2.11.2/tauri/struct.ResourceTable.html)
+provides the concrete native ownership boundary; notify's [watcher contract](https://docs.rs/notify/8.2.0/notify/trait.Watcher.html)
+is implemented behind the testable directory lease policy.

@@ -175,7 +175,7 @@ async fn run_scenario(
         })
         .await?;
 
-        let previous_session = invoke(view, "git_watch_session", json!({})).await?;
+        let previous_session = invoke(view, "native_resource_session", json!({})).await?;
         let mut previous_session = string_result(&previous_session, "initial Git session")?;
         let initial_repo = directory.join("repository-0");
         let mut previous_lease = acquire(view, &initial_repo, "initial-watch").await?;
@@ -195,7 +195,7 @@ async fn run_scenario(
             )
             .await?;
             let reclamation = format!(
-                "Reclaimed Git observation for closed native owner: {}",
+                "Reclaimed Git observation for retired ownership: {}",
                 previous_lease.repo_root
             );
             let reclamations_before = log_occurrences(&previous_lease.log_dir, &reclamation)?;
@@ -233,7 +233,7 @@ async fn run_scenario(
             })
             .await?;
 
-            let current_session = invoke(view, "git_watch_session", json!({})).await?;
+            let current_session = invoke(view, "native_resource_session", json!({})).await?;
             let current_session = string_result(&current_session, "recovered Git session")?;
             if current_session == previous_session {
                 return Err("renderer recovery reused the previous Git session".into());
@@ -252,7 +252,7 @@ async fn run_scenario(
             .await?;
             let obsolete_error = obsolete.get("error").map(Value::to_string).unwrap_or_default();
             if obsolete.get("ok").and_then(Value::as_bool) != Some(false)
-                || !obsolete_error.contains("Git observation renderer was replaced")
+                || !obsolete_error.contains("Native resource renderer was replaced")
             {
                 return Err(format!(
                     "obsolete Git acquisition was not rejected by the generation guard: {obsolete}"

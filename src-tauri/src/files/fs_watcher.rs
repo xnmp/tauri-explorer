@@ -2,7 +2,7 @@
 //! Issue: tauri-explorer-2gdf
 //!
 //! Uses `notify` crate to watch directories for external changes.
-//! Refcounted watches allow multiple panes viewing the same directory
+//! Renderer-owned leases allow multiple panes viewing the same directory
 //! to share a single OS watch. Debounces events (300ms, trailing) before
 //! emitting `directory-changed`, so bulk operations produce one event per
 //! directory instead of a storm.
@@ -10,13 +10,20 @@
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex, OnceLock,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Runtime};
 
 use super::dir_listing::invalidate_dir_cache_sync;
+use super::directory_watches::{DirectoryWatches, Lease, Observer};
 use crate::error::AppError;
+use crate::renderer_owner::{self, Owner};
 use crate::search::{invalidate_search_cache_for_change, invalidate_search_cache_root};
 
 /// Trailing debounce window for `directory-changed` events.
@@ -40,13 +47,20 @@ struct PendingChange {
     observed_at_ms: u64,
 }
 
-/// Singleton filesystem watcher with refcounted directory watches.
-#[derive(Debug)]
-struct FsWatcher {
+/// Native observation and recursive cache coverage shared by directory leases.
+struct NativeObserver {
     watcher: RecommendedWatcher,
     search_watcher: Option<RecommendedWatcher>,
-    watched: HashMap<String, usize>,
     search_watched: HashSet<String>,
+}
+
+type FsWatcher = DirectoryWatches<NativeObserver>;
+
+static RETIRED_OWNERS: AtomicBool = AtomicBool::new(false);
+
+/// Native lifecycle callbacks do not lock or perform notify operations.
+pub(crate) fn retire_owners() {
+    RETIRED_OWNERS.store(true, Ordering::Release);
 }
 
 static FS_WATCHER: OnceLock<Mutex<FsWatcher>> = OnceLock::new();
@@ -93,13 +107,13 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
     let Some(mut watcher) = FS_WATCHER.get().and_then(|watcher| watcher.lock().ok()) else {
         return false;
     };
-    if !watcher.watched.contains_key(&path_string) {
+    if !watcher.covered(&path_string) {
         return false;
     }
-    if watcher.search_watched.contains(&path_string) {
+    if watcher.observer.search_watched.contains(&path_string) {
         return true;
     }
-    let Some(search_watcher) = watcher.search_watcher.as_mut() else {
+    let Some(search_watcher) = watcher.observer.search_watcher.as_mut() else {
         return false;
     };
     if let Err(error) = search_watcher.watch(path, RecursiveMode::Recursive) {
@@ -114,7 +128,7 @@ pub(crate) fn ensure_search_cache_watched(path: &Path) -> bool {
     // before advertising it so a walk that started in the uncovered gap
     // cannot publish into the newly covered cache.
     invalidate_search_cache_root(path);
-    watcher.search_watched.insert(path_string);
+    watcher.observer.search_watched.insert(path_string);
     true
 }
 
@@ -128,7 +142,7 @@ pub(crate) fn is_search_cache_watched(path: &Path) -> bool {
         .and_then(|watcher| watcher.lock().ok())
         .is_some_and(|watcher| {
             let path = path.to_string_lossy().to_string();
-            watcher.watched.contains_key(&path) && watcher.search_watched.contains(&path)
+            watcher.covered(&path) && watcher.observer.search_watched.contains(&path)
         })
 }
 
@@ -170,7 +184,7 @@ fn new_search_cache_watcher() -> Result<RecommendedWatcher, notify::Error> {
 /// notify's inotify backend can remove descendant OS watches when overlapping
 /// parent and child registrations share a watcher. Rebuilding gives every
 /// surviving root fresh coverage and a fresh cache publication epoch.
-fn rebuild_search_cache_watches(watcher: &mut FsWatcher) {
+fn rebuild_search_cache_watches(watcher: &mut NativeObserver) {
     let roots: Vec<String> = watcher.search_watched.iter().cloned().collect();
     let mut replacement = match new_search_cache_watcher() {
         Ok(replacement) => replacement,
@@ -209,9 +223,8 @@ fn rebuild_search_cache_watches(watcher: &mut FsWatcher) {
     }
 }
 
-/// Initialize the filesystem watcher. Call once during app setup.
-pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
-    let watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+fn new_directory_watcher() -> notify::Result<RecommendedWatcher> {
+    notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         let event = match res {
             Ok(e) => e,
             Err(err) => {
@@ -252,7 +265,36 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
                 );
             }
         }
-    });
+    })
+}
+
+impl Observer for NativeObserver {
+    fn watch(&mut self, path: &str) -> notify::Result<()> {
+        self.watcher
+            .watch(Path::new(path), RecursiveMode::NonRecursive)
+    }
+    fn unwatch(&mut self, path: &str) -> notify::Result<()> {
+        self.watcher.unwatch(Path::new(path))
+    }
+    fn replace(&mut self, paths: &[String]) -> notify::Result<()> {
+        let mut replacement = new_directory_watcher()?;
+        for path in paths {
+            replacement.watch(Path::new(path), RecursiveMode::NonRecursive)?;
+        }
+        self.watcher = replacement;
+        Ok(())
+    }
+    fn uncovered(&mut self, path: &str) {
+        if self.search_watched.remove(path) {
+            rebuild_search_cache_watches(self);
+        }
+        invalidate_search_cache_root(Path::new(path));
+    }
+}
+
+/// Initialize the filesystem watcher. Call once during app setup.
+pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
+    let watcher = new_directory_watcher();
 
     // Watcher creation can fail at startup (e.g. inotify instance exhaustion).
     // Degrade to no live refresh instead of panicking the whole app —
@@ -283,48 +325,60 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
         }
     };
 
-    let fs_watcher = FsWatcher {
+    let fs_watcher = DirectoryWatches::new(NativeObserver {
         watcher,
         search_watcher,
-        watched: HashMap::new(),
         search_watched: HashSet::new(),
-    };
+    });
 
-    FS_WATCHER
-        .set(Mutex::new(fs_watcher))
-        .expect("init_watcher called more than once");
+    assert!(
+        FS_WATCHER.set(Mutex::new(fs_watcher)).is_ok(),
+        "init_watcher called more than once"
+    );
 
     // Flush thread: emits directory-changed once a directory has been quiet
     // for the debounce window (trailing debounce).
     let app_handle = app.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(FLUSH_INTERVAL);
-
-        let ready: Vec<(String, u64)> = {
-            let Ok(mut pending) = pending_changes().lock() else {
-                continue;
-            };
-            let now = Instant::now();
-            let ready: Vec<(String, u64)> = pending
-                .iter()
-                .filter(|(_, change)| now.duration_since(change.last_event) >= DEBOUNCE)
-                .map(|(dir, change)| (dir.clone(), change.observed_at_ms))
-                .collect();
-            for (dir, _) in &ready {
-                pending.remove(dir);
+    std::thread::spawn(move || {
+        let mut cleanup_pending = false;
+        loop {
+            std::thread::sleep(FLUSH_INTERVAL);
+            if RETIRED_OWNERS.swap(false, Ordering::AcqRel) || cleanup_pending {
+                if let Err(error) = with_watcher(|watcher| {
+                    watcher.maintain(Instant::now());
+                    cleanup_pending = watcher.needs_cleanup();
+                    Ok(())
+                }) {
+                    log::warn!("Directory owner cleanup failed: {error}");
+                }
             }
-            ready
-        };
 
-        for (dir, observed_at_ms) in ready {
-            if let Err(e) = app_handle.emit(
-                "directory-changed",
-                DirectoryChangedPayload {
-                    path: dir.clone(),
-                    observed_at_ms,
-                },
-            ) {
-                log::warn!("Failed to emit directory-changed for {}: {}", dir, e);
+            let ready: Vec<(String, u64)> = {
+                let Ok(mut pending) = pending_changes().lock() else {
+                    continue;
+                };
+                let now = Instant::now();
+                let ready: Vec<(String, u64)> = pending
+                    .iter()
+                    .filter(|(_, change)| now.duration_since(change.last_event) >= DEBOUNCE)
+                    .map(|(dir, change)| (dir.clone(), change.observed_at_ms))
+                    .collect();
+                for (dir, _) in &ready {
+                    pending.remove(dir);
+                }
+                ready
+            };
+
+            for (dir, observed_at_ms) in ready {
+                if let Err(e) = app_handle.emit(
+                    "directory-changed",
+                    DirectoryChangedPayload {
+                        path: dir.clone(),
+                        observed_at_ms,
+                    },
+                ) {
+                    log::warn!("Failed to emit directory-changed for {}: {}", dir, e);
+                }
             }
         }
     });
@@ -344,50 +398,69 @@ where
     f(&mut watcher)
 }
 
-/// Start watching a directory. Refcounted — multiple calls for the same path
-/// increment the count; the OS watch starts only on the first call.
-#[tauri::command]
-pub async fn watch_directory(path: String) -> Result<(), AppError> {
-    with_watcher(|w| {
-        if let Some(count) = w.watched.get_mut(&path) {
-            *count += 1;
-            log::debug!("Incremented watch refcount for {}: {}", path, count);
-            return Ok(());
+/// A result owns its lease until the awaiting command takes it. This also
+/// covers cancellation after a successful oneshot send but before consumption.
+struct PendingLease(Option<Lease>);
+impl Drop for PendingLease {
+    fn drop(&mut self) {
+        if let Some(lease) = self.0.take() {
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = with_watcher(|watcher| {
+                    watcher.abandon(&lease.id);
+                    Ok(())
+                });
+                retire_owners();
+            });
         }
-        // Only record the entry once the OS watch actually succeeded, so a
-        // failed watch doesn't leave a phantom refcount blocking retries.
-        let pb = PathBuf::from(&path);
-        w.watcher
-            .watch(&pb, RecursiveMode::NonRecursive)
-            .map_err(|e| AppError::Other(format!("Failed to watch {}: {}", path, e)))?;
-        w.watched.insert(path.clone(), 1);
-        log::debug!("Started watching: {}", path);
-        Ok(())
-    })
+    }
 }
 
-/// Stop watching a directory. Decrements refcount; OS watch removed at zero.
-#[tauri::command]
-pub async fn unwatch_directory(path: String) -> Result<(), AppError> {
-    with_watcher(|w| {
-        if let Some(count) = w.watched.get_mut(&path) {
-            *count -= 1;
-            if *count == 0 {
-                w.watched.remove(&path);
-                let pb = PathBuf::from(&path);
-                let _ = w.watcher.unwatch(&pb);
-                if w.search_watched.remove(&path) {
-                    rebuild_search_cache_watches(w);
-                }
-                // Ending the final watch also ends the cache epoch. Files can
-                // change unobserved before this root is watched again, and an
-                // in-flight walk from the old epoch must not publish afterward.
-                invalidate_search_cache_root(&pb);
-                log::debug!("Stopped watching: {}", path);
-            } else {
-                log::debug!("Decremented watch refcount for {}: {}", path, count);
-            }
-        }
-        Ok(())
+/// Registration runs off the async executor. An undelivered result reclaims
+/// its lease even if cancellation races the command's reply.
+pub(crate) async fn acquire_directory(owner: Owner, path: String) -> Result<Lease, AppError> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = with_watcher(|watcher| watcher.acquire(&owner, path))
+            .map(|lease| PendingLease(Some(lease)));
+        let _ = send.send(result);
+        // Also schedules retries if retirement raced a blocked registration.
+        retire_owners();
+    });
+    let mut pending = receive
+        .await
+        .map_err(|_| AppError::Other("Directory watch registration interrupted".into()))??;
+    Ok(pending.0.take().expect("pending directory lease"))
+}
+
+pub(crate) async fn release_directory(owner: Owner, id: String) -> Result<(), AppError> {
+    super::run_blocking(move || {
+        let result = with_watcher(|watcher| watcher.release(&owner, &id));
+        // Final release is committed even if its frontend owner disappears
+        // after an unwatch failure. Maintenance retries the retained identity.
+        retire_owners();
+        result
     })
+    .await
+}
+
+#[tauri::command]
+pub async fn watch_directory(
+    window: tauri::Window,
+    path: String,
+    session_id: String,
+) -> Result<Lease, AppError> {
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    acquire_directory(owner, path).await
+}
+
+#[tauri::command]
+pub async fn unwatch_directory(
+    window: tauri::Window,
+    lease_id: String,
+    session_id: String,
+) -> Result<(), AppError> {
+    match renderer_owner::release_owner(&window, &session_id) {
+        Some(owner) => release_directory(owner, lease_id).await,
+        None => Ok(()),
+    }
 }

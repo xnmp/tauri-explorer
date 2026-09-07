@@ -2125,7 +2125,7 @@ if (typeof window !== "undefined") {
     if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
     return [...lines, ""].join("\n");
   },
-  git_watch_session: () => "0",
+  native_resource_session: () => "0",
   git_watch_repo: ({ repoPath }) => ({ id: crypto.randomUUID(), repoRoot: repoPath }),
   git_unwatch_repo: () => null,
 
@@ -2804,7 +2804,7 @@ if (typeof window !== "undefined") {
 
   // ----- Filesystem watcher (no-op in mock) -----
 
-  watch_directory: () => {},
+  watch_directory: ({ path }) => ({ id: crypto.randomUUID(), path }),
 
   unwatch_directory: () => {},
 

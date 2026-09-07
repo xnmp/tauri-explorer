@@ -4,7 +4,8 @@ Status: Accepted
 
 Governs: `src-tauri/src/git_watch.rs`, `src-tauri/src/git_watch/`, `src/lib/api/git.ts`,
 `src/lib/state/git-repo-watch.ts`, `src/lib/state/git-graph-coverage.ts`,
-`src/lib/state/scm.svelte.ts`
+`src/lib/state/scm.svelte.ts`, `src-tauri/src/renderer_owner.rs`,
+`src-tauri/src/renderer_owner/`, `src/lib/api/native-resource-session.ts`
 
 Git queries can outlive their views through retained snapshots. Observation
 therefore belongs to query/cache owners, independently of mounted graph and SCM
@@ -17,7 +18,7 @@ not permission to decrement another caller's reference. Frontend ordered owners
 retain the lease after failed release and retry it before acquiring a replacement.
 SCM and the graph share that owner.
 
-Each native lease also belongs to the concrete calling window. The Tauri adapter
+Each native lease also belongs to the concrete calling window. The shared `renderer_owner` adapter
 keeps one lazy renderer-generation slot in that window's resource table, independent of
 its reusable label. Acquisition and release obtain the identity from Tauri's
 injected `Window`; it is not supplied by renderer arguments. The builder's native
@@ -77,8 +78,8 @@ Same-URL reloads are replacements; SPA navigation within the same document is no
 The app currently has one application Webview per native Window. Independently
 navigating child Webviews would require moving this generation to Webview identity.
 
-Each JavaScript realm lazily acknowledges `git_watch_session` before its first
-watch and shares that promise among concurrent callers. Every watch/unwatch carries
+Each JavaScript realm lazily acknowledges `native_resource_session` before its first
+watch and shares that promise among concurrent Git and directory callers. Every watch/unwatch carries
 that generation. The native slot checks it under the same locks as page/native
 retirement before cloning the worker owner. Delayed old-generation acquisition is
 rejected; old release is an idempotent no-op because retirement owns cleanup. Work
@@ -101,7 +102,7 @@ renderer that is merely unresponsive does not invalidate the owning document.
 Apple uses Tauri's global `on_web_content_process_terminate` hook to inspect an
 existing slot without allocating unused ownership.
 
-Linux/Windows register their native listener only at the first `git_watch_session`
+Linux/Windows register their native listener only at the first `native_resource_session`
 request. Main-thread installation must acknowledge success before the session is
 read. The callback checks and records successful installation inside the serialized
 UI-thread dispatch, so cancelling the awaiting command cannot lose that state or
@@ -123,3 +124,28 @@ References: [Tauri page-load hook](https://docs.rs/tauri/2.11.5/tauri/struct.Bui
 [Apple process termination hook](https://docs.rs/tauri/2.11.5/tauri/struct.Builder.html#method.on_web_content_process_terminate),
 [WebKitGTK termination signal](https://webkitgtk.org/reference/webkit2gtk/stable/signal.WebView.web-process-terminated.html)
 and [WebView2 process failure events](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/process-related-events).
+
+## Shared directory lifetime and request cancellation
+
+Directory observations use the same native renderer slot and session; their
+registration, event debounce and recursive search-cache policy remain in the
+filesystem service. Native retirement wakes both existing services without
+starting Git observation for a directory-only session. The existing filesystem
+flush loop handles retirement and failed cleanup; no additional polling thread
+is introduced. The first listing does not await watch acknowledgment.
+
+A directory lease is an opaque, nonrecycled ID. The path groups shared OS
+registrations, while the renderer token grants release authority. Blocking
+notify registration and release run on the blocking pool. Retired owners cannot
+authorize cache reuse, even before physical cleanup runs. Final coverage loss
+invalidates the root epoch and rebuilds surviving recursive registrations using
+the existing overlap policy. Failed final unwatch retains cleanup intent and
+identity, disables cache reuse, and retries in the backend even if its frontend
+component disappears. Persistent failures rebuild a complete direct watcher
+before swapping it in; failed reconstruction preserves existing registrations.
+
+Request ownership lasts until the caller consumes an acquisition result.
+Cancellation after a successful reply send still reclaims an undelivered lease.
+Git retains a request cancellation token alongside its renderer token and uses
+the same bounded worker wake; filesystem replies hold a drop guard until consumed.
+Reclaiming one request never retires its renderer or another owner's shared lease.

@@ -70,7 +70,7 @@ describe("Git observation native window ownership", () => {
       lease: { id: string; repoRoot: string }; logDir: string;
     };
     expect(lease.id).toMatch(/^\d+$/);
-    const reclamation = `Reclaimed Git observation for closed native owner: ${lease.repoRoot}`;
+    const reclamation = `Reclaimed Git observation for retired ownership: ${lease.repoRoot}`;
     expect(readLogs(logDir)).not.toContain(reclamation);
     // Dispatch once. Destruction removes the DOM before an IPC result can be
     // published, and bypasses the app's ordinary frontend close/lease cleanup.
@@ -99,7 +99,7 @@ describe("Git observation native window ownership", () => {
     };
     for (let cycle = 0; cycle < 2; cycle++) {
       const { lease, logDir } = acquired;
-      const reclamation = `Reclaimed Git observation for closed native owner: ${lease.repoRoot}`;
+      const reclamation = `Reclaimed Git observation for retired ownership: ${lease.repoRoot}`;
       const count = () => readLogs(logDir).split(reclamation).length - 1;
       const before = count();
       // The probe deliberately has no frontend cleanup. Reload destroys its JS

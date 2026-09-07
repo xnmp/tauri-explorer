@@ -7,6 +7,7 @@ import { invoke, extractError, type ApiResult } from "./common";
 import type { GitFileEntry, GitStatusCode, GitOpState } from "$lib/domain/git";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import { directoryKey } from "$lib/domain/path";
+import { getNativeResourceSession } from "./native-resource-session";
 
 function recordWatchAcknowledgement(lease: GitWatchLease, acquired: boolean): void {
   if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
@@ -232,19 +233,9 @@ export async function gitCommit(
 
 export interface GitWatchLease { id: string; repoRoot: string }
 
-// One acknowledged generation per JS realm. Reload creates a new module cache;
-// commands already sent retain the old ID and cannot acquire for that new page.
-let watchSession: Promise<string> | undefined;
-function getWatchSession(): Promise<string> {
-  return watchSession ??= invoke<string>("git_watch_session").catch(error => {
-    watchSession = undefined;
-    throw error;
-  });
-}
-
 export async function gitWatchRepo(repoPath: string): Promise<ApiResult<GitWatchLease>> {
   try {
-    const sessionId = await getWatchSession();
+    const sessionId = await getNativeResourceSession();
     const lease = await invoke<GitWatchLease>("git_watch_repo", { repoPath, sessionId });
     recordWatchAcknowledgement(lease, true);
     return { ok: true, data: lease };
@@ -255,7 +246,7 @@ export async function gitWatchRepo(repoPath: string): Promise<ApiResult<GitWatch
 
 export async function gitUnwatchRepo(lease: GitWatchLease): Promise<ApiResult<void>> {
   try {
-    const sessionId = await getWatchSession();
+    const sessionId = await getNativeResourceSession();
     await invoke<void>("git_unwatch_repo", { leaseId: lease.id, sessionId });
     recordWatchAcknowledgement(lease, false);
     return { ok: true, data: undefined };

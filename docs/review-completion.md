@@ -5,12 +5,12 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): the page now composes an explicit session owner
-for subscriptions, setup rollback and delayed work. Launch-path/restoration policy
-is pure. Optional automatic warm priming waits for foreground readiness; opt-in
-native test dispatch is retired with its page. Git observation leases/recovery,
-keyboard/focus ownership and the native watcher fixture are implemented as
-recorded below. The full review is **not complete**.
+Current checkpoint (2026-09-07): native Git leases now belong to concrete native
+window instances and are reclaimed on destruction without frontend cleanup,
+including queued/blocked acquisition. Rust contracts and real Linux destruction
+acceptance pass. Page-session ownership/readiness and earlier observation,
+keyboard/focus and watcher work remain implemented as recorded below. The full
+review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -24,7 +24,7 @@ limitations and must not be read as current status.
 | Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
-| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Workspace/plugin churn, scaled soak and native retention acceptance remain outstanding |
+| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer survival after a crash/reload, workspace/plugin churn, scaled soak and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
@@ -980,3 +980,63 @@ The broader review remains open: crashed-window native Git lease reclamation,
 dense viewport policy, workspace/plugin/native soak, Windows and macOS platform
 acceptance, the full product/theme/accessibility/DPI matrix, and actual macOS
 release startup measurements still require work. No merge or publication occurred.
+
+
+## Native Git window ownership — 2026-09-07
+
+Every native Git lease now carries the concrete calling window's lifetime token.
+`git_watch.rs` creates it lazily in the native window's Tauri resource table;
+`lib.rs` uses the concrete-window `Destroyed` hook to retire it. Both admission
+lookup and retirement use the same resource-table lock. Old native handles retain
+the retired token even if their label is reused, and no global closed-label
+registry accumulates with window churn. Renderer arguments cannot select another
+window's identity, and foreign lease releases are idempotent no-ops.
+
+`git_watch/service.rs` propagates the token through bounded acquisition/release
+commands. Native destruction flips cancellation state and requests a nonblocking
+wake; a coalesced flag survives inbox saturation. The worker reclaims retired
+leases before recovery and retains observers still shared with live windows.
+Registration that finishes after its owner retires is drained before an ACK can
+be returned. Native event handling does not wait for registration or observer
+destruction. Closing windows which never used Git does not start the worker.
+[ADR 0009](adr/0009-git-observation-leases.md) records the contract.
+
+The regression first failed against the unchanged worker behavior with ownership
+arguments mechanically added to expose its missing retirement boundary
+(`/tmp/git-owner-before.log`: unreleased observer timed out instead of dropping).
+The new native test acquires a raw acknowledged lease with no frontend cleanup
+owner, destroys its source window, checks the worker's unique-repository
+reclamation diagnostic, and verifies the surviving main window still navigates.
+The diagnostic proves native-hook-to-worker delivery; Rust DropSignal tests prove
+direct observer destruction. Neither establishes completion of asynchronous
+notify backend teardown or kernel watch/FD drainage.
+
+Validation:
+
+- **446 Rust tests passed, seven ignored** (`/tmp/git-owner-rust-full.log`).
+  The final focused ownership/observation subset passed independently: **17 passed,
+  one manual measurement ignored** (`/tmp/git-owner-independent-review.md`).
+  Cases cover shared ownership, foreign releases, destruction before the first
+  command, old/replacement native handles, blocked registration, and 128 pending
+  acquisitions against the 64-slot inbox.
+- **Five rebuilt Linux native outcomes passed** (`/tmp/git-owner-native.log`):
+  destruction reclamation plus hidden graph invalidation, retained pagination,
+  staged/unstaged real diffs, and observation recovery after root replacement.
+- **11 focused frontend contracts passed** for graph coverage, ordered watch
+  ownership and page-owned probes (`/tmp/git-owner-frontend-tests.log`). Typecheck
+  has zero errors/warnings; strict Clippy across all targets, architecture lint and
+  363/363 source-map coverage pass.
+- Normal startup remains **42 chunks, 640,700 raw bytes / 207,786 gzip bytes**,
+  within budgets (`/tmp/git-owner-bundle.log`). New native fixture operations and
+  the page-session probe are absent from normal release assets. No launch-time
+  speedup is claimed.
+- Independent review found and prompted closure of the adapter admission gap;
+  final worker/adapter interleavings and regression tests have no outstanding
+  concrete defect. The current Tauri adapter uses installed version 2.11.2.
+
+This closes native-window destruction ownership, not renderer crash/reload while
+its native window remains alive. Windows/macOS destruction acceptance, large-tree
+costs and native OS resource drainage remain open, alongside dense viewport work,
+workspace/plugin soak, product/platform matrices and measured macOS release
+startup. This batch has no user-visible layout change and needs no new screenshot.
+No publication, merge or full-review completion is implied.

@@ -27,12 +27,33 @@ pub struct Lease {
     pub repo_root: String,
 }
 
+/// An incarnation, not a window label. Clones carry cancellation state without
+/// retaining the native window. Only its native lifetime owner retires it.
+#[derive(Clone, Default)]
+pub(super) struct Owner(Arc<AtomicBool>);
+
+impl Owner {
+    pub fn retire(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn active(&self) -> bool {
+        !self.0.load(Ordering::Acquire)
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 enum Command {
     Acquire {
+        owner: Owner,
         path: String,
         reply: oneshot::Sender<Result<Lease, AppError>>,
     },
     Release {
+        owner: Owner,
         id: String,
         reply: oneshot::Sender<()>,
     },
@@ -70,6 +91,7 @@ impl Default for Timing {
 pub(super) struct Service {
     sender: mpsc::Sender<Command>,
     stopped: Arc<AtomicBool>,
+    retired_owners: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -81,6 +103,8 @@ impl Service {
     pub fn spawn(factory: Factory, emit: Emit, timing: Timing) -> Result<Self, AppError> {
         let (sender, receiver) = mpsc::channel(64);
         let stopped = Arc::new(AtomicBool::new(false));
+        let retired_owners = Arc::new(AtomicBool::new(false));
+        let worker_retired = Arc::clone(&retired_owners);
         let worker_sender = sender.clone();
         let worker_stopped = Arc::clone(&stopped);
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -94,6 +118,7 @@ impl Service {
                         receiver,
                         sender: worker_sender,
                         stopped: worker_stopped,
+                        retired_owners: worker_retired,
                         factory,
                         emit,
                         timing,
@@ -107,29 +132,49 @@ impl Service {
         Ok(Self {
             sender,
             stopped,
+            retired_owners,
             worker: Mutex::new(Some(worker)),
         })
     }
 
-    pub async fn acquire(&self, path: String) -> Result<Lease, AppError> {
+    pub async fn acquire(&self, owner: &Owner, path: String) -> Result<Lease, AppError> {
         if self.stopped.load(Ordering::Acquire) {
             return Err(closed());
         }
+        if !owner.active() {
+            return Err(owner_closed());
+        }
         let (reply, result) = oneshot::channel();
         self.sender
-            .send(Command::Acquire { path, reply })
+            .send(Command::Acquire {
+                owner: owner.clone(),
+                path,
+                reply,
+            })
             .await
             .map_err(|_| closed())?;
         result.await.map_err(|_| closed())?
     }
 
-    pub async fn release(&self, id: String) -> Result<(), AppError> {
+    pub async fn release(&self, owner: &Owner, id: String) -> Result<(), AppError> {
         let (reply, result) = oneshot::channel();
         self.sender
-            .send(Command::Release { id, reply })
+            .send(Command::Release {
+                owner: owner.clone(),
+                id,
+                reply,
+            })
             .await
             .map_err(|_| closed())?;
         result.await.map_err(|_| closed())
+    }
+
+    pub fn retire(&self, owner: &Owner) {
+        owner.retire();
+        self.retired_owners.store(true, Ordering::Release);
+        // Destruction never queues an unbounded task or waits for registration.
+        // A full inbox already guarantees another worker turn and flag scan.
+        let _ = self.sender.try_send(Command::Wake);
     }
 
     pub fn stop(&self) {
@@ -146,15 +191,25 @@ impl Drop for Service {
     }
 }
 
+fn owner_closed() -> AppError {
+    AppError::Other("Git watch owner closed".into())
+}
+
+struct HeldLease {
+    key: String,
+    owner: Owner,
+}
+
 struct Worker {
     receiver: mpsc::Receiver<Command>,
     sender: mpsc::Sender<Command>,
     stopped: Arc<AtomicBool>,
+    retired_owners: Arc<AtomicBool>,
     factory: Factory,
     emit: Emit,
     timing: Timing,
     entries: HashMap<String, Entry>,
-    leases: HashMap<String, String>,
+    leases: HashMap<String, HeldLease>,
     next_lease: u64,
 }
 
@@ -183,21 +238,35 @@ impl Worker {
                 break;
             }
             match command {
-                Some(Command::Acquire { path, reply }) => {
+                Some(Command::Acquire { owner, path, reply }) => {
                     if reply.is_closed() {
                         continue;
                     }
-                    let result = self.acquire(&path);
+                    let mut result = self.acquire(&owner, &path);
                     if self.stopped.load(Ordering::Acquire) {
                         let _ = reply.send(Err(closed()));
                         break;
+                    }
+                    // Registration is synchronous. Closure while it blocks must
+                    // drain its result, even if the IPC receiver still exists.
+                    if !owner.active() {
+                        if let Ok(lease) = &result {
+                            self.release(&lease.id);
+                        }
+                        result = Err(owner_closed());
                     }
                     if let Err(Ok(lease)) = reply.send(result) {
                         self.release(&lease.id);
                     }
                 }
-                Some(Command::Release { id, reply }) => {
-                    self.release(&id);
+                Some(Command::Release { owner, id, reply }) => {
+                    if self
+                        .leases
+                        .get(&id)
+                        .is_some_and(|lease| lease.owner.same(&owner))
+                    {
+                        self.release(&id);
+                    }
                     let _ = reply.send(());
                 }
                 Some(Command::Wake) => {}
@@ -241,7 +310,16 @@ impl Worker {
         Ok((observer, flags))
     }
 
-    fn acquire(&mut self, path: &str) -> Result<Lease, AppError> {
+    fn acquire(&mut self, owner: &Owner, path: &str) -> Result<Lease, AppError> {
+        if !owner.active() {
+            return Err(owner_closed());
+        }
+        // Allocate before installing an observer so exhaustion cannot leave an
+        // unleased registration behind.
+        let next_lease = self
+            .next_lease
+            .checked_add(1)
+            .ok_or_else(|| AppError::Other("Git observation lease IDs exhausted".into()))?;
         let target = Target::resolve(path)?;
         let key = target.key.clone();
         if let Some(entry) = self.entries.get(&key) {
@@ -268,22 +346,25 @@ impl Worker {
                 },
             );
         }
-        self.next_lease = self
-            .next_lease
-            .checked_add(1)
-            .ok_or_else(|| AppError::Other("Git observation lease IDs exhausted".into()))?;
+        self.next_lease = next_lease;
         let id = self.next_lease.to_string();
         self.entries
             .get_mut(&key)
             .unwrap()
             .leases
             .insert(id.clone());
-        self.leases.insert(id.clone(), key.clone());
+        self.leases.insert(
+            id.clone(),
+            HeldLease {
+                key: key.clone(),
+                owner: owner.clone(),
+            },
+        );
         Ok(Lease { id, repo_root: key })
     }
 
     fn release(&mut self, id: &str) {
-        let Some(key) = self.leases.remove(id) else {
+        let Some(HeldLease { key, .. }) = self.leases.remove(id) else {
             return;
         };
         if let Some(entry) = self.entries.get_mut(&key) {
@@ -295,6 +376,26 @@ impl Worker {
     }
 
     fn maintain(&mut self) {
+        if self.retired_owners.swap(false, Ordering::AcqRel) {
+            // Reclaim before recovery, without allocating on the callback path.
+            self.leases.retain(|id, lease| {
+                if lease.owner.active() {
+                    return true;
+                }
+                if let Some(entry) = self.entries.get_mut(&lease.key) {
+                    entry.leases.remove(id);
+                }
+                false
+            });
+            self.entries.retain(|key, entry| {
+                if entry.leases.is_empty() {
+                    log::info!("Reclaimed Git observation for closed native owner: {key}");
+                    false
+                } else {
+                    true
+                }
+            });
+        }
         let now = Instant::now();
         // The registry is worker-local; callbacks touch only generation flags.
         // Scan in place without allocating/cloning repository keys per event.

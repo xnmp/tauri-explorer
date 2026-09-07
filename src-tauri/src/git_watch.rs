@@ -4,10 +4,10 @@ mod target;
 
 use crate::error::AppError;
 use notify::Watcher;
-use service::{Lease, Service, Timing};
+use service::{Lease, Owner, Service, Timing};
 use std::sync::OnceLock;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Window};
 
 static SERVICE: OnceLock<Result<Service, String>> = OnceLock::new();
 
@@ -52,14 +52,56 @@ fn service(app: &AppHandle) -> Result<&'static Service, AppError> {
         .map_err(|error| AppError::Other(error.clone()))
 }
 
-#[tauri::command]
-pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<Lease, AppError> {
-    service(&app)?.acquire(repo_path).await
+// Window-local resources distinguish native incarnations even when a label is
+// reused. A retired slot stays with old Window clones, not in a global tombstone
+// registry. Lookup/creation and destruction share the resource-table lock.
+struct WindowOwner(Owner);
+impl tauri::Resource for WindowOwner {}
+
+fn resource_owner(resources: &mut tauri::ResourceTable) -> Owner {
+    let existing = resources
+        .names()
+        .find_map(|(id, _)| resources.get::<WindowOwner>(id).ok());
+    if let Some(existing) = existing {
+        return existing.0.clone();
+    }
+    let owner = Owner::default();
+    resources.add(WindowOwner(owner.clone()));
+    owner
+}
+
+/// Called with the concrete native window, including windows which never
+/// acquired a watch. A delayed first command therefore sees a retired owner.
+pub fn on_window_destroyed<R: Runtime>(window: &Window<R>) {
+    let owner = {
+        let mut resources = window.resources_table();
+        let owner = resource_owner(&mut resources);
+        owner.retire();
+        owner
+    };
+    if let Some(Ok(service)) = SERVICE.get() {
+        service.retire(&owner);
+    }
 }
 
 #[tauri::command]
-pub async fn git_unwatch_repo(app: AppHandle, lease_id: String) -> Result<(), AppError> {
-    service(&app)?.release(lease_id).await
+pub async fn git_watch_repo(
+    app: AppHandle,
+    window: Window,
+    repo_path: String,
+) -> Result<Lease, AppError> {
+    let owner = resource_owner(&mut window.resources_table());
+    service(&app)?.acquire(&owner, repo_path).await
+}
+
+#[tauri::command]
+pub async fn git_unwatch_repo(
+    app: AppHandle,
+    window: Window,
+    lease_id: String,
+) -> Result<(), AppError> {
+    let owner = resource_owner(&mut window.resources_table());
+    service(&app)?.release(&owner, lease_id).await
 }
 
 /// Called after the native event loop finishes. Also avoids starting a worker

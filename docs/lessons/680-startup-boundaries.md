@@ -296,3 +296,23 @@ listeners does not prevent a callback already waiting on an import from dispatch
 later. Re-check session ownership after import and before accepting work. Once a
 transfer has been accepted, its existing domain owner must finish or cancel it;
 simply suppressing its post-await completion can strand adoption halfway.
+
+
+### Native leases need an owner beyond frontend cleanup
+
+A unique lease ID makes release idempotent but does not reclaim it when a renderer
+vanishes. Git leases now carry a native-window cancellation token. Keep that token
+in the concrete Window resource table, not a label registry: native labels can be
+reused, and retained old Window handles must stay retired. Tauri's table is keyed
+by resource IDs, so find/create the single typed resource under its table lock.
+The Destroyed handler must find/create **and retire** under that same lock; dropping
+the lock between lookup and retirement admits a racing command.
+
+Retirement must not depend on successfully enqueuing a cleanup message. Flip the
+token, set a coalesced reclamation flag, and attempt a nonblocking wake. A full
+inbox guarantees another worker turn. Check the token again after synchronous
+registration, because its IPC receiver can outlive its destroyed source window.
+A native E2E with an intentionally unowned frontend lease verifies destruction
+reaches reclamation while another window stays usable; blocked-install and
+queue-saturation Rust tests prove the relevant interleavings. Do not equate an
+Observer drop with completion of notify's asynchronous OS resource teardown.

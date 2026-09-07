@@ -45,7 +45,7 @@ backend for E2E/browser).
 
 - `state/git-repo-watch.ts` — shares ordered native lease acquisition/release across graph and SCM, retaining failed releases for retry.
 - `state/git-graph-coverage.ts` — shares acknowledged observation across graph writers and retained snapshots, independent of mounted views; network polling roots read fresh.
-- `src-tauri/src/git_watch.rs`, `git_watch/service.rs`, `git_watch/target.rs` — acknowledged unique native leases and shared observers; one worker owns recovery/debounce deadlines; parent watches detect root replacement while filtering sibling activity.
+- `src-tauri/src/git_watch.rs`, `git_watch/service.rs`, `git_watch/target.rs` — acknowledged unique native leases scoped to concrete windows and reclaimed on native destruction; one worker owns shared observers and recovery/debounce deadlines; parent watches detect root replacement while filtering sibling activity.
 - `state/directory-watch.ts` — serialized refcount ownership used by pane-watch, FolderThumbnail, MillerColumns and drives; destroy drains late acquisition without changing refresh policy.
 
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation

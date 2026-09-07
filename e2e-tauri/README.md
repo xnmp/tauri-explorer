@@ -78,3 +78,12 @@ fresh fallback after rejected activation, and retirement after a claimer closes
 without dispatching. Its abandoned-claim case exercises the production 30-second
 lease expiry; retain that native outcome instead of replacing it with a browser
 mock or shortened test-only timeout.
+
+
+`git-watch-window-lifetime.spec.ts` acquires a raw acknowledged Git lease in a
+child without a frontend cleanup owner, destroys that native window, and checks
+the worker's reclamation diagnostic for the unique repository while the main
+window remains functional. It needs the default app Info logging. Rust service
+and mock-window tests separately cover observer drops, shared coverage, recycled
+labels, queued acquisition and registration racing destruction. This is native
+window destruction coverage, not renderer-crash recovery or OS watch-FD drainage.

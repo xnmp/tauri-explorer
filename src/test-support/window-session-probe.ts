@@ -64,10 +64,22 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "native-destroy"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
+      if (op === "watch-acquire") {
+        const { invoke } = await whileActive(import("@tauri-apps/api/core"));
+        // Intentionally no frontend lease owner or cleanup: this fixture checks
+        // native reclamation when a renderer disappears with accepted work.
+        const lease = await invoke<{ id: string; repoRoot: string }>("git_watch_repo", { repoPath: target });
+        return { lease, logDir: await invoke<string>("get_log_dir") };
+      }
+      if (op === "native-destroy") {
+        const { getCurrentWindow } = await whileActive(import("@tauri-apps/api/window"));
+        await getCurrentWindow().destroy();
+        return true;
+      }
       if (op === "warm-claim") {
         const { warmPoolClaim } = await whileActive(import("$lib/api/warm-pool"));
         return warmPoolClaim();

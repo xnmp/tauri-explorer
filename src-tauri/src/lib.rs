@@ -196,6 +196,11 @@ pub fn run(launch_dir: Option<String>) {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_clipboard_x::init())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                git_watch::on_window_destroyed(window);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             // Launch info
             get_launch_cwd,

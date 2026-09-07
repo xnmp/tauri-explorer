@@ -442,3 +442,12 @@ ordering regression fails on the actual prior page in both browser engines and
 passes after this change. Full units/performance, 26 browser outcomes and 12 real
 Linux native outcomes pass; ADR 0010 and the completion ledger define scope and
 remaining release gates.
+
+
+Native Git window checkpoint (2026-09-07): leases now have concrete-native-window
+ownership in addition to frontend cache ownership. Native destruction reclaims
+unreleased leases, queued/blocked acquisitions reject or drain, and other windows'
+coverage survives. Independent Rust interleaving tests and Linux native
+hook-to-worker acceptance pass; see ADR 0009 and the completion ledger. Renderer
+crashes/reloads that keep the native window alive and other-platform acceptance
+remain separate work.

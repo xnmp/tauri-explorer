@@ -14,7 +14,46 @@
  *   layout tree (arbitrary splits), an active pane, and an optional name.
  */
 
-import type { PaneNode, SplitDirection } from "$lib/domain/pane-layout";
+import { clampSplitRatio, type PaneNode, type SplitDirection } from "$lib/domain/pane-layout";
+import { isRecord, isWindowPath } from "$lib/domain/window-input";
+
+const MAX_PERSISTED_TABS = 4096;
+export const MAX_TOTAL_LAYOUT_NODES = 8192;
+
+/** Cheap, iterative preflight that bounds current and legacy layouts before
+ * migration or the canonical normalizer can traverse/map them. */
+export function persistedStateAllocation(state: unknown, remaining = MAX_TOTAL_LAYOUT_NODES): number | null {
+  if (!isRecord(state)) return null;
+  let count = 0;
+  const consume = (amount = 1) => {
+    count += amount;
+    return count <= remaining;
+  };
+  if (state.version === 3 && Array.isArray(state.tabs)) {
+    if (state.tabs.length > MAX_PERSISTED_TABS || !consume(state.tabs.length)) return null;
+    const pending = state.tabs.map((tab) => isRecord(tab) ? tab.layout : null);
+    while (pending.length) {
+      const node = pending.pop();
+      if (!consume()) return null;
+      if (!isRecord(node)) continue;
+      if (node.type === "split") pending.push(node.first, node.second);
+    }
+    return count;
+  }
+  if (state.version === undefined && Array.isArray(state.tabs)) {
+    if (state.tabs.length > MAX_PERSISTED_TABS || !consume(state.tabs.length * 3)) return null;
+    return count;
+  }
+  if (state.version === 2 && isRecord(state.panes)) {
+    const left = isRecord(state.panes.left) && Array.isArray(state.panes.left.tabs)
+      ? state.panes.left.tabs.length : -1;
+    const right = isRecord(state.panes.right) && Array.isArray(state.panes.right.tabs)
+      ? state.panes.right.tabs.length : -1;
+    if (left < 0 || right < 0 || left + right > MAX_PERSISTED_TABS || !consume((left + right) * 3)) return null;
+    return count;
+  }
+  return null;
+}
 
 // ── v3 (current) ─────────────────────────────────────────────────────────
 
@@ -80,34 +119,54 @@ export function toLayoutTree(node: PersistedNode): PaneNode {
 }
 
 function isPersistedNode(node: unknown): node is PersistedNode {
-  const n = node as PersistedNode;
-  if (!n) return false;
-  if (n.type === "leaf") return typeof n.id === "string" && typeof n.path === "string";
-  if (n.type === "split") {
-    return (
-      (n.direction === "row" || n.direction === "column") &&
-      typeof n.ratio === "number" &&
-      isPersistedNode(n.first) &&
-      isPersistedNode(n.second)
-    );
+  // Saved workspaces are untrusted input. Bound depth before any recursive
+  // layout operation and reject duplicate IDs (including cyclic objects).
+  const pending = [{ node, depth: 0 }];
+  const ids = new Set<string>();
+  while (pending.length) {
+    const next = pending.pop()!;
+    if (next.depth > 64 || ids.size >= 4096) return false;
+    const n = next.node as PersistedNode;
+    if (!n || !isWindowPath(n.id) || ids.has(n.id)) return false;
+    ids.add(n.id);
+    if (n.type === "leaf") {
+      if (!isWindowPath(n.path) || (n.gitGraph !== undefined && !isWindowPath(n.gitGraph))) return false;
+    } else if (n.type === "split") {
+      if ((n.direction !== "row" && n.direction !== "column") || !Number.isFinite(n.ratio)) return false;
+      pending.push({ node: n.first, depth: next.depth + 1 }, { node: n.second, depth: next.depth + 1 });
+    } else return false;
   }
-  return false;
+  return true;
 }
 
 type PersistedTabInput = PersistedWindowTab | PersistedGitGraphTab;
 
 function isPersistedTabInput(tab: unknown): tab is PersistedTabInput {
   const t = tab as PersistedTabInput;
-  if (!t || typeof t.id !== "string") return false;
-  if (t.kind === "git-graph") return typeof t.path === "string";
-  if (t.kind === "explorer") return isPersistedNode(t.layout) && typeof t.activePaneId === "string";
+  if (!t || !isWindowPath(t.id)) return false;
+  if (t.kind === "git-graph") return isWindowPath(t.path);
+  if (t.kind === "explorer") return isPersistedNode(t.layout) && typeof t.activePaneId === "string"
+    && (t.name === undefined || (typeof t.name === "string" && t.name.length <= 32_768));
   return false;
 }
 
 /** Validate any persisted tab shape and migrate pre-#272 git-graph tabs. */
 function normalizePersistedTab(tab: unknown): PersistedWindowTab | null {
   if (!isPersistedTabInput(tab)) return null;
-  return tab.kind === "git-graph" ? migrateGitGraphTab(tab) : tab;
+  const source = tab.kind === "git-graph" ? migrateGitGraphTab(tab) : tab;
+  // Copy only validated fields; live state must not retain unknown payload
+  // objects, and restored geometry follows the same policy as resizing.
+  const copyNode = (node: PersistedNode): PersistedNode => node.type === "leaf"
+    ? { type: "leaf", id: node.id, path: node.path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}) }
+    : { type: "split", id: node.id, direction: node.direction, ratio: clampSplitRatio(node.ratio), first: copyNode(node.first), second: copyNode(node.second) };
+  const normalized: PersistedWindowTab = {
+    id: source.id, kind: "explorer", layout: copyNode(source.layout), activePaneId: source.activePaneId,
+    ...(source.name !== undefined ? { name: source.name } : {}),
+  };
+  const leaves = persistedLeaves(normalized.layout);
+  return leaves.some((pane) => pane.id === normalized.activePaneId)
+    ? normalized
+    : { ...normalized, activePaneId: leaves[0].id };
 }
 
 // ── v2 (per-pane strips, #140) ───────────────────────────────────────────
@@ -266,12 +325,25 @@ export function migrateV2State(v2: PersistedTabStateV2): PersistedTabState {
 
 /** Accept any persisted shape, migrating v1/v2 on the fly. */
 export function normalizePersistedState(state: unknown): PersistedTabState | null {
-  if (!state) return null;
-  if (isLegacyState(state)) return migrateLegacyState(state);
-  if (isV2State(state)) return migrateV2State(state);
+  if (persistedStateAllocation(state) === null) return null;
+  // Run migrated data through the same identity validation as current data.
+  // Invalid legacy fields must not abort startup before its default pane exists.
+  try {
+    if (isLegacyState(state)) return normalizePersistedState(migrateLegacyState(state));
+    if (isV2State(state)) return normalizePersistedState(migrateV2State(state));
+  } catch { return null; }
   const s = state as PersistedTabState;
   if (s.version === 3 && Array.isArray(s.tabs)) {
-    const tabs = s.tabs.map(normalizePersistedTab).filter((t): t is PersistedWindowTab => !!t);
+    const tabIds = new Set<string>();
+    const paneIds = new Set<string>();
+    const tabs = s.tabs.map(normalizePersistedTab).filter((tab): tab is PersistedWindowTab => {
+      if (!tab || tabIds.has(tab.id)) return false;
+      const ids = persistedLeaves(tab.layout).map((pane) => pane.id);
+      if (ids.some((id) => paneIds.has(id))) return false;
+      tabIds.add(tab.id);
+      ids.forEach((id) => paneIds.add(id));
+      return true;
+    });
     return {
       version: 3,
       tabs,
@@ -311,21 +383,20 @@ export interface TabSnapshot {
 
 /** Tolerate snapshots written by older builds (v1 pane pairs, v2 paths). */
 export function normalizeSnapshot(raw: unknown): TabSnapshot | null {
-  const s = raw as {
-    path?: string;
-    tab?: unknown;
-    leftPath?: string;
-    rightPath?: string;
-    activePaneId?: "left" | "right";
-  };
-  if (typeof s?.path === "string") {
-    const tab = normalizePersistedTab(s.tab);
-    return tab ? { path: s.path, tab } : { path: s.path };
+  if (!isRecord(raw)) return null;
+  if (isWindowPath(raw.path)) {
+    const tab = normalizePersistedTab(raw.tab);
+    return tab ? { path: raw.path, tab } : { path: raw.path };
   }
-  if (typeof s?.leftPath === "string") {
-    return { path: s.activePaneId === "right" && s.rightPath ? s.rightPath : s.leftPath };
+  if (isWindowPath(raw.leftPath)) {
+    return { path: raw.activePaneId === "right" && isWindowPath(raw.rightPath) ? raw.rightPath : raw.leftPath };
   }
   return null;
+}
+
+/** Fresh children consume only the directory seed addressed to their label. */
+export function directorySeedKey(windowLabel: string): string {
+  return `dir-seed:${windowLabel}`;
 }
 
 /** localStorage key a freshly spawned tear-off window reads its tab from. */
@@ -350,29 +421,15 @@ export interface ClosedTabSnapshot {
 
 /** Tolerate closed-tab snapshots persisted by older builds. */
 export function normalizeClosedSnapshot(raw: unknown): ClosedTabSnapshot | null {
-  const s = raw as ClosedTabSnapshot & {
-    leftPath?: string;
-    rightPath?: string;
-    activePaneId?: "left" | "right";
+  const snapshot = normalizeSnapshot(raw);
+  if (!snapshot || !isRecord(raw)) return null;
+  return {
+    ...snapshot,
+    ...(raw.kind === "explorer" || raw.kind === "git-graph" ? { kind: raw.kind } : {}),
+    closedAt: typeof raw.closedAt === "number" && Number.isSafeInteger(raw.closedAt) && raw.closedAt >= 0 ? raw.closedAt : 0,
+    fromClosedWindow: raw.fromClosedWindow === true,
+    ...(typeof raw.closedTs === "number" && Number.isSafeInteger(raw.closedTs) && raw.closedTs >= 0 ? { closedTs: raw.closedTs } : {}),
   };
-  if (typeof s?.path === "string") {
-    return {
-      path: s.path,
-      kind: s.kind,
-      tab: normalizePersistedTab(s.tab) ?? undefined,
-      closedAt: s.closedAt ?? 0,
-      fromClosedWindow: !!s.fromClosedWindow,
-      ...(typeof s.closedTs === "number" ? { closedTs: s.closedTs } : {}),
-    };
-  }
-  if (typeof s?.leftPath === "string") {
-    return {
-      path: s.activePaneId === "right" && s.rightPath ? s.rightPath : s.leftPath,
-      closedAt: s.closedAt ?? 0,
-      fromClosedWindow: !!s.fromClosedWindow,
-    };
-  }
-  return null;
 }
 
 /** Result of restoring a closed tab */

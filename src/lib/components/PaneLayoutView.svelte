@@ -6,66 +6,90 @@
   (windowTabsManager.setSplitRatio).
 -->
 <script lang="ts">
-  import type { PaneNode } from "$lib/domain/pane-layout";
+  import { onDestroy } from "svelte";
+  import { someLeaf, type PaneNode } from "$lib/domain/pane-layout";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { createPaneResize } from "$lib/state/pane-resize";
   import ExplorerPane from "./ExplorerPane.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
 
   const { node }: { node: PaneNode } = $props();
 
+  const materialized = $derived(someLeaf(node, windowTabsManager.isPaneReady));
+
   // Resize state (only used when node is a split)
   let isResizing = $state(false);
   let containerRef = $state<HTMLElement | null>(null);
-  // Container rect is stable for the duration of a drag; cache it so
-  // mousemove never forces a layout read.
-  let containerRect: DOMRect | null = null;
-  let pendingClient: number | null = null;
-  let moveRafId = 0;
+  let capturedPointer: number | undefined;
+  let releasePointer: (() => void) | undefined;
+  const resize = createPaneResize({
+    schedule: (callback) => {
+      const frame = requestAnimationFrame(callback);
+      return () => cancelAnimationFrame(frame);
+    },
+    publishActive: (active) => {
+      isResizing = active;
+      if (!active) {
+        const release = releasePointer;
+        capturedPointer = undefined;
+        releasePointer = undefined;
+        release?.();
+      }
+    },
+  });
+  onDestroy(resize.cancel);
 
-  function startResize(event: MouseEvent) {
+  function startResize(event: PointerEvent) {
+    if (!event.isPrimary || event.button !== 0 || node.type !== "split" || !containerRef) return;
     event.preventDefault();
-    isResizing = true;
-    containerRect = containerRef?.getBoundingClientRect() ?? null;
-  }
-
-  function applyPendingResize() {
-    if (pendingClient === null || !containerRect || node.type !== "split") return;
-    const ratio =
-      node.direction === "row"
-        ? (pendingClient - containerRect.left) / containerRect.width
-        : (pendingClient - containerRect.top) / containerRect.height;
-    windowTabsManager.setSplitRatio(node.id, ratio);
-    pendingClient = null;
+    // Capture geometry once: pointer moves never force layout or read live props.
+    const rect = containerRef.getBoundingClientRect();
+    resize.start({
+      direction: node.direction,
+      start: node.direction === "row" ? rect.left : rect.top,
+      extent: node.direction === "row" ? rect.width : rect.height,
+      commit: windowTabsManager.beginSplitResize(node.id),
+    });
+    if (isResizing) {
+      const divider = event.currentTarget as HTMLElement;
+      divider.setPointerCapture(event.pointerId);
+      capturedPointer = event.pointerId;
+      releasePointer = () => {
+        if (divider.hasPointerCapture(event.pointerId)) divider.releasePointerCapture(event.pointerId);
+      };
+    }
   }
 
   // rAF-coalesced: mousemove can fire far above frame rate on high-poll-rate
   // mice; applying every event triggers a full pane re-layout each time.
-  function handleResize(event: MouseEvent) {
-    if (!isResizing || node.type !== "split") return;
-    pendingClient = node.direction === "row" ? event.clientX : event.clientY;
-    if (moveRafId) return;
-    moveRafId = requestAnimationFrame(() => {
-      moveRafId = 0;
-      applyPendingResize();
-    });
+  function handleResize(event: PointerEvent) {
+    if (event.pointerId !== capturedPointer) return;
+    if ((event.buttons & 1) === 0) { resize.cancel(); return; }
+    resize.move(event.clientX, event.clientY);
   }
 
-  function endResize() {
-    if (!isResizing) return;
-    if (moveRafId) {
-      cancelAnimationFrame(moveRafId);
-      moveRafId = 0;
-    }
-    applyPendingResize();
-    isResizing = false;
-    containerRect = null;
+  function finishResize(event: PointerEvent) {
+    if (event.pointerId === capturedPointer) resize.finish();
+  }
+
+  function cancelResize(event: PointerEvent) {
+    if (event.pointerId === capturedPointer) resize.cancel();
   }
 </script>
 
-<svelte:window onmousemove={handleResize} onmouseup={endResize} />
+<svelte:window onblur={resize.cancel} />
 
-{#if node.type === "leaf"}
-  <ExplorerPane paneId={node.id} />
+{#if !materialized}
+  <div class="pane-restoring" aria-busy="true">Restoring panes…</div>
+{:else if node.type === "leaf"}
+  {@const explorer = windowTabsManager.getExplorer(node.id)}
+  {#if explorer}
+    {#key explorer}
+      <ExplorerPane paneId={node.id} {explorer} />
+    {/key}
+  {:else}
+    <div role="alert">Unable to load this pane.</div>
+  {/if}
 {:else}
   <div
     class="pane-split {node.direction}"
@@ -80,7 +104,11 @@
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
     <div
       class="pane-divider"
-      onmousedown={startResize}
+      onpointerdown={startResize}
+      onpointermove={handleResize}
+      onpointerup={finishResize}
+      onpointercancel={cancelResize}
+      onlostpointercapture={cancelResize}
       role="separator"
       aria-orientation={node.direction === "row" ? "vertical" : "horizontal"}
       aria-label="Resize panes"
@@ -95,6 +123,18 @@
 {/if}
 
 <style>
+  .pane-restoring {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
   .pane-split {
     display: flex;
     flex: 1;
@@ -141,6 +181,7 @@
   }
 
   .pane-divider {
+    touch-action: none;
     display: flex;
     align-items: center;
     justify-content: center;

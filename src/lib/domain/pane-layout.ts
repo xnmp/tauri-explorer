@@ -47,6 +47,11 @@ export function leafIds(node: PaneNode): string[] {
   return [...leafIds(node.first), ...leafIds(node.second)];
 }
 
+/** Stop as soon as a leaf matches; callers need not allocate a full ID list. */
+export function someLeaf(node: PaneNode, matches: (id: string) => boolean): boolean {
+  return node.type === "leaf" ? matches(node.id) : someLeaf(node.first, matches) || someLeaf(node.second, matches);
+}
+
 export function hasLeaf(node: PaneNode, id: string): boolean {
   return leafIds(node).includes(id);
 }
@@ -55,7 +60,7 @@ export function countLeaves(node: PaneNode): number {
   return node.type === "leaf" ? 1 : countLeaves(node.first) + countLeaves(node.second);
 }
 
-function clampRatio(ratio: number): number {
+export function clampSplitRatio(ratio: number): number {
   return Math.max(0.1, Math.min(0.9, ratio));
 }
 
@@ -79,9 +84,13 @@ export function splitLeaf(
 
 /** Whether any node (leaf or split) with `id` exists in the tree. */
 export function hasNode(root: PaneNode, id: string): boolean {
-  if (root.id === id) return true;
-  if (root.type === "leaf") return false;
-  return hasNode(root.first, id) || hasNode(root.second, id);
+  return findNode(root, id) !== undefined;
+}
+
+export function findNode(root: PaneNode, id: string): PaneNode | undefined {
+  if (root.id === id) return root;
+  if (root.type === "leaf") return undefined;
+  return findNode(root.first, id) ?? findNode(root.second, id);
 }
 
 /**
@@ -168,15 +177,17 @@ export function removeLeaf(root: PaneNode, id: string): PaneNode | null {
   return { ...root, first: first ?? root.first, second: second ?? root.second };
 }
 
-/** Set the ratio of the split node `splitId` (clamped). */
+/** Set a finite split ratio, retaining unchanged branches and no-op roots. */
 export function updateRatio(root: PaneNode, splitId: string, ratio: number): PaneNode {
-  if (root.type === "leaf") return root;
-  if (root.id === splitId) return { ...root, ratio: clampRatio(ratio) };
-  return {
-    ...root,
-    first: updateRatio(root.first, splitId, ratio),
-    second: updateRatio(root.second, splitId, ratio),
-  };
+  if (root.type === "leaf" || !Number.isFinite(ratio)) return root;
+  if (root.id === splitId) {
+    const clamped = clampSplitRatio(ratio);
+    return root.ratio === clamped ? root : { ...root, ratio: clamped };
+  }
+  const first = updateRatio(root.first, splitId, ratio);
+  if (first !== root.first) return { ...root, first };
+  const second = updateRatio(root.second, splitId, ratio);
+  return second === root.second ? root : { ...root, second };
 }
 
 export interface LeafRect {

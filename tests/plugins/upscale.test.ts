@@ -49,7 +49,7 @@ function makeFakeCtx() {
     registerDialog: (d) => void dialogs.push(d),
     openDialog: () => {},
     closeDialog: () => {},
-    jobs: { add: () => {}, complete: () => {}, fail: () => {} },
+    jobs: { accept: (_registration, start) => start() },
     toast: { show: () => {}, error: () => {} },
     events: { listen: (name) => void events.push(name) },
     storage: {
@@ -70,13 +70,13 @@ function makeFakeCtx() {
 }
 
 describe("upscale plugin: contributions", () => {
-  it("registers a command, context item, settings section, dialog and two event listeners", async () => {
+  it("registers activation-owned contributions while job events stay app-owned", async () => {
     const f = makeFakeCtx();
     await upscalePlugin.activate(f.ctx);
 
     expect(f.commands.map((c) => c.id)).toContain(COMMAND_ID);
     expect(f.dialogs.map((d) => d.id)).toContain(DIALOG_ID);
-    expect(f.events).toEqual(["upscale-complete", "upscale-error"]);
+    expect(f.events).toEqual([]);
 
     // Settings section: a single password row bound to the "apiKey" key.
     expect(f.settingsSections).toHaveLength(1);

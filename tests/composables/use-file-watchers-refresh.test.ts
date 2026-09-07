@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
   listen: vi.fn(),
   initFileChangeListener: vi.fn(),
   cleanupFileChangeListener: vi.fn(),
+  subscribeToLocalFileChanges: vi.fn(),
+  subscribeGitChanges: vi.fn(),
+  invalidateRepoRoot: vi.fn(),
   gitRefresh: vi.fn(),
 }));
 
@@ -12,6 +15,11 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 vi.mock("$lib/state/file-events", () => ({
   initFileChangeListener: mocks.initFileChangeListener,
   cleanupFileChangeListener: mocks.cleanupFileChangeListener,
+  subscribeToLocalFileChanges: mocks.subscribeToLocalFileChanges,
+}));
+vi.mock("$lib/state/git-refresh", () => ({ subscribeGitChanges: mocks.subscribeGitChanges }));
+vi.mock("$lib/state/repo-root-cache.svelte", () => ({
+  repoRootCache: { invalidate: mocks.invalidateRepoRoot },
 }));
 vi.mock("$lib/state/settings.svelte", () => ({
   settingsStore: { showGitStatus: false },
@@ -28,6 +36,8 @@ type TauriDirectoryEvent = { payload: { path: string; observed_at_ms?: number } 
 describe("useFileWatchers refresh coalescing", () => {
   let broadcastHandler: ((dirs: string[]) => void) | undefined;
   let tauriHandler: ((event: TauriDirectoryEvent) => void) | undefined;
+  let localChangeHandler: ((dirs: string[]) => void) | undefined;
+  let gitChangeHandler: ((change: { repoRoot: string | null }) => void) | undefined;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -35,9 +45,14 @@ describe("useFileWatchers refresh coalescing", () => {
     mocks.listen.mockReset();
     mocks.initFileChangeListener.mockReset();
     mocks.cleanupFileChangeListener.mockReset();
+    mocks.subscribeToLocalFileChanges.mockReset().mockReturnValue(vi.fn());
+    mocks.subscribeGitChanges.mockReset().mockResolvedValue(vi.fn());
+    mocks.invalidateRepoRoot.mockReset();
     mocks.gitRefresh.mockReset();
     broadcastHandler = undefined;
     tauriHandler = undefined;
+    localChangeHandler = undefined;
+    gitChangeHandler = undefined;
     mocks.initFileChangeListener.mockImplementation((handler) => {
       broadcastHandler = handler;
     });
@@ -45,6 +60,34 @@ describe("useFileWatchers refresh coalescing", () => {
       tauriHandler = handler;
       return Promise.resolve(vi.fn());
     });
+    mocks.subscribeToLocalFileChanges.mockImplementation((handler) => {
+      localChangeHandler = handler;
+      return vi.fn();
+    });
+    mocks.subscribeGitChanges.mockImplementation(async (handler) => {
+      gitChangeHandler = handler;
+      return vi.fn();
+    });
+  });
+
+  it("invalidates repository probes through filesystem and git lifecycle buses", async () => {
+    const watchers = useFileWatchers({ getAllExplorers: () => [] });
+    watchers.setup();
+    await Promise.resolve();
+
+    localChangeHandler?.(["/repo/a", "/repo/b"]);
+    tauriHandler?.({ payload: { path: "/repo/native" } });
+    gitChangeHandler?.({ repoRoot: "/repo/git" });
+    gitChangeHandler?.({ repoRoot: null });
+
+    expect(mocks.invalidateRepoRoot.mock.calls).toEqual([
+      ["/repo/a"],
+      ["/repo/b"],
+      ["/repo/native"],
+      ["/repo/git"],
+      [undefined],
+    ]);
+    watchers.cleanup();
   });
 
   afterEach(() => {

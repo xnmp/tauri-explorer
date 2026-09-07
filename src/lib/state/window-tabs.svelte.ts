@@ -10,6 +10,9 @@
  * workspace.
  */
 
+import { SvelteMap } from "svelte/reactivity";
+import { createWindowClose, type NativeCloseSource } from "./window-close";
+import { createPaneActivationQueue, type PaneActivationScheduler } from "./pane-activation";
 import type { PaneId, WindowTab, ExplorerTab, TabPane } from "./types";
 import {
   type PaneNode,
@@ -22,18 +25,22 @@ import {
   splitLeaf,
   splitNode,
   hasNode,
+  findNode,
   removeLeaf,
   updateRatio,
   dwindlePlacement,
   leafSiblingContext,
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
+import { createPaneSessions } from "./pane-sessions";
 import {
   createCoalescedPersister,
   loadPersisted,
   removePersisted,
 } from "./persisted";
 import { parentDir } from "$lib/domain/path";
+import { acknowledgeWindowHandoff } from "./window-handoff";
+import { isFreshSeed, isRecord, normalizeDirectorySeed, windowSeedFitsBudget, WINDOW_SEED_MAX_CHARS, type ExplorerSeed } from "$lib/domain/window-input";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
 import { workspacesStore } from "./workspaces.svelte";
@@ -51,6 +58,7 @@ import {
   type TabSnapshot,
   normalizeSnapshot,
   tabSeedKey,
+  directorySeedKey,
   type ClosedTabSnapshot,
   normalizeClosedSnapshot,
   type RestoreResult,
@@ -70,6 +78,7 @@ export {
   countPersistedTabs,
   normalizeSnapshot,
   tabSeedKey,
+  directorySeedKey,
   normalizeClosedSnapshot,
 };
 export type {
@@ -100,7 +109,7 @@ const WINDOW_LABEL = detectWindowLabel();
 // for backward compatibility with existing saved state.
 const STORAGE_KEY = WINDOW_LABEL === "main" ? "explorer-tabs" : `explorer-tabs:${WINDOW_LABEL}`;
 
-/** Generate unique IDs for tabs, panes, splits, and explorers */
+/** Generate unique IDs for tabs, panes, and splits */
 export function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -108,13 +117,21 @@ export function generateId(prefix: string): string {
 // Re-exported for existing importers/tests; canonical home is domain (#281).
 export { extractFolderName } from "$lib/domain/tab-title";
 
-type ExternalSeed = {
-  currentPath: string;
-  entries: any[];
-  sortBy: string;
-  sortAscending: boolean;
-  viewMode: string;
-};
+type ExternalSeed = ExplorerSeed;
+
+// A tab's persisted ID can be reused on restore; this identity cannot. Symbol
+// values survive immutable tab updates and never enter persisted snapshots.
+const TAB_INSTANCE = Symbol("tab instance");
+type ManagedTab = WindowTab & { readonly [TAB_INSTANCE]: symbol };
+export interface TabTransfer {
+  /** Each reader receives an isolated copy of the captured transfer payload. */
+  readonly snapshot: TabSnapshot;
+  /** Call only after destination adoption; stale or repeated completion is inert. */
+  complete(): boolean;
+  /** Release an unadopted transfer before allowing a replacement. */
+  cancel(): void;
+}
+
 
 type TestManagerRegistry = Set<{ dispose(): Promise<void> }>;
 
@@ -124,24 +141,58 @@ function testManagerRegistry(): TestManagerRegistry | undefined {
   }).__tauriExplorerTestManagerRegistry;
 }
 
-function createWindowTabsManager() {
-  // Explorer instances registry (keyed by explorerId)
-  const explorers = new Map<string, ExplorerInstance>();
-  // Initial directory loads are started when a pane is created so the UI can
-  // render immediately. Retain their promises so an explicit manager teardown
-  // can wait for their diagnostics and IPC work before its environment closes.
-  const pendingInitialLoads = new Set<Promise<void>>();
-  // Restore and initialization replace explorers through synchronous public
-  // APIs. Retain their asynchronous cleanup so a later dispose still drains it.
-  const pendingBackgroundDestructions = new Set<Promise<void>>();
+function createWindowTabsManager(options: {
+  schedulePaneActivation?: PaneActivationScheduler;
+  nativeWindow?: () => NativeCloseSource;
+} = {}) {
+  const paneReadiness = new SvelteMap<PaneId, boolean>();
+  const sessions = createPaneSessions<ExplorerInstance>({
+    onChange(paneId, ready) {
+      if (ready === undefined) paneReadiness.delete(paneId);
+      else paneReadiness.set(paneId, ready);
+    },
+    releasePane(paneId) {
+      disposeCommitPanelStore(paneId);
+      dropGraphFileHistory(paneId);
+      return disposeScmStore(paneId);
+    },
+    reportCleanupError(reason, error) {
+      console.error(reason === "replaced"
+        ? "Failed to clean up previous explorers:"
+        : "Failed to clean up removed explorer:", error);
+    },
+  });
+  const paneActivation = createPaneActivationQueue({
+    isPending: sessions.isPending,
+    activate: (paneId) => { sessions.activate(paneId); },
+    schedule: options.schedulePaneActivation,
+  });
   let disposal: Promise<void> | null = null;
-  // Pane close/collapse removes an explorer from the live registry before its
-  // asynchronous listener cleanup completes. Retain that cleanup separately
-  // so a later manager disposal still owns the in-flight work.
-  const pendingRemovedExplorerCleanups = new Set<Promise<void>>();
+  // Once native close is dispatched it cannot be recalled. Reject incoming
+  // ownership until it fails; otherwise a newly adopted tab could be lost.
+  let closing = false;
+  const transfers = new Set<symbol>();
+  function requireOpenWindow(): void {
+    if (closing || disposal) throw new Error("Window is closing");
+  }
+  const windowClose = createWindowClose({
+    source: options.nativeWindow ?? getCurrentWindow,
+    begin: () => {
+      if (closing || disposal) return null;
+      closing = true;
+      paneActivation.cancel();
+      return () => {
+        if (disposal) return;
+        closing = false;
+        activateTabResources(activeTabId);
+      };
+    },
+    save: () => saveStateNow(),
+    reportError: (error) => console.error("Could not close window:", error),
+  });
 
   // Window-level tab strip
-  let tabs = $state<WindowTab[]>([]);
+  let tabs = $state<ManagedTab[]>([]);
   let activeTabId = $state<string | null>(null);
 
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
@@ -184,45 +235,7 @@ function createWindowTabsManager() {
     activeTab?.kind === "explorer" ? leafIds(activeTab.layout) : [],
   );
 
-  /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry.
-   *  Settlement and error propagation are defined by ADR 0002. */
-  async function destroyAllExplorers(): Promise<void> {
-    const destructions = [...explorers.values()].map((explorer) => explorer.destroy());
-    explorers.clear();
-    const results = await Promise.allSettled(destructions);
-    const failure = results.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    if (failure) throw failure.reason;
-  }
-
-  function destroyRemovedExplorer(explorer: ExplorerInstance | undefined): void {
-    if (!explorer) return;
-    const cleanup = explorer.destroy();
-    pendingRemovedExplorerCleanups.add(cleanup);
-    void cleanup.then(
-      () => pendingRemovedExplorerCleanups.delete(cleanup),
-      (error) => {
-        pendingRemovedExplorerCleanups.delete(cleanup);
-        console.error("Failed to clean up removed explorer:", error);
-      },
-    );
-  }
-
-  // Restore and initialization are synchronous APIs, so retain replacement
-  // cleanup for a later disposal and report its failures at the app boundary.
-  function destroyExplorersInBackground(): void {
-    const destruction = destroyAllExplorers();
-    pendingBackgroundDestructions.add(destruction);
-    void destruction.then(
-      () => pendingBackgroundDestructions.delete(destruction),
-      (error) => {
-        pendingBackgroundDestructions.delete(destruction);
-        console.error("Failed to clean up previous explorers:", error);
-      },
-    );
-  }
-  function findTab(tabId: string): WindowTab | null {
+  function findTab(tabId: string): ManagedTab | null {
     return tabs.find((t) => t.id === tabId) ?? null;
   }
 
@@ -232,7 +245,7 @@ function createWindowTabsManager() {
     if (!pane) return "/home";
     // || not ??: an explorer that hasn't completed its first navigation
     // reports "" — fall back to the pane's creation path, never persist "".
-    return explorers.get(pane.explorerId)?.state.currentPath || pane.path;
+    return sessions.get(paneId)?.state.currentPath || pane.path;
   }
 
   /** Live path for a tab: its active pane's path. */
@@ -301,7 +314,7 @@ function createWindowTabsManager() {
 
   /** Load tab state from localStorage (migrating older shapes) */
   function loadState(): PersistedTabState | null {
-    return normalizePersistedState(loadPersisted<unknown>(STORAGE_KEY, null));
+    return normalizePersistedState(loadPersisted<unknown>(STORAGE_KEY, null, WINDOW_SEED_MAX_CHARS));
   }
 
   // Tab labels/titles + git-root decoration live in their own module (#281);
@@ -339,12 +352,13 @@ function createWindowTabsManager() {
    *  provided and shares the same path, seed the new one with its
    *  entries so the UI doesn't flash empty while loading. */
   function createAndRegisterExplorer(
+    paneId: PaneId,
     path: string,
     sourceExplorer?: ExplorerInstance,
     externalSeed?: ExternalSeed,
     track = true,
-  ): { explorerId: string; explorer: ExplorerInstance } {
-    const explorerId = generateId("explorer");
+  ): void {
+    requireOpenWindow();
     const canSeed = sourceExplorer && sourceExplorer.currentPath === path;
     const seed = canSeed
       ? {
@@ -355,21 +369,12 @@ function createWindowTabsManager() {
           viewMode: sourceExplorer.viewMode,
         }
       : externalSeed?.currentPath === path
-        ? (externalSeed as any)
+        ? externalSeed
         : undefined;
-    const explorer = createExplorerState(seed);
-    explorers.set(explorerId, explorer);
-    // Seeded/restored panes use a non-tracking initial load so restoring
-    // tabs doesn't double-record frecency/recent-files visits.
-    const initialLoad = seed || !track
-      ? explorer.initialLoad(path)
-      : explorer.navigateTo(path);
-    pendingInitialLoads.add(initialLoad);
-    void initialLoad.then(
-      () => pendingInitialLoads.delete(initialLoad),
-      () => pendingInitialLoads.delete(initialLoad),
-    );
-    return { explorerId, explorer };
+    // Seeded/restored panes must not record duplicate visits.
+    sessions.create(paneId, () => createExplorerState(seed), async (explorer) => {
+      await (seed || !track ? explorer.initialLoad(path) : explorer.navigateTo(path));
+    });
   }
 
   /** Create a single-pane explorer tab object (not yet inserted). */
@@ -378,20 +383,21 @@ function createWindowTabsManager() {
     sourceExplorer?: ExplorerInstance,
     externalSeed?: ExternalSeed,
     track = true,
-  ): ExplorerTab {
-    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer, externalSeed, track);
+  ): ManagedTab {
     const paneId = generateId("pane");
+    createAndRegisterExplorer(paneId, path, sourceExplorer, externalSeed, track);
     return {
+      [TAB_INSTANCE]: Symbol(),
       id: generateId("tab"),
       kind: "explorer",
       layout: leaf(paneId),
-      panes: { [paneId]: { explorerId, path } },
+      panes: { [paneId]: { path } },
       activePaneId: paneId,
     };
   }
 
   /** Insert a tab after the active one and activate it. */
-  function insertTab(tab: WindowTab, index?: number): void {
+  function insertTab(tab: ManagedTab, index?: number): void {
     const activeIndex = tabs.findIndex((t) => t.id === activeTabId);
     const at =
       index !== undefined
@@ -403,6 +409,7 @@ function createWindowTabsManager() {
     newTabs.splice(at, 0, tab);
     tabs = newTabs;
     activeTabId = tab.id;
+    activateTabResources(tab.id);
     saveState();
   }
 
@@ -491,13 +498,14 @@ function createWindowTabsManager() {
     return next;
   }
 
-  /** Rebuild a live tab from its persisted form (fresh explorers, non-tracking
-   *  loads). `regenerateIds` gives the tab and its panes fresh ids (adopting
+  /** Rebuild tab descriptors, reserving explorers until the tab is activated.
+   *  `regenerateIds` gives the tab and its panes fresh ids (adopting
    *  into a window that may already contain the original ids). */
   function reviveTab(
     persisted: PersistedWindowTab,
     opts: { regenerateIds?: boolean; overridePath?: string } = {},
-  ): WindowTab {
+  ): ManagedTab {
+    requireOpenWindow();
     const idMap = new Map<string, string>();
     const mapId = (id: string): string => {
       if (!opts.regenerateIds) return id;
@@ -505,14 +513,14 @@ function createWindowTabsManager() {
       return idMap.get(id)!;
     };
 
-    const panes: Record<PaneId, TabPane> = {};
+    const panes: Record<PaneId, TabPane> = Object.create(null);
     const build = (node: PersistedNode): PaneNode => {
       if (node.type === "leaf") {
         const paneId = mapId(node.id);
         const isActiveTarget = node.id === persisted.activePaneId && !!opts.overridePath;
         const path = isActiveTarget ? opts.overridePath! : node.path;
-        const { explorerId } = createAndRegisterExplorer(path, undefined, undefined, false);
-        panes[paneId] = { explorerId, path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}) };
+        sessions.reserve(paneId, () => createExplorerState(), (explorer) => explorer.initialLoad(path));
+        panes[paneId] = { path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}) };
         return leaf(paneId);
       }
       return {
@@ -529,10 +537,14 @@ function createWindowTabsManager() {
     const paneIds = leafIds(layout);
     const mappedActive = mapId(persisted.activePaneId);
     return {
+      [TAB_INSTANCE]: Symbol(),
       id: opts.regenerateIds ? generateId("tab") : persisted.id,
       kind: "explorer",
       layout,
-      panes,
+      // Svelte only deeply proxies plain objects. Build safely with a null
+      // prototype, then spread into a reactive dictionary; spread preserves
+      // names such as __proto__ as own data properties without invoking setters.
+      panes: { ...panes },
       activePaneId: paneIds.includes(mappedActive) ? mappedActive : paneIds[0],
       ...(persisted.name ? { name: persisted.name } : {}),
     };
@@ -543,6 +555,39 @@ function createWindowTabsManager() {
     const tab = findTab(tabId);
     if (!tab) return null;
     return { path: getTabLivePath(tab), tab: persistTab(tab) };
+  }
+
+  /** Capture source ownership before awaiting destination adoption. */
+  function beginTabTransfer(tabId: string): TabTransfer | null {
+    const tab = findTab(tabId);
+    if (!tab || disposal || closing) return null;
+    const incarnation = tab[TAB_INSTANCE];
+    if (transfers.has(incarnation)) return null;
+    const snapshot = exportTab(tabId);
+    if (!windowSeedFitsBudget(snapshot)) return null;
+    const encoded = JSON.stringify(snapshot);
+    let pending = true;
+    transfers.add(incarnation);
+    const cancel = () => {
+      if (!pending) return;
+      pending = false;
+      transfers.delete(incarnation);
+    };
+    return {
+      cancel,
+      get snapshot(): TabSnapshot { return JSON.parse(encoded); },
+      complete(): boolean {
+        if (!pending) return false;
+        cancel();
+        if (disposal || closing || findTab(tabId)?.[TAB_INSTANCE] !== incarnation) return false;
+        // Preserve navigation/layout edits the destination's captured payload
+        // did not adopt. Reordering other tabs does not change this snapshot.
+        const current = exportTab(tabId);
+        if (!windowSeedFitsBudget(current) || JSON.stringify(current) !== encoded) return false;
+        removeTransferredTab(tabId);
+        return true;
+      },
+    };
   }
 
   /** Adopt a tab transferred from another window: rebuild it with fresh
@@ -561,12 +606,15 @@ function createWindowTabsManager() {
    *  @param overridePath - If set, the active tab's active pane navigates
    *    here instead of its saved path (avoids racing navigations). */
   function restoreFromState(state: PersistedTabState | unknown, overridePath?: string): void {
+    requireOpenWindow();
     const normalized = normalizePersistedState(state);
     if (!normalized || normalized.tabs.length === 0) return;
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    destroyExplorersInBackground();
+    paneActivation.cancel();
+    transfers.clear();
+    sessions.clear();
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -574,6 +622,7 @@ function createWindowTabsManager() {
       }),
     );
     activeTabId = normalized.activeTabId ?? tabs[0]?.id ?? null;
+    activateTabResources(activeTabId);
   }
 
   /** Initialize - restores from localStorage or creates a new tab.
@@ -583,6 +632,7 @@ function createWindowTabsManager() {
    *  @param overridePath - When set, the active tab navigates here instead
    *    of its saved path. Used for CLI cwd so we don't race two navigations. */
   function init(initialPath: string, skipRestore = false, overridePath?: string): WindowTab | null {
+    requireOpenWindow();
     testManagerRegistry()?.add(manager);
     if (!skipRestore) {
       // Try to restore from localStorage (cold start / app relaunch)
@@ -595,31 +645,35 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    destroyExplorersInBackground();
+    paneActivation.cancel();
+    transfers.clear();
+    sessions.clear();
     tabs = [];
     activeTabId = null;
 
     // Tear-off windows receive their tab through a label-keyed localStorage
     // seed written by the source window.
-    const tabSeed = loadPersisted<{ snapshot: unknown; ts: number } | null>(
+    const tabSeed = loadPersisted<unknown>(
       tabSeedKey(WINDOW_LABEL),
       null,
+      WINDOW_SEED_MAX_CHARS,
     );
-    if (tabSeed && Date.now() - tabSeed.ts < 10_000) {
-      removePersisted(tabSeedKey(WINDOW_LABEL));
+    removePersisted(tabSeedKey(WINDOW_LABEL));
+    if (isRecord(tabSeed) && isFreshSeed(tabSeed.ts, Date.now(), 10_000)) {
       const snapshot = normalizeSnapshot(tabSeed.snapshot);
-      if (snapshot) return adoptTab(snapshot);
+      if (snapshot) {
+        const adopted = adoptTab(snapshot);
+        void acknowledgeWindowHandoff(tabSeed.handoff, WINDOW_LABEL).catch(() => {});
+        return adopted;
+      }
     }
 
     // Check for parent-window seed (child windows get entries pre-loaded)
     const targetPath = overridePath ?? initialPath;
-    const seedKey = `dir-seed:${targetPath}`;
-    const seed = loadPersisted<(ExternalSeed & { ts: number }) | null>(seedKey, null);
-    let externalSeed: ExternalSeed | undefined = undefined;
-    if (seed && Date.now() - seed.ts < 5000) {
-      externalSeed = seed;
-      removePersisted(seedKey);
-    }
+    const seedKey = directorySeedKey(WINDOW_LABEL);
+    const seed = loadPersisted<unknown>(seedKey, null, WINDOW_SEED_MAX_CHARS);
+    removePersisted(seedKey);
+    const externalSeed = normalizeDirectorySeed(seed, targetPath, Date.now()) ?? undefined;
 
     return createTab(targetPath, externalSeed);
   }
@@ -635,7 +689,7 @@ function createWindowTabsManager() {
       closedTs: Date.now(),
     };
 
-    // Closing the last tab snapshots then attempts window.close(), which can
+    // Closing the last tab snapshots then attempts native destruction, which can
     // fail silently — repeated Ctrl+W would stack identical snapshots.
     if (fromClosedWindow) {
       const top = closedTabs.peek();
@@ -666,16 +720,11 @@ function createWindowTabsManager() {
 
   function destroyTabExplorers(tab: WindowTab): void {
     if (tab.kind !== "explorer") return;
-    for (const [paneId, pane] of Object.entries(tab.panes)) {
-      destroyRemovedExplorer(explorers.get(pane.explorerId));
-      explorers.delete(pane.explorerId);
-      disposeScmStore(paneId);
-      disposeCommitPanelStore(paneId);
-      dropGraphFileHistory(paneId);
-    }
+    for (const paneId of Object.keys(tab.panes)) sessions.remove(paneId);
   }
 
   function removeTab(tabId: string, opts: { snapshot: boolean }): void {
+    if (closing || disposal) return;
     const tabIndex = tabs.findIndex((t) => t.id === tabId);
     if (tabIndex < 0) return;
     const tab = tabs[tabIndex];
@@ -687,13 +736,26 @@ function createWindowTabsManager() {
     }
 
     if (isLast) {
-      // Close the window when closing the last tab
-      import("@tauri-apps/api/window")
-        .then(({ getCurrentWindow }) => getCurrentWindow().close())
-        .catch(() => {}); // Not in Tauri runtime
+      const incarnation = tab[TAB_INSTANCE];
+      if (!opts.snapshot) {
+        // Ownership already moved: detach the source synchronously. If a new
+        // tab opens while native close is loading, it keeps this window alive.
+        destroyTabExplorers(tab);
+        tabs = [];
+        activeTabId = null;
+        saveState();
+      }
+      void Promise.resolve().then(() => {
+        const stillClosing = opts.snapshot
+          ? tabs.length === 1 && findTab(tabId)?.[TAB_INSTANCE] === incarnation
+          : tabs.length === 0;
+        if (disposal || closing || !stillClosing) return;
+        return windowClose.request();
+      });
       return;
     }
 
+    transfers.delete(tab[TAB_INSTANCE]);
     destroyTabExplorers(tab);
 
     const newTabs = tabs.filter((t) => t.id !== tabId);
@@ -702,11 +764,13 @@ function createWindowTabsManager() {
       activeTabId = newTabs[newIndex]?.id ?? null;
     }
     tabs = newTabs;
+    activateTabResources(activeTabId);
     saveState();
   }
 
   /** Restore the most recently closed tab. Returns false if nothing to restore. */
   function restoreClosedTab(): false | RestoreResult {
+    requireOpenWindow();
     // Re-read from localStorage to pick up snapshots from other windows
     closedTabs.refresh();
     const snapshot = closedTabs.pop();
@@ -767,8 +831,8 @@ function createWindowTabsManager() {
     const tab = findTab(snapshot.tabId);
     if (tab?.kind !== "explorer") return;
     setActiveTab(tab.id);
-    const { explorerId } = createAndRegisterExplorer(snapshot.path, undefined, undefined, false);
     const paneId = generateId("pane");
+    createAndRegisterExplorer(paneId, snapshot.path, undefined, undefined, false);
     const splitId = generateId("split");
     updateActiveExplorerTab((t) => {
       const layout = hasNode(t.layout, snapshot.siblingId)
@@ -781,7 +845,7 @@ function createWindowTabsManager() {
       return {
         ...t,
         layout,
-        panes: { ...t.panes, [paneId]: { explorerId, path: snapshot.path } },
+        panes: { ...t.panes, [paneId]: { path: snapshot.path } },
         activePaneId: paneId,
       };
     });
@@ -792,6 +856,7 @@ function createWindowTabsManager() {
    *  when it's newer than the last closed tab, else the last closed tab.
    *  Returns false when there's nothing to restore. */
   function restoreClosedSurface(): false | RestoreResult {
+    requireOpenWindow();
     closedTabs.refresh();
     pruneClosedPanes();
     const topPane = closedPanes[closedPanes.length - 1];
@@ -803,10 +868,17 @@ function createWindowTabsManager() {
     return restoreClosedTab();
   }
 
+  function activateTabResources(tabId: string | null): void {
+    const tab = tabId ? findTab(tabId) : undefined;
+    if (tab?.kind !== "explorer") { paneActivation.cancel(); return; }
+    paneActivation.request(leafIds(tab.layout), tab.activePaneId);
+  }
+
   /** Set the active tab */
   function setActiveTab(tabId: string): void {
-    if (!findTab(tabId)) return;
+    if (closing || disposal || !findTab(tabId)) return;
     activeTabId = tabId;
+    activateTabResources(tabId);
     saveState();
   }
 
@@ -821,10 +893,11 @@ function createWindowTabsManager() {
   }
 
   function cycleTab(delta: number): void {
-    if (tabs.length <= 1) return;
+    if (closing || disposal || tabs.length <= 1) return;
     const currentIndex = tabs.findIndex((t) => t.id === activeTabId);
     const nextIndex = (currentIndex + delta + tabs.length) % tabs.length;
     activeTabId = tabs[nextIndex].id;
+    activateTabResources(activeTabId);
     saveState();
   }
 
@@ -855,26 +928,29 @@ function createWindowTabsManager() {
   /** Get the explorer backing a pane (searched across all tabs, so pane-
    *  scoped components keep working during tab transitions). */
   function getExplorer(paneId: PaneId): ExplorerInstance | undefined {
+    // Subscribe only to this pane's materialization, not every batch in the tab.
+    paneReadiness.get(paneId);
     for (const tab of tabs) {
       if (tab.kind !== "explorer") continue;
       const pane = tab.panes[paneId];
-      if (pane) return explorers.get(pane.explorerId);
+      if (pane) return sessions.get(paneId);
     }
     return undefined;
   }
 
-  /** Iterate all known explorer instances across every tab and pane.
+  /** Iterate instantiated explorers across every tab and pane. Unvisited
+   *  restored tabs load fresh on activation and need no background refresh.
    *  Used by callers that need to broadcast a refresh to every pane that
    *  may currently be viewing an affected directory (e.g. cross-tab paste). */
   function getAllExplorers(): ExplorerInstance[] {
-    return Array.from(explorers.values());
+    return sessions.values();
   }
 
   /** Get the active explorer (active tab's active pane) */
   function getActiveExplorer(): ExplorerInstance | undefined {
     const tab = activeTab;
     if (tab?.kind !== "explorer") return undefined;
-    return explorers.get(tab.panes[tab.activePaneId]?.explorerId ?? "");
+    return sessions.get(tab.activePaneId);
   }
 
   /** Silently refresh the visible panes — for file operations (drops,
@@ -884,14 +960,14 @@ function createWindowTabsManager() {
     const tab = activeTab;
     if (tab?.kind !== "explorer") return;
     for (const paneId of leafIds(tab.layout)) {
-      explorers.get(tab.panes[paneId]?.explorerId ?? "")?.refresh({ silent: true });
+      sessions.get(paneId)?.refresh({ silent: true });
     }
   }
 
   /** Update the active explorer tab's layout/panes in place (immutably). */
   function updateActiveExplorerTab(
-    update: (tab: ExplorerTab) => ExplorerTab,
-  ): ExplorerTab | null {
+    update: (tab: ManagedTab) => ManagedTab,
+  ): ManagedTab | null {
     const tab = activeTab;
     if (tab?.kind !== "explorer") return null;
     const updated = update(tab);
@@ -904,6 +980,8 @@ function createWindowTabsManager() {
     const tab = activeTab;
     if (tab?.kind !== "explorer" || tab.activePaneId === paneId) return;
     if (!tab.panes[paneId]) return;
+    requireOpenWindow();
+    sessions.activate(paneId);
     updateActiveExplorerTab((t) => ({ ...t, activePaneId: paneId }));
     saveState();
   }
@@ -937,12 +1015,12 @@ function createWindowTabsManager() {
     const sourceExplorer = getActiveExplorer();
     const sourcePath = panePath(tab, tab.activePaneId);
     const path = initialPath ?? sourcePath;
-    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer);
     const paneId = generateId("pane");
+    createAndRegisterExplorer(paneId, path, sourceExplorer);
     updateActiveExplorerTab((t) => ({
       ...t,
       layout: splitLeaf(t.layout, t.activePaneId, placement, paneId, generateId("split")),
-      panes: { ...t.panes, [paneId]: { explorerId, path } },
+      panes: { ...t.panes, [paneId]: { path } },
       activePaneId: paneId,
     }));
     saveState();
@@ -969,6 +1047,7 @@ function createWindowTabsManager() {
   /** Close a pane of the active tab (default: the focused pane).
    *  Closing the last pane closes the tab. */
   function closePane(paneId?: PaneId): void {
+    if (closing || disposal) return;
     const tab = activeTab;
     if (tab?.kind !== "explorer") return;
     const target = paneId ?? tab.activePaneId;
@@ -996,17 +1075,14 @@ function createWindowTabsManager() {
       if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
     }
 
-    destroyRemovedExplorer(explorers.get(pane.explorerId));
-    explorers.delete(pane.explorerId);
-    disposeScmStore(target);
-    disposeCommitPanelStore(target);
-    dropGraphFileHistory(target);
+    sessions.remove(target);
 
     const remaining = leafIds(newLayout);
     const oldOrder = leafIds(tab.layout);
     // Focus the nearest surviving pane (previous in visual order).
     const closedIndex = oldOrder.indexOf(target);
     const fallback = remaining[Math.max(0, Math.min(closedIndex - 1, remaining.length - 1))];
+    if (tab.activePaneId === target) sessions.activate(fallback);
     updateActiveExplorerTab((t) => {
       const { [target]: _closed, ...panes } = t.panes;
       return {
@@ -1038,12 +1114,7 @@ function createWindowTabsManager() {
       // Collapse: keep only the focused pane.
       for (const paneId of leafIds(tab.layout)) {
         if (paneId === tab.activePaneId) continue;
-        const pane = tab.panes[paneId];
-        destroyRemovedExplorer(explorers.get(pane.explorerId));
-        explorers.delete(pane.explorerId);
-        disposeScmStore(paneId);
-        disposeCommitPanelStore(paneId);
-        dropGraphFileHistory(paneId);
+        sessions.remove(paneId);
       }
       updateActiveExplorerTab((t) => ({
         ...t,
@@ -1068,8 +1139,26 @@ function createWindowTabsManager() {
 
   /** Set a split's ratio on the active tab (divider drag). */
   function setSplitRatio(splitId: string, ratio: number): void {
-    updateActiveExplorerTab((t) => ({ ...t, layout: updateRatio(t.layout, splitId, ratio) }));
+    if (closing || disposal || activeTab?.kind !== "explorer") return;
+    const layout = updateRatio(activeTab.layout, splitId, ratio);
+    if (layout === activeTab.layout) return;
+    updateActiveExplorerTab((t) => ({ ...t, layout }));
     saveState();
+  }
+
+  /** Capture the divider operation when a drag starts. */
+  function beginSplitResize(splitId: string): (ratio: number) => boolean {
+    const tab = activeTab;
+    if (closing || disposal || tab?.kind !== "explorer"
+      || findNode(tab.layout, splitId)?.type !== "split") return () => false;
+    const incarnation = tab[TAB_INSTANCE];
+    return (ratio) => {
+      const current = activeTab;
+      if (closing || disposal || current?.[TAB_INSTANCE] !== incarnation
+        || current.kind !== "explorer" || findNode(current.layout, splitId)?.type !== "split") return false;
+      setSplitRatio(splitId, ratio);
+      return true;
+    };
   }
 
   /** Reorder tabs within the strip */
@@ -1095,6 +1184,10 @@ function createWindowTabsManager() {
     },
     get activeTab() {
       return activeTab;
+    },
+    /** Mount identity survives edits but changes when a saved tab is revived. */
+    get activeTabInstance() {
+      return activeTab?.[TAB_INSTANCE];
     },
     get totalTabCount() {
       return tabs.length;
@@ -1128,11 +1221,14 @@ function createWindowTabsManager() {
     getPaneScmVisible,
     toggleScmInActivePane,
     closeTab,
+    get acceptsTransfers() { return !closing && !disposal; },
+    requestWindowClose: windowClose.request,
+    observeNativeClose: windowClose.observe,
     closeActiveTab,
     closeSurface,
     exportTab,
+    beginTabTransfer,
     adoptTab,
-    removeTransferredTab,
     get windowLabel() {
       return WINDOW_LABEL;
     },
@@ -1162,6 +1258,7 @@ function createWindowTabsManager() {
 
     // Explorer access
     getExplorer,
+    isPaneReady: (paneId: PaneId): boolean => paneReadiness.get(paneId) === true,
     getActiveExplorer,
     getAllExplorers,
     refreshAllPanes,
@@ -1176,6 +1273,7 @@ function createWindowTabsManager() {
     toggleDualPane,
     setDualPane,
     setSplitRatio,
+    beginSplitResize,
 
     // Persistence
     save: saveStateNow,
@@ -1191,27 +1289,16 @@ function createWindowTabsManager() {
       // it without awaiting. Share the same promise so every caller drains the
       // original explorer cleanup rather than observing its cleared registry.
       if (disposal) return disposal;
+      windowClose.dispose();
+      paneActivation.cancel();
+      transfers.clear();
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onWindowFocus);
       }
       // Flushes a queued write before dropping its page-lifecycle listeners,
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
-      disposal = (async () => {
-        const [destroyed, , removedCleanups] = await Promise.allSettled([
-          destroyAllExplorers(),
-          Promise.allSettled(pendingInitialLoads),
-          Promise.allSettled(pendingRemovedExplorerCleanups),
-          Promise.allSettled(pendingBackgroundDestructions),
-        ]);
-        if (destroyed.status === "rejected") throw destroyed.reason;
-        if (removedCleanups.status === "fulfilled") {
-          const failure = removedCleanups.value.find(
-            (result): result is PromiseRejectedResult => result.status === "rejected",
-          );
-          if (failure) throw failure.reason;
-        }
-      })();
+      disposal = sessions.dispose();
       void disposal.then(
         () => testManagerRegistry()?.delete(manager),
         () => testManagerRegistry()?.delete(manager),

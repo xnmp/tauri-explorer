@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
+import {
+  requestRefresh,
+  cancelPendingRefreshes,
+  refreshManagerRetention,
+} from "$lib/state/refresh-manager";
 
 describe("refresh-manager", () => {
   beforeEach(() => {
@@ -144,5 +148,34 @@ describe("refresh-manager", () => {
     requestRefresh(refreshB, "/home/user/pictures");
     vi.advanceTimersByTime(150);
     expect(refreshB).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds settled directory metadata over a long session and fully clears on teardown", () => {
+    const refresh = vi.fn();
+    for (let index = 0; index < 5000; index++) {
+      requestRefresh(refresh, `/long-session/${index}`);
+    }
+    expect(refreshManagerRetention().pending).toBe(5000);
+    expect(vi.getTimerCount()).toBe(5000);
+    vi.advanceTimersByTime(150);
+
+    expect(refresh).toHaveBeenCalledTimes(5000);
+    expect(refreshManagerRetention()).toEqual({
+      pending: 0,
+      lastRefresh: 1024,
+      inFlight: 0,
+      baselines: 0,
+      intervals: 0,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    cancelPendingRefreshes();
+    expect(refreshManagerRetention()).toEqual({
+      pending: 0,
+      lastRefresh: 0,
+      inFlight: 0,
+      baselines: 0,
+      intervals: 0,
+    });
   });
 });

@@ -9,7 +9,7 @@
  * rapid successive saves of the same file can't interleave on disk.
  */
 
-import { writeConfigFile } from "$lib/api/files";
+import { writeConfigFile } from "$lib/api/config";
 
 const isAvailable = typeof localStorage !== "undefined";
 
@@ -24,11 +24,11 @@ export const EXPLORER_BG_RGBA_KEY = "explorer-bg-rgba";
 /**
  * Load a value from localStorage, returning the default if not found or invalid.
  */
-export function loadPersisted<T>(key: string, defaultValue: T): T {
+export function loadPersisted<T>(key: string, defaultValue: T, maxChars = Infinity): T {
   if (!isAvailable) return defaultValue;
   try {
     const saved = localStorage.getItem(key);
-    if (saved !== null) {
+    if (saved !== null && saved.length <= maxChars) {
       return JSON.parse(saved) as T;
     }
   } catch {
@@ -55,7 +55,12 @@ export function savePersisted<T>(key: string, value: T): void {
  */
 export function removePersisted(key: string): void {
   if (!isAvailable) return;
-  localStorage.removeItem(key);
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Storage access can be disabled after startup. Optional persisted state
+    // must not prevent navigation or window creation from recovering.
+  }
 }
 
 /**

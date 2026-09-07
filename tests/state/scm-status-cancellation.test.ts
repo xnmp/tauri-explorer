@@ -2,13 +2,13 @@
  * Store-level race coverage for same-repository navigation during an SCM scan.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitStatusSummary } from "$lib/api/files";
+import type { GitStatusSummary } from "$lib/api/git";
 
 const gitRepoRootMock = vi.fn();
 const gitSummaryMock = vi.fn();
 const cancelGitStatusMock = vi.fn(async (_taskId: number) => {});
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
   gitSummary: (root: string, taskId: number) => gitSummaryMock(root, taskId),
   cancelGitStatus: (taskId: number) => cancelGitStatusMock(taskId),

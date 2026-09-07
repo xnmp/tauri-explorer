@@ -22,11 +22,10 @@
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex, OnceLock,
-};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -61,11 +60,35 @@ struct ConfigChangedPayload {
 ///
 /// This is public so integration tests and embedding callers can drive the
 /// same watcher mapping as the app rather than duplicating symlink handling.
+#[derive(Clone)]
 struct WatchPlan {
     config_dir: PathBuf,
     external_roots: Vec<(PathBuf, RecursiveMode)>,
     external_files: HashMap<PathBuf, String>,
     external_themes_dir: Option<PathBuf>,
+}
+
+struct WatchState {
+    plan: WatchPlan,
+    registered_external_roots: HashMap<PathBuf, RecursiveMode>,
+}
+
+trait WatchRegistration {
+    type Error: Display;
+    fn register(&mut self, path: &Path, mode: RecursiveMode) -> Result<(), Self::Error>;
+    fn unregister(&mut self, path: &Path) -> Result<(), Self::Error>;
+}
+
+impl WatchRegistration for RecommendedWatcher {
+    type Error = notify::Error;
+
+    fn register(&mut self, path: &Path, mode: RecursiveMode) -> Result<(), Self::Error> {
+        self.watch(path, mode)
+    }
+
+    fn unregister(&mut self, path: &Path) -> Result<(), Self::Error> {
+        self.unwatch(path)
+    }
 }
 
 impl WatchPlan {
@@ -102,7 +125,10 @@ fn config_watch_plan(config_dir: &Path) -> WatchPlan {
         };
         if !target.starts_with(config_dir) {
             if let Some(parent) = target.parent() {
-                external_roots.push((parent.to_path_buf(), RecursiveMode::NonRecursive));
+                // Recursive coverage also handles the case where this same
+                // external directory later becomes the themes target. Keeping
+                // one stable mode avoids an unwatch/re-watch gap on role changes.
+                external_roots.push((parent.to_path_buf(), RecursiveMode::Recursive));
                 external_files.insert(target, filename.to_string());
             }
         }
@@ -128,13 +154,21 @@ fn config_watch_plan(config_dir: &Path) -> WatchPlan {
 /// A small real-watcher harness for consumers that need to verify config
 /// autoreload behaviour without constructing a Tauri application.
 pub struct ConfigWatchHarness {
-    active: Arc<AtomicBool>,
+    stop: Arc<(Mutex<bool>, Condvar)>,
+    worker: Option<JoinHandle<()>>,
     _watcher: Arc<Mutex<RecommendedWatcher>>,
 }
 
 impl Drop for ConfigWatchHarness {
     fn drop(&mut self) {
-        self.active.store(false, Ordering::Release);
+        let (lock, wake) = &*self.stop;
+        if let Ok(mut stopped) = lock.lock() {
+            *stopped = true;
+            wake.notify_all();
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -147,8 +181,12 @@ pub fn watch_config_changes<F>(
 where
     F: Fn(String) + Send + Sync + 'static,
 {
-    let watch_plan = Arc::new(Mutex::new(config_watch_plan(&config_dir)));
-    let callback_plan = Arc::clone(&watch_plan);
+    let initial_plan = config_watch_plan(&config_dir);
+    let watch_state = Arc::new(Mutex::new(WatchState {
+        plan: initial_plan.clone(),
+        registered_external_roots: HashMap::new(),
+    }));
+    let callback_state = Arc::clone(&watch_state);
     let on_change = Arc::new(on_change);
     let callback = Arc::clone(&on_change);
     let callback_config_dir = config_dir.clone();
@@ -166,41 +204,56 @@ where
         if matches!(event.kind, EventKind::Access(_)) {
             return;
         }
-        let Ok(plan) = callback_plan.lock() else {
-            return;
+        let names = {
+            let Ok(state) = callback_state.lock() else {
+                return;
+            };
+            event
+                .paths
+                .iter()
+                .filter_map(|path| state.plan.watched_config_name(path))
+                .collect::<Vec<_>>()
         };
-        for path in event.paths {
-            if let Some(name) = plan.watched_config_name(&path) {
-                callback(name);
-            }
+        for name in names {
+            callback(name);
         }
     })?;
     let watcher = Arc::new(Mutex::new(watcher));
     {
         let mut watcher = watcher.lock().expect("config watcher lock");
         watcher.watch(&config_dir, RecursiveMode::Recursive)?;
-        for (root, mode) in &watch_plan
-            .lock()
-            .expect("config watch plan lock")
-            .external_roots
-        {
+        for (root, mode) in &initial_plan.external_roots {
             watcher.watch(root, *mode)?;
+            watch_state
+                .lock()
+                .expect("config watch state lock")
+                .registered_external_roots
+                .insert(root.clone(), *mode);
         }
     }
 
-    let active = Arc::new(AtomicBool::new(true));
-    let refresh_active = Arc::clone(&active);
+    let stop = Arc::new((Mutex::new(false), Condvar::new()));
+    let refresh_stop = Arc::clone(&stop);
     let refresh_watcher = Arc::clone(&watcher);
-    std::thread::spawn(move || {
-        while refresh_active.load(Ordering::Acquire) {
-            std::thread::sleep(WATCH_PLAN_REFRESH_INTERVAL);
-            if let Ok(mut watcher) = refresh_watcher.lock() {
-                apply_watch_plan_update(&config_dir, &watch_plan, &mut watcher);
-            }
+    let worker = std::thread::spawn(move || loop {
+        let (lock, wake) = &*refresh_stop;
+        let Ok(stopped) = lock.lock() else {
+            break;
+        };
+        let Ok((stopped, _)) = wake.wait_timeout(stopped, WATCH_PLAN_REFRESH_INTERVAL) else {
+            break;
+        };
+        if *stopped {
+            break;
+        }
+        drop(stopped);
+        if let Ok(mut watcher) = refresh_watcher.lock() {
+            apply_watch_plan_update(&config_dir, &watch_state, &mut *watcher);
         }
     });
     Ok(ConfigWatchHarness {
-        active,
+        stop,
+        worker: Some(worker),
         _watcher: watcher,
     })
 }
@@ -338,29 +391,63 @@ fn spawn_flush_thread(app: AppHandle) {
 /// new root with the old plan in the small interval after `watch` succeeds.
 fn apply_watch_plan_update(
     config_dir: &Path,
-    watch_plan: &Arc<Mutex<WatchPlan>>,
-    watcher: &mut RecommendedWatcher,
+    watch_state: &Arc<Mutex<WatchState>>,
+    watcher: &mut impl WatchRegistration,
 ) {
     let replacement = config_watch_plan(config_dir);
-    let Ok(mut current_plan) = watch_plan.lock() else {
+    reconcile_watch_plan(replacement, watch_state, watcher);
+}
+
+fn reconcile_watch_plan(
+    replacement: WatchPlan,
+    watch_state: &Arc<Mutex<WatchState>>,
+    watcher: &mut impl WatchRegistration,
+) {
+    let Ok(mut state) = watch_state.lock() else {
         return;
     };
+
+    // Establish every new target before publishing the new callback mapping.
+    // If any registration fails, the old plan and its complete coverage stay
+    // authoritative; successful additions are retained for the next retry.
     for (root, mode) in &replacement.external_roots {
-        if current_plan
-            .external_roots
-            .iter()
-            .any(|(current, _)| current == root)
-        {
+        if state.registered_external_roots.get(root) == Some(mode) {
             continue;
         }
-        if let Err(error) = watcher.watch(root, *mode) {
+        if let Err(error) = watcher.register(root, *mode) {
             log::warn!(
                 "Config autoreload cannot watch updated symlink target {}: {error}",
                 root.display()
             );
+            return;
+        }
+        state.registered_external_roots.insert(root.clone(), *mode);
+    }
+
+    state.plan = replacement;
+    let stale: Vec<PathBuf> = state
+        .registered_external_roots
+        .keys()
+        .filter(|root| {
+            !state
+                .plan
+                .external_roots
+                .iter()
+                .any(|(current, _)| current == *root)
+        })
+        .cloned()
+        .collect();
+    for root in stale {
+        match watcher.unregister(&root) {
+            Ok(()) => {
+                state.registered_external_roots.remove(&root);
+            }
+            Err(error) => log::warn!(
+                "Config autoreload cannot retire old symlink target {}: {error}",
+                root.display()
+            ),
         }
     }
-    *current_plan = replacement;
 }
 
 /// Path of the config file the frontend reloads, for tests and diagnostics.
@@ -371,11 +458,165 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{pending, settings_path, watched_config_name, BOOKMARKS_FILE, FOLDER_VIEWS_FILE};
+    use super::{
+        pending, reconcile_watch_plan, settings_path, watched_config_name, WatchPlan,
+        WatchRegistration, WatchState, BOOKMARKS_FILE, FOLDER_VIEWS_FILE, SETTINGS_FILE,
+        THEMES_DIR, WATCH_PLAN_REFRESH_INTERVAL,
+    };
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-    use std::path::Path;
-    use std::sync::mpsc;
+    use std::collections::{HashMap, HashSet};
+    use std::path::{Path, PathBuf};
+    use std::sync::{mpsc, Arc, Mutex};
     use std::time::{Duration, Instant};
+
+    #[derive(Default)]
+    struct RecordingWatcher {
+        registered: HashSet<PathBuf>,
+        operations: Vec<(String, PathBuf)>,
+        fail_registration: Option<PathBuf>,
+    }
+
+    impl WatchRegistration for RecordingWatcher {
+        type Error = &'static str;
+
+        fn register(&mut self, path: &Path, _mode: RecursiveMode) -> Result<(), Self::Error> {
+            self.operations.push(("watch".into(), path.to_path_buf()));
+            if self.fail_registration.as_deref() == Some(path) {
+                return Err("injected registration failure");
+            }
+            self.registered.insert(path.to_path_buf());
+            Ok(())
+        }
+
+        fn unregister(&mut self, path: &Path) -> Result<(), Self::Error> {
+            self.operations.push(("unwatch".into(), path.to_path_buf()));
+            self.registered.remove(path);
+            Ok(())
+        }
+    }
+
+    fn plan(config_dir: &Path, root: Option<&Path>) -> WatchPlan {
+        let mut external_files = HashMap::new();
+        let external_roots = root.map_or_else(Vec::new, |root| {
+            external_files.insert(root.join(SETTINGS_FILE), SETTINGS_FILE.to_string());
+            vec![(root.to_path_buf(), RecursiveMode::NonRecursive)]
+        });
+        WatchPlan {
+            config_dir: config_dir.to_path_buf(),
+            external_roots,
+            external_files,
+            external_themes_dir: None,
+        }
+    }
+
+    fn state(initial: WatchPlan) -> Arc<Mutex<WatchState>> {
+        Arc::new(Mutex::new(WatchState {
+            registered_external_roots: initial.external_roots.iter().cloned().collect(),
+            plan: initial,
+        }))
+    }
+
+    #[test]
+    fn repeated_retargets_watch_new_before_retiring_old_without_growth() {
+        let config = Path::new("/config");
+        let first = Path::new("/targets/0");
+        let watch_state = state(plan(config, Some(first)));
+        let mut watcher = RecordingWatcher::default();
+        watcher.registered.insert(first.to_path_buf());
+
+        for index in 1..1000 {
+            let next = PathBuf::from(format!("/targets/{index}"));
+            reconcile_watch_plan(plan(config, Some(&next)), &watch_state, &mut watcher);
+            expect_single_registration(&watch_state, &watcher, &next);
+            let tail = &watcher.operations[watcher.operations.len() - 2..];
+            assert_eq!(tail[0], ("watch".into(), next));
+            assert_eq!(tail[1].0, "unwatch");
+        }
+    }
+
+    fn expect_single_registration(
+        watch_state: &Arc<Mutex<WatchState>>,
+        watcher: &RecordingWatcher,
+        expected: &Path,
+    ) {
+        assert_eq!(watcher.registered, HashSet::from([expected.to_path_buf()]));
+        let state = watch_state.lock().expect("watch state");
+        assert_eq!(state.registered_external_roots.len(), 1);
+        assert!(state.registered_external_roots.contains_key(expected));
+    }
+
+    #[test]
+    fn failed_new_registration_keeps_old_plan_and_watch_until_retry() {
+        let temp = tempfile::tempdir().expect("temp roots");
+        let config = temp.path().join("config");
+        let old = temp.path().join("old");
+        let new = temp.path().join("new");
+        std::fs::create_dir_all(&config).expect("config dir");
+        std::fs::create_dir_all(&old).expect("old target");
+        std::fs::create_dir_all(&new).expect("new target");
+        std::fs::write(old.join(SETTINGS_FILE), "{}").expect("old settings");
+        std::fs::write(new.join(SETTINGS_FILE), "{}").expect("new settings");
+        let watch_state = state(plan(&config, Some(&old)));
+        let mut watcher = RecordingWatcher {
+            registered: HashSet::from([old.clone()]),
+            fail_registration: Some(new.clone()),
+            ..Default::default()
+        };
+
+        reconcile_watch_plan(plan(&config, Some(&new)), &watch_state, &mut watcher);
+        expect_single_registration(&watch_state, &watcher, &old);
+        assert_eq!(
+            watch_state
+                .lock()
+                .expect("watch state")
+                .plan
+                .watched_config_name(&old.join(SETTINGS_FILE)),
+            Some(SETTINGS_FILE.to_string())
+        );
+
+        watcher.fail_registration = None;
+        reconcile_watch_plan(plan(&config, Some(&new)), &watch_state, &mut watcher);
+        expect_single_registration(&watch_state, &watcher, &new);
+    }
+
+    #[test]
+    fn delayed_old_callbacks_are_filtered_after_handover_and_final_plan_retires_external_watch() {
+        let temp = tempfile::tempdir().expect("temp roots");
+        let config = temp.path().join("config");
+        let old = temp.path().join("old");
+        let new = temp.path().join("new");
+        std::fs::create_dir_all(&config).expect("config dir");
+        std::fs::create_dir_all(&old).expect("old target");
+        std::fs::create_dir_all(&new).expect("new target");
+        std::fs::write(old.join(SETTINGS_FILE), "{}").expect("old settings");
+        std::fs::write(new.join(SETTINGS_FILE), "{}").expect("new settings");
+        let watch_state = state(plan(&config, Some(&old)));
+        let mut watcher = RecordingWatcher {
+            registered: HashSet::from([old.clone()]),
+            ..Default::default()
+        };
+
+        reconcile_watch_plan(plan(&config, Some(&new)), &watch_state, &mut watcher);
+        {
+            let state = watch_state.lock().expect("watch state");
+            assert_eq!(
+                state.plan.watched_config_name(&old.join(SETTINGS_FILE)),
+                None
+            );
+            assert_eq!(
+                state.plan.watched_config_name(&new.join(SETTINGS_FILE)),
+                Some(SETTINGS_FILE.to_string())
+            );
+        }
+
+        reconcile_watch_plan(plan(&config, None), &watch_state, &mut watcher);
+        assert!(watcher.registered.is_empty());
+        assert!(watch_state
+            .lock()
+            .expect("watch state")
+            .registered_external_roots
+            .is_empty());
+    }
 
     #[test]
     fn reports_reloadable_json_blobs_and_user_theme_css() {
@@ -471,5 +712,89 @@ mod tests {
         let queued = pending().lock().expect("pending lock");
         assert!(queued.contains_key(BOOKMARKS_FILE));
         assert!(queued.contains_key(FOLDER_VIEWS_FILE));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_watcher_handover_observes_new_symlink_target_and_retires_old_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("temporary watcher tree");
+        let config = temp.path().join("config");
+        let old_dir = temp.path().join("old");
+        let new_dir = temp.path().join("new");
+        std::fs::create_dir_all(&config).expect("config dir");
+        std::fs::create_dir_all(&old_dir).expect("old target dir");
+        std::fs::create_dir_all(&new_dir).expect("new target dir");
+        let old_file = old_dir.join(SETTINGS_FILE);
+        let new_file = new_dir.join(SETTINGS_FILE);
+        std::fs::write(&old_file, "old-0").expect("old target");
+        std::fs::write(&new_file, "new-0").expect("new target");
+        let configured = config.join(SETTINGS_FILE);
+        symlink(&old_file, &configured).expect("initial settings symlink");
+
+        let (sent, received) = mpsc::channel();
+        let harness = super::watch_config_changes(config, move |name| {
+            let _ = sent.send(name);
+        })
+        .expect("config watcher");
+
+        std::fs::write(&old_file, "old-1").expect("initial target write");
+        assert_eq!(
+            received
+                .recv_timeout(Duration::from_secs(3))
+                .ok()
+                .as_deref(),
+            Some(SETTINGS_FILE)
+        );
+
+        std::fs::remove_file(&configured).expect("remove old symlink");
+        symlink(&new_file, &configured).expect("retarget settings symlink");
+        std::thread::sleep(WATCH_PLAN_REFRESH_INTERVAL + Duration::from_millis(300));
+        while received.try_recv().is_ok() {}
+
+        // The old native registration has been removed after new coverage was
+        // established, while writes through the new target remain observable.
+        std::fs::write(&old_file, "old-2").expect("retired target write");
+        assert!(received.recv_timeout(Duration::from_millis(400)).is_err());
+        std::fs::write(&new_file, "new-1").expect("replacement target write");
+        assert_eq!(
+            received
+                .recv_timeout(Duration::from_secs(3))
+                .ok()
+                .as_deref(),
+            Some(SETTINGS_FILE)
+        );
+
+        let drop_started = Instant::now();
+        drop(harness);
+        assert!(drop_started.elapsed() < Duration::from_secs(1));
+        while received.try_recv().is_ok() {}
+        std::fs::write(&new_file, "new-2").expect("write after teardown");
+        assert!(received.recv_timeout(Duration::from_millis(400)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_external_file_and_theme_root_keeps_recursive_coverage() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("temporary watcher tree");
+        let config = temp.path().join("config");
+        let shared = temp.path().join("shared");
+        std::fs::create_dir_all(&config).expect("config dir");
+        std::fs::create_dir_all(&shared).expect("shared target");
+        std::fs::write(shared.join(SETTINGS_FILE), "{}").expect("settings target");
+        symlink(shared.join(SETTINGS_FILE), config.join(SETTINGS_FILE)).expect("settings symlink");
+        symlink(&shared, config.join(THEMES_DIR)).expect("themes symlink");
+
+        let plan = super::config_watch_plan(&config);
+        assert_eq!(
+            plan.external_roots,
+            vec![(
+                std::fs::canonicalize(shared).expect("canonical shared root"),
+                RecursiveMode::Recursive,
+            )]
+        );
     }
 }

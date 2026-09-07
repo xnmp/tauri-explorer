@@ -315,7 +315,7 @@
     font-size: 13px;
     color: var(--text-primary);
     outline: none;
-    transition: all var(--transition-fast);
+    transition: border-color var(--transition-fast);
   }
 
   .search-input:focus {
@@ -335,7 +335,6 @@
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
     white-space: nowrap;
   }
 
@@ -353,7 +352,6 @@
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
     white-space: nowrap;
   }
 
@@ -442,7 +440,6 @@
     border: 1px solid var(--control-stroke);
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .shortcut-btn:hover {
@@ -489,7 +486,6 @@
     color: var(--text-tertiary);
     cursor: pointer;
     font-size: 14px;
-    transition: all var(--transition-fast);
   }
 
   .reset-btn:hover {
@@ -523,7 +519,6 @@
     font-size: 11px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .cancel-btn:hover {

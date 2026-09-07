@@ -10,6 +10,10 @@ use crate::files;
 /// Stores the working directory from which the app was launched.
 pub struct LaunchCwd(pub String);
 
+/// Monotonic clock starting at app run(), before builder and window creation.
+/// Excludes OS process loading and main() argument parsing.
+pub struct StartupClock(pub std::time::Instant);
+
 /// Reap a launcher child asynchronously so opening a native surface does not
 /// accumulate zombies on Unix.
 #[cfg(not(target_os = "linux"))]
@@ -288,8 +292,22 @@ pub fn is_launcher_artifact_cwd(cwd: &std::path::Path, exe_dir: Option<&std::pat
 /// (boot→first directory visible) halves of cold start can be read together
 /// from the log file — durable in release builds without devtools.
 #[tauri::command]
-pub async fn log_startup_timing(summary: String) {
+pub async fn log_startup_timing(
+    window: tauri::Window,
+    clock: tauri::State<'_, StartupClock>,
+    summary: String,
+) -> Result<(), AppError> {
     log::info!("{}", summary);
+    // Child/warm windows share this process clock; only the initial main
+    // window can interpret it as startup latency. IPC receipt adds a small
+    // scheduling delay but avoids adding unrelated Rust and JS time origins.
+    if window.label() == "main" {
+        log::info!(
+            "Startup(native-ready): app-run-to-ready={:.1}ms",
+            clock.0.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    Ok(())
 }
 
 /// Set the window theme (light/dark) to sync NSAppearance with the app theme.

@@ -17,197 +17,301 @@
 //! LIFECYCLE: a warm window keeps its `explorer-warm-` label for its whole
 //! life, including after activation — Tauri labels are immutable. So "is this
 //! window a real, user-facing window?" cannot be answered by label alone: the
-//! registry tracks claimed labels in `activated`. A claimed window counts as
-//! real from the moment of the claim (destroying it on last-real-window-closed
+//! registry tracks temporary claims separately from committed `activated` labels.
+//! A bounded claim counts as real while activation finishes (destroying it on last-real-window-closed
 //! was the bug that killed the user's freshly Ctrl+N'd window and exited the
 //! app).
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 
-/// Label prefix identifying warm-pool windows (see warm-window.ts).
 pub const WARM_LABEL_PREFIX: &str = "explorer-warm-";
-
 const TARGET_POOL_SIZE: usize = 1;
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(30);
+const CLAIM_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 struct PoolState {
-    /// Labels of parked warm windows that completed the ready handshake.
     ready: Vec<String>,
-    /// Labels claimed via `claim` — real user-facing windows despite the
-    /// warm label. Entries leave this set only when the window is destroyed.
-    activated: Vec<String>,
-    /// Reservation timestamps for spawns that haven't registered yet.
-    spawns_in_flight: Vec<Instant>,
+    activated: HashSet<String>,
+    // Labels are unique reservation identities, retained through native boot.
+    spawns_in_flight: HashMap<String, Instant>,
+    // A claim temporarily keeps the app alive, but must commit after reveal.
+    claimed: HashMap<String, Instant>,
+    retiring: HashSet<String>,
 }
 
 impl PoolState {
-    fn prune_stale_spawns(&mut self, now: Instant) {
-        self.spawns_in_flight
-            .retain(|started| now.duration_since(*started) < SPAWN_TIMEOUT);
-    }
-
-    fn try_reserve_spawn(&mut self, now: Instant) -> bool {
-        self.prune_stale_spawns(now);
-        if self.ready.len() + self.spawns_in_flight.len() >= TARGET_POOL_SIZE {
+    fn try_reserve_spawn(&mut self, label: String, now: Instant) -> bool {
+        if self.ready.len() + self.spawns_in_flight.len() >= TARGET_POOL_SIZE || self.owns(&label) {
             return false;
         }
-        self.spawns_in_flight.push(now);
+        self.spawns_in_flight.insert(label, now);
         true
     }
 
-    fn release_spawn(&mut self) {
-        self.spawns_in_flight.pop();
-    }
-
-    fn register(&mut self, label: String) {
-        self.release_spawn();
-        if !self.ready.contains(&label) {
-            self.ready.push(label);
+    fn expire_spawn(&mut self, label: &str, started: Instant) -> bool {
+        if self.spawns_in_flight.get(label) != Some(&started) {
+            return false;
         }
+        self.spawns_in_flight.remove(label);
+        self.retiring.insert(label.to_owned());
+        true
     }
 
-    /// Pop ready labels until one passes `is_alive` (a pooled window may have
-    /// been destroyed since it registered); dead labels are discarded. The
-    /// claimed label is marked activated: it is a real window from this
-    /// moment, even though it is not visible for another few milliseconds.
-    fn claim(&mut self, is_alive: impl Fn(&str) -> bool) -> Option<String> {
+    fn release_spawn(&mut self, label: &str) {
+        self.spawns_in_flight.remove(label);
+    }
+
+    fn owns(&self, label: &str) -> bool {
+        self.ready.iter().any(|entry| entry == label)
+            || self.activated.contains(label)
+            || self.claimed.contains_key(label)
+            || self.spawns_in_flight.contains_key(label)
+            || self.retiring.contains(label)
+    }
+
+    fn register(&mut self, label: String, now: Instant) -> bool {
+        let Some(started) = self.spawns_in_flight.remove(&label) else {
+            return false;
+        };
+        if now.duration_since(started) >= SPAWN_TIMEOUT || self.owns(&label) {
+            return false;
+        }
+        self.ready.push(label);
+        true
+    }
+
+    fn claim(&mut self, now: Instant, is_alive: impl Fn(&str) -> bool) -> Option<String> {
         while let Some(label) = self.ready.pop() {
             if is_alive(&label) {
-                self.activated.push(label.clone());
+                self.claimed.insert(label.clone(), now);
                 return Some(label);
             }
         }
         None
     }
 
-    /// Whether `label` is a real, user-facing window: anything not warm, or a
-    /// warm window that has been claimed.
-    fn is_real(&self, label: &str) -> bool {
-        !label.starts_with(WARM_LABEL_PREFIX) || self.activated.iter().any(|l| l == label)
+    fn activate(&mut self, label: &str, now: Instant) -> bool {
+        let Some(started) = self.claimed.get(label) else {
+            return false;
+        };
+        if now.duration_since(*started) >= CLAIM_TIMEOUT {
+            // Reject commitment without revoking the watchdog's authority to
+            // retire the native window, even if this caller never resumes.
+            return false;
+        }
+        self.claimed.remove(label);
+        self.activated.insert(label.to_owned());
+        true
     }
 
-    /// Drop `label` from all pool sets. Returns whether it counted as a real
-    /// window at the time it was destroyed.
+    fn expire_claim(&mut self, label: &str, started: Instant) -> bool {
+        if self.claimed.get(label) != Some(&started) {
+            return false;
+        }
+        self.claimed.remove(label);
+        self.retiring.insert(label.to_owned());
+        true
+    }
+
+    fn is_real(&self, label: &str) -> bool {
+        !label.starts_with(WARM_LABEL_PREFIX)
+            || self.activated.contains(label)
+            || self.claimed.contains_key(label)
+    }
+
     fn forget(&mut self, label: &str) -> bool {
         let was_real = self.is_real(label);
-        self.ready.retain(|l| l != label);
-        self.activated.retain(|l| l != label);
+        self.ready.retain(|entry| entry != label);
+        self.activated.remove(label);
+        self.claimed.remove(label);
+        self.spawns_in_flight.remove(label);
+        self.retiring.remove(label);
         was_real
     }
 
-    /// Take every parked (ready) label out of the pool, e.g. to shut it down.
-    fn drain_ready(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.ready)
+    fn drain_parked(&mut self) -> Vec<String> {
+        let mut labels = std::mem::take(&mut self.ready);
+        labels.extend(self.spawns_in_flight.drain().map(|(label, _)| label));
+        labels.extend(self.retiring.drain());
+        labels
     }
 }
 
-static POOL: Mutex<PoolState> = Mutex::new(PoolState {
-    ready: Vec::new(),
-    activated: Vec::new(),
-    spawns_in_flight: Vec::new(),
-});
+static POOL: std::sync::LazyLock<Mutex<PoolState>> = std::sync::LazyLock::new(Mutex::default);
 
-/// Reserve a spawn slot. Returns false when the pool (ready + in-flight) is
-/// already at target size — the caller must not create a warm window then.
+/// Reserve exactly this future native label. Late callbacks cannot release a successor.
 #[tauri::command]
-pub async fn warm_pool_begin_spawn() -> bool {
-    POOL.lock()
+pub async fn warm_pool_begin_spawn(app: AppHandle, label: String) -> bool {
+    if !label.starts_with(WARM_LABEL_PREFIX) || label.len() > 128 {
+        return false;
+    }
+    let started = Instant::now();
+    if !POOL
+        .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .try_reserve_spawn(Instant::now())
+        .try_reserve_spawn(label.clone(), started)
+    {
+        return false;
+    }
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(SPAWN_TIMEOUT).await;
+        let expired = POOL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .expire_spawn(&label, started);
+        if expired {
+            retire_window(&app, &label);
+        }
+    });
+    true
 }
 
-/// Release a reservation after a failed spawn (webview creation error).
 #[tauri::command]
-pub async fn warm_pool_cancel_spawn() {
-    POOL.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .release_spawn();
+pub async fn warm_pool_cancel_spawn(app: AppHandle, label: String) {
+    if !label.starts_with(WARM_LABEL_PREFIX) {
+        return;
+    }
+    let pending = {
+        let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
+        let pending = pool.spawns_in_flight.contains_key(&label);
+        pool.release_spawn(&label);
+        pending
+    };
+    if pending {
+        retire_window(&app, &label);
+    }
 }
 
-/// Called by the warm window itself once its activate-listener is registered.
-///
-/// If no real window is left by the time the handshake completes (the spawner
-/// closed while this window was booting), the warm window is destroyed instead
-/// of registered: an unclaimable hidden window would keep the process alive
-/// forever with nothing on screen.
+/// Only the window that owns an admitted reservation can become ready.
 #[tauri::command]
-pub async fn warm_pool_register(app: AppHandle, label: String) {
+pub async fn warm_pool_register(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    label: String,
+) -> bool {
+    if window.label() != label || !label.starts_with(WARM_LABEL_PREFIX) {
+        return false;
+    }
     {
         let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
-        let any_real_left = app.webview_windows().keys().any(|l| pool.is_real(l));
-        if any_real_left {
-            pool.register(label);
-            return;
+        let any_real_left = app
+            .webview_windows()
+            .keys()
+            .any(|entry| pool.is_real(entry));
+        if any_real_left && pool.register(label.clone(), Instant::now()) {
+            return true;
         }
-        pool.release_spawn();
+        // A duplicate handshake is idempotent; never re-pool or destroy a live owner.
+        if pool.ready.contains(&label)
+            || pool.activated.contains(&label)
+            || pool.claimed.contains_key(&label)
+        {
+            return true;
+        }
+        pool.release_spawn(&label);
     }
-    log::info!("Destroying warm window {label} (no real window left to serve)");
-    if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.destroy();
-    }
+    retire_window(&app, &label);
+    false
 }
 
-/// Atomically claim a ready warm window, if any. The claimer owns the label
-/// exclusively; no other window can receive it. The claimed window counts as
-/// a real window from here on.
+/// Claims expire if their requesting webview dies before dispatch/reveal.
 #[tauri::command]
 pub async fn warm_pool_claim(app: AppHandle) -> Option<String> {
-    POOL.lock()
+    let started = Instant::now();
+    let label = POOL
+        .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .claim(|label| app.get_webview_window(label).is_some())
+        .claim(started, |label| app.get_webview_window(label).is_some())?;
+    let expiring = label.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(CLAIM_TIMEOUT).await;
+        let expired = POOL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .expire_claim(&expiring, started);
+        if expired {
+            retire_window(&app, &expiring);
+        }
+    });
+    Some(label)
 }
 
-/// Destroy a claimed warm window whose activation failed (the caller opens a
-/// fresh window instead). Without this the claimed-but-never-shown window
-/// would linger hidden while counting as real — keeping the app alive forever.
+/// The receiver commits only after successfully revealing and navigating.
+#[tauri::command]
+pub async fn warm_pool_activate(window: tauri::WebviewWindow, label: String) -> bool {
+    if window.label() != label {
+        return false;
+    }
+    POOL.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .activate(&label, Instant::now())
+}
+
 #[tauri::command]
 pub async fn warm_pool_discard(app: AppHandle, label: String) {
-    POOL.lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .forget(&label);
-    if let Some(window) = app.get_webview_window(&label) {
-        let _ = window.destroy();
+    if !label.starts_with(WARM_LABEL_PREFIX) {
+        return;
     }
+    retire_window(&app, &label);
 }
 
-/// Close all parked warm windows and empty the pool (settings.warmWindow was
-/// turned off). Activated windows are untouched — they are the user's.
 #[tauri::command]
 pub async fn warm_pool_shutdown(app: AppHandle) {
-    let parked = POOL.lock().unwrap_or_else(|e| e.into_inner()).drain_ready();
+    let parked = POOL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain_parked();
     for label in parked {
-        log::info!("Closing parked warm window {label} (pool disabled)");
-        if let Some(window) = app.get_webview_window(&label) {
-            let _ = window.destroy();
-        }
+        retire_window(&app, &label);
     }
 }
 
-/// Run-loop hook for every window Destroyed event. Drops the label from the
-/// pool, and — when the destroyed window was the last REAL one (non-warm or
-/// activated) — closes the remaining parked warm windows so the normal
-/// all-windows-closed exit fires instead of a hidden window pinning the app.
 pub fn on_window_destroyed(app: &AppHandle, destroyed_label: &str) {
-    let windows = app.webview_windows();
-    {
+    let parked = {
         let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
-        let was_real = pool.forget(destroyed_label);
-        if !was_real {
+        pool.forget(destroyed_label);
+        let windows = app.webview_windows();
+        if windows
+            .keys()
+            .any(|label| label != destroyed_label && pool.is_real(label))
+        {
             return;
         }
-        let any_real_left = windows.keys().any(|label| pool.is_real(label));
-        if any_real_left {
-            return;
-        }
-    } // release the lock: destroy() below re-enters this hook synchronously
+        // Revoke claim admission while locked, before destruction can yield.
+        let mut parked: HashSet<_> = pool.drain_parked().into_iter().collect();
+        // Native inventory also owns booting windows whose JS never registered,
+        // including construction that completed after reservation retirement.
+        parked.extend(
+            windows
+                .keys()
+                .filter(|label| label.as_str() != destroyed_label)
+                .cloned(),
+        );
+        parked
+    };
+    for label in parked {
+        retire_window(app, &label);
+    }
+}
 
-    for (label, window) in windows {
-        log::info!("Closing parked warm window {label} (last real window closed)");
-        let _ = window.destroy();
+fn retire_window(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(error) = window.destroy() {
+            // Destruction is verified by its native event, never inferred from
+            // an attempted IPC. Retain failed retirement for later cleanup.
+            POOL.lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retiring
+                .insert(label.to_owned());
+            log::error!("Could not retire warm window {label}: {error}");
+        }
+    } else {
+        on_window_destroyed(app, label);
     }
 }
 
@@ -219,53 +323,72 @@ mod tests {
         PoolState::default()
     }
 
+    fn ready(s: &mut PoolState, label: &str) {
+        let now = Instant::now();
+        assert!(s.try_reserve_spawn(label.into(), now));
+        assert!(s.register(label.into(), now));
+    }
+
     #[test]
     fn reserve_caps_at_target_size() {
         let mut s = state();
         let now = Instant::now();
-        assert!(s.try_reserve_spawn(now));
-        assert!(!s.try_reserve_spawn(now), "second reservation must fail");
+        assert!(s.try_reserve_spawn("explorer-warm-1".into(), now));
+        assert!(
+            !s.try_reserve_spawn("explorer-warm-1".into(), now),
+            "second reservation must fail"
+        );
     }
 
     #[test]
     fn ready_window_blocks_new_reservations() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
-        assert!(!s.try_reserve_spawn(Instant::now()));
+        ready(&mut s, "explorer-warm-1");
+        assert!(!s.try_reserve_spawn("explorer-warm-1".into(), Instant::now()));
     }
 
     #[test]
     fn register_converts_reservation_to_ready() {
         let mut s = state();
         let now = Instant::now();
-        assert!(s.try_reserve_spawn(now));
-        s.register("explorer-warm-1".into());
+        assert!(s.try_reserve_spawn("explorer-warm-1".into(), now));
+        assert!(s.register("explorer-warm-1".into(), now));
         assert_eq!(s.spawns_in_flight.len(), 0);
-        assert_eq!(s.claim(|_| true), Some("explorer-warm-1".into()));
+        assert_eq!(
+            s.claim(Instant::now(), |_| true),
+            Some("explorer-warm-1".into())
+        );
     }
 
     #[test]
     fn cancel_frees_the_slot() {
         let mut s = state();
         let now = Instant::now();
-        assert!(s.try_reserve_spawn(now));
-        s.release_spawn();
-        assert!(s.try_reserve_spawn(now));
+        assert!(s.try_reserve_spawn("explorer-warm-1".into(), now));
+        s.release_spawn("explorer-warm-1");
+        assert!(s.try_reserve_spawn("explorer-warm-1".into(), now));
     }
 
     #[test]
     fn claim_is_exclusive_and_empties_pool() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
-        assert_eq!(s.claim(|_| true), Some("explorer-warm-1".into()));
-        assert_eq!(s.claim(|_| true), None, "second claim must miss");
+        ready(&mut s, "explorer-warm-1");
+        assert_eq!(
+            s.claim(Instant::now(), |_| true),
+            Some("explorer-warm-1".into())
+        );
+        assert_eq!(
+            s.claim(Instant::now(), |_| true),
+            None,
+            "second claim must miss"
+        );
     }
 
     #[test]
     fn claim_skips_dead_windows() {
         let mut s = state();
-        s.register("explorer-warm-dead".into());
-        assert_eq!(s.claim(|_| false), None);
+        ready(&mut s, "explorer-warm-dead");
+        assert_eq!(s.claim(Instant::now(), |_| false), None);
         assert!(s.ready.is_empty(), "dead label must be discarded");
     }
 
@@ -275,9 +398,10 @@ mod tests {
         let past = Instant::now()
             .checked_sub(SPAWN_TIMEOUT + Duration::from_secs(1))
             .expect("clock underflow");
-        s.spawns_in_flight.push(past);
+        s.spawns_in_flight.insert("explorer-warm-old".into(), past);
+        assert!(s.expire_spawn("explorer-warm-old", past));
         assert!(
-            s.try_reserve_spawn(Instant::now()),
+            s.try_reserve_spawn("explorer-warm-1".into(), Instant::now()),
             "expired reservation must not block a new spawn"
         );
     }
@@ -285,9 +409,9 @@ mod tests {
     #[test]
     fn forget_drops_only_matching_label() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
+        ready(&mut s, "explorer-warm-1");
         s.forget("explorer-warm-1");
-        assert_eq!(s.claim(|_| true), None);
+        assert_eq!(s.claim(Instant::now(), |_| true), None);
     }
 
     // — activated-window lifecycle (the "Ctrl+N window destroyed when the
@@ -296,9 +420,9 @@ mod tests {
     #[test]
     fn claimed_window_counts_as_real() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
+        ready(&mut s, "explorer-warm-1");
         assert!(!s.is_real("explorer-warm-1"), "parked warm is not real");
-        s.claim(|_| true);
+        s.claim(Instant::now(), |_| true);
         assert!(s.is_real("explorer-warm-1"), "claimed warm IS real");
         assert!(s.is_real("explorer-123"), "non-warm labels are always real");
     }
@@ -306,15 +430,15 @@ mod tests {
     #[test]
     fn destroying_parked_warm_window_is_not_a_real_close() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
+        ready(&mut s, "explorer-warm-1");
         assert!(!s.forget("explorer-warm-1"));
     }
 
     #[test]
     fn destroying_activated_warm_window_is_a_real_close() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
-        s.claim(|_| true);
+        ready(&mut s, "explorer-warm-1");
+        s.claim(Instant::now(), |_| true);
         assert!(s.forget("explorer-warm-1"));
         assert!(
             !s.is_real("explorer-warm-1"),
@@ -325,8 +449,8 @@ mod tests {
     #[test]
     fn discarded_claim_loses_real_status() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
-        s.claim(|_| true);
+        ready(&mut s, "explorer-warm-1");
+        s.claim(Instant::now(), |_| true);
         s.forget("explorer-warm-1"); // discard path after failed activation
         assert!(!s.is_real("explorer-warm-1"));
     }
@@ -334,11 +458,90 @@ mod tests {
     #[test]
     fn drain_ready_leaves_activated_untouched() {
         let mut s = state();
-        s.register("explorer-warm-1".into());
-        s.claim(|_| true);
-        s.register("explorer-warm-2".into());
-        assert_eq!(s.drain_ready(), vec!["explorer-warm-2".to_string()]);
+        ready(&mut s, "explorer-warm-1");
+        s.claim(Instant::now(), |_| true);
+        ready(&mut s, "explorer-warm-2");
+        assert_eq!(s.drain_parked(), vec!["explorer-warm-2".to_string()]);
         assert!(s.is_real("explorer-warm-1"), "activated survives shutdown");
-        assert_eq!(s.claim(|_| true), None);
+        assert_eq!(s.claim(Instant::now(), |_| true), None);
+    }
+    #[test]
+    fn stale_cancel_and_registration_cannot_consume_new_reservation() {
+        let mut s = state();
+        let now = Instant::now();
+        assert!(s.try_reserve_spawn("explorer-warm-old".into(), now));
+        assert!(s.expire_spawn("explorer-warm-old", now));
+        assert!(s.try_reserve_spawn("explorer-warm-new".into(), now + SPAWN_TIMEOUT));
+        s.release_spawn("explorer-warm-old");
+        assert!(!s.register("explorer-warm-old".into(), now + SPAWN_TIMEOUT));
+        assert!(!s.try_reserve_spawn("explorer-warm-third".into(), now + SPAWN_TIMEOUT));
+        assert!(s.register("explorer-warm-new".into(), now + SPAWN_TIMEOUT));
+        assert_eq!(s.claim(now, |_| true).as_deref(), Some("explorer-warm-new"));
+    }
+
+    #[test]
+    fn shutdown_rejects_late_boot_but_allows_future_reservations() {
+        let mut s = state();
+        let now = Instant::now();
+        assert!(s.try_reserve_spawn("explorer-warm-old".into(), now));
+        assert_eq!(s.drain_parked(), vec!["explorer-warm-old"]);
+        assert!(!s.register("explorer-warm-old".into(), now));
+        assert!(s.claim(now, |_| true).is_none());
+        assert!(s.try_reserve_spawn("explorer-warm-new".into(), now));
+    }
+
+    #[test]
+    fn registration_cannot_repool_a_claimed_or_activated_window() {
+        let mut s = state();
+        let now = Instant::now();
+        ready(&mut s, "explorer-warm-one");
+        s.claim(Instant::now(), |_| true);
+        assert!(!s.register("explorer-warm-one".into(), Instant::now()));
+        assert!(s.activate("explorer-warm-one", now));
+        assert!(!s.register("explorer-warm-one".into(), Instant::now()));
+        assert!(s.claim(Instant::now(), |_| true).is_none());
+    }
+
+    #[test]
+    fn abandoned_claim_expires_but_committed_activation_survives() {
+        let mut s = state();
+        let now = Instant::now();
+        ready(&mut s, "explorer-warm-one");
+        s.claim(now, |_| true);
+        assert!(!s.expire_claim("explorer-warm-one", now + CLAIM_TIMEOUT));
+        assert!(s.expire_claim("explorer-warm-one", now));
+        assert!(!s.is_real("explorer-warm-one"));
+        assert!(!s.activate("explorer-warm-one", now));
+        ready(&mut s, "explorer-warm-two");
+        s.claim(now, |_| true);
+        assert!(s.activate("explorer-warm-two", now));
+        assert!(!s.expire_claim("explorer-warm-two", now));
+        assert!(s.is_real("explorer-warm-two"));
+    }
+    #[test]
+    fn expired_boot_retains_native_retirement_ownership() {
+        let mut pool = PoolState::default();
+        let now = Instant::now();
+        assert!(pool.try_reserve_spawn("explorer-warm-a".into(), now));
+        assert!(pool.expire_spawn("explorer-warm-a", now));
+        assert!(pool.try_reserve_spawn("explorer-warm-b".into(), now + SPAWN_TIMEOUT));
+        let retired = pool.drain_parked();
+        assert!(retired.contains(&"explorer-warm-a".to_owned()));
+    }
+    #[test]
+    fn late_activation_cannot_commit_before_a_delayed_expiry_callback() {
+        let mut s = state();
+        let now = Instant::now();
+        ready(&mut s, "explorer-warm-delayed");
+        s.claim(now, |_| true);
+        assert!(!s.activate("explorer-warm-delayed", now + CLAIM_TIMEOUT));
+        assert!(
+            s.expire_claim("explorer-warm-delayed", now),
+            "watchdog must still request native retirement"
+        );
+        assert!(!s.is_real("explorer-warm-delayed"));
+        assert!(s
+            .drain_parked()
+            .contains(&"explorer-warm-delayed".to_owned()));
     }
 }

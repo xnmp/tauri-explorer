@@ -38,7 +38,7 @@ function makeStubCtx() {
     registerDialog: () => {},
     openDialog: () => {},
     closeDialog: () => {},
-    jobs: { add: () => {}, complete: () => {}, fail: () => {} },
+    jobs: { accept: (_registration, start) => start() },
     toast: { show: (m) => void toasts.push(m), error: (m) => void toasts.push(m) },
     events: { listen: () => {} },
     storage: { get: async () => ({}), set: async () => {} },

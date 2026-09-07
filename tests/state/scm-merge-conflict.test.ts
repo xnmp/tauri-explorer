@@ -10,7 +10,7 @@
  * - continueRebase calls the rebase-continue backend and refreshes.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { GitStatusSummary, GitOpState } from "$lib/api/files";
+import type { GitStatusSummary, GitOpState } from "$lib/api/git";
 
 const gitRepoRootMock = vi.fn((_path: string) => Promise.resolve({ ok: true, data: "/repo" }));
 const gitSummaryMock = vi.fn(
@@ -27,7 +27,7 @@ const gitRebaseContinueMock = vi.fn((_root: string) => Promise.resolve({ ok: tru
 const gitCherryPickAbortMock = vi.fn((_root: string) => Promise.resolve({ ok: true }));
 const gitRevertAbortMock = vi.fn((_root: string) => Promise.resolve({ ok: true }));
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
   gitSummary: (root: string) => gitSummaryMock(root),
   gitStage: vi.fn(async () => ({ ok: true })),

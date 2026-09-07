@@ -111,11 +111,11 @@ describe("navigation error path", () => {
     loadImpl.current = staticLoad({ "/good": [entry("f", "/good")] });
     const explorer = createExplorerState();
 
-    await explorer.navigateTo("/good");
+    expect(await explorer.navigateTo("/good")).toBe(true);
     expect(explorer.currentPath).toBe("/good");
 
     // /missing is not in the map -> load returns ok:false.
-    await explorer.navigateTo("/missing");
+    expect(await explorer.navigateTo("/missing")).toBe(false);
     expect(explorer.error).toContain("no such dir");
     expect(explorer.loading).toBe(false);
     // A failed navigation must not move the pane off the last good directory.
@@ -202,17 +202,35 @@ describe("navGeneration race (documented in lessons_learnt)", () => {
     const pA = explorer.navigateTo("/A");
     const pB = explorer.navigateTo("/B");
 
-    await pB;
+    expect(await pB).toBe(true);
     expect(explorer.currentPath).toBe("/B");
     expect(explorer.displayEntries.map((e) => e.name)).toEqual(["b-only"]);
 
     // Now release the stale /A result — it must be discarded, not applied.
     resolveA!();
-    await pA;
+    expect(await pA).toBe(false);
 
     expect(explorer.currentPath).toBe("/B");
     expect(explorer.displayEntries.map((e) => e.name)).toEqual(["b-only"]);
     // Only B's navigation should be in history.
     expect(explorer.canGoBack).toBe(false);
+  });
+});
+
+describe("per-pane numeric preferences", () => {
+  it("uses whole bounded Miller layer counts and ignores non-finite input", async () => {
+    const explorer = createExplorerState();
+    try {
+      explorer.setMillerLayers(1.4);
+      expect(explorer.millerLayers).toBe(1);
+      explorer.setMillerLayers(Number.NaN);
+      expect(explorer.millerLayers).toBe(1);
+      explorer.setMillerLayers(100);
+      expect(explorer.millerLayers).toBe(3);
+      explorer.setMillerLayers(-1);
+      expect(explorer.millerLayers).toBe(0);
+    } finally {
+      await explorer.destroy();
+    }
   });
 });

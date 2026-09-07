@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { buildTree, collectPaths } from "$lib/domain/scm-tree";
-import type { GitFileEntry } from "$lib/api/files";
+import type { GitFileEntry } from "$lib/api/git";
 
 const entry = (path: string): GitFileEntry => ({
   path,

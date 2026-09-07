@@ -4,11 +4,7 @@
  * Extracted from explorer.svelte.ts.
  */
 
-import {
-  startStreamingDirectory,
-  cancelDirectoryListing,
-  type DirectoryEntriesEvent,
-} from "$lib/api/files";
+import { startStreamingDirectory, cancelDirectoryListing, type DirectoryEntriesEvent } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { FileEntry } from "$lib/domain/file";
 

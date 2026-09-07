@@ -242,7 +242,6 @@
     text-transform: uppercase;
     letter-spacing: var(--letter-spacing-wide);
     cursor: pointer;
-    transition: all var(--transition-fast);
     text-align: left;
     flex: 1;
     min-width: 0;

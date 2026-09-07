@@ -16,9 +16,8 @@
 
 <div class="pane-container" class:multi-pane={multiPane}>
   {#if activeTab}
-    <!-- Keyed by tab so switching tabs remounts the tree cleanly (pane ids
-         are unique per tab; explorer state lives in the manager). -->
-    {#key activeTab.id}
+    <!-- A restored tab may reuse its saved ID; its old DOM/gestures still retire. -->
+    {#key windowTabsManager.activeTabInstance}
       <div class="pane-tree">
         <PaneLayoutView node={activeTab.layout} />
       </div>

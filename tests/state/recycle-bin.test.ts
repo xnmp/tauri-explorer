@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { openRecycleBinWithFeedback } from "$lib/domain/recycle-bin";
+import { openRecycleBinWithFeedback } from "$lib/state/recycle-bin";
 
 describe("openRecycleBinWithFeedback", () => {
   it("reports a native launcher failure to the user", async () => {

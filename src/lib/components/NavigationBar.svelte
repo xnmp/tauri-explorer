@@ -20,9 +20,10 @@
 
   interface Props {
     explorer: ExplorerInstance;
+    paneId: string;
   }
 
-  let { explorer }: Props = $props();
+  let { explorer, paneId }: Props = $props();
 
   // Home directory detection for breadcrumb collapsing. Read from the shared
   // app-wide cache so a freshly mounted bar (new tab / tab switch) collapses
@@ -147,6 +148,7 @@
   }
 
   function requestAddressBarFocus() {
+    if (windowTabsManager.activePaneId !== paneId) return;
     addressBarFocusRequested = true;
   }
 
@@ -556,7 +558,6 @@
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
-    transition: background var(--transition-fast);
   }
 
   .nav-btn:hover:not(:disabled) {
@@ -635,7 +636,6 @@
     font-weight: var(--font-weight-medium);
     color: var(--breadcrumb-text, var(--text-primary));
     cursor: pointer;
-    transition: background var(--transition-fast);
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -719,7 +719,6 @@
     border: none;
     border-radius: 3px;
     cursor: pointer;
-    transition: background var(--transition-fast);
   }
 
   .caret-btn:hover {

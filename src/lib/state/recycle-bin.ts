@@ -5,7 +5,7 @@ type ReportError = (message: string) => void;
 
 /**
  * Opens the native recycle-bin surface from a UI event. The feedback callback
- * keeps this policy importable and testable outside the sidebar component.
+ * keeps this orchestration importable and testable outside the sidebar.
  */
 export async function openRecycleBinWithFeedback(
   openRecycleBin: OpenRecycleBin,

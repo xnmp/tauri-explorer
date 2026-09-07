@@ -7,7 +7,7 @@
  */
 
 import { moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
-import type { ApiResult } from "$lib/api/files";
+import type { ApiResult } from "$lib/api/common";
 import { conflictResolver } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { toastStore } from "./toast.svelte";

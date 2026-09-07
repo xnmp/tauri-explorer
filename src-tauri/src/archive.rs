@@ -88,7 +88,9 @@ fn compress_to_zip_sync(
 
     let zip_path = find_unique_path(parent_dir, &base_name, "zip");
 
-    let cancelled = job_id.map(|id| COMPRESS_TASKS.start_with_id(id));
+    let cancelled = job_id
+        .map(|id| COMPRESS_TASKS.start_with_id(id))
+        .transpose()?;
     let total = estimate_total_bytes(&paths);
     let mut tracker = ZipTracker::new(
         app,
@@ -219,21 +221,28 @@ fn extract_archive_sync(
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "extracted".to_string());
-        let dest = find_unique_path(parent_dir, &folder_name, "");
-        fs::create_dir_all(&dest)?;
-        dest
+        find_unique_path(parent_dir, &folder_name, "")
     };
 
-    let cancelled = job_id.map(|id| EXTRACT_TASKS.start_with_id(id));
-    let result = extract_entries(
-        app,
-        &archive,
-        &dest,
-        extract_here,
-        job_id.unwrap_or(0),
-        cancelled.as_deref(),
-        MAX_EXTRACT_TOTAL_BYTES,
-    );
+    // Acquire cancellation ownership before creating the destination so a
+    // duplicate client id cannot begin a second mutation.
+    let cancelled = job_id
+        .map(|id| EXTRACT_TASKS.start_with_id(id))
+        .transpose()?;
+    let result = (|| {
+        if !extract_here {
+            fs::create_dir_all(&dest)?;
+        }
+        extract_entries(
+            app,
+            &archive,
+            &dest,
+            extract_here,
+            job_id.unwrap_or(0),
+            cancelled.as_deref(),
+            MAX_EXTRACT_TOTAL_BYTES,
+        )
+    })();
     if let Some(id) = job_id {
         EXTRACT_TASKS.cleanup(id);
     }
@@ -903,13 +912,13 @@ mod tests {
         fs::write(src_dir.join("big.bin"), vec![0u8; 3 * 1024 * 1024]).unwrap();
 
         let job_id = 999_001;
-        // Cancel before starting: start_with_id replaces the flag, so set it
-        // through the same registry path the command uses.
-        let flag = COMPRESS_TASKS.start_with_id(job_id);
+        // Register and cancel before driving the worker directly, through the
+        // same registry path the command uses.
+        let flag = COMPRESS_TASKS.start_with_id(job_id).unwrap();
         flag.store(true, Ordering::Relaxed);
 
-        // Bypass compress_to_zip_sync's own registration (it would reset the
-        // flag): drive write_zip with a cancelled tracker directly.
+        // Bypass compress_to_zip_sync's own duplicate registration and drive
+        // write_zip with the cancelled tracker directly.
         let zip_path = dir.path().join("source.zip");
         let mut tracker = ZipTracker::new(
             None,
@@ -939,11 +948,11 @@ mod tests {
             compress_to_zip_sync(None, vec![src_dir.to_string_lossy().to_string()], None).unwrap();
 
         let job_id = 999_002;
-        let flag = EXTRACT_TASKS.start_with_id(job_id);
+        let flag = EXTRACT_TASKS.start_with_id(job_id).unwrap();
         flag.store(true, Ordering::Relaxed);
 
-        // extract_archive_sync would reset the flag via its own start_with_id;
-        // drive extract_entries directly with the pre-cancelled flag. With
+        // Bypass extract_archive_sync's own duplicate registration and drive
+        // extract_entries directly with the pre-cancelled flag. With
         // extract_here=true, extract_entries owns best-effort cleanup.
         let dest = dir.path().join("out");
         fs::create_dir_all(&dest).unwrap();

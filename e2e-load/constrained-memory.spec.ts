@@ -1,5 +1,5 @@
 /**
- * Survival under a hard 256MB old-space cap (see the constrained-memory project
+ * Survival under a 256 MiB V8 old-space cap (see the constrained-memory project
  * in playwright.load.config.ts). Opens 8 graph tabs at 1000 commits each, then
  * browses directories — the app must NOT crash the renderer, tabs must stay
  * switchable, and graphs must still render. This is a survival test, not a
@@ -18,7 +18,7 @@ import {
 
 const REPO_COUNT = 8;
 
-test("8 heavy graph tabs + directory browsing survive a 256MB cap", async ({ page }) => {
+test("8 heavy graph tabs + directory browsing survive a 256 MiB V8 old-space cap", async ({ page }) => {
   let crashed = false;
   page.on("crash", () => {
     crashed = true;

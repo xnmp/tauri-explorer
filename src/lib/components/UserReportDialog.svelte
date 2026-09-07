@@ -5,7 +5,7 @@
     submitUserReport,
   } from "$lib/api/user-report";
   import { openExternalUrl } from "$lib/api/crash";
-  import { clipboardHasImage } from "$lib/api/files";
+  import { clipboardHasImage } from "$lib/api/clipboard-image";
   import {
     userReportAttachmentBytes,
     userReportAttachmentFailureMessage,
@@ -442,7 +442,7 @@
     font-size: 12px;
   }
   .attachment-hint { color: var(--text-secondary); }
-  .attachment-error { color: var(--danger, #d13438); }
+  .attachment-error { color: var(--system-critical); }
   .attachment-list {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

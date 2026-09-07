@@ -16,7 +16,8 @@ import {
   writeConfigQueued,
 } from "./persisted";
 import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
-import { readConfigFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
+import { NUMERIC_SETTINGS, clampNumericSetting, isValidNumericSetting, type NumericSettingRule } from "$lib/domain/settings-numbers";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
 import {
@@ -135,8 +136,8 @@ export interface Settings {
  *  right/down = always split that way. */
 export type PaneLayoutMode = "dwindle" | "right" | "down";
 
-const MIN_ZOOM = 50;
-const MAX_ZOOM = 200;
+const MIN_ZOOM = NUMERIC_SETTINGS.zoomLevel.min;
+const MAX_ZOOM = NUMERIC_SETTINGS.zoomLevel.max;
 const ZOOM_STEP = 10;
 
 const DEFAULT_SETTINGS: Settings = {
@@ -206,19 +207,98 @@ const DEFAULT_SETTINGS: Settings = {
 
 const STORAGE_KEY = "explorer-settings";
 const CONFIG_FILENAME = "settings.json";
+const MAX_PERSISTED_SETTINGS_BYTES = 1024 * 1024;
 
-function loadSettings(): Settings {
-  const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
-  return { ...DEFAULT_SETTINGS, ...saved };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function saveSettings(settings: Settings): void {
-  savePersisted(STORAGE_KEY, settings);
-  writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+function persistedExtras(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) return {};
+  const known = new Set<string>(Object.keys(DEFAULT_SETTINGS));
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !known.has(key)));
+}
+
+function persistedSettings(settings: Settings, extras: Record<string, unknown>): Record<string, unknown> {
+  return { ...extras, ...settings };
+}
+
+const SETTING_ENUMS: Partial<Record<keyof Settings, readonly string[]>> = {
+  iconTheme: ["default", "material", "minimal"],
+  thumbnailSize: ["small", "medium", "large", "xlarge"],
+  viewMode: ["details", "list", "tiles"],
+  previewPanePosition: ["right", "bottom", "top", "auto"],
+  windowsBackdrop: ["off", "mica", "acrylic"],
+  defaultPaneLayout: ["dwindle", "right", "down"],
+};
+
+// Exhaustiveness is checked against Settings: a new numeric preference must
+// declare its consumer contract in the domain before it can enter live state.
+type NumericSettingsKey = {
+  [K in keyof Settings]: Settings[K] extends number ? K : never;
+}[keyof Settings];
+const SETTING_NUMBER_RULES: Record<NumericSettingsKey, NumericSettingRule> = NUMERIC_SETTINGS;
+
+function boundedPersistedInput(value: unknown): unknown {
+  try {
+    return JSON.stringify(value).length <= MAX_PERSISTED_SETTINGS_BYTES ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Keep only values satisfying the existing Settings contract. */
+export function normalizeSettingsInput(value: unknown): Partial<Settings> {
+  if (!isRecord(value)) return {};
+  const normalized: Partial<Settings> = {};
+  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
+    const candidate = value[key];
+    const fallback = DEFAULT_SETTINGS[key];
+    if (candidate === undefined) continue;
+    if (key === "terminalShortcuts" || key === "pluginsEnabled") {
+      if (!isRecord(candidate)) continue;
+      const expected = key === "terminalShortcuts" ? "string" : "boolean";
+      (normalized as Record<string, unknown>)[key] = Object.fromEntries(
+        Object.entries(candidate).filter(([, entry]) => typeof entry === expected),
+      );
+      continue;
+    }
+    if (key === "navBarButtons" || key === "columnVisibility") {
+      if (!isRecord(candidate) || !isRecord(fallback)) continue;
+      (normalized as Record<string, unknown>)[key] = {
+        ...fallback,
+        ...Object.fromEntries(
+          Object.keys(fallback)
+            .filter((nestedKey) => typeof candidate[nestedKey] === typeof fallback[nestedKey])
+            .map((nestedKey) => [nestedKey, candidate[nestedKey]]),
+        ),
+      };
+      continue;
+    }
+    if (typeof fallback === "number") {
+      if (isValidNumericSetting(SETTING_NUMBER_RULES[key as NumericSettingsKey], candidate)) {
+        (normalized as Record<string, unknown>)[key] = candidate;
+      }
+      continue;
+    }
+    if (typeof candidate !== typeof fallback) continue;
+    const allowed = SETTING_ENUMS[key];
+    if (allowed && !allowed.includes(candidate as string)) continue;
+    (normalized as Record<string, unknown>)[key] = candidate;
+  }
+  return normalized;
 }
 
 function createSettingsStore() {
-  let settings = $state<Settings>(loadSettings());
+  const initialPersisted = boundedPersistedInput(loadPersisted<unknown>(STORAGE_KEY, {}));
+  let settings = $state<Settings>({ ...DEFAULT_SETTINGS, ...normalizeSettingsInput(initialPersisted) });
+  let extras: Record<string, unknown> = persistedExtras(initialPersisted);
+
+  function saveSettings(next: Settings): void {
+    const persisted = persistedSettings(next, extras);
+    savePersisted(STORAGE_KEY, persisted);
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(persisted, null, 2));
+  }
 
   /**
    * Load settings from config file, migrating from localStorage if needed.
@@ -236,26 +316,34 @@ function createSettingsStore() {
    */
   function parseSettingsBlob(
     raw: string,
-  ): { settings: Settings; migrationChanged: boolean } | null {
+  ): { settings: Settings; extras: Record<string, unknown>; migrationChanged: boolean } | null {
     try {
-      const loaded = JSON.parse(raw) as Partial<Settings>;
-      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) return null;
+      if (raw.length > MAX_PERSISTED_SETTINGS_BYTES) return null;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!isRecord(parsed)) return null;
+      const loaded = normalizeSettingsInput(parsed);
       const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS);
-      return { settings: migrated, migrationChanged: changed };
+      return { settings: migrated, extras: persistedExtras(parsed), migrationChanged: changed };
     } catch {
       return null;
     }
   }
 
   /** Adopt a parsed blob as the live settings and refresh the localStorage cache. */
-  function adoptSettings(next: Settings, migrationChanged: boolean): void {
+  function adoptSettings(
+    next: Settings,
+    nextExtras: Record<string, unknown>,
+    migrationChanged: boolean,
+  ): void {
     settings = next;
-    savePersisted(STORAGE_KEY, settings);
+    extras = nextExtras;
+    const persisted = persistedSettings(settings, extras);
+    savePersisted(STORAGE_KEY, persisted);
     // Write the migrated blob (and its version stamp) straight back, so
     // the migration applies once rather than on every launch — that is
     // what lets a user switch the setting off again afterwards (#506).
     if (migrationChanged) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(persisted, null, 2));
     }
   }
 
@@ -263,7 +351,7 @@ function createSettingsStore() {
     const result = await readConfigFile(CONFIG_FILENAME);
     const loaded = result.ok && result.data ? parseSettingsBlob(result.data) : null;
     if (loaded) {
-      adoptSettings(loaded.settings, loaded.migrationChanged);
+      adoptSettings(loaded.settings, loaded.extras, loaded.migrationChanged);
       return;
     }
 
@@ -279,12 +367,14 @@ function createSettingsStore() {
     // stamp is NOT a legacy blob, so its own stamp is promoted instead —
     // otherwise losing settings.json would revive a decoration the user
     // turned off after the migration had already run (#506).
-    const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
+    const cachedBlob = boundedPersistedInput(loadPersisted<unknown>(STORAGE_KEY, {}));
+    const saved = normalizeSettingsInput(cachedBlob);
     if (Object.keys(saved).length > 0) {
+      extras = persistedExtras(cachedBlob);
       const cached = (saved as Record<string, unknown>)[SETTINGS_VERSION_KEY];
       const stamp = typeof cached === "number" && Number.isFinite(cached) ? cached : 0;
       settings = { ...settings, [SETTINGS_VERSION_KEY]: stamp };
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(persistedSettings(settings, extras), null, 2));
     }
   }
 
@@ -309,19 +399,24 @@ function createSettingsStore() {
     const parsed = parseSettingsBlob(raw);
     const decision = decideConfigReload({
       raw,
-      normalized: parsed ? JSON.stringify(parsed.settings) : null,
-      currentNormalized: JSON.stringify(settings),
+      normalized: parsed ? JSON.stringify(persistedSettings(parsed.settings, parsed.extras)) : null,
+      currentNormalized: JSON.stringify(persistedSettings(settings, extras)),
       lastWritten: lastWrittenConfig(CONFIG_FILENAME),
       selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead),
     });
     if (!decision.apply || !parsed) return decision.reason;
-    adoptSettings(parsed.settings, parsed.migrationChanged);
+    adoptSettings(parsed.settings, parsed.extras, parsed.migrationChanged);
     return decision.reason;
   }
 
   function update(partial: Partial<Settings>): void {
-    settings = { ...settings, ...partial };
+    settings = { ...settings, ...normalizeSettingsInput(partial) };
     saveSettings(settings);
+  }
+
+  function updateNumber(key: NumericSettingsKey, value: number): void {
+    const clamped = clampNumericSetting(key, value);
+    if (clamped !== undefined) update({ [key]: clamped });
   }
 
   function toggleSidebar(): void {
@@ -478,7 +573,7 @@ function createSettingsStore() {
       return settings.recentItemsCount;
     },
     setRecentItemsCount(count: number): void {
-      update({ recentItemsCount: Math.max(0, Math.min(20, count)) });
+      updateNumber("recentItemsCount", count);
     },
     get showRecycleBin() {
       return settings.showRecycleBin;
@@ -490,7 +585,8 @@ function createSettingsStore() {
       return settings.millerLayers;
     },
     setMillerLayers(n: number): void {
-      const clamped = Math.max(0, Math.min(3, n));
+      const clamped = clampNumericSetting("millerLayers", n);
+      if (clamped === undefined) return;
       const updates: Partial<Settings> = { millerLayers: clamped };
       if (clamped > 0) updates.millerLayersPreferred = clamped;
       update(updates);
@@ -588,7 +684,7 @@ function createSettingsStore() {
       update({ showPreviewInfo: !settings.showPreviewInfo });
     },
     setPreviewFontSize(px: number): void {
-      update({ previewFontSize: Math.max(8, Math.min(28, Math.round(px))) });
+      updateNumber("previewFontSize", Math.round(px));
     },
     get autoEnterSingleSubdir() {
       return settings.autoEnterSingleSubdir;
@@ -634,10 +730,10 @@ function createSettingsStore() {
       update({ theme: themeId });
     },
     setPreviewPaneWidth(px: number): void {
-      update({ previewPaneWidth: Math.max(0, Math.min(600, px)) });
+      updateNumber("previewPaneWidth", px);
     },
     setPreviewPaneHeight(px: number): void {
-      update({ previewPaneHeight: Math.max(0, Math.min(600, px)) });
+      updateNumber("previewPaneHeight", px);
     },
     setPreviewPanePosition(position: string): void {
       update({ previewPanePosition: normalizePreviewPanePositionMode(position) });
@@ -646,7 +742,7 @@ function createSettingsStore() {
       update({ previewPanePosition: cyclePreviewPanePositionMode(settings.previewPanePosition) });
     },
     setTerminalPanelHeight(px: number): void {
-      update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });
+      updateNumber("terminalPanelHeight", Math.round(px));
     },
     /** Bind a terminal line-editing action (#375, #404). An empty string is
      *  STORED — it disables the action, masking any platform default; `null`
@@ -661,10 +757,10 @@ function createSettingsStore() {
       update({ viewMode: mode });
     },
     setListViewColumns(n: number): void {
-      update({ listViewColumns: Math.max(0, Math.min(3, n)) });
+      updateNumber("listViewColumns", n);
     },
     setListColumnMaxWidth(px: number): void {
-      update({ listColumnMaxWidth: Math.max(100, Math.min(600, px)) });
+      updateNumber("listColumnMaxWidth", px);
     },
     toggleColumn(column: keyof ColumnVisibility): void {
       update({

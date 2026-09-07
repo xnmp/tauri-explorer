@@ -19,6 +19,20 @@ import {
   type PaneNode,
 } from "$lib/domain/pane-layout";
 
+it("ratio updates preserve unaffected branches and ignore no-op or malformed moves", () => {
+  const left = splitLeaf(leaf("a"), "a", "down", "b", "left");
+  const tree = splitNode(left, "left", "right", "c", "root");
+  if (tree.type !== "split") throw new Error("fixture must be a split");
+  const updated = updateRatio(tree, "left", 0.7);
+  expect(updated.type === "split" && updated.second).toBe(tree.second);
+  expect(tree.first).toEqual(left);
+  expect(updateRatio(updated, "left", 0.7)).toBe(updated);
+  expect(updateRatio(updated, "missing", 0.3)).toBe(updated);
+  for (const ratio of [NaN, Infinity, -Infinity]) {
+    expect(updateRatio(updated, "left", ratio)).toBe(updated);
+  }
+});
+
 describe("splitLeaf", () => {
   it("splits a leaf right into a row with the new leaf second", () => {
     const tree = splitLeaf(leaf("a"), "a", "right", "b", "s1");

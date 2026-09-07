@@ -5,8 +5,11 @@
 <script lang="ts">
   import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
+  import { isTauri } from "$lib/api/common";
   import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
   import { E2E_HOOKS_ENABLED, E2E_WARM_WINDOW_PRIMING_DISABLED } from "$lib/domain/e2e-hooks";
+  import { isViewMode } from "$lib/domain/file";
+  import { isWindowPath, normalizeLaunchData } from "$lib/domain/window-input";
   import { themeStore } from "$lib/state/theme.svelte";
   import { startConfigWatch } from "$lib/state/config-watch";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -15,7 +18,8 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { resolveLaunchHomePath, startWindowTitleSync } from "$lib/state/window-title.svelte";
-  import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
+  import { markStartup, reportStartupReady } from "$lib/state/startup-timing";
+  import { startWindowStartup } from "$lib/state/window-startup";
   import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
@@ -401,19 +405,32 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     };
   })();
 
-  // Cold-start timing: fire once when the first directory listing is visible
-  // (active explorer has entries and is no longer loading). Reports a summary
-  // to the Rust log so it sits next to the backend `Startup:` line. Idempotent
-  // via reportFirstPaint's internal guard; the effect just stops reading once
-  // it has fired. See src/lib/state/startup-timing.ts.
+  // Readiness requires loaded settings, registered commands, and a completed
+  // listing (including empty directories). Two frame callbacks give Svelte's
+  // committed DOM a paint opportunity before reporting; this is a readiness
+  // signal, not proof of pixels presented by the OS compositor.
   let firstPaintReported = false;
+  let commandsReady = $state(false);
+  let settingsReady = $state(false);
+  let listingReadyReported = false;
   $effect(() => {
-    if (firstPaintReported) return;
+    if (listingReadyReported) return;
     const explorer = windowTabsManager.getActiveExplorer();
-    if (explorer && !explorer.state.loading && explorer.displayEntries.length > 0) {
-      firstPaintReported = true;
-      reportFirstPaint();
-    }
+    if (!explorer?.currentPath || explorer.state.loading || explorer.state.error) return;
+    listingReadyReported = true;
+    markStartup("list-ready");
+  });
+  $effect(() => {
+    if (firstPaintReported || !commandsReady || !settingsReady) return;
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (!explorer?.currentPath || explorer.state.loading || explorer.state.error) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        firstPaintReported = true;
+        reportStartupReady();
+      });
+    });
+    return () => cancelAnimationFrame(frame);
   });
 
   onMount(() => {
@@ -422,30 +439,41 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // Initialize theme from saved preference
     themeStore.initTheme();
 
+    const startup = startWindowStartup({
+      loadSettings: () => settingsStore.init(),
+      synchronizeTheme: () => themeStore.syncFromSettings(),
+      publishSettingsReady: () => {
+        markStartup("settings-ready");
+        settingsReady = true;
+      },
+      initializePlugins: () => pickerInfo ? Promise.resolve() : pluginRegistry.initPlugins(),
+      disposePlugins: () => pickerInfo ? Promise.resolve() : pluginRegistry.dispose(),
+    });
+    void startup.ready.catch((error) => console.error("Window startup failed:", error));
+
     // Picker windows skip the full app init (tabs, watchers, commands).
     if (pickerInfo) {
-      settingsStore.init().then(() => themeStore.syncFromSettings());
-      return;
+      return () => { void startup.dispose(); };
     }
+
+    const stopNativeClose = isTauri() ? windowTabsManager.observeNativeClose() : () => {};
 
     // EXPERIMENTAL warm window (?warm=1 parked, ?warm=measure self-firing): a
     // hidden, fully-booted window for a future Ctrl+N. It runs the normal init
     // below (stores/tabs/listeners live), then registers its activate-listener
     // and signals readiness. It stays hidden until activated.
     const wmode = warmMode();
-    if (wmode !== "off") {
-      void runWarmWindow(wmode === "measure");
-    }
+    const warmWindow = wmode !== "off" ? runWarmWindow(wmode === "measure") : null;
 
     // Read launch data injected by Rust initialization_script (synchronous, no IPC).
     // Falls back to IPC for child windows or if injection is missing.
-    const launchData = (window as any).__LAUNCH_DATA__ as
-      | { cwd: string; home: string }
-      | undefined;
+    const launchData = normalizeLaunchData((window as Window & { __LAUNCH_DATA__?: unknown }).__LAUNCH_DATA__);
 
     const searchParams = new URLSearchParams(window.location.search);
-    const urlPath = searchParams.get("path");
-    const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
+    const requestedPath = searchParams.get("path");
+    const urlPath = isWindowPath(requestedPath) ? requestedPath : null;
+    const requestedView = searchParams.get("viewMode");
+    const urlViewMode = isViewMode(requestedView) ? requestedView : null;
 
     const homePath = launchHomePath ?? "/home";
     const launchCwd = launchData?.cwd ?? null;
@@ -474,12 +502,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       explorer?.setViewMode(urlViewMode);
     }
 
-    // Load settings and bookmarks from config files (async, non-blocking).
-    // Plugins activate after settings load so persisted enable state is known.
-    settingsStore.init().then(() => {
-      themeStore.syncFromSettings();
-      void pluginRegistry.initPlugins();
-    });
+    // Load independent configuration without delaying directory navigation.
     bookmarksStore.init();
     folderViewsStore.init();
     manualHiddenStore.init();
@@ -545,6 +568,58 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
         }
       }) as EventListener);
 
+      // Native multiwindow acceptance uses DOM requests across WebDriver's
+      // isolated JS world, invoking the same launch/adoption owners as dragging.
+      window.addEventListener("e2e-window-operation", ((e: CustomEvent<{
+        token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim"; target?: string;
+      }>) => {
+        const { token, op, target } = e.detail;
+        void (async () => {
+          if (op === "warm-claim") {
+            const { warmPoolClaim } = await import("$lib/api/warm-pool");
+            return warmPoolClaim();
+          }
+          if (op === "warm-prime") { await spawnWarmWindow(); return true; }
+          if (op === "warm-open") {
+            const { openNewWindow } = await import("$lib/state/window-launch");
+            const opened = await openNewWindow(target ?? windowTabsManager.getActiveExplorer()!.currentPath);
+            return opened ? { kind: opened.kind, label: opened.label } : null;
+          }
+          if (op === "native-close") {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            await getCurrentWindow().close();
+            return true;
+          }
+          const { openNewWindow } = await import("$lib/state/window-launch");
+          if (op === "open-pair") {
+            const path = windowTabsManager.getActiveExplorer()?.currentPath;
+            if (!path) throw new Error("No active directory");
+            const children = await Promise.all([openNewWindow(path), openNewWindow(path)]);
+            return children.map((child) => child?.label ?? null);
+          }
+          const id = windowTabsManager.activeTabId;
+          const transfer = id ? windowTabsManager.beginTabTransfer(id) : null;
+          if (!transfer) throw new Error("No transferable tab");
+          try {
+            const snapshot = transfer.snapshot;
+            if (op === "transfer" && target) {
+              const { sendTabToWindow } = await import("$lib/state/tab-transfer");
+              return { moved: await sendTabToWindow(target, snapshot) && transfer.complete(), target };
+            }
+            const child = await openNewWindow(snapshot.path, undefined, snapshot);
+            return { moved: !!child && transfer.complete(), target: child?.label };
+          } finally { transfer.cancel(); }
+        })().then((result) => {
+          document.documentElement.dataset.e2eWindowResult = JSON.stringify({ token, result });
+        }).catch((error: unknown) => {
+          document.documentElement.dataset.e2eWindowResult = JSON.stringify({ token, error: String(error) });
+        });
+      }) as EventListener);
+      document.documentElement.dataset.e2eWindowLabel = windowTabsManager.windowLabel;
+      void warmWindow?.ready.then((ready) => {
+        if (ready) document.documentElement.dataset.e2eWarmReady = "1";
+      });
+
       // WebKitWebDriver can execute injected scripts before these listeners
       // exist. Publish readiness through the DOM (visible across WebKit's
       // isolated JS worlds) so the driver can dispatch each navigation once
@@ -554,7 +629,11 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     }
 
     // Register all commands for the command palette (deferred to next tick)
-    queueMicrotask(() => registerAllCommands());
+    queueMicrotask(() => {
+      registerAllCommands();
+      markStartup("commands-ready");
+      commandsReady = true;
+    });
 
     // Once this window is idle, prime the global warm-window pool so the next
     // Ctrl+N activates a pre-warmed window instead of paying webview-create
@@ -564,8 +643,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // runaway-spawn bug. Deferred so it never competes with this window's own
     // first paint; settings are read at fire time, after settingsStore.init()
     // has resolved.
+    let warmPrimeTimer: ReturnType<typeof setTimeout> | undefined;
     if (wmode === "off" && !E2E_WARM_WINDOW_PRIMING_DISABLED) {
-      setTimeout(() => {
+      warmPrimeTimer = setTimeout(() => {
         if (settingsStore.warmWindow) void spawnWarmWindow();
       }, 1500);
     }
@@ -593,6 +673,8 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     window.addEventListener("resize", handleResize);
 
     return () => {
+      void startup.dispose();
+      clearTimeout(warmPrimeTimer);
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("keyup", handleKeyup);
       window.removeEventListener("blur", handleBlur);
@@ -600,6 +682,8 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();
+      warmWindow?.dispose();
+      stopNativeClose();
       stopWindowTitleSync();
       stopTabTransfer();
       stopConfigWatch();

@@ -32,8 +32,10 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
     // A minimal raw-mode terminal application reports the numeric byte it
     // receives. ASCII 17 proves Ctrl+Q reached terminal input rather than an
     // Explorer shortcut handler.
+    // Assemble readiness in the program so echoed command text cannot satisfy
+    // the wait before Python enters raw mode.
     const keyProbe =
-      'python3 -c "import os,sys,termios,tty;fd=sys.stdin.fileno();old=termios.tcgetattr(fd);tty.setraw(fd);print(\'key-probe-ready\',flush=True);key=os.read(fd,1);termios.tcsetattr(fd,termios.TCSADRAIN,old);print(\'terminal-key-byte=\'+str(key[0]),flush=True)"';
+      'python3 -c "import os,sys,termios,tty;fd=sys.stdin.fileno();old=termios.tcgetattr(fd);tty.setraw(fd);print(\'key-\'+\'probe-ready\',flush=True);key=os.read(fd,1);termios.tcsetattr(fd,termios.TCSADRAIN,old);print(\'terminal-key-byte=\'+str(key[0]),flush=True)"';
     await input.addValue(`${keyProbe}\n`);
     await browser.waitUntil(async () => (await terminalText()).includes("key-probe-ready"), {
       timeout: 15_000,
@@ -43,10 +45,23 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
     await focusTerminalInput(input);
     // Match the chord path used by the app's other shortcut tests.
     await browser.keys(["Control", "q"]);
-    await browser.waitUntil(async () => (await terminalText()).includes("terminal-key-byte=17"), {
-      timeout: 15_000,
-      timeoutMsg: "terminal-hosted key probe never received Ctrl+Q",
-    });
+    try {
+      await browser.waitUntil(async () => (await terminalText()).includes("terminal-key-byte=17"), {
+        timeout: 15_000,
+        timeoutMsg: "terminal-hosted key probe never received Ctrl+Q",
+      });
+    } catch (error) {
+      console.error("[terminal-key-diagnostics]", JSON.stringify(await browser.execute(() => ({
+        terminalText: document.querySelector(".terminal-panel .xterm-rows")?.textContent,
+        activeElement: document.activeElement
+          ? { tag: document.activeElement.tagName, classes: document.activeElement.className }
+          : null,
+        terminalDisplayed: !!document.querySelector(".terminal-panel"),
+        modalText: document.querySelector("[role=dialog]")?.textContent ?? null,
+      }))));
+      await browser.saveScreenshot("e2e-tauri/logs/terminal-key-ownership-failure.png").catch(() => {});
+      throw error;
+    }
     await expect($(".terminal-panel")).toBeDisplayed();
     await browser.saveScreenshot("evidence/ac-1-terminal-owns-ctrl-q.png");
 

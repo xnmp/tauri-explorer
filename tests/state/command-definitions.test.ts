@@ -138,6 +138,7 @@ describe("registerAllCommands", () => {
   it("registers the core command surface with stable ids", () => {
     const ids = new Set(getAllCommands().map((c) => c.id));
     for (const id of [
+      "navigation.focusAddressBar",
       "navigation.goBack",
       "navigation.goForward",
       "navigation.goUp",
@@ -163,6 +164,7 @@ describe("registerAllCommands", () => {
     // The keybindings store resolves a display form (arrow glyphs); the raw
     // default lives on the command object.
     expect(getCommand("navigation.goBack")?.shortcut).toBe("Ctrl+Alt+Left");
+    expect(getCommandShortcut("navigation.focusAddressBar")).toBe("Ctrl+L");
     expect(getCommandShortcut("navigation.goBack")).toBeTruthy();
   });
 

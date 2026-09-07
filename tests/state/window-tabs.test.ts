@@ -511,12 +511,12 @@ describe("cross-window tab transfer primitives", () => {
     expect(manager.getTabPath(adopted.id)).toBe("/var");
   });
 
-  it("removeTransferredTab removes without adding a closed-tab snapshot", () => {
+  it("completing a transfer removes without adding a closed-tab snapshot", () => {
     const manager = freshManager();
     const moved = manager.createTab("/tmp/moving");
     expect(manager.tabs.length).toBe(2);
 
-    manager.removeTransferredTab(moved.id);
+    expect(manager.beginTabTransfer(moved.id)?.complete()).toBe(true);
 
     expect(manager.tabs.length).toBe(1);
     expect(manager.tabs.some((t) => t.id === moved.id)).toBe(false);

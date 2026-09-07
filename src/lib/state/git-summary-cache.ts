@@ -41,15 +41,15 @@
  * through here.
  */
 
-import {
-  cancelGitStatus,
-  gitSummary,
-  type GitStatusSummary,
-  type ApiResult,
-} from "$lib/api/files";
+import { subscribeGitChanges } from "./git-refresh";
+import { directoryKey } from "$lib/domain/path";
+
+import { cancelGitStatus, gitSummary, type GitStatusSummary } from "$lib/api/git";
+import { type ApiResult } from "$lib/api/common";
 
 /** How long a settled scan may be reused by a passive (non-forced) caller. */
 const TTL_MS = 1500;
+const MAX_CACHED_SUMMARIES = 64;
 
 interface CacheEntry {
   at: number;
@@ -64,13 +64,11 @@ interface FlightEntry {
   consumers: Set<string>;
   hasUnownedConsumer: boolean;
   cancelled: boolean;
-  generation: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, FlightEntry>();
 const allFlights = new Map<string, Set<FlightEntry>>();
-const latestGeneration = new Map<string, number>();
 
 /**
  * Fetch a repo's working-tree summary, deduped and short-TTL cached.
@@ -85,7 +83,7 @@ export async function fetchGitSummary(
   repoPath: string,
   opts?: { force?: boolean; consumerId?: string },
 ): Promise<ApiResult<GitStatusSummary>> {
-  const key = repoPath;
+  const key = directoryKey(repoPath);
   const force = opts?.force ?? false;
   const flight = inFlight.get(key);
 
@@ -96,7 +94,7 @@ export async function fetchGitSummary(
       addConsumer(flight, opts?.consumerId);
       return flight.promise;
     }
-    return startScan(key, true, opts?.consumerId);
+    return startScan(key, repoPath, true, opts?.consumerId);
   }
 
   // Passive caller: any in-flight scan is good enough to share.
@@ -106,35 +104,38 @@ export async function fetchGitSummary(
   }
 
   const cached = cache.get(key);
-  if (cached && Date.now() - cached.at < TTL_MS) return cached.result;
+  if (cached && Date.now() - cached.at < TTL_MS) {
+    cache.delete(key);
+    cache.set(key, cached);
+    return cached.result;
+  }
 
-  return startScan(key, false, opts?.consumerId);
+  return startScan(key, repoPath, false, opts?.consumerId);
 }
 
 function startScan(
   key: string,
+  repoPath: string,
   forced: boolean,
   consumerId?: string,
 ): Promise<ApiResult<GitStatusSummary>> {
   const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-  const generation = (latestGeneration.get(key) ?? 0) + 1;
-  latestGeneration.set(key, generation);
   const flight = {
     taskId,
     forced,
     consumers: new Set<string>(),
     hasUnownedConsumer: false,
     cancelled: false,
-    generation,
   } as FlightEntry;
   addConsumer(flight, consumerId);
-  const promise = gitSummary(key, taskId)
+  const promise = gitSummary(repoPath, taskId)
     .then((result) => {
       if (
-        !flight.cancelled
-        && latestGeneration.get(key) === flight.generation
+        result.ok && !flight.cancelled && inFlight.get(key) === flight
       ) {
+        cache.delete(key);
         cache.set(key, { at: Date.now(), result });
+        if (cache.size > MAX_CACHED_SUMMARIES) cache.delete(cache.keys().next().value!);
       }
       return result;
     })
@@ -180,15 +181,19 @@ export function releaseGitSummaryConsumer(consumerId: string): void {
   }
 }
 
-/** Drop a repo's cached scan (or all repos when omitted). */
+/** Revoke stored results and joinable scans. Existing consumers retain their
+ * promise, but a new reader after the change can only join a new scan. */
 export function invalidateGitSummary(repoPath?: string): void {
   if (repoPath) {
-    cache.delete(repoPath);
-    latestGeneration.set(repoPath, (latestGeneration.get(repoPath) ?? 0) + 1);
+    const key = directoryKey(repoPath);
+    cache.delete(key);
+    inFlight.delete(key);
   } else {
     cache.clear();
-    for (const key of latestGeneration.keys()) {
-      latestGeneration.set(key, (latestGeneration.get(key) ?? 0) + 1);
-    }
+    inFlight.clear();
   }
 }
+
+// The cache is process-wide, as is this subscription. Register before callers'
+// refresh listeners so new reads cannot join scans from before a Git change.
+void subscribeGitChanges((change) => invalidateGitSummary(change.repoRoot ?? undefined));

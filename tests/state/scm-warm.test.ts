@@ -12,13 +12,13 @@
  * - warming never starts the repo watcher (single-watcher invariant preserved).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { GitStatusSummary } from "$lib/api/files";
+import type { GitStatusSummary } from "$lib/api/git";
 
 const gitRepoRootMock = vi.fn();
 const gitSummaryMock = vi.fn();
 const gitWatchRepoMock = vi.fn(async (_root: string) => {});
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
   gitSummary: (root: string) => gitSummaryMock(root),
   gitStage: vi.fn(async () => ({ ok: true })),

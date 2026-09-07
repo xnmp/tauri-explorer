@@ -59,13 +59,14 @@ describe("git-graph-cache", () => {
     expect(getSnapshot(other)).toBeDefined();
   });
 
-  it("evicts on an external (watcher) git change, ignores local mutations", () => {
+  it("evicts on local and external changes", () => {
     const localKey = snapshotKey(repo, null, false);
     cacheSnapshot(localKey, snap());
 
-    // A local mutation is re-cached by the mounted view — the cache leaves it.
+    // Another surface can mutate a repository while this graph is hidden.
     notifyLocalGitChange(repo);
-    expect(getSnapshot(localKey)).toBeDefined();
+    expect(getSnapshot(localKey)).toBeUndefined();
+    cacheSnapshot(localKey, snap());
 
     // An external change invalidates it so the next remount refetches.
     emitWatcherGitChange(repo);

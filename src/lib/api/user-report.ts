@@ -3,7 +3,7 @@ import type {
   UserReportAttachment,
   UserReportDraft,
 } from "$lib/domain/user-report";
-import { invoke } from "./files";
+import { invoke } from "./common";
 
 export function submitUserReport(
   draft: UserReportDraft,

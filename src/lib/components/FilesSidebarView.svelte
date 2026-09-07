@@ -17,7 +17,7 @@
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { openRecycleBin } from "$lib/api/open";
-  import { openRecycleBinWithFeedback } from "$lib/domain/recycle-bin";
+  import { openRecycleBinWithFeedback } from "$lib/state/recycle-bin";
   import { toastStore } from "$lib/state/toast.svelte";
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
 
@@ -782,7 +782,7 @@
   }
 
   .quick-access.drag-over {
-    background: rgba(0, 120, 212, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     border-radius: 6px;
     outline: 2px dashed var(--accent);
     outline-offset: -2px;
@@ -793,7 +793,7 @@
     font-size: 11px;
     font-weight: 500;
     color: var(--accent);
-    background: rgba(0, 120, 212, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     padding: 2px 6px;
     border-radius: 4px;
   }
@@ -819,7 +819,6 @@
     color: var(--text-tertiary);
     cursor: pointer;
     padding: 0;
-    transition: all var(--transition-fast);
   }
 
   .folder-item:hover .remove-bookmark,

@@ -4,7 +4,8 @@
  */
 
 /** Available view modes for the file list */
-export type ViewMode = "details" | "list" | "tiles";
+import type { ViewMode } from "$lib/domain/file";
+export type { ViewMode } from "$lib/domain/file";
 
 /** Undoable action types — canonical definition lives in domain (#278). */
 export type { UndoAction } from "$lib/domain/undo-operations";
@@ -54,11 +55,10 @@ export type PaneId = string;
  */
 export type WindowTab = ExplorerTab;
 
-/** A pane within an explorer tab: references its explorer instance by ID.
+/** Presentation state of a pane. Its layout ID also identifies its session.
  *  `path` is the creation/restore path; the live path comes from the
  *  explorer instance. */
 export interface TabPane {
-  explorerId: string;
   path: string;
   /** When set, the pane shows the commit graph for this repo root instead
    *  of the file listing (#272). Toggled by `git.showGraph`. */
@@ -80,4 +80,3 @@ export interface ExplorerTab {
   /** Custom title — only multi-pane tabs can be renamed. */
   name?: string;
 }
-

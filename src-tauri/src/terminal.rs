@@ -5,7 +5,7 @@
 //! terminal; each entry remembers its owning window label so terminals die
 //! with their window (see `on_window_destroyed`, called from the run loop).
 //!
-//! Events (global emit, per-terminal names so windows can't cross-subscribe):
+//! Events (targeted to the owning window and named per terminal):
 //!   `terminal-output-{id}` — chunk of shell output (String)
 //!   `terminal-exit-{id}`   — shell exited (payload: exit code if known)
 //!   `terminal-cwd-{id}`    — shell reported a new cwd via OSC 7 (String path)
@@ -18,23 +18,66 @@
 //! running before injecting a `cd`; `terminal_status` answers that.
 
 use crate::error::AppError;
-use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
-use tauri::{AppHandle, Emitter};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::Emitter;
 
 struct TerminalHandle {
-    writer: Box<dyn Write + Send>,
-    master: Box<dyn MasterPty + Send>,
-    killer: Box<dyn ChildKiller + Send + Sync>,
-    window_label: String,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    master: SharedMaster,
+    child: SharedChild,
     /// The spawned shell's pid; used for foreground-process-group busy
     /// detection. `None` if portable-pty couldn't report it.
     pid: Option<u32>,
     /// Last cwd the shell reported via OSC 7 (updated from the reader thread).
     shell_cwd: Option<String>,
+}
+
+/// Reservation, startup, and the running PTY share one window-owned identity.
+/// A cancelled startup can finish preparing a PTY, but cannot publish it.
+struct TerminalSlot {
+    window_label: String,
+    token: Arc<AtomicBool>,
+    phase: TerminalPhase,
+}
+
+enum TerminalPhase {
+    Reserved,
+    Starting,
+    Running(TerminalHandle),
+}
+
+impl TerminalSlot {
+    fn reserved(window_label: String) -> Self {
+        Self {
+            window_label,
+            token: Arc::new(AtomicBool::new(false)),
+            phase: TerminalPhase::Reserved,
+        }
+    }
+
+    fn check_owner(&self, label: &str) -> Result<(), AppError> {
+        if self.window_label != label {
+            return Err(AppError::Other("Terminal belongs to another window".into()));
+        }
+        Ok(())
+    }
+
+    fn begin(&mut self, label: &str) -> Result<Arc<AtomicBool>, AppError> {
+        self.check_owner(label)?;
+        if !matches!(self.phase, TerminalPhase::Reserved) {
+            return Err(AppError::Other("Terminal has already been started".into()));
+        }
+        self.phase = TerminalPhase::Starting;
+        Ok(self.token.clone())
+    }
+
+    fn is_current(&self, token: &Arc<AtomicBool>) -> bool {
+        Arc::ptr_eq(&self.token, token) && !token.load(Ordering::Relaxed)
+    }
 }
 
 /// What `terminal_spawn` actually started (#409): the frontend must speak the
@@ -248,11 +291,122 @@ fn hex_val(b: u8) -> Option<u8> {
     }
 }
 
-static TERMINALS: OnceLock<Mutex<HashMap<u64, TerminalHandle>>> = OnceLock::new();
+static TERMINALS: OnceLock<Mutex<HashMap<u64, TerminalSlot>>> = OnceLock::new();
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-fn terminals() -> &'static Mutex<HashMap<u64, TerminalHandle>> {
+fn terminals() -> &'static Mutex<HashMap<u64, TerminalSlot>> {
     TERMINALS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn reserve_terminal(window_label: &str) -> Result<u64, AppError> {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    terminals()
+        .lock()
+        .map_err(|error| AppError::Other(format!("terminals registry lock poisoned: {error}")))?
+        .insert(id, TerminalSlot::reserved(window_label.to_owned()));
+    Ok(id)
+}
+
+fn begin_terminal(id: u64, window_label: &str) -> Result<Arc<AtomicBool>, AppError> {
+    terminals()
+        .lock()
+        .map_err(|error| AppError::Other(format!("terminals registry lock poisoned: {error}")))?
+        .get_mut(&id)
+        .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?
+        .begin(window_label)
+}
+
+fn remove_if_token(id: u64, token: &Arc<AtomicBool>) {
+    let mut map = terminals()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if map
+        .get(&id)
+        .is_some_and(|slot| Arc::ptr_eq(&slot.token, token))
+    {
+        map.remove(&id);
+    }
+}
+
+type SharedChild = Arc<Mutex<Box<dyn Child + Send + Sync>>>;
+type SharedMaster = Arc<Mutex<Box<dyn MasterPty + Send>>>;
+
+fn terminate_child(child: &mut dyn Child) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let Some(pid) = child.process_id() else {
+            return child.kill();
+        };
+        let _ = child.try_wait()?;
+        let signal_group = |signal| {
+            let result = unsafe { libc::kill(-(pid as i32), signal) };
+            if result == 0 {
+                Ok(())
+            } else {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        };
+        signal_group(libc::SIGHUP)?;
+        for _ in 0..5 {
+            if child.try_wait()?.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        signal_group(libc::SIGKILL)
+    }
+    #[cfg(not(unix))]
+    {
+        child.kill()
+    }
+}
+
+fn kill_child(child: &SharedChild) -> std::io::Result<()> {
+    let mut child = child.lock().unwrap_or_else(|error| error.into_inner());
+    terminate_child(child.as_mut())
+}
+
+fn wait_for_child(child: &SharedChild) -> Option<portable_pty::ExitStatus> {
+    loop {
+        let status = child
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .try_wait();
+        match status {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            Err(_) => return None,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn wait_pty_readable(master: &SharedMaster, timeout_ms: i32) -> std::io::Result<bool> {
+    // The reader's Arc keeps this stable master (and its fd) alive. Only the
+    // descriptor lookup needs the mutex: holding it during poll can starve
+    // status/resize indefinitely as the idle reader repeatedly reacquires it.
+    let fd = {
+        let master = master.lock().unwrap_or_else(|error| error.into_inner());
+        master
+            .as_raw_fd()
+            .ok_or_else(|| std::io::Error::other("PTY master has no file descriptor"))?
+    };
+    let mut poll_fd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let result = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
+    if result < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(result > 0)
+    }
 }
 
 /// The user's shell: $SHELL on Unix; COMSPEC (fallback powershell) on Windows.
@@ -370,10 +524,10 @@ fn install_zsh_shim(cmd: &mut CommandBuilder) {
 /// tty semantics, so we optimistically report idle (an injected `cd` there
 /// runs after the current line at worst).
 #[allow(unused_variables)]
-fn is_busy(handle: &TerminalHandle) -> bool {
+fn is_busy(master: &dyn MasterPty, pid: Option<u32>) -> bool {
     #[cfg(unix)]
     {
-        let (Some(fd), Some(pid)) = (handle.master.as_raw_fd(), handle.pid) else {
+        let (Some(fd), Some(pid)) = (master.as_raw_fd(), pid) else {
             return false;
         };
         let fg = unsafe { libc::tcgetpgrp(fd) };
@@ -392,6 +546,7 @@ use crate::wsl::parse_wsl_unc;
 fn spawn_shell(
     id: u64,
     window_label: String,
+    token: Arc<AtomicBool>,
     cwd: Option<String>,
     cols: u16,
     rows: u16,
@@ -452,38 +607,75 @@ fn spawn_shell(
     drop(pair.slave);
 
     let pid = child.process_id();
-    let killer = child.clone_killer();
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| AppError::Other(format!("pty reader failed: {e}")))?;
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| AppError::Other(format!("pty writer failed: {e}")))?;
+    let mut reader = match pair.master.try_clone_reader() {
+        Ok(reader) => reader,
+        Err(error) => {
+            let _ = terminate_child(child.as_mut());
+            let _ = child.wait();
+            remove_if_token(id, &token);
+            return Err(AppError::Other(format!("pty reader failed: {error}")));
+        }
+    };
+    let writer = match pair.master.take_writer() {
+        Ok(writer) => writer,
+        Err(error) => {
+            let _ = terminate_child(child.as_mut());
+            let _ = child.wait();
+            remove_if_token(id, &token);
+            return Err(AppError::Other(format!("pty writer failed: {error}")));
+        }
+    };
 
-    terminals()
-        .lock()
-        .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?
-        .insert(
-            id,
-            TerminalHandle {
-                writer,
-                master: pair.master,
-                killer,
-                window_label,
-                pid,
-                shell_cwd: None,
-            },
-        );
+    let child = {
+        let mut map = terminals()
+            .lock()
+            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
+        let publish = map.get_mut(&id).filter(|slot| {
+            slot.window_label == window_label
+                && slot.is_current(&token)
+                && matches!(slot.phase, TerminalPhase::Starting)
+        });
+        if publish.is_none() {
+            drop(map);
+            let _ = terminate_child(child.as_mut());
+            let _ = child.wait();
+            return Err(AppError::Other(format!(
+                "terminal {id} startup was cancelled"
+            )));
+        }
+        let child = Arc::new(Mutex::new(child));
+        let master = Arc::new(Mutex::new(pair.master));
+        publish.expect("checked above").phase = TerminalPhase::Running(TerminalHandle {
+            writer: Arc::new(Mutex::new(writer)),
+            master: master.clone(),
+            child: child.clone(),
+            pid,
+            shell_cwd: None,
+        });
+        (child, master)
+    };
+    let (child, _reader_master) = child;
 
+    let reader_token = token.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         let mut pending: Vec<u8> = Vec::new();
         let mut scanner = Osc7Scanner::new();
         loop {
+            #[cfg(unix)]
+            {
+                if reader_token.load(Ordering::Relaxed) {
+                    break;
+                }
+                match wait_pty_readable(&_reader_master, 50) {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(_) => break,
+                }
+            }
             match reader.read(&mut buf) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
+                Err(_) => break,
                 Ok(n) => {
                     pending.extend_from_slice(&buf[..n]);
                     let text = take_valid_utf8(&mut pending);
@@ -493,26 +685,45 @@ fn spawn_shell(
                         for cwd in scanner.push(&text) {
                             // Reader thread (returns ()): recover the registry
                             // rather than panic if another holder poisoned it.
-                            if let Some(h) = terminals()
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .get_mut(&id)
-                            {
-                                h.shell_cwd = Some(cwd.clone());
+                            let should_emit = {
+                                let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
+                                if let Some(TerminalSlot {
+                                    token: current_token,
+                                    phase: TerminalPhase::Running(handle),
+                                    ..
+                                }) = map.get_mut(&id)
+                                {
+                                    if Arc::ptr_eq(current_token, &reader_token)
+                                        && !reader_token.load(Ordering::Relaxed)
+                                    {
+                                        handle.shell_cwd = Some(cwd.clone());
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            };
+                            if should_emit {
+                                on_cwd(cwd);
                             }
-                            on_cwd(cwd);
                         }
-                        on_output(text);
+                        if !reader_token.load(Ordering::Relaxed) {
+                            on_output(text);
+                        }
                     }
                 }
             }
         }
-        let code = child.wait().ok().map(|status| status.exit_code());
-        terminals()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&id);
-        on_exit(code);
+    });
+
+    std::thread::spawn(move || {
+        let code = wait_for_child(&child).map(|status| status.exit_code());
+        remove_if_token(id, &token);
+        if !token.load(Ordering::Relaxed) {
+            on_exit(code);
+        }
     });
 
     Ok(TerminalSpawnInfo {
@@ -531,8 +742,21 @@ fn spawn_shell(
 pub fn on_window_destroyed(label: &str) {
     // Returns (): recover the registry rather than panic on a poisoned lock.
     let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-    for handle in map.values_mut().filter(|h| h.window_label == label) {
-        let _ = handle.killer.kill();
+    let mut children = Vec::new();
+    map.retain(|_, slot| {
+        if slot.window_label != label {
+            return true;
+        }
+        slot.token.store(true, Ordering::Relaxed);
+        if let TerminalPhase::Running(handle) = &slot.phase {
+            children.push(handle.child.clone());
+            return true;
+        }
+        false
+    });
+    drop(map);
+    for child in children {
+        let _ = kill_child(&child);
     }
 }
 
@@ -543,8 +767,8 @@ pub fn on_window_destroyed(label: &str) {
 /// prompt into the listener-registration gap and the terminal opens blank
 /// (#201 — reproduced repeatedly by the Linux CI smoke suite).
 #[tauri::command]
-pub async fn terminal_reserve_id() -> u64 {
-    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+pub async fn terminal_reserve_id(window: tauri::Window) -> Result<u64, AppError> {
+    reserve_terminal(window.label())
 }
 
 /// Spawn the user's shell in a PTY at `cwd`, emitting on the
@@ -552,7 +776,6 @@ pub async fn terminal_reserve_id() -> u64 {
 /// events for the RESERVED id (see `terminal_reserve_id`).
 #[tauri::command]
 pub async fn terminal_spawn(
-    app: AppHandle,
     window: tauri::Window,
     id: u64,
     cwd: Option<String>,
@@ -560,52 +783,65 @@ pub async fn terminal_spawn(
     rows: u16,
 ) -> Result<TerminalSpawnInfo, AppError> {
     let label = window.label().to_string();
-    {
-        let map = terminals()
-            .lock()
-            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        if map.contains_key(&id) {
-            return Err(AppError::Other(format!("terminal {id} already exists")));
-        }
-    }
-    tokio::task::spawn_blocking(move || {
-        let out_app = app.clone();
-        let cwd_app = app.clone();
-        spawn_shell(
+    let token = begin_terminal(id, &label)?;
+    let cleanup_token = token.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        let output_window = window.clone();
+        let cwd_window = window.clone();
+        let result = spawn_shell(
             id,
             label,
+            token.clone(),
             cwd,
             cols.max(2),
             rows.max(2),
             move |chunk| {
-                let _ = out_app.emit(&format!("terminal-output-{id}"), chunk);
+                let _ = output_window.emit(&format!("terminal-output-{id}"), chunk);
             },
             move |code| {
-                let _ = app.emit(&format!("terminal-exit-{id}"), code);
+                let _ = window.emit(&format!("terminal-exit-{id}"), code);
             },
             move |path| {
-                let _ = cwd_app.emit(&format!("terminal-cwd-{id}"), path);
+                let _ = cwd_window.emit(&format!("terminal-cwd-{id}"), path);
             },
-        )
-    })
-    .await
-    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+        );
+        if result.is_err() {
+            remove_if_token(id, &token);
+        }
+        result
+    });
+    match task.await {
+        Ok(result) => result,
+        Err(error) => {
+            cleanup_token.store(true, Ordering::Relaxed);
+            remove_if_token(id, &cleanup_token);
+            Err(AppError::Other(format!("Task join error: {error}")))
+        }
+    }
 }
 
 /// Write user input (keystrokes) to the terminal.
 #[tauri::command]
-pub async fn terminal_write(id: u64, data: String) -> Result<(), AppError> {
+pub async fn terminal_write(window: tauri::Window, id: u64, data: String) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
-        let mut map = terminals()
+        let map = terminals()
             .lock()
             .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        let handle = map
-            .get_mut(&id)
+        let slot = map
+            .get(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-        handle
-            .writer
+        slot.check_owner(window.label())?;
+        let TerminalPhase::Running(handle) = &slot.phase else {
+            return Err(AppError::Other(format!("terminal {id} is not running")));
+        };
+        let writer = handle.writer.clone();
+        drop(map);
+        let result = writer
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
             .write_all(data.as_bytes())
-            .map_err(|e| AppError::Other(format!("pty write failed: {e}")))
+            .map_err(|e| AppError::Other(format!("pty write failed: {e}")));
+        result
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
@@ -613,23 +849,36 @@ pub async fn terminal_write(id: u64, data: String) -> Result<(), AppError> {
 
 /// Resize the PTY to match the xterm.js grid.
 #[tauri::command]
-pub async fn terminal_resize(id: u64, cols: u16, rows: u16) -> Result<(), AppError> {
+pub async fn terminal_resize(
+    window: tauri::Window,
+    id: u64,
+    cols: u16,
+    rows: u16,
+) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
         let map = terminals()
             .lock()
             .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        let handle = map
+        let slot = map
             .get(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-        handle
-            .master
+        slot.check_owner(window.label())?;
+        let TerminalPhase::Running(handle) = &slot.phase else {
+            return Err(AppError::Other(format!("terminal {id} is not running")));
+        };
+        let master = handle.master.clone();
+        drop(map);
+        let result = master
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
             .resize(PtySize {
                 rows: rows.max(2),
                 cols: cols.max(2),
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| AppError::Other(format!("pty resize failed: {e}")))
+            .map_err(|e| AppError::Other(format!("pty resize failed: {e}")));
+        result
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
@@ -638,18 +887,25 @@ pub async fn terminal_resize(id: u64, cols: u16, rows: u16) -> Result<(), AppErr
 /// Kill the terminal's shell. Registry cleanup and the exit event happen in
 /// the reader thread when the PTY reaches EOF.
 #[tauri::command]
-pub async fn terminal_kill(id: u64) -> Result<(), AppError> {
+pub async fn terminal_kill(window: tauri::Window, id: u64) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
         let mut map = terminals()
             .lock()
             .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        let handle = map
-            .get_mut(&id)
+        let slot = map
+            .get(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-        handle
-            .killer
-            .kill()
-            .map_err(|e| AppError::Other(format!("pty kill failed: {e}")))
+        slot.check_owner(window.label())?;
+        let slot = map
+            .remove(&id)
+            .expect("terminal existed while registry locked");
+        slot.token.store(true, Ordering::Relaxed);
+        drop(map);
+        match slot.phase {
+            TerminalPhase::Running(handle) => kill_child(&handle.child)
+                .map_err(|e| AppError::Other(format!("pty kill failed: {e}"))),
+            TerminalPhase::Reserved | TerminalPhase::Starting => Ok(()),
+        }
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
@@ -659,17 +915,26 @@ pub async fn terminal_kill(id: u64) -> Result<(), AppError> {
 /// cwd (issue #149). The frontend uses `busy` to decide between injecting a
 /// `cd` now or queuing it, and `cwd` to skip redundant cd's (loop guard).
 #[tauri::command]
-pub async fn terminal_status(id: u64) -> Result<TerminalStatus, AppError> {
+pub async fn terminal_status(window: tauri::Window, id: u64) -> Result<TerminalStatus, AppError> {
     tokio::task::spawn_blocking(move || {
         let map = terminals()
             .lock()
             .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        let handle = map
+        let slot = map
             .get(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+        slot.check_owner(window.label())?;
+        let TerminalPhase::Running(handle) = &slot.phase else {
+            return Err(AppError::Other(format!("terminal {id} is not running")));
+        };
+        let master = handle.master.clone();
+        let pid = handle.pid;
+        let cwd = handle.shell_cwd.clone();
+        drop(map);
+        let master = master.lock().unwrap_or_else(|error| error.into_inner());
         Ok(TerminalStatus {
-            busy: is_busy(handle),
-            cwd: handle.shell_cwd.clone(),
+            busy: is_busy(master.as_ref(), pid),
+            cwd,
         })
     })
     .await
@@ -681,6 +946,259 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    fn reserve_started(label: &str) -> (u64, Arc<AtomicBool>) {
+        let id = reserve_terminal(label).unwrap();
+        let token = begin_terminal(id, label).unwrap();
+        (id, token)
+    }
+
+    fn running_child(id: u64) -> SharedChild {
+        let map = terminals()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let slot = map.get(&id).expect("terminal registered");
+        let TerminalPhase::Running(handle) = &slot.phase else {
+            panic!("terminal not running")
+        };
+        handle.child.clone()
+    }
+
+    fn kill_test_terminal(id: u64) {
+        let _ = kill_child(&running_child(id));
+    }
+
+    #[test]
+    fn reservation_claim_is_atomic_and_window_owned() {
+        let id = reserve_terminal("owner").unwrap();
+        assert!(begin_terminal(id, "other-window").is_err());
+        let token = begin_terminal(id, "owner").unwrap();
+        assert!(begin_terminal(id, "owner").is_err());
+        on_window_destroyed("owner");
+        assert!(token.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cancelled_startup_cannot_publish_a_late_pty() {
+        let (id, token) = reserve_started("owner");
+        token.store(true, Ordering::Relaxed);
+        terminals()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&id);
+
+        let result = spawn_shell(
+            id,
+            "owner".into(),
+            token,
+            None,
+            80,
+            24,
+            |_| panic!("cancelled startup published output"),
+            |_| panic!("cancelled startup published exit"),
+            |_| panic!("cancelled startup published cwd"),
+        );
+
+        assert!(result.is_err());
+        assert!(!terminals()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .contains_key(&id));
+    }
+
+    #[test]
+    fn window_destruction_cancels_reserved_and_starting_slots_only_for_owner() {
+        let reserved = reserve_terminal("closing").unwrap();
+        let (starting, starting_token) = reserve_started("closing");
+        let survivor = reserve_terminal("survivor").unwrap();
+
+        on_window_destroyed("closing");
+
+        let map = terminals()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        assert!(!map.contains_key(&reserved));
+        assert!(!map.contains_key(&starting));
+        assert!(starting_token.load(Ordering::Relaxed));
+        assert!(map.contains_key(&survivor));
+        drop(map);
+        on_window_destroyed("survivor");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn actual_child_kill_escalates_when_shell_ignores_hangup() {
+        use std::io::BufRead;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                "trap '' HUP; (trap '' HUP; while :; do sleep 1; done) & echo ready; wait",
+            ])
+            .stdout(Stdio::piped());
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn().unwrap();
+        let mut ready = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(ready.trim(), "ready");
+
+        let child: SharedChild = Arc::new(Mutex::new(Box::new(child)));
+        kill_child(&child).unwrap();
+        let status = child.lock().unwrap().wait().unwrap();
+        assert_ne!(status.exit_code(), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn waiter_releases_child_lock_while_process_remains_alive() {
+        use std::io::BufRead;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                "echo ready; exec >/dev/null 2>&1; trap '' HUP; while :; do sleep 1; done",
+            ])
+            .stdout(Stdio::piped());
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn().unwrap();
+        let mut ready = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(ready.trim(), "ready");
+
+        let child: SharedChild = Arc::new(Mutex::new(Box::new(child)));
+        let waiter_child = child.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = wait_for_child(&waiter_child);
+            let _ = done_tx.send(());
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        kill_child(&child).unwrap();
+        assert!(done_rx.recv_timeout(Duration::from_secs(3)).is_ok());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn window_teardown_releases_pty_while_foreground_job_ignores_hangup() {
+        let (id, token) = reserve_started("job-control-owner");
+        spawn_shell(
+            id,
+            "job-control-owner".into(),
+            token,
+            None,
+            80,
+            24,
+            |_| {},
+            |_| {},
+            |_| {},
+        )
+        .unwrap();
+        let (writer, master, shell_pid) = {
+            let map = terminals()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let TerminalPhase::Running(handle) = &map.get(&id).unwrap().phase else {
+                panic!("terminal not running")
+            };
+            (
+                handle.writer.clone(),
+                handle.master.clone(),
+                handle.pid.unwrap(),
+            )
+        };
+        writer
+            .lock()
+            .unwrap()
+            .write_all(b"sh -c 'trap \"\" HUP; while :; do sleep 1; done'\n")
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let foreground_group = loop {
+            let master = master.lock().unwrap();
+            let foreground = unsafe { libc::tcgetpgrp(master.as_raw_fd().unwrap()) };
+            drop(master);
+            if foreground > 0 && foreground as u32 != shell_pid {
+                break foreground;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "foreground job never started"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+
+        on_window_destroyed("job-control-owner");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while terminals().lock().unwrap().contains_key(&id) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "owned shell was not reaped"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Descendant process-tree policy is intentionally separate from PTY
+        // ownership. Clean the hostile fixture's distinct job-control group.
+        unsafe { libc::kill(-foreground_group, libc::SIGKILL) };
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn blocked_terminal_writer_does_not_hold_registry_lock() {
+        let (id, token) = reserve_started("blocked-writer");
+        spawn_shell(
+            id,
+            "blocked-writer".into(),
+            token,
+            None,
+            80,
+            24,
+            |_| {},
+            |_| {},
+            |_| {},
+        )
+        .unwrap();
+        let writer = {
+            let map = terminals()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let TerminalPhase::Running(handle) = &map.get(&id).unwrap().phase else {
+                panic!("terminal not running")
+            };
+            handle.writer.clone()
+        };
+        let _blocked_writer = writer.lock().unwrap();
+
+        let unrelated = reserve_terminal("unrelated").unwrap();
+        assert!(terminals().lock().unwrap().contains_key(&unrelated));
+        on_window_destroyed("unrelated");
+        kill_test_terminal(id);
+    }
 
     #[test]
     fn shells_classify_into_dialect_families() {
@@ -742,10 +1260,11 @@ mod tests {
         let (tx, rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
 
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let (id, token) = reserve_started("test-window");
         let id = spawn_shell(
             id,
             "test-window".into(),
+            token,
             Some(canonical.to_string_lossy().into_owned()),
             80,
             24,
@@ -762,8 +1281,16 @@ mod tests {
 
         {
             let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            let handle = map.get_mut(&id).expect("terminal registered");
-            handle.writer.write_all(b"pwd && exit\n").unwrap();
+            let slot = map.get_mut(&id).expect("terminal registered");
+            let TerminalPhase::Running(handle) = &mut slot.phase else {
+                panic!("not running")
+            };
+            handle
+                .writer
+                .lock()
+                .unwrap()
+                .write_all(b"pwd && exit\n")
+                .unwrap();
         }
 
         let mut output = String::new();
@@ -801,12 +1328,14 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn on_window_destroyed_kills_only_that_windows_terminals() {
-        let (exit_tx_a, exit_rx_a) = mpsc::channel::<Option<u32>>();
+        let (exit_tx_a, _exit_rx_a) = mpsc::channel::<Option<u32>>();
         let (exit_tx_b, exit_rx_b) = mpsc::channel::<Option<u32>>();
 
+        let (a_id, a_token) = reserve_started("win-a");
         let _a = spawn_shell(
-            NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            a_id,
             "win-a".into(),
+            a_token,
             None,
             80,
             24,
@@ -817,9 +1346,11 @@ mod tests {
             |_| {},
         )
         .unwrap();
+        let (b_id, b_token) = reserve_started("win-b");
         let b = spawn_shell(
-            NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            b_id,
             "win-b".into(),
+            b_token,
             None,
             80,
             24,
@@ -833,11 +1364,19 @@ mod tests {
 
         on_window_destroyed("win-a");
 
-        // win-a's shell dies…
-        assert!(
-            exit_rx_a.recv_timeout(Duration::from_secs(10)).is_ok(),
-            "window-a terminal should exit after on_window_destroyed"
-        );
+        // win-a's shell is retained until its reader reaps it, then removed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while terminals()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .contains_key(&_a.id)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "window-a terminal was not reaped after on_window_destroyed"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
         // …while win-b's stays alive (no exit within a grace window).
         assert!(
             exit_rx_b.recv_timeout(Duration::from_millis(500)).is_err(),
@@ -845,11 +1384,7 @@ mod tests {
         );
 
         // Cleanup.
-        terminals()
-            .lock()
-            .unwrap()
-            .get_mut(&b.id)
-            .map(|h| h.killer.kill());
+        kill_test_terminal(b.id);
         let _ = exit_rx_b.recv_timeout(Duration::from_secs(10));
     }
 
@@ -1021,9 +1556,11 @@ mod tests {
     #[cfg(unix)]
     fn busy_detection_tracks_foreground_command() {
         let (exit_tx, _exit_rx) = mpsc::channel::<Option<u32>>();
+        let (id, token) = reserve_started("busy-test");
         let id = spawn_shell(
-            NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            id,
             "busy-test".into(),
+            token,
             None,
             80,
             24,
@@ -1038,7 +1575,12 @@ mod tests {
 
         let busy_now = || {
             let map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            is_busy(map.get(&id).expect("registered"))
+            let slot = map.get(&id).expect("registered");
+            let TerminalPhase::Running(handle) = &slot.phase else {
+                panic!("not running")
+            };
+            let master = handle.master.lock().unwrap();
+            is_busy(master.as_ref(), handle.pid)
         };
 
         // Let the shell reach its prompt.
@@ -1054,9 +1596,14 @@ mod tests {
         // Start a foreground command.
         {
             let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            map.get_mut(&id)
-                .unwrap()
+            let slot = map.get_mut(&id).unwrap();
+            let TerminalPhase::Running(handle) = &mut slot.phase else {
+                panic!("not running")
+            };
+            handle
                 .writer
+                .lock()
+                .unwrap()
                 .write_all(b"sleep 2\n")
                 .unwrap();
         }
@@ -1084,11 +1631,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        terminals()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&id)
-            .map(|h| h.killer.kill());
+        kill_test_terminal(id);
     }
 
     /// If `zsh` is installed, spawning through `spawn_shell` should produce an
@@ -1115,9 +1658,11 @@ mod tests {
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (cwd_tx, cwd_rx) = mpsc::channel::<String>();
+        let (id, token) = reserve_started("zsh-osc7");
         let info = spawn_shell(
-            NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            id,
             "zsh-osc7".into(),
+            token,
             Some(canonical.to_string_lossy().into_owned()),
             80,
             24,
@@ -1143,11 +1688,7 @@ mod tests {
         while let Ok(chunk) = rx.try_recv() {
             output.push_str(&chunk);
         }
-        terminals()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&info.id)
-            .map(|h| h.killer.kill());
+        kill_test_terminal(info.id);
 
         assert!(
             got_cwd.is_ok(),

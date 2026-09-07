@@ -928,7 +928,7 @@ where
     F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
 {
     let (id, cancelled) = match task_id {
-        Some(id) => (id, GIT_TASKS.start_with_id(id)),
+        Some(id) => (id, GIT_TASKS.start_with_id(id)?),
         None => GIT_TASKS.start(),
     };
     let handle = tokio::task::spawn_blocking(move || f(cancelled));

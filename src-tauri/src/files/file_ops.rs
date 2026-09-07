@@ -410,7 +410,7 @@ fn copy_entry_impl(
 
     // Register cancellation + size the copy for progress only when a job id is
     // attached; a plain internal copy pays neither the walk nor event overhead.
-    let cancelled = job_id.map(|id| COPY_TASKS.start_with_id(id));
+    let cancelled = job_id.map(|id| COPY_TASKS.start_with_id(id)).transpose()?;
     let total_bytes = if cancelled.is_some() {
         let mut fc = 0;
         let mut tb = 0;
@@ -1495,11 +1495,11 @@ mod tests {
         let dest_dir = dir.path().join("dest");
         fs::create_dir(&dest_dir).unwrap();
 
-        // Pre-register + cancel the job id, then bypass the impl's own
-        // start_with_id (which would reset the flag) by driving copy_recursively
-        // with the registry's flag directly — same pattern archive tests use.
+        // Pre-register + cancel the job id, then bypass the impl's duplicate
+        // registration by driving copy_recursively with the registry's flag
+        // directly — the same pattern the archive tests use.
         let job_id = 424_242;
-        let flag = COPY_TASKS.start_with_id(job_id);
+        let flag = COPY_TASKS.start_with_id(job_id).unwrap();
         flag.store(true, Ordering::Relaxed);
         let mut tracker = ProgressTracker::new(
             None,

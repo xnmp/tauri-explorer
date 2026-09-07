@@ -2,9 +2,8 @@
  * API client for file operations.
  * Issue: tauri-explorer-nv2y - Migrated from Python FastAPI to Rust Tauri commands
  *
- * Concern-focused modules split out of this file live alongside it and are
- * re-exported at the bottom, so existing importers of `$lib/api/files` keep
- * working unchanged (Issue: refactor/audit-tier4-splits (#212)).
+ * Owns filesystem and directory operations. Other API concerns live in their
+ * dedicated sibling modules and are imported directly by feature consumers.
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
@@ -420,68 +419,6 @@ export async function readImageAsBlobUrl(
 }
 
 /**
- * Get the user's home directory path.
- *
- * @returns Result with home directory path or error message
- */
-export async function getHomeDirectory(): Promise<ApiResult<string>> {
-  try {
-    const path = await invoke<string>("get_home_directory");
-    return { ok: true, data: path };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Get the working directory the app was launched from.
- */
-export async function getLaunchCwd(): Promise<ApiResult<string>> {
-  try {
-    const path = await invoke<string>("get_launch_cwd");
-    return { ok: true, data: path };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/** Directory holding the app's rolling log files (for "open log folder"). */
-export async function getLogDir(): Promise<string> {
-  return invoke<string>("get_log_dir");
-}
-
-/**
- * Report a webview startup-timing summary to the app log (fire-and-forget
- * telemetry). Absent in mock/browser mode, where the promise rejects.
- */
-export async function logStartupTiming(summary: string): Promise<void> {
-  return invoke<void>("log_startup_timing", { summary });
-}
-
-export type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
-
-export type CloudProvider = "googledrive" | "wsl";
-
-export interface Drive {
-  name: string;
-  path: string;
-  kind: DriveKind;
-  /** Secondary/dimmed label (e.g. the drive letter "E:" when name is the volume label). */
-  detail?: string;
-  /** Set for cloud/remote drives — selects the sidebar icon. */
-  provider?: CloudProvider;
-}
-
-export async function listDrives(): Promise<ApiResult<Drive[]>> {
-  try {
-    const drives = await invoke<Drive[]>("list_drives");
-    return { ok: true, data: drives };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
  * Size estimation for file operations progress.
  */
 export interface SizeEstimate {
@@ -635,23 +572,15 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
  * Refcounted — safe to call multiple times for the same path.
  */
 export async function watchDirectory(path: string): Promise<void> {
-  try {
-    await invoke("watch_directory", { path });
-    publishReadyDirectoryWatch(path);
-  } catch {
-    // Non-critical: watcher failure shouldn't block navigation
-  }
+  await invoke("watch_directory", { path });
+  publishReadyDirectoryWatch(path);
 }
 
 /**
  * Stop watching a directory. Decrements refcount; OS watch removed at zero.
  */
 export async function unwatchDirectory(path: string): Promise<void> {
-  try {
-    await invoke("unwatch_directory", { path });
-  } catch {
-    // Non-critical
-  }
+  await invoke("unwatch_directory", { path });
 }
 
 // ===================
@@ -679,213 +608,3 @@ export async function createSymlink(
     return { ok: false, error: extractError(err) };
   }
 }
-
-// ===================
-// Clipboard Image Paste
-// Issue: tauri-ttbb
-// ===================
-
-/**
- * Check if the OS clipboard contains image data.
- */
-export async function clipboardHasImage(): Promise<boolean> {
-  try {
-    return await invoke<boolean>("clipboard_has_image");
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Paste clipboard image to a file in the given directory.
- *
- * @param directory - Directory to save the image in
- * @returns Result with the created file path or error
- */
-export async function clipboardPasteImage(directory: string): Promise<ApiResult<string>> {
-  try {
-    const path = await invoke<string>("clipboard_paste_image", { directory });
-    return { ok: true, data: path };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Wallpaper
-// Issue: tauri-explorer-mj32
-// ===================
-
-/**
- * Set an image file as the desktop wallpaper.
- * Auto-detects DE (Hyprland/hyprpaper, Sway, GNOME, KDE, XFCE, feh).
- *
- * @param path - Full path to image file
- * @returns Result indicating success or error message
- */
-export async function setAsWallpaper(path: string): Promise<ApiResult<void>> {
-  try {
-    await invoke("set_as_wallpaper", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Nano Banana (AI Image Editing)
-// Issue: feat/nano-banana
-// ===================
-
-/**
- * Start a Nano Banana image editing job.
- * Returns job ID immediately; listen for nano-banana-complete/error events.
- */
-export async function startNanoBananaJob(
-  sourcePath: string,
-  prompt: string,
-  outputDir: string,
-  outputFilename: string,
-  apiKey: string,
-  model: string,
-): Promise<ApiResult<number>> {
-  try {
-    const jobId = await invoke<number>("start_nano_banana_job", {
-      sourcePath,
-      prompt,
-      outputDir,
-      outputFilename,
-      apiKey,
-      model,
-    });
-    return { ok: true, data: jobId };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Upscale (fal.ai SeedVR2)
-// Issue: #276
-// ===================
-
-/**
- * Start a SeedVR2 image upscale job.
- * Returns job ID immediately; listen for upscale-complete/error events.
- */
-export async function startUpscaleJob(
-  sourcePath: string,
-  outputDir: string,
-  outputFilename: string,
-  apiKey: string,
-  upscaleFactor: number,
-): Promise<ApiResult<number>> {
-  try {
-    const jobId = await invoke<number>("start_upscale_job", {
-      sourcePath,
-      outputDir,
-      outputFilename,
-      apiKey,
-      upscaleFactor,
-    });
-    return { ok: true, data: jobId };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Concern-focused re-exports (façade)
-// Issue: refactor/audit-tier4-splits (#212)
-// Issue: refactor/finish-api-files-split-into-open-and-system-modules (#282)
-//
-// Split out of this file into cohesive modules; re-exported here (by exact
-// symbol, not `export *`) so existing importers of `$lib/api/files` continue
-// to resolve every symbol they actually use unchanged.
-// ===================
-
-export {
-  invoke,
-  extractError,
-  extractErrorKind,
-  type AppError,
-  type AppErrorKind,
-  type ApiResult,
-} from "./common";
-
-export {
-  openFile,
-  openFileAtLine,
-  openFileWith,
-  openImageWithSiblings,
-  openInTerminal,
-  listInstalledTerminals,
-} from "./open";
-
-export { pickerRespond, setWindowTheme, setFfmpegPath } from "./system";
-
-export {
-  fuzzySearch,
-  type SearchResult,
-  startStreamingSearch,
-  cancelSearch,
-  type SearchResultsEvent,
-  startContentSearch,
-  cancelContentSearch,
-  type ContentMatch,
-  type ContentSearchResult,
-  type ContentSearchEvent,
-} from "./search";
-
-export {
-  getMicroThumbnail,
-  getThumbnailData,
-  getVideoThumbnailData,
-  getFolderPreview,
-} from "./thumbnails";
-
-export {
-  compressToZip,
-  cancelCompress,
-  extractArchive,
-  listArchiveContents,
-  cancelExtract,
-  type ZipProgressEvent,
-} from "./archive";
-
-export {
-  readConfigFile,
-  writeConfigFile,
-  listUserThemes,
-} from "./config";
-
-export {
-  getGitStatus,
-  cancelGetGitStatus,
-  type GitFileStatus,
-  gitInit,
-  gitRepoRoot,
-  gitAddToGitignore,
-  gitArchiveUntracked,
-  gitTrashUntracked,
-  gitSummary,
-  cancelGitStatus,
-  gitStage,
-  gitUnstage,
-  gitApplyPatch,
-  type GitPatchAction,
-  gitDiscard,
-  gitDiff,
-  gitCommit,
-  gitWatchRepo,
-  gitUnwatchRepo,
-  gitMergeAbort,
-  gitRebaseAbort,
-  gitRebaseContinue,
-  gitCherryPickAbort,
-  gitRevertAbort,
-  type GitFileEntry,
-  type GitStatusSummary,
-  type GitStatusCode,
-  type GitOpState,
-} from "./git";

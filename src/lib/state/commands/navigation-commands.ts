@@ -8,8 +8,19 @@ import { windowTabsManager } from "../window-tabs.svelte";
 import { refreshGraphPane } from "../git-graph-refresh";
 import { stepGraphSelection } from "../git-graph-nav";
 import { activePaneIsGraph } from "./active-pane";
+import { settingsStore } from "../settings.svelte";
 
 export const navigationCommands: Command[] = [
+  {
+    id: "navigation.focusAddressBar",
+    label: "Focus Address Bar",
+    category: "navigation",
+    shortcut: "Ctrl+L",
+    handler: () => {
+      window.dispatchEvent(new Event("explorer:focus-address-bar"));
+    },
+    when: () => settingsStore.showAddressBar && !!getActiveExplorer(),
+  },
   {
     id: "navigation.goBack",
     label: "Go Back",
@@ -39,7 +50,7 @@ export const navigationCommands: Command[] = [
     label: "Go to Home",
     category: "navigation",
     handler: async () => {
-      const { getHomeDirectory } = await import("$lib/api/files");
+      const { getHomeDirectory } = await import("$lib/api/environment");
       const result = await getHomeDirectory();
       if (result.ok) {
         getActiveExplorer()?.navigateTo(result.data);

@@ -8,6 +8,7 @@
  * previous window.dispatchEvent custom event pattern.
  */
 
+import { modalOwnership } from "./modal-ownership.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 export type DialogType = "rename" | "delete" | null;
@@ -145,7 +146,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen;
+      return modalOwnership.hasOpen || shortcutsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen;
     },
 
     // Overlay dialog actions
@@ -241,6 +242,8 @@ function createDialogStore() {
     },
 
     closeAll(): void {
+      modalOwnership.closeAll();
+      shortcutsOpen = false;
       activeDialog = null;
       targetEntry = null;
       targetEntries = [];

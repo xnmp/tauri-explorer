@@ -14,16 +14,19 @@ be retargeted while the app is running.
 ## Decision
 
 `watch_config_changes` owns the native watcher and a process-independent
-refresh worker. The worker re-resolves symlink targets every two seconds and
-adds watches for newly resolved external roots. `init_config_watcher` retains
-that handle in `CONFIG_WATCHER` for the process lifetime; test callers retain
-their own handle, and dropping it asks the worker to stop on its next cadence.
+refresh worker. The worker re-resolves symlink targets every two seconds.
+`init_config_watcher` retains that handle in `CONFIG_WATCHER` for the process
+lifetime; test callers retain their own handle. Dropping the handle wakes and
+joins the worker, so no refresh callback outlives teardown.
 
-Existing external watches are deliberately not removed during a retarget.
-An editor can still write an old target during the handover. The current watch
-plan filters those stale events by canonical target equality, so retaining the
-old native watch avoids a blind interval without producing a reload for the
-wrong config file. Runtime watcher errors are logged with the config path;
+Retargeting establishes all new native coverage before publishing the new plan
+and removing obsolete watches. A failed registration leaves the previous plan
+active for retry. Failed removals remain tracked separately from the current
+plan and are retried; successful retargets do not retain historical roots.
+Shared file parents and theme directories use stable recursive coverage so one
+role cannot downgrade another role's watch. The current plan filters delayed
+old-target events by canonical target equality. Callbacks run outside the
+watch-state lock. Runtime watcher errors are logged with the config path;
 access-only events remain filtered because they do not change config content.
 
 ## Consequences
@@ -32,3 +35,6 @@ access-only events remain filtered because they do not change config content.
 - The watcher handle is the owner of both native watch lifetime and refresh
   worker shutdown; callers must retain it for as long as events are needed.
 - Integration tests use this same lifecycle instead of a separate notify setup.
+- Repeated retargets retain current coverage and outstanding failed removals,
+  rather than every previously visited root. Replacement, failure/retry and
+  teardown tests include a real Linux symlink handover.

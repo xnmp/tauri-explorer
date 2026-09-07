@@ -26,18 +26,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const evt = vi.hoisted(() => ({
   emitToCalls: [] as Array<{ label: string; event: string; payload: unknown }>,
   emitToFails: false,
+  listeners: new Map<string, (event: { payload: unknown }) => Promise<void>>(),
   listener: undefined as ((event: { payload: unknown }) => Promise<void>) | undefined,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (_event: string, handler: (event: { payload: unknown }) => Promise<void>) => {
-    evt.listener = handler;
-    return () => {};
+    evt.listeners.set(_event, handler);
+    if (_event === "warm-activate") evt.listener = handler;
+    return () => { evt.listeners.delete(_event); };
   }),
   emit: vi.fn(async () => {}),
   emitTo: vi.fn(async (label: string, event: string, payload: unknown) => {
     if (evt.emitToFails) throw new Error("window gone");
     evt.emitToCalls.push({ label, event, payload });
+    if (event === "warm-activate") {
+      const handoff = (payload as { handoff: { requestId: string } }).handoff;
+      await evt.listeners.get("explorer://warm-activated")?.({ payload: { requestId: handoff.requestId, targetWindow: label } });
+    }
   }),
 }));
 
@@ -101,7 +107,9 @@ const invokeMock = vi.hoisted(() =>
         return pool.spawnAllowed;
       case "warm_pool_register":
         pool.ready.push(args!.label as string);
-        return undefined;
+        return true;
+      case "warm_pool_activate":
+        return true;
       case "warm_pool_discard":
         pool.discarded.push(args!.label as string);
         return undefined;
@@ -118,9 +126,10 @@ vi.mock(import("$lib/api/common"), async (orig) => {
 // window-tabs is heavy; stub the one method warm-window calls.
 vi.mock("../../src/lib/state/window-tabs.svelte", () => ({
   windowTabsManager: {
+    acceptsTransfers: true,
     getActiveExplorer: () => ({
       currentPath: "/home/user",
-      navigateTo: vi.fn(async () => {}),
+      navigateTo: vi.fn(async () => true),
       setViewMode: vi.fn(),
     }),
   },
@@ -152,6 +161,7 @@ beforeEach(() => {
   evt.emitToCalls.length = 0;
   evt.emitToFails = false;
   evt.listener = undefined;
+  evt.listeners.clear();
   created.calls.length = 0;
   currentWindow.calls.length = 0;
   currentWindow.title = "";
@@ -163,9 +173,23 @@ beforeEach(() => {
 });
 
 describe("warm-window consume contract", () => {
-  it("returns false on a pool miss and primes the pool for next time", async () => {
+  it("does not claim a parked window for malformed activation input", async () => {
+    pool.ready.push("explorer-warm-valid");
+    expect(await consumeWarmWindow("", undefined, undefined)).toBeNull();
+    expect(pool.ready).toEqual(["explorer-warm-valid"]);
+  });
+
+  it("discards a claimed window when reading native geometry fails", async () => {
+    pool.ready.push("explorer-warm-failure");
+    const position = vi.spyOn(currentWindow.api, "outerPosition").mockRejectedValue(new Error("window gone"));
+    try {
+      expect(await consumeWarmWindow("/valid", undefined, undefined)).toBeNull();
+      expect(pool.discarded).toEqual(["explorer-warm-failure"]);
+    } finally { position.mockRestore(); }
+  });
+  it("returns null on a pool miss and primes the pool for next time", async () => {
     const used = await consumeWarmWindow("/some/path", undefined, undefined);
-    expect(used).toBe(false);
+    expect(used).toBeNull();
     expect(evt.emitToCalls).toHaveLength(0);
     expect(pool.beginSpawnCalls).toBeGreaterThan(0); // miss → prime
   });
@@ -175,7 +199,7 @@ describe("warm-window consume contract", () => {
 
     const used = await consumeWarmWindow("/target", "tiles", undefined);
 
-    expect(used).toBe(true);
+    expect(used).toBe("explorer-warm-123");
     expect(evt.emitToCalls).toHaveLength(1);
     expect(evt.emitToCalls[0].label).toBe("explorer-warm-123");
     expect(evt.emitToCalls[0].event).toBe(WARM_ACTIVATE_EVENT);
@@ -203,8 +227,8 @@ describe("warm-window consume contract", () => {
     pool.ready.push("explorer-warm-456");
     const first = await consumeWarmWindow("/a", undefined, undefined);
     const second = await consumeWarmWindow("/b", undefined, undefined);
-    expect(first).toBe(true);
-    expect(second).toBe(false);
+    expect(first).toBe("explorer-warm-456");
+    expect(second).toBeNull();
     expect(evt.emitToCalls).toHaveLength(1);
   });
 
@@ -214,7 +238,7 @@ describe("warm-window consume contract", () => {
 
     const used = await consumeWarmWindow("/x", undefined, undefined);
 
-    expect(used).toBe(false); // caller opens a fresh window — never a no-op
+    expect(used).toBeNull(); // caller opens a fresh window — never a no-op
     // The claimed-but-unactivatable window must be destroyed, not leaked as
     // an invisible window the registry counts as real.
     await vi.waitFor(() => expect(pool.discarded).toEqual(["explorer-warm-9"]));
@@ -239,12 +263,20 @@ describe("warm-window spawn contract", () => {
 });
 
 describe("warm-window reveal contract", () => {
+  it("ignores malformed activation without consuming the next valid activation", async () => {
+    await runWarmWindow(false).ready;
+    await evt.listener!({ payload: { path: 23, viewMode: "invalid", width: -1, height: 0 } });
+    expect(currentWindow.calls).toEqual([]);
+    await evt.listener!({ payload: { path: "/work/valid", handoff: { sourceWindow: "main", requestId: "valid" } } });
+    expect(currentWindow.calls).toContain("title:valid - Tauri Explorer");
+    expect(currentWindow.calls).toContain("show");
+  });
   it("sets the requested title before a claimed window becomes visible", async () => {
-    await runWarmWindow(false);
+    await runWarmWindow(false).ready;
     expect(evt.listener).toBeTypeOf("function");
 
     await evt.listener!({
-      payload: { path: "/work/beta" } satisfies WarmActivatePayload,
+      payload: { path: "/work/beta", handoff: { sourceWindow: "main", requestId: "beta" } },
     });
 
     expect(currentWindow.calls.slice(0, 2)).toEqual([

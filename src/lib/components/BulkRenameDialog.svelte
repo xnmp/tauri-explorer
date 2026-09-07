@@ -381,7 +381,6 @@
     font-size: var(--font-size-caption);
     cursor: pointer;
     border: 1px solid var(--control-stroke);
-    transition: all var(--transition-fast);
   }
 
   .btn-primary {

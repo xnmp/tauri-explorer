@@ -14,20 +14,21 @@
  */
 
 import type { Command } from "$lib/state/commands.svelte";
-import { registerCommand, unregisterCommand } from "$lib/state/commands.svelte";
+import { registerCommandContribution } from "$lib/state/commands.svelte";
 import { contextMenuItems, type ContextMenuItem } from "$lib/state/context-menu-items.svelte";
 import { registerFsProvider, type FsProvider } from "./fs-providers";
 import { pluginSettingsSections } from "./settings-registry.svelte";
 import { dialogRegistry, type DialogDescriptor } from "./dialog-registry.svelte";
-import { jobsStore } from "$lib/state/jobs.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
-import { readConfigFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { performFileTransfer } from "$lib/state/file-transfer";
 import type { FileEntry } from "$lib/domain/file";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
+import type { ApiResult } from "$lib/api/common";
 
 // ----- Settings descriptors -----
 
@@ -58,11 +59,12 @@ export interface PluginStorage {
   set(value: Record<string, unknown>): Promise<void>;
 }
 
-/** Source-tagged handle over the shared jobs store for a single plugin. */
+/** Window-owned background jobs survive plugin activation changes. */
 export interface PluginJobs {
-  add(id: number, label: string, detail: string): void;
-  complete(id: number, outputPath: string): void;
-  fail(id: number, error: string): void;
+  accept(
+    registration: { kind: PluginJobKind; label: string; detail: string },
+    start: () => Promise<ApiResult<number>>,
+  ): Promise<ApiResult<number>>;
 }
 
 export interface PluginToast {
@@ -109,7 +111,7 @@ export interface PluginWorkspace {
  * The capability surface handed to a plugin's `activate`. Plugins never call
  * `invoke` or reach into app stores directly — the common side effects route
  * through this object so they can be tracked, torn down, and audited in one
- * place: contribution registration, jobs, toasts, events, plugin storage, the
+ * place: contribution registration, toasts, events, plugin storage, the
  * workspace (selection / navigation / pane refresh / moves), and opening
  * Settings.
  *
@@ -181,25 +183,17 @@ export function createPluginContext(pluginId: string): {
   dispose: () => void;
 } {
   const disposers: (() => void)[] = [];
-  const track = (fn: () => void) => disposers.push(fn);
+  let disposed = false;
+  const track = (fn: () => void) => {
+    if (disposed) fn();
+    else disposers.push(fn);
+  };
   const storage = createPluginStorage(pluginId);
 
-  // Jobs the plugin added through ctx.jobs, so still-running ones can be torn
-  // down on deactivate rather than orphaning rows in the shared store (#154).
-  const jobIds = new Set<number>();
-  track(() => {
-    for (const id of jobIds) {
-      if (jobsStore.jobs.some((j) => j.id === id && j.status === "running")) {
-        jobsStore.removeJob(id);
-      }
-    }
-    jobIds.clear();
-  });
 
   const ctx: PluginContext = {
     registerCommand(cmd: Command): void {
-      registerCommand(cmd);
-      track(() => unregisterCommand(cmd.id));
+      track(registerCommandContribution(cmd));
     },
     registerContextMenuItem(item: ContextMenuItem): void {
       track(contextMenuItems.register(item));
@@ -208,7 +202,7 @@ export function createPluginContext(pluginId: string): {
       track(pluginSettingsSections.register(pluginId, section, storage));
     },
     registerFsProvider(scheme: string, provider: FsProvider): void {
-      track(registerFsProvider(scheme, provider));
+      track(registerFsProvider(scheme, provider, false));
     },
     registerDialog(descriptor: DialogDescriptor): void {
       track(dialogRegistry.register(descriptor));
@@ -219,14 +213,7 @@ export function createPluginContext(pluginId: string): {
     closeDialog(id: string): void {
       dialogRegistry.close(id);
     },
-    jobs: {
-      add: (id, label, detail) => {
-        jobIds.add(id);
-        jobsStore.addJob(id, label, detail, pluginId);
-      },
-      complete: (id, outputPath) => jobsStore.completeJob(id, outputPath),
-      fail: (id, error) => jobsStore.failJob(id, error),
-    },
+    jobs: pluginJobsController,
     toast: {
       show: (message, variant) => toastStore.show(message, variant),
       error: (message) => toastStore.error(message),
@@ -234,17 +221,19 @@ export function createPluginContext(pluginId: string): {
     events: {
       listen<T>(name: string, handler: (payload: T) => void): void {
         let un: UnlistenFn | null = null;
-        let disposed = false;
-        listen<T>(name, (event) => handler(event.payload))
+        let listenerDisposed = false;
+        listen<T>(name, (event) => {
+          if (!listenerDisposed && !disposed) handler(event.payload);
+        })
           .then((fn) => {
-            if (disposed) fn();
+            if (listenerDisposed || disposed) fn();
             else un = fn;
           })
           .catch(() => {
             // Outside Tauri (browser/mock) the event system is unavailable.
           });
         track(() => {
-          disposed = true;
+          listenerDisposed = true;
           un?.();
         });
       },
@@ -276,6 +265,7 @@ export function createPluginContext(pluginId: string): {
   return {
     ctx,
     dispose: () => {
+      disposed = true;
       while (disposers.length) {
         const fn = disposers.pop();
         try {

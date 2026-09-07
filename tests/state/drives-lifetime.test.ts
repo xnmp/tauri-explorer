@@ -1,0 +1,37 @@
+import { afterEach, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ list: vi.fn(), watch: vi.fn(), unwatch: vi.fn(), listen: vi.fn() }));
+vi.mock("$lib/api/drives", () => ({ listDrives: mocks.list }));
+vi.mock("$lib/api/files", () => ({ watchDirectory: mocks.watch, unwatchDirectory: mocks.unwatch }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
+import { drivesStore } from "$lib/state/drives.svelte";
+afterEach(async () => { await drivesStore.stopPolling(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetAllMocks(); });
+it("stopping during discovery cannot acquire watches or listeners afterward", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("navigator", { userAgent: "Mac OS" });
+  let resolve!: (value: unknown) => void;
+  mocks.list.mockImplementation(() => new Promise((r) => { resolve = r; }));
+  mocks.watch.mockResolvedValue(undefined);
+  const unlisten = vi.fn(); mocks.listen.mockResolvedValue(unlisten);
+  const starting = drivesStore.startPolling();
+  await vi.waitFor(() => expect(resolve).toBeDefined());
+  const stopping = drivesStore.stopPolling();
+  resolve({ ok: true, data: [] });
+  await Promise.all([starting, stopping]);
+  expect(mocks.watch).not.toHaveBeenCalled();
+  expect(mocks.listen).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("a watch acquired after stop is released before teardown resolves", async () => {
+  vi.useFakeTimers(); vi.stubGlobal("navigator", { userAgent: "Mac OS" });
+  mocks.list.mockResolvedValue({ ok: true, data: [] });
+  let acquire!: () => void; let held = 0;
+  mocks.watch.mockImplementation(() => new Promise<void>((resolve) => { acquire = () => { held++; resolve(); }; }));
+  mocks.unwatch.mockImplementation(async () => { held--; });
+  mocks.listen.mockResolvedValue(() => {});
+  const starting = drivesStore.startPolling();
+  await vi.waitFor(() => expect(acquire).toBeDefined());
+  const stopping = drivesStore.stopPolling();
+  acquire();
+  await Promise.all([starting, stopping]);
+  expect(held).toBe(0);
+});

@@ -1,6 +1,7 @@
 # macOS launch smoke (#192): the only automated macOS signal we can get
 # without a WKWebView WebDriver. Builds the app with embedded assets and
-# asserts it boots: the process survives and the startup log line appears.
+# asserts core Explorer readiness, including commands/settings/initial listing.
+# This debug build on a shared runner is a smoke check, not a latency benchmark.
 name: macOS Smoke
 
 on:
@@ -58,15 +59,15 @@ jobs:
               cat app.log
               exit 1
             fi
-            if grep -q "Startup:" app.log; then
-              echo "OK: startup log line appeared"
+            if grep -q "Startup(native-ready):" app.log; then
+              echo "OK: core Explorer readiness reached"
               break
             fi
             sleep 1
           done
 
-          if ! grep -q "Startup:" app.log; then
-            echo "FAIL: startup log line never appeared within 30s"
+          if ! grep -q "Startup(native-ready):" app.log; then
+            echo "FAIL: core Explorer readiness never appeared within 30s"
             cat app.log
             exit 1
           fi

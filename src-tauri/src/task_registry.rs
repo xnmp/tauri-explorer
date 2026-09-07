@@ -5,6 +5,7 @@
 //! cancelled. Used by directory listings, search, and content search to avoid
 //! duplicating the same AtomicU64 + Mutex<HashMap> pattern.
 
+use crate::error::AppError;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -45,31 +46,36 @@ impl TaskRegistry {
     /// Start a new task. Returns (task_id, cancellation_flag).
     /// The caller should check `cancelled.load(Ordering::Relaxed)` periodically.
     pub fn start(&self) -> (u64, Arc<AtomicBool>) {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let mut state = self.state().lock().unwrap_or_else(|poisoned| {
+            log::error!("task registry lock poisoned on start, recovering");
+            poisoned.into_inner()
+        });
+        let id = loop {
+            let candidate = self.next_id.fetch_add(1, Ordering::SeqCst);
+            if !state.active.contains_key(&candidate) && !state.pre_cancelled.contains(&candidate) {
+                break candidate;
+            }
+        };
         let cancelled = Arc::new(AtomicBool::new(false));
-        self.state()
-            .lock()
-            .unwrap_or_else(|poisoned| {
-                log::error!("task registry lock poisoned on start, recovering");
-                poisoned.into_inner()
-            })
-            .active
-            .insert(id, cancelled.clone());
+        state.active.insert(id, cancelled.clone());
         (id, cancelled)
     }
 
     /// Register a task under a caller-chosen ID. Used when the client
     /// generates the job id itself so it can cancel before the command
     /// returns (e.g. zip compression progress).
-    pub fn start_with_id(&self, id: u64) -> Arc<AtomicBool> {
+    pub fn start_with_id(&self, id: u64) -> Result<Arc<AtomicBool>, AppError> {
         let mut state = self.state().lock().unwrap_or_else(|poisoned| {
             log::error!("task registry lock poisoned on start_with_id, recovering");
             poisoned.into_inner()
         });
+        if state.active.contains_key(&id) {
+            return Err(AppError::Other(format!("Task ID {id} is already active")));
+        }
         let was_pre_cancelled = state.pre_cancelled.remove(&id);
         let cancelled = Arc::new(AtomicBool::new(was_pre_cancelled));
         state.active.insert(id, cancelled.clone());
-        cancelled
+        Ok(cancelled)
     }
 
     /// Cancel a task by ID. If registration has not happened yet, preserve a
@@ -108,11 +114,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn duplicate_client_id_cannot_replace_cancellation_ownership() {
+        let registry = TaskRegistry::new();
+        let first = registry.start_with_id(42).unwrap();
+        assert!(registry.start_with_id(42).is_err());
+        registry.cancel(42);
+        assert!(first.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn generated_id_does_not_replace_a_client_task() {
+        let registry = TaskRegistry::new();
+        let client = registry.start_with_id(1).unwrap();
+        let (generated, _) = registry.start();
+        registry.cancel(1);
+        assert!(client.load(Ordering::Relaxed));
+        assert_ne!(generated, 1);
+    }
+
+    #[test]
     fn cancellation_before_registration_is_observed() {
         let registry = TaskRegistry::new();
         registry.cancel(42);
 
-        let cancelled = registry.start_with_id(42);
+        let cancelled = registry.start_with_id(42).unwrap();
 
         assert!(cancelled.load(Ordering::Relaxed));
         registry.cleanup(42);

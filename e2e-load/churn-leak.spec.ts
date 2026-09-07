@@ -5,7 +5,7 @@
  *   1) open-tab-with-graph -> close-tab, 25x
  *   2) toggle the graph on/off in one pane, 25x
  * After forced GC the heap must return to near its post-warmup baseline
- * (baseline + 25MB). Requires performance.memory (Chromium) — fails loudly
+ * (baseline + 25 MiB). Requires performance.memory (Chromium) — fails loudly
  * otherwise rather than silently passing.
  */
 import { test, expect } from "@playwright/test";
@@ -31,7 +31,7 @@ async function heapOrFail(page: import("@playwright/test").Page, label: string):
   return heap as number;
 }
 
-test("open/close graph-tab churn does not leak", async ({ page }) => {
+test("open/close graph-tab churn stays within its retained JS heap budget", async ({ page }) => {
   await openApp(page, { commits: 300 });
 
   // Warm up: one open+close so one-time module/cache allocations are already
@@ -48,12 +48,12 @@ test("open/close graph-tab churn does not leak", async ({ page }) => {
   const final = await heapOrFail(page, "open/close final");
   // eslint-disable-next-line no-console
   console.log(
-    `[LOAD] open/close heap baseline=${(baseline / MB).toFixed(1)}MB final=${(final / MB).toFixed(1)}MB delta=${((final - baseline) / MB).toFixed(1)}MB`,
+    `[LOAD] open/close heap baseline=${(baseline / MB).toFixed(1)} MiB final=${(final / MB).toFixed(1)} MiB delta=${((final - baseline) / MB).toFixed(1)} MiB`,
   );
   expect(final - baseline).toBeLessThanOrEqual(HEAP_BUDGET);
 });
 
-test("graph on/off toggle churn in one pane does not leak", async ({ page }) => {
+test("graph on/off toggle churn stays within its retained JS heap budget", async ({ page }) => {
   await openApp(page, { commits: 300 });
 
   // A single pane sitting on a repo, graph open.
@@ -73,7 +73,7 @@ test("graph on/off toggle churn in one pane does not leak", async ({ page }) => 
   const final = await heapOrFail(page, "toggle final");
   // eslint-disable-next-line no-console
   console.log(
-    `[LOAD] toggle heap baseline=${(baseline / MB).toFixed(1)}MB final=${(final / MB).toFixed(1)}MB delta=${((final - baseline) / MB).toFixed(1)}MB`,
+    `[LOAD] toggle heap baseline=${(baseline / MB).toFixed(1)} MiB final=${(final / MB).toFixed(1)} MiB delta=${((final - baseline) / MB).toFixed(1)} MiB`,
   );
   expect(final - baseline).toBeLessThanOrEqual(HEAP_BUDGET);
 });

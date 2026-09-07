@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const invokeMock = vi.fn();
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/common", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 

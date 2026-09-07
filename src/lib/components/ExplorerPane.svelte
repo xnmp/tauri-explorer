@@ -6,12 +6,11 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { setPaneIdContext } from "$lib/state/pane-context";
-  import { createExplorerState } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
   import NavigationBar from "./NavigationBar.svelte";
   import FileList from "./FileList.svelte";
-  import GitGraphView from "./GitGraphView.svelte";
   import MillerColumns from "./MillerColumns.svelte";
   import ContextMenu from "./ContextMenu.svelte";
 import ScmPanel from "./ScmPanel.svelte";
@@ -20,29 +19,40 @@ import ScmPanel from "./ScmPanel.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { gitWarmer } from "$lib/state/git-warm";
+  import { gitGraphComponent } from "$lib/state/git-graph-component";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { directoryKey } from "$lib/domain/path";
-  import { gitRepoRoot } from "$lib/api/files";
+  import { gitRepoRoot } from "$lib/api/git";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
 
   interface Props {
     paneId: PaneId;
+    explorer: ExplorerInstance;
   }
 
-  let { paneId }: Props = $props();
+  let { paneId, explorer }: Props = $props();
+  // PaneLayoutView keys this component by the explorer instance. Capture the
+  // resource for the entire mount, including cleanup after the parent removes
+  // its registry entry (when a reactive prop lookup can already be undefined).
+  const paneExplorer = untrack(() => explorer);
 
   // paneId is a static literal per pane instance (see PaneContainer), so
   // capturing it at init is safe. Consumed by GitStatusBadge to resolve the
   // directory its entry is rendered in.
   setPaneIdContext(untrack(() => paneId));
 
-  // Get explorer from window tabs manager
-  const paneExplorer = $derived(windowTabsManager.getExplorer(paneId) ?? createExplorerState());
-
   // Repo whose commit graph this pane shows instead of the file listing
   // (#272). Toggled per-pane via git.showGraph (Ctrl+Alt+G).
   const paneGitGraph = $derived(windowTabsManager.getPaneGitGraph(paneId));
+
+  function loadGraphComponent() {
+    return gitGraphComponent.load(() => import("./GitGraphView.svelte").then((module) => module.default))
+      .catch((error) => {
+        console.error("Could not load Git history:", error);
+        throw error;
+      });
+  }
 
   // Per-pane SCM panel visibility (#434): explicit per-pane override, else the
   // global `showScmPanel` default.
@@ -58,7 +68,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     function onWindowKeydown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (dialogStore.activeDialog) return;
+      if (dialogStore.hasModalOpen) return;
       handleKeydown(e);
     }
     window.addEventListener("keydown", onWindowKeydown);
@@ -116,13 +126,16 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     }
   });
 
-  // Focus the selected item after navigation so arrow keys work immediately.
-  // Uses a callback (not reactive) to avoid firing on mount or tab switch.
+  // Navigation completion also runs for restored background panes. Only the
+  // current pane may return focus to its listing, and that ownership must
+  // survive the render before touching the DOM.
   function focusSelectedAfterNav() {
+    if (windowTabsManager.getActiveExplorer() !== paneExplorer) return;
     const active = document.activeElement;
     if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
     tick().then(() => {
-      if (!paneRef) return;
+      if (!paneRef?.isConnected || windowTabsManager.getActiveExplorer() !== paneExplorer
+        || document.activeElement !== active) return;
       const selected = paneRef.querySelector<HTMLElement>(".selected");
       if (selected) {
         selected.focus({ preventScroll: false });
@@ -230,7 +243,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
   function handleKeydown(event: KeyboardEvent): void {
     // Don't process keyboard shortcuts when a dialog is open
-    if (dialogStore.activeDialog) return;
+    if (dialogStore.hasModalOpen) return;
 
     // While the pane shows the commit graph the file listing isn't rendered at
     // all, so none of this navigation has a visible target — but it still ran,
@@ -378,11 +391,25 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       <!-- Keyed so switching between graphs of different repos recreates the
            view — no selected-commit/state bleed or in-flight races (#167). -->
       {#key paneGitGraph}
-        <GitGraphView repoPath={paneGitGraph} />
+        {@const CachedGraph = gitGraphComponent.current}
+        {#if CachedGraph}
+          <CachedGraph repoPath={paneGitGraph} />
+        {:else}
+          {#await loadGraphComponent()}
+            <div class="graph-load-status" role="status">Loading history…</div>
+          {:then Graph}
+            <Graph repoPath={paneGitGraph} />
+          {:catch}
+            <div class="graph-load-status" role="alert">
+              <p>Could not load Git history. Restart the app and try again.</p>
+              <button onclick={() => windowTabsManager.setPaneGitGraph(paneId, null)}>Return to files</button>
+            </div>
+          {/await}
+        {/if}
       {/key}
     </div>
   {:else if paneExplorer}
-    <NavigationBar explorer={paneExplorer} />
+    <NavigationBar explorer={paneExplorer} {paneId} />
     <div class="pane-content">
       <!-- Miller columns render inline UNLESS they are hoisted to the left
            island (island mode + no sidebar, active pane only). The hoist
@@ -407,6 +434,34 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 </section>
 
 <style>
+  .graph-load-status {
+    flex: 1;
+    align-self: center;
+    text-align: center;
+    padding: 16px;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .graph-load-status button {
+    font: inherit;
+    color: var(--text-primary);
+    background: var(--control-fill);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  .graph-load-status button:hover {
+    background: var(--control-fill-secondary);
+  }
+
+  .graph-load-status button:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: 2px;
+  }
+
   .explorer-pane {
     display: flex;
     flex-direction: column;

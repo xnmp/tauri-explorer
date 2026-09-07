@@ -38,10 +38,14 @@
  * Measure windows never register with the pool: they are probes, not stock.
  */
 
+import { createWarmActivation } from "./warm-activation";
+import { requestWindowAcknowledgement, acknowledgeWindowRequest } from "./window-handoff";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { emitTo, listen } from "@tauri-apps/api/event";
-import { logStartupTiming } from "$lib/api/files";
+import { logStartupTiming } from "$lib/api/environment";
 import {
+  warmPoolActivate,
   warmPoolBeginSpawn,
   warmPoolCancelSpawn,
   warmPoolClaim,
@@ -53,6 +57,8 @@ import { explorerWindowAppearance } from "./window-appearance";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import type { ViewMode } from "./types";
+import { normalizeWarmActivation, type WarmActivatePayload } from "$lib/domain/window-input";
+export type { WarmActivatePayload } from "$lib/domain/window-input";
 import { formatWindowTitle } from "../domain/tab-title";
 import { resolveLaunchHomePath } from "./window-title.svelte";
 
@@ -64,19 +70,7 @@ const WARM_LABEL_PREFIX = "explorer-warm-";
 
 /** Parent → warm window: "become a real window at this path." */
 export const WARM_ACTIVATE_EVENT = "warm-activate";
-
-export interface WarmActivatePayload {
-  path: string;
-  viewMode?: ViewMode;
-  /** Physical-pixel geometry mirroring the fresh-window path; always set by
-   *  consumeWarmWindow, optional only for the measure-mode self-fire. */
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  /** Set on the measure-mode self-fire; used to dedupe vs real Ctrl+N. */
-  measure?: boolean;
-}
+const WARM_ACTIVATED_EVENT = "explorer://warm-activated";
 
 /** "1" = normal parked warm window; "measure" = self-firing measurement run
  *  (Rust-spawned via WARM_MEASURE=1, flagged with the __WARM_MEASURE__
@@ -95,17 +89,17 @@ export function warmMode(): "off" | "park" | "measure" {
  * over-spawning. The window becomes claimable only after it registers itself.
  */
 export async function spawnWarmWindow(): Promise<void> {
+  const label = WARM_LABEL_PREFIX + crypto.randomUUID();
   let reserved = false;
   try {
-    reserved = await warmPoolBeginSpawn();
+    reserved = await warmPoolBeginSpawn(label);
   } catch {
     return; // not running in Tauri (e.g. browser E2E) — no pool
   }
   if (!reserved) return;
 
-  const cancelReservation = () => void warmPoolCancelSpawn().catch(() => {});
+  const cancelReservation = () => void warmPoolCancelSpawn(label).catch(() => {});
 
-  const label = WARM_LABEL_PREFIX + Date.now();
   const baseUrl = window.location.origin + window.location.pathname;
   // Park the warm window at the SPAWNER's current path so its boot-time init
   // navigates somewhere valid. Without this it fell back to "/home" (nonexistent
@@ -124,7 +118,7 @@ export async function spawnWarmWindow(): Promise<void> {
       skipTaskbar: true,
       ...explorerWindowAppearance(formatWindowTitle(parkPath, homePath)),
     });
-    win.once("tauri://error", cancelReservation);
+    void win.once("tauri://error", cancelReservation).catch(cancelReservation);
   } catch {
     cancelReservation();
   }
@@ -132,8 +126,8 @@ export async function spawnWarmWindow(): Promise<void> {
 
 /**
  * Claim a ready warm window from the global pool, activate it for `path`, and
- * return true. Returns false when none is ready (or activation fails) so the
- * caller spawns a normal window — Ctrl+N can never be a no-op. On a miss the
+ * return its label only after acknowledged reveal. Returns null on a miss or
+ * failed activation so the caller spawns a normal window — Ctrl+N can never be a no-op. On a miss the
  * pool is primed so the NEXT new window is warm; on a hit a replacement is
  * spawned.
  *
@@ -145,45 +139,43 @@ export async function consumeWarmWindow(
   path: string,
   viewMode: ViewMode | undefined,
   at: { x: number; y: number } | undefined,
-): Promise<boolean> {
+): Promise<string | null> {
+  if (!normalizeWarmActivation({ path, viewMode })
+    || (at && (!Number.isFinite(at.x) || !Number.isFinite(at.y)))) return null;
   let label: string | null = null;
   try {
     label = await warmPoolClaim();
   } catch {
-    return false; // not running in Tauri — fresh-window path handles it
+    return null; // not running in Tauri — fresh-window path handles it
   }
   if (!label) {
     void spawnWarmWindow();
-    return false;
+    return null;
   }
 
-  // Geometry mirrors the fresh-window path, computed from THIS (claiming)
-  // window at consume time: tear-off places the title bar under the cursor,
-  // otherwise cascade +30/+30 from the current window, at its size.
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  const win = getCurrentWindow();
-  const [pos, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
-
-  const payload: WarmActivatePayload = {
-    path,
-    viewMode,
-    x: at ? Math.round(at.x - 120) : pos.x + 30,
-    y: at ? Math.round(at.y - 16) : pos.y + 30,
-    width: size.width,
-    height: size.height,
-  };
-
+  // Everything after claiming shares one failure boundary. A native geometry
+  // read can fail just like emitTo; either must retire the claimed window.
   try {
-    await emitTo(label, WARM_ACTIVATE_EVENT, payload);
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    const [pos, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
+    const payload = normalizeWarmActivation({
+      path, viewMode,
+      x: at ? Math.round(at.x - 120) : pos.x + 30,
+      y: at ? Math.round(at.y - 16) : pos.y + 30,
+      width: size.width, height: size.height,
+    });
+    if (!payload) throw new Error("Invalid warm-window geometry");
+    const activated = await requestWindowAcknowledgement(win.label, label, async (handoff) => {
+      await emitTo(label!, WARM_ACTIVATE_EVENT, { ...payload, handoff });
+    }, { event: WARM_ACTIVATED_EVENT });
+    if (!activated) throw new Error("Warm destination did not acknowledge activation");
   } catch {
-    // The claim already marked this window as real in the registry; a window
-    // that can't be activated must be destroyed, not leaked as an invisible
-    // "real" window that keeps the app alive. Caller opens a fresh window.
-    void warmPoolDiscard(label).catch(() => {});
-    return false;
+    await warmPoolDiscard(label).catch(() => {});
+    return null;
   }
   void spawnWarmWindow(); // replenish
-  return true;
+  return label;
 }
 
 /**
@@ -193,107 +185,55 @@ export async function consumeWarmWindow(
  * so activation latency is captured headlessly (and skip pool registration —
  * a self-activated window must never be claimable).
  */
-export async function runWarmWindow(measure: boolean): Promise<void> {
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+export function runWarmWindow(measure: boolean): { ready: Promise<boolean>; dispose(): void } {
+  let started = 0;
   const self = getCurrentWindow();
-
-  let activated = false;
-  await listen<WarmActivatePayload>(WARM_ACTIVATE_EVENT, async (event) => {
-    if (activated) return; // one-shot
-    activated = true;
-    const tActivate = performance.now();
-    const { path, viewMode, x, y, width, height } = event.payload;
-    const homePath = resolveLaunchHomePath();
-
-    // The window may have been parked for minutes: re-read settings and theme
-    // so the revealed window matches one created fresh right now (there is no
-    // cross-window settings sync; boot-time values are stale after any change).
-    try {
-      await settingsStore.init();
-      themeStore.syncFromSettings();
-    } catch {
-      // config unreadable — keep boot-time settings
-    }
-
-    const explorer = windowTabsManager.getActiveExplorer();
-    let navigation: Promise<void> | undefined;
-    if (explorer) {
+  const owner = createWarmActivation({
+    measure,
+    acceptsActivation: () => windowTabsManager.acceptsTransfers,
+    listen: (handler) => listen<unknown>(WARM_ACTIVATE_EVENT, ({ payload }) => handler(payload), { target: self.label }),
+    register: async () => warmPoolRegister(self.label),
+    refreshSettings: async (current) => {
+      started = performance.now();
+      try { await settingsStore.init(); if (current()) themeStore.syncFromSettings(); }
+      catch { /* Keep boot-time preferences if the config cannot be read. */ }
+    },
+    navigate: async ({ path, viewMode }) => {
+      const explorer = windowTabsManager.getActiveExplorer();
+      if (!explorer) throw new Error("Warm destination has no active explorer");
       if (viewMode) explorer.setViewMode(viewMode);
-      navigation = explorer.navigateTo(path);
-    }
-
-    // Geometry first (positioning after show would visibly jump), but a
-    // geometry failure must never block the reveal below — the claim is
-    // consumed, so a window that fails to show makes Ctrl+N a silent no-op.
-    try {
-      const { PhysicalPosition, PhysicalSize } = await import("@tauri-apps/api/dpi");
-      if (typeof x === "number" && typeof y === "number") {
-        await self.setPosition(new PhysicalPosition(x, y));
-      }
-      if (typeof width === "number" && typeof height === "number") {
-        await self.setSize(new PhysicalSize(width, height));
-      }
-    } catch {
-      // best effort — e.g. Wayland ignores setPosition
-    }
-
-    // Set the final title while still hidden; showing first produces a visible
-    // stale-title frame in taskbars/window switchers.
-    await self.setTitle(formatWindowTitle(path, homePath)).catch(() => {});
-
-    // The reveal — the one call that must happen.
-    try {
-      await self.show();
-    } catch {
-      // window destroyed mid-activation; nothing to salvage
-    }
-
-    // Post-reveal niceties, each individually best-effort per platform
-    // (e.g. macOS has no taskbar concept).
-    try {
-      await self.setSkipTaskbar(false); // parked windows skip the taskbar
-    } catch {
-      /* unsupported platform */
-    }
-    try {
-      await self.unminimize();
-      await self.setFocus();
-    } catch {
-      /* unsupported platform */
-    }
-    try {
-      // Briefly assert always-on-top so the freshly-shown window comes to the
-      // front, then release so it behaves like a normal window.
-      await self.setAlwaysOnTop(true);
-      setTimeout(() => void self.setAlwaysOnTop(false), 300);
-    } catch {
-      /* unsupported platform */
-    }
-
-    // Unlike a fresh child window, this webview was mounted while parked, so
-    // wait for the requested path before mounting BreadcrumbAutocomplete,
-    // which intentionally captures the explorer path only once on mount.
-    await navigation;
-    window.dispatchEvent(new Event("explorer:focus-address-bar"));
-
-    // Activation latency telemetry (event received → window shown), durable in
-    // the app log next to the Rust `Startup:` line.
-    const dt = performance.now() - tActivate;
-    void logStartupTiming(`Startup(warm-activate): show=${dt.toFixed(1)}ms`).catch(() => {});
+      if (!await explorer.navigateTo(path, { autoEnterSingleSubdir: false })) throw new Error("Warm navigation failed or was superseded");
+    },
+    prepare: async ({ path, x, y, width, height }, current) => {
+      try {
+        const { PhysicalPosition, PhysicalSize } = await import("@tauri-apps/api/dpi");
+        if (!current()) return;
+        if (x !== undefined && y !== undefined) await self.setPosition(new PhysicalPosition(x, y));
+        if (!current()) return;
+        if (width !== undefined && height !== undefined) await self.setSize(new PhysicalSize(width, height));
+      } catch { /* Geometry is best effort on compositors such as Wayland. */ }
+      if (current()) await self.setTitle(formatWindowTitle(path, resolveLaunchHomePath())).catch(() => {});
+    },
+    show: () => self.show(),
+    commit: () => warmPoolActivate(self.label),
+    focus: async (current) => {
+      await self.setSkipTaskbar(false).catch(() => {});
+      if (!current()) return;
+      await self.unminimize().catch(() => {});
+      if (current()) await self.setFocus().catch(() => {});
+    },
+    acknowledge: (request) => acknowledgeWindowRequest(request, self.label, WARM_ACTIVATED_EVENT),
+    retire: () => warmPoolDiscard(self.label),
+    reject: (request) => acknowledgeWindowRequest(request, self.label, WARM_ACTIVATED_EVENT, false),
+    requestAddressBar: () => window.dispatchEvent(new Event("explorer:focus-address-bar")),
+    shown: () => {
+      void logStartupTiming(`Startup(warm-activate): show=${(performance.now() - started).toFixed(1)}ms`).catch(() => {});
+    },
+    reportError: (error) => console.error("Warm window activation failed:", error),
   });
-
   if (measure) {
-    // Measurement probe: self-fire one activation, never join the pool.
-    const home = resolveLaunchHomePath() ?? "/";
-    await emitTo(self.label, WARM_ACTIVATE_EVENT, {
-      path: home,
-      x: 100,
-      y: 100,
-      measure: true,
-    } satisfies WarmActivatePayload);
-    return;
+    void owner.ready.then((ready) => ready ? owner.activate({ path: resolveLaunchHomePath() ?? "/", x: 100, y: 100, measure: true }) : undefined);
+    started = performance.now();
   }
-
-  // Report ready to the global pool (after the listener above is registered).
-  await warmPoolRegister(self.label).catch(() => {});
+  return owner;
 }

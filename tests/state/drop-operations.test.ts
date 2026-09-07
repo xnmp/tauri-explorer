@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const transfer = vi.hoisted(() => vi.fn());
-const undo = vi.hoisted(() => ({ push: vi.fn(), pushAndBroadcast: vi.fn() }));
+const undo = vi.hoisted(() => ({ push: vi.fn(), pushAndBroadcast: vi.fn(), invalidateRedo: vi.fn() }));
 const toast = vi.hoisted(() => ({ show: vi.fn(), error: vi.fn(), broadcast: vi.fn() }));
 const broadcast = vi.hoisted(() => vi.fn());
 
@@ -125,6 +125,62 @@ describe("handleFileDropMany", () => {
     expect(action.type).toBe("move"); // only the one success
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast.error.mock.calls[0][0]).toContain("2");
+  });
+
+  it("refreshes and reports committed recovery results without recording unsafe inverses", async () => {
+    transfer
+      .mockResolvedValueOnce({
+        ok: true,
+        path: "/dest/a.txt",
+        entry: null,
+        recovery: {
+          sourcePath: "/src/a.txt",
+          destinationPath: "/dest/a.txt",
+          error: "source cleanup denied",
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        path: "/dest/b.txt",
+        entry: { path: "/dest/b.txt", name: "b.txt" },
+      });
+    const options = { onRefresh: vi.fn(), existingNames: new Set<string>() };
+
+    await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", false, options);
+
+    expect(undo.push).toHaveBeenCalledWith({
+      type: "move",
+      sourcePath: "/src/b.txt",
+      destPath: "/dest/b.txt",
+      originalDir: "/src",
+    });
+    expect(options.onRefresh).toHaveBeenCalledOnce();
+    expect(broadcast).toHaveBeenCalledWith(expect.arrayContaining(["/src", "/dest"]));
+    expect(toast.show).toHaveBeenCalledWith("Moved 1 item to dest", "info");
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("source cleanup denied"));
+  });
+
+  it("refreshes an all-recovery batch without showing a move success", async () => {
+    transfer.mockImplementation(async (sourcePath: string) => ({
+      ok: true,
+      path: `/dest/${sourcePath.split("/").pop()}`,
+      entry: null,
+      recovery: {
+        sourcePath,
+        destinationPath: `/dest/${sourcePath.split("/").pop()}`,
+        error: "cleanup incomplete",
+      },
+    }));
+    const options = opts();
+
+    await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", false, options);
+
+    expect(undo.push).not.toHaveBeenCalled();
+    expect(options.onRefresh).toHaveBeenCalledOnce();
+    expect(broadcast).toHaveBeenCalledWith(expect.arrayContaining(["/src", "/dest"]));
+    expect(toast.show).not.toHaveBeenCalled();
+    expect(toast.error.mock.calls[0][0]).toContain("/dest/a.txt");
+    expect(toast.error.mock.calls[0][0]).toContain("/dest/b.txt");
   });
 
   it("does nothing for an empty path list", async () => {

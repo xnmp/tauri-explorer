@@ -61,6 +61,20 @@ function harness() {
 }
 
 describe("native undo history projection", () => {
+  it("invalidates redo for a committed effect without manufacturing an inverse", async () => {
+    const { store, port, publish } = harness();
+    publish(summary(1, { undoId: 10, redoId: 20, stackSize: 1 }));
+    port.push.mockResolvedValueOnce(reply(summary(2, { undoId: 10, stackSize: 1 })));
+
+    await store.invalidateRedo(true);
+
+    expect(port.push).toHaveBeenCalledWith(null, true);
+    expect(store.canRedo).toBe(false);
+    expect(store.canUndo).toBe(true);
+    expect(store.stackSize).toBe(1);
+    expect(port.execute).not.toHaveBeenCalled();
+  });
+
   it("accepts only summaries with a higher revision", () => {
     const { store, publish } = harness();
     publish(summary(4, { undoId: 40, stackSize: 2 }));

@@ -17,7 +17,7 @@ import { basename, parentDir, sameDirectory } from "$lib/domain/path";
 import { toastStore } from "./toast.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { performFileTransfer } from "./file-transfer";
-import type { FileEntry } from "$lib/domain/file";
+import { fileMutationRecoveryMessage, type FileEntry } from "$lib/domain/file";
 
 export interface PasteSource {
   path: string;
@@ -64,6 +64,7 @@ export async function pasteEntries(
   const undoActions: import("./types").UndoAction[] = [];
   const affectedDirs = new Set<string>();
   let committedCount = 0;
+  let safelyCompletedCutCount = 0;
   let bytesProcessed = 0;
   let cancelledByUser = false;
 
@@ -144,6 +145,7 @@ export async function pasteEntries(
     if (isSameDir && isCut) {
       const existing = existingEntries.find((e) => e.name === source.name);
       if (existing) newEntries.push(existing);
+      safelyCompletedCutCount++;
     } else {
       // Delegate the actual transfer to shared logic.
       // Paste manages batch undo/toast/broadcast/refresh itself.
@@ -173,7 +175,10 @@ export async function pasteEntries(
         // name are detected as conflicts (the snapshot taken before the loop
         // doesn't know about entries created during the batch).
         existingNames.add(basename(result.path));
-        if (isCut) {
+        if (result.recovery) {
+          errors.push(`${source.name}: ${fileMutationRecoveryMessage(result.recovery)}`);
+        } else if (isCut) {
+          safelyCompletedCutCount++;
           undoActions.push({
             type: "move",
             sourcePath: source.path,
@@ -224,13 +229,20 @@ export async function pasteEntries(
     });
   }
 
-  onComplete?.();
+  // The caller clears a cut clipboard on completion. Keep it intact when any
+  // source failed, was skipped/cancelled, or needs recovery so the UI does not
+  // claim that the whole cut completed.
+  if (!isCut || safelyCompletedCutCount === sources.length) onComplete?.();
 
-  // Finalize operation tracking
-  if (operationsManager.isOperationCancelled(op.id) || cancelledByUser) {
+  // The requested operation is incomplete even when some destination effects
+  // committed. Keep that distinction in the progress dialog as well as the toast.
+  const error = errors.length > 0
+    ? `${committedCount > 0 ? "Paste incomplete" : "Paste failed"}: ${errors.join(", ")}`
+    : null;
+  if (error) {
+    operationsManager.failOperation(op.id, error);
+  } else if (operationsManager.isOperationCancelled(op.id) || cancelledByUser) {
     operationsManager.cancelOperation(op.id);
-  } else if (errors.length > 0 && committedCount === 0) {
-    operationsManager.failOperation(op.id, errors.join("; "));
   } else {
     operationsManager.completeOperation(op.id);
   }
@@ -243,7 +255,6 @@ export async function pasteEntries(
 
   // Toast before the confirming refresh (#388): the entries are already
   // visible optimistically, so feedback shouldn't wait on a re-list.
-  const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
   if (error) {
     toastStore.error(error);
   } else if (!operationsManager.isOperationCancelled(op.id)) {

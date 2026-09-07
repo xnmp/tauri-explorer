@@ -11,6 +11,17 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
+pub(super) fn private_directory(parent: &Path, prefix: &str) -> io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(prefix);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir_in(parent)
+}
+
 pub(super) struct StagedEntry {
     directory: tempfile::TempDir,
     payload: PathBuf,
@@ -23,14 +34,7 @@ impl StagedEntry {
         parent: &Path,
         build: impl FnOnce(&Path) -> Result<(), AppError>,
     ) -> Result<Self, AppError> {
-        let mut builder = tempfile::Builder::new();
-        builder.prefix(".tauri-explorer-stage-");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o700));
-        }
-        let directory = builder.tempdir_in(parent)?;
+        let directory = private_directory(parent, ".tauri-explorer-stage-")?;
         let staged = Self {
             payload: directory.path().join("payload"),
             directory,
@@ -44,8 +48,24 @@ impl StagedEntry {
     /// Commit once. An occupied target is an error even if it appeared after
     /// name selection. Cleanup failure after commit cannot revoke success.
     pub(super) fn publish(self, target: &Path) -> Result<(), AppError> {
+        // POSIX may require write permission on a directory when moving it
+        // between parents (updating '..'). A copied read-only directory must
+        // stay writable while unpublished, then regain its final permissions.
+        #[cfg(unix)]
+        let permissions = match movable_directory(&self.payload) {
+            Ok(permissions) => permissions,
+            Err(error) => return Err(self.abort(error.into())),
+        };
         if let Err(error) = rename_noreplace(&self.payload, target) {
             return Err(self.abort(error.into()));
+        }
+        #[cfg(unix)]
+        if let Some((directory, permissions)) = permissions {
+            // Restore through the captured handle, so a post-publication path
+            // replacement cannot redirect this metadata change to another entry.
+            if let Err(error) = directory.set_permissions(permissions) {
+                log::warn!("Published {} but could not restore its directory permissions: {error}", target.display());
+            }
         }
         let staging_path = self.directory.path().to_owned();
         if let Err(error) = self.directory.close() {
@@ -68,6 +88,21 @@ impl StagedEntry {
             )),
         }
     }
+}
+
+#[cfg(unix)]
+fn movable_directory(path: &Path) -> io::Result<Option<(std::fs::File, std::fs::Permissions)>> {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    let metadata = fs::symlink_metadata(path)?;
+    let permissions = metadata.permissions();
+    if !metadata.is_dir() || permissions.mode() & 0o200 != 0 {
+        return Ok(None);
+    }
+    // This is newly built data in our private staging namespace, never the
+    // user's source or a displaced original. Read permission lets us retain
+    // an fd for finalization even when copied mode bits deny the new owner read.
+    fs::set_permissions(path, fs::Permissions::from_mode(permissions.mode() | 0o600))?;
+    Ok(Some((fs::File::open(path)?, permissions)))
 }
 
 /// A same-filesystem rename that atomically refuses an occupied destination.

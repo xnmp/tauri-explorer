@@ -3,6 +3,38 @@ use std::fs;
 
 #[cfg(unix)]
 #[test]
+fn publishing_a_read_only_directory_preserves_its_contents_and_final_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = tempfile::tempdir().unwrap();
+    let target = parent.path().join("read-only-copy");
+    let mut payload_path = None;
+    let staged = StagedEntry::prepare(parent.path(), |payload| {
+        fs::create_dir(payload)?;
+        fs::write(payload.join("content"), "keep")?;
+        fs::set_permissions(payload, fs::Permissions::from_mode(0o555))?;
+        payload_path = Some(payload.to_owned());
+        Ok(())
+    }).unwrap();
+
+    let result = staged.publish(&target);
+    let contents = fs::read_to_string(target.join("content"));
+    let mode = fs::metadata(&target).map(|metadata| metadata.permissions().mode() & 0o777);
+    // Make only this fixture's copied directories removable even on the
+    // failing-before path, where publication leaves retained staging behind.
+    for directory in [payload_path.unwrap(), target.clone()] {
+        if directory.exists() {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    assert!(result.is_ok(), "read-only directory publication failed: {result:?}");
+    assert_eq!(contents.unwrap(), "keep");
+    assert_eq!(mode.unwrap(), 0o555);
+    assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
 fn unpublished_contents_are_private_to_the_current_user() {
     use std::os::unix::fs::PermissionsExt;
     let parent = tempfile::tempdir().unwrap();

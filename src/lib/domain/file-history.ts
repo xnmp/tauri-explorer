@@ -21,7 +21,7 @@ export interface HistoryReply {
 }
 export interface HistoryPort {
   subscribe(receive: (summary: HistorySummary) => void): () => void;
-  push(action: UndoAction, shared: boolean): Promise<HistoryReply>;
+  push(action: UndoAction | null, shared: boolean): Promise<HistoryReply>;
   clear(): Promise<HistoryReply>;
   execute(direction: HistoryDirection, expectedEntryId: number): Promise<HistoryReply>;
 }

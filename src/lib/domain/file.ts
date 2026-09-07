@@ -36,6 +36,24 @@ export interface DirectoryListing {
 export interface FileMutationReceipt {
   readonly path: string;
   readonly entry: FileEntry | null;
+  /** Destination exists, but source cleanup is incomplete or uncertain.
+   * Neither a Move nor a Copy inverse is safe: the destination may contain
+   * the only surviving copy of some source children. */
+  readonly recovery?: FileMutationRecovery;
+}
+
+export interface FileMutationRecovery {
+  readonly sourcePath: string;
+  readonly destinationPath: string;
+  readonly error: string;
+  readonly displacedPath?: string;
+}
+
+export function fileMutationRecoveryMessage(recovery: FileMutationRecovery): string {
+  const retained = recovery.displacedPath
+    ? ` The previous destination is retained at ${recovery.displacedPath}.`
+    : "";
+  return `Files were copied to ${recovery.destinationPath}, but removing ${recovery.sourcePath} did not finish: ${recovery.error}. Inspect both locations before continuing.${retained}`;
 }
 
 export type SortField = "name" | "size" | "modified" | "type";

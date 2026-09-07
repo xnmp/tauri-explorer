@@ -62,8 +62,8 @@ export function createMockFileHistory(invoke: Invoke, publishEffects: (directori
   };
   return {
     register(listener: (summary: HistorySummary) => void) { receive = listener; publish(); return "0"; },
-    push(action: UndoAction) {
-      undo = [...undo, entry(prepare(structuredClone(action)))].slice(-256);
+    push(action: UndoAction | null) {
+      if (action) undo = [...undo, entry(prepare(structuredClone(action)))].slice(-256);
       redo = []; branch += 1; revision += 1; publish(); return reply();
     },
     clear() { undo = []; redo = []; generation += 1; branch += 1; revision += 1; publish(); return reply(); },

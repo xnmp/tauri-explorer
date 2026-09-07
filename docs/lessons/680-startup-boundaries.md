@@ -838,3 +838,27 @@ protection from identity ownership: another same-user process can replace the
 staging namespace, and NFS can report a failed rename after committing it.
 Those cases require explicit artifact identity and indeterminate/retained
 outcomes before claiming complete recovery.
+
+## A partially completed move is not a failed copy
+
+After destination publication, recursive source removal can fail after deleting
+some children. Returning an ordinary error lets overwrite rollback destroy the
+new destination and can make history retry an already-applied inverse. Return
+the committed destination plus explicit recovery details; retain the displaced
+original, reconcile both parents, and offer neither a Move nor Copy inverse for
+that effect. A Copy inverse is also unsafe: the destination may hold the last
+surviving copy of the removed source children.
+
+Do not solve this by parking the source before a long copy without durable
+journaling and startup reconciliation. That introduces a crash window where
+the only source is hidden and no destination exists. The interim receipt must
+be honest about incomplete work, including the progress operation status and
+cut clipboard, while the persistent recovery owner is implemented.
+
+Read-only copied directories need a distinct publication boundary on Unix:
+renaming a directory between parents can require owner write to update `..`.
+Temporarily make only the unpublished copied root readable/writable, retain a
+handle, publish without replacement, then restore exact permissions through the
+handle. Do not make the source writable to get a cleanup-failure test to pass.
+The real Linux cross-device acceptance caught this before source cleanup ran;
+`file_publication` now reproduces the original failure independently.

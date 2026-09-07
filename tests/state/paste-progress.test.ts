@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const transfer = vi.hoisted(() => vi.fn());
-const undo = vi.hoisted(() => ({ push: vi.fn() }));
+const undo = vi.hoisted(() => ({ push: vi.fn(), invalidateRedo: vi.fn() }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 const estimate = vi.hoisted(() => vi.fn());
 const cancelCopy = vi.hoisted(() => vi.fn());
@@ -231,6 +231,40 @@ describe("large paste progress", () => {
     expect(ctx.onRefresh).toHaveBeenCalledOnce();
     expect(toast.success).toHaveBeenCalledWith("Pasted successfully");
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("publishes and refreshes a committed recovery without an unsafe inverse or success claim", async () => {
+    transfer.mockResolvedValue({
+      ok: true,
+      path: "/dest/a",
+      entry: null,
+      recovery: {
+        sourcePath: "/src/a",
+        destinationPath: "/dest/a",
+        error: "source cleanup denied",
+      },
+    });
+    const ctx = context();
+    const completed = vi.fn();
+
+    const error = await pasteEntries(
+      [{ name: "a", path: "/src/a", size: 1 }],
+      true,
+      ctx,
+      completed,
+    );
+
+    expect(error).toContain("source cleanup denied");
+    expect(error).toContain("Paste incomplete");
+    expect(operationsManager.operations[0].status).toBe("error");
+    expect(operationsManager.operations[0].error).toBe(error);
+    expect(operationsManager.operations[0].retryHandler).toBeUndefined();
+    expect(undo.push).not.toHaveBeenCalled();
+    expect(completed).not.toHaveBeenCalled();
+    expect(ctx.onEntriesAdded).not.toHaveBeenCalled();
+    expect(ctx.onRefresh).toHaveBeenCalledOnce();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("source cleanup denied"));
   });
 
   it("estimate failure still runs the batch with file-level progress", async () => {

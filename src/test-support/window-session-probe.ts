@@ -71,6 +71,10 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
       pending = captured.explorer.confirmDelete(captured.entries, false);
     } else if (op === "undo" || op === "redo") {
       pending = explorer[op]();
+    } else if (op === "cut" && entry) {
+      pending = explorer.cutToClipboard([entry]).then(() => null);
+    } else if (op === "paste") {
+      pending = explorer.paste();
     } else if (op === "new-folder" && name) {
       pending = explorer.createFolder(name);
     } else if (op === "rename" && entry && name) {

@@ -281,6 +281,46 @@ fn completed_one_way_copy_has_no_redo_entry() {
 }
 
 #[test]
+fn shared_null_push_clears_every_participant_redo_without_replacing_their_undo() {
+    let mut histories = Histories::default();
+    histories.register(FIRST);
+    histories.register(SECOND);
+    let retained = copy("/shared/retained.txt", true);
+    histories.push(FIRST, Some(retained.clone()), true).unwrap();
+    let retained_id = histories.summary(FIRST).undo_id.unwrap();
+
+    for (client, name) in [(FIRST, "first-redo"), (SECOND, "second-redo")] {
+        let local = copy(&format!("/local/{name}.txt"), true);
+        histories.push(client, Some(local.clone()), false).unwrap();
+        let reservation = histories
+            .begin(
+                client,
+                Direction::Undo,
+                histories.summary(client).undo_id.unwrap(),
+            )
+            .unwrap();
+        histories.finish(reservation, &completed(&local, Some(local.clone())));
+        let summary = histories.summary(client);
+        assert_eq!(summary.undo_id, Some(retained_id));
+        assert!(summary.redo_id.is_some());
+        assert_eq!(summary.stack_size, 1);
+    }
+
+    histories.push(FIRST, None, true).unwrap();
+
+    for client in [FIRST, SECOND] {
+        let summary = histories.summary(client);
+        assert_eq!(summary.undo_id, Some(retained_id));
+        assert_eq!(summary.redo_id, None);
+        assert_eq!(summary.stack_size, 1);
+    }
+    let reservation = histories
+        .begin(SECOND, Direction::Undo, retained_id)
+        .unwrap();
+    assert_eq!(reservation.action, retained);
+}
+
+#[test]
 fn history_count_bound_evicts_oldest_entries_and_keeps_the_latest_admissible() {
     let mut histories = Histories::default();
     histories.register(FIRST);

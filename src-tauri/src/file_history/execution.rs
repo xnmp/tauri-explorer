@@ -10,7 +10,7 @@ pub trait Operations: Sync {
         &self,
         path: String,
         destination: String,
-    ) -> impl Future<Output = Result<(), String>> + Send;
+    ) -> impl Future<Output = Result<Option<String>, String>> + Send;
     fn trash(&self, path: String) -> impl Future<Output = Result<(), String>> + Send;
     fn trash_many(
         &self,
@@ -72,11 +72,19 @@ fn execute_inner<'a, O: Operations>(
                     }),
                 };
                 match request {
-                    Ok((path, destination)) => settled(
-                        action.clone(),
-                        operations.move_entry(path, destination).await,
-                        true,
-                    ),
+                    Ok((path, destination)) => match operations.move_entry(path, destination).await {
+                        Ok(Some(recovery)) => Execution {
+                            // The destination committed and the source may
+                            // be partially removed. Retrying this Move, or
+                            // offering its opposite, can destroy surviving data.
+                            completed: Some(action),
+                            opposite: None,
+                            remaining: None,
+                            error: Some(recovery),
+                        },
+                        Ok(None) => settled(action, Ok(()), true),
+                        Err(error) => failed(action, error),
+                    },
                     Err(error) => failed(action, error),
                 }
             }

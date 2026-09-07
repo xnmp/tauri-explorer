@@ -26,18 +26,24 @@ vi.mock("$lib/state/conflict-resolver.svelte", () => ({
 }));
 
 const undoPushMock = vi.fn();
+const undoBroadcastMock = vi.fn();
+const invalidateRedoMock = vi.fn();
 vi.mock("$lib/state/undo.svelte", () => ({
   undoStore: {
     push: (...args: unknown[]) => undoPushMock(...args),
+    pushAndBroadcast: (...args: unknown[]) => undoBroadcastMock(...args),
+    invalidateRedo: (...args: unknown[]) => invalidateRedoMock(...args),
   },
 }));
 
 const toastShowMock = vi.fn();
 const toastErrorMock = vi.fn();
+const toastBroadcastMock = vi.fn();
 vi.mock("$lib/state/toast.svelte", () => ({
   toastStore: {
     show: (...args: unknown[]) => toastShowMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
+    broadcast: (...args: unknown[]) => toastBroadcastMock(...args),
   },
 }));
 
@@ -287,6 +293,37 @@ describe("performFileTransfer", () => {
     expect(refreshMock).toHaveBeenCalledOnce();
     expect(broadcastMock).toHaveBeenCalledWith(["/src", "/dest"]);
     expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("publishes an incomplete committed move without fabricating an inverse", async () => {
+    const recovery = {
+      sourcePath: "/src/file.txt",
+      destinationPath: "/dest/file.txt",
+      error: "source cleanup denied",
+    };
+    moveEntryMock.mockResolvedValue({
+      ok: true,
+      data: { path: "/dest/file.txt", entry: null, recovery },
+    });
+    const refreshMock = vi.fn();
+
+    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+      onRefresh: refreshMock,
+      suppressUndo: true,
+      broadcastToOtherWindows: true,
+    });
+
+    expect(result).toEqual({ ok: true, path: "/dest/file.txt", entry: null, recovery });
+    expect(undoPushMock).not.toHaveBeenCalled();
+    expect(undoBroadcastMock).not.toHaveBeenCalled();
+    expect(invalidateRedoMock).toHaveBeenCalledWith(true);
+    expect(refreshMock).toHaveBeenCalledOnce();
+    expect(broadcastMock).toHaveBeenCalledWith(["/src", "/dest"]);
+    expect(toastShowMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledWith(expect.stringMatching(
+      /copied to \/dest\/file\.txt.*removing \/src\/file\.txt did not finish.*source cleanup denied/i,
+    ));
+    expect(toastBroadcastMock).toHaveBeenCalledWith(expect.any(String), "error");
   });
 
   // --- Same-parent guard ---

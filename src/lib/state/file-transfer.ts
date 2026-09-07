@@ -14,7 +14,12 @@ import { toastStore } from "./toast.svelte";
 import { broadcastFileChange } from "./file-events";
 import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import { frecencyStore } from "./frecency.svelte";
-import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
+import {
+  fileMutationRecoveryMessage,
+  type FileEntry,
+  type FileMutationReceipt,
+  type FileMutationRecovery,
+} from "$lib/domain/file";
 
 export interface FileTransferOptions {
   onRefresh: () => void;
@@ -42,6 +47,8 @@ export type FileTransferResult =
       path: string;
       /** Optional presentation snapshot captured after the mutation. */
       entry: FileEntry | null;
+      /** Destination committed, but source cleanup is incomplete. */
+      recovery?: FileMutationRecovery;
     }
   | { ok: false; error: string };
 
@@ -147,7 +154,13 @@ export async function performFileTransfer(
   // --- Post-transfer side effects ---
   const targetName = basename(targetDir);
 
-  if (!suppressUndo) {
+  const recovery = result.data.recovery;
+  if (recovery) {
+    // A committed mutation still supersedes the redo branch even when a batch
+    // caller owns history publication. Neither transfer inverse is safe while
+    // the source cleanup outcome is incomplete.
+    await undoStore.invalidateRedo(broadcastToOtherWindows);
+  } else if (!suppressUndo) {
     const action = isCopy
       ? {
           type: "copy" as const,
@@ -167,7 +180,13 @@ export async function performFileTransfer(
     }
   }
 
-  if (!suppressToast) {
+  if (!suppressToast && recovery) {
+    const message = fileMutationRecoveryMessage(recovery);
+    toastStore.error(message);
+    if (broadcastToOtherWindows) {
+      toastStore.broadcast(message, "error");
+    }
+  } else if (!suppressToast) {
     const verb = isCopy ? "Copied" : "Moved";
     const message = `${verb} ${fileName} to ${targetName}`;
     toastStore.show(message, "info");
@@ -185,5 +204,10 @@ export async function performFileTransfer(
     frecencyStore.pruneNonExistent();
   }
 
-  return { ok: true, path: result.data.path, entry: result.data.entry };
+  return {
+    ok: true,
+    path: result.data.path,
+    entry: result.data.entry,
+    ...(recovery ? { recovery } : {}),
+  };
 }

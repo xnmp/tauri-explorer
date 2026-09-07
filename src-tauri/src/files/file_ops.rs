@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::publication::{rename_noreplace, StagedEntry};
-use super::{mutation::FileMutationReceipt, run_blocking, SizeEstimate};
+use super::{mutation::{FileMutationReceipt, FileMutationRecovery}, run_blocking, SizeEstimate};
 use crate::error::AppError;
 use crate::progress::ProgressTracker;
 use crate::task_registry::TaskRegistry;
@@ -78,19 +78,6 @@ fn reject_dir_into_itself(source: &Path, dest_dir: &Path) -> Result<(), AppError
         )));
     }
     Ok(())
-}
-
-/// Generate a unique hidden staging path inside `dest_dir` for transactional
-/// copy/move operations.
-fn unique_staging_path(dest_dir: &Path, name: &str) -> PathBuf {
-    let pid = std::process::id();
-    for counter in 0u64.. {
-        let candidate = dest_dir.join(format!(".{}.tmp.{}.{}", name, pid, counter));
-        if !entry_exists(&candidate) {
-            return candidate;
-        }
-    }
-    unreachable!("exhausted staging path candidates")
 }
 
 /// Remove a file, directory tree, or symlink (the link itself, not its target).
@@ -473,7 +460,6 @@ fn copy_entry_inner(
                 source_path,
                 dest_dir_path,
                 &target,
-                source_name,
                 tracker,
             );
         } else {
@@ -494,36 +480,19 @@ fn copy_entry_inner(
     Ok(FileMutationReceipt::committed(&target))
 }
 
-/// Overwrite-copy transactionally: stage the copy under a temp name in the
-/// destination dir, and only swap it into place (displacing the old target)
-/// after the copy fully succeeded. The old target is removed last; on any
-/// failure the old target is restored and the staging copy cleaned up.
+/// Build the replacement before displacing the destination. Failed publication
+/// restores without replacing a racing entry; retained originals outlive errors.
 fn copy_entry_overwriting(
     source: &Path,
     dest_dir: &Path,
     target: &Path,
-    source_name: &str,
     tracker: &mut ProgressTracker,
 ) -> Result<FileMutationReceipt, AppError> {
-    let staging = unique_staging_path(dest_dir, source_name);
-    if let Err(e) = copy_recursively(source, &staging, tracker) {
-        let _ = remove_entry_at(&staging);
-        return Err(e);
-    }
-
-    let displaced = unique_staging_path(dest_dir, source_name);
-    if let Err(e) = fs::rename(target, &displaced) {
-        let _ = remove_entry_at(&staging);
-        return Err(AppError::from(e));
-    }
-    if let Err(e) = fs::rename(&staging, target) {
-        let _ = fs::rename(&displaced, target); // restore the old target
-        let _ = remove_entry_at(&staging);
-        return Err(AppError::from(e));
-    }
-    let _ = remove_entry_at(&displaced);
-
-    log::info!("Copied entry over existing target (overwrite=true)");
+    let staged = StagedEntry::prepare(dest_dir, |payload| {
+        copy_recursively(source, payload, tracker)
+    })?;
+    let (_, displaced) = super::replacement::replace(target, || staged.publish(target))?;
+    displaced.discard();
     Ok(FileMutationReceipt::committed(target))
 }
 
@@ -542,6 +511,15 @@ fn move_entry_impl(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
+) -> Result<FileMutationReceipt, AppError> {
+    move_entry_with(source, dest_dir, overwrite, perform_move)
+}
+
+fn move_entry_with(
+    source: String,
+    dest_dir: String,
+    overwrite: Option<bool>,
+    move_entry: impl FnOnce(&Path, &Path, &Path) -> Result<Option<FileMutationRecovery>, AppError>,
 ) -> Result<FileMutationReceipt, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
@@ -572,42 +550,37 @@ fn move_entry_impl(
 
     let target = dest_dir_path.join(&source_name);
 
-    // If the target exists, displace it to a temp name (cheap same-dir rename)
-    // instead of deleting it; it's only removed after the move succeeds.
-    let mut displaced: Option<PathBuf> = None;
-    if entry_exists(&target) {
+    let target_exists = entry_exists(&target);
+    if target_exists {
         if !overwrite.unwrap_or(false) {
-            return Err(AppError::AlreadyExists(
-                target.to_string_lossy().to_string(),
-            ));
+            return Err(AppError::AlreadyExists(target.to_string_lossy().into_owned()));
         }
         if is_same_entry(&source_path, &target) {
-            return Err(AppError::InvalidPath(format!(
-                "Source and destination are the same: {}",
-                source
-            )));
-        }
-        let tmp = unique_staging_path(&dest_dir_path, &source_name);
-        fs::rename(&target, &tmp)?;
-        displaced = Some(tmp);
-    }
-
-    match perform_move(&source_path, &dest_dir_path, &target) {
-        Ok(()) => {
-            if let Some(tmp) = displaced {
-                let _ = remove_entry_at(&tmp);
-            }
-        }
-        Err(e) => {
-            // Restore the displaced target before reporting the error.
-            if let Some(tmp) = displaced {
-                let _ = fs::rename(&tmp, &target);
-            }
-            return Err(e);
+            return Err(AppError::InvalidPath(format!("Source and destination are the same: {source}")));
         }
     }
 
-    Ok(FileMutationReceipt::committed(&target))
+    let (mut recovery, displaced) = if target_exists {
+        let (recovery, displaced) = super::replacement::replace(&target, || {
+            move_entry(&source_path, &dest_dir_path, &target)
+        })?;
+        (recovery, Some(displaced))
+    } else {
+        (move_entry(&source_path, &dest_dir_path, &target)?, None)
+    };
+    if let Some(displaced) = displaced {
+        if let Some(recovery) = &mut recovery {
+            // Both the committed destination and its displaced original may
+            // be necessary for recovery after partial source removal.
+            recovery.displaced_path = Some(displaced.retain().to_string_lossy().into_owned());
+        } else {
+            displaced.discard();
+        }
+    }
+
+    let mut receipt = FileMutationReceipt::committed(&target);
+    receipt.recovery = recovery;
+    Ok(receipt)
 }
 
 /// Move `source` to `target`: rename when possible, staged copy+delete for
@@ -616,7 +589,7 @@ fn perform_move(
     source_path: &Path,
     dest_dir_path: &Path,
     target: &Path,
-) -> Result<(), AppError> {
+) -> Result<Option<FileMutationRecovery>, AppError> {
     // Raw OS error for a cross-filesystem rename, as a fallback for platforms
     // where std hasn't categorized the code into `ErrorKind::CrossesDevices`.
     // Unix `EXDEV` = 18; Windows `ERROR_NOT_SAME_DEVICE` = 17. `raw_os_error()`
@@ -631,7 +604,7 @@ fn perform_move(
 
     // Try a simple rename first (works if same filesystem)
     match rename_noreplace(source_path, target) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(None),
         Err(e) => {
             // Only fall back to copy+delete for cross-filesystem moves.
             // Other errors (permission denied, etc.) should be returned immediately.
@@ -646,14 +619,30 @@ fn perform_move(
             log::info!("Cross-device move detected, falling back to copy+delete");
             // Stage the copy in the destination dir, swap it into place once
             // complete, and only then delete the source.
-            StagedEntry::prepare(dest_dir_path, |payload| {
-                copy_recursively(source_path, payload, &mut detached_tracker())
-            })?
-            .publish(target)?;
-            remove_entry_at(source_path)?;
-            Ok(())
+            cross_device_move(source_path, dest_dir_path, target, remove_entry_at)
         }
     }
+}
+
+fn cross_device_move(
+    source: &Path,
+    destination: &Path,
+    target: &Path,
+    cleanup: impl FnOnce(&Path) -> Result<(), AppError>,
+) -> Result<Option<FileMutationRecovery>, AppError> {
+    StagedEntry::prepare(destination, |payload| {
+        copy_recursively(source, payload, &mut detached_tracker())
+    })?
+    .publish(target)?;
+    // Publication is committed. Recursive cleanup can have removed any subset
+    // of the source before failing, so preserve the actual effect separately
+    // from the complete requested Move and never expose a retryable error.
+    Ok(cleanup(source).err().map(|error| FileMutationRecovery {
+        source_path: source.to_string_lossy().into_owned(),
+        destination_path: target.to_string_lossy().into_owned(),
+        error: error.to_string(),
+        displaced_path: None,
+    }))
 }
 
 /// Read a text file's contents with a size limit (default 1MB).
@@ -957,6 +946,10 @@ fn estimate_path_size(path: &Path, file_count: &mut u64, total_bytes: &mut u64) 
 #[cfg(test)]
 #[path = "../../test_support/file_publication_regressions.rs"]
 mod publication_regressions;
+
+#[cfg(test)]
+#[path = "../../test_support/file_move_recovery.rs"]
+mod move_recovery_tests;
 
 #[cfg(test)]
 mod tests {

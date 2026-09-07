@@ -16,6 +16,7 @@ enum Call {
 
 enum Reply {
     Unit(Result<(), String>),
+    Move(Result<Option<String>, String>),
     Batch(Result<FileBatchOutcome, String>),
 }
 
@@ -46,8 +47,24 @@ impl FakeOperations {
             .pop_front()
         {
             Some(Reply::Unit(result)) => result,
+            Some(Reply::Move(_)) => panic!("unit operation received a move reply"),
             Some(Reply::Batch(_)) => panic!("unit operation received a batch reply"),
             None => panic!("unexpected unit operation"),
+        }
+    }
+
+    fn move_entry(&self, call: Call) -> Result<Option<String>, String> {
+        self.calls.lock().expect("record operation call").push(call);
+        match self
+            .replies
+            .lock()
+            .expect("read operation reply")
+            .pop_front()
+        {
+            Some(Reply::Move(result)) => result,
+            Some(Reply::Unit(_)) => panic!("move operation received a unit reply"),
+            Some(Reply::Batch(_)) => panic!("move operation received a batch reply"),
+            None => panic!("unexpected move operation"),
         }
     }
 
@@ -61,6 +78,7 @@ impl FakeOperations {
         {
             Some(Reply::Batch(result)) => result,
             Some(Reply::Unit(_)) => panic!("batch operation received a unit reply"),
+            Some(Reply::Move(_)) => panic!("batch operation received a move reply"),
             None => panic!("unexpected batch operation"),
         }
     }
@@ -71,8 +89,12 @@ impl Operations for FakeOperations {
         self.unit(Call::Rename(path, name))
     }
 
-    async fn move_entry(&self, path: String, destination: String) -> Result<(), String> {
-        self.unit(Call::Move(path, destination))
+    async fn move_entry(
+        &self,
+        path: String,
+        destination: String,
+    ) -> Result<Option<String>, String> {
+        self.move_entry(Call::Move(path, destination))
     }
 
     async fn trash(&self, path: String) -> Result<(), String> {
@@ -142,8 +164,8 @@ fn rename_and_move_use_the_current_directional_paths() {
     let operations = FakeOperations::new([
         Reply::Unit(Ok(())),
         Reply::Unit(Ok(())),
-        Reply::Unit(Ok(())),
-        Reply::Unit(Ok(())),
+        Reply::Move(Ok(None)),
+        Reply::Move(Ok(None)),
     ]);
 
     let rename_undo = run(execute(rename_action.clone(), &operations, Direction::Undo));
@@ -168,6 +190,85 @@ fn rename_and_move_use_the_current_directional_paths() {
             Call::Move(path("from/landed.txt"), path("to")),
         ]
     );
+}
+
+#[test]
+fn a_move_with_cleanup_recovery_is_completed_without_an_opposite_or_retry() {
+    let action = Action::Move {
+        source_path: path("from/original.txt"),
+        dest_path: path("to/landed.txt"),
+        original_dir: path("from"),
+    };
+    let recovery = "Files were copied, but source cleanup did not finish";
+    let operations = FakeOperations::new([Reply::Move(Ok(Some(recovery.into())))]);
+
+    let result = run(execute(action.clone(), &operations, Direction::Undo));
+
+    assert_eq!(result.completed, Some(action));
+    assert_eq!(result.opposite, None);
+    assert_eq!(result.remaining, None);
+    assert_eq!(result.error.as_deref(), Some(recovery));
+    assert_eq!(
+        operations.calls(),
+        vec![Call::Move(path("to/landed.txt"), path("from"))],
+    );
+}
+
+#[test]
+fn a_batch_stops_after_a_recovered_move_without_retrying_its_committed_effect() {
+    let never_attempted = rename("never-attempted");
+    let recovered_move = Action::Move {
+        source_path: path("from/original.txt"),
+        dest_path: path("to/landed.txt"),
+        original_dir: path("from"),
+    };
+    let completed_last = rename("completed-last");
+    let action = Action::Batch {
+        actions: vec![
+            never_attempted.clone(),
+            recovered_move.clone(),
+            completed_last.clone(),
+        ],
+        label: "mixed move recovery".into(),
+    };
+    let recovery = "destination committed; source cleanup incomplete";
+    let operations =
+        FakeOperations::new([Reply::Unit(Ok(())), Reply::Move(Ok(Some(recovery.into())))]);
+
+    let result = run(execute(action, &operations, Direction::Undo));
+
+    assert_eq!(
+        operations.calls(),
+        vec![
+            Call::Rename(
+                path("work/completed-last-new.txt"),
+                "completed-last-old.txt".into(),
+            ),
+            Call::Move(path("to/landed.txt"), path("from")),
+        ],
+    );
+    assert_eq!(
+        result.completed,
+        Some(Action::Batch {
+            actions: vec![recovered_move, completed_last.clone()],
+            label: "mixed move recovery".into(),
+        }),
+    );
+    assert_eq!(
+        result.opposite,
+        Some(Action::Batch {
+            actions: vec![completed_last],
+            label: "mixed move recovery".into(),
+        }),
+    );
+    assert_eq!(
+        result.remaining,
+        Some(Action::Batch {
+            actions: vec![never_attempted],
+            label: "mixed move recovery".into(),
+        }),
+    );
+    assert_eq!(result.error.as_deref(), Some(recovery));
 }
 
 #[test]

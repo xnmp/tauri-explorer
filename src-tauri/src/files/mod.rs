@@ -11,6 +11,7 @@ pub mod fs_watcher;
 pub mod git_status;
 pub(crate) mod mutation;
 mod publication;
+mod replacement;
 pub mod shortcuts;
 pub mod trash;
 mod watch_observation;

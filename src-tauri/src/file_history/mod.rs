@@ -116,12 +116,15 @@ pub(crate) fn retire_owners() {
 pub async fn file_history_push(
     window: tauri::Window,
     session_id: String,
-    action: Action,
+    action: Option<Action>,
     shared: bool,
 ) -> Result<Reply, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     // Shape/capability normalization is outside the shared history lock.
-    let action = action::prepare(action, !cfg!(target_os = "macos"));
+    let action = match action {
+        Some(action) => action::prepare(action, !cfg!(target_os = "macos")),
+        None => Ok(None),
+    };
     let mut service = service().lock().unwrap();
     let client = service.client(&owner)?;
     let error = match action {
@@ -170,10 +173,10 @@ impl execution::Operations for NativeOperations {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
-    async fn move_entry(&self, path: String, destination: String) -> Result<(), String> {
+    async fn move_entry(&self, path: String, destination: String) -> Result<Option<String>, String> {
         crate::files::file_ops::move_entry(path, destination, Some(false))
             .await
-            .map(|_| ())
+            .map(|receipt| receipt.recovery.map(|recovery| recovery.message()))
             .map_err(|error| error.to_string())
     }
     async fn trash(&self, path: String) -> Result<(), String> {

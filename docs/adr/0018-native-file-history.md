@@ -64,6 +64,42 @@ prove native admission, watcher timing or renderer-independent completion.
 
 ## Acceptance still required
 
+### Partial move outcomes and explicit replacement ownership
+
+`FileMutationReceipt.recovery`, when present, reports a committed destination
+with incomplete or uncertain source cleanup. It contains source and destination
+paths, the cleanup error, and an optional retained displaced-original path.
+Recursive source removal may have deleted any subset of the source; neither a
+Move inverse nor a Copy inverse is safe, because the destination may contain
+the only surviving copy of some children. Forward consumers invalidate redo
+without adding an inverse, reconcile both parents, and report the incomplete
+operation. Native inverse execution consumes the affected leaf with completed
+effects and an error, retaining no opposite or retry; untouched batch siblings
+remain available. This is explicit partial progress, not automatic recovery.
+
+Copy and move overwrite share `files/replacement.rs`. An exclusive directory
+and original-path record are created before displacing the existing target;
+automatic directory destruction is relinquished before any user bytes enter
+it. Rollback uses no-replace rename. A collision preserves the racing target
+and reports the retained original. An incomplete move retains that original
+instead of rolling it back over the committed destination. Complete overwrites
+still remove displaced originals, so full overwrite Undo is not implemented.
+
+The original-path record supports manual inspection. It is not a durable
+transaction journal or globally discoverable recovery index. Failed capture
+can leave an empty recovery record, and cleanup failure after a complete
+overwrite can retain data reported only through native logs. Native identity,
+bounded retention and startup reconciliation remain required. Parking a move
+source before copying is deliberately deferred until durable journaling and
+reconciliation can land with it; otherwise a process crash could strand the
+only source under a hidden name before any destination exists.
+
+Incomplete paste marks its progress operation as an error with no retry
+handler and a `Paste incomplete` message. Safe siblings remain undoable; an
+incomplete cut keeps the original clipboard selection, including paths of
+already-moved siblings. Precise pruning must coordinate OS clipboard ownership
+before replacing that payload.
+
 ### Publication prerequisite
 
 `files/publication.rs` owns newly created, unpublished payloads in an exclusive
@@ -84,9 +120,10 @@ artifact identity and an indeterminate publication outcome before an error can
 universally be interpreted as proof of no mutation. A case-only rename still
 uses the existing platform rename branch after its same-entry check.
 
-Staging cleanup never intentionally owns displaced originals. Old overwrite
-displacement/rollback paths still require migration to explicitly retained
-artifacts. Staging itself is still addressed by path: a process running as the
+Staging cleanup never intentionally owns displaced originals. Overwrite
+displacement now uses the explicitly retained `replacement.rs` owner described
+above; durable reconciliation and complete overwrite history remain open.
+Staging itself is still addressed by path: a process running as the
 same user can replace the staging directory or one of its ancestors between
 operations. Mode 0700 does not provide identity anchoring against that actor;
 publication and cleanup need native handles/identity before claiming protection
@@ -94,17 +131,28 @@ against arbitrary external namespace replacement.
 Cross-device publication now uses exclusive staging, but deleting
 the source afterward can still fail partially: Rust's
 [`remove_dir_all` contract](https://doc.rust-lang.org/std/fs/fn.remove_dir_all.html)
-does not promise all-or-nothing removal. The transaction continuation must
-separate committed effects, cleanup warnings, retained originals and available
-inverses, then combine native forward completion and history admission.
+does not promise all-or-nothing removal. The recovery receipt now separates the committed destination from incomplete
+source cleanup and suppresses its unsafe inverse. Durable reconciliation and
+combined native forward completion/history admission remain required.
+
+Native acceptance exposed a publication boundary for read-only directories:
+Linux requires write permission on a directory moved between parents to update
+`..`. Publication now temporarily grants owner read/write only on the newly built
+payload root in private staging, retains a directory handle, and restores the
+exact copied mode through that handle after commit. It never changes source
+permissions. Restoration failure is logged without revoking committed success.
+A real-filesystem regression fails before this fix and passes afterward; the
+Linux native cross-device case also verifies both exact copies, the destination
+listing, an incomplete-paste error and absence of an unsafe Undo. Read-only
+nested staging cleanup and arbitrary namespace substitution remain open.
 
 ### Remaining acceptance
 
 - Real multiwindow inverse admission, passive peer settlement and initiating
   renderer closure while an inverse is accepted.
-- Structured outcomes for cross-device source cleanup, failed copy cleanup and
-  overwrite rollback. A committed destination must not be retried as an
-  unapplied move. Partial text writes also need an owned publication boundary.
+- Durable recovery for cross-device source cleanup, failed staging cleanup and
+  overwrite rollback. Current receipts and retained paths expose partial
+  effects, but do not reconcile them automatically or after native-process loss.
 - Recorded native artifact identity before path-based destructive inverses;
   retained displaced artifacts for complete overwrite recovery.
 - Native forward mutation/history admission ownership: the current separate

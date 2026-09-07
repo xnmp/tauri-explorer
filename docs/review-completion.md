@@ -5,7 +5,41 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-## Exclusive publication prerequisite
+## Partial-move recovery checkpoint
+
+Cross-device moves now return a committed destination with an explicit recovery
+receipt if source cleanup fails, including when cleanup already removed some
+children. Paste, drag/drop, transfers, plugins and native history preserve that
+effect, refresh the affected parents, report the incomplete operation and avoid
+recording an inverse that could delete the last surviving copy. Safe siblings
+remain undoable; incomplete cuts conservatively retain their original clipboard
+selection. Overwrite copy/move share an exclusively reserved displaced-original
+owner whose destructor never deletes user data. Rollback refuses destination
+races and reports the retained original path.
+
+This checkpoint passes 2,281 frontend tests plus 30 performance cases (three
+skipped), 577 Rust library tests plus nine integration tests (seven ignored),
+and 74 Chromium outcomes across all three file views. Svelte, architecture and all-targets recovery-feature Clippy checks are clean;
+source maps cover 399/399 files. A freshly rebuilt Linux binary passes six outcomes across four
+specs, including real cross-filesystem source-cleanup failure with exact bytes
+at both locations, a visible incomplete-paste message and rejected unsafe Undo.
+Native acceptance first exposed read-only staged-directory publication failure;
+a failing-before Rust regression now verifies publication and exact final mode,
+and the corrected native case passes. See
+[the checkpoint evidence](reviews/file-move-recovery-checkpoint-2026-09-08.json)
+and [the native screenshot](../screenshots/refactor/repo-health-cleanup/partial-move-recovery.png).
+
+Startup JavaScript is 217,236 gzip bytes, 383 above the preceding checkpoint.
+No startup latency improvement is claimed. Durable transaction journals and
+startup reconciliation, staging/source identity, indeterminate network-filesystem
+outcomes, complete overwrite Undo, atomic forward/history recording and native
+multiwindow/platform acceptance remain open. Parking sources before copying is
+deferred until durable recovery can land with it: otherwise a crash can hide the
+only source before any destination exists. Independent GPT-5.6 Sol review accepts the scoped guarantees and evidence with
+these limits. This is a verified recovery boundary, not completion of the
+comprehensive review.
+
+## Preceding exclusive publication checkpoint
 
 Ordinary copies and new text writes now build their complete payload in an
 exclusively created destination-local staging directory. Shared native

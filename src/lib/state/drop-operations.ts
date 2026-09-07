@@ -14,6 +14,7 @@ import { toastStore } from "./toast.svelte";
 import { broadcastFileChange } from "./file-events";
 import { frecencyStore } from "./frecency.svelte";
 import type { UndoAction } from "./types";
+import { fileMutationRecoveryMessage } from "$lib/domain/file";
 
 export interface DropOptions {
   /** Refresh callback after drop completes */
@@ -99,6 +100,8 @@ export async function handleFileDropMany(
 
   const actions: UndoAction[] = [];
   const affectedDirs = new Set<string>([targetDir]);
+  const recoveryErrors: string[] = [];
+  let committed = 0;
   let failed = 0;
   let lastError: string | undefined;
 
@@ -110,6 +113,7 @@ export async function handleFileDropMany(
       suppressToast: true,
       suppressRefresh: true,
       suppressBroadcast: true,
+      broadcastToOtherWindows: options.broadcastToOtherWindows,
     });
     if (!result.ok) {
       // "skipped" is a user choice (conflict dialog) or a same-parent no-op,
@@ -120,19 +124,24 @@ export async function handleFileDropMany(
       }
       continue;
     }
+    committed++;
     affectedDirs.add(parentDir(sourcePath));
     // Later items in this batch sharing the landed name must still conflict.
     options.existingNames?.add(basename(result.path));
-    actions.push(
-      isCopy
-        ? { type: "copy", copiedPath: result.path, parentDir: targetDir }
-        : {
-            type: "move",
-            sourcePath,
-            destPath: result.path,
-            originalDir: parentDir(sourcePath),
-          },
-    );
+    if (result.recovery) {
+      recoveryErrors.push(fileMutationRecoveryMessage(result.recovery));
+    } else {
+      actions.push(
+        isCopy
+          ? { type: "copy", copiedPath: result.path, parentDir: targetDir }
+          : {
+              type: "move",
+              sourcePath,
+              destPath: result.path,
+              originalDir: parentDir(sourcePath),
+            },
+      );
+    }
   }
 
   const verb = isCopy ? "Copied" : "Moved";
@@ -151,17 +160,27 @@ export async function handleFileDropMany(
     if (options.broadcastToOtherWindows) {
       toastStore.broadcast(message, "info");
     }
+  }
 
+  if (committed > 0) {
     options.onRefresh();
     broadcastFileChange([...affectedDirs]);
     frecencyStore.pruneNonExistent();
   }
 
-  if (failed > 0) {
-    toastStore.error(
+  const failureMessage = failed > 0
+    ? (
       failed === 1 && lastError
         ? lastError
-        : `Failed to ${isCopy ? "copy" : "move"} ${failed} item${failed === 1 ? "" : "s"}`,
-    );
+        : `Failed to ${isCopy ? "copy" : "move"} ${failed} item${failed === 1 ? "" : "s"}`
+    )
+    : null;
+  const problems = [...recoveryErrors, ...(failureMessage ? [failureMessage] : [])];
+  if (problems.length > 0) {
+    const message = problems.join("\n");
+    toastStore.error(message);
+    if (options.broadcastToOtherWindows) {
+      toastStore.broadcast(message, "error");
+    }
   }
 }

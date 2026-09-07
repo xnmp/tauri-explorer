@@ -295,6 +295,33 @@ describe("paste and undo publication ownership", () => {
     expect.soft(mocks.broadcastFileChange).toHaveBeenCalledWith(expect.arrayContaining(["/a", "/source"]));
   });
 
+  it("keeps the cut clipboard and reconciles the destination after incomplete source cleanup", async () => {
+    const explorer = explorerAtA();
+    const cut = entry("partial.txt", "/source");
+    const destination = entry(cut.name);
+    await clipboardStore.cut([cut]);
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [cut.path] });
+    mocks.transfer.mockResolvedValueOnce({
+      ok: true,
+      path: destination.path,
+      entry: null,
+      recovery: {
+        sourcePath: cut.path,
+        destinationPath: destination.path,
+        error: "source cleanup denied",
+      },
+    });
+    serveListing([...explorer.displayEntries, destination]);
+
+    const error = await explorer.paste();
+
+    expect(error).toContain("source cleanup denied");
+    expect(clipboardStore.content).toEqual({ entries: [cut], operation: "cut" });
+    expect(explorer.displayEntries.some(({ path }) => path === destination.path)).toBe(true);
+    expect(mocks.undoPush).not.toHaveBeenCalled();
+    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a", "/source"]);
+  });
+
   it("keeps clipboard-image destination and completion scoped to A", async () => {
     const explorer = explorerAtA();
     const imageAvailable = deferred<boolean>();

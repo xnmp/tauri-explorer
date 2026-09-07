@@ -25,7 +25,7 @@ import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import { performFileTransfer } from "$lib/state/file-transfer";
-import type { FileEntry } from "$lib/domain/file";
+import type { FileEntry, FileMutationRecovery } from "$lib/domain/file";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
 import type { ApiResult } from "$lib/api/common";
@@ -82,6 +82,9 @@ export interface PluginEvents {
 export interface PluginMoveResult {
   ok: boolean;
   error?: string;
+  /** Published destination with incomplete source cleanup; inspect before
+   * treating the requested move as finished or removing its source UI. */
+  recovery?: FileMutationRecovery;
 }
 
 /**

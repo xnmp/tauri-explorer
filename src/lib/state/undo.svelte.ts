@@ -72,6 +72,8 @@ export function createUndoStore(port: HistoryPort, report: (error: string) => vo
     get stackSize() { return summary.stackSize; },
     push: (action: UndoAction) => push(action, false),
     pushAndBroadcast: (action: UndoAction) => push(action, true),
+    /** A committed effect without a safe inverse still supersedes redo. */
+    invalidateRedo: (shared = false) => write(() => port.push(null, shared)),
     clear: () => write(() => port.clear()),
     undo: () => perform("undo"),
     redo: () => perform("redo"),

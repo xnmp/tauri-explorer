@@ -14,11 +14,12 @@ export function useResizeOwner(create: (effects: ResizeEffects) => ScalarResize,
   let revision = $state(0), isResizing = $state(false);
   let retireActivity: (() => void) | undefined;
   let pointer: number | undefined;
+  let capturedHandle: HTMLElement | undefined;
   let release: (() => void) | undefined;
   const owner = create({
     schedule: callback => { const frame = requestAnimationFrame(callback); return () => cancelAnimationFrame(frame); },
     retire() {
-      const cleanup = release; release = undefined; pointer = undefined; cleanup?.();
+      const cleanup = release; release = undefined; pointer = undefined; capturedHandle = undefined; cleanup?.();
       retireActivity?.(); retireActivity = undefined;
       isResizing = false;
     },
@@ -42,6 +43,7 @@ export function useResizeOwner(create: (effects: ResizeEffects) => ScalarResize,
     if (!owner.start(owner.axis === "x" ? event.clientX : event.clientY, scale)) return;
     event.preventDefault();
     pointer = event.pointerId;
+    capturedHandle = handle;
     const controller = new AbortController();
     const zoom = new MutationObserver(owner.cancel);
     zoom.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
@@ -55,13 +57,18 @@ export function useResizeOwner(create: (effects: ResizeEffects) => ScalarResize,
     try { handle.setPointerCapture(event.pointerId); }
     catch { owner.cancel(); }
   }
+  // One owner can serve several keyed handles. Loss from a retired target may
+  // arrive after the same pointer has been captured by its replacement.
+  function owns(event: PointerEvent) {
+    return event.pointerId === pointer && event.currentTarget === capturedHandle;
+  }
   function move(event: PointerEvent) {
-    if (event.pointerId !== pointer) return;
+    if (!owns(event)) return;
     if ((event.buttons & 1) === 0) owner.cancel();
     else owner.move(owner.axis === "x" ? event.clientX : event.clientY);
   }
-  function finish(event: PointerEvent) { if (event.pointerId === pointer) owner.finish(); }
-  function cancelPointer(event: PointerEvent) { if (event.pointerId === pointer) owner.cancel(); }
+  function finish(event: PointerEvent) { if (owns(event)) owner.finish(); }
+  function cancelPointer(event: PointerEvent) { if (owns(event)) owner.cancel(); }
   function keydown(event: KeyboardEvent) {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     if (owner.key(event.key)) event.preventDefault();

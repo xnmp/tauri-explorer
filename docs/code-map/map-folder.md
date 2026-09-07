@@ -234,7 +234,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
 - `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
-- `use-column-resize.svelte.ts` — Details-view column width drag/persist.
+- `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
 - `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
 - `use-native-drop-target.svelte.ts` — position-based drop target detection.
@@ -291,6 +291,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `undo-operations.ts` — pure undo/redo execution logic.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
+- `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
 - `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).

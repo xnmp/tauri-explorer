@@ -496,3 +496,15 @@ real visual growth at 150% zoom and verifies subsequent shell command execution.
 Startup payload remains within budget at 43 chunks / 650,380 raw bytes / 211,520 gzip
 bytes. ADR0012 and the completion ledger retain exact semantics, evidence and the
 remaining Preview/Details, platform, wider integration and Mac startup work.
+
+
+Details-column checkpoint (2026-09-07): one keyed controlled resize owner replaces
+the private mouse/frame loop. Column policy is pure; key retirement preserves the
+correct commit target, and shared DOM ownership now checks both pointer ID and
+captured handle. Regression evidence includes actual browser-generated loss after
+capture transfer. All 20 new Details scenarios and 2,108 unit tests plus 30
+performance cases pass. The combined browser run is 92 passed / one skipped /
+one existing WebKit graph-filter failure before resize input; three isolated
+repetitions pass but its wider-run cause remains open. ADR0012 and the completion
+ledger record finite bounds, session-local widths and remaining Preview, platform,
+startup and broader release acceptance work.

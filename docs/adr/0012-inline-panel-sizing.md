@@ -6,7 +6,8 @@ Governs: `domain/resize-size.ts`, `state/scalar-resize.ts`, `state/panel-resize.
 `composables/use-resize-owner.svelte.ts`, `composables/use-controlled-size.svelte.ts`,
 `composables/use-panel-resize.svelte.ts`, `components/PanelResizeHandle.svelte`,
 `state/pane-viewport.svelte.ts`, `composables/use-inline-panel-width.svelte.ts`,
-`state/resize-activity.svelte.ts`
+`state/resize-activity.svelte.ts`, `domain/detail-columns.ts`,
+`composables/use-column-resize.svelte.ts`
 
 The base file-pane minimum cannot include a fixed assumption about optional
 panels. Their presence depends on actual render conditions: Miller columns can
@@ -89,5 +90,20 @@ The DOM owner accepts an explicit model-to-visual scale. Ordinary widths derive
 it from the controlled element's rect/computed size; Terminal passes app zoom
 because its counter-zoomed element has net CSS zoom one while its styled height
 is the model height multiplied by app zoom. Blur, root style changes, scrolling,
-window resizing, hide and unmount retire its gesture. Preview and Details remain
-separate migrations; this architecture does not claim they already use the core.
+window resizing, hide and unmount retire its gesture. Preview remains a separate
+migration; this architecture does not claim it already uses the core.
+
+Details composes one controlled owner with session-local committed column widths.
+Selecting a different column synchronously retires the current owner before
+changing the key used by read/commit/options. Only the selected column receives
+the transient draft. Hidden columns retain their committed width and retire any
+active gesture. Pure column policy retains name's 150px minimum and other columns'
+80px minimum, with a deliberate generous 4096px maximum for finite layout and End
+navigation. Widths are not added to settings or persisted across view remounts.
+
+DOM ownership is the pair of pointer ID and captured handle. A shared controller
+can serve multiple column elements, and old-target loss can arrive after a new
+handle captures the same pointer. Clear both identifiers before releasing capture;
+require both for move/release/cancellation. Global interruption remains independent
+of target identity. A browser test establishes real capture, requests a replacement
+capture, and verifies browser-generated old loss cannot cancel the replacement.

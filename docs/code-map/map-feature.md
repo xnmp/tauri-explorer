@@ -16,7 +16,7 @@ backend for E2E/browser).
 ## View modes & virtualization
 
 - `components/FileList.svelte` — dispatches to Details/List/Tiles by view mode
-- `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers)
+- `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
 - `components/ListView.svelte` — CSS-grid columns view
 - `components/TilesView.svelte` — auto-fill tile grid
 - `components/VirtualList.svelte` — windowing engine (visible-range calc, spacers)

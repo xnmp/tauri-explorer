@@ -403,3 +403,18 @@ Native xterm scrollback must be verified through visible history navigation.
 xterm 6 owns its scroll model internally, so `.xterm-viewport.scrollTop` and
 `scrollHeight` do not establish whether shell history exists. Populate real PTY
 output, use Shift+PageUp, and assert that earlier output replaces the latest rows.
+
+
+### A keyed resize owner needs both model and DOM identity
+
+Retire the active scalar gesture before switching the column key used by its
+read/commit callbacks. Otherwise a final draft can commit to the replacement
+column, even when its queued frame itself was cancelled. Keep pending movement
+separate from published work and project only the active draft into the grid.
+
+Pointer IDs alone do not identify the captured element. Once a shared owner
+serves multiple handles, browser-generated loss from the old target can arrive
+after the replacement captures that same pointer. Clear pointer and handle before
+release; check both against each incoming move/up/cancel/lost-capture event. The
+regression needs an initial real move to establish the old capture: transferring
+before that first move has no old capture to lose and misses the defect.

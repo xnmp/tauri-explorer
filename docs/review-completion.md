@@ -5,13 +5,14 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): fixed/automatic panel widths and Terminal height
-now compose over a shared scalar draft owner and DOM input lifetime. Controlled
-settings have synchronous supersession checks and final-only persistence. All 80
-browser outcomes, 2,105 unit tests, 30 performance cases and six native Linux
-Terminal outcomes pass (one OSC7 case skipped). Preview and Details resizing,
-prior wider WebKit detail failures and full platform/startup acceptance remain
-open. The full review is **not complete**.
+Current checkpoint (2026-09-07): fixed/automatic panel widths, Terminal height
+and keyed Details columns now compose over shared scalar drafts and DOM input
+lifetime. All 20 new Details browser outcomes and 2,108 unit tests plus 30
+performance cases pass. The combined browser run passes 92, skips one and fails
+one existing WebKit graph-filter setup; that case passes 3/3 isolated repetitions
+but its wider-run cause remains unresolved. Preview resizing, wider WebKit
+integration and full platform/startup acceptance remain open.
+The full review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -1291,3 +1292,48 @@ Independent adversarial review accepts the final core and Terminal integration.
 Preview and Details retain their custom resize implementations and remain next
 migration work. Full release acceptance, prior wider WebKit detail failures,
 Windows/macOS native acceptance and measured Mac half-bounce startup remain open.
+
+
+## Keyed Details column sizing — 2026-09-07
+
+Details now composes one controlled scalar owner with session-local column widths.
+The column key changes only after the previous owner retires, so its published
+width commits to the old column and pending frames cannot alter the replacement.
+Pure `detail-columns` policy owns defaults, normalization, visibility projection
+and bounds. Name retains its 150px minimum; other columns retain 80px minima.
+The deliberate 4096px maximum bounds extreme layout and gives keyboard End a
+finite destination. Widths remain local to the mounted Details view.
+
+The shared DOM owner identifies a gesture by both pointer ID and captured handle.
+Clearing both before release rejects synchronous loss; checking both on later
+move/release/cancellation rejects delayed events from an old handle after a
+replacement has acquired the same pointer. A deterministic late-loss regression
+failed in both engines before this fix. A stronger case establishes real Name
+capture with mouse movement, requests Date capture using the live pointer ID,
+then resumes real mouse movement: browser-generated old-target loss cancelled
+the replacement before the fix, and both engines now retain Name=330/Date=210.
+Only the ownership-transfer request in that case is programmatic.
+
+Blur, hidden optional columns and unmount retire the owner. Column separators
+are keyboard-focusable, expose their current range and share one declarative
+handle snippet. Arrows/Home/End change only the focused column, preserve sorting
+and selection, and retain immediate hover feedback. The original mouse/frame
+loop and component window listeners are removed.
+
+The old implementation failed blur, queued replacement-column and keyboard
+regressions in both engines. Final Details acceptance passes all 20 scenarios,
+including continuous visual movement at 80/150% zoom, hidden-width restoration,
+key switching, real capture transfer, and usable file selection after unmount.
+The full unit suite passes 2,108 tests in 237 files (three skipped), plus 30
+performance cases. Typecheck has zero errors/warnings. Architecture lint is clean,
+maps cover 375/375 source files, and startup payload remains within budget at
+43 chunks / 651,306 raw bytes / 211,896 gzip bytes. These are payload measurements,
+not evidence of launch-time or the macOS half-bounce target. Independent review accepts
+the final key ordering, target identity, geometry and keyboard integration.
+
+The combined browser run passes 92 scenarios, skips the Chromium-calibrated
+virtualization case on WebKit, and fails one existing WebKit graph-filter setup
+before any resize input. Three isolated repetitions pass in 16.7 seconds. This does not establish the
+cause of the wider-run failure; it remains an integration acceptance item.
+Preview still has its private resize implementation. Native Windows/macOS,
+measured macOS half-bounce startup and full release acceptance remain outstanding.

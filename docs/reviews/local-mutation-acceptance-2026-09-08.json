@@ -1,0 +1,99 @@
+{
+  "date": "2026-09-08",
+  "baseline": "8d04054c",
+  "scope": "Local file mutation publication, clipboard destination and editor opening ownership",
+  "status": "Verified Linux/browser checkpoint; comprehensive architectural review remains incomplete",
+  "implementation": [
+    "Borrow existing navigation generation and pane lifetime for UI publication; retain durable filesystem effects independently",
+    "Capture paste and clipboard-image destination before asynchronous clipboard reads; preserve newer clipboard and selection",
+    "Opaque dialog openings and optional creation session; old completion cannot close a newer editor",
+    "Upsert created entries by path when the watcher already observed them",
+    "Undo and broadcasts use actual affected parents, including multi-parent deletion; publish individually confirmed permanent-delete successes on partial failure",
+    "Remove lossy one-second mutation cooldown and forced-refresh bypass; retain existing scheduling and unchanged-listing suppression",
+    "Rename input remains read-only and focusable during submission, with session-owned error/finally/focus completion",
+    "Literal build-time guard removes native mutation test probe from production assets"
+  ],
+  "before": [
+    {
+      "log": "/tmp/local-mutation-create-before.log",
+      "result": "7 intended failures: stale create/symlink pane publication, disposal and newer inline editor"
+    },
+    {
+      "log": "/tmp/local-mutation-dialogs-before.log",
+      "result": "4 intended failures and 1 preservation pass: rename/delete dialog ownership"
+    },
+    {
+      "log": "/tmp/pane-mutation-cooldown-before.log",
+      "result": "Causal same-directory external write remains absent inside own-create cooldown"
+    },
+    {
+      "log": "/tmp/local-mutation-paste-before.log",
+      "result": "6 intended failures: clipboard destination, stale transfer/undo publication and newer clipboard retention"
+    },
+    {
+      "log": "/tmp/local-mutation-editor-before.log",
+      "result": "3 failures / 3 passes: asynchronous rename error loses input focus in every view"
+    }
+  ],
+  "verification": {
+    "frontend": {
+      "passed": 2253,
+      "skipped": 3,
+      "performancePassed": 30,
+      "log": "/tmp/local-mutation-frontend-final.log"
+    },
+    "browser": {
+      "integrated": 102,
+      "transfer": 7,
+      "editor": 6,
+      "logs": [
+        "/tmp/local-mutation-browser.log",
+        "/tmp/local-mutation-browser-transfer.log",
+        "/tmp/local-mutation-editor-final.log"
+      ]
+    },
+    "native": {
+      "platform": "Linux / WebKitGTK",
+      "specs": 3,
+      "outcomes": 6,
+      "seconds": 36,
+      "log": "/tmp/local-mutation-native.log",
+      "binarySha256": "6e48ea62eacec8ff2673cbd7488d9a19b07abdaae84eaffcaaec66db0d61f2cc",
+      "buildLog": "/tmp/local-mutation-native-build.log",
+      "mutation": "One default-view real create held after successful filesystem IPC, navigation to B, release preserves B selection/listing, external B write within prior cooldown has causal backend receipt and appears, return to A retains created directory",
+      "regressions": "Two real watcher coalescing/cadence cases; three native focus scenarios each spanning all three views"
+    },
+    "static": {
+      "svelteErrors": 0,
+      "svelteWarnings": 0,
+      "log": "/tmp/local-mutation-check-final.log",
+      "architectureLog": "/tmp/local-mutation-architecture.log",
+      "nativeTypecheckLog": "/tmp/local-mutation-native-types.log"
+    },
+    "startup": {
+      "chunks": 44,
+      "rawBytes": 663604,
+      "gzipBytes": 216083,
+      "mainGzipBytes": 90385,
+      "gzipDelta": 500,
+      "log": "/tmp/local-mutation-bundle-final.log",
+      "latencyClaim": false
+    },
+    "releaseProbeAbsence": {
+      "log": "/tmp/local-mutation-release-probes.json",
+      "matches": 0,
+      "qualification": "Scanned normal production assets before the subsequent E2E-enabled native build replaced build/"
+    },
+    "screenshot": "screenshots/refactor/repo-health-cleanup/rename-error-retry.png",
+    "independentReview": "Sol ACCEPT after source review, adversarial dialog/paste tests, browser evidence and terminal native result; native verifier did not author its fixture"
+  },
+  "limits": [
+    "Native mutation timing proof covers create on Linux/default view; rename/delete/disposal/multi-parent cases have narrower unit/browser evidence",
+    "Non-permanent bulk trash can partially succeed but exposes aggregate failure; structured native per-item results remain required",
+    "Global undo concurrency reservation/serialization remains open",
+    "Browser derived_inert warnings need stack-based attribution; no failed outcome or root cause established",
+    "Own mutation echoes can require a confirming listing; no startup latency or Mac half-bounce improvement claimed",
+    "Windows/macOS, broader product matrix, soak and final release acceptance remain open",
+    "Public publication remains blocked by prior automatic approval review; this checkpoint is local only"
+  ]
+}

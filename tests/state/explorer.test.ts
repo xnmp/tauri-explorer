@@ -174,8 +174,10 @@ describe("inline new-entry creation kind (#436)", () => {
 
     explorer.cancelInlineNewFolder();
     expect(explorer.isCreatingFolder).toBe(false);
-    // Kind sticks at its last value; only the active flag is cleared.
-    expect(explorer.newEntryKind).toBe("file");
+    // A later opening chooses its own kind; cancellation retires the editor.
+    explorer.startInlineNewFolder();
+    expect(explorer.isCreatingFolder).toBe(true);
+    expect(explorer.newEntryKind).toBe("folder");
   });
 });
 

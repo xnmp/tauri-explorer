@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DirectoryWatchLease } from "$lib/api/files";
 import type { DirectoryChange, DirectorySubscription } from "$lib/state/directory-events";
-import { createPaneWatch, MUTATION_COOLDOWN_MS } from "$lib/state/pane-watch";
+import { createPaneWatch } from "$lib/state/pane-watch";
 
 type RefreshOptions = { silent: boolean };
 type ScheduledRefresh = {
@@ -259,17 +259,5 @@ describe("createPaneWatch", () => {
     expect(harness.prepare).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the local-mutation cooldown boundary", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(10_000);
-    const harness = createHarness();
-    expect(harness.watch.inMutationCooldown()).toBe(false);
 
-    harness.watch.markLocalMutation();
-    expect(harness.watch.inMutationCooldown()).toBe(true);
-    vi.advanceTimersByTime(MUTATION_COOLDOWN_MS - 1);
-    expect(harness.watch.inMutationCooldown()).toBe(true);
-    vi.advanceTimersByTime(2);
-    expect(harness.watch.inMutationCooldown()).toBe(false);
-  });
 });

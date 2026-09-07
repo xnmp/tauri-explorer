@@ -57,7 +57,7 @@ backend for E2E/browser).
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
 - `state/pane-refresh.ts` — `createPaneRefresh`: re-list without UI flash (fingerprint diff)
 - `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
-- `state/pane-watch.ts` — observed navigation tickets keep the old directory lease until commit, replay pending-target changes and gate refresh during navigation; mutation cooldown.
+- `state/pane-watch.ts` — observed navigation tickets keep the old directory lease until commit, replay pending-target changes and gate refresh during navigation.
 - `state/directory-events.ts` — shared ready-before-scan native event hub with acquisition retry and late-listener retirement.
 - `composables/use-file-watchers.ts` — subscribes to `directory-changed` + cross-window channel
 - `state/file-events.ts` — BroadcastChannel `explorer-file-changes` between windows
@@ -146,8 +146,9 @@ backend for E2E/browser).
 ## Copy / paste / file-ops & progress
 
 - `state/clipboard.svelte.ts` — in-app cut/copy path set
-- `state/paste-operations.ts` — paste orchestration (conflict, dest)
-- `state/pane-mutations.ts` — `createPaneMutations`: optimistic add/remove/rename on entries
+- `state/paste-operations.ts` — paste orchestration (conflict, dest); explorer captures destination before clipboard waits and guards pane callbacks by navigation/lifetime.
+- `state/pane-mutations.ts` — `createPaneMutations`: durable affected-parent/undo effects; navigation/lifetime-owned entry updates and exact editor-session completion
+- `src/test-support/file-mutation-probe.ts` — opt-in native hold between successful file IPC and renderer publication, with tokened release and teardown.
 - `state/operations.svelte.ts` — `operationsManager`: tracked long ops, `formatBytes`
 - `components/ProgressDialog.svelte`, `components/JobsPanel.svelte`, `state/jobs.svelte.ts` — progress UI
 - `components/ConflictDialog.svelte`, `state/conflict-resolver.svelte.ts` — overwrite/rename prompts
@@ -164,7 +165,7 @@ backend for E2E/browser).
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
 - `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `src-tauri/src/files/file_ops.rs` (`create_directory`, `create_empty_file`)
 - FLOW: inline-rename commits → `renameEntry` → pane-mutations renames entry + `renameThumbnailCache` so thumb doesn't flash.
-- New-entry FLOW: context menu / `file.newFolder`|`file.newFile` command → `explorer.startInlineNewFolder`|`startInlineNewFile` (sets `newEntryKind`) → InlineNewFolder row → `createFolder`|`createFile` → pane-mutations optimistic add + `broadcastFileChange`.
+- New-entry FLOW: context menu / `file.newFolder`|`file.newFile` command → `explorer.startInlineNewFolder`|`startInlineNewFile` (opens an independently owned creation session) → InlineNewFolder row → `createFolder`|`createFile` → pane-mutations optimistic add + `broadcastFileChange`.
 
 ## Delete / trash / undo
 

@@ -68,9 +68,8 @@ function makeMutations() {
   return createPaneMutations({
     coreState,
     setSelection: vi.fn(),
-    displayEntries: () => [],
-    markLocalMutation: vi.fn(),
-    getParentPath: () => "/home",
+    capture: () => ({ path: coreState.currentPath, current: () => true, selectionCurrent: () => true }),
+    alive: () => true,
     navigateTo: vi.fn(async () => {}),
     refreshSilent: vi.fn(),
   });

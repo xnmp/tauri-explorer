@@ -20,6 +20,12 @@ import { providerFor } from "$lib/plugins/fs-providers";
 import { logFrontendDiagnostic } from "./frontend-log";
 import { getNativeResourceSession } from "./native-resource-session";
 
+// Vite must erase this import before extracting dynamic chunks. An imported
+// constant folds too late and leaves an orphan test chunk in release assets.
+const fileMutationProbe = (import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1")
+  ? import("../../test-support/file-mutation-probe")
+  : null;
+
 interface DirectoryListingE2EProbe {
   targetPath: string;
   delays: number[];
@@ -143,6 +149,7 @@ export async function createDirectory(
       parentPath,
       name,
     });
+    if (fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("create_directory", parentPath, data.path);
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -187,6 +194,7 @@ export async function renameEntry(
   if (guard) return guard;
   try {
     const data = await invoke<FileEntry>("rename_entry", { path, newName });
+    if (fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("rename_entry", path, data.path);
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };

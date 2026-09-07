@@ -13,7 +13,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   };
   const listen = (name: string, handler: EventListener) => window.addEventListener(name, handler, { signal });
   signal.addEventListener("abort", () => {
-    for (const key of ["e2eHooksReady", "e2eWarmReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eWindowResult"]) {
+    for (const key of ["e2eHooksReady", "e2eWarmReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eWindowResult", "e2eFileOperationResult"]) {
       delete document.documentElement.dataset[key];
     }
   }, { once: true });
@@ -43,21 +43,30 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   }) as EventListener);
 
   listen("e2e-file-op", ((
-    e: CustomEvent<{ op: string; name?: string; path?: string }>,
+    e: CustomEvent<{ op: string; name?: string; path?: string; token?: string }>,
   ) => {
     const explorer = windowTabsManager.getActiveExplorer();
     if (!explorer) return;
-    const { op, name, path } = e.detail;
+    const { op, name, path, token } = e.detail;
     const entry = path
       ? explorer.displayEntries.find((en) => en.path === path)
       : undefined;
+    let pending: Promise<string | null> | undefined;
     if (op === "new-folder" && name) {
-      void explorer.createFolder(name);
+      pending = explorer.createFolder(name);
     } else if (op === "rename" && entry && name) {
       explorer.startRename(entry);
-      void explorer.rename(name);
+      pending = explorer.rename(name);
     } else if (op === "delete" && entry) {
-      void explorer.confirmDelete([entry]);
+      pending = explorer.confirmDelete([entry]);
+    }
+    if (pending && token) {
+      const completed = (error: string | null) => {
+        if (!signal.aborted) document.documentElement.dataset.e2eFileOperationResult = JSON.stringify({
+          token, status: "completed", completedAt: Date.now(), error,
+        });
+      };
+      void pending.then(completed, (error) => completed(String(error)));
     }
   }) as EventListener);
 

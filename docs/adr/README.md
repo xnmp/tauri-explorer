@@ -21,3 +21,4 @@ decision during review.
 | [0013](0013-directory-observation-recovery.md) | Directory observation generations, recovery and cache eligibility | Accepted |
 | [0014](0014-observed-directory-navigation.md) | Observed directory navigation and snapshot handoff | Accepted |
 | [0015](0015-file-list-keyboard-cursor.md) | File-list keyboard cursor and virtualized focus ownership | Accepted |
+| [0016](0016-file-mutation-publication.md) | File mutation publication and editor ownership | Accepted |

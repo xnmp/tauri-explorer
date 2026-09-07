@@ -5,25 +5,26 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-08): file-list navigation uses a separate path cursor
-and path-based range anchor. All three views provide one roving gridcell Tab stop,
-an off-screen viewport fallback and exact virtualized focus. Rename preserves
-matching selection identities, and keyboard editor completion borrows FileList's
-focus owner across row teardown.
+Current checkpoint (2026-09-08): accepted file operations retain their origin
+across navigation and pane disposal. Pane publication and selection updates
+borrow that origin; filesystem success, undo and affected-parent notifications
+remain durable. Exact editor-opening identities preserve newer rename/delete and
+creation sessions. Paste captures its destination before clipboard reads. The
+lossy mutation cooldown is removed, and failed rename submissions retain focus.
 
-Frontend tests pass 2,223 cases plus 30 performance cases (three skipped).
-Chromium passes 111 integrated outcomes. Linux native focus acceptance passes
-forward Tab departure/return and real folder Open, range selection and F2/Escape
-in all three views. Native Shift+Tab is limited by WebKitGTK driver delivery of
-`Unidentified`; browser backward traversal remains separately covered. Startup
-JavaScript is 215,583 gzip bytes, 1,458 above the prior checkpoint; this is not a
-startup speedup claim. See
-[the acceptance artifact](reviews/file-list-focus-acceptance-2026-09-08.json).
+Frontend tests pass 2,253 cases plus 30 performance cases (three skipped).
+Chromium passes 102 integrated outcomes, seven transfer/clipboard outcomes and
+six focused editor outcomes. Linux native acceptance passes one real creation
+handoff with a causal external watcher write, two watcher scheduling regressions,
+and three all-view keyboard-focus scenarios (six outcomes, 36 seconds).
+Startup JavaScript is 216,083 gzip bytes, 500 above the prior checkpoint; this
+is not a startup speedup claim. See
+[the acceptance artifact](reviews/local-mutation-acceptance-2026-09-08.json).
 
-Independent review has identified pending local-mutation publication across
-navigation/destruction and newer editor sessions as the next ownership boundary.
-Broader platform/product/soak acceptance and actual Mac half-bounce measurements
-remain open. The comprehensive review is **not complete**.
+Non-permanent bulk-trash partial success reporting, global undo concurrency,
+stack-based attribution of browser teardown warnings, broader platform/product/
+soak acceptance and actual Mac half-bounce measurements remain open. The
+comprehensive review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -2246,3 +2247,47 @@ sessions, preserve navigation out of an actually deleted current directory, and
 make cooldown/broadcast/undo paths refer to the operation's affected directories.
 Deferred-promise behavior tests should establish these interleavings before
 changing the ownership boundary. They remain part of the comprehensive review.
+
+## Local mutation publication and editor ownership — 2026-09-08
+
+The prior source findings now have deferred public-explorer reproductions and
+implemented ownership boundaries. Requests capture path/navigation/lifetime
+before awaiting. Create and paste preserve newer selection and merge by path
+when the watcher has already observed a result. Exact dialog openings prevent
+old success from closing another editor, including a reopened identical path;
+direct delete entries do not own an unrelated global dialog. Creation sessions
+retire on navigation/disposal. Undo uses actual affected parents, including
+Miller/multi-parent inputs. Individually confirmed permanent deletions still
+publish when a later item fails; a pane inside a removed ancestor escapes it.
+
+The same-directory cooldown reproduction lost an external file during the one
+second after a successful local create. Removing that gate leaves the existing
+refresh scheduler, observation admission and unchanged-listing checks in charge.
+Paste/clipboard-image destinations are captured before clipboard waits, stale
+callbacks do not select or refresh a newer pane, and old cuts preserve newer
+clipboard contents. Rename error/finally/focus completion follows the exact
+opening. Browser failure in every view showed native disabled inputs losing
+focus; read-only pending inputs retain focus and support retry.
+
+Independent Sol reviewers reproduced additional explicit-delete dialog borrowing
+and partial permanent-delete publication failures, then accepted their fixes.
+Current evidence is 2,253 frontend passes plus 30 performance cases, three skips,
+102 integrated Chromium outcomes, seven transfer/clipboard outcomes and six
+focused editor cases. Native Linux passes six outcomes across three specs in
+36 seconds: one real create-response handoff plus a causal external write,
+two existing watcher cadence/coalescing cases and three all-view focus cases.
+Only the first is mutation-lifetime native evidence; native rename/delete/pane
+closure and non-Linux counterparts remain unverified.
+
+Normal production output has no mutation-probe content. An initial imported
+constant guard left an orphan test chunk; a literal Vite environment guard removes
+that import before chunk extraction. The final production startup graph is 44
+chunks, 663,604 raw / 216,083 gzip bytes (main 90,385 gzip), a 500-byte gzip increase.
+No launch-time improvement is established. ADR 0016 records the boundary; the
+structured acceptance artifact records logs, binary identity and limitations.
+
+Next concrete gaps: native bulk trash exposes aggregate failure despite partial
+success, so exact per-item undo/publication requires a structured IPC result;
+global undo lacks concurrent request reservation; browser `derived_inert`
+warnings need a captured stack before a lifecycle change. The latter warnings
+had no failed browser outcome and are not attributed to a cause yet.

@@ -7,8 +7,7 @@
  *   result only contains the first batch, the rest arrives via events)
  * - the result is discarded if the pane navigated away mid-fetch
  *   (path-change bail) or the listing was cancelled by a newer load
- * - watcher-triggered (silent) refreshes are skipped during the
- *   local-mutation cooldown so thumbnails don't flash after rename/delete
+ * - unchanged listings do not publish, including watcher echoes of local work
  */
 
 import type { FileEntry } from "$lib/domain/file";
@@ -19,7 +18,6 @@ import { toastStore } from "./toast.svelte";
 export interface PaneRefreshContext {
   coreState: ExplorerCoreState;
   dirListing: ReturnType<typeof createDirectoryListing>;
-  inMutationCooldown: () => boolean;
   allowRefresh: (path: string) => boolean;
   /** Fallback when the current directory no longer exists. */
   navigateToParent: () => Promise<void>;
@@ -33,19 +31,8 @@ export function entriesFingerprint(entries: FileEntry[]): string {
 export function createPaneRefresh(ctx: PaneRefreshContext) {
   const { coreState, dirListing } = ctx;
 
-  return async function refresh(options?: { silent?: boolean; force?: boolean }): Promise<void> {
+  return async function refresh(options?: { silent?: boolean }): Promise<void> {
     const silent = options?.silent ?? false;
-    const force = options?.force ?? false;
-
-    // The mutation cooldown suppresses the *watcher's* follow-up refresh after
-    // our own mutation (avoids a redundant double-fetch). An explicit
-    // post-mutation refresh (force) must still run — otherwise an op whose
-    // result only shows up via a refresh (zip create, extract) wouldn't
-    // appear until a manual refresh.
-    if (silent && !force && ctx.inMutationCooldown()) {
-      return;
-    }
-
     const refreshPath = coreState.currentPath;
     if (!ctx.allowRefresh(refreshPath)) return;
     const oldEntries = coreState.entries;

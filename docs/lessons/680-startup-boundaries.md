@@ -739,3 +739,29 @@ and explicit Shift-held action order reproduced it; plain Tab delivered `Tab`
 and moved DOM focus. Capture actual keyboard/focus events before changing app
 routing to compensate for an automation failure. Native forward Tab traversal
 and browser backward traversal have distinct evidence scopes.
+
+
+### Filesystem success and pane publication have separate lifetimes
+
+Capture destination and navigation identity before the first await, including
+clipboard reads. Successful work remains real after its pane navigates or closes;
+undo and affected-parent notifications must survive, while entry/selection/editor
+updates need their original owner. A dialog type or path is insufficient identity
+when the same path can be reopened. Direct operations must not borrow whichever
+global dialog happens to be active. Bulk undo parents come from the input paths,
+not from the pane that happens to display them.
+
+A fixed mutation cooldown cannot distinguish an own-write echo from an unrelated
+external write. Dropping refreshes silently loses the latter even with a path-
+specific timer. Existing coalescing and unchanged-listing suppression provide a
+correct confirming refresh. The watcher may beat the mutation IPC reply, so
+optimistic insertion must also be idempotent by path.
+
+Disabling an inline rename input during submission can blur it permanently on an
+asynchronous error. Keep it read-only and focusable; apply error/finally/focus
+completion only to the opening that submitted it. Test actual keyboard retry.
+
+Vite can emit an orphan dynamic-import chunk when its false guard is an imported
+constant folded after chunk extraction. Use a literal environment expression at
+the opt-in test import and inspect all normal production JavaScript, not just the
+startup graph, before claiming the test fixture is absent from release assets.

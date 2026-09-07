@@ -74,14 +74,13 @@ function fakeListing(opts: FakeListingOptions): DirListing {
 function makeRefresh(
   state: ExplorerCoreState,
   listing: DirListing,
-  overrides?: { inCooldown?: boolean; allowRefresh?: (path: string) => boolean }
+  overrides?: { allowRefresh?: (path: string) => boolean }
 ) {
   const allowRefresh = vi.fn(overrides?.allowRefresh ?? (() => true));
   const navigateToParent = vi.fn(async () => {});
   const refresh = createPaneRefresh({
     coreState: state,
     dirListing: listing,
-    inMutationCooldown: () => overrides?.inCooldown ?? false,
     allowRefresh,
     navigateToParent,
   });
@@ -174,35 +173,10 @@ describe("createPaneRefresh", () => {
     expect(toastShow).toHaveBeenCalledWith("Already up to date", "info", { duration: 1500 });
   });
 
-  it("skips silent (watcher) refreshes during the mutation cooldown", async () => {
+  it("publishes a changed silent listing without a toast", async () => {
     const state = coreState([entry("a")]);
-    const load = vi.fn();
-    const listing = { load, cleanup: async () => {} } as unknown as DirListing;
-    const { refresh } = makeRefresh(state, listing, { inCooldown: true });
-
+    const { refresh } = makeRefresh(state, fakeListing({ entries: [entry("a"), entry("new.zip")] }));
     await refresh({ silent: true });
-    expect(load).not.toHaveBeenCalled();
-
-    // Manual refresh ignores the cooldown.
-    await makeRefresh(state, fakeListing({ entries: [entry("a")] }), {
-      inCooldown: true,
-    }).refresh();
-    expect(toastShow).toHaveBeenCalled();
-  });
-
-  it("forced silent refresh runs during the cooldown (post-mutation, no toast)", async () => {
-    // The zip-create / extract case: markLocalMutation has started the
-    // cooldown, but the explicit refresh that reveals the new entry must
-    // still run — and silently (no 'Refreshed' toast).
-    const state = coreState([entry("a")]);
-    const { refresh } = makeRefresh(
-      state,
-      fakeListing({ entries: [entry("a"), entry("new.zip")] }),
-      { inCooldown: true },
-    );
-
-    await refresh({ silent: true, force: true });
-
     expect(state.entries.map((e) => e.name)).toContain("new.zip");
     expect(toastShow).not.toHaveBeenCalled();
   });

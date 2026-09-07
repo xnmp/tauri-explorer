@@ -24,15 +24,18 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   let renameInputRef = $state<HTMLInputElement | HTMLTextAreaElement | null>(null);
   let editedName = $state("");
   let renameError = $state<string | null>(null);
-  let submittingRename = $state(false);
+  let submission = $state.raw<object | null>(null);
+  const submittingRename = $derived(submission !== null && submission === dialogStore.fileOperationSession);
 
   function focusAndSelect(entry: FileEntry) {
+    const session = dialogStore.fileOperationSession;
     editedName = entry.name;
     renameError = null;
     // Ask the (optional) AI provider for a Tab-autocomplete suggestion.
     // Best-effort and non-blocking; no-op when no provider is registered.
     renameSuggestionStore.fetch(entry);
     tick().then(() => {
+      if (dialogStore.fileOperationSession !== session) return;
       renameInputRef?.focus();
       if (entry.kind === "file") {
         const lastDot = entry.name.lastIndexOf(".");
@@ -58,13 +61,23 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
       dialogStore.cancelRename();
       return true;
     }
-    submittingRename = true;
+    const session = dialogStore.fileOperationSession;
+    if (!session) return false;
+    submission = session;
     renameError = null;
-    const result = await getExplorer().rename(trimmed);
-    submittingRename = false;
-    if (result) renameError = result;
-    else renameSuggestionStore.clear();
-    return !result;
+    try {
+      const result = await getExplorer().rename(trimmed);
+      if (result && dialogStore.fileOperationSession === session) renameError = result;
+      else if (!result && dialogStore.fileOperationSession === null) renameSuggestionStore.clear();
+      return !result && (dialogStore.fileOperationSession === null || dialogStore.fileOperationSession === session);
+    } catch (error) {
+      if (dialogStore.fileOperationSession === session) {
+        renameError = error instanceof Error ? error.message : String(error);
+      }
+      return false;
+    } finally {
+      if (submission === session) submission = null;
+    }
   }
 
   function cancelRename() {

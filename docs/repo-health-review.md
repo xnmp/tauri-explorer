@@ -694,3 +694,19 @@ A quiet first observed pane load settles at one instrumented call. Independent r
 including a pane falsely credited for a refresh it deferred; explicit scheduler
 participation fixes both failing-before interleavings. See ADR 0014 and the
 completion ledger for evidence and remaining native/platform measurement gaps.
+
+
+### Local file mutation ownership checkpoint — 2026-09-08
+
+File operations now capture their originating navigation and lifetime, preserve
+newer pane selection/editor sessions, and publish durable undo/cache/clipboard
+and actual-parent notifications independently. Clipboard destinations are fixed
+before asynchronous reads. The one-second mutation cooldown is removed after a
+reproduction showed it hiding unrelated same-directory writes. Pending rename
+inputs stay focusable so asynchronous failures support immediate keyboard retry.
+
+Public-explorer regressions, three-view browser outcomes and a real Linux
+create-response/watcher handoff verify this boundary. The completion ledger and
+ADR 0016 retain exact evidence and limits. Structured partial bulk-trash outcomes,
+concurrent global undo ownership and platform/product/soak/startup acceptance
+remain part of the comprehensive review.

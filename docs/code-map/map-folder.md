@@ -110,7 +110,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
-- `pane-mutations.ts` — per-pane create/rename/delete/symlink/archive mutations.
+- `pane-mutations.ts` — accepted file mutations: durable filesystem effects, navigation-owned pane publication and exact dialog-session completion.
 - `pane-refresh.ts` — flicker-free re-list of current dir (streamed chunk accumulation).
 - `pane-sessions.ts` — manager-owned pane identities and deferred explorer resources; activation opens restored directories on demand, cleanup drains loads and pane stores (ADR 0002).
 - `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.
@@ -119,7 +119,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `panel-resize.ts` — fixed/live automatic width preference adapter over the scalar gesture owner.
 - `scalar-resize.ts` — captured scalar drafts, frame identity, durable retirement and external-source supersession.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
-- `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and local-mutation cooldown.
+- `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `directory-listing.ts` — streaming/event-based incremental dir load management.
 - `navigation.ts` — pure back/forward history utilities.
@@ -429,6 +429,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
 
 - `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
+- `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
 

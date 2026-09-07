@@ -6,8 +6,6 @@ import { isVirtualPath } from "$lib/domain/virtual-path";
 import { directoryEvents, type DirectoryChange, type DirectorySubscription } from "./directory-events";
 import { requestRefresh } from "./refresh-manager";
 
-export const MUTATION_COOLDOWN_MS = 1000;
-
 type Refresh = (options: { silent: boolean }) => void | Promise<void>;
 interface PaneWatchDependencies {
   refresh: Refresh;
@@ -37,7 +35,6 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
   const releases = new Set<Promise<void>>();
   let destroyed = false;
   let disposal: Promise<void> | undefined;
-  let lastMutationTime = 0;
 
   function release(lease: DirectoryWatchLease): void {
     if (retired.has(lease.id)) return;
@@ -155,8 +152,6 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
       if (committed?.path === path) remember({ path });
       return false;
     },
-    markLocalMutation() { lastMutationTime = Date.now(); },
-    inMutationCooldown() { return Date.now() - lastMutationTime < MUTATION_COOLDOWN_MS; },
     destroy(): Promise<void> {
       if (disposal) return disposal;
       destroyed = true;

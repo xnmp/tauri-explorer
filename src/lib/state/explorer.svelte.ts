@@ -7,7 +7,7 @@
  * - Types (types.ts)
  * - Selection logic (selection.ts)
  * - Navigation/history (navigation.ts)
- * - Filesystem watch + mutation cooldown (pane-watch.ts)
+ * - Filesystem observation ownership (pane-watch.ts)
  * - Refresh lifecycle (pane-refresh.ts)
  * - File mutations: create/rename/delete/symlink/archive (pane-mutations.ts)
  * - Clipboard (clipboard.svelte.ts) - shared between panes
@@ -86,8 +86,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   // Inline new-entry creation state (folder or file share the same inline row)
-  let isCreatingFolder = $state(false);
-  let newEntryKind = $state<"folder" | "file">("folder");
+  let creationSession = $state.raw<{ kind: "folder" | "file" } | null>(null);
 
   // True when the current path lives on a removable drive that has been
   // ejected/unplugged. Set by ExplorerPane, which watches the drives store.
@@ -104,9 +103,8 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
 
-  // Filesystem watcher + local-mutation cooldown
+  // Filesystem observation ownership
   const watch = createPaneWatch({ refresh: (options) => refresh(options) });
-  const markLocalMutation = watch.markLocalMutation;
 
   // Read-only state accessor for components that need the raw state bag.
   // Exposes the $state proxy itself (typed read-only) — a spread copy here
@@ -150,6 +148,27 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Per-pane navigation generation counter. Guards against rapid A→B
   // navigation applying whichever result happens to land last.
   let navGeneration = 0;
+  let destroyed = false;
+
+  function captureSelection() {
+    const selected = [...coreState.selectedPaths];
+    const cursor = coreState.cursorPath;
+    const anchor = coreState.selectionAnchorPath;
+    return () => cursor === coreState.cursorPath && anchor === coreState.selectionAnchorPath &&
+      selected.length === coreState.selectedPaths.size && selected.every((path) => coreState.selectedPaths.has(path));
+  }
+
+  // Accepted filesystem work outlives its pane. Only publication into that
+  // pane borrows the navigation generation and lifetime.
+  function captureMutation() {
+    const generation = navGeneration;
+    const path = coreState.currentPath;
+    return {
+      path,
+      selectionCurrent: captureSelection(),
+      current: () => !destroyed && generation === navGeneration && path === coreState.currentPath,
+    };
+  }
 
   async function navigateInternal(rawPath: string): Promise<"ok" | "error" | "stale"> {
     // Normalize separators to the platform-native style up front. The backend
@@ -158,6 +177,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     // `currentPath`) consistent — never mixed `C:\Users\x/Pictures`. Gated to
     // `/` on non-Windows, where a backslash is a legal filename character.
     const path = toNativeSeparators(rawPath, isWindows ? "\\" : "/");
+    if (destroyed) return "stale";
+    creationSession = null;
     const gen = ++navGeneration;
     const observation = watch.begin(path);
     try {
@@ -418,7 +439,6 @@ function createExplorerState(seed?: ExplorerSeed) {
   const refresh = createPaneRefresh({
     coreState,
     dirListing,
-    inMutationCooldown: watch.inMutationCooldown,
     allowRefresh: watch.allowRefresh,
     navigateToParent,
   });
@@ -426,17 +446,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   const mutations = createPaneMutations({
     coreState,
     setSelection,
-    displayEntries: () => displayEntries,
-    markLocalMutation,
-    getParentPath: () => navigation.getParentPath(breadcrumbs),
+    capture: captureMutation,
+    alive: () => !destroyed,
     navigateTo,
-    refreshSilent: () => {
-      // force: this is an explicit post-mutation refresh (zip create /
-      // extract), which must run even though markLocalMutation just started
-      // the cooldown — without force the cooldown would swallow it and the
-      // result wouldn't appear until a manual refresh.
-      void refresh({ silent: true, force: true });
-    },
+    refreshSilent: () => { void refresh({ silent: true }); },
   });
 
   // ===================
@@ -564,32 +577,32 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function createFolder(name: string): Promise<string | null> {
+    const session = creationSession;
     const error = await mutations.createFolder(name);
-    if (!error) isCreatingFolder = false;
+    if (!error && creationSession === session) creationSession = null;
     return error;
   }
 
   async function createFile(name: string): Promise<string | null> {
+    const session = creationSession;
     const error = await mutations.createFile(name);
-    if (!error) isCreatingFolder = false;
+    if (!error && creationSession === session) creationSession = null;
     return error;
   }
 
   /** Start inline folder creation (shows editable placeholder in file list) */
   function startInlineNewFolder(): void {
-    newEntryKind = "folder";
-    isCreatingFolder = true;
+    if (!destroyed) creationSession = { kind: "folder" };
   }
 
   /** Start inline file creation (touch — shows editable placeholder in file list) */
   function startInlineNewFile(): void {
-    newEntryKind = "file";
-    isCreatingFolder = true;
+    if (!destroyed) creationSession = { kind: "file" };
   }
 
   /** Cancel inline new-entry creation */
   function cancelInlineNewFolder(): void {
-    isCreatingFolder = false;
+    creationSession = null;
   }
 
   // ===================
@@ -611,34 +624,33 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Paste result for UI feedback
   let pasteResult = $state<PasteResult | null>(null);
 
-  function makePasteContext() {
-    let pastedPaths: Set<string> | null = null;
+  function makePasteContext(origin: ReturnType<typeof captureMutation>) {
+    let selectionCurrent = captureSelection();
     return {
-      destPath: coreState.currentPath,
+      destPath: origin.path,
       existingEntries: coreState.entries,
       onEntriesAdded: (entries: FileEntry[]) => {
-        const newPaths = new Set(entries.map((e) => e.path));
-        coreState.entries = [...coreState.entries.filter((e) => !newPaths.has(e.path)), ...entries];
-        markLocalMutation();
-        // Remember pasted paths so onRefresh can re-select after navigation
-        if (entries.length > 0) {
-          pastedPaths = new Set(entries.map((e) => e.path));
-          setSelection(pastedPaths);
+        if (!origin.current()) return;
+        const newPaths = new Set(entries.map((entry) => entry.path));
+        coreState.entries = [...coreState.entries.filter((entry) => !newPaths.has(entry.path)), ...entries];
+        if (entries.length > 0 && selectionCurrent()) {
+          setSelection(newPaths);
+          coreState.cursorPath = entries[0].path;
+          coreState.selectionAnchorPath = entries[0].path;
+          selectionCurrent = captureSelection();
         }
       },
       onRefresh: async () => {
-        await navigateInternal(coreState.currentPath);
-        // Re-select pasted entries after refresh resets selection
-        if (pastedPaths) {
-          setSelection(pastedPaths);
-          pastedPaths = null;
-        }
+        if (origin.current()) await refresh({ silent: true });
       },
     };
   }
 
   async function paste(): Promise<string | null> {
-    if (!coreState.currentPath) return "No current directory";
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
+    if (!origin.path) return "No current directory";
+    const context = makePasteContext(origin);
 
     // The OS clipboard is the single source of truth for what was most
     // recently copied. We keep an internal clipboard too (it carries cut
@@ -660,36 +672,33 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (useInternal) {
       const { entries, operation } = internal!;
       const isCut = operation === "cut";
-      markLocalMutation();
       const error = await pasteEntries(
         entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
-        makePasteContext(),
-        () => { if (isCut) clipboardStore.clear(); },
+        context,
+        () => { if (isCut && clipboardStore.content === internal) clipboardStore.clear(); },
       );
-      pasteResult = { error, timestamp: Date.now() };
+      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }
 
     // OS clipboard (files copied from external apps like Explorer/Finder)
     if (osContent && osContent.paths.length > 0) {
-      markLocalMutation();
       const error = await pasteEntries(
         osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
         false,
-        makePasteContext(),
+        context,
       );
-      pasteResult = { error, timestamp: Date.now() };
+      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }
 
     // Fall back to clipboard image
     if (await clipboardHasImage()) {
-      markLocalMutation();
-      const result = await clipboardPasteImage(coreState.currentPath);
+      const result = await clipboardPasteImage(origin.path);
       if (result.ok) {
-        markLocalMutation();
-        await navigateInternal(coreState.currentPath);
+        broadcastFileChange([origin.path]);
+        if (origin.current()) await refresh({ silent: true });
         return null;
       }
       return result.error;
@@ -709,7 +718,8 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function undo(): Promise<string | null> {
-    markLocalMutation();
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
     const result = await undoStore.undo();
     if ("error" in result) {
       toastStore.error(result.error);
@@ -717,21 +727,20 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
 
     toastStore.show(`Undo: ${undoActionLabel(result.action)}`, "info");
-    markLocalMutation();
-    await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
+    if (origin.current()) await refresh({ silent: true });
     return null;
   }
 
   async function redo(): Promise<string | null> {
-    markLocalMutation();
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
     const result = await undoStore.redo();
     if ("error" in result) return result.error;
 
     toastStore.show(`Redo: ${undoActionLabel(result.action)}`, "info");
-    markLocalMutation();
-    await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
+    if (origin.current()) await refresh({ silent: true });
     return null;
   }
 
@@ -859,10 +868,10 @@ function createExplorerState(seed?: ExplorerSeed) {
     },
     // Inline new-entry creation
     get isCreatingFolder() {
-      return isCreatingFolder;
+      return creationSession !== null;
     },
     get newEntryKind() {
-      return newEntryKind;
+      return creationSession?.kind ?? "folder";
     },
     startInlineNewFolder,
     startInlineNewFile,
@@ -894,6 +903,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     destroy: async (): Promise<void> => {
       // Tear down the streaming listener and any in-flight listing,
       // otherwise each closed tab leaks a Tauri event listener.
+      destroyed = true;
+      creationSession = null;
       navGeneration += 1;
       const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup()]);
       const failure = results.find((result) => result.status === "rejected");

@@ -67,7 +67,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     if (!isActive) return;
     function onWindowKeydown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.closest?.('[role="separator"]')) return;
       if (dialogStore.hasModalOpen) return;
       handleKeydown(e);
     }
@@ -255,7 +255,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
     // Ignore events from interactive elements (e.g. path input, rename input)
     const tag = (event.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (tag === "INPUT" || tag === "TEXTAREA" || (event.target as HTMLElement)?.closest?.('[role="separator"]')) return;
 
     // Arrow key navigation in file list (not in global command system
     // because it needs current selection context and shift-key handling)

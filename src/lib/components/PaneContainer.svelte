@@ -5,21 +5,57 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs), #228
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { revealPane } from "$lib/domain/pane-viewport";
+  import { usePaneDividers } from "$lib/composables/use-pane-dividers.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
 
   // The git graph is no longer a tab kind — panes render it themselves
   // when their gitGraph flag is set (#272).
   const activeTab = $derived(windowTabsManager.activeTab);
   const multiPane = $derived(windowTabsManager.dualPaneEnabled);
+  let viewport = $state<HTMLElement>();
+  let width = $state(0), height = $state(0);
+  const instance = $derived(windowTabsManager.activeTabInstance);
+  const geometry = $derived(windowTabsManager.paneViewport.geometry);
+  const dividers = usePaneDividers({ geometry: () => geometry, begin: windowTabsManager.beginSplitResize });
+  $effect(() => {
+    const gap = settingsStore.islandMode ? 8 : 6;
+    const measuredWidth = width, measuredHeight = height;
+    untrack(() => {
+      dividers.cancel();
+      windowTabsManager.paneViewport.measure(measuredWidth, measuredHeight, gap);
+    });
+  });
+  $effect(() => {
+    instance;
+    untrack(dividers.cancel);
+  });
+  $effect(() => { geometry; dividers.reconcile(); });
+  $effect(() => {
+    if (dividers.activeId) return;
+    const pane = geometry?.panes.get(windowTabsManager.activePaneId);
+    if (!viewport || !pane || width <= 0 || height <= 0) return;
+    const next = revealPane({ left: viewport.scrollLeft, top: viewport.scrollTop }, { width, height }, pane);
+    viewport.scrollLeft = next.left;
+    viewport.scrollTop = next.top;
+  });
 </script>
 
-<div class="pane-container" class:multi-pane={multiPane}>
+<svelte:window onblur={dividers.cancel} />
+
+<div class="pane-container" class:multi-pane={multiPane}
+  bind:this={viewport} bind:clientWidth={width} bind:clientHeight={height}
+  onscroll={dividers.cancel}
+  style:--pane-divider-size={`${geometry?.divider ?? 6}px`}>
   {#if activeTab}
     <!-- A restored tab may reuse its saved ID; its old DOM/gestures still retire. -->
     {#key windowTabsManager.activeTabInstance}
-      <div class="pane-tree">
-        <PaneLayoutView node={activeTab.layout} />
+      <div class="pane-tree" style:width={geometry ? `${geometry.width}px` : "100%"}
+        style:height={geometry ? `${geometry.height}px` : "100%"}>
+        <PaneLayoutView node={activeTab.layout} {geometry} {dividers} />
       </div>
     {/key}
   {/if}
@@ -30,15 +66,17 @@
     display: flex;
     flex-direction: column;
     flex: 1;
-    overflow: hidden;
+    overflow: auto;
+    min-width: 0;
+    min-height: 0;
     gap: 0;
   }
 
   .pane-tree {
     display: flex;
-    flex: 1;
+    flex: none;
+    min-width: 0;
     min-height: 0;
-    overflow: hidden;
   }
 
   /* Vibrancy: main content island */

@@ -451,3 +451,13 @@ coverage survives. Independent Rust interleaving tests and Linux native
 hook-to-worker acceptance pass; see ADR 0009 and the completion ledger. Renderer
 crashes/reloads that keep the native window alive and other-platform acceptance
 remain separate work.
+
+
+Dense viewport checkpoint (2026-09-07): descendant-constrained geometry now
+separates saved split preferences from rendering, shares rectangles with focus
+and dwindle, and keeps dense layouts reachable through local workspace scrolling.
+One container owns divider pointer/keyboard lifetime. 2,080 unit tests plus 30
+performance tests, 46 Chromium/WebKit cases and six real Linux window outcomes
+pass. ADR 0011 and `review-completion.md` record evidence and scope; wide optional
+SCM/Miller panels, broader product/platform acceptance and measured Mac startup
+remain open. The comprehensive review is still incomplete.

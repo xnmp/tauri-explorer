@@ -192,3 +192,21 @@ describe("chord ownership transitions", () => {
     expect(f.executeCommand).not.toHaveBeenCalled();
   });
 });
+
+
+it("handled splitter input retires chords while unhandled global shortcuts remain available", () => {
+  const f = fixture();
+  Object.assign(f.target, { closest: (selector: string) => selector === '[role="separator"]' ? f.target : null });
+  f.bind("plugin.chord", "Alt+M T");
+  f.bind("plugin.arrow", "ArrowRight");
+  f.bind("general.openQuickOpen", "Ctrl+P");
+  f.press("m", { altKey: true });
+  const handled = new Event("keydown", { cancelable: true });
+  Object.assign(handled, { key: "ArrowRight", code: "ArrowRight", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false });
+  handled.preventDefault(); // The focused splitter accepted this resize.
+  f.target.dispatchEvent(handled);
+  f.press("t");
+  expect(f.executeCommand).not.toHaveBeenCalled();
+  f.press("p", { ctrlKey: true });
+  expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("general.openQuickOpen");
+});

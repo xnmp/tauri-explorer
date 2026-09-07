@@ -106,7 +106,9 @@ backend for E2E/browser).
 ## Workspaces & split panes
 
 - `components/PaneContainer.svelte`, `components/PaneLayoutView.svelte`, `components/ExplorerPane.svelte` — pane tree render + focus
-- `domain/pane-layout.ts` — binary split-tree ops (`splitLeaf`, `removeLeaf`, `leafSiblingContext`, `leafInDirection`)
+- `domain/pane-layout.ts` — binary split-tree ops and directional neighbor policy (`splitLeaf`, `removeLeaf`, `leafSiblingContext`, `paneInDirection`)
+- `domain/pane-viewport.ts` → `state/pane-viewport.svelte.ts` — pure constrained canvas geometry and window-owned measurements shared by rendering, focus and dwindle; saved ratios remain preferences
+- `composables/use-pane-dividers.svelte.ts` — container-owned pointer/keyboard resizing, captured geometry and cancellation; `PaneContainer` locally reveals the active pane when the canvas overflows
 - `state/workspaces.svelte.ts` — saved workspace layouts (`workspacesStore`)
 - `components/WorkspaceDialog.svelte` — save/load workspace UI
 - `state/pane-context.ts`, `state/commands/pane-commands.ts` — active-pane resolution + split cmds (`Cmd+Alt+L/'/P/;`) and directional focus cmds (same cluster without Cmd, #501)

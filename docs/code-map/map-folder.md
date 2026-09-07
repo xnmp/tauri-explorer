@@ -35,8 +35,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
-- `PaneContainer.svelte` — hosts active tab content (explorer / scm / git-graph pane).
-- `PaneLayoutView.svelte` — recursive renderer for a tab's split pane-layout tree (#228).
+- `PaneContainer.svelte` — owns the measured, scrollable active workspace and one divider input lifetime.
+- `PaneLayoutView.svelte` — declarative split-tree renderer using shared constrained geometry and focusable separators (#228).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
 - `NavigationHistoryMenu.svelte` — full back/forward history dropdown.
 - `BreadcrumbAutocomplete.svelte` — editable address bar with directory autocomplete.
@@ -111,6 +111,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-refresh.ts` — flicker-free re-list of current dir (streamed chunk accumulation).
 - `pane-sessions.ts` — manager-owned pane identities and deferred explorer resources; activation opens restored directories on demand, cleanup drains loads and pane stores (ADR 0002).
 - `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.
+- `pane-viewport.svelte.ts` — window-owned viewport measurements and derived pane geometry; never persists rendered ratios.
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane fs-watch + local-mutation cooldown (pure).
 - `directory-listing.ts` — streaming/event-based incremental dir load management.
@@ -242,6 +243,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
+- `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
 - `use-panel-resize.svelte.ts` — persisted drag-resizable panel width; shared by Sidebar, SCM panel, miller-column handles.
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
@@ -282,6 +284,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `undo-operations.ts` — pure undo/redo execution logic.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
+- `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.

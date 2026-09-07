@@ -5,12 +5,12 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): native Git leases now belong to concrete native
-window instances and are reclaimed on destruction without frontend cleanup,
-including queued/blocked acquisition. Rust contracts and real Linux destruction
-acceptance pass. Page-session ownership/readiness and earlier observation,
-keyboard/focus and watcher work remain implemented as recorded below. The full
-review is **not complete**.
+Current checkpoint (2026-09-07): dense split layouts now use shared constrained
+viewport geometry, local workspace scrolling and one divider gesture owner.
+Saved ratios remain preferences; rendering, directional focus and dwindle use
+the same measured rectangles. Unit, Chromium/WebKit and real Linux window
+regressions pass. Wide optional panels and broader release/platform acceptance
+remain open. The full review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -31,7 +31,7 @@ limitations and must not be read as current status.
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
 | 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Wider theme/native interaction matrix pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
-| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Targeted baseline passes; wider matrix outstanding |
+| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Wide SCM/Miller combinations, wider themes/accessibility/platform matrix remain outstanding |
 | Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
 
 Every completion update must name the actual production seam, regression or
@@ -1040,3 +1040,62 @@ costs and native OS resource drainage remain open, alongside dense viewport work
 workspace/plugin soak, product/platform matrices and measured macOS release
 startup. This batch has no user-visible layout change and needs no new screenshot.
 No publication, merge or full-review completion is implied.
+
+
+## Dense pane viewport ownership — 2026-09-07
+
+`domain/pane-viewport.ts` separates saved layout preference from available space.
+Two linear passes calculate descendant minima and place the constrained canvas,
+including divider gaps. The window manager owns measured presentation state;
+rendering, directional focus and dwindle consume its shared leaf rectangles.
+`PaneContainer` reveals the active pane inside its own scrollable workspace.
+`use-pane-dividers.svelte.ts` owns one captured pointer/keyboard resize lifetime,
+using the existing coalesced-frame and tab-incarnation guards. Separator keys
+preserve file selection and cancel pending chords while other global shortcuts
+remain available. See ADR 0011 for contracts and limits.
+
+Evidence:
+
+- Before the fix, the dense 16-pane restoration test found the active file in
+  the DOM but outside the viewport in both engines (`/tmp/pane-viewport-before.log`).
+  After the fix it is reachable/selectable, focusing the opposite pane reveals
+  its files, and the captured saved layout is unchanged.
+- **46/46 Chromium/WebKit cases pass**: dense restoration; Details/List/Tiles at
+  150% zoom in island mode; pointer ratios at 80%/150%; keyboard arrows/Home/End
+  with unchanged per-pane selection and working palette; scroll-cancelled frames;
+  existing directional focus, gesture lifetime and deferred materialization.
+  Final log: `/tmp/pane-viewport-browser-accepted.log`. No page errors in the new
+  viewport scenarios. Inspected proof: `screenshots/refactor/repo-health-cleanup/dense-pane-viewport.png`.
+- An independent zoom diagnosis corrected the fixture, not production math.
+  Ratio alone cannot detect measurement settlement after zoom. WebKit's settled
+  canvas also differs from client dimensions because of scrollbar accounting.
+  The final fixture observes changed, stable canvas geometry before sampling
+  drag coordinates; the final 55% outcome assertion remains intact.
+- **233 unit files: 2,080 passed / 3 skipped**, plus **30 performance tests**
+  (`/tmp/pane-viewport-all-units.log`). Behavioral contracts cover descendant
+  constraints, preference recovery, measured directional neighbors, 256-leaf
+  linear extent, invalid measurements, local reveal and keyboard ownership.
+- **6 real Linux outcomes pass**: native maximize/restore preserving navigation,
+  concurrent children, acknowledged last-tab transfer, split tear-off, large
+  active-layout transfer and window-specific close. Both native spec files pass
+  against a fresh E2E-enabled binary (`/tmp/pane-viewport-native.log`). These are
+  native integration regressions, not native zoom/assistive-technology acceptance.
+- Typecheck: zero errors/warnings. Architecture lint clean; source-map coverage
+  **366/366**. Normal startup graph: **42 chunks, 645,059 raw / 209,356 gzip bytes**,
+  within existing budgets (`/tmp/pane-viewport-bundle.log`). This adds 4,359 raw /
+  1,570 gzip bytes over the prior checkpoint; no startup latency improvement is
+  claimed. Rust production code is unchanged in this batch.
+- Independent adversarial review passed 33 focused tests and found no blocking
+  defect in geometry, saved preference preservation, gesture retirement or
+  keyboard routing (`/tmp/pane-viewport-independent-review.md`). Startup findings
+  establish static ownership/complexity only. Persisted depth/node validation
+  bounds recursive input before geometry is reached.
+
+The 240 × 200 base leaf minimum does not account for wide optional SCM/Miller
+panels. Their width contributions and resize ownership need further acceptance.
+Before the first usable measurement, focus/dwindle retain their previous fallback.
+This does not virtualize every retained pane, certify assistive technology, prove
+native platform zoom equivalence, or satisfy the macOS half-bounce target.
+Publication, merge, full review completion and the remaining ledger gates remain
+open. Existing generated native screenshots were restored after the regression
+run; the new dense viewport screenshot is retained.

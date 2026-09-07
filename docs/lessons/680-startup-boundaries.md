@@ -316,3 +316,22 @@ A native E2E with an intentionally unowned frontend lease verifies destruction
 reaches reclamation while another window stays usable; blocked-install and
 queue-saturation Rust tests prove the relevant interleavings. Do not equate an
 Observer drop with completion of notify's asynchronous OS resource teardown.
+
+
+### Saved split ratios are preferences, not viewport geometry
+
+Immediate-child CSS minima can hide entire descendants in dense restored trees.
+Compute subtree minima before placing the tree, and share the resulting rectangles
+with directional focus and split placement. Keep viewport measurements outside
+persistence: shrinking a window must not overwrite the user's preferred ratios.
+A local scrollable canvas keeps the active pane reachable without scrolling the
+application chrome. One container-owned divider gesture removes per-node global
+listeners and retires pending frames when the workspace geometry changes.
+
+Resizing a separator with arrow keys must also respect the window's file-list
+listeners. An accepted local key cancels a pending global chord; file selection
+ignores separator targets, while unhandled global commands remain available.
+For zoomed pointer tests, wait for the canvas measurement to change after zoom
+and settle before sampling rectangles. WebKit scrollbar accounting can make the
+settled canvas smaller than clientWidth/clientHeight, so equality is not portable. The ratio can remain 50% across two different
+measurement generations, so waiting for that ratio does not establish readiness.

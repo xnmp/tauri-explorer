@@ -232,7 +232,11 @@ export function leafInDirection(
   fromId: string,
   direction: FocusDirection,
 ): string | null {
-  const rects = leafRects(root);
+  return paneInDirection(leafRects(root), fromId, direction);
+}
+
+/** Same neighbor policy for measured workspace rectangles. */
+export function paneInDirection(rects: ReadonlyMap<string, LeafRect>, fromId: string, direction: FocusDirection): string | null {
   const from = rects.get(fromId);
   if (!from) return null;
 

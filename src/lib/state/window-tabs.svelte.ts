@@ -21,6 +21,7 @@ import {
   leaf,
   leafIds,
   leafInDirection,
+  paneInDirection,
   countLeaves,
   splitLeaf,
   splitNode,
@@ -32,6 +33,7 @@ import {
   leafSiblingContext,
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
+import { createPaneViewport } from "./pane-viewport.svelte";
 import { createPaneSessions } from "./pane-sessions";
 import {
   createCoalescedPersister,
@@ -224,6 +226,8 @@ function createWindowTabsManager(options: {
   }
 
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
+
+  const paneViewport = createPaneViewport(() => activeTab?.kind === "explorer" ? activeTab.layout : undefined);
 
   /** The active tab's focused pane id ("" for non-explorer tabs). */
   const activePaneId = $derived(
@@ -1002,7 +1006,9 @@ function createWindowTabsManager(options: {
   function focusPaneInDirection(direction: FocusDirection): void {
     const tab = activeTab;
     if (tab?.kind !== "explorer") return;
-    const target = leafInDirection(tab.layout, tab.activePaneId, direction);
+    const target = paneViewport.geometry
+      ? paneInDirection(paneViewport.geometry.panes, tab.activePaneId, direction)
+      : leafInDirection(tab.layout, tab.activePaneId, direction);
     if (target !== null) setActivePane(target);
   }
 
@@ -1037,6 +1043,8 @@ function createWindowTabsManager(options: {
       splitPane(mode);
       return;
     }
+    const measured = paneViewport.geometry?.panes.get(tab.activePaneId);
+    if (measured) { splitPane(measured.w >= measured.h ? "right" : "down"); return; }
     const aspect =
       typeof window !== "undefined" && window.innerHeight > 0
         ? window.innerWidth / window.innerHeight
@@ -1194,6 +1202,7 @@ function createWindowTabsManager(options: {
     },
 
     // Pane state (active tab)
+    paneViewport,
     get activePaneId() {
       return activePaneId;
     },

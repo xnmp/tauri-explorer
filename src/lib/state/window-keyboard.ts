@@ -25,6 +25,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     return {
       input: element?.tagName === "INPUT" || element?.tagName === "TEXTAREA" || !!element?.isContentEditable,
       terminal: !!element?.closest?.(".terminal-panel"),
+      separator: !!element?.closest?.('[role="separator"]'),
     };
   };
   const cancelChord = () => { if (!disposed) bindings.cancelChord(); };
@@ -34,7 +35,10 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const event = raw as KeyboardEvent;
     // WebKitGTK reports Super separately from metaKey; track before routing.
     bindings.trackModifierKey(event, true);
-    const { input, terminal: terminalFocus } = inputContext(event);
+    const { input, terminal: terminalFocus, separator } = inputContext(event);
+    // A focused splitter owns its handled resize keys. Unhandled commands keep
+    // normal routing; accepted local input terminates an unfinished chord.
+    if (separator && event.defaultPrevented) { bindings.cancelChord(); return; }
     const terminalCommand = terminalFocus ? getTerminalCommand(event, bindings, isAvailable) : undefined;
     const explorer = dependencies.getActiveExplorer();
     const action = resolveWindowKey(event, {

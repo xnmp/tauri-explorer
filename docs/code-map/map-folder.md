@@ -76,7 +76,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
-- `window-keyboard.ts` — owns window input listeners, exact terminal command dispatch, native button activation, accepted custom-control input and modifier/chord release on blur or teardown.
+- `window-keyboard.ts` — owns window input listeners, exact terminal command dispatch, main-list command versus native-button activation, accepted local input and modifier/chord release on blur or teardown.
 - `deferred-focus.ts` — one-shot focus requests cancelled by newer interaction, with a consumer availability check before delayed surface mounting.
 
 - `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.

@@ -643,3 +643,14 @@ regressions pass 3/3. The completion ledger links structured results and the
 inspected screenshot. This adds controlled recovery acceptance, not automatic
 production recovery policy; platform equivalents, native soak, the wider product
 matrix and measured Mac half-bounce startup remain open.
+
+
+Native integration checkpoint (2026-09-08): selected main-list Enter/Open and
+Space/Preview are restored after the native-button routing regression, preserving
+Miller/navigation, nested buttons and local filename type-ahead. Two failing-before
+routing contracts, 34 passing routing tests, 27 Chromium outcomes across all file
+views/graph controls, and the original native preview outcome establish the scope.
+A separate actual inotify test now reproduces retained directory watches after
+native child destruction. Directory-watch native lifetime ownership is therefore
+still required; existing Git lease acceptance does not cover it. The ledger also
+tracks Tab focus/selection consistency and the remaining release gates.

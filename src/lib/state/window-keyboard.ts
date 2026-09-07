@@ -24,6 +24,7 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const element = event.target as HTMLElement | null;
     return {
       nativeButton: element?.tagName === "BUTTON",
+      fileEntry: element?.matches?.(".file-list .entry-item") ?? false,
       input: element?.tagName === "INPUT" || element?.tagName === "TEXTAREA" || !!element?.isContentEditable,
       terminal: !!element?.closest?.(".terminal-panel"),
       customButton: !!element?.closest?.('[role="button"]'),
@@ -37,14 +38,14 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     const event = raw as KeyboardEvent;
     // WebKitGTK reports Super separately from metaKey; track before routing.
     bindings.trackModifierKey(event, true);
-    const { input, nativeButton, terminal: terminalFocus, separator, customButton } = inputContext(event);
+    const { input, nativeButton, fileEntry, terminal: terminalFocus, separator, customButton } = inputContext(event);
     // Custom controls own keys they explicitly accept. Unhandled commands
     // keep normal routing; accepted local input retires an unfinished chord.
-    if ((separator || customButton) && event.defaultPrevented) { bindings.cancelChord(); return; }
+    if ((separator || customButton || fileEntry) && event.defaultPrevented) { bindings.cancelChord(); return; }
     const terminalCommand = terminalFocus ? getTerminalCommand(event, bindings, isAvailable) : undefined;
     const explorer = dependencies.getActiveExplorer();
     const action = resolveWindowKey(event, {
-      input, nativeButton, trackedMetaHeld: bindings.trackedMetaHeld, terminal: terminalFocus, terminalCommand,
+      input, nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld, terminal: terminalFocus, terminalCommand,
       modal: dialogs.hasModalOpen, filterOpen: explorer?.showFilter ?? false,
       terminalEnabled: terminal.enabled,
     });

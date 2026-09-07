@@ -271,3 +271,66 @@ it("preserves Super-modified button shortcuts when WebKitGTK omits metaKey", () 
   expect(f.press("Enter").defaultPrevented).toBe(true);
   expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith("plugin.modifiedActivation");
 });
+
+
+describe("file-entry keyboard commands", () => {
+  it.each([
+    [" ", "Space", "view.togglePreviewPane"],
+    ["Enter", "Enter", "file.openSelected"],
+  ])("routes focused file-entry %s to its Explorer command", (key, shortcut, command) => {
+    const f = fixture();
+    Object.assign(f.target, {
+      tagName: "BUTTON",
+      matches: (selector: string) => selector === ".file-list .entry-item",
+    });
+    f.bind(command, shortcut);
+    expect(f.press(key).defaultPrevented).toBe(true);
+    expect(f.executeCommand).toHaveBeenCalledExactlyOnceWith(command);
+  });
+});
+
+
+it.each([["Enter", "Enter"], [" ", "Space"]])(
+  "keeps nested entry-control %s as native activation",
+  (key, shortcut) => {
+    const f = fixture();
+    Object.assign(f.target, {
+      tagName: "BUTTON",
+      matches: () => false,
+      closest: (selector: string) => selector === ".entry-item" ? {} : null,
+    });
+    f.bind("plugin.conflictingActivation", shortcut);
+    expect(f.press(key).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  },
+);
+
+
+it.each([["Enter", "Enter"], [" ", "Space"]])(
+  "keeps Miller-folder %s as native navigation",
+  (key, shortcut) => {
+    const f = fixture();
+    Object.assign(f.target, {
+      tagName: "BUTTON",
+      matches: (selector: string) => selector === ".entry-item",
+    });
+    f.bind("plugin.conflictingActivation", shortcut);
+    expect(f.press(key).defaultPrevented).toBe(false);
+    expect(f.executeCommand).not.toHaveBeenCalled();
+  },
+);
+
+
+it("keeps a file-entry Space accepted by type-ahead local", () => {
+  const f = fixture();
+  Object.assign(f.target, {
+    tagName: "BUTTON",
+    matches: (selector: string) => selector === ".file-list .entry-item",
+  });
+  f.bind("view.togglePreviewPane", "Space");
+  const event = new Event("keydown", { cancelable: true });
+  Object.assign(event, { key: " ", code: "Space", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false });
+  event.preventDefault();
+  f.target.dispatchEvent(event);
+  expect(f.executeCommand).not.toHaveBeenCalled();
+});

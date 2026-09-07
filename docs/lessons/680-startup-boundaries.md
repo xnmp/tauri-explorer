@@ -616,3 +616,17 @@ WebDriver, allow that empty state, and load the actual app through WebDriver
 navigation. Require the same handle to publish the requested Tauri label and
 original tab/pane/path afterward; a newly replenished warm window must not be
 mistaken for the unready target.
+
+
+## Native button semantics and file-entry commands
+
+Main file entries are native buttons, but Enter and Space belong to the
+configurable Open and Preview commands. A blanket native-button exemption in
+window keyboard routing disabled both after a row was clicked. Classify the
+actual `.file-list .entry-item` event target: Miller-column buttons share
+`.entry-item` yet own their navigation, and nested rename buttons must retain
+native activation. Respect default prevention from the file list too: Space
+continues a nonempty filename type-ahead buffer and must not also open Preview.
+Verify all three views and real native input, alongside the graph/button
+regressions that motivated the exemption. Two production routing contracts and
+the native preview case failed before this correction.

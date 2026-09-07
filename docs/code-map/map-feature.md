@@ -273,7 +273,7 @@ backend for E2E/browser).
 
 ## Keyboard shortcuts
 
-- `domain/window-keys.ts`, `state/window-keyboard.ts` — window-key policy and owned subscriptions; native buttons retain Enter/Space, accepted custom-control keys retire chords, and terminal exceptions retain their exact command identity through dispatch. `domain/terminal-keys.ts` resolves that identity for both xterm and window routing.
+- `domain/window-keys.ts`, `state/window-keyboard.ts` — window-key policy and owned subscriptions; main file-list entries route Open/Preview commands while ordinary/Miller buttons retain Enter/Space; accepted local file-list/custom-control keys retire chords, and terminal exceptions retain their exact command identity through dispatch. `domain/terminal-keys.ts` resolves that identity for both xterm and window routing.
 - `state/deferred-focus.ts`, `state/terminal.svelte.ts` — cancellable terminal-opening focus across lazy loading; new interactions retire obsolete focus requests while queued insertions still arrive.
 - `+page.svelte` — composes the window keyboard owner with active explorer and surface commands
 - `state/keybindings.svelte.ts` — `keybindingsStore`: binding map, resolve

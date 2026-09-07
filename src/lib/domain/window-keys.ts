@@ -5,6 +5,7 @@ type WindowKey = Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "a
 export interface WindowKeyContext {
   input: boolean;
   nativeButton: boolean;
+  fileEntry: boolean;
   trackedMetaHeld: boolean;
   terminal: boolean;
   terminalCommand?: TerminalCommandId;
@@ -23,7 +24,8 @@ export function resolveWindowKey(event: WindowKey, context: WindowKeyContext): W
   const primary = event.ctrlKey || event.metaKey;
   // Native controls generate their click after key dispatch. Consuming Enter
   // or Space as an Explorer command would prevent that activation entirely.
-  if (context.nativeButton && !context.trackedMetaHeld && !primary && !event.altKey && !event.shiftKey
+  // File entries use those keys for Open and Preview through the command owner.
+  if (context.nativeButton && !context.fileEntry && !context.trackedMetaHeld && !primary && !event.altKey && !event.shiftKey
     && (event.key === "Enter" || event.key === " ")) return "native-activation";
   if ((event.key === "`" || event.code === "Backquote") && primary && !context.modal) {
     return context.terminalEnabled ? "toggle-terminal" : "pass";

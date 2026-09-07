@@ -5,17 +5,21 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-07): Linux same-process renderer-crash recovery now
-passes two real SIGKILL cycles with one retained native GTK WebView. Each cycle
-reclaims its old Git lease before reload, creates a fresh renderer session,
-rejects obsolete acquisition, preserves the new lease after stale release, and
-observes and displays a file written after recovery. The opt-in controller
-performs the reload; this adds acceptance coverage, not automatic production
-recovery behavior. Existing native destruction/reload/blank-crash tests also
-pass (three cases). Independent source and runtime review is recorded below.
-The comprehensive review is **not complete**: Windows/Mac equivalents, broader
-product/native integration and soak, the wider product matrix, and actual Mac
-half-bounce measurements remain open.
+Current checkpoint (2026-09-08): the full Linux native run exposed a keyboard
+regression: blanket native-button ownership blocked selected file-row Enter
+(Open) and Space (Preview). Main file-list entries now use the command owner,
+while Miller navigation, nested/ordinary buttons and accepted local type-ahead
+retain their own keys. Two routing tests and the native preview case failed
+before the correction; 34 routing contracts, 27 Chromium outcomes across all
+three views and graph controls, and the native preview scenario now pass.
+
+The retention investigation also **reproduced an unfixed native directory-watch
+leak**: a child window's exact Linux inotify descriptor remains after native
+window destruction while the watched directory still exists. Git's completed
+window/renderer ownership work does not cover this separate filesystem watcher.
+Directory-watch ownership is the next implementation boundary. Tab-driven file
+focus/selection consistency, broader platform/product/soak acceptance and actual
+Mac half-bounce measurements remain open. The comprehensive review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -29,7 +33,7 @@ limitations and must not be read as current status.
 | Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
 | 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
 | 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
-| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; two-cycle same-process Linux crash recovery now passes with controlled reload; other-platform recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
+| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Registry reentrancy fixes now cover teardown/retry/shutdown with four failing-before regressions and 5,001 mixed-plugin activation cycles through real contribution stores. Seven bounded browser load cases now pass without retries; 150-cycle graph tab/toggle heap deltas are +4.5/+2.2 MiB and 150 workspace replacement pairs are +3.45 MiB, with intermediate DOM/listener samples and independent evidence review. Native-window Git ownership/reclamation now has Rust interleaving and Linux binary acceptance; renderer reload reclamation now has generation-checked IPC, Rust contracts and two-cycle Linux binary acceptance; blank-renderer cleanup now has native termination hooks and Linux reclamation evidence; two-cycle same-process Linux crash recovery now passes with controlled reload; a separate native directory-watch destruction leak is now reproduced and awaits ownership repair; other-platform recovery, hours-long/native soak, native plugin combinations and broader native retention acceptance remain outstanding |
 | 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
 | 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
 | 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Missing, destroyed, hidden warm and real picker targets now have Linux binary source-retention acceptance. Destination closure during real handoff receipt, unready native targets with later app initialization, and duplicate-label asynchronous creation failure now pass Linux binary acceptance; Windows/Mac equivalents remain open |
@@ -1918,3 +1922,62 @@ change was needed. Independent Sol review confirmed the source correction.
 Scope remains Linux debug-binary controlled recovery. This does not establish
 Windows/macOS behavior, hours-long native retention, a user-facing automatic
 recovery experience, or Mac half-bounce startup. Those release gates remain open.
+
+
+## File-entry keyboard correction and native retention finding — 2026-09-08
+
+The 25-spec Linux integration run passed 22 specs and failed three. Two trash
+failures came from isolating XDG data on tmpfs while fixtures lived on the home
+filesystem; the application correctly rejected an unwritable filesystem-root
+trash directory. Both file-operation specs pass with a same-filesystem profile.
+The preview failure also reproduced in a clean, single-spec run and was an
+application regression from `1cf4e04b`.
+
+All three file-list views use native button entries. The global native-button
+activation exemption incorrectly swallowed their configurable Enter/Open and
+Space/Preview commands. Routing now distinguishes actual main-list entries
+from ordinary controls. Independent Sol review exposed two necessary refinements:
+Miller-column folder buttons share `.entry-item` but own native navigation, and
+Space accepted by filename type-ahead must not also dispatch Preview. Both are
+covered by the final predicate and local-consumption guard.
+
+Verification: two production routing regressions failed before the fix; 34
+routing contracts pass afterward. Chromium passes 27 file-entry/graph cases,
+including all three views, real UI rename followed by multiword type-ahead,
+Miller Enter/Space navigation, address editing, selected directory Open, Preview
+and graph-button ownership. The rebuilt native debug binary passes the original
+Markdown preview/zoom/dock/fullscreen/pointer/keyboard scenario in five seconds.
+Its [inspected screenshot](../screenshots/refactor/repo-health-cleanup/native-preview-resize.png)
+shows the real Markdown result. No Windows or macOS runtime acceptance is implied.
+
+The independent review also identified an existing focus/selection split: Tab
+can focus an unselected main-list row while selection-based commands retain a
+different target. This needs a deliberate composite-list focus policy; narrowing
+the shortcut exception to selected rows would merely hide that issue. Keep this
+specific case in the open keyboard/accessibility product matrix.
+
+A new native retention reproduction pins the app PID/executable/start time and
+matches Linux inotify descriptors by device and inode. It proves a child watch
+is acknowledged and receives a real filesystem mutation, destroys that window,
+then checks OS-watch removal while retaining the directory. The unchanged
+filesystem watcher fails: child-1 retains fd 15 / watch 3, device `0x10306`,
+inode `0xc2003a`, after native destruction. The fixture is retained until the
+assertion ends, so kernel deletion cleanup cannot mask the leak. Initial probe
+qualification caught and corrected Linux's internal 12:20 device-number encoding
+versus userspace `stat.dev`; the final failure occurs at teardown, not acquisition.
+
+This is a reproduced outstanding defect, not completed soak acceptance.
+`files/fs_watcher.rs` currently counts paths without concrete window/renderer
+ownership. The next change must cover destruction, reload/crash, pending
+acquisition, stale release, shared paths and recursive search-cache epochs using
+consistent native lifetime ownership. The new reproduction remains local work
+until that fix and adversarial/native verification are complete.
+
+Final keyboard checkpoint checks: typecheck has zero errors/warnings,
+architecture lint is clean, source maps cover 378/378 production files, and the
+normal bundle passes at 44 startup chunks / 652,565 raw / 212,451 gzip bytes
+(main 302,858 raw / 90,007 gzip). This adds 94 raw startup bytes relative to
+`5b58b943`; no launch-latency improvement is claimed. The focus/selection split
+also exists before `1cf4e04b`: main-row events already flowed to the same
+selection-based command owner then. Restoring that contract does not resolve
+the separate composite-list focus policy.

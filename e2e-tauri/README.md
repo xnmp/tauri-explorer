@@ -61,6 +61,14 @@ Windows additionally builds with `--features e2e-webview2-attach`, sets
 driver that matches the WebView2 runtime. That Cargo feature is intentionally
 absent from release builds: it is the only path that exposes a CDP port.
 
+When isolating Linux runs with XDG variables, keep `XDG_DATA_HOME` on the same
+filesystem as the file-operation fixtures (which live under the user's home).
+A profile under a tmpfs `/tmp` forces Freedesktop trash to look for a separate
+filesystem-root trash directory, which may be unwritable. Use a disposable
+profile under the home filesystem; never repurpose `HOME` to redirect tests.
+The suites currently share persisted settings when they share one profile, so
+use a fresh profile when qualifying a scenario that requires default settings.
+
 ## CI
 
 See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to

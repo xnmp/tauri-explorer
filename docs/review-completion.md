@@ -8,8 +8,9 @@ No row is complete merely because its implementation exists or a mock agrees.
 Latest checkpoint (2026-09-07): warm activation and native pool retirement now
 have explicit ownership and acknowledgements; terminal readiness polling no longer
 holds the control mutex while waiting. Validation below supersedes earlier
-checkpoint counts. The foundation is being published as a **draft** against `dev`;
-this does not complete the review or authorize merge/release. Historical handovers
+checkpoint counts. The foundation is published in **[draft PR #684](https://github.com/xnmp/tauri-explorer/pull/684)**
+against `dev` (implementation commit `fd06b3c6`); this does not complete the review
+or authorize merge/release. Historical handovers
 below record the state at their own checkpoint.
 
 | Requirement | Required implementation and evidence | Current state |
@@ -57,9 +58,9 @@ acceptance then passed 2/2, and two fresh isolated graph → pane sequences pass
 was made for it. These are checkpoints, not release acceptance.
 
 Publication: the earlier foundation report was verified on issue #680. This
-completion pass is prepared for an authorized draft PR on
-`refactor/repo-health-cleanup`; the published report does not claim these pending
-rows are complete. The draft will link this ledger as its remaining-work contract.
+completion pass is published in [draft PR #684](https://github.com/xnmp/tauri-explorer/pull/684)
+on `refactor/repo-health-cleanup`; the published report does not claim these
+pending rows are complete. The draft links this ledger as its remaining-work contract.
 
 ## Continuation handover — 2026-09-07
 

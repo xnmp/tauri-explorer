@@ -7,7 +7,8 @@ with targeted runtime verification, not a claim that every path in the roughly
 
 The full review is **not complete**. The initial foundation report has been
 published on [issue #680](https://github.com/xnmp/tauri-explorer/issues/680),
-and the implementation foundation is being published as a draft PR against `dev`. [review-completion.md](review-completion.md)
+and the implementation foundation is published in
+[draft PR #684](https://github.com/xnmp/tauri-explorer/pull/684) against `dev`. [review-completion.md](review-completion.md)
 is the current requirement-by-requirement ledger; the earlier verification and
 handover below describe the initial foundation checkpoint, not final acceptance
 of the ongoing pass. macOS half-bounce measurements remain outstanding.

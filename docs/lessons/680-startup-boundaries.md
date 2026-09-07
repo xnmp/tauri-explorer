@@ -275,3 +275,24 @@ payloads (including errors delivered after timeout) in the application log, so a
 future failure can distinguish geometry, construction, listener registration,
 native rejection, timeout and failed retirement. Warm creation logs its label and
 error too; cleanup ownership is unchanged.
+
+### Automatic warm priming must follow foreground readiness
+
+A 1.5-second timer started at page mount can create an optional WebView while
+settings and the foreground listing are still initializing. A three-second config
+fixture reproduced the wrong order on the actual old page in Chromium and WebKit.
+The session now starts that timer only after the existing settings/commands/listing
+and paint-opportunity readiness signal. Its command microtask and timer retire
+with page teardown, and partial setup rolls back acquired subscriptions.
+
+Record startup/prime ordering in the application world. Driver observations can
+arrive late, and a five-second completion timeout is too short for a deliberately
+slow three-second config read plus priming delay and browser startup. The test's
+15-second wait only bounds completion; recorded ordering is the assertion.
+An inspected screenshot demonstrates usable navigation/selection, not timing.
+
+Moving E2E hooks out of the page also exposed a lazy-import boundary: removing
+listeners does not prevent a callback already waiting on an import from dispatching
+later. Re-check session ownership after import and before accepting work. Once a
+transfer has been accepted, its existing domain owner must finish or cancel it;
+simply suppressing its post-await completion can strand adoption halfway.

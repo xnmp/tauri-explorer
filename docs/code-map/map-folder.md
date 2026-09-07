@@ -86,6 +86,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-branches.svelte.ts` — lazy branch/author metadata owner; known-coverage fallback and query/popover request coordination.
 
 - `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
+- `window-session.ts` — composes page subscriptions, startup, command readiness and post-readiness warm priming with rollback/teardown.
 - `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; labelled failure-phase diagnostics; tear-offs require adoption ACK before source retirement.
 - `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
 - `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
@@ -247,6 +248,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
 - `window-keys.ts` — pure ordered window-key routing policy for terminal, modal, editable and filter contexts.
+- `window-launch-plan.ts` — pure initial-directory/view and restoration policy across main and child windows.
 - `window-input.ts` — launch, warm-window and directory-seed validation; shared parse/producer budgets and canonical explorer seed shape.
 
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
@@ -401,5 +403,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
 
+- `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import dispatch retirement.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.

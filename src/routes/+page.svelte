@@ -5,36 +5,16 @@
 <script lang="ts">
   import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
-  import { isTauri } from "$lib/api/common";
-  import { startWindowKeyboard } from "$lib/state/window-keyboard";
-  import { E2E_HOOKS_ENABLED, E2E_WARM_WINDOW_PRIMING_DISABLED } from "$lib/domain/e2e-hooks";
-  import { isViewMode } from "$lib/domain/file";
-  import { isWindowPath, normalizeLaunchData } from "$lib/domain/window-input";
-  import { themeStore } from "$lib/state/theme.svelte";
-  import { startConfigWatch } from "$lib/state/config-watch";
+  import { startWindowSession } from "$lib/state/window-session";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
-  import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { resolveLaunchHomePath, startWindowTitleSync } from "$lib/state/window-title.svelte";
+  import { resolveLaunchHomePath } from "$lib/state/window-title.svelte";
   import { markStartup, reportStartupReady } from "$lib/state/startup-timing";
-  import { startWindowStartup } from "$lib/state/window-startup";
-  import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { registerAllCommands } from "$lib/state/command-definitions";
-  import { pluginRegistry } from "$lib/plugins/registry.svelte";
-  import { executeCommand, getCommand } from "$lib/state/commands.svelte";
-  import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { setFfmpegPath } from "$lib/api/system";
-  import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
-  import { useFileWatchers } from "$lib/composables/use-file-watchers";
-  import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
   import "$lib/themes/index.css";
   import WindowDialogs from "$lib/components/WindowDialogs.svelte";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -43,8 +23,6 @@
   import type { PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
-  import { gitStatusStore } from "$lib/state/git-status.svelte";
-  import { initTabTransferListener } from "$lib/state/tab-transfer";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
@@ -82,16 +60,6 @@
   }
 
   const refreshAllPanes = () => windowTabsManager.refreshAllPanes();
-
-  // Initialize composables
-  const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });
-  const fileWatchers = useFileWatchers({
-    getAllExplorers: () => windowTabsManager.getAllExplorers(),
-  });
-  const windowLifecycle = useWindowLifecycle({
-    getActiveExplorer,
-    saveTabs: () => windowTabsManager.save(),
-  });
 
   // Update localStorage whenever the active explorer's path or viewMode changes
   $effect(() => {
@@ -212,261 +180,21 @@
       frame = requestAnimationFrame(() => {
         firstPaintReported = true;
         reportStartupReady();
+        session?.markCoreReady();
       });
     });
     return () => cancelAnimationFrame(frame);
   });
 
+  let session: ReturnType<typeof startWindowSession> | undefined;
   onMount(() => {
-    markStartup("mount");
-
-    // Initialize theme from saved preference
-    themeStore.initTheme();
-
-    const startup = startWindowStartup({
-      loadSettings: () => settingsStore.init(),
-      synchronizeTheme: () => themeStore.syncFromSettings(),
-      publishSettingsReady: () => {
-        markStartup("settings-ready");
-        settingsReady = true;
-      },
-      initializePlugins: () => pickerInfo ? Promise.resolve() : pluginRegistry.initPlugins(),
-      disposePlugins: () => pickerInfo ? Promise.resolve() : pluginRegistry.dispose(),
+    session = startWindowSession({
+      picker: pickerInfo !== null,
+      homePath: launchHomePath,
+      settingsReady: () => { settingsReady = true; },
+      commandsReady: () => { commandsReady = true; },
     });
-    void startup.ready.catch((error) => console.error("Window startup failed:", error));
-
-    // Picker windows skip the full app init (tabs, watchers, commands).
-    if (pickerInfo) {
-      return () => { void startup.dispose(); };
-    }
-
-    const stopNativeClose = isTauri() ? windowTabsManager.observeNativeClose() : () => {};
-
-    // EXPERIMENTAL warm window (?warm=1 parked, ?warm=measure self-firing): a
-    // hidden, fully-booted window for a future Ctrl+N. It runs the normal init
-    // below (stores/tabs/listeners live), then registers its activate-listener
-    // and signals readiness. It stays hidden until activated.
-    const wmode = warmMode();
-    const warmWindow = wmode !== "off" ? runWarmWindow(wmode === "measure") : null;
-
-    // Read launch data injected by Rust initialization_script (synchronous, no IPC).
-    // Falls back to IPC for child windows or if injection is missing.
-    const launchData = normalizeLaunchData((window as Window & { __LAUNCH_DATA__?: unknown }).__LAUNCH_DATA__);
-
-    const searchParams = new URLSearchParams(window.location.search);
-    const requestedPath = searchParams.get("path");
-    const urlPath = isWindowPath(requestedPath) ? requestedPath : null;
-    const requestedView = searchParams.get("viewMode");
-    const urlViewMode = isViewMode(requestedView) ? requestedView : null;
-
-    const homePath = launchHomePath ?? "/home";
-    const launchCwd = launchData?.cwd ?? null;
-
-    // Child windows (spawned via Ctrl+N) have a ?path= param — skip
-    // saved-state restoration so they open at the parent's path.
-    const isChildWindow = !!urlPath;
-    const defaultPath = urlPath || launchCwd || homePath;
-
-    // If launched from a terminal with a meaningful cwd, pass it as an
-    // override so the active pane navigates here directly instead of
-    // racing two concurrent navigateTo calls.
-    const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
-    const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
-    const tab = windowTabsManager.init(defaultPath, isChildWindow, overridePath);
-    // Start only after tab initialization: creation paths already seed the
-    // correct native title, and an eager empty-path write causes a visible
-    // "Tauri Explorer" flash before the first explorer exists.
-    const stopWindowTitleSync = startWindowTitleSync(
-      () => windowTabsManager.getActiveExplorer()?.currentPath,
-      homePath,
-    );
-    // Apply inherited view mode from parent window
-    if (urlViewMode && tab) {
-      const explorer = windowTabsManager.getActiveExplorer();
-      explorer?.setViewMode(urlViewMode);
-    }
-
-    // Load independent configuration without delaying directory navigation.
-    bookmarksStore.init();
-    folderViewsStore.init();
-    manualHiddenStore.init();
-
-    // Initialize git status watcher so file badges update on changes
-    gitStatusStore.initWatcherListener();
-
-    // Cross-window tab moves: remove our copy when another window claims a
-    // tab dragged out of this one.
-    const stopTabTransfer = initTabTransferListener();
-
-    // Apply edits made to settings.json / user themes outside the app (#599).
-    const stopConfigWatch = startConfigWatch();
-
-    // E2E hooks: the tauri-driver suite runs under Xvfb with no window
-    // manager, where autofocused inline inputs (address bar, new-folder,
-    // rename) blur — and cancel — the instant they open. These hooks drive
-    // the SAME real backend operations (navigate / create_directory /
-    // rename_entry / trash) the UI flows do, just without the headless-only
-    // focus race. Compiled out of production builds (see E2E_HOOKS_ENABLED).
-    if (E2E_HOOKS_ENABLED) {
-      window.addEventListener("e2e-navigate", ((
-        e: CustomEvent<string | { path: string; token?: string }>,
-      ) => {
-        const path = typeof e.detail === "string" ? e.detail : e.detail.path;
-        const token = typeof e.detail === "string" ? undefined : e.detail.token;
-        const navigation = windowTabsManager.getActiveExplorer()?.navigateTo(path);
-        if (navigation && token) {
-          void navigation.then(() => {
-            document.documentElement.dataset.e2eNavigationComplete = token;
-          });
-        }
-      }) as EventListener);
-
-      // Restore the active pane to its file listing by closing any open commit
-      // graph. The per-pane `gitGraph` state persists to localStorage, which is
-      // shared across every tauri-driver session (same http://localhost origin),
-      // so a spec that leaves the graph open (git-graph-pull) would otherwise
-      // relaunch every later spec into graph mode — no `.file-list` ever renders
-      // (#447). Specs call this via navigateTo before waiting for the listing.
-      window.addEventListener("e2e-reset-view", (() => {
-        for (const paneId of windowTabsManager.activePaneIds) {
-          windowTabsManager.setPaneGitGraph(paneId, null);
-        }
-      }) as EventListener);
-
-      window.addEventListener("e2e-file-op", ((
-        e: CustomEvent<{ op: string; name?: string; path?: string }>,
-      ) => {
-        const explorer = windowTabsManager.getActiveExplorer();
-        if (!explorer) return;
-        const { op, name, path } = e.detail;
-        const entry = path
-          ? explorer.displayEntries.find((en) => en.path === path)
-          : undefined;
-        if (op === "new-folder" && name) {
-          void explorer.createFolder(name);
-        } else if (op === "rename" && entry && name) {
-          explorer.startRename(entry);
-          void explorer.rename(name);
-        } else if (op === "delete" && entry) {
-          void explorer.confirmDelete([entry]);
-        }
-      }) as EventListener);
-
-      // Native multiwindow acceptance uses DOM requests across WebDriver's
-      // isolated JS world, invoking the same launch/adoption owners as dragging.
-      window.addEventListener("e2e-window-operation", ((e: CustomEvent<{
-        token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim"; target?: string;
-      }>) => {
-        const { token, op, target } = e.detail;
-        void (async () => {
-          if (op === "warm-claim") {
-            const { warmPoolClaim } = await import("$lib/api/warm-pool");
-            return warmPoolClaim();
-          }
-          if (op === "warm-prime") { await spawnWarmWindow(); return true; }
-          if (op === "warm-open") {
-            const { openNewWindow } = await import("$lib/state/window-launch");
-            const opened = await openNewWindow(target ?? windowTabsManager.getActiveExplorer()!.currentPath);
-            return opened ? { kind: opened.kind, label: opened.label } : null;
-          }
-          if (op === "native-close") {
-            const { getCurrentWindow } = await import("@tauri-apps/api/window");
-            await getCurrentWindow().close();
-            return true;
-          }
-          const { openNewWindow } = await import("$lib/state/window-launch");
-          if (op === "open-pair") {
-            const path = windowTabsManager.getActiveExplorer()?.currentPath;
-            if (!path) throw new Error("No active directory");
-            const children = await Promise.all([openNewWindow(path), openNewWindow(path)]);
-            return children.map((child) => child?.label ?? null);
-          }
-          const id = windowTabsManager.activeTabId;
-          const transfer = id ? windowTabsManager.beginTabTransfer(id) : null;
-          if (!transfer) throw new Error("No transferable tab");
-          try {
-            const snapshot = transfer.snapshot;
-            if (op === "transfer" && target) {
-              const { sendTabToWindow } = await import("$lib/state/tab-transfer");
-              return { moved: await sendTabToWindow(target, snapshot) && transfer.complete(), target };
-            }
-            const child = await openNewWindow(snapshot.path, undefined, snapshot);
-            return { moved: !!child && transfer.complete(), target: child?.label };
-          } finally { transfer.cancel(); }
-        })().then((result) => {
-          document.documentElement.dataset.e2eWindowResult = JSON.stringify({ token, result });
-        }).catch((error: unknown) => {
-          document.documentElement.dataset.e2eWindowResult = JSON.stringify({ token, error: String(error) });
-        });
-      }) as EventListener);
-      document.documentElement.dataset.e2eWindowLabel = windowTabsManager.windowLabel;
-      void warmWindow?.ready.then((ready) => {
-        if (ready) document.documentElement.dataset.e2eWarmReady = "1";
-      });
-
-      // WebKitWebDriver can execute injected scripts before these listeners
-      // exist. Publish readiness through the DOM (visible across WebKit's
-      // isolated JS worlds) so the driver can dispatch each navigation once
-      // and wait for its matching completion token. Repeated polling dispatches
-      // queue duplicate real listings and contaminate watcher timing probes.
-      document.documentElement.dataset.e2eHooksReady = "true";
-    }
-
-    // Register all commands for the command palette (deferred to next tick)
-    queueMicrotask(() => {
-      registerAllCommands();
-      markStartup("commands-ready");
-      commandsReady = true;
-    });
-
-    // Once this window is idle, prime the global warm-window pool so the next
-    // Ctrl+N activates a pre-warmed window instead of paying webview-create
-    // cost. Every REAL window primes — the Rust registry caps the pool at one,
-    // so concurrent windows can't over-spawn. Warm windows themselves never
-    // prime (wmode !== "off"): a warm window spawning another was the earlier
-    // runaway-spawn bug. Deferred so it never competes with this window's own
-    // first paint; settings are read at fire time, after settingsStore.init()
-    // has resolved.
-    let warmPrimeTimer: ReturnType<typeof setTimeout> | undefined;
-    if (wmode === "off" && !E2E_WARM_WINDOW_PRIMING_DISABLED) {
-      warmPrimeTimer = setTimeout(() => {
-        if (settingsStore.warmWindow) void spawnWarmWindow();
-      }, 1500);
-    }
-
-    // Setup composables
-    nativeDropHandler.setup();
-    fileWatchers.setup();
-    windowLifecycle.setup();
-
-    const stopKeyboard = startWindowKeyboard(window, {
-      bindings: keybindingsStore, getCommand, executeCommand, dialogs: dialogStore,
-      terminal: { get enabled() { return settingsStore.enableTerminal; }, toggle: () => terminalPanelStore.toggle() },
-      toggleDualPane: () => windowTabsManager.toggleDualPane(), getActiveExplorer,
-    });
-
-    // Window size tracking (#467): feeds the preview pane's "auto" dock mode
-    // (settingsStore.resolvedPreviewPanePosition derives from this on every
-    // read, no effect-driven sync needed) — sync once now for the initial
-    // size, then on every resize.
-    windowSizeStore.sync();
-    const handleResize = () => windowSizeStore.sync();
-    window.addEventListener("resize", handleResize);
-
-    return () => {
-      void startup.dispose();
-      clearTimeout(warmPrimeTimer);
-      stopKeyboard();
-      window.removeEventListener("resize", handleResize);
-      nativeDropHandler.cleanup();
-      fileWatchers.cleanup();
-      windowLifecycle.cleanup();
-      warmWindow?.dispose();
-      stopNativeClose();
-      stopWindowTitleSync();
-      stopTabTransfer();
-      stopConfigWatch();
-    };
+    return () => { session?.dispose(); session = undefined; };
   });
 </script>
 

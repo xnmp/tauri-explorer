@@ -434,3 +434,11 @@ arguments through all creation paths, with Windows native verification pending.
 Labelled launch-stage diagnostics preserve future failure evidence. The prior
 Linux creation failure is unreproduced locally; see the completion ledger rather
 than treating local success as an explanation of that failure.
+
+Page-session checkpoint (2026-09-07): the page now owns rendering/readiness and
+composes an explicit subscription/delayed-work owner with a pure launch plan.
+Automatic warm priming waits for configured foreground readiness. The slow-config
+ordering regression fails on the actual prior page in both browser engines and
+passes after this change. Full units/performance, 26 browser outcomes and 12 real
+Linux native outcomes pass; ADR 0010 and the completion ledger define scope and
+remaining release gates.

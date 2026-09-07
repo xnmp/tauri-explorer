@@ -5,10 +5,43 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Latest continuation: the native Git observation service below supersedes the
-earlier cache checkpoint's open callback-recovery, SCM release and worktree-lock
-filtering findings. The comprehensive review and platform/startup gates remain
-open.
+Current checkpoint (2026-09-07): the page now composes an explicit session owner
+for subscriptions, setup rollback and delayed work. Launch-path/restoration policy
+is pure. Optional automatic warm priming waits for foreground readiness; opt-in
+native test dispatch is retired with its page. Git observation leases/recovery,
+keyboard/focus ownership and the native watcher fixture are implemented as
+recorded below. The full review is **not complete**.
+
+The branch has unpublished local commits after the published draft PR #684 tip
+`2c2a8121`. Publication is waiting for explicit approval of the public destination
+and payload after automatic approval review rejected prior pushes. No merge or
+release acceptance is implied. The current table and newest sections describe
+current scope; earlier checkpoint sections retain their historical counts and
+limitations and must not be read as current status.
+
+| Requirement | Required implementation and evidence | Current state |
+| --- | --- | --- |
+| Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
+| 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
+| 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
+| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Workspace/plugin churn, scaled soak and native retention acceptance remain outstanding |
+| 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Page-session subscriptions and delayed work now have explicit teardown/rollback; pure launch policy preserves immediate navigation, and automatic warming follows configured core readiness. Domain/session/probe contracts and browser/native acceptance pass; ADR 0010 defines borrowed window-store versus page ownership |
+| 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
+| 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
+| 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
+| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Wider theme/native interaction matrix pending |
+| Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
+| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Targeted baseline passes; wider matrix outstanding |
+| Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
+
+Every completion update must name the actual production seam, regression or
+measurement, result and limitations. Platform gates stay open until directly
+verified; scaffolding a runner does not satisfy the gate. Additional defects
+found while implementing a row belong to the same objective.
+
+## Historical evidence (superseded by current checkpoints)
+
+### Graph snapshot coverage before the native observation service
 
 Git cache observation checkpoint (2026-09-07, continuing locally): the previous
 Linux hidden-cache test did **not** prove cached-state invalidation. Its target
@@ -55,37 +88,6 @@ SCM cleanup gap to consolidate next: direct SCM unwatch calls discard failed
 `ApiResult`s and their identities, whereas the ordered graph watch adapter
 retains identity after release failure. This batch fixes the acquired identity
 contract; it does not claim comprehensive release-error recovery.
-
-Latest checkpoint (2026-09-07): window keyboard routing and terminal opening focus
-have explicit owners; graph mutations invalidate caches before publishing fresh
-history. Page dialogs have a typed host and owned lazy imports; CI retention
-coverage uses bounded fake-clock bursts. Warm activation and
-native pool retirement have explicit ownership and acknowledgements; terminal
-readiness polling no longer holds the control mutex while waiting. Validation below supersedes earlier
-checkpoint counts. The foundation is published in **[draft PR #684](https://github.com/xnmp/tauri-explorer/pull/684)**
-against `dev` (implementation commit `fd06b3c6`); this does not complete the review
-or authorize merge/release. Historical handovers
-below record the state at their own checkpoint.
-
-| Requirement | Required implementation and evidence | Current state |
-| --- | --- | --- |
-| Existing ownership overhaul | Retain pane/SCM/watch/drive/preview/terminal/contribution lifetimes, cache invalidation and persistence fixes; rerun appropriate suites after integration | Previous passing evidence recorded in review; integration acceptance pending |
-| 1. Startup performance | Release Mac half-bounce recording, first presented frame and successful input, >=30 samples/scenario with p50/p95; cold, warm-cache, warm-window and restored optional surfaces; actionable profile-driven improvements | Instrumentation and payload budgets implemented; actual Mac measurements outstanding |
-| 2. External jobs | Cancellation/timeout must stop local work and prevent late final-output publication; real worker/process/filesystem tests; adversarial verification | Worker draining, held staging files, serialized cancel/publication, bounded fal requests, and Nano child kill/reap implemented; 11 targeted Rust tests and independent review pass. Full integration pending; network calls can take up to their 30-second bound |
-| 3. Long-session retention | Measure and bound refresh history/timers, validate config watch retention against ADR 0004, workspace/plugin churn and heap/load suite | Refresh inactive metadata capped at 1,024; 5,000-key regression. Config retarget registrations bounded after successful reconciliation; 9 Rust tests including actual Linux symlink handover, independently confirmed. Window-owned accepted plugin jobs independently confirmed; 5,000-job churn verifies exactly-once effects. Six bounded graph load cases now pass, including 25-cycle tab/toggle heap deltas of +3.5/+1.3 MiB, with independent evidence review. Workspace/plugin churn, scaled soak and native retention acceptance remain outstanding |
-| 4. Orchestration | Extract coherent startup and graph state/policy owners; lifecycle behavior tests; preserve immediate core readiness and lazy features | Window settings/theme/plugin startup owner extracted; late settings teardown covered. Independent review exposed registry disposal missing active/in-flight contexts; fixed with terminal admission closure and shared disposal promise, independently confirmed. Inactive restored panes load on first activation (64-tab production regression failed before, passes after; independently confirmed). Graph history/pagination, PR/check/log and branch-metadata owners are extracted; request identity, immutable cache ingress and resolved branch walks have behavioral regression coverage and independent review. Commit-detail/inline-diff owner also implemented with mutation-time selection tokens and stage-side identity; 15 focused tests, Chromium/WebKit outcomes and native real-Git diff regression pass. Page dialog loading/rendering now lives in a typed WindowDialogs host with per-dialog demand and owned imports; cancelled/retired publication, real Svelte teardown, portal feedback and feature outcomes pass. Window keyboard routing now has pure policy, exact terminal command identity and owned modifier/chord subscriptions. Terminal focus requests survive lazy loading only while their originating interaction remains current. Window-session page orchestration remains open |
-| 5. API dependencies | Feature-owned wrappers replace files.ts aggregation and dispatch cycles; architecture guardrail; caller tests and unchanged typed IPC contracts | Feature owners migrated across production, tests, benches and E2E; files.ts now filesystem-only, sibling wrappers import common primitives. Contract guardrail, independent API review and architecture lint pass. Plugins access accepted work through PluginContext.jobs |
-| 6. Input boundaries | Normalize directory/tab/window launch/warm/transfer seeds before live state or allocation; validate finite and consumer-compatible setting bounds; malformed/oversized/legacy cases | Shared seed validation and serialization/parse budgets, finite geometry, closed snapshot validation, acknowledged native handoff implemented with regression tests. Lazy restoration bounds initial inactive-directory fanout. Numeric consumer audit now has a shared domain rule set, strict direct/config validation and finite setter coercion; malformed fractions, sentinel gaps, and the 4-column command are fixed, with unit/browser outcomes and independent review. Window launch/transfer ownership now has unit, browser and real three-window acceptance (details below). Large active layouts now materialize the focused pane immediately and defer remaining panes in cancellable batches; current browser/native acceptance is recorded below. Additional rejected-target native scenarios remain open |
-| 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
-| 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Wider theme/native interaction matrix pending |
-| Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
-| Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Targeted baseline passes; wider matrix outstanding |
-| Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
-
-Every completion update must name the actual production seam, regression or
-measurement, result and limitations. Platform gates stay open until directly
-verified; scaffolding a runner does not satisfy the gate. Additional defects
-found while implementing a row belong to the same objective.
 
 Latest integration checkpoint: typecheck zero errors/warnings; 214 unit files,
 1,943 unit tests and 30 performance tests pass (three unit cases skipped).
@@ -921,3 +923,60 @@ Remaining: published Windows acceptance, unreproduced Linux creation failure if
 it recurs, native Git leases on crashed windows, page-session ownership, dense
 viewport policy, workspace/plugin/native soak, full product/platform matrices,
 and actual macOS release half-bounce measurements. The entire review remains open.
+
+## Page-session ownership and foreground readiness — 2026-09-07
+
+The page delegates imperative setup to `state/window-session.ts` and retains
+rendering, reactive appearance and the paint/readiness observation. The session
+records each acquired subscription separately, rolls back partial setup, continues
+cleanup after an individual cleanup failure, and retires queued commands and
+warm priming. `domain/window-launch-plan.ts` preserves query/cwd/home precedence,
+child restoration and inherited view policy as pure logic. Initial tab navigation
+still starts synchronously, independently of settings and plugins.
+
+Automatic warm priming now follows configured foreground readiness instead of a
+wall-clock delay from mount. With deliberately slow config reads, the actual old
+page primes before readiness in both Chromium and WebKit; the same browser test
+passes with the session owner (`/tmp/window-session-startup-before.log`,
+`/tmp/window-session-browser-final.log`). Timing is captured in the app world so
+driver scheduling cannot invent the ordering. The fixture's completion timeout
+accommodates its injected three-second config latency; it is not a performance
+threshold. Unit tests also reproduce queued registration after teardown and
+priming before core readiness against the mechanically extracted prior logic.
+
+Native E2E hooks live in a separately compiled opt-in module. Its listeners,
+readiness and result publication retire with the page, including a delayed import
+which resolves after disposal. Independent review exposed a request which could
+resume after lazy loading and dispatch native work after teardown; a regression
+failed before adding the acceptance check around those imports. Already accepted
+navigation, mutation and transfer work remains with its existing domain owner.
+Window-scoped stores retain their data lifetimes. [ADR 0010](adr/0010-page-session-and-core-readiness.md)
+records these boundaries; this is not a claim to cancel every window operation
+on page teardown.
+
+Validation:
+
+- **2,070 unit tests passed, three skipped, plus 30 performance checks** across
+  231 unit files (`/tmp/window-session-full-unit.log`). The new subset has 23
+  session, launch-policy and probe contracts.
+- **26 Chromium/WebKit outcomes passed** for startup readiness, slow-config
+  ordering, title synchronization, keyboard/terminal ownership and address/modal
+  focus (`/tmp/window-session-browser-final.log`). The inspected
+  `session-startup-ready.png` demonstrates usable navigation and selection after
+  readiness; timestamps and assertions establish priming order.
+- **12 rebuilt Linux native outcomes passed** across transfer/close, warm
+  activation/fallback/abandoned-claim expiry, real watcher coalescing/adaptive
+  cadence and config autoreload (`/tmp/window-session-native-final.log`).
+- Typecheck zero errors/warnings; architecture lint clean; source maps 363/363.
+  Normal startup graph: **42 chunks, 640,696 raw bytes / 207,786 gzip bytes**,
+  within budgets (`/tmp/window-session-bundle-final.log`). The native test-hook
+  modules and readiness markers are absent from normal release assets. These
+  are payload and readiness-order results, not macOS presentation latency.
+- Independent review confirmed launch/restoration parity, synchronous navigation,
+  picker/parked behavior, setup rollback and delayed-work/probe retirement.
+
+The page orchestration recommendation is implemented within ADR 0010's scope.
+The broader review remains open: crashed-window native Git lease reclamation,
+dense viewport policy, workspace/plugin/native soak, Windows and macOS platform
+acceptance, the full product/theme/accessibility/DPI matrix, and actual macOS
+release startup measurements still require work. No merge or publication occurred.

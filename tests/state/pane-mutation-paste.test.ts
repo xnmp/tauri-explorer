@@ -309,4 +309,24 @@ describe("paste and undo publication ownership", () => {
     expect.soft(explorer.focusedEntry?.path).toBe(bEntries[1].path);
     expect.soft(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
   });
+
+  it.each([false, true])("publishes completed undo effects despite a sibling failure (navigate away: %s)", async (navigateAway) => {
+    const explorer = explorerAtA();
+    const undone = deferred<{ action: UndoAction; error: string }>();
+    mocks.undo.mockReturnValueOnce(undone.promise);
+    const pending = explorer.undo();
+    const expected = navigateAway
+      ? await navigateToB(explorer)
+      : [...explorer.displayEntries, entry("restored.txt")];
+    if (!navigateAway) serveListing(expected);
+    undone.resolve({
+      action: { type: "delete", paths: ["/a/restored.txt"], parentDir: "/a" },
+      error: "/elsewhere/blocked.txt: permission denied",
+    });
+
+    expect(await pending).toContain("permission denied");
+    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a"]);
+    expect(explorer.displayEntries.map(({ path }) => path).sort()).toEqual(expected.map(({ path }) => path).sort());
+    expect(selectedPaths(explorer)).toEqual([navigateAway ? "/b/b-newer.txt" : "/a/a-second.txt"]);
+  });
 });

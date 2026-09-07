@@ -25,7 +25,9 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   let editedName = $state("");
   let renameError = $state<string | null>(null);
   let submission = $state.raw<object | null>(null);
-  const submittingRename = $derived(submission !== null && submission === dialogStore.fileOperationSession);
+  // Blur can run while this component is being destroyed; read raw session
+  // state directly instead of evaluating a derived owned by the dead effect.
+  const isSubmitting = () => submission !== null && submission === dialogStore.fileOperationSession;
 
   function focusAndSelect(entry: FileEntry) {
     const session = dialogStore.fileOperationSession;
@@ -51,7 +53,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   }
 
   async function confirmRename(currentName: string): Promise<boolean> {
-    if (submittingRename) return false;
+    if (isSubmitting()) return false;
     const trimmed = editedName.trim();
     if (!trimmed) {
       renameError = "Name cannot be empty";
@@ -162,7 +164,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     get editedName() { return editedName; },
     set editedName(v) { editedName = v; },
     get renameError() { return renameError; },
-    get submittingRename() { return submittingRename; },
+    get submittingRename() { return isSubmitting(); },
     focusAndSelect,
     confirmRename,
     cancelRename,

@@ -5,26 +5,28 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
-Current checkpoint (2026-09-08): accepted file operations retain their origin
-across navigation and pane disposal. Pane publication and selection updates
-borrow that origin; filesystem success, undo and affected-parent notifications
-remain durable. Exact editor-opening identities preserve newer rename/delete and
-creation sessions. Paste captures its destination before clipboard reads. The
-lossy mutation cooldown is removed, and failed rename submissions retain focus.
+Current checkpoint (2026-09-08): bulk trash and restore publish confirmed
+per-path outcomes. Partial undo/redo retains only unfinished work, publishes
+completed effects, and reserves an exact renderer-local history entry across
+concurrent calls, new pushes and explicit clears. Linux restore atomically
+refuses collisions and distinguishes successful payload moves from metadata
+cleanup. Mixed local/network deletion preserves local trash recovery. Rename
+teardown no longer reads a destroyed component-owned derivation.
 
-Frontend tests pass 2,253 cases plus 30 performance cases (three skipped).
-Chromium passes 102 integrated outcomes, seven transfer/clipboard outcomes and
-six focused editor outcomes. Linux native acceptance passes one real creation
-handoff with a causal external watcher write, two watcher scheduling regressions,
-and three all-view keyboard-focus scenarios (six outcomes, 36 seconds).
-Startup JavaScript is 216,083 gzip bytes, 500 above the prior checkpoint; this
-is not a startup speedup claim. See
-[the acceptance artifact](reviews/local-mutation-acceptance-2026-09-08.json).
+Frontend tests pass 2,267 cases plus 30 performance cases (three skipped).
+Chromium passes 84 targeted file-operation, delete/restore, clipboard, drag/undo,
+Miller-column and rename outcomes. Rust passes 517 library tests and nine
+integration tests (seven ignored); Clippy is clean. Linux native acceptance
+passes five outcomes across three specs, including real partial delete followed
+by Undo/Redo/Undo with exact file contents and listing assertions.
+Startup JavaScript is 216,714 gzip bytes, 631 above the prior checkpoint;
+this is not a startup speedup claim. See
+[the acceptance artifact](reviews/file-outcome-acceptance-2026-09-08.json).
 
-Non-permanent bulk-trash partial success reporting, global undo concurrency,
-stack-based attribution of browser teardown warnings, broader platform/product/
-soak acceptance and actual Mac half-bounce measurements remain open. The
-comprehensive review is **not complete**.
+Cross-window inverse admission, Windows shell restore completion, action-level
+recovery capabilities for UNC copies/macOS, broader platform/product/soak
+acceptance and actual Mac half-bounce measurements remain open. The comprehensive
+review is **not complete**.
 
 The branch has unpublished local commits after the published draft PR #684 tip
 `2c2a8121`. Publication is waiting for explicit approval of the public destination
@@ -2291,3 +2293,59 @@ success, so exact per-item undo/publication requires a structured IPC result;
 global undo lacks concurrent request reservation; browser `derived_inert`
 warnings need a captured stack before a lifecycle change. The latter warnings
 had no failed browser outcome and are not attributed to a cause yet.
+
+
+## Per-path file outcomes and partial undo ownership — 2026-09-08
+
+The native trash boundary now lives in `files/trash.rs`; OS launching remains in
+`system.rs`. Best-effort trash/restore returns ordered successful paths and
+per-path errors, processing duplicate input strings once. Restore builds one
+requested-path index instead of filtering and sorting the whole trash inventory
+for every input. This removes repeated traversal; no restore latency benchmark
+or startup speedup is claimed.
+
+Linux restoration uses atomic `renameat2(RENAME_NOREPLACE)` instead of creating
+a placeholder before moving the payload. Colliding files, directories and broken
+symlinks remain intact. A successful payload move remains success when metadata
+cleanup fails; later selection ignores known-missing payload records while
+retaining broken symlinks and real IO errors. Seven process-isolated Rust cases
+exercise actual filesystem receipts, collisions and repeated restoration after
+cleanup failure. Windows retains the trash crate's per-item shell operation;
+its completion contract still needs platform acceptance.
+
+Pane publication, undo and affected-parent invalidation use confirmed successes.
+A mixed local/UNC selection no longer permanently deletes its local siblings.
+Domain undo returns completed and remaining action subsets; the renderer-local
+history owner serializes inverses and settles the exact admitted entry. Rejected
+calls and partial failures remain retryable without repeating completed work.
+New commands drop obsolete redo history but retain unfinished work from an
+already-admitted redo; explicit clear retires it. An independent reviewer found
+that last race, and two before-fix failures now pass within 11 history contracts.
+Two additional explorer tests assert that partial success still publishes and
+refreshes, while preserving a subsequently navigated pane and its selection.
+
+Stack-based attribution located `derived_inert` in a rename blur completion that
+read a retired `$derived`. The ownership predicate is now a plain getter over the
+existing submission and dialog identities. Browser tests verify Enter/click-away
+rename outcomes and absence of that exact warning in all three views.
+
+Verification: 2,267 frontend plus 30 performance tests, 84 targeted Chromium
+outcomes, 517 Rust library plus nine integration tests, clean Clippy/typecheck/
+architecture lint, and five Linux native outcomes across three specs pass.
+The native partial-batch fixture captures A/B, externally removes B, then requires
+A deletion with a B error followed by Undo/Redo/Undo preserving A's bytes and B's
+absence. A first runner attempt misclassified an application `error` field as a
+WebDriver error; returning encoded JSON fixed only the fixture, with the same
+binary passing the full sequence. Mutation navigation/watch publication and real
+create/rename/trash regressions pass in the same run. Native evidence is Linux,
+default view; concurrent history interleavings are verified through store tests.
+
+Normal release startup is 44 chunks, 665,022 raw / 216,714 gzip bytes (main 90,488
+gzip), 631 gzip bytes above a4f085f8. Normal production assets contain no file
+mutation test probe content; inspection preceded the E2E-enabled native build.
+ADR 0017 and the acceptance artifact record the exact boundary and evidence.
+Remaining gaps include cross-window inverse admission, native Windows shell
+completion and capabilities for operations whose inverse cannot be recovered
+(macOS trash restoration and UNC-copy redo). Linux cleanup failure can leave a
+metadata-only entry in external trash tools. These are explicit limitations,
+not claims of complete release acceptance.

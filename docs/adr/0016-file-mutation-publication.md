@@ -55,8 +55,9 @@ holds a real successful creation, navigates to another observed directory and
 requires a causally acknowledged external write there, then returns to the origin.
 Current results and limitations are recorded in the completion ledger.
 
-Non-permanent bulk trash still reports aggregate failure despite potentially
-partial native success. Exact per-item publication needs a structured native/API
-result. Global undo execution still needs independent reservation/serialization
-under concurrent requests. These remain architectural work, not completed claims.
+At this checkpoint, non-permanent bulk trash still reported aggregate failure
+despite potentially partial native success, and undo lacked concurrent request
+reservation. [ADR 0017](0017-file-batch-outcomes.md) follows this decision with
+structured per-path outcomes and renderer-local history ownership; its platform
+and cross-window limitations remain explicit.
 No startup latency or Mac half-bounce improvement is established by this change.

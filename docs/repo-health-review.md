@@ -13,13 +13,16 @@ is the current requirement-by-requirement ledger; the earlier verification and
 handover below describe the initial foundation checkpoint, not final acceptance
 of the ongoing pass. macOS half-bounce measurements remain outstanding.
 
-The latest file-list checkpoint separates cursor and path-based range selection,
-provides one virtualized Tab stop in each view, and preserves focus across inline
-rename. Unit, Chromium and Linux native focus outcomes pass within the scopes
-recorded in the ledger. Observed directory navigation also closes the prior
-initial-list/watch handoff gap. Pending local file mutations can still publish
-against a changed pane or newer editor session; that is the next ownership pass.
-Platform startup, long-session and full release acceptance remain outstanding.
+The latest file-operation checkpoint returns per-path trash/restore outcomes and
+keeps completed effects separate from retryable work. Renderer-local undo/redo
+reserves an exact history entry, preserving newer commands and partial progress.
+Linux restore uses atomic no-replace rename and treats metadata cleanup after the
+move separately. Mixed network/local deletion preserves local trash recovery.
+The preceding checkpoint keeps mutation publication bound to its original pane
+and editor session; cursor ownership and observed navigation are also implemented.
+Evidence and scope are recorded in the ledger and ADRs 0014–0017. Cross-window
+inverse admission, platform restore capabilities, Windows/macOS acceptance,
+startup measurements and long-session release acceptance remain outstanding.
 
 The latest cache pass corrected a misleading native acceptance precondition:
 the hidden-graph test had reopened without ever retaining its target snapshot.

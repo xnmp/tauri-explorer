@@ -1,6 +1,8 @@
 /** Opt-in native E2E commands; handlers and readiness belong to one page session. */
 import { windowTabsManager } from "../lib/state/window-tabs.svelte";
 import { spawnWarmWindow } from "../lib/state/warm-window";
+import type { FileEntry } from "../lib/domain/file";
+import type { ExplorerInstance } from "../lib/state/explorer.svelte";
 
 export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise<boolean>): void {
   if (signal.aborted) return;
@@ -12,7 +14,9 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
     return value;
   };
   const listen = (name: string, handler: EventListener) => window.addEventListener(name, handler, { signal });
+  let capturedDelete: { token: string; explorer: ExplorerInstance; entries: FileEntry[] } | null = null;
   signal.addEventListener("abort", () => {
+    capturedDelete = null;
     for (const key of ["e2eHooksReady", "e2eWarmReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eWindowResult", "e2eFileOperationResult"]) {
       delete document.documentElement.dataset[key];
     }
@@ -43,16 +47,31 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   }) as EventListener);
 
   listen("e2e-file-op", ((
-    e: CustomEvent<{ op: string; name?: string; path?: string; token?: string }>,
+    e: CustomEvent<{ op: string; name?: string; path?: string; paths?: string[]; token?: string }>,
   ) => {
     const explorer = windowTabsManager.getActiveExplorer();
     if (!explorer) return;
-    const { op, name, path, token } = e.detail;
+    const { op, name, path, paths, token } = e.detail;
     const entry = path
       ? explorer.displayEntries.find((en) => en.path === path)
       : undefined;
     let pending: Promise<string | null> | undefined;
-    if (op === "new-folder" && name) {
+    if (op === "capture-delete" && token && paths) {
+      const targets = new Set(paths);
+      const entries = explorer.displayEntries.filter((entry) => targets.has(entry.path));
+      const error = entries.length === targets.size ? null : "Some requested entries are not listed";
+      capturedDelete = error ? null : { token, explorer, entries };
+      document.documentElement.dataset.e2eFileOperationResult = JSON.stringify({
+        token, status: "captured", completedAt: Date.now(), error,
+      });
+      return;
+    } else if (op === "confirm-captured-delete" && capturedDelete && capturedDelete.token === token) {
+      const captured = capturedDelete;
+      capturedDelete = null;
+      pending = captured.explorer.confirmDelete(captured.entries, false);
+    } else if (op === "undo" || op === "redo") {
+      pending = explorer[op]();
+    } else if (op === "new-folder" && name) {
       pending = explorer.createFolder(name);
     } else if (op === "rename" && entry && name) {
       explorer.startRename(entry);

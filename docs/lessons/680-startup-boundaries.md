@@ -765,3 +765,39 @@ Vite can emit an orphan dynamic-import chunk when its false guard is an imported
 constant folded after chunk extraction. Use a literal environment expression at
 the opt-in test import and inspect all normal production JavaScript, not just the
 startup graph, before claiming the test fixture is absent from release assets.
+
+### Partial filesystem outcomes must survive failed commands
+
+Bulk trash and restore are best-effort operations. Return confirmed per-path
+successes alongside failures, then use only the successful paths for row removal,
+undo and parent invalidation. A mixed local/network selection must apply location
+policy per item; one UNC path must not permanently delete its local siblings.
+
+Undo/redo reserves one exact history entry before its first await. New actions
+must not be removed by a late completion, and a partial inverse must retain only
+unfinished work for retry. A new push discards the obsolete redo branch, but an
+already-admitted redo still owns its unfinished work unless history was explicitly
+cleared. Test rejected calls, partial receipts, intervening pushes and clears
+through the public history API.
+
+Linux trash restoration has a commit boundary before metadata cleanup. The trash
+crate can successfully rename a payload and then return an error removing its
+`.trashinfo`; treating that error as failed restoration repeats completed work.
+An atomic no-replace rename establishes both collision safety and the durable
+outcome. Cleanup failure is logged separately. Ignore metadata-only records when
+selecting a later restore, using `symlink_metadata` so broken symlinks remain
+valid payloads. Process-isolate temporary XDG settings; mutating the parent Rust
+test process environment can silently send parallel tests to the wrong trash.
+
+A component-owned `$derived` is not a safe asynchronous ownership predicate after
+the component is destroyed. Stack attribution of `derived_inert` showed rename's
+blur completion reading its retired submission derivation. A plain getter over
+the existing session/submission identities remains reactive during rendering and
+can safely answer the same guard during teardown. Assert successful Enter and
+click-away rename outcomes as well as absence of that exact warning.
+
+Returning an application receipt with an own `error` field directly from
+`browser.execute` can make WebKitWebDriver treat it as a protocol error. Return
+the encoded JSON string and parse it in the runner, so an expected per-file
+failure remains assertion data. Keep token/status checks on the application-side
+DOM receipt; transport retries must never redispatch accepted filesystem work.

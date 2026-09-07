@@ -12,6 +12,7 @@ import { extractArchive as apiExtractArchive, compressToZip as apiCompressToZip,
 import { type ApiResult } from "$lib/api/common";
 import { operationsManager } from "./operations.svelte";
 import type { FileEntry } from "$lib/domain/file";
+import { fileBatchError } from "$lib/domain/file-batch-outcome";
 import type { ExplorerCoreState, UndoAction } from "./types";
 import { broadcastFileChange } from "./file-events";
 import { clipboardStore } from "./clipboard.svelte";
@@ -119,11 +120,10 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     if (entries.length === 0) return "No entries selected for delete";
     const requestedPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
-    const paths = entries.map((e) => e.path);
-    // UNC/WSL locations have no Recycle Bin — such deletes are always permanent
-    // (the backend removes them directly). Treat them as permanent here too, so
-    // we don't record a "restore from trash" undo that could never succeed.
-    const isPermanent = requestedPermanent || paths.some(isUncPath);
+    const paths = [...new Set(entries.map((e) => e.path))];
+    // UNC paths are removed by the native trash adapter; only those paths
+    // are excluded from undo, rather than making a mixed selection permanent.
+    const isPermanent = requestedPermanent;
 
     let result: { ok: boolean; error?: string };
     const removed: string[] = [];
@@ -137,23 +137,30 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       }
       result = errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true };
     } else {
-      result = entries.length === 1
-        ? await deleteEntry(paths[0])
-        : await deleteMultipleEntries(paths);
-      if (result.ok) removed.push(...paths);
+      if (paths.length === 1) {
+        result = await deleteEntry(paths[0]);
+        if (result.ok) removed.push(paths[0]);
+      } else {
+        const batch = await deleteMultipleEntries(paths);
+        if (batch.ok) {
+          removed.push(...batch.data.succeeded);
+          const error = fileBatchError(batch.data);
+          result = error ? { ok: false, error } : { ok: true };
+        } else result = batch;
+      }
     }
 
     if (removed.length > 0) {
       if (!isPermanent) {
         const groups = new Map<string, string[]>();
-        for (const path of paths) {
+        for (const path of removed.filter((path) => !isUncPath(path))) {
           const parent = parentDir(path);
           const group = groups.get(parent);
           if (group) group.push(path);
           else groups.set(parent, [path]);
         }
         const actions: UndoAction[] = [...groups].map(([parentDir, paths]) => ({ type: "delete", paths, parentDir }));
-        undoStore.push(actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" });
+        if (actions.length) undoStore.push(actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" });
       }
       const deletedPaths = new Set(removed);
       if (origin.current()) {

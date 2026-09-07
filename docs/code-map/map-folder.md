@@ -110,7 +110,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
-- `pane-mutations.ts` — accepted file mutations: durable filesystem effects, navigation-owned pane publication and exact dialog-session completion.
+- `pane-mutations.ts` — accepted file mutations: durable filesystem effects, per-path delete receipts/undo parents, navigation-owned pane publication and exact dialog-session completion.
 - `pane-refresh.ts` — flicker-free re-list of current dir (streamed chunk accumulation).
 - `pane-sessions.ts` — manager-owned pane identities and deferred explorer resources; activation opens restored directories on demand, cleanup drains loads and pane stores (ADR 0002).
 - `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.
@@ -145,7 +145,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window file clipboard (cut/copy paths).
 - `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
-- `undo.svelte.ts` — global undo/redo stack store.
+- `undo.svelte.ts` — renderer-local undo/redo history with one exact-entry reservation, branch/clear retirement and partial-progress settlement, including unfinished admitted redo work (ADR 0017).
 - `undo-helpers.ts` — pure undo/redo helpers.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
@@ -209,7 +209,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `native-resource-session.ts` — one acknowledged renderer generation shared by directory and Git IPC; only failed acknowledgement retries.
-- `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
+- `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
@@ -295,7 +295,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
 - `diff.ts` — unified-diff parser (#55).
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
-- `undo-operations.ts` — pure undo/redo execution logic.
+- `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
+- `undo-operations.ts` — pure undo/redo execution with completed/remaining action partitions for partial retries.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
 - `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
@@ -379,7 +380,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
-- `system.rs` — system commands: trash, launch context, window theme, log paths.
+- `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, environment/log-tail body assembly, and ureq transport.
 - `process_ext.rs` — suppress console-window flash for spawned children.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
@@ -418,6 +419,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
+- `trash.rs` — single/bulk trash and restore commands; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.

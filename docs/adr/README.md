@@ -22,3 +22,4 @@ decision during review.
 | [0014](0014-observed-directory-navigation.md) | Observed directory navigation and snapshot handoff | Accepted |
 | [0015](0015-file-list-keyboard-cursor.md) | File-list keyboard cursor and virtualized focus ownership | Accepted |
 | [0016](0016-file-mutation-publication.md) | File mutation publication and editor ownership | Accepted |
+| [0017](0017-file-batch-outcomes.md) | File batch outcomes and undo progress | Accepted |

@@ -6,6 +6,7 @@
  * dedicated sibling modules and are imported directly by feature consumers.
  */
 
+import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import {
@@ -227,12 +228,12 @@ export async function deleteEntry(path: string): Promise<ApiResult<void>> {
  * Move multiple files/directories to the system trash.
  *
  * @param paths - Array of full paths to delete
- * @returns Result indicating success or error message
+ * @returns Per-path outcomes; an outer error means the batch could not be classified
  */
-export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<void>> {
+export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<FileBatchOutcome>> {
   try {
-    await invoke("move_multiple_to_trash", { paths });
-    return { ok: true, data: undefined };
+    const data = await invoke<FileBatchOutcome>("move_multiple_to_trash", { paths });
+    return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -254,12 +255,12 @@ export async function deleteEntryPermanent(path: string): Promise<ApiResult<void
  * Restore files from the system trash by their original paths.
  *
  * @param paths - Array of original paths to restore
- * @returns Result indicating success or error message
+ * @returns Per-path outcomes; successful paths remain valid when siblings fail
  */
-export async function restoreFromTrash(paths: string[]): Promise<ApiResult<void>> {
+export async function restoreFromTrash(paths: string[]): Promise<ApiResult<FileBatchOutcome>> {
   try {
-    await invoke("restore_from_trash", { paths });
-    return { ok: true, data: undefined };
+    const data = await invoke<FileBatchOutcome>("restore_from_trash", { paths });
+    return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

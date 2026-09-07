@@ -717,32 +717,21 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Undo Actions
   // ===================
 
-  async function undo(): Promise<string | null> {
+  async function applyHistory(direction: "undo" | "redo"): Promise<string | null> {
     const origin = captureMutation();
     if (!origin.current()) return "Pane is closed";
-    const result = await undoStore.undo();
-    if ("error" in result) {
-      toastStore.error(result.error);
-      return result.error;
+    const result = await undoStore[direction]();
+    if (result.action) {
+      broadcastFileChange(getAffectedDirs(result.action));
+      if (!result.error) toastStore.show(`${direction === "undo" ? "Undo" : "Redo"}: ${undoActionLabel(result.action)}`, "info");
+      if (origin.current()) await refresh({ silent: true });
     }
-
-    toastStore.show(`Undo: ${undoActionLabel(result.action)}`, "info");
-    broadcastFileChange(getAffectedDirs(result.action));
-    if (origin.current()) await refresh({ silent: true });
-    return null;
+    if (result.error) toastStore.error(result.error);
+    return result.error ?? null;
   }
 
-  async function redo(): Promise<string | null> {
-    const origin = captureMutation();
-    if (!origin.current()) return "Pane is closed";
-    const result = await undoStore.redo();
-    if ("error" in result) return result.error;
-
-    toastStore.show(`Redo: ${undoActionLabel(result.action)}`, "info");
-    broadcastFileChange(getAffectedDirs(result.action));
-    if (origin.current()) await refresh({ silent: true });
-    return null;
-  }
+  const undo = () => applyHistory("undo");
+  const redo = () => applyHistory("redo");
 
   // ===================
   // Public API

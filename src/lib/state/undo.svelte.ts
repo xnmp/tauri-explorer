@@ -26,87 +26,86 @@ const undoApi: UndoApiDeps = {
 const UNDO_CHANNEL = "explorer-undo-actions";
 let channel: BroadcastChannel | null = null;
 
-function createUndoStore() {
-  let stack = $state<UndoAction[]>([]);
-  let redoStack = $state<UndoAction[]>([]);
+interface HistoryEntry { readonly action: UndoAction }
+export interface UndoCompletion { action?: UndoAction; error?: string }
 
-  // Listen for undo actions broadcast from other windows
+function snapshot(action: UndoAction): UndoAction {
+  if (action.type === "batch") return { ...action, actions: action.actions.map(snapshot) };
+  if (action.type === "delete") return { ...action, paths: [...action.paths] };
+  return { ...action };
+}
+
+function createUndoStore() {
+  let stack = $state.raw<HistoryEntry[]>([]);
+  let redoStack = $state.raw<HistoryEntry[]>([]);
+  let running = $state(false);
+  let generation = 0;
+  let branch = 0;
+
+  function push(action: UndoAction): void {
+    stack = [...stack, { action: snapshot(action) }];
+    redoStack = [];
+    branch += 1;
+  }
+
   if (typeof BroadcastChannel !== "undefined") {
     channel = new BroadcastChannel(UNDO_CHANNEL);
-    channel.onmessage = (event: MessageEvent<UndoAction>) => {
-      stack = [...stack, event.data];
-      redoStack = [];
-    };
+    channel.onmessage = (event: MessageEvent<UndoAction>) => push(event.data);
+  }
+
+  async function perform(direction: "undo" | "redo"): Promise<UndoCompletion> {
+    if (running) return { error: "An undo or redo operation is already in progress" };
+    const entry = (direction === "undo" ? stack : redoStack).at(-1);
+    if (!entry) return { error: direction === "undo" ? "Nothing to undo" : "Nothing to redo" };
+    const admittedGeneration = generation;
+    const admittedBranch = branch;
+    running = true;
+    try {
+      const result = await (direction === "undo" ? executeUndo : executeRedo)(entry.action, undoApi);
+      // Clearing history retires this reservation without cancelling accepted
+      // filesystem work. Intervening pushes invalidate the old redo branch.
+      if (generation === admittedGeneration) {
+        const settle = (entries: HistoryEntry[]) => entries.flatMap((candidate) =>
+          candidate !== entry ? [candidate] : result.remaining ? [{ action: result.remaining }] : []);
+        if (direction === "undo") {
+          stack = settle(stack);
+          if (result.completed && branch === admittedBranch) redoStack = [...redoStack, { action: result.completed }];
+        } else {
+          // A new command discards the obsolete redo branch, but cannot
+          // discard unfinished work from this already-admitted redo. Clear
+          // explicitly retires both through the generation check above.
+          redoStack = branch === admittedBranch
+            ? settle(redoStack)
+            : result.remaining ? [{ action: result.remaining }] : [];
+          if (result.completed) stack = [...stack, { action: result.completed }];
+        }
+      }
+      // A partial error still reports its completed effect for directory
+      // invalidation; the history reservation retains only unfinished work.
+      return {
+        ...(result.completed ? { action: result.completed } : {}),
+        ...(result.error ? { error: result.error } : {}),
+      };
+    } finally {
+      running = false;
+    }
   }
 
   return {
-    // Accessors
-    get canUndo() {
-      return stack.length > 0;
-    },
-    get canRedo() {
-      return redoStack.length > 0;
-    },
-    get stackSize() {
-      return stack.length;
-    },
-
-    // Actions
-    push(action: UndoAction): void {
-      stack = [...stack, action];
-      redoStack = []; // New action clears redo history
-    },
-
-    /** Push an action and broadcast it to other windows. */
+    get canUndo() { return !running && stack.length > 0; },
+    get canRedo() { return !running && redoStack.length > 0; },
+    get stackSize() { return stack.length; },
+    push,
     pushAndBroadcast(action: UndoAction): void {
-      stack = [...stack, action];
-      redoStack = [];
-      channel?.postMessage(action);
+      const owned = snapshot(action);
+      push(owned);
+      channel?.postMessage(owned);
     },
-
-    /**
-     * Execute the most recent undo action and remove it from the stack.
-     * Returns { error } on failure, { action } on success (for broadcasting affected dirs).
-     */
-    async undo(): Promise<{ error: string } | { action: UndoAction }> {
-      if (stack.length === 0) return { error: "Nothing to undo" };
-
-      const action = stack[stack.length - 1];
-      const result = await executeUndo(action, undoApi);
-
-      if (!result.ok) {
-        // Keep the failed action on the stack — a failed/partial undo must
-        // not silently discard history. The caller surfaces the error via
-        // toast and the user can retry once the cause is fixed.
-        return { error: result.error };
-      }
-
-      stack = stack.slice(0, -1);
-      redoStack = [...redoStack, action];
-      return { action };
-    },
-
-    /**
-     * Re-execute the most recently undone action.
-     * Returns { error } on failure, { action } on success (for broadcasting affected dirs).
-     */
-    async redo(): Promise<{ error: string } | { action: UndoAction }> {
-      if (redoStack.length === 0) return { error: "Nothing to redo" };
-
-      const action = redoStack[redoStack.length - 1];
-      const result = await executeRedo(action, undoApi);
-
-      if (!result.ok) return { error: result.error };
-
-      redoStack = redoStack.slice(0, -1);
-      stack = [...stack, action];
-      return { action };
-    },
-
-    /**
-     * Clear all undo/redo history.
-     */
+    undo: () => perform("undo"),
+    redo: () => perform("redo"),
     clear(): void {
+      generation += 1;
+      branch += 1;
       stack = [];
       redoStack = [];
     },

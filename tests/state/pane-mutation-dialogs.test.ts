@@ -105,7 +105,7 @@ beforeEach(() => {
   mocks.deleteMultipleEntries.mockReset();
   mocks.deleteEntryPermanent.mockReset();
   mocks.restoreFromTrash.mockReset();
-  mocks.restoreFromTrash.mockResolvedValue({ ok: true });
+  mocks.restoreFromTrash.mockImplementation(async (paths: string[]) => ({ ok: true, data: { succeeded: paths, failed: [] } }));
 });
 
 afterEach(async () => {
@@ -274,7 +274,7 @@ describe("deferred delete ownership", () => {
     const first = entry("first.txt", "/A");
     const second = entry("second.txt", "/B");
     const current = entry("current.txt", "/Active");
-    mocks.deleteMultipleEntries.mockResolvedValueOnce({ ok: true, data: undefined });
+    mocks.deleteMultipleEntries.mockImplementationOnce(async (paths: string[]) => ({ ok: true, data: { succeeded: paths, failed: [] } }));
     mocks.load.current = listing({ "/Active": [current] });
     const explorer = explorerAt("/Active", [current]);
     const changes: string[][] = [];
@@ -338,5 +338,31 @@ describe("deferred delete ownership", () => {
 
     expect(explorer.currentPath).toBe("/A");
     expect(explorer.displayEntries.map(({ path }) => path)).toEqual([survivor.path]);
+  });
+});
+
+describe("bulk trash receipts", () => {
+  it("retains failed entries and records only successful paths for undo", async () => {
+    const removed = entry("removed.txt", "/A");
+    const failed = entry("denied.txt", "/B");
+    mocks.deleteMultipleEntries.mockResolvedValueOnce({ ok: true, data: {
+      succeeded: [removed.path], failed: [{ path: failed.path, error: "Permission denied" }],
+    } });
+    const explorer = explorerAt("/A", [removed]);
+    const changes: string[][] = [];
+    const unsubscribe = subscribeToLocalFileChanges((paths) => changes.push(paths));
+    try {
+      const error = await explorer.confirmDelete([removed, failed], false);
+      expect(error).toContain("Permission denied");
+      expect(explorer.displayEntries).toEqual([]);
+      expect(changes).toEqual([["/A"]]);
+      changes.length = 0;
+      mocks.load.current = listing({ "/A": [removed] });
+      expect(await explorer.undo()).toBeNull();
+      expect(mocks.restoreFromTrash).toHaveBeenCalledWith([removed.path]);
+      expect(changes).toEqual([["/A"]]);
+    } finally {
+      unsubscribe();
+    }
   });
 });

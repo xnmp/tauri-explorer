@@ -76,9 +76,9 @@ fn e2e_webview2_browser_args() -> String {
 mod wsl;
 
 use system::{
-    get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
-    open_recycle_bin, restore_from_trash, set_window_theme, LaunchCwd,
+    get_launch_cwd, get_log_dir, log_startup_timing, open_recycle_bin, set_window_theme, LaunchCwd,
 };
+use files::trash::{move_multiple_to_trash, move_to_trash, restore_from_trash};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 // Keep this pre-webview seed aligned with the domain source of truth:

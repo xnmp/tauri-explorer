@@ -3,6 +3,7 @@
  * Provides realistic fake data when running outside of Tauri webview.
  */
 
+import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
@@ -46,6 +47,51 @@ function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boole
     modified: nextTimestamp(),
     ...(is_git_repo ? { is_git_repo: true } : {}),
   };
+}
+
+interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][] }
+const mockTrash = new Map<string, MockTrashItem[]>();
+
+function removeMockEntry(path: string, toTrash: boolean): void {
+  const parent = parentDir(path);
+  const entries = mockFiles[parent] ?? [];
+  const entry = entries.find((candidate) => candidate.path === path);
+  if (!entry) throw new Error(`Path not found: ${path}`);
+  const listings = Object.entries(mockFiles).filter(([directory]) => directory === path || directory.startsWith(`${path}/`));
+  if (toTrash) {
+    const versions = mockTrash.get(path) ?? [];
+    versions.push({ entry, listings });
+    mockTrash.set(path, versions);
+  }
+  mockFiles[parent] = entries.filter((candidate) => candidate.path !== path);
+  for (const [directory] of listings) delete mockFiles[directory];
+}
+
+function restoreMockEntry(path: string): void {
+  const versions = mockTrash.get(path);
+  const item = versions?.at(-1);
+  if (!item) throw new Error(`No matching trash item: ${path}`);
+  const parent = parentDir(path);
+  const entries = mockFiles[parent];
+  if (!entries) throw new Error(`Parent not found: ${parent}`);
+  if (entries.some((entry) => entry.path === path)) throw new Error(`Path already exists: ${path}`);
+  mockFiles[parent] = [...entries, item.entry];
+  for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
+  versions!.pop();
+  if (!versions!.length) mockTrash.delete(path);
+}
+
+function mockBatch(paths: string[], operation: (path: string) => void): FileBatchOutcome {
+  const result: FileBatchOutcome = { succeeded: [], failed: [] };
+  for (const path of new Set(paths)) {
+    try {
+      operation(path);
+      result.succeeded.push(path);
+    } catch (error) {
+      result.failed.push({ path, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return result;
 }
 
 // Mock file system structure
@@ -1483,34 +1529,11 @@ const mockCommands: Record<string, CommandHandler> = {
     throw new Error("Entry not found");
   },
 
-  move_to_trash: (args) => {
-    const path = args.path as string;
-    const parentPath = parentDir(path);
-    const entries = mockFiles[parentPath] || [];
-    const entryIndex = entries.findIndex((e) => e.path === path);
-    if (entryIndex >= 0) {
-      entries.splice(entryIndex, 1);
-    }
-    // Remove the directory's own listing so navigating to it after deletion fails
-    delete mockFiles[path];
-  },
+  move_to_trash: (args) => removeMockEntry(args.path as string, true),
 
-  move_multiple_to_trash: (args) => {
-    const paths = args.paths as string[];
-    for (const path of paths) {
-      const pp = parentDir(path);
-      const entries = mockFiles[pp] || [];
-      const entryIndex = entries.findIndex((e) => e.path === path);
-      if (entryIndex >= 0) {
-        entries.splice(entryIndex, 1);
-      }
-      delete mockFiles[path];
-    }
-  },
+  move_multiple_to_trash: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, true)),
 
-  restore_from_trash: () => {
-    // Mock: no-op in tests (trash restore is OS-level)
-  },
+  restore_from_trash: (args) => mockBatch(args.paths as string[], restoreMockEntry),
 
   copy_entry: (args) => {
     const source = args.source as string;

@@ -12,8 +12,8 @@ function mockApi(): UndoApiDeps {
     renameEntry: vi.fn().mockResolvedValue({ ok: true }),
     moveEntry: vi.fn().mockResolvedValue({ ok: true }),
     deleteEntry: vi.fn().mockResolvedValue({ ok: true }),
-    deleteMultipleEntries: vi.fn().mockResolvedValue({ ok: true }),
-    restoreFromTrash: vi.fn().mockResolvedValue({ ok: true }),
+    deleteMultipleEntries: vi.fn().mockImplementation(async (paths: string[]) => ({ ok: true, data: { succeeded: paths, failed: [] } })),
+    restoreFromTrash: vi.fn().mockImplementation(async (paths: string[]) => ({ ok: true, data: { succeeded: paths, failed: [] } })),
   };
 }
 
@@ -31,7 +31,7 @@ describe("executeUndo", () => {
 
     const result = await executeUndo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(api.renameEntry).toHaveBeenCalledWith("/docs/report.txt", "notes.txt");
   });
 
@@ -46,7 +46,7 @@ describe("executeUndo", () => {
 
     const result = await executeUndo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(api.moveEntry).toHaveBeenCalledWith("/b/file.txt", "/a");
   });
 
@@ -60,7 +60,7 @@ describe("executeUndo", () => {
 
     const result = await executeUndo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(api.deleteEntry).toHaveBeenCalledWith("/dest/file.txt");
   });
 
@@ -74,7 +74,7 @@ describe("executeUndo", () => {
 
     const result = await executeUndo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(api.restoreFromTrash).toHaveBeenCalledWith(["/a.txt", "/b.txt"]);
   });
 
@@ -101,7 +101,7 @@ describe("executeUndo", () => {
 
     const result = await executeUndo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(callOrder).toEqual(["delete-copy", "rename"]);
   });
 
@@ -123,7 +123,7 @@ describe("executeUndo", () => {
 
     const result = await executeUndo(action, api);
 
-    expect(result).toEqual({ ok: false, error: "permission denied" });
+    expect(result).toEqual({ completed: null, remaining: action, error: "permission denied" });
     // rename (index 0) should NOT have been called because the batch reverses
     // and the copy undo (index 1, processed first) failed
     expect(api.renameEntry).not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ describe("executeUndo", () => {
 
     const result = await executeUndo(action, api);
 
-    expect(result).toEqual({ ok: false, error: "file not found" });
+    expect(result).toEqual({ completed: null, remaining: action, error: "file not found" });
   });
 });
 
@@ -163,7 +163,7 @@ describe("executeRedo", () => {
 
     const result = await executeRedo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     // After undo, the file is at parentDir/oldName. Redo renames it to newName.
     expect(api.renameEntry).toHaveBeenCalledWith("/docs/notes.txt", "report.txt");
   });
@@ -179,7 +179,7 @@ describe("executeRedo", () => {
 
     const result = await executeRedo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     // After undo, file is at originalDir/fileName. Redo moves it to destDir.
     expect(api.moveEntry).toHaveBeenCalledWith("/a/file.txt", "/b");
   });
@@ -194,7 +194,7 @@ describe("executeRedo", () => {
 
     const result = await executeRedo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(api.restoreFromTrash).toHaveBeenCalledWith(["/dest/file.txt"]);
   });
 
@@ -208,7 +208,7 @@ describe("executeRedo", () => {
 
     const result = await executeRedo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(api.deleteMultipleEntries).toHaveBeenCalledWith(["/a.txt", "/b.txt"]);
   });
 
@@ -219,9 +219,9 @@ describe("executeRedo", () => {
       callOrder.push("rename");
       return { ok: true };
     });
-    (api.restoreFromTrash as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+    (api.restoreFromTrash as ReturnType<typeof vi.fn>).mockImplementation(async (paths: string[]) => {
       callOrder.push("restore");
-      return { ok: true };
+      return { ok: true, data: { succeeded: paths, failed: [] } };
     });
 
     const action: UndoAction = {
@@ -235,7 +235,7 @@ describe("executeRedo", () => {
 
     const result = await executeRedo(action, api);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ completed: action, remaining: null, error: null });
     expect(callOrder).toEqual(["rename", "restore"]);
   });
 
@@ -257,7 +257,7 @@ describe("executeRedo", () => {
 
     const result = await executeRedo(action, api);
 
-    expect(result).toEqual({ ok: false, error: "disk full" });
+    expect(result).toEqual({ completed: null, remaining: action, error: "disk full" });
     // Copy redo (restore) should not be called because rename failed first
     expect(api.restoreFromTrash).not.toHaveBeenCalled();
   });
@@ -278,6 +278,6 @@ describe("executeRedo", () => {
 
     const result = await executeRedo(action, api);
 
-    expect(result).toEqual({ ok: false, error: "target exists" });
+    expect(result).toEqual({ completed: null, remaining: action, error: "target exists" });
   });
 });

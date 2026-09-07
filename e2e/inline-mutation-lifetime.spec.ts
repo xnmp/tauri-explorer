@@ -65,5 +65,38 @@ for (const viewMode of ALL_VIEW_MODES) {
       await page.keyboard.press("Escape");
       await expect(input).toHaveCount(0);
     });
+
+    test("successful rename teardown stays single-owned without stale derived reads", async ({ page }) => {
+      const derivedWarnings: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "warning" && message.text().includes("[svelte] derived_inert")) {
+          derivedWarnings.push(message.text());
+        }
+      });
+
+      const enteredName = `entered-${viewMode}.txt`;
+      const enteredPath = `/home/user/${enteredName}`;
+      const input = page.locator(".rename-input");
+      await input.fill(enteredName);
+      await page.keyboard.press("Enter");
+
+      await expect(page.locator(`.entry-item[data-path="${enteredPath}"]`)).toBeVisible();
+      await expect(page.locator('.entry-item[data-path="/home/user/readme.txt"]')).toHaveCount(0);
+      await expect(input).toHaveCount(0);
+
+      await page.locator(`.entry-item[data-path="${enteredPath}"]`).click();
+      await page.keyboard.press("F2");
+      await expect(input).toBeFocused();
+
+      const clickAwayName = `click-away-${viewMode}.txt`;
+      const clickAwayPath = `/home/user/${clickAwayName}`;
+      await input.fill(clickAwayName);
+      await page.locator('.entry-item[data-path="/home/user/Documents"]').click();
+
+      await expect(page.locator(`.entry-item[data-path="${clickAwayPath}"]`)).toBeVisible();
+      await expect(page.locator(`.entry-item[data-path="${enteredPath}"]`)).toHaveCount(0);
+      await expect(input).toHaveCount(0);
+      expect(derivedWarnings).toEqual([]);
+    });
   });
 }

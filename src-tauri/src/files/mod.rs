@@ -10,6 +10,7 @@ pub mod file_ops;
 pub mod fs_watcher;
 pub mod git_status;
 pub mod shortcuts;
+pub mod trash;
 mod watch_observation;
 
 use chrono::{DateTime, Local};

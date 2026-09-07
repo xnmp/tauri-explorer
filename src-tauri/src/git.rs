@@ -1094,7 +1094,7 @@ pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Resul
         let mut failures = Vec::new();
         for relative in relative_paths {
             let path = workdir.join(relative);
-            if let Err(error) = crate::system::trash_or_remove(&path) {
+            if let Err(error) = crate::files::trash::trash_or_remove(&path) {
                 failures.push(format!("{} ({error})", path.display()));
             }
         }

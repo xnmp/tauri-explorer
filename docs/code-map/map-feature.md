@@ -169,12 +169,13 @@ backend for E2E/browser).
 
 ## Delete / trash / undo
 
-- `components/DeleteDialog.svelte` — confirm permanent vs trash
-- `state/undo.svelte.ts` — `undoStore` op-history stack
-- `state/undo-helpers.ts`, `domain/undo-operations.ts` — invertible op descriptors
-- `api/files.ts` (moveToTrash, moveMultipleToTrash, deleteEntryPermanent, restoreFromTrash)
-- `src-tauri/src/files/file_ops.rs`
-- FLOW: delete → trash → push inverse (restore) onto undoStore → Ctrl+Z pops and re-invokes.
+- `components/DeleteDialog.svelte` — confirms explicit permanent deletion and explains mixed local/UNC disposition.
+- `state/pane-mutations.ts` — publishes only confirmed deleted paths, groups their actual parents and excludes permanently removed UNC paths from undo.
+- `state/undo.svelte.ts` — renderer-local history and exact-entry undo/redo reservation; settles completed and remaining work without consuming newer history.
+- `state/undo-helpers.ts`, `domain/undo-operations.ts` — invertible descriptors, ordered batch execution and per-path completed/remaining partitions.
+- `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed` receipts for `deleteMultipleEntries` and `restoreFromTrash`.
+- `src-tauri/src/files/trash.rs` — trash/restore commands, UNC removal and Linux `renameat2(RENAME_NOREPLACE)` restore boundary; `files/file_ops.rs` owns explicit permanent deletion.
+- FLOW: delete → native per-path outcome → publish/push inverse for confirmed successes → Ctrl+Z reserves the exact history entry → restore outcome moves completed paths to redo and retains only unfinished paths for retry (ADR 0017).
 
 ## Thumbnails
 

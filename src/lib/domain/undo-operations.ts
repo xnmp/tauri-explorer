@@ -7,6 +7,7 @@
  */
 
 import { parentDir, basename, joinPath } from "./path";
+import { fileBatchError, type FileBatchResult } from "./file-batch-outcome";
 
 /** Undoable action types. Lives in domain — these describe invertible
  *  filesystem operations, independent of any store (#278). */
@@ -25,74 +26,86 @@ export interface UndoApiDeps {
   renameEntry: (path: string, newName: string) => Promise<UndoResult>;
   moveEntry: (source: string, destDir: string) => Promise<UndoResult>;
   deleteEntry: (path: string) => Promise<UndoResult>;
-  deleteMultipleEntries: (paths: string[]) => Promise<UndoResult>;
-  restoreFromTrash: (paths: string[]) => Promise<UndoResult>;
+  deleteMultipleEntries: (paths: string[]) => Promise<FileBatchResult>;
+  restoreFromTrash: (paths: string[]) => Promise<FileBatchResult>;
 }
 
-/**
- * Execute the reverse of the given action (undo).
- * Batch actions are undone in reverse order; failure at any step aborts.
- */
-export async function executeUndo(
-  action: UndoAction,
-  api: UndoApiDeps
-): Promise<UndoResult> {
-  switch (action.type) {
-    case "rename":
-      return api.renameEntry(action.path, action.oldName);
-    case "move":
-      return api.moveEntry(action.destPath, action.originalDir);
-    case "copy":
-      return api.deleteEntry(action.copiedPath);
-    case "batch": {
-      for (let i = action.actions.length - 1; i >= 0; i--) {
-        const result = await executeUndo(action.actions[i], api);
-        if (!result.ok) return result;
+/** An inverse may make progress before failing. Retry only `remaining`. */
+export interface UndoExecution {
+  completed: UndoAction | null;
+  remaining: UndoAction | null;
+  error: string | null;
+}
+
+type Direction = "undo" | "redo";
+
+function settled(action: UndoAction, result: UndoResult): UndoExecution {
+  return result.ok
+    ? { completed: action, remaining: null, error: null }
+    : { completed: null, remaining: action, error: result.error };
+}
+
+function batchAction(actions: (UndoAction | null)[], label: string): UndoAction | null {
+  const retained = actions.filter((action): action is UndoAction => action !== null);
+  return retained.length ? { type: "batch", actions: retained, label } : null;
+}
+
+async function execute(action: UndoAction, api: UndoApiDeps, direction: Direction): Promise<UndoExecution> {
+  // Batch execution stops on failure, but retains the exact completed subset
+  // in original command order so the opposite direction remains composable.
+  if (action.type === "batch") {
+    const completed: (UndoAction | null)[] = action.actions.map(() => null);
+    const remaining: (UndoAction | null)[] = [...action.actions];
+    const indices = action.actions.map((_, index) => index);
+    if (direction === "undo") indices.reverse();
+    let error: string | null = null;
+    for (const index of indices) {
+      const result = await execute(action.actions[index], api, direction);
+      completed[index] = result.completed;
+      remaining[index] = result.remaining;
+      if (result.error) {
+        error = result.error;
+        break;
       }
-      return { ok: true };
     }
-    case "delete":
-      return api.restoreFromTrash(action.paths);
-    default: {
-      const _exhaustive: never = action;
-      return { ok: false, error: `Unknown undo action type: ${(_exhaustive as UndoAction).type}` };
+    return { completed: batchAction(completed, action.label), remaining: batchAction(remaining, action.label), error };
+  }
+
+  try {
+    switch (action.type) {
+      case "rename": {
+        const path = direction === "undo" ? action.path : joinPath(parentDir(action.path), action.oldName);
+        return settled(action, await api.renameEntry(path, direction === "undo" ? action.oldName : action.newName));
+      }
+      case "move": {
+        const path = direction === "undo" ? action.destPath : joinPath(action.originalDir, basename(action.destPath));
+        return settled(action, await api.moveEntry(path, direction === "undo" ? action.originalDir : parentDir(action.destPath)));
+      }
+      case "copy": {
+        if (direction === "undo") return settled(action, await api.deleteEntry(action.copiedPath));
+        const result = await api.restoreFromTrash([action.copiedPath]);
+        if (!result.ok) return settled(action, result);
+        return result.data.succeeded.includes(action.copiedPath)
+          ? settled(action, { ok: true })
+          : settled(action, { ok: false, error: fileBatchError(result.data) ?? "File was not restored" });
+      }
+      case "delete": {
+        const result = await (direction === "undo" ? api.restoreFromTrash : api.deleteMultipleEntries)(action.paths);
+        if (!result.ok) return settled(action, result);
+        const succeeded = new Set(result.data.succeeded);
+        const completedPaths = action.paths.filter((path) => succeeded.has(path));
+        const remainingPaths = action.paths.filter((path) => !succeeded.has(path));
+        return {
+          completed: completedPaths.length ? { ...action, paths: completedPaths } : null,
+          remaining: remainingPaths.length ? { ...action, paths: remainingPaths } : null,
+          error: fileBatchError(result.data) ?? (remainingPaths.length ? "Some files were not processed" : null),
+        };
+      }
     }
+  } catch (error) {
+    return settled(action, { ok: false, error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-/**
- * Re-execute the original operation (redo = reverse of undo).
- * Batch actions are redone in original order; failure at any step aborts.
- */
-export async function executeRedo(
-  action: UndoAction,
-  api: UndoApiDeps
-): Promise<UndoResult> {
-  switch (action.type) {
-    case "rename": {
-      const currentPath = joinPath(parentDir(action.path), action.oldName);
-      return api.renameEntry(currentPath, action.newName);
-    }
-    case "move": {
-      const fileName = basename(action.destPath);
-      const currentPath = joinPath(action.originalDir, fileName);
-      const destDir = parentDir(action.destPath);
-      return api.moveEntry(currentPath, destDir);
-    }
-    case "copy":
-      return api.restoreFromTrash([action.copiedPath]);
-    case "batch": {
-      for (const a of action.actions) {
-        const result = await executeRedo(a, api);
-        if (!result.ok) return result;
-      }
-      return { ok: true };
-    }
-    case "delete":
-      return api.deleteMultipleEntries(action.paths);
-    default: {
-      const _exhaustive: never = action;
-      return { ok: false, error: `Unknown redo action type: ${(_exhaustive as UndoAction).type}` };
-    }
-  }
-}
+export const executeUndo = (action: UndoAction, api: UndoApiDeps): Promise<UndoExecution> => execute(action, api, "undo");
+export const executeRedo = (action: UndoAction, api: UndoApiDeps): Promise<UndoExecution> => execute(action, api, "redo");

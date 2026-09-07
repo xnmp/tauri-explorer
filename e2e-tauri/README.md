@@ -87,3 +87,13 @@ window remains functional. It needs the default app Info logging. Rust service
 and mock-window tests separately cover observer drops, shared coverage, recycled
 labels, queued acquisition and registration racing destruction. This is native
 window destruction coverage, not renderer-crash recovery or OS watch-FD drainage.
+
+
+`git-watch-renderer-crash.spec.ts` is Linux-only. It matches the exact application
+executable and isolated `XDG_CONFIG_HOME`, kills only that process's descendant
+WebKit renderers, then checks repository-qualified worker reclamation while the
+native process stays alive. The blank phase issues no DOM or WebDriver commands.
+WebKitWebDriver deletes its automation session when the renderer crashes, so this
+spec cannot assert recovery of the same application. The normal reload scenario
+in `git-watch-window-lifetime.spec.ts` separately exercises renewed ownership and
+real mutation delivery; it must not be presented as crash-recovery acceptance.

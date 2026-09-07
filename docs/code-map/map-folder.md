@@ -390,6 +390,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_watch.rs` — lazy Tauri observation adapter; concrete-window resource-table identity, acknowledged renderer sessions, page/destruction retirement, native factory and process shutdown.
+- `git_watch/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `git_watch/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
 - `git_watch/service.rs` — dedicated worker owns window-scoped leases, shared observers, cancellation/reclamation, coalesced event flags, debounce/recovery deadlines and invalidation delivery retries.
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.

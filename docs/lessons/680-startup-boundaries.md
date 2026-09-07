@@ -469,4 +469,27 @@ The frontend caches its acknowledged session per JS realm; only a failed handsha
 can retry. A rejected watch cannot renew the generation and adopt another page's
 lifetime. Page hooks inspect existing slots so sessions without Git stay lazy.
 Test repeated same-window reload, not only closing the window or application. A
-blank process crash without reload still needs platform-native termination handling.
+blank process crash without reload requires a separate native termination signal.
+
+
+### Native listener acknowledgement must survive cancellation
+
+Linux WebKit renderer death leaves the native Window alive, so neither JavaScript
+cleanup nor window destruction is sufficient. Register a native termination handler
+before acknowledging Git ownership. On WebView2, only main-renderer/browser exits
+invalidate the owning document; subframes, GPU failures and unresponsiveness do not.
+
+An async OnceCell initializer can be cancelled after it schedules native registration,
+losing the successful-install state and duplicating handlers on retry. Record success
+inside the serialized UI callback itself, check again there before installation, and
+only then acknowledge through the oneshot channel. Native handlers should capture a
+weak owner; acquisition must enforce registration even if a raw IPC caller bypasses
+the JS handshake. Read the current generation after registration, because loading or
+closing may have happened while the request waited on the UI thread.
+
+WebKitWebDriver destroys its automation session when a renderer crashes. A passing
+blank-page cleanup assertion followed by an invalid-session error on reload is not
+crash-recovery evidence. Assert cleanup through native diagnostics without any DOM
+calls, retain the recovery gap, and test ordinary reload separately. Use fresh unique
+repository roots when proving renewed observation, so delayed old-root events cannot
+satisfy the new mutation's receipt assertion.

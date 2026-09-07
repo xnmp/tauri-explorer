@@ -9,7 +9,7 @@ import { navigateTo, domTexts } from "./helpers";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-watch-owner-"));
 const repository = path.join(scratch, "repository");
-const reloadRepository = path.join(scratch, "reload-repository");
+const reloadRepository = (generation: number) => path.join(scratch, `reload-repository-${generation}`);
 let mainHandle: string;
 
 async function operation(op: string, target?: string): Promise<unknown> {
@@ -34,7 +34,7 @@ function readLogs(directory: string): string {
 describe("Git observation native window ownership", () => {
   before(() => {
     execFileSync("git", ["init", "--quiet", repository]);
-    execFileSync("git", ["init", "--quiet", reloadRepository]);
+    execFileSync("git", ["init", "--quiet", reloadRepository(0)]);
     fs.writeFileSync(path.join(scratch, "survivor.txt"), "main window stays usable");
   });
   after(async () => {
@@ -94,10 +94,11 @@ describe("Git observation native window ownership", () => {
   it("reclaims an abandoned renderer lease when the same native window reloads", async () => {
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
+    let acquired = await operation("watch-acquire", reloadRepository(0)) as {
+      lease: { id: string; repoRoot: string }; logDir: string;
+    };
     for (let cycle = 0; cycle < 2; cycle++) {
-      const { lease, logDir } = await operation("watch-acquire", reloadRepository) as {
-        lease: { id: string; repoRoot: string }; logDir: string;
-      };
+      const { lease, logDir } = acquired;
       const reclamation = `Reclaimed Git observation for closed native owner: ${lease.repoRoot}`;
       const count = () => readLogs(logDir).split(reclamation).length - 1;
       const before = count();
@@ -110,6 +111,24 @@ describe("Git observation native window ownership", () => {
       await browser.waitUntil(() => count() > before, {
         timeout: 10_000, timeoutMsg: "reload retained the previous renderer's Git observation",
       });
+      const currentRepository = reloadRepository(cycle + 1);
+      execFileSync("git", ["init", "--quiet", currentRepository]);
+      acquired = await operation("watch-acquire", currentRepository) as {
+        lease: { id: string; repoRoot: string }; logDir: string;
+      };
+      expect(acquired.lease.id).toMatch(/^\d+$/);
+      const mutationStartedAt = Date.now();
+      fs.writeFileSync(path.join(currentRepository, `observed-after-reload-${cycle + 1}.txt`), String(cycle));
+      await browser.waitUntil(async () => {
+        const changes = await browser.execute(() =>
+          JSON.parse(document.documentElement.dataset.e2eGitChanges ?? "[]") as {
+            repoRoot: string; source: string; receivedAt: number;
+          }[]);
+        return changes.some(change => change.repoRoot === acquired.lease.repoRoot
+          && change.source === "watcher" && change.receivedAt >= mutationStartedAt);
+      }, { timeout: 20_000, timeoutMsg: `renderer ${cycle + 1} did not receive the real Git mutation` });
+      await navigateTo(currentRepository);
+      expect(await domTexts(".entry-name")).toContain(`observed-after-reload-${cycle + 1}.txt`);
     }
     // Visual evidence establishes post-reload usability; reclamation itself is
     // established by the acknowledgements and worker log above, not this image.

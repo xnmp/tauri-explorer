@@ -540,3 +540,16 @@ window/cache cases, 2,130 frontend tests plus30perf, 448 Rust tests, strict Clip
 typecheck, architecture/map checks and payload budgets pass. ADR0009 and the ledger
 state the evidence limits. An indefinitely blank renderer crash still needs native
 termination handling; full platform/integration/startup acceptance remains open.
+
+
+Native termination checkpoint (2026-09-07): this supersedes the blank-renderer gap
+in the preceding checkpoint. Native renderer termination now retires Git ownership
+without waiting for page cleanup or reload. Registration is lazy, acknowledged and
+cancellation-safe; direct IPC cannot bypass it. The Linux regression fails before
+the fix and passes twice afterward while the page remains blank and the native
+application process exists. Ordinary reload separately proves fresh native mutation
+delivery. Rust449/7ignored, strict Clippy, typecheck and architecture checks pass.
+Same-process crash recovery is still unverified because WebKitWebDriver deletes its
+session after a renderer crash. Windows/Apple runtime acceptance, broader retention
+and integration, and actual Mac half-bounce measurements remain open; ADR0009 and
+the current completion ledger record evidence and platform limits.

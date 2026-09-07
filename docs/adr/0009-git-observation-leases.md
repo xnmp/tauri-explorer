@@ -94,11 +94,32 @@ owner is retired. A destroyed realm cannot consume a late session acknowledgemen
 and issue new watch requests with it. The existing dedicated worker/coalesced wake
 handles retirement; there is no heartbeat or periodic idle work.
 
-A crash followed by reload is covered at that replacement boundary. A crash which
-leaves the renderer blank indefinitely remains open: Tauri's general API has no
-cross-platform process-termination callback. Apple has a dedicated hook; native
-WebKitGTK/WebView2 termination integration and real acceptance remain separate work.
+Renderer termination also retires ownership while the page stays blank. Linux
+uses WebKitGTK's `web-process-terminated` signal. WebView2 handles only
+`RenderProcessExited` and `BrowserProcessExited`: a subframe/GPU failure or a
+renderer that is merely unresponsive does not invalidate the owning document.
+Apple uses Tauri's global `on_web_content_process_terminate` hook to inspect an
+existing slot without allocating unused ownership.
+
+Linux/Windows register their native listener only at the first `git_watch_session`
+request. Main-thread installation must acknowledge success before the session is
+read. The callback checks and records successful installation inside the serialized
+UI-thread dispatch, so cancelling the awaiting command cannot lose that state or
+install a second handler on retry. Scheduling, registration and dropped-callback
+failures reject acknowledgement; failed registration may retry. Acquisition also
+checks successful registration in the native adapter, so a direct caller cannot
+bypass this guarantee by supplying the predictable initial generation ID.
+Native handlers
+capture only a weak slot and live until the native Webview is destroyed; they do
+not retain the window, worker or native control. Retirement releases the scope
+lock before requesting a worker wake. Recovery reloads may advance the generation
+again; old IDs stay rejected. This assumes one native Webview per Window for its
+whole lifetime; recreating the Webview within a surviving Window would require
+moving installation state to the concrete Webview incarnation.
+
 Large-repository cost, OS watch-resource drainage, and Windows/macOS lifecycle
-acceptance also remain open. This decision does not establish Mac startup latency.
-References: [Tauri page-load hook](https://docs.rs/tauri/2.11.5/tauri/struct.Builder.html#method.on_page_load)
-and [Apple process termination hook](https://docs.rs/tauri/2.11.5/tauri/struct.Builder.html#method.on_web_content_process_terminate).
+acceptance remain open. This decision does not establish Mac startup latency.
+References: [Tauri page-load hook](https://docs.rs/tauri/2.11.5/tauri/struct.Builder.html#method.on_page_load),
+[Apple process termination hook](https://docs.rs/tauri/2.11.5/tauri/struct.Builder.html#method.on_web_content_process_terminate),
+[WebKitGTK termination signal](https://webkitgtk.org/reference/webkit2gtk/stable/signal.WebView.web-process-terminated.html)
+and [WebView2 process failure events](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/process-related-events).

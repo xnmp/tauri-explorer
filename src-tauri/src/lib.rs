@@ -158,6 +158,10 @@ pub fn run(launch_dir: Option<String>) {
         .unwrap_or(log::LevelFilter::Info);
 
     let builder = tauri::Builder::default();
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    let builder = builder.on_web_content_process_terminate(|webview| {
+        git_watch::on_page_started(&webview.window());
+    });
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.

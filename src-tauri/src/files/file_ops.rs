@@ -4,6 +4,9 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use super::entry_plan::validate_entry_name;
+use super::entry_plan::EntryPlan;
 use super::publication::{rename_noreplace, StagedEntry};
 use super::{
     mutation::{FileMutationReceipt, FileMutationRecovery},
@@ -26,24 +29,6 @@ const COPY_BUF_SIZE: usize = 1024 * 1024;
 /// symlinks are still treated as existing entries.
 fn entry_exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
-}
-
-/// Validate a user-supplied entry name: must be non-empty and must not
-/// contain path separators or traversal components.
-fn validate_entry_name(name: &str) -> Result<(), AppError> {
-    if name.is_empty() {
-        return Err(AppError::InvalidPath("Name cannot be empty".to_string()));
-    }
-    if name.contains('/') || name.contains('\\') {
-        return Err(AppError::InvalidPath(format!(
-            "Name cannot contain path separators: {}",
-            name
-        )));
-    }
-    if name == "." || name == ".." {
-        return Err(AppError::InvalidPath(format!("Invalid name: {}", name)));
-    }
-    Ok(())
 }
 
 /// True when two paths refer to the same filesystem entry.
@@ -207,109 +192,153 @@ pub async fn create_directory(
     parent_path: String,
     name: String,
 ) -> Result<FileMutationReceipt, AppError> {
-    validate_entry_name(&name)?;
-
-    run_blocking(move || {
-        let parent = PathBuf::from(&parent_path);
-        if !parent.exists() {
-            return Err(AppError::NotFound(format!(
-                "Parent directory does not exist: {}",
-                parent_path
-            )));
-        }
-
-        let new_path = parent.join(&name);
-        if entry_exists(&new_path) {
-            return Err(AppError::AlreadyExists(
-                new_path.to_string_lossy().to_string(),
-            ));
-        }
-
-        fs::create_dir(&new_path)?;
-        log::info!("Created directory: {:?}", name);
-
-        Ok(FileMutationReceipt::committed(&new_path))
-    })
-    .await
+    execute_entry(EntryPlan::create_directory(parent_path, name)?).await
 }
 
-/// Create a new empty file (touch). Fails if a file/dir already exists there.
+/// Create a new empty file. Fails if any entry already occupies the name.
 pub async fn create_empty_file(
     parent_path: String,
     name: String,
 ) -> Result<FileMutationReceipt, AppError> {
-    validate_entry_name(&name)?;
-
-    run_blocking(move || {
-        let parent = PathBuf::from(&parent_path);
-        if !parent.exists() {
-            return Err(AppError::NotFound(format!(
-                "Parent directory does not exist: {}",
-                parent_path
-            )));
-        }
-
-        let new_path = parent.join(&name);
-        if entry_exists(&new_path) {
-            return Err(AppError::AlreadyExists(
-                new_path.to_string_lossy().to_string(),
-            ));
-        }
-
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&new_path)?;
-        log::info!("Created empty file: {:?}", name);
-
-        Ok(FileMutationReceipt::committed(&new_path))
-    })
-    .await
+    execute_entry(EntryPlan::create_empty_file(parent_path, name)?).await
 }
 
-/// True when renaming only changes the filename's case and both paths refer
-/// to the same entry. On case-insensitive filesystems the target appears to
-/// exist even though it is the source itself; such renames must be allowed.
+/// True when renaming changes only case and both names refer to the same entry.
 fn is_case_only_rename(source: &Path, target: &Path, new_name: &str) -> bool {
     let same_name_ci = source
         .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase() == new_name.to_lowercase())
+        .map(|name| name.to_string_lossy().to_lowercase() == new_name.to_lowercase())
         .unwrap_or(false);
     same_name_ci && is_same_entry(source, target)
 }
 
-/// Rename a file or directory.
 pub async fn rename_entry(path: String, new_name: String) -> Result<FileMutationReceipt, AppError> {
-    validate_entry_name(&new_name)?;
+    execute_entry(EntryPlan::rename(path, new_name)?).await
+}
 
-    run_blocking(move || {
-        let source = PathBuf::from(&path);
-        if !entry_exists(&source) {
-            return Err(AppError::NotFound(path.clone()));
-        }
+/// One worker dispatch for the exact request inspected by the history layer.
+pub(crate) async fn execute_entry(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
+    execute_entry_owned((), plan).await
+}
 
-        let parent = source.parent().ok_or_else(|| {
-            AppError::InvalidPath(format!("Cannot get parent directory of: {}", path))
-        })?;
+pub(crate) async fn execute_entry_owned<O: Send + 'static>(
+    owner: O,
+    plan: EntryPlan,
+) -> Result<FileMutationReceipt, AppError> {
+    super::worker::run_blocking_owned(owner, move || execute_entry_impl(plan)).await
+}
 
-        let target = parent.join(&new_name);
-        let target_exists = entry_exists(&target);
-        let case_only = target_exists && is_case_only_rename(&source, &target, &new_name);
-        if target_exists && !case_only {
-            return Err(AppError::AlreadyExists(
-                target.to_string_lossy().to_string(),
-            ));
-        }
-
-        if case_only {
-            fs::rename(&source, &target)?;
+fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
+    use super::entry_plan::Request;
+    let (target, request, presentation) = plan.into_parts();
+    let absent = || {
+        if entry_exists(&target) {
+            Err(AppError::AlreadyExists(
+                target.to_string_lossy().into_owned(),
+            ))
         } else {
-            rename_noreplace(&source, &target)?;
+            Ok(())
         }
-
-        Ok(FileMutationReceipt::committed(&target))
-    })
-    .await
+    };
+    match request {
+        Request::CreateDirectory | Request::CreateEmptyFile => {
+            let parent = target
+                .parent()
+                .ok_or_else(|| AppError::InvalidPath(target.to_string_lossy().into_owned()))?;
+            if !parent.exists() {
+                return Err(AppError::NotFound(format!(
+                    "Parent directory does not exist: {}",
+                    parent.display()
+                )));
+            }
+            absent()?;
+            if matches!(request, Request::CreateDirectory) {
+                fs::create_dir(&target)?;
+            } else {
+                fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&target)?;
+            }
+            log::info!("Created entry: {:?}", target.file_name());
+        }
+        Request::Rename {
+            source, new_name, ..
+        } => {
+            if !entry_exists(&source) {
+                return Err(AppError::NotFound(source.to_string_lossy().into_owned()));
+            }
+            let target_exists = entry_exists(&target);
+            let case_only = target_exists && is_case_only_rename(&source, &target, &new_name);
+            if target_exists && !case_only {
+                return Err(AppError::AlreadyExists(
+                    target.to_string_lossy().into_owned(),
+                ));
+            }
+            if case_only {
+                fs::rename(&source, &target)?;
+            } else {
+                rename_noreplace(&source, &target)?;
+            }
+        }
+        Request::WriteText { content } => {
+            absent()?;
+            let parent = target
+                .parent()
+                .ok_or_else(|| AppError::InvalidPath(target.to_string_lossy().into_owned()))?;
+            StagedEntry::prepare(parent, |payload| {
+                let mut writer = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(payload)?;
+                writer.write_all(content.as_bytes())?;
+                writer.flush()?;
+                Ok(())
+            })?
+            .publish(&target)?;
+        }
+        Request::Symlink {
+            target: link_target,
+            probe_target,
+        } => {
+            if !entry_exists(probe_target.as_deref().unwrap_or(&link_target)) {
+                return Err(AppError::NotFound(
+                    link_target.to_string_lossy().into_owned(),
+                ));
+            }
+            absent()?;
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&link_target, &target)?;
+            #[cfg(windows)]
+            if link_target.is_dir() {
+                std::os::windows::fs::symlink_dir(&link_target, &target)?;
+            } else {
+                std::os::windows::fs::symlink_file(&link_target, &target)?;
+            }
+        }
+    }
+    let mut receipt = FileMutationReceipt::committed(&target);
+    if let Some(presentation) = presentation {
+        // Preserve the pane's alias spelling only while it still denotes the
+        // committed parent. History uses the bound plan's target independently.
+        let same_parent =
+            presentation
+                .parent()
+                .zip(target.parent())
+                .is_some_and(|(requested, actual)| {
+                    fs::canonicalize(requested)
+                        .ok()
+                        .zip(fs::canonicalize(actual).ok())
+                        .is_some_and(|(requested, actual)| requested == actual)
+                });
+        if same_parent {
+            receipt.path = presentation.to_string_lossy().into_owned();
+            if let Some(entry) = &mut receipt.entry {
+                entry.path = receipt.path.clone();
+            }
+        }
+    }
+    Ok(receipt)
 }
 
 /// Generate a unique copy name like "name - Copy.ext" or "name - Copy (2).ext".
@@ -354,103 +383,182 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
     unreachable!("exhausted copy name candidates")
 }
 
-/// Copy a file or directory.
-///
-/// If overwrite is true and target exists, replaces the existing entry.
-/// When `job_id` is supplied, the copy streams its bytes and emits
-/// `copy-progress` events keyed by that id, and can be cancelled mid-file via
-/// `cancel_copy` — so a multi-gigabyte single-file copy shows real progress and
-/// stays interruptible instead of freezing the operation dialog at 0%.
-#[tauri::command]
-pub async fn copy_entry(
-    app: tauri::AppHandle,
-    source: String,
-    dest_dir: String,
-    overwrite: Option<bool>,
-    job_id: Option<u64>,
-) -> Result<FileMutationReceipt, AppError> {
-    run_blocking(move || copy_entry_impl(Some(&app), source, dest_dir, overwrite, job_id)).await
-}
-
 /// Cancel a running copy job. The pending `copy_entry` call fails with
-/// "Copy cancelled" and any partially-written copy is cleaned up.
+/// "Copy cancelled" before durable work; interrupted replacements retain their
+/// artifacts and report recovery instead of promising a path-based rollback.
 #[tauri::command]
 pub async fn cancel_copy(job_id: u64) {
     COPY_TASKS.cancel(job_id);
 }
 
-fn copy_entry_impl(
+#[cfg(any(test, not(target_os = "linux")))]
+pub(crate) fn copy_entry_impl(
     app: Option<&tauri::AppHandle>,
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
     job_id: Option<u64>,
 ) -> Result<FileMutationReceipt, AppError> {
-    let source_path = PathBuf::from(&source);
-    let dest_dir_path = PathBuf::from(&dest_dir);
+    copy_entry_with(
+        app,
+        source,
+        dest_dir,
+        overwrite,
+        job_id,
+        copy_entry_overwriting,
+    )
+}
 
-    if !entry_exists(&source_path) {
-        return Err(AppError::NotFound(source.clone()));
-    }
-
-    if !dest_dir_path.exists() {
-        return Err(AppError::NotFound(format!(
-            "Destination directory does not exist: {}",
-            dest_dir
-        )));
-    }
-
-    let source_name = source_path
-        .file_name()
-        .ok_or_else(|| AppError::InvalidPath("Invalid source path".to_string()))?
-        .to_string_lossy()
-        .to_string();
-
-    reject_dir_into_itself(&source_path, &dest_dir_path)?;
-
-    // Register cancellation + size the copy for progress only when a job id is
-    // attached; a plain internal copy pays neither the walk nor event overhead.
-    let cancelled = job_id.map(|id| COPY_TASKS.start_with_id(id)).transpose()?;
-    let total_bytes = if cancelled.is_some() {
-        let mut fc = 0;
-        let mut tb = 0;
-        estimate_path_size(&source_path, &mut fc, &mut tb);
-        tb
-    } else {
-        0
-    };
+pub(crate) fn copy_entry_with(
+    app: Option<&tauri::AppHandle>,
+    source: String,
+    dest_dir: String,
+    overwrite: Option<bool>,
+    job_id: Option<u64>,
+    replace: impl FnOnce(
+        &Path,
+        &Path,
+        &Path,
+        &mut ProgressTracker,
+    ) -> Result<FileMutationReceipt, AppError>,
+) -> Result<FileMutationReceipt, AppError> {
+    // A session supplies its own tracker; standalone calls own their task here.
+    // Never walk a tree just to size progress before copying its first byte.
+    let registration = job_id.map(|id| COPY_TASKS.register(id)).transpose()?;
+    let cancelled = registration.as_ref().map(|job| job.cancelled());
+    let total_bytes = fs::symlink_metadata(&source)
+        .ok()
+        .filter(|meta| !meta.is_dir())
+        .map_or(0, |meta| meta.len());
     let mut tracker = ProgressTracker::new(
-        // Suppress events when there's no job so a plain copy stays silent.
         if job_id.is_some() { app } else { None },
         "copy-progress",
         "Copy cancelled",
         job_id.unwrap_or(0),
         total_bytes,
-        cancelled.as_deref(),
+        cancelled,
     );
-
-    let result = copy_entry_inner(
-        &source_path,
-        &dest_dir_path,
-        &source_name,
+    copy_entry_tracked(
+        Path::new(&source),
+        Path::new(&dest_dir),
         overwrite,
-        &source,
         &mut tracker,
-    );
-
-    if let Some(id) = job_id {
-        COPY_TASKS.cleanup(id);
-    }
-    result
+        None,
+        replace,
+    )
 }
 
+/// Execute one child using its session's cancellation/progress identity.
+/// Naming is resolved here against effects of previously completed children.
+pub(crate) fn copy_entry_tracked(
+    source_path: &Path,
+    dest_dir_path: &Path,
+    overwrite: Option<bool>,
+    tracker: &mut ProgressTracker,
+    observation: Option<&super::mutation::CopyObservation>,
+    replace: impl FnOnce(
+        &Path,
+        &Path,
+        &Path,
+        &mut ProgressTracker,
+    ) -> Result<FileMutationReceipt, AppError>,
+) -> Result<FileMutationReceipt, AppError> {
+    tracker.check_cancelled()?;
+    if !entry_exists(source_path) {
+        return Err(AppError::NotFound(
+            source_path.to_string_lossy().into_owned(),
+        ));
+    }
+    if !dest_dir_path.is_dir() {
+        return Err(AppError::NotFound(format!(
+            "Destination directory does not exist: {}",
+            dest_dir_path.display()
+        )));
+    }
+    let source_name = source_path
+        .file_name()
+        .ok_or_else(|| AppError::InvalidPath("Invalid source path".into()))?
+        .to_string_lossy();
+    reject_dir_into_itself(source_path, dest_dir_path)?;
+    #[cfg(target_os = "linux")]
+    validate_copy_observation(source_path, dest_dir_path, overwrite, observation)?;
+    copy_entry_inner_with(
+        source_path,
+        dest_dir_path,
+        &source_name,
+        overwrite,
+        observation,
+        tracker,
+        replace,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn validate_copy_observation(
+    source_path: &Path,
+    dest_dir_path: &Path,
+    overwrite: Option<bool>,
+    observation: Option<&super::mutation::CopyObservation>,
+) -> Result<(), AppError> {
+    if let Some(observation) = observation {
+        use super::{
+            file_identity::{of_file, version_from_metadata},
+            native_directory::Directory,
+        };
+        if version_from_metadata(&fs::symlink_metadata(source_path)?)? != observation.source
+            || of_file(&Directory::open(dest_dir_path)?.file)? != observation.parent
+        {
+            return Err(AppError::Other("Copy source or destination directory changed while awaiting a decision; retry the copy".into()));
+        }
+        if overwrite == Some(true) {
+            let target =
+                dest_dir_path.join(source_path.file_name().expect("validated source name"));
+            let current = match fs::symlink_metadata(target) {
+                Ok(meta) => Some(version_from_metadata(&meta)?),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            if current != observation.target {
+                return Err(AppError::Other("Copy destination changed while awaiting a decision; retry to review the new conflict".into()));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn copy_entry_inner(
     source_path: &Path,
     dest_dir_path: &Path,
     source_name: &str,
     overwrite: Option<bool>,
-    source: &str,
+    _source: &str,
     tracker: &mut ProgressTracker,
+) -> Result<FileMutationReceipt, AppError> {
+    copy_entry_inner_with(
+        source_path,
+        dest_dir_path,
+        source_name,
+        overwrite,
+        None,
+        tracker,
+        copy_entry_overwriting,
+    )
+}
+
+fn copy_entry_inner_with(
+    source_path: &Path,
+    dest_dir_path: &Path,
+    source_name: &str,
+    overwrite: Option<bool>,
+    observation: Option<&super::mutation::CopyObservation>,
+    tracker: &mut ProgressTracker,
+    replace: impl FnOnce(
+        &Path,
+        &Path,
+        &Path,
+        &mut ProgressTracker,
+    ) -> Result<FileMutationReceipt, AppError>,
 ) -> Result<FileMutationReceipt, AppError> {
     let mut target = dest_dir_path.join(source_name);
 
@@ -459,47 +567,111 @@ fn copy_entry_inner(
             if is_same_entry(source_path, &target) {
                 return Err(AppError::InvalidPath(format!(
                     "Source and destination are the same: {}",
-                    source
+                    source_path.display()
                 )));
             }
-            return copy_entry_overwriting(source_path, dest_dir_path, &target, tracker);
+            return replace(source_path, dest_dir_path, &target, tracker);
         } else {
             target = generate_copy_name(dest_dir_path, source_name, source_path.is_dir());
         }
     }
 
-    StagedEntry::prepare(dest_dir_path, |payload| {
-        copy_recursively(source_path, payload, tracker)
-    })?
-    .publish(&target)?;
+    let staged = stage_copy(source_path, dest_dir_path, tracker, observation)?;
+    #[cfg(target_os = "linux")]
+    let publication = Some(std::sync::Arc::new(match observation {
+        Some(observation) => staged.publish_observed_in(&target, Some(&observation.parent))?,
+        None => staged.publish_observed(&target)?,
+    }));
+    #[cfg(not(target_os = "linux"))]
+    let publication = {
+        staged.publish(&target)?;
+        None
+    };
 
     log::info!(
         "Copied entry (is_dir={}) overwrite={}",
         source_path.is_dir(),
         overwrite.unwrap_or(false)
     );
-    Ok(FileMutationReceipt::committed(&target))
+    let mut receipt = FileMutationReceipt::committed(&target);
+    receipt.publication = publication;
+    Ok(receipt)
+}
+
+fn stage_copy(
+    source: &Path,
+    dest_dir: &Path,
+    tracker: &mut ProgressTracker,
+    observation: Option<&super::mutation::CopyObservation>,
+) -> Result<StagedEntry, AppError> {
+    #[cfg(not(target_os = "linux"))]
+    let _ = observation;
+    StagedEntry::prepare(dest_dir, |payload| {
+        #[cfg(target_os = "linux")]
+        if let Some(observation) = observation {
+            use super::native_directory::Directory;
+            use std::os::unix::fs::PermissionsExt;
+            let parent = Directory::open(source.parent().expect("validated source parent"))?;
+            let stage = Directory::open(payload.parent().expect("staging parent"))?;
+            let outcome = super::anchored_copy::copy_entry_buffered(
+                &parent,
+                source.file_name().expect("source name"),
+                &stage,
+                payload.file_name().expect("payload name"),
+                source,
+                &observation.source,
+                tracker,
+            )?;
+            if let Some(mode) = outcome.final_mode {
+                fs::set_permissions(payload, fs::Permissions::from_mode(mode))?;
+            }
+            return Ok(());
+        }
+        copy_recursively(source, payload, tracker)
+    })
 }
 
 /// Build the replacement before displacing the destination. Failed publication
 /// restores without replacing a racing entry; retained originals outlive errors.
-fn copy_entry_overwriting(
+#[cfg(any(test, not(target_os = "linux")))]
+pub(super) fn copy_entry_overwriting(
     source: &Path,
     dest_dir: &Path,
     target: &Path,
     tracker: &mut ProgressTracker,
 ) -> Result<FileMutationReceipt, AppError> {
-    let staged = StagedEntry::prepare(dest_dir, |payload| {
-        copy_recursively(source, payload, tracker)
-    })?;
-    let (_, displaced) = super::replacement::replace(target, || staged.publish(target))?;
-    displaced.discard();
-    Ok(FileMutationReceipt::committed(target))
+    copy_entry_overwriting_observed(source, dest_dir, target, tracker, None)
 }
 
-/// Move a file or directory.
-/// If overwrite is true and target exists, replaces the existing entry.
-#[tauri::command]
+pub(super) fn copy_entry_overwriting_observed(
+    source: &Path,
+    dest_dir: &Path,
+    target: &Path,
+    tracker: &mut ProgressTracker,
+    observation: Option<&super::mutation::CopyObservation>,
+) -> Result<FileMutationReceipt, AppError> {
+    let staged = stage_copy(source, dest_dir, tracker, observation)?;
+    #[cfg(target_os = "linux")]
+    validate_copy_observation(source, dest_dir, Some(true), observation)?;
+    #[cfg(target_os = "linux")]
+    let (publication, displaced) = super::replacement::replace(target, || {
+        staged.publish_observed_in(target, observation.map(|observation| &observation.parent))
+    })?;
+    #[cfg(not(target_os = "linux"))]
+    let (_, displaced) = super::replacement::replace(target, || staged.publish(target))?;
+    displaced.discard();
+    let receipt = FileMutationReceipt::committed(target);
+    #[cfg(target_os = "linux")]
+    let receipt = FileMutationReceipt {
+        publication: Some(std::sync::Arc::new(publication)),
+        ..receipt
+    };
+    Ok(receipt)
+}
+
+/// Direct filesystem test seam. Live commands and inverses use move_execution
+/// so their worker cannot bypass application recovery ownership.
+#[cfg(test)]
 pub async fn move_entry(
     source: String,
     dest_dir: String,
@@ -508,7 +680,7 @@ pub async fn move_entry(
     run_blocking(move || move_entry_impl(source, dest_dir, overwrite)).await
 }
 
-fn move_entry_impl(
+pub(super) fn move_entry_impl(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
@@ -820,29 +992,7 @@ pub async fn write_text_file(
     path: String,
     content: String,
 ) -> Result<FileMutationReceipt, AppError> {
-    run_blocking(move || {
-        let file_path = PathBuf::from(&path);
-
-        if entry_exists(&file_path) {
-            return Err(AppError::AlreadyExists(path));
-        }
-
-        let parent = file_path
-            .parent()
-            .ok_or_else(|| AppError::InvalidPath(path.clone()))?;
-        StagedEntry::prepare(parent, |payload| {
-            let mut writer = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(payload)?;
-            writer.write_all(content.as_bytes())?;
-            writer.flush()?;
-            Ok(())
-        })?
-        .publish(&file_path)?;
-        Ok(FileMutationReceipt::committed(&file_path))
-    })
-    .await
+    execute_entry(EntryPlan::write_text(path, content)).await
 }
 
 /// Delete a file or directory permanently (not to trash).
@@ -863,33 +1013,7 @@ pub async fn create_symlink(
     target_path: String,
     link_path: String,
 ) -> Result<FileMutationReceipt, AppError> {
-    run_blocking(move || {
-        let target = PathBuf::from(&target_path);
-        let link = PathBuf::from(&link_path);
-
-        if !entry_exists(&target) {
-            return Err(AppError::NotFound(target_path));
-        }
-
-        if entry_exists(&link) {
-            return Err(AppError::AlreadyExists(link_path));
-        }
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, &link)?;
-
-        #[cfg(windows)]
-        {
-            if target.is_dir() {
-                std::os::windows::fs::symlink_dir(&target, &link)?;
-            } else {
-                std::os::windows::fs::symlink_file(&target, &link)?;
-            }
-        }
-
-        Ok(FileMutationReceipt::committed(&link))
-    })
-    .await
+    execute_entry(EntryPlan::symlink(target_path, link_path)).await
 }
 
 /// Estimate total file count and size for a list of paths.

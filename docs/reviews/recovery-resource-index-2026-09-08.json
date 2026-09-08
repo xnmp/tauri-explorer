@@ -1,0 +1,172 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "uncommitted Unix physical namespace conflict index; full architectural review incomplete",
+  "scope": [
+    "Missing destinations conflict through every captured physical ancestor plus their remaining relative suffix, including bind aliases and intermediate materialization",
+    "Read/read sharing, unrelated siblings, hardlink ownership and final symlink ownership preserved",
+    "Shared NUL-delimited normalized component encoding and minimal subtree frontier avoid repeated Path parsing and repeated ancestor lookups",
+    "Resource validation rejects impossible ancestry counts before indexing"
+  ],
+  "verification": {
+    "before_fix": {
+      "log": "/tmp/recovery-resource-namespaces-red.log",
+      "exit_code": 101,
+      "passed": 6,
+      "failed": 2,
+      "scope": "Missing physical-parent aliases and alias subtree conflicts fail against the earlier lexical/object-only index."
+    },
+    "final_file_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files:: -- --test-threads=4",
+      "passed": 333,
+      "failed": 0,
+      "ignored": 7,
+      "log": "/tmp/recovery-resource-encoded-files.log",
+      "note": "Includes deep/shallow load and mixed-native-name differential contract matrix. Final test-only malformed ancestry assertions were added afterwards and passed independently."
+    },
+    "final_ancestry_validation": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files::recovery::resources::tests::malformed_resources_are_rejected_before_capture -- --exact",
+      "passed": 1,
+      "failed": 0,
+      "log": "/tmp/recovery-resource-encoded-validation.log"
+    },
+    "native_bind_alias": {
+      "passed": 1,
+      "failed": 0,
+      "log": "/tmp/recovery-resource-encoded-bind-mount.log",
+      "invocation": "TAURI_RECOVERY_BIND_MOUNT_TEST=1 unshare --user --map-root-user --mount --propagation private <fresh cargo lib-test binary> --exact files::recovery::resources::tests::real_bind_mount_aliases_preserve_missing_destination_ownership --ignored --test-threads=1",
+      "scope": "Real libc bind mount and fs capture in private user/mount namespace; same missing leaf conflicts both directions, sibling remains free, later materialized intermediate still conflicts."
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery --offline",
+      "exit_code": 0,
+      "log": "/tmp/recovery-resource-encoded-clippy.log",
+      "warnings": "133 library unused-infrastructure warnings; five lib-test warnings, four duplicate. Before final test-only ancestry assertions."
+    },
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT",
+      "mode": "Independent source and evidence review; reviewer did not execute a separate benchmark.",
+      "confirmed": [
+        "Unix encoding preserves equality/order/component-prefix behavior for validated native paths",
+        "Logical and physical indexes are separate, so omitting the root delimiter is sound",
+        "Ancestor iteration remains valid across capture and validated journal ingress",
+        "Rc lifetime is safe and no current ConflictIndex crosses an await or enters shared coordinator state",
+        "Mixed-name differential matrix and real bind-mount results cover scoped behavior",
+        "Five alternating release benchmark samples support the scoped improvement"
+      ],
+      "limits": [
+        "ConflictIndex is intentionally synchronous and not Send",
+        "No Windows/macOS case equivalence, durability, production admission or startup evidence"
+      ]
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_source_coverage": "415/415",
+      "unresolvable": 0
+    },
+    "formatting": "Changed source rustfmt checks and git diff --check pass."
+  },
+  "benchmark": {
+    "workload": "1442 Subtree write claims, each with 255 physical ancestors; near the aggregate resource-record budget. Build the real ConflictIndex and check first/middle/last aliases plus an unrelated sibling.",
+    "harness": "Actual source imports for resources, native_path, model, object_id and file_identity, with production-locked Rust dependencies; release thin LTO and codegen-units=1. No Tauri or filesystem capture in this index benchmark.",
+    "manifest": "[package]\nname=\"recovery-resources-check\"\nversion=\"0.0.0\"\nedition=\"2021\"\n[dependencies]\nserde={version=\"=1.0.229\",features=[\"derive\"]}\nserde_json=\"=1.0.151\"\nbase64=\"=0.21.7\"\ntempfile=\"=3.27.0\"\nlibc=\"=0.2.189\"\n[profile.release]\nlto=\"thin\"\ncodegen-units=1\n[workspace]\n",
+    "lib_rs": "#[path=\"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/object_id.rs\"]\nmod object_id;\n#[path=\"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_identity.rs\"]\nmod file_identity;\n#[path=\"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/native_path.rs\"]\nmod native_path;\n#[path=\"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/model.rs\"]\nmod model;\n#[path=\"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/resources.rs\"]\nmod resources;\n",
+    "baseline": "Pre-encoding physical-namespace index with BTreeSet<&Path>, minimal covering frontier and one-pass Components iterator; saved at /tmp/recovery-resources-before-encoded.rs. Baseline harness only rewrites its test include to an absolute path.",
+    "baseline_sha256": "7bf125dee02dd8a4306faff9113cb002a97437e7636901207668beb296346579",
+    "samples": [
+      {
+        "variant": "baseline",
+        "iteration": 0,
+        "build_ms": 10084.881773,
+        "peak_rss_kib": 42112
+      },
+      {
+        "variant": "encoded",
+        "iteration": 0,
+        "build_ms": 318.683532,
+        "peak_rss_kib": 53172
+      },
+      {
+        "variant": "encoded",
+        "iteration": 1,
+        "build_ms": 318.682008,
+        "peak_rss_kib": 53276
+      },
+      {
+        "variant": "baseline",
+        "iteration": 1,
+        "build_ms": 10041.702405,
+        "peak_rss_kib": 42492
+      },
+      {
+        "variant": "baseline",
+        "iteration": 2,
+        "build_ms": 9999.186308,
+        "peak_rss_kib": 42468
+      },
+      {
+        "variant": "encoded",
+        "iteration": 2,
+        "build_ms": 319.718928,
+        "peak_rss_kib": 52924
+      },
+      {
+        "variant": "encoded",
+        "iteration": 3,
+        "build_ms": 329.313127,
+        "peak_rss_kib": 52788
+      },
+      {
+        "variant": "baseline",
+        "iteration": 3,
+        "build_ms": 10158.729941000001,
+        "peak_rss_kib": 42016
+      },
+      {
+        "variant": "baseline",
+        "iteration": 4,
+        "build_ms": 10079.140175999999,
+        "peak_rss_kib": 42428
+      },
+      {
+        "variant": "encoded",
+        "iteration": 4,
+        "build_ms": 321.778707,
+        "peak_rss_kib": 52608
+      }
+    ],
+    "summary": {
+      "baseline": {
+        "median_build_ms": 10079.140175999999,
+        "range_build_ms": [
+          9999.186308,
+          10158.729941000001
+        ],
+        "max_process_rss_kib": 42492
+      },
+      "encoded": {
+        "median_build_ms": 319.718928,
+        "range_build_ms": [
+          318.682008,
+          329.313127
+        ],
+        "max_process_rss_kib": 53276
+      }
+    },
+    "speed_ratio_of_medians": 31.525003036417033,
+    "measurement": "Five alternating fresh processes per variant; Rust Instant around index construction; Linux wait4 ru_maxrss for peak process KiB. Raw outputs /tmp/recovery-resource-{baseline,encoded}-sample-{0..4}.log.",
+    "limits": "Whole-process RSS includes fixture/runtime. Shared-host scheduling and a Clippy run overlapped some late samples; not a controlled device benchmark or statistically established tail latency. Encoded key storage trades additional memory for comparison cost. No app startup or ordinary mutation latency claim."
+  },
+  "limitations": [
+    "Resource capture remains Unix-only; Windows per-directory case/short-name and provider semantics and case-insensitive macOS volumes remain required",
+    "Production callers still do not acquire recovery reservations; durable replacement/reconciliation/IPC/UI/Undo/retention and full platform acceptance remain incomplete",
+    "The resource-record byte budget does not claim a strict bound on total allocator overhead across all journal records",
+    "No publication, Windows runtime, macOS half-bounce measurement or release acceptance this checkpoint"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/resources.rs": "41a962163fe991358ccfb96ff8114b5743079e7c7e4965b08e2d0de3ff9b94b1",
+    "src-tauri/test_support/recovery_resources.rs": "56e9ef8b9bf472836098a2c705758087668b1f5c7349948f404f2a98a7c601c2"
+  }
+}

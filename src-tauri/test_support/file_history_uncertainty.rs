@@ -10,6 +10,126 @@ use crate::{
 };
 use std::{fs, path::Path};
 
+#[test]
+fn move_history_uses_recorded_source_parent_despite_inconsistent_legacy_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    let unrelated = root.path().join("unrelated");
+    for directory in [&source, &destination, &unrelated] {
+        fs::create_dir(directory).unwrap();
+    }
+    fs::write(destination.join("landed.txt"), b"moved payload").unwrap();
+    fs::write(unrelated.join("sentinel.txt"), b"unrelated payload").unwrap();
+    let action = Action::Move {
+        source_path: source.join("original.txt").to_string_lossy().into_owned(),
+        dest_path: destination
+            .join("landed.txt")
+            .to_string_lossy()
+            .into_owned(),
+        original_dir: unrelated.to_string_lossy().into_owned(),
+    };
+    // Exercise renderer admission as well as the real native filesystem port.
+    let action = super::action::prepare_renderer(action, true)
+        .unwrap()
+        .unwrap();
+    let result = tauri::async_runtime::block_on(execution::execute(
+        action,
+        &NativeOperations::default(),
+        Direction::Undo,
+    ));
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert!(
+        source.join("landed.txt").is_file(),
+        "Undo must return the entry to the recorded source parent"
+    );
+    assert_eq!(
+        fs::read(source.join("landed.txt")).unwrap(),
+        b"moved payload"
+    );
+    assert!(!destination.join("landed.txt").exists());
+    assert!(!unrelated.join("landed.txt").exists());
+    let mut affected = execution_affected(&result);
+    affected.sort();
+    let mut expected = vec![
+        source.to_string_lossy().into_owned(),
+        destination.to_string_lossy().into_owned(),
+    ];
+    expected.sort();
+    assert_eq!(affected, expected);
+    let result = tauri::async_runtime::block_on(execution::execute(
+        result.opposite.expect("Undo retains Redo"),
+        &NativeOperations::default(),
+        Direction::Redo,
+    ));
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(
+        fs::read(destination.join("landed.txt")).unwrap(),
+        b"moved payload"
+    );
+    assert!(!source.join("landed.txt").exists());
+    assert!(!unrelated.join("landed.txt").exists());
+    assert_eq!(
+        fs::read(unrelated.join("sentinel.txt")).unwrap(),
+        b"unrelated payload"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_move_inverse_obeys_recovery_admission_and_reports_physical_parents() {
+    use crate::files::recovery::{Access, ResourceRequest, Runtime, Scope};
+
+    let root = tempfile::tempdir().unwrap();
+    let original_parent = root.path().join("original");
+    let destination_parent = root.path().join("destination");
+    fs::create_dir(&original_parent).unwrap();
+    fs::create_dir(&destination_parent).unwrap();
+    let original = original_parent.join("moved.txt");
+    let destination = destination_parent.join("moved.txt");
+    fs::write(&destination, b"moved bytes").unwrap();
+    let runtime = Runtime::default();
+    let storage = root.path().join("recovery");
+    let held = tauri::async_runtime::block_on(runtime.clone().admit(
+        storage.clone(),
+        vec![ResourceRequest {
+            path: destination.clone(),
+            access: Access::Write,
+            scope: Scope::Subtree,
+        }],
+    ))
+    .unwrap();
+    let operations = NativeOperations {
+        recovery: Some((runtime.clone(), storage.clone())),
+    };
+
+    let rejected = tauri::async_runtime::block_on(operations.move_entry(
+        destination.to_string_lossy().into_owned(),
+        original_parent.to_string_lossy().into_owned(),
+    ));
+    assert!(matches!(rejected.result, Err(OperationError::Unchanged(_))));
+    assert!(rejected.affected.is_empty());
+    assert!(!original.exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"moved bytes");
+
+    held.finish().unwrap();
+    let completed = tauri::async_runtime::block_on(operations.move_entry(
+        destination.to_string_lossy().into_owned(),
+        original_parent.to_string_lossy().into_owned(),
+    ));
+    assert!(matches!(completed.result, Ok(None)));
+    let mut affected = completed.affected;
+    affected.sort();
+    let mut expected = vec![
+        original_parent.to_string_lossy().into_owned(),
+        destination_parent.to_string_lossy().into_owned(),
+    ];
+    expected.sort();
+    assert_eq!(affected, expected);
+    assert_eq!(fs::read(&original).unwrap(), b"moved bytes");
+    assert!(!destination.exists());
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn undo_restores_its_own_deletion_when_the_same_path_is_trashed_again_externally() {
@@ -40,9 +160,10 @@ fn undo_restores_its_own_deletion_when_the_same_path_is_trashed_again_externally
     let file = directory.join("same-name.txt");
     let requested = file.to_string_lossy().into_owned();
     fs::write(&file, b"bytes deleted by this history entry").unwrap();
-    let deletion =
-        tauri::async_runtime::block_on(NativeOperations.trash_many(vec![requested.clone()]))
-            .unwrap();
+    let deletion = tauri::async_runtime::block_on(
+        NativeOperations::default().trash_many(vec![requested.clone()]),
+    )
+    .unwrap();
     assert_eq!(deletion.succeeded, std::slice::from_ref(&requested));
     let action = Action::Delete {
         recovery: super::model::Recovery::Restore(std::sync::Arc::new(deletion.artifacts)),
@@ -88,7 +209,7 @@ fn undo_restores_its_own_deletion_when_the_same_path_is_trashed_again_externally
         .unwrap();
     let result = tauri::async_runtime::block_on(execution::execute(
         reservation.action.clone(),
-        &NativeOperations,
+        &NativeOperations::default(),
         Direction::Undo,
     ));
     assert!(result.error.is_none(), "{:?}", result.error);
@@ -130,7 +251,7 @@ struct PanicAfterRename;
 impl Operations for PanicAfterRename {
     async fn rename(&self, path: String, name: String) -> Result<(), OperationError> {
         if !path.ends_with("panic-new.txt") {
-            return NativeOperations.rename(path, name).await;
+            return NativeOperations::default().rename(path, name).await;
         }
         run_blocking(move || -> Result<(), AppError> {
             let source = Path::new(&path);
@@ -140,21 +261,19 @@ impl Operations for PanicAfterRename {
         .await
         .map_err(operation_error)
     }
-    async fn move_entry(
-        &self,
-        path: String,
-        destination: String,
-    ) -> Result<Option<String>, OperationError> {
-        NativeOperations.move_entry(path, destination).await
+    async fn move_entry(&self, path: String, destination: String) -> execution::MoveResult {
+        NativeOperations::default()
+            .move_entry(path, destination)
+            .await
     }
     async fn trash_many(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
-        NativeOperations.trash_many(paths).await
+        NativeOperations::default().trash_many(paths).await
     }
     async fn restore(
         &self,
         requests: Vec<crate::files::trash_artifact::RestoreRequest>,
     ) -> Result<FileBatchOutcome, OperationError> {
-        NativeOperations.restore(requests).await
+        NativeOperations::default().restore(requests).await
     }
 }
 
@@ -167,6 +286,77 @@ fn fixture(root: &Path, stem: &str) -> Action {
         path: path.to_string_lossy().into_owned(),
         old_name: format!("{stem}-old.txt"),
         new_name: format!("{stem}-new.txt"),
+    }
+}
+
+#[test]
+fn supervisor_panic_after_native_inverse_consumes_history_and_reconciles_planned_parents() {
+    for direction in [Direction::Undo, Direction::Redo] {
+        let root = tempfile::tempdir().unwrap();
+        let action = fixture(root.path(), "supervisor");
+        let directory = root.path().join("supervisor");
+        let renamed = directory.join("supervisor-new.txt");
+        let original = directory.join("supervisor-old.txt");
+        let mut histories = Histories::default();
+        histories.register(1);
+        histories.push(1, Some(action), false).unwrap();
+        if direction == Direction::Redo {
+            let reservation = histories
+                .begin(1, Direction::Undo, histories.summary(1).undo_id.unwrap())
+                .unwrap();
+            let result = tauri::async_runtime::block_on(execution::execute(
+                reservation.action.clone(),
+                &NativeOperations::default(),
+                Direction::Undo,
+            ));
+            assert!(result.error.is_none());
+            histories.finish(reservation, &result);
+        }
+        let id = match direction {
+            Direction::Undo => histories.summary(1).undo_id,
+            Direction::Redo => histories.summary(1).redo_id,
+        }
+        .unwrap();
+        let reservation = histories.begin(1, direction, id).unwrap();
+        let prepared = super::plan::Prepared::new(reservation.action.clone(), direction);
+        let (result, affected) = tauri::async_runtime::block_on(super::supervise_inverse(
+            prepared,
+            |prepared| async move {
+                let result =
+                    execution::execute_prepared(prepared, &NativeOperations::default()).await;
+                assert!(result.error.is_none());
+                panic!("injected outer supervisor panic after native rename");
+            },
+        ));
+        let (present, absent) = match direction {
+            Direction::Undo => (&original, &renamed),
+            Direction::Redo => (&renamed, &original),
+        };
+        assert_eq!(fs::read_to_string(present).unwrap(), "supervisor bytes");
+        assert!(!absent.exists());
+        assert_eq!(affected, [directory.to_string_lossy().into_owned()]);
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("execution was interrupted")));
+        assert!(
+            result.remaining.is_none(),
+            "interrupted inverse must never be retried automatically"
+        );
+        assert!(
+            result.opposite.is_none(),
+            "lost receipts cannot authorize an opposite"
+        );
+        assert!(
+            result.completed.is_none(),
+            "panic cannot mint a confirmed receipt"
+        );
+        histories.finish(reservation, &result);
+        let summary = histories.summary(1);
+        assert!(!summary.busy);
+        assert!(summary.undo_id.is_none());
+        assert!(summary.redo_id.is_none());
+        assert!(histories.begin(1, direction, id).is_err());
     }
 }
 

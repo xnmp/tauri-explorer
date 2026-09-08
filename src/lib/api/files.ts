@@ -238,17 +238,12 @@ export async function copyEntry(
 ): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(source, destDir);
   if (guard) return guard;
-  try {
-    const data = await invoke<FileMutationReceipt>("copy_entry", { source, destDir, overwrite, jobId });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+  return invokeFileMutation<FileMutationReceipt>("copy_entry", { source, destDir, overwrite, jobId });
 }
 
 /** Cancel a running copy job. The pending copyEntry call fails with
- *  "Copy cancelled" and any partial copy is removed. Best-effort — the job
- *  may already have finished. */
+ *  "Copy cancelled" before durable work starts. Interrupted replacements retain
+ *  recovery evidence; accepted publication may finish before cancellation. */
 export async function cancelCopy(jobId: number): Promise<void> {
   try {
     await invoke("cancel_copy", { jobId });
@@ -271,12 +266,7 @@ export async function moveEntry(
 ): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(source, destDir);
   if (guard) return guard;
-  try {
-    const data = await invoke<FileMutationReceipt>("move_entry", { source, destDir, overwrite });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+  return invokeFileMutation<FileMutationReceipt>("move_entry", { source, destDir, overwrite });
 }
 
 /** Resolved target of a Windows `.lnk` shortcut. */
@@ -515,7 +505,10 @@ export async function startStreamingDirectory(
           path,
           operation: e2eProbe.writeOperation,
           signal: e2eProbe.abort.signal,
-          write: (filePath, content) => invoke("write_text_file", { path: filePath, content }),
+          write: async (filePath, content) => {
+            const result = await writeTextFile(filePath, content);
+            if (!result.ok) throw new Error(result.error);
+          },
         });
       }
       const delay = e2eProbe.delays[e2eCallIndex] ?? 0;

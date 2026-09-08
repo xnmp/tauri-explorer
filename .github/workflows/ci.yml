@@ -134,3 +134,11 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --features avif
+
+      # Keep the deferred recovery policy verified without enabling it in
+      # release artifacts. Default-policy capacity coverage runs above.
+      - name: Opt-in recovery Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-copy-recovery,e2e-renderer-recovery -- -D warnings
+
+      - name: Opt-in recovery tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-copy-recovery

@@ -20,6 +20,7 @@ export function createWarmActivation(dependencies: {
   reject(request: WindowHandoff): Promise<void>;
   requestAddressBar(): void;
   shown(): void;
+  activated?(): void;
   reportError(error: unknown): void;
 }) {
   let disposed = false;
@@ -66,6 +67,10 @@ export function createWarmActivation(dependencies: {
       dependencies.requestAddressBar();
       if (request) await dependencies.acknowledge(request);
       committed = true;
+      if (current()) {
+        try { dependencies.activated?.(); }
+        catch (error) { dependencies.reportError(error); }
+      }
     } catch (error) {
       if (!disposed) dependencies.reportError(error);
       if (request && !disposed) await dependencies.reject(request).catch(dependencies.reportError);

@@ -2,6 +2,9 @@
 //! This module is compiled only with `e2e-renderer-recovery`; it does not define
 //! application crash-recovery policy.
 
+#[path = "file_recovery_crash.rs"]
+mod file_recovery;
+
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -45,6 +48,7 @@ struct CycleEvidence {
     watcher_received_at: u64,
     marker: String,
     entries: Vec<String>,
+    file_recovery: Option<file_recovery::Evidence>,
 }
 
 #[derive(Serialize)]
@@ -179,6 +183,7 @@ async fn run_scenario(
         let mut previous_session = string_result(&previous_session["result"], "initial Git session")?;
         let initial_repo = directory.join("repository-0");
         let mut previous_lease = acquire(view, &initial_repo, "initial-watch").await?;
+        let mut previous_recovery = file_recovery::acquire(view).await?;
 
         for cycle in 1..=2 {
             while terminations.try_recv().is_ok() {}
@@ -226,6 +231,9 @@ async fn run_scenario(
             // This is test-controller behavior on the retained GTK object, not
             // application recovery policy. A committed reload advances the
             // production Git generation before the new realm can invoke IPC.
+            if let Some(lease) = &previous_recovery {
+                file_recovery::wait_for_drop(lease).await?;
+            }
             view.reload();
             wait_for(view, "recovered E2E hooks", || {
                 "document.documentElement.dataset.e2eHooksReady === 'true' && \
@@ -238,6 +246,12 @@ async fn run_scenario(
             if current_session == previous_session {
                 return Err("renderer recovery reused the previous Git session".into());
             }
+            let current_recovery = file_recovery::acquire(view).await?;
+            let file_recovery_evidence = match (&previous_recovery, &current_recovery) {
+                (Some(old), Some(current)) => Some(file_recovery::verify(view, old, current).await?),
+                (None, None) => None,
+                _ => return Err("file recovery fixture changed during crash acceptance".into()),
+            };
 
             let repository = directory.join(format!("repository-{cycle}"));
             let current_lease = acquire(view, &repository, &format!("watch-{cycle}")).await?;
@@ -338,9 +352,11 @@ async fn run_scenario(
                 watcher_received_at,
                 marker,
                 entries,
+                file_recovery: file_recovery_evidence,
             });
             previous_session = current_session;
             previous_lease = current_lease;
+            previous_recovery = current_recovery;
         }
 
         save_snapshot(view, &directory.join("recovered.png")).await?;

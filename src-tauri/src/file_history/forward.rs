@@ -8,6 +8,7 @@ use std::future::Future;
 pub(crate) struct MutationOutcome<T> {
     pub result: Result<T, AppError>,
     pub effect: ForwardEffect,
+    pub warning: Option<String>,
     pub affected: Vec<String>,
 }
 
@@ -50,6 +51,7 @@ pub(crate) async fn run_forward<T: Send + 'static>(
             Err(error) => MutationOutcome {
                 result: Err(AppError::Other(error)),
                 effect: ForwardEffect::Changed(None),
+                warning: None,
                 affected: potential_directories,
             },
         };
@@ -64,6 +66,9 @@ pub(crate) async fn run_forward<T: Send + 'static>(
             },
             effect => (effect, None),
         };
+        let warning = [outcome.warning, warning]
+            .into_iter().flatten().collect::<Vec<_>>();
+        let warning = (!warning.is_empty()).then(|| warning.join("\n"));
         let history = {
             let mut service = service().lock().unwrap();
             service.histories.finish_forward(reservation, effect);

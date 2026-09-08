@@ -66,8 +66,9 @@ async function execute(action: UndoAction, api: UndoApiDeps, direction: Directio
         return settled(action, await api.renameEntry(path, direction === "undo" ? action.oldName : action.newName));
       }
       case "move": {
-        const path = direction === "undo" ? action.destPath : joinPath(action.originalDir, basename(action.destPath));
-        return settled(action, await api.moveEntry(path, direction === "undo" ? action.originalDir : parentDir(action.destPath)));
+        const originalDir = parentDir(action.sourcePath);
+        const path = direction === "undo" ? action.destPath : joinPath(originalDir, basename(action.destPath));
+        return settled(action, await api.moveEntry(path, direction === "undo" ? originalDir : parentDir(action.destPath)));
       }
       case "copy": {
         if (direction === "undo") return settled(action, await api.deleteEntry(action.copiedPath));

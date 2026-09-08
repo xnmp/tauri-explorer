@@ -254,8 +254,10 @@ describe("useFileWatchers refresh coalescing", () => {
     const receipts = JSON.parse(
       document.documentElement.dataset.e2eDirectoryWatcherReceipts ?? "{}",
     );
-    expect(receipts["/watched"]).toEqual({ count: 1, observedAt: 1234 });
-    expect(received).toEqual([{ path: "/watched", count: 1, observedAt: 1234 }]);
+    expect(receipts["/watched"]).toEqual({ count: 1, observedAt: 1234,
+      origin: "watcher", mutationCount: 0, mutationObservedAt: null });
+    expect(received).toEqual([{ path: "/watched", count: 1, observedAt: 1234,
+      origin: "watcher", mutationCount: 0, mutationObservedAt: null }]);
 
     watchers.cleanup();
   });

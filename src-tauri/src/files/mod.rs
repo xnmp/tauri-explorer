@@ -1,19 +1,30 @@
 //! File operations module for Tauri commands.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s, tauri-explorer-9djf.6
 
+#[cfg(unix)]
+mod anchored_copy;
 pub mod batch;
+pub(crate) mod copy_session;
 pub mod dir_listing;
 mod directory_cache;
 mod directory_watches;
 pub mod drives;
+pub(crate) mod entry_plan;
+mod entry_version;
 pub mod external_apps;
+mod file_identity;
 pub mod file_ops;
 #[cfg(target_os = "linux")]
 mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+pub(crate) mod move_execution;
+pub(crate) mod move_plan;
 pub(crate) mod mutation;
+mod native_directory;
+mod object_id;
 mod publication;
+pub(crate) mod recovery;
 mod replacement;
 #[cfg(any(target_os = "windows", test))]
 mod restore_outcome;
@@ -27,10 +38,14 @@ mod trash_mounts;
 #[cfg(any(target_os = "windows", test))]
 mod trash_outcome;
 mod watch_observation;
+#[cfg(windows)]
+mod windows_io;
 #[cfg(target_os = "windows")]
 mod windows_paths;
 #[cfg(target_os = "windows")]
 mod windows_restore;
+mod worker;
+pub(crate) use worker::{run_blocking_context, Completion as WorkerCompletion};
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -52,10 +67,7 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
 {
-    match tauri::async_runtime::spawn_blocking(f).await {
-        Ok(result) => result,
-        Err(e) => Err(crate::error::AppError::WorkerFailed(e.to_string())),
-    }
+    worker::run_blocking_owned((), f).await
 }
 
 /// File system entry representation.

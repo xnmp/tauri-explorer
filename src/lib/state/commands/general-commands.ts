@@ -303,6 +303,12 @@ export const terminalCommands: Command[] = [
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
   {
+    id: "general.fileRecovery",
+    label: "File Recovery",
+    category: "general",
+    handler: () => dialogStore.openFileRecovery(),
+  },
+  {
     id: "help.reportIssue",
     label: "Report Issue",
     category: "general",

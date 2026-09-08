@@ -21,7 +21,7 @@ interface FileOperationResult {
 const operationResults: FileOperationResult[] = [];
 
 async function dispatchOperation(detail: {
-  op: "cut" | "paste" | "undo";
+  op: "cut" | "paste" | "undo" | "redo";
   path?: string;
   token: string;
 }): Promise<FileOperationResult> {
@@ -187,6 +187,43 @@ linuxDescribe(
           operationResults,
         }));
         throw error;
+      }
+    });
+
+    it("moves a tree through admitted cut/paste and repeats native Undo/Redo", async function () {
+      this.timeout(60_000);
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-admitted-move-"));
+      const origin = path.join(root, "origin");
+      const destination = path.join(root, "destination");
+      const name = "moved-tree";
+      const source = path.join(origin, name);
+      const target = path.join(destination, name);
+      const files = { "one.txt": "first moved payload", "two.txt": "second moved payload" };
+      fs.mkdirSync(source, { recursive: true });
+      fs.mkdirSync(destination);
+      for (const [file, contents] of Object.entries(files)) fs.writeFileSync(path.join(source, file), contents);
+      try {
+        await navigateTo(origin);
+        await waitForListed(name, true);
+        expect((await dispatchOperation({ op: "cut", path: source, token: crypto.randomUUID() })).error).toBeNull();
+        await navigateTo(destination);
+        expect((await dispatchOperation({ op: "paste", token: crypto.randomUUID() })).error).toBeNull();
+        assertTree(target, files);
+        expect(fs.existsSync(source)).toBe(false);
+        await waitForListed(name, true);
+        for (let cycle = 0; cycle < 2; cycle++) {
+          expect((await dispatchOperation({ op: "undo", token: crypto.randomUUID() })).error).toBeNull();
+          assertTree(source, files);
+          expect(fs.existsSync(target)).toBe(false);
+          await waitForListed(name, false);
+          expect((await dispatchOperation({ op: "redo", token: crypto.randomUUID() })).error).toBeNull();
+          assertTree(target, files);
+          expect(fs.existsSync(source)).toBe(false);
+          await waitForListed(name, true);
+        }
+        await browser.saveScreenshot(path.join(process.cwd(), "screenshots/refactor/repo-health-cleanup/native-admitted-move-redone.png"));
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
       }
     });
   },

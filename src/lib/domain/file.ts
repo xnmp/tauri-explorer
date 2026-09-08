@@ -40,6 +40,8 @@ export interface FileMutationReceipt {
    * Neither a Move nor a Copy inverse is safe: the destination may contain
    * the only surviving copy of some source children. */
   readonly recovery?: FileMutationRecovery;
+  /** Displaced original belongs to durable recovery, not a path-only Copy inverse. */
+  readonly replacement?: { readonly id: string };
 }
 
 export interface FileMutationRecovery {

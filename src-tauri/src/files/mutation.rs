@@ -4,12 +4,53 @@ use crate::error::AppError;
 use serde::Serialize;
 use std::{fs, path::Path};
 
+/// Native observation of the object an ordinary copy actually published.
+/// Paths are resolved at publication; callers cannot mint this through IPC.
+/// EntryVersion detects ordinary replacement/metadata changes, not arbitrary
+/// recursive edits or restored timestamps (see entry_version.rs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PublishedEntry {
+    pub path: std::path::PathBuf,
+    pub parent: super::object_id::ObjectId,
+    pub version: super::entry_version::EntryVersion,
+}
+
+impl PublishedEntry {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + 2 * std::mem::size_of::<usize>() + self.path.capacity()
+    }
+}
+
+/// Objects inspected for an ordered copy before requesting an overwrite choice.
+pub(crate) struct CopyObservation {
+    pub source: super::entry_version::EntryVersion,
+    pub parent: super::object_id::ObjectId,
+    pub target: Option<super::entry_version::EntryVersion>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct FileMutationReceipt {
     pub path: String,
     pub entry: Option<FileEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery: Option<FileMutationRecovery>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<CopyReplacementReceipt>,
+    #[serde(skip)]
+    pub(crate) warning: Option<String>,
+    #[serde(skip)]
+    pub(crate) publication: Option<std::sync::Arc<PublishedEntry>>,
+}
+
+/// The original is durably retained. An ordinary Copy inverse would remove the
+/// publication without restoring it, so callers must not record that inverse.
+#[derive(Debug, Serialize)]
+pub struct CopyReplacementReceipt {
+    pub id: String,
+    #[serde(skip)]
+    pub(crate) history: super::recovery::ReplacementHistory,
+    #[serde(skip)]
+    pub warning: Option<String>,
 }
 
 /// A destination was committed, but the complete requested move did not
@@ -60,6 +101,9 @@ impl FileMutationReceipt {
             path: path.to_string_lossy().into_owned(),
             entry,
             recovery: None,
+            replacement: None,
+            warning: None,
+            publication: None,
         }
     }
 }

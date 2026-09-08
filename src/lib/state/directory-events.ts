@@ -1,9 +1,12 @@
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import { listen } from "@tauri-apps/api/event";
 
+export type DirectoryChangeOrigin = "watcher" | "mutation";
+
 export interface DirectoryChange {
   path: string;
   observedAt?: number;
+  origin?: DirectoryChangeOrigin;
 }
 
 export interface DirectorySubscription {
@@ -159,11 +162,15 @@ export function createDirectoryEvents(
 }
 
 interface NativeDirectoryChange {
+  origin?: DirectoryChangeOrigin;
   path: string;
   observed_at_ms?: number;
 }
 
 interface WatcherReceipt {
+  origin: DirectoryChangeOrigin;
+  mutationCount: number;
+  mutationObservedAt: number | null;
   count: number;
   observedAt: number | null;
 }
@@ -176,7 +183,7 @@ function publishWatcherListenerReady(): void {
   document.documentElement.dataset.e2eDirectoryWatcherListenerReady = "true";
 }
 
-function publishWatcherReceipt(path: string, observedAt: number | undefined): void {
+function publishWatcherReceipt(path: string, observedAt: number | undefined, origin: DirectoryChangeOrigin): void {
   if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
   const previous = watcherReceipts.get(path);
   if (!previous && watcherReceipts.size >= MAX_WATCHER_RECEIPTS) {
@@ -184,6 +191,9 @@ function publishWatcherReceipt(path: string, observedAt: number | undefined): vo
     if (oldest !== undefined) watcherReceipts.delete(oldest);
   }
   watcherReceipts.set(path, {
+    origin,
+    mutationCount: (previous?.mutationCount ?? 0) + (origin === "mutation" ? 1 : 0),
+    mutationObservedAt: origin === "mutation" ? observedAt ?? null : previous?.mutationObservedAt ?? null,
     count: (previous?.count ?? 0) + 1,
     observedAt: observedAt ?? null,
   });
@@ -197,11 +207,12 @@ function publishWatcherReceipt(path: string, observedAt: number | undefined): vo
 
 const nativeDirectoryEvents = createDirectoryEvents((dispatch) =>
   listen<NativeDirectoryChange>("directory-changed", (event) => {
-    const change: DirectoryChange = {
+    const change = {
       path: event.payload.path,
       observedAt: event.payload.observed_at_ms,
-    };
-    publishWatcherReceipt(change.path, change.observedAt);
+      origin: event.payload.origin === "mutation" ? "mutation" : "watcher",
+    } satisfies DirectoryChange;
+    publishWatcherReceipt(change.path, change.observedAt, change.origin);
     dispatch(change);
   }),
 );

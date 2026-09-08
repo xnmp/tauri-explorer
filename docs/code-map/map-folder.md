@@ -19,6 +19,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
+- `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
+
 - `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
 
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
@@ -75,6 +77,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
+
+- `src/lib/state/file-recovery.svelte.ts` — page-created revision-ordered recovery state, explicit inspection/action capabilities and independently retired subscription lifetimes; no module-global active store.
+- `src/lib/state/file-recovery-session.svelte.ts` — lazy page-owned recovery loading/reconnection and awaitable idempotent retirement; late imports cannot attach to a disposed page. Contracts in `tests/state/file-recovery-session.test.ts`; browser behavior in `e2e/file-recovery.spec.ts`.
 
 - `file-list-focus-context.ts` — typed borrowed focus-return seam from inline editors to the FileList owner.
 
@@ -139,14 +144,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
-- `file-transfer.ts` — shared move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
+- `src/lib/state/copy-operations.ts` — lazy shared paste/drop copy-session presentation, immediate cancellation, incremental entries and warning settlement.
+- `file-transfer.ts` — legacy single-entry move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
 - `paste-operations.ts` — batch paste (conflict apply-to-all, progress) over file-transfer.
 - `drop-operations.ts` — shared drop-handler logic for drag-drop (over file-transfer).
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window file clipboard (cut/copy paths).
 - `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
-- `undo-helpers.ts` — pure undo/redo helpers.
+- `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
+- `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
 - `user-report-draft.svelte.ts` — debounced localStorage store for Report Issue's text-only unsent draft; attachments stay in the dialog's in-session retry state.
@@ -202,6 +209,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
 
+- `src/lib/api/file-recovery.ts` — recovery IPC facade with exact renderer/subscription identities and failed-ack cleanup; list/inspect/restore and renderer-bound subscription commands are registered; page-owned UI activation is deferred until foreground readiness or explicit demand.
+
 - `environment.ts` — home/launch environment and startup telemetry IPC.
 - `drives.ts` — drive enumeration, mount, unmount and eject IPC.
 - `clipboard-image.ts` — clipboard bitmap detection and save IPC.
@@ -210,6 +219,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `native-resource-session.ts` — one acknowledged renderer generation shared by directory/Git IPC and the ordered history-summary channel; only failed acknowledgement retries.
 - `file-history.ts` — typed native history push/clear/execute IPC and revisioned summary subscription.
+- `src/lib/api/copy-session.ts` — one acknowledged copy request with request-local events, single-use conflict replies, cancellation handshake and native history settlement.
 - `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
@@ -264,6 +274,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
+- `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot.
+
 - `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
 - `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts.
@@ -301,6 +313,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `diff.ts` — unified-diff parser (#55).
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
+- `src/lib/domain/copy-session.ts` — ordered native copy event, conflict-decision and positional result contracts.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
@@ -405,10 +418,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
 - `file_history/model.rs` — pure per-client/shared history admission, reserved forward/opposite ordering, partial settlement, branch/clear retirement and retained-history bounds.
 - `file_history/forward.rs` — native forward admission and supervised settlement independent of the invoking renderer.
-- `file_mutation.rs` — typed create/rename/new-text/symlink and whole-selection deletion commands settle native history and affected parents before returning outcomes.
+- `file_mutation.rs` — typed create/rename/new-text/symlink, move, ordered copy and whole-selection deletion commands settle native history and affected parents before returning outcomes.
 - `file_history/action.rs` — action shape/capability admission and affected-parent projection.
+- `src-tauri/src/file_history/plan.rs` — owned directional inverse requests and pre-execution refresh projection; preserves invalid leaves in their partial-execution position and derives move parents from recorded effect paths.
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `file_history/retention.rs` — complete history-entry budget for forward and inverse recovery; preserves unfinished work and a dependency-safe prefix of the opposite execution with explicit warnings.
+- `src-tauri/src/diagnostics.rs` — bounded, ordered completion diagnostics, independent of batch failures; lazy formatting stops at the output limit; bounded panic descriptions are shared by worker and replacement execution.
 - `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
 - `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
@@ -427,25 +442,45 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ### src-tauri/src/files/ — file operations module.
 
+- `src-tauri/src/files/native_directory.rs` — shared owned directory handle and platform implementation boundary; Unix trash/recovery reuse the same relative-access contract.
+- `src-tauri/src/files/native_directory/unix.rs` — Unix no-follow relative access, exclusive rename, no-follow existence, typed removal and independent bounded enumeration.
+- `src-tauri/src/files/native_directory/windows.rs` — Windows handle-relative no-follow traversal, exclusive creation/rename, typed removal and bounded independent enumeration; namespace durability remains unqualified.
+- `src-tauri/src/files/native_directory/windows_security.rs` — creation-time protected current-user/SYSTEM descriptors and handle-based explicit/inherited child ACL validation.
+- `src-tauri/src/files/recovery/private_storage.rs` — shared retained-handle recovery privacy policy; Unix effective-owner, permission, kind and single-link validation.
+- `src-tauri/src/files/recovery/private_storage/windows.rs` — Windows protected ACL, kind/reparse, hardlink and delete-pending evidence checks through retained handles.
+- `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
+- `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
+
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
+- `src-tauri/src/files/copy_session.rs` — async ordered copy orchestration with a supervisor-owned per-item receipt ledger.
+- `src-tauri/src/files/copy_session/model.rs` — bounded ordered copy intent, decisions and positional outcomes.
+- `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
+- `src-tauri/src/files/copy_session/worker.rs` — physical path/version inspection and observed native child execution without UI waits or size prewalks.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
-- `mutation.rs` — committed-path receipt with an optional subsequent FileEntry snapshot; presentation metadata cannot revoke a committed mutation.
+- `src-tauri/src/files/move_plan.rs` — bounded move intent supplies source/target claims, admitted execution bindings and physical/requested refresh parents.
+- `src-tauri/src/files/move_execution.rs` — forward/inverse move reservation, retained worker context and warning-preserving ownership settlement.
+- `src-tauri/src/files/entry_plan.rs` — pure owned targets/requests for directory/file creation, rename, new text and symlink creation; forward history and the owned worker consume the same plan; Linux admission binds execution paths while retaining stable alias presentation and both refresh parents.
+- `mutation.rs` — committed-path receipt with optional FileEntry metadata and a native-only ordinary-copy PublishedEntry (physical path, parent identity, entry version); metadata cannot revoke a committed mutation.
 - `replacement.rs` — explicit retained ownership of overwritten destinations; no-replace rollback shared by copy/move, retained-original reporting after partial source cleanup.
-- `publication.rs` — owns unpublished copy/write payloads in an exclusive staging directory; shared native no-replace rename for ordinary publication, move, rename and Linux trash restore.
-- `batch/mod.rs` — shared supervisor-owned ledger for pool work and fresh thread-affine restore batches; completed siblings survive panic and uncertain work stops the batch.
+- `publication.rs` — owns unpublished copy/write payloads in an exclusive physical staging directory; observed Linux ordinary-copy publication retains the staged version and uses opened-parent no-replace rename. Generic publication remains path-based.
+- `batch/mod.rs` — supervisor-owned ledger for pooled and fresh thread-affine batches; shared read-only setup/execution/cleanup boundary retains partial receipts and actual worker ownership through cancellation.
+- `src-tauri/src/files/batch/receipts.rs` — generic ordered receipt slots owned outside worker unwinding; shared by deletion and replacement execution, preserving family-specific stop, artifact and error policy.
 - `batch/model.rs` — bounded stable batch admission, component-aware overlap rejection, and succeeded/failed/uncertain/unstarted outcome partitions.
-- `trash.rs` — platform trash dispatch and exact receipt restore; ordered per-path outcomes and explicit UNC permanent-removal warnings (ADR 0017).
-- `trash_artifact.rs` — native-only data identities and restore requests, shared with history without filesystem handles or renderer authority.
+- `trash.rs` — platform trash dispatch and exact receipt restore; Linux context setup and selection execution share one pooled job; ordered per-path outcomes and explicit UNC permanent-removal warnings (ADR 0017).
+- `trash_artifact.rs` — native-only trash identities, restore requests and successful trash/restore receipts; restore can carry a fresh publication identity for its next inverse.
 - `freedesktop_trash.rs` — Linux exact trash receipts, exclusive metadata publication, descriptor-relative no-replace moves, identity verification and restore.
+- `src-tauri/src/files/freedesktop_trash/plan.rs` — read-only source/layout/candidate preparation; explicit directory create/open/repair steps, predeclared shared/personal fallback and mount-aware identity revalidation before exact execution.
+- `src-tauri/src/files/freedesktop_trash/selection.rs` — source-first selection observation, alias dependencies, bounded aligned plans and immutable layout sharing; verified-copy inverses bind physical path, parent and version before effects and revalidate the observed parent when preparing each item.
+- `src-tauri/test_support/freedesktop_trash_selection.rs` — native selection preparation budget/candidate collisions, prefailed ancestor exclusion, late disappearance and shared-layout behavior.
 - `trash_mounts.rs` — lossless Linux mountinfo parsing and mount-ID-aware trash placement, including bind mounts.
 - `windows_restore.rs` — STA-owned Windows Shell delete/restore, exact Recycle Bin locators, source-verified callbacks and collision-preserving flags.
 - `windows_paths.rs` — Windows ordinal path comparison and component-aware alias/ancestor rejection before destructive batch admission; receipt spellings remain unchanged.
 - `trash_outcome.rs` — pure Windows delete callback classification; committed recovery warnings remain distinct from uncertain and unchanged outcomes.
 - `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
 - `restore_parents.rs` — iterative Linux restore-parent creation; bounded supervisor-owned invalidations survive partial creation and panic independently of leaf completion.
-- `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
+- `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events preserve mutation priority and observation time.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
@@ -457,6 +492,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
+- `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery requests and deliberately unmanaged channels for renderer-retirement acceptance.
 - `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
@@ -466,3 +502,56 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; bounded ownership/recovery/navigation assertions and native snapshot.
 - `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
+- `src-tauri/test_support/file_recovery_native.rs` — feature-only abandoned replacement fixture through the production executor; native registration IDs correlate actual IPC Channel send/drop receipts across renderer lifetimes.
+- `src-tauri/test_support/file_recovery_crash.rs` — native receipt checks before retained-WebView reload after actual renderer death, followed by stale-session rejection and fresh durable-generation delivery.
+
+## src-tauri/src/files/recovery/ — durable recovery under construction
+
+- `src-tauri/src/files/recovery/mod.rs` — journal/model/storage and native preparation module boundary; Linux simple-entry admission and explicit recovery commands/UI are connected, durable forward replacement integration remains pending.
+- `src-tauri/src/files/recovery/journal.rs` — bounded opaque SQLite records, recognized schema, unique global generations, atomic multi-record admission and transactional compare-and-swap writes.
+- `src-tauri/src/files/entry_version.rs` — shared bounded object/content/mode/ownership observations that survive link and rename operations; durable shape validation.
+- `src-tauri/src/files/object_id.rs` — pure native-platform identity codec, full-width Windows IDs and separate volume equality; rejects foreign/untagged authority.
+- `src-tauri/src/files/file_identity.rs` — native object/version capture from supplied handles, Unix metadata and descriptor-relative Linux stat; no-follow leaf semantics.
+- `src-tauri/src/files/file_identity/windows.rs` — FileIdInfo query on the supplied Windows handle, preserving volume serial and all 128 identifier bits without path fallback.
+- `src-tauri/src/files/windows_io.rs` — shared Win32/NT error-code conversion for directory access, recovery identity and locking.
+- `src-tauri/test_support/recovery_object_id.rs` — full-width identity distinction, native/foreign codec contracts and malformed/wire-size bounds.
+- `src-tauri/test_support/recovery_file_identity.rs` — real independent opens/hardlinks, retained-handle identity through path replacement and native leaf/device checks.
+- `src-tauri/src/files/recovery/replacement_transition.rs` — pure root/manifest/stage/displacement/publication and resolution progression; state-only transitions and retry-error contracts in `src-tauri/test_support/recovery_replacement_transition.rs`.
+- `src-tauri/src/files/recovery/replacement_artifact.rs` — retained parent/root handles bound to the complete durable intent; exclusive root creation and exact framed local manifests. Native substitution and evidence-preservation contracts in `src-tauri/test_support/recovery_replacement_artifact.rs`.
+- `src-tauri/src/files/anchored_copy.rs` — descriptor-relative tree copy with streaming enumeration, shared buffer, source version checks and progress/cancellation; native content, link, permission, substitution and interruption contracts in `src-tauri/test_support/anchored_copy.rs`.
+- `src-tauri/src/files/recovery/rename_outcome.rs` — pure exact-version endpoint classification for ambiguous native rename results; missing/exact/conflicting endpoint contracts in `src-tauri/test_support/recovery_rename_outcome.rs`.
+- `src-tauri/src/files/native_directory/permissions.rs` — Linux metadata-only directory pins, exact-descriptor chmod and guarded procfs fallback; macOS retains ordinary read-access requirements. Native substitution and fallback contracts in `src-tauri/test_support/native_directory_permissions.rs`.
+- `src-tauri/src/files/recovery/history.rs` — native Undo/Redo resolves an operation/content-revision token under exact recovery ownership, restores or reapplies retained versions, and returns the newly confirmed opposite revision; native history model/executor contracts in `src-tauri/test_support/file_history_replacement.rs`.
+- `src-tauri/src/files/recovery/replacement_reapplication.rs` — pure retained-copy reapplication policy; exact endpoint combinations reject missing or changed copies before displacement. Contracts in `src-tauri/test_support/recovery_replacement_reapplication.rs`; real repeated execution, semantic history claims and process-death boundaries in `src-tauri/test_support/recovery_reapplication_execution.rs`.
+- `src-tauri/src/files/recovery/replacement_restoration.rs` — pure exact original/private-copy/target observations choose copy parking, original restoration, completion or conflict; exhaustive endpoint and malformed-version contracts in `src-tauri/test_support/recovery_replacement_restoration.rs`.
+- `src-tauri/src/files/recovery/replacement_restore.rs` — retained-handle restoration, restrictive copy-directory preparation and no-replace parking/restoration; native preservation, collision, source-independence and interrupted-effect contracts in `src-tauri/test_support/recovery_replacement_restore.rs`.
+- `src-tauri/src/files/recovery/replacement_transfer.rs` — handle-relative no-replace copy displacement/publication and retained-directory mode finalization, including pinned Linux unreadable-directory retries; native collision, lost-result, source-alias and authority-change regressions in `src-tauri/test_support/recovery_replacement_transfer.rs`.
+- `src-tauri/src/files/recovery/replacement_execution.rs` — owned preparation, private copy staging, original displacement, publication and restoration with durable intent before effects; persisted ordering, retry and process-kill outcomes in `src-tauri/test_support/recovery_replacement_execution.rs`. Reopening verifies the persisted root identity and exact manifest after claiming ownership. The explicit recovery service uses reopening and restoration; forward production replacements, discard and retirement remain pending.
+- `src-tauri/src/files/recovery/commands.rs` — asynchronous list/inspect/restore and subscribe/unsubscribe IPC bound to native operation IDs and renderer sessions; generations are canonical decimal strings, and platform enablement remains Linux-only.
+- `src-tauri/src/files/recovery/coordinator/inventory.rs` — bounded catalog/index association without user-volume probes or action authority; missing-checkpoint and malformed-record contracts in `src-tauri/test_support/recovery_inventory.rs`.
+- `src-tauri/src/files/recovery/service.rs` — current-generation inspection and restoration through exclusive native claims; initial unindexed presentation and native/runtime/large-counter contracts in `src-tauri/test_support/recovery_service.rs`.
+- `src-tauri/src/files/recovery/model.rs` — common immutable durable authority with catalog-digest checkpoints and typed operation spec/state and replacement phase/manifest validation, distinct artifact identities and lossless decimal IPC counters; action offers reuse the native restoration policy.
+- `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation; no executable move phases. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
+- `src-tauri/src/files/recovery/native_path.rs` — bounded lossless native entry paths tagged with the operating system; rejects cross-OS records before decoding authority.
+- `src-tauri/test_support/recovery_native_path.rs` — non-Unicode round trips and malformed/platform/size rejection through the actual durable path codec.
+- `src-tauri/src/files/recovery/file_lock.rs` — owned OS-lock lifetime; fresh opens, contention/error distinction and evidence-preserving release on Unix/Windows.
+- `src-tauri/src/files/recovery/file_lock/windows.rs` — exclusive Windows byte-range ownership beyond the nonce; drains overlapped completion before releasing request storage.
+- `src-tauri/test_support/recovery_file_lock.rs` — real independent-handle contention, bounded readable evidence, unwind and subprocess-termination ownership contracts.
+- `src-tauri/src/files/recovery/locks.rs` — Unix exact-file operation ownership with random nonces and OS locks; uncertain missing/replaced locks never imply abandonment.
+- `src-tauri/src/files/recovery/storage.rs` — bounded immutable checksummed catalog, independent of SQLite, using private descriptor-relative files.
+
+- `src-tauri/src/files/recovery/coordinator/claim.rs` — exact abandoned-lock acquisition with unchanged catalog/checkpoint and fresh CAS generation; native contention, stale input, corrupt evidence and overlap contracts in `src-tauri/test_support/recovery_claim.rs`.
+- `src-tauri/src/files/recovery/coordinator/claims.rs` — shared effective ownership for reservation admission and recovery: verified idle completed operations protect retained artifacts, while active and incomplete operations retain full claims. Native alias, reacquisition and interprocess gate contracts live in `src-tauri/test_support/recovery_effective_claims.rs`; independent corruption and successive-replacement contracts live in `src-tauri/test_support/recovery_effective_claims_adversarial.rs`.
+- `src-tauri/src/files/recovery/forward_copy.rs` — production Linux overwrite preparation binds native source/target/root resources, then owns durable promotion, staging, displacement and publication. The prepared owner retains physical refresh paths across worker failure; `src-tauri/test_support/recovery_forward_copy.rs` tests real copy dispatch, restore, aliases, competing ownership and interrupted staging.
+- `src-tauri/src/files/recovery/forward_copy/batch.rs` — ordered independent replacement execution with typed retained receipts, contained child panic, explicit suffix retirement, aggregate physical refresh and shared bounded diagnostics. Production singleton delegates this executor; real partial-effect/inverse tests are in `src-tauri/test_support/recovery_copy_batch.rs`.
+- `src-tauri/src/files/recovery/forward_copy/plan.rs` — whole-group exact replacement preparation: immutable native bindings and versions, atomic child reservations, common durable-intent/manifest preflight and exhaustive unstarted-owner cleanup. Single-copy production preparation shares this path. `src-tauri/test_support/recovery_copy_plan.rs` covers independent execution/restoration, stale bindings, cancellation and failed retirement.
+- `src-tauri/test_support/recovery_operation_fixture.rs` — shared real-filesystem and coordinator fixture for promotion and abandoned-claim contracts.
+- `src-tauri/src/files/recovery/coordinator/promotion.rs` — catalog-first reservation promotion and compact phase CAS, exact lost-reply retry and distinct durable ownership; interruption, changed authority, bounded manifest and checkpoint-size contracts in `src-tauri/test_support/recovery_promotion.rs`.
+- `src-tauri/src/files/recovery/coordinator.rs` — process-shared admission, exact owner reclamation, validated catalog/index claims and protected storage; bounded catalog-only discovery survives SQLite loss without user-volume probes. Linux simple-entry runtime integrated; other operation roots remain pending.
+- `src-tauri/src/files/recovery/coordinator/admission.rs` — atomic admission of independent child reservations with aggregate bounds, optimistic capture revision and cross-child conflict checks; single reservations share this path. Child promotion/finish, rollback, aliases and process-exit contracts live in `src-tauri/test_support/recovery_batch_admission.rs`.
+- `src-tauri/src/files/recovery/resources.rs` — bounded resource requests, native parent/entry identity capture and logical/physical-ancestor namespace conflicts; shared component encodings and minimal subtree frontiers bound index overhead; selection roles permit distinct hardlinks/shared layout dependencies while excluding source/artifact overlaps.
+- `src-tauri/src/files/recovery/runtime.rs` — application-owned lazy Linux coordinator initialization, admission and recovery requests on blocking workers; production overwrite policy keeps durable copies opt-in and retires default transient reservations; renderer subscriptions publish completed operations even after a requesting IPC future is lost, with initial catalog-only fallback when the index is unavailable. Runtime publication/cancellation contracts in `src-tauri/test_support/recovery_runtime.rs`.
+- `src-tauri/src/files/recovery/context.rs` — explicit worker lease clones; only the logical owner may finish after all workers release ownership.
+- `src-tauri/src/files/worker.rs` — shared blocking job ownership plus explicit-context workers that report whole results before context destruction; work/cleanup unwind separately and late cleanup diagnostics preserve successful receipts. `src-tauri/test_support/file_worker_completion.rs` covers result retention, blocked cleanup, waiter loss and subprocess double panic.
+
+- `src-tauri/src/files/recovery/subscriptions.rs` — bounded exact-renderer recovery channels; monotonic subscription tokens fence reordered registration/release, pending acknowledgements roll back, and native retirement releases listeners. Ordering, capacity, reentrant callback and retirement contracts in `src-tauri/test_support/recovery_subscriptions.rs`.

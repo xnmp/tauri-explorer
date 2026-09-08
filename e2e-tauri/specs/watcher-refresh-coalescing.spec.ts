@@ -1,7 +1,8 @@
 /**
  * Real-backend regressions for watcher refresh timing. The probe delays real
- * listing IPC responses; filesystem writes still travel through notify and
- * Tauri's directory-changed event before reaching useFileWatchers.
+ * listing IPC responses. Held-listing app writes use native mutation admission
+ * and directory-changed receipts; external host writes independently exercise
+ * notify-only adaptive cadence.
  */
 import { browser } from "@wdio/globals";
 import fs from "node:fs";
@@ -137,7 +138,7 @@ describe("filesystem watcher refresh coalescing", () => {
     fs.rmSync(adaptiveDir, { recursive: true, force: true });
   });
 
-  it("runs one trailing listing after repeated events during a slow listing", async () => {
+  it("runs one trailing listing after repeated native mutations during a slow listing", async () => {
     await navigateTo(coalescingDir);
     await waitForWatcherReady(coalescingDir);
     await waitForWatcherQuiet(coalescingDir);
@@ -164,6 +165,7 @@ describe("filesystem watcher refresh coalescing", () => {
     const trailing = await listingProbe();
     expect(trailing.calls).toBe(2);
     for (const ack of result.acknowledgements) {
+      expect(ack.origin).toBe("mutation");
       expect(ack.startedAt).toBeGreaterThanOrEqual(trailing.starts[0]);
       expect(ack.observedAt).toBeGreaterThanOrEqual(ack.startedAt);
       expect(ack.receivedAt).toBeLessThanOrEqual(trailing.finishes[0]);

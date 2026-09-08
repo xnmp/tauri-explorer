@@ -41,9 +41,25 @@ function createOperationsManager() {
   // cancellation after the row has been removed from the visible list.
   // Entries expire after CANCELLED_ID_TTL_MS so the set can't grow unbounded.
   const cancelledIds = new Set<string>();
+  const cancellationListeners = new Map<string, Set<() => void>>();
+
+  /** Owned workers receive cancellation immediately, including while paused. */
+  function subscribeCancellation(operationId: string, cancel: () => void): () => void {
+    if (cancelledIds.has(operationId)) { cancel(); return () => {}; }
+    const listeners = cancellationListeners.get(operationId) ?? new Set<() => void>();
+    listeners.add(cancel);
+    cancellationListeners.set(operationId, listeners);
+    return () => {
+      listeners.delete(cancel);
+      if (listeners.size === 0) cancellationListeners.delete(operationId);
+    };
+  }
 
   function markCancelled(operationId: string): void {
     cancelledIds.add(operationId);
+    for (const cancel of [...(cancellationListeners.get(operationId) ?? [])]) {
+      try { cancel(); } catch (error) { console.error("Operation cancellation listener failed", error); }
+    }
     setTimeout(() => cancelledIds.delete(operationId), CANCELLED_ID_TTL_MS);
   }
 
@@ -242,6 +258,7 @@ function createOperationsManager() {
     retryOperation,
     cancelOperation,
     isOperationCancelled,
+    subscribeCancellation,
     cancelAllOperations,
     cleanupCompletedOperations,
     clearOperation,

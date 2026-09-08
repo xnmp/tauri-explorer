@@ -16,6 +16,25 @@ pub struct TaskRegistry {
     state: OnceLock<Mutex<RegistryState>>,
 }
 
+/// A worker owns registration until its last effect, including panic unwinding.
+pub struct TaskRegistration<'a> {
+    registry: &'a TaskRegistry,
+    id: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl TaskRegistration<'_> {
+    pub fn cancelled(&self) -> &AtomicBool {
+        &self.cancelled
+    }
+}
+
+impl Drop for TaskRegistration<'_> {
+    fn drop(&mut self) {
+        self.registry.cleanup(self.id);
+    }
+}
+
 #[derive(Default)]
 struct RegistryState {
     active: HashMap<u64, Arc<AtomicBool>>,
@@ -78,6 +97,14 @@ impl TaskRegistry {
         Ok(cancelled)
     }
 
+    pub fn register(&self, id: u64) -> Result<TaskRegistration<'_>, AppError> {
+        Ok(TaskRegistration {
+            cancelled: self.start_with_id(id)?,
+            registry: self,
+            id,
+        })
+    }
+
     /// Cancel a task by ID. If registration has not happened yet, preserve a
     /// bounded tombstone so a racing `start_with_id` begins cancelled.
     pub fn cancel(&self, id: u64) {
@@ -112,6 +139,21 @@ impl TaskRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_registration_releases_after_worker_unwinds() {
+        let registry = TaskRegistry::new();
+        let result = std::panic::catch_unwind(|| {
+            let job = registry.register(73).unwrap();
+            assert!(registry.register(73).is_err());
+            registry.cancel(73);
+            assert!(job.cancelled().load(Ordering::Relaxed));
+            panic!("worker failed after admission");
+        });
+        assert!(result.is_err());
+        let replacement = registry.register(73).unwrap();
+        assert!(!replacement.cancelled().load(Ordering::Relaxed));
+    }
 
     #[test]
     fn duplicate_client_id_cannot_replace_cancellation_ownership() {

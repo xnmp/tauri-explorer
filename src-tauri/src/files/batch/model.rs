@@ -1,4 +1,5 @@
 //! Pure batch admission and outcome projection. Paths retain their IPC spelling.
+use super::receipts::ItemState;
 use crate::files::trash_artifact::{TrashArtifact, TrashSuccess};
 use serde::Serialize;
 use std::{
@@ -76,8 +77,14 @@ pub struct FileFailure {
 pub struct FileBatchOutcome {
     #[serde(skip)]
     pub(crate) artifacts: BTreeMap<String, Arc<TrashArtifact>>,
+    #[serde(skip)]
+    pub(crate) publications: BTreeMap<String, Arc<crate::files::mutation::PublishedEntry>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) warnings: Vec<FileFailure>,
+    /// Worker failure outside an active item's syscall (for example cleanup).
+    /// Confirmed receipts survive; otherwise retryable inputs need inspection.
+    #[serde(rename = "workerError", skip_serializing_if = "Option::is_none")]
+    pub(crate) worker_error: Option<String>,
     /// Native reconciliation effects independent of requested-item success.
     /// These are conservative invalidations, not created-directory ownership.
     /// The native coordinator publishes them; they are not a renderer receipt.
@@ -96,9 +103,31 @@ impl FileBatchOutcome {
         self.succeeded
             .iter()
             .chain(self.uncertain.iter().map(|failure| &failure.path))
+            .chain(self.worker_error.iter().flat_map(|_| {
+                self.failed
+                    .iter()
+                    .map(|failure| &failure.path)
+                    .chain(&self.unstarted)
+            }))
     }
 
+    /// Combined user-facing diagnostic retained for existing mutation callers.
     pub fn error(&self) -> Option<String> {
+        self.message(true)
+    }
+
+    /// Only failures stop dependent work; completed-item warnings do not.
+    pub fn failure_message(&self) -> Option<String> {
+        self.message(false)
+    }
+
+    pub fn warning_messages(&self) -> impl Iterator<Item = String> + '_ {
+        self.warnings
+            .iter()
+            .map(|item| format!("{}: {}", item.path, item.error))
+    }
+
+    fn message(&self, include_warnings: bool) -> Option<String> {
         let mut errors: Vec<_> = self
             .failed
             .iter()
@@ -110,11 +139,12 @@ impl FileBatchOutcome {
                 item.path, item.error
             )
         }));
-        errors.extend(
-            self.warnings
-                .iter()
-                .map(|item| format!("{}: {}", item.path, item.error)),
-        );
+        if include_warnings {
+            errors.extend(self.warning_messages());
+        }
+        if let Some(error) = &self.worker_error {
+            errors.push(format!("File worker did not finish cleanly; inspect the affected files before continuing: {error}"));
+        }
         if !self.unstarted.is_empty() {
             errors.push(format!("{} items were not started", self.unstarted.len()));
         }
@@ -122,27 +152,31 @@ impl FileBatchOutcome {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub(super) enum ItemState {
-    #[default]
-    Unstarted,
-    Active,
-    Succeeded(TrashSuccess),
-    Failed(String),
-    Uncertain(String),
-}
-
 pub(super) fn settle(
     paths: Vec<String>,
-    states: Vec<ItemState>,
+    states: Vec<ItemState<TrashSuccess>>,
     worker_error: Option<String>,
 ) -> FileBatchOutcome {
-    let mut outcome = FileBatchOutcome::default();
+    let mut outcome = FileBatchOutcome {
+        worker_error: if worker_error.is_none()
+            || states
+                .iter()
+                .any(|state| matches!(state, ItemState::Active))
+        {
+            None
+        } else {
+            worker_error.clone()
+        },
+        ..Default::default()
+    };
     for (path, state) in paths.into_iter().zip(states) {
         match state {
             ItemState::Succeeded(success) => {
                 if let Some(artifact) = success.artifact {
                     outcome.artifacts.insert(path.clone(), artifact);
+                }
+                if let Some(publication) = success.publication {
+                    outcome.publications.insert(path.clone(), publication);
                 }
                 if let Some(error) = success.warning {
                     outcome.warnings.push(FileFailure {

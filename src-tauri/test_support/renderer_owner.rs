@@ -261,3 +261,48 @@ fn acquisition_requires_native_ack_and_the_current_generation() {
         "Native resource renderer was replaced"
     );
 }
+
+#[test]
+fn retirement_wakes_every_registered_waiter_and_future_waiters() {
+    tauri::async_runtime::block_on(async {
+        use std::{future::Future, task::Poll};
+        let owner = Owner::default();
+        let mut first = Box::pin(owner.retired());
+        let mut second = Box::pin(owner.retired());
+        std::future::poll_fn(|cx| {
+            assert!(first.as_mut().poll(cx).is_pending());
+            assert!(second.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        owner.retire();
+        owner.retire();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            first.await;
+            second.await;
+            owner.retired().await;
+        })
+        .await
+        .unwrap();
+        assert!(!owner.active());
+        assert!(Owner::default().active());
+    });
+}
+
+#[test]
+fn retirement_racing_waiter_installation_does_not_lose_wakeups() {
+    tauri::async_runtime::block_on(async {
+        for _ in 0..256 {
+            let owner = Owner::default();
+            let waiting = owner.clone();
+            let task = tokio::spawn(async move {
+                waiting.retired().await;
+            });
+            owner.retire();
+            tokio::time::timeout(std::time::Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    });
+}

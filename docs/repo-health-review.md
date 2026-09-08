@@ -1,5 +1,10 @@
 # Repository health and startup review — #680
 
+Execution scope was frozen by the user on 2026-09-09. The
+[active completion gates](review-completion.md#active-scope--frozen-2026-09-09)
+supersede open-ended implementation requirements in this historical audit.
+Deferred expansion is tracked in GitHub issues #685–#688.
+
 Reviewed against `ea256aaf` (dev), September 2026. This document records the
 implemented cleanup and the next highest-value work. It is a source review
 with targeted runtime verification, not a claim that every path in the roughly
@@ -12,6 +17,56 @@ and the implementation foundation is published in
 is the current requirement-by-requirement ledger; the earlier verification and
 handover below describe the initial foundation checkpoint, not final acceptance
 of the ongoing pass. macOS half-bounce measurements remain outstanding.
+
+The latest local checkpoint closes a native move ownership bypass: forward moves
+and native history moves now share Linux recovery reservation, an immutable execution
+plan and worker-owned settlement. It passes 1,143 Rust tests, 2,418 frontend tests,
+four Chromium scenarios and two Linux native move scenarios, with independent Sol
+review. This binds admitted paths and managed ownership; exact object identity,
+durable move recovery, ordered move batches and the release gates remain open.
+See [move admission evidence](reviews/recovery-move-admission-2026-09-09.json).
+
+The preceding local checkpoint migrates production paste/drop copies to one ordered
+native session with live conflict decisions, owned cancellation/progress and grouped
+ordinary/replacement Undo/Redo. It passes 1,135 Rust tests (19 ignored), 2,415 frontend
+unit/performance tests (3 skipped), seven Linux native scenarios and nine Chromium
+scenarios including copy behavior in all three file views. Independent Sol source
+review confirms the scoped contracts. Moves, broader recovery admission and artifact
+retention remain implementation work; Windows/macOS and release qualification remain
+open. See the [ledger](review-completion.md) and
+[copy-session evidence](reviews/recovery-copy-session-2026-09-09.json).
+
+Earlier checkpoint paragraphs below retain their then-current limitations;
+the ledger's current checkpoint supersedes their pending copy-session migration.
+
+The preceding local checkpoint preserves a returned copy result through worker
+context cleanup, including exact replacement inverses and bounded cleanup
+warnings. Separate work/cleanup unwind boundaries prevent double-unwind termination
+for one panic in each phase. It passes 507 focused Rust tests and all five rebuilt
+Linux native recovery scenarios, with independent Sol review. This establishes
+whole-result retention; mixed transfer command integration, per-item receipts
+outside that command's worker, and grouped history remain open. The
+[ledger](review-completion.md) records the evidence and remaining release gates.
+
+The preceding local checkpoint retains independent replacement batch receipts across
+later child failure, cancellation and panic, explicitly retires unstarted children,
+and preserves results through post-execution inventory/refresh failure. Production
+single replacements share this executor; deletion shares the underlying ordered
+receipt store while retaining its own policy. Copy/history diagnostics share one
+bounded collector. It passes 498 focused Rust tests with independent Sol review.
+The mixed transfer command, grouped history and paste/drop migration remain open;
+[the ledger](review-completion.md) records native acceptance and all remaining gates.
+
+The preceding local checkpoint separates native history completion warnings from
+execution failures and preserves mutation origin through the shared refresh
+policy. A first-mutation deadline prevents watcher churn from postponing visible
+reconciliation, while ordinary external changes retain adaptive throttling.
+It passes 464 focused Rust tests, 79 frontend tests and seven Linux native
+scenarios. Final detached Undo reconciled its surviving named row in 241ms after
+gate release (152ms after receipt); this is a DOM observation in one native run,
+not startup or general latency qualification. Exact evidence and outstanding
+grouped-operation, retention, platform and release gates are in the ledger and
+[acceptance record](reviews/recovery-warning-refresh-2026-09-09.json).
 
 The working tree now adds native shared-history admission and committed-path
 mutation receipts with optional metadata. That migration remains in progress;

@@ -11,6 +11,7 @@ const request = { path: "/requested", handoff: { sourceWindow: "main", requestId
 function fixture() {
   const stop = vi.fn();
   const dependencies = {
+    activated: vi.fn(),
     measure: false, acceptsActivation: vi.fn(() => true),
     listen: vi.fn(async (_handler: (payload: unknown) => Promise<void>) => stop),
     register: vi.fn(async () => true), refreshSettings: vi.fn(async () => {}),
@@ -108,4 +109,44 @@ it("ignores malformed and uncorrelated requests without consuming the valid one"
   expect(dependencies.show).toHaveBeenCalledOnce();
   expect(dependencies.acknowledge).toHaveBeenCalledOnce();
   owner.dispose();
+});
+
+
+it("notifies foreground services only after successful acknowledgement", async () => {
+  const { owner, dependencies } = fixture();
+  const ack = deferred<void>();
+  dependencies.acknowledge.mockReturnValue(ack.promise);
+  await owner.ready;
+  const activating = owner.activate(request);
+  await vi.waitFor(() => expect(dependencies.acknowledge).toHaveBeenCalledOnce());
+  expect(dependencies.activated).not.toHaveBeenCalled();
+  ack.resolve();
+  await activating;
+  expect(dependencies.activated).toHaveBeenCalledOnce();
+  owner.dispose();
+});
+
+it("retirement during acknowledgement suppresses foreground service activation", async () => {
+  const { owner, dependencies } = fixture();
+  const ack = deferred<void>();
+  dependencies.acknowledge.mockReturnValue(ack.promise);
+  await owner.ready;
+  const activating = owner.activate(request);
+  await vi.waitFor(() => expect(dependencies.acknowledge).toHaveBeenCalledOnce());
+  owner.dispose();
+  ack.resolve();
+  await activating;
+  expect(dependencies.activated).not.toHaveBeenCalled();
+});
+
+it("a foreground observer failure does not reject a successfully activated window", async () => {
+  const { owner, dependencies } = fixture();
+  dependencies.activated.mockImplementation(() => { throw new Error("observer failed"); });
+  await owner.ready;
+  await owner.activate(request);
+  expect(dependencies.acknowledge).toHaveBeenCalledOnce();
+  expect(dependencies.reject).not.toHaveBeenCalled();
+  expect(dependencies.reportError).toHaveBeenCalledWith(expect.objectContaining({ message: "observer failed" }));
+  owner.dispose();
+  expect(dependencies.retire).not.toHaveBeenCalled();
 });

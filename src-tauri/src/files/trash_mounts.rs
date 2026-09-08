@@ -137,7 +137,7 @@ fn decode_mount_field(field: &[u8]) -> Vec<u8> {
     decoded
 }
 
-fn mount_id(path: &Path) -> Result<Option<u64>, AppError> {
+pub(super) fn mount_id(path: &Path) -> Result<Option<u64>, AppError> {
     let path = CString::new(path.as_os_str().as_bytes())
         .map_err(|_| AppError::InvalidPath("Path contains a NUL byte".into()))?;
     let mut stat = std::mem::MaybeUninit::<libc::statx>::zeroed();

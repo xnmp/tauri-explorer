@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { FileRecoverySession } from "$lib/state/file-recovery-session.svelte";
   import type { PickerInfo } from "./FilePicker.svelte";
   import { useLazyDialog } from "$lib/composables/use-lazy-dialog.svelte";
   import { createDialogCrashHandler } from "$lib/domain/lazy-dialog";
@@ -10,8 +11,9 @@
   import ProgressDialog from "./ProgressDialog.svelte";
   import ToastOverlay from "./ToastOverlay.svelte";
 
-  let { pickerInfo = null, onFilesChanged }: {
+  let { pickerInfo = null, recovery = null, onFilesChanged }: {
     pickerInfo?: PickerInfo | null;
+    recovery?: FileRecoverySession | null;
     onFilesChanged: () => void;
   } = $props();
 
@@ -75,6 +77,11 @@
     load: () => import("$lib/components/OptionPicker.svelte"),
     onFailure: () => dialogStore.closePicker(),
   }, notifyError);
+  const FileRecoveryDialog = useLazyDialog({
+    label: "File Recovery", isOpen: () => !pickerInfo && dialogStore.isFileRecoveryOpen,
+    load: () => import("$lib/components/FileRecoveryDialog.svelte"),
+    onFailure: () => dialogStore.closeFileRecovery(),
+  }, notifyError);
   const UserReportDialog = useLazyDialog({
     label: "Report dialog", isOpen: () => !pickerInfo && dialogStore.isUserReportOpen,
     load: () => import("$lib/components/UserReportDialog.svelte"),
@@ -108,6 +115,11 @@
 {#if OptionPicker.component}
   <svelte:boundary onerror={dialogCrash("Option Picker", () => dialogStore.closePicker())}>
     <OptionPicker.component />
+  </svelte:boundary>
+{/if}
+{#if FileRecoveryDialog.component && recovery}
+  <svelte:boundary onerror={dialogCrash("File Recovery", () => dialogStore.closeFileRecovery())}>
+    <FileRecoveryDialog.component {recovery} open={dialogStore.isFileRecoveryOpen} onClose={() => dialogStore.closeFileRecovery()} />
   </svelte:boundary>
 {/if}
 {#if UserReportDialog.component}

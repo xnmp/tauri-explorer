@@ -9,8 +9,11 @@ const f = vi.hoisted(() => ({
   setupLifecycle: vi.fn(), cleanupLifecycle: vi.fn(), stopKeyboard: vi.fn(),
   config: vi.fn(), stopConfig: vi.fn(), transfer: vi.fn(), stopTransfer: vi.fn(),
   syncSize: vi.fn(), probe: vi.fn(), nativeSession: vi.fn(async () => "session"),
+  recoveryStart: vi.fn(async () => {}), recoveryDispose: vi.fn(async () => {}),
+  activate: null as (() => void) | null,
   mode: "off", warmEnabled: true,
 }));
+vi.mock("$lib/state/file-recovery-session.svelte", () => ({ createFileRecoverySession: () => ({ start: f.recoveryStart, dispose: f.recoveryDispose }) }));
 vi.mock("$lib/api/common", () => ({ isTauri: () => true }));
 vi.mock("$lib/api/native-resource-session", () => ({
   getNativeResourceSession: f.nativeSession,
@@ -23,7 +26,7 @@ vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: { init: f.i
   getActiveExplorer: () => ({ currentPath: "/work", setViewMode: f.view }) } }));
 vi.mock("$lib/state/window-title.svelte", () => ({ startWindowTitleSync: f.title }));
 vi.mock("$lib/state/warm-window", () => ({ warmMode: () => f.mode, spawnWarmWindow: f.spawn,
-  runWarmWindow: () => ({ ready: Promise.resolve(true), dispose() {} }) }));
+  runWarmWindow: (_measure: boolean, activate: () => void) => { f.activate = activate; return { ready: Promise.resolve(true), dispose() {} }; } }));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: { init: async () => {} } }));
 vi.mock("$lib/state/folder-views.svelte", () => ({ folderViewsStore: { init: async () => {} } }));
 vi.mock("$lib/state/manual-hidden.svelte", () => ({ manualHiddenStore: { init: async () => {} } }));
@@ -48,7 +51,7 @@ let host: EventTarget;
 const options = () => ({ picker: false, homePath: "/home/me", settingsReady: vi.fn(), commandsReady: vi.fn() });
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks();
-  f.mode = "off"; f.warmEnabled = true;
+  f.mode = "off"; f.warmEnabled = true; f.activate = null;
   f.settings.mockImplementation(() => new Promise(resolve => { resolveSettings = resolve; }));
   f.title.mockReturnValue(f.stopTitle); f.nativeClose.mockReturnValue(f.stopNativeClose);
   f.config.mockReturnValue(f.stopConfig); f.transfer.mockReturnValue(f.stopTransfer);
@@ -153,6 +156,41 @@ describe("page session ownership", () => {
     expect(f.plugins).not.toHaveBeenCalled();
     expect(f.spawn).not.toHaveBeenCalled();
     expect(f.nativeSession).not.toHaveBeenCalled();
+    expect(f.recoveryStart).not.toHaveBeenCalled();
     session.dispose();
   });
+});
+
+
+it("starts recovery only on foreground readiness and retires it with the session", async () => {
+  const session = startWindowSession(options());
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(f.recoveryStart).not.toHaveBeenCalled();
+  session.markCoreReady();
+  expect(f.recoveryStart).toHaveBeenCalledOnce();
+  session.dispose();
+  expect(f.recoveryDispose).toHaveBeenCalledOnce();
+  session.markBackgroundReady();
+  expect(f.recoveryStart).toHaveBeenCalledOnce();
+});
+
+it("permits recovery after an initial listing error without priming a warm window", async () => {
+  const session = startWindowSession(options());
+  session.markBackgroundReady();
+  expect(f.recoveryStart).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(f.spawn).not.toHaveBeenCalled();
+  session.dispose();
+});
+
+it.each(["park", "measure"])("waits for successful %s activation and foreground readiness before recovery", async (mode) => {
+  f.mode = mode;
+  const session = startWindowSession(options());
+  session.markCoreReady();
+  expect(f.recoveryStart).not.toHaveBeenCalled();
+  f.activate!();
+  expect(f.recoveryStart).toHaveBeenCalledOnce();
+  session.dispose();
+  f.activate!();
+  expect(f.recoveryStart).toHaveBeenCalledOnce();
 });

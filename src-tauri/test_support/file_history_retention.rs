@@ -39,6 +39,7 @@ fn delete_restore(paths: &[String], artifact_units: usize) -> Action {
 
 fn copy_restore(id: &str, artifact_units: usize) -> Action {
     Action::Copy {
+        publication: None,
         copied_path: format!("/history/{id}.txt"),
         parent_dir: "/history".into(),
         restore_supported: true,

@@ -175,6 +175,113 @@ fn restore_exact(items: impl IntoIterator<Item = ExactTrash>) -> batch::FileBatc
 }
 
 #[test]
+fn aliased_duplicate_selection_is_rejected_before_any_deletion() {
+    isolated(
+        "aliased_duplicate_selection_is_rejected_before_any_deletion",
+        |fixture| {
+            let first = fixture.file("first", "first bytes");
+            let alias = fixture.root.join("alias");
+            symlink(first.parent().unwrap(), &alias).unwrap();
+            let duplicate = alias.join("first");
+            let result = run(move_multiple_to_trash(vec![
+                path_string(&first),
+                path_string(&duplicate),
+            ]));
+            assert!(
+                result.is_err(),
+                "semantic duplicate must reject the entire batch before effects"
+            );
+            assert_eq!(fs::read(&first).unwrap(), b"first bytes");
+            assert_eq!(fs::read(&duplicate).unwrap(), b"first bytes");
+            assert!(!fixture.root.join("xdg-data/Trash").exists());
+        },
+    );
+}
+
+#[test]
+fn aliased_selected_ancestor_rejects_the_entire_deletion() {
+    isolated(
+        "aliased_selected_ancestor_rejects_the_entire_deletion",
+        |fixture| {
+            let child = fixture.file("child", "child bytes");
+            let directory = child.parent().unwrap();
+            let alias = fixture.root.join("alias");
+            symlink(directory, &alias).unwrap();
+            let result = run(move_multiple_to_trash(vec![
+                path_string(&alias.join("child")),
+                path_string(directory),
+            ]));
+            assert!(
+                result.is_err(),
+                "physical ancestor must reject before deleting a child"
+            );
+            assert_eq!(fs::read(&child).unwrap(), b"child bytes");
+            assert!(!fixture.root.join("xdg-data/Trash").exists());
+        },
+    );
+}
+
+#[test]
+fn selection_cannot_delete_an_alias_used_by_another_selected_source() {
+    isolated(
+        "selection_cannot_delete_an_alias_used_by_another_selected_source",
+        |fixture| {
+            let path = fixture.file("entry", "retain bytes");
+            let alias = fixture.root.join("alias");
+            symlink(path.parent().unwrap(), &alias).unwrap();
+            let indirect = fixture.root.join("indirect");
+            symlink(&alias, &indirect).unwrap();
+            let result = run(move_multiple_to_trash(vec![
+                path_string(&alias),
+                path_string(&indirect.join("entry")),
+            ]));
+            assert!(
+                result.is_err(),
+                "selection must retain a source's alias dependency"
+            );
+            assert_eq!(fs::read(path).unwrap(), b"retain bytes");
+            assert!(fs::symlink_metadata(alias).unwrap().is_symlink());
+            assert!(!fixture.root.join("xdg-data/Trash").exists());
+        },
+    );
+}
+
+#[test]
+fn whole_selection_hardlinks_keep_original_receipt_keys_and_exact_undo() {
+    isolated(
+        "whole_selection_hardlinks_keep_original_receipt_keys_and_exact_undo",
+        |fixture| {
+            use std::os::unix::fs::MetadataExt;
+            let first = fixture.file("first", "shared bytes");
+            let second = first.with_file_name("second");
+            fs::hard_link(&first, &second).unwrap();
+            let alias = fixture.root.join("alias");
+            symlink(first.parent().unwrap(), &alias).unwrap();
+            let keys = [path_string(&alias.join("first")), path_string(&second)];
+            let outcome = run(move_multiple_to_trash(keys.to_vec())).unwrap();
+            assert_known_outcome(&outcome, &keys, &[]);
+            assert!(!first.exists() && !second.exists());
+            let requests: Vec<_> = keys
+                .iter()
+                .map(|key| RestoreRequest {
+                    path: key.clone(),
+                    artifact: outcome.artifacts[key].clone(),
+                })
+                .collect();
+            let restored = run(restore_entries(requests)).unwrap();
+            assert_known_outcome(&restored, &keys, &[]);
+            assert_eq!(fs::read(&first).unwrap(), b"shared bytes");
+            assert_eq!(fs::read(&second).unwrap(), b"shared bytes");
+            assert_eq!(
+                fs::metadata(&first).unwrap().ino(),
+                fs::metadata(&second).unwrap().ino()
+            );
+            assert_eq!(fs::metadata(first).unwrap().nlink(), 2);
+        },
+    );
+}
+
+#[test]
 fn bulk_trash_retains_success_and_receipt_when_another_path_is_missing() {
     isolated(
         "bulk_trash_retains_success_and_receipt_when_another_path_is_missing",

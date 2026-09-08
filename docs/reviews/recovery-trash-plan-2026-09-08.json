@@ -1,0 +1,131 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "Linux per-item prepared trash execution implemented; full architectural review remains active",
+  "production_seams": [
+    "Context::trash -> read-only Context::prepare -> owned Prepared::execute_with inside the existing pooled batch Job",
+    "Prepared stores native source paths, entry and parent identities, mount identity, exact payload/final metadata/staging names, metadata bytes/digest and explicit layout steps without retaining descriptors",
+    "DirectoryAction Create/Open/Repair separates mutation authority; only a planned repair may chmod, and an appeared first-use directory must already be private and real",
+    "Predeclared shared and personal trash destinations preserve mandated fallback; both use the selected exact candidate names and filesystem name limits",
+    "Fallback spans layout, metadata and payload attempts, advancing only after confirmed no-source-effect cleanup; uncertain metadata or source outcomes terminate immediately",
+    "Directory identity compares device/inode/mount, not mutable ctime; mount capture uses statx AT_EMPTY_PATH on retained descriptors",
+    "Normalized source/trash-root containment is rejected before directory creation"
+  ],
+  "verification": {
+    "self_overlap_red": {
+      "log": "/tmp/recovery-trash-plan-self-overlap-red.log",
+      "failed": 1,
+      "exit_code": 101,
+      "reason": "Self-containing trash destination reached execution rather than failing pure path validation"
+    },
+    "first_use_red": {
+      "log": "/tmp/recovery-trash-plan-first-use-red.log",
+      "failed": 1,
+      "exit_code": 101,
+      "reason": "Independently prepared second deletion failed with AlreadyExists after the first created the shared home layout"
+    },
+    "focused": {
+      "log": "/tmp/recovery-trash-plan-full-fallback-tests.log",
+      "passed": 34,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "filesystem": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files:: -- --test-threads=1",
+      "log": "/tmp/recovery-trash-plan-final-files.log",
+      "passed": 348,
+      "failed": 0,
+      "ignored": 7,
+      "exit_code": 0
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-trash-plan-final-clippy.log",
+      "exit_code": 0,
+      "warnings": "11 existing unused-infrastructure library warnings; 5 test warnings, 4 duplicate"
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 VITE_E2E_NO_WARM_PRIME=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": "/tmp/recovery-trash-plan-final-native-build.log",
+      "binary_sha256": "a492f097d7718a6c4e6b79ae4368ba483d2e6d9363def5aaacd7cf43a11ceb5f",
+      "initial_command": "TAURI_E2E_HISTORY_GATE_DIR=/tmp/recovery-trash-plan-native-gates bash /tmp/run-native-review.sh --spec e2e-tauri/specs/file-ops.spec.ts --spec e2e-tauri/specs/file-forward-history.spec.ts --spec e2e-tauri/specs/local-mutation-lifetime.spec.ts",
+      "initial_log": "/tmp/recovery-trash-plan-native.log",
+      "initial_exit_code": 1,
+      "initial_result": "File operations 3 passed; navigation lifetime 1 passed; history before-all failed because the temporary gate directory had not been created",
+      "history_command": "TAURI_E2E_HISTORY_GATE_DIR=/tmp/recovery-trash-plan-native-gates bash /tmp/run-native-review.sh --spec e2e-tauri/specs/file-forward-history.spec.ts",
+      "history_fixture_correction": "mkdir -p /tmp/recovery-trash-plan-native-gates",
+      "history_log": "/tmp/recovery-trash-plan-native-history.log",
+      "history_passed": 4,
+      "history_exit_code": 0,
+      "accepted_outcomes_across_runs": 8,
+      "skipped": 0,
+      "environment": "Approved local WebDriver/display access; private XDG profile on the home filesystem, HOME unchanged; same native binary in both runs",
+      "screenshot": "screenshots/refactor/repo-health-cleanup/native-forward-history.png",
+      "screenshot_review": "Opened and visually inspected; shows native child rename/history completion in details view. It does not depict internal plan checks or the self-overlap rejection."
+    },
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT for revised prepared Linux trash executor",
+      "found_and_addressed": [
+        "First-use EEXIST availability regression",
+        "Personal fallback must remain available through metadata and payload attempts after confirmed safe cleanup",
+        "Appeared directory parent now synchronized independently"
+      ],
+      "confirmed": [
+        "Read-only preparation and exact name constraints",
+        "Create/Open/Repair policy with no unplanned chmod or symlink following",
+        "Clean failures retain declared personal fallback; uncertain or committed effects do not retry",
+        "Preserved exact receipts and source/occupant bytes"
+      ],
+      "qualifications": [
+        "No whole-selection admission yet",
+        "No descriptors retained between preparation and execution",
+        "Arbitrary external namespace changes after last validation, inode reuse and old-kernel mount-ID limits remain",
+        "Synthetic mounted placement tests verify executor effects, not real kernel mount discovery or crash durability"
+      ]
+    },
+    "maps": "python3 docs/code-map/validate.py --coverage passed: 415/415 tracked source files, 0 unresolvable references; new plan file mapped explicitly",
+    "formatting": "Final cargo fmt --check and git diff --check passed. Whitespace-only readability formatting follows executable verification; normal build uses final formatting."
+  },
+  "normal_build": {
+    "command": "bun run tauri build --debug --no-bundle",
+    "log": "/tmp/recovery-trash-plan-normal-build.log",
+    "exit_code": 0,
+    "binary_sha256": "2c29b1dd2d5392c802bdcf3216ebbee1ccd19ada0b3cda78ed578997b706876d",
+    "note": "Restored normal custom-protocol debug binary without E2E environment flags; no runtime probe-absence inspection claimed"
+  },
+  "research": [
+    {
+      "url": "https://specifications.freedesktop.org/trash/latest/",
+      "application": "Unique payload/info names, metadata pairing, and mandatory method-1 to method-2 fallback guided preparation and execution branching"
+    },
+    {
+      "url": "https://man7.org/linux/man-pages/man2/statx.2.html",
+      "application": "Descriptor AT_EMPTY_PATH and STATX_MNT_ID distinguish bind mounts without inspecting a procfs symlink itself"
+    },
+    {
+      "url": "https://man7.org/linux/man-pages/man2/access.2.html",
+      "application": "Effective-ID access probing is advisory only; execution failures retain the declared fallback"
+    }
+  ],
+  "remaining_requirements": [
+    "Whole-selection preparation, aggregate budgets and physical cross-item source/artifact overlap validation",
+    "One logical reservation for all primary/fallback resources, bound execution and actual worker ownership",
+    "Alias-safe native deletion history and both requested/resolved/auxiliary refresh parents",
+    "Durable promotion before artifact effects, retained cleanup evidence and claimed recovery UI",
+    "All remaining mutation roots, Windows/macOS native identity/durability/runtime qualification",
+    "Product/platform release matrix and measured Mac half-bounce startup"
+  ],
+  "publication": "No commit, push or merge; previous automatic rejection of public pushes remains respected",
+  "source_sha256": {
+    "src-tauri/src/files/freedesktop_trash.rs": "efacfb25fc1878101c8fd1d2e764e105028ec67b314d73bc018d25856cc3ef78",
+    "src-tauri/src/files/freedesktop_trash/plan.rs": "43abfb195b82da2ca6c0e54f40547516f72ea7a3e878f7630932703d6f02ca4f",
+    "src-tauri/src/files/native_directory.rs": "659b47f696bd3a25cc28eb89e757921391f4148e8dc76281b3f8e782272ffe47",
+    "src-tauri/src/files/native_directory/unix.rs": "fd75d011278f0930569e7622154d45f3ef7b883024437e5b0dfb3a1ab87e1417",
+    "src-tauri/src/files/trash_mounts.rs": "2087884ccf52ba4ed793bb6d912ba99b8137546f7a671b38c6b3144057807ab6",
+    "src-tauri/test_support/freedesktop_trash.rs": "7162551053124cdbdc37533ef6b1151340f7a2492ff4f36eec5e20d69c54effc",
+    "src-tauri/test_support/freedesktop_trash_plan.rs": "3c613731a4de90faa2569e0dae46c5a0d828983294a0e370a45125e194e0aa7d",
+    "src-tauri/test_support/native_directory.rs": "282156798da776dc2e90c03b21d91db359b920fcb4ebe816c387f5cacbe288bd"
+  }
+}

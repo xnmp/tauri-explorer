@@ -1,8 +1,10 @@
 //! Inverse execution with injected file operations and explicit partial progress.
 use super::model::{Action, Direction, Execution, Recovery};
+use super::plan::{Plan, Prepared, Request};
+use crate::diagnostics::Warnings;
 use crate::files::trash::FileBatchOutcome;
 use crate::files::trash_artifact::RestoreRequest;
-use std::{collections::HashSet, future::Future, path::Path, pin::Pin};
+use std::{collections::HashSet, future::Future, pin::Pin};
 
 #[derive(Debug)]
 pub enum OperationError {
@@ -15,7 +17,35 @@ impl From<String> for OperationError {
     }
 }
 
-pub trait Operations: Sync {
+pub(crate) struct MoveResult {
+    pub result: Result<Option<String>, OperationError>,
+    pub warning: Option<String>,
+    pub affected: Vec<String>,
+}
+
+pub(crate) trait Operations: Sync {
+    fn trash_publication(
+        &self,
+        _publication: std::sync::Arc<crate::files::mutation::PublishedEntry>,
+    ) -> impl Future<Output = Result<FileBatchOutcome, OperationError>> + Send {
+        async {
+            Err(OperationError::Unchanged(
+                "Verified copy removal is unavailable on this host".into(),
+            ))
+        }
+    }
+    fn replacement(
+        &self,
+        _history: crate::files::recovery::ReplacementHistory,
+        _direction: crate::files::recovery::ReplacementDirection,
+    ) -> impl Future<Output = Result<crate::files::recovery::ReplacementOutcome, OperationError>> + Send
+    {
+        async {
+            Err(OperationError::Unchanged(
+                "Replacement history is unavailable on this host".into(),
+            ))
+        }
+    }
     fn rename(
         &self,
         path: String,
@@ -25,7 +55,7 @@ pub trait Operations: Sync {
         &self,
         path: String,
         destination: String,
-    ) -> impl Future<Output = Result<Option<String>, OperationError>> + Send;
+    ) -> impl Future<Output = MoveResult> + Send;
     fn trash_many(
         &self,
         paths: Vec<String>,
@@ -36,185 +66,163 @@ pub trait Operations: Sync {
     ) -> impl Future<Output = Result<FileBatchOutcome, OperationError>> + Send;
 }
 
+#[cfg(test)]
 pub async fn execute(
     action: Action,
     operations: &impl Operations,
     direction: Direction,
 ) -> Execution {
-    let result = execute_inner(action, operations, direction).await;
+    execute_prepared(Prepared::new(action, direction), operations).await
+}
+
+pub(super) async fn execute_prepared(
+    prepared: Prepared,
+    operations: &impl Operations,
+) -> Execution {
+    let (direction, plan) = prepared.into_parts();
+    let result = execute_plan(plan, operations, direction).await;
     super::retention::settlement(result, direction)
 }
 
-fn execute_inner<'a, O: Operations>(
-    action: Action,
+fn execute_plan<'a, O: Operations>(
+    plan: Plan,
     operations: &'a O,
     direction: Direction,
 ) -> Pin<Box<dyn Future<Output = Execution> + Send + 'a>> {
     Box::pin(async move {
-        if let Action::Batch { actions, label } = action {
-            return execute_batch(actions, label, operations, direction).await;
-        }
-
-        match &action {
-            Action::Rename {
-                path,
-                old_name,
-                new_name,
-            } => {
-                let request = match direction {
-                    Direction::Undo => Ok((path.clone(), old_name.clone())),
-                    Direction::Redo => {
-                        parent(path).map(|parent| (join(&parent, old_name), new_name.clone()))
-                    }
-                };
-                match request {
-                    Ok((path, name)) => {
-                        settled(action.clone(), operations.rename(path, name).await, true)
-                    }
-                    Err(error) => failed(action, error),
-                }
+        let (action, request) = match plan {
+            Plan::Batch { children, label } => {
+                return execute_batch(children, label, operations, direction).await
             }
-            Action::Move {
-                dest_path,
-                original_dir,
-                ..
-            } => {
-                let request = match direction {
-                    Direction::Undo => Ok((dest_path.clone(), original_dir.clone())),
-                    Direction::Redo => file_name(dest_path).and_then(|name| {
-                        parent(dest_path)
-                            .map(|destination| (join(original_dir, &name), destination))
-                    }),
-                };
-                match request {
-                    Ok((path, destination)) => match operations.move_entry(path, destination).await
-                    {
-                        Ok(Some(recovery)) => Execution {
-                            // The destination committed and the source may
-                            // be partially removed. Retrying this Move, or
-                            // offering its opposite, can destroy surviving data.
+            Plan::Leaf { action, request } => (action, request),
+        };
+        let request = match request {
+            Ok(request) => request,
+            Err(error) => return failed(action, error),
+        };
+        match request {
+            Request::Replacement { history, direction } => {
+                match operations.replacement(history, direction).await {
+                    Ok(outcome) => {
+                        let Action::Replacement { path, .. } = &action else {
+                            unreachable!("replacement request must retain its native action");
+                        };
+                        Execution {
+                            opposite: Some(Action::Replacement {
+                                path: path.clone(),
+                                recovery: Some(outcome.history),
+                            }),
                             completed: Some(action),
-                            uncertain: None,
-                            opposite: None,
-                            remaining: None,
-                            error: Some(recovery),
+                            warnings: outcome.warning.into_iter().collect::<Warnings>().into_vec(),
                             ..Execution::default()
-                        },
-                        Ok(None) => settled(action, Ok(()), true),
-                        Err(error) => failed(action, error),
-                    },
-                    Err(error) => failed(action, error),
-                }
-            }
-            Action::Copy {
-                copied_path,
-                restore_supported,
-                recovery,
-                ..
-            } => {
-                let result = match (direction, recovery) {
-                    (Direction::Undo, Recovery::Capture) => {
-                        operations.trash_many(vec![copied_path.clone()]).await
-                    }
-                    (Direction::Redo, Recovery::Restore(artifact)) if *restore_supported => {
-                        operations
-                            .restore(vec![RestoreRequest {
-                                path: copied_path.clone(),
-                                artifact: artifact.clone(),
-                            }])
-                            .await
-                    }
-                    (Direction::Redo, _) if !restore_supported => Err(OperationError::Unchanged(
-                        "Cannot redo copy because restoring this item is unsupported".into(),
-                    )),
-                    _ => Err(OperationError::Unchanged(
-                        "Copy history has no exact recovery identity for this direction".into(),
-                    )),
-                };
-                match result {
-                    Ok(outcome) => settled_copy(action, outcome, direction),
-                    Err(error) => failed(action, error),
-                }
-            }
-            Action::Delete {
-                paths, recovery, ..
-            } => {
-                let result = match (direction, recovery) {
-                    (Direction::Undo, Recovery::Restore(artifacts)) => {
-                        let requests = paths
-                            .iter()
-                            .map(|path| {
-                                artifacts
-                                    .get(path)
-                                    .map(|artifact| RestoreRequest {
-                                        path: path.clone(),
-                                        artifact: artifact.clone(),
-                                    })
-                                    .ok_or_else(|| {
-                                        OperationError::Unchanged(format!(
-                                            "No exact recovery identity for {path}"
-                                        ))
-                                    })
-                            })
-                            .collect::<Result<Vec<_>, _>>();
-                        match requests {
-                            Ok(requests) => operations.restore(requests).await,
-                            Err(error) => Err(error),
                         }
                     }
-                    (Direction::Redo, Recovery::Capture) => {
-                        operations.trash_many(paths.clone()).await
-                    }
-                    _ => Err(OperationError::Unchanged(
-                        "Delete history has no exact recovery identity for this direction".into(),
-                    )),
-                };
-                match result {
-                    Ok(outcome) => settled_delete(action, outcome, direction),
                     Err(error) => failed(action, error),
                 }
             }
-            Action::Batch { .. } => unreachable!("batch actions execute before leaf dispatch"),
+            Request::Rename { path, name } => {
+                settled(action, operations.rename(path, name).await, true)
+            }
+            Request::Move { path, destination } => {
+                let outcome = operations.move_entry(path, destination).await;
+                let mut execution = match outcome.result {
+                    Ok(Some(recovery)) => Execution {
+                        // Destination committed; source cleanup is uncertain. Neither
+                        // retry nor an opposite can safely assume intact source data.
+                        completed: Some(action),
+                        error: Some(recovery),
+                        ..Execution::default()
+                    },
+                    Ok(None) => settled(action, Ok(()), true),
+                    Err(error) => failed(action, error),
+                };
+                execution.refresh_dirs = outcome.affected;
+                execution.warnings = outcome.warning.into_iter().collect::<Warnings>().into_vec();
+                execution
+            }
+            Request::Trash(paths) => {
+                let result = operations.trash_many(paths).await;
+                settled_batch(action, result, direction)
+            }
+            Request::TrashPublication(publication) => {
+                let result = operations.trash_publication(publication).await;
+                settled_batch(action, result, direction)
+            }
+            Request::Restore(requests) => {
+                let result = operations.restore(requests).await;
+                settled_batch(action, result, direction)
+            }
         }
     })
 }
 
+fn settled_batch(
+    action: Action,
+    result: Result<FileBatchOutcome, OperationError>,
+    direction: Direction,
+) -> Execution {
+    match result {
+        Err(error) => failed(action, error),
+        Ok(outcome) => match action {
+            Action::Copy { .. } => settled_copy(action, outcome, direction),
+            Action::Delete { .. } => settled_delete(action, outcome, direction),
+            _ => unreachable!("only copy/delete requests produce batch outcomes"),
+        },
+    }
+}
+
 async fn execute_batch<O: Operations>(
-    actions: Vec<Action>,
+    mut children: Vec<Plan>,
     label: String,
     operations: &O,
     direction: Direction,
 ) -> Execution {
-    let mut completed = vec![None; actions.len()];
-    let mut opposite = vec![None; actions.len()];
-    let mut uncertain = vec![None; actions.len()];
-    let mut remaining = actions.iter().cloned().map(Some).collect::<Vec<_>>();
-    let indices = match direction {
-        Direction::Undo => (0..actions.len()).rev().collect::<Vec<_>>(),
-        Direction::Redo => (0..actions.len()).collect::<Vec<_>>(),
-    };
-    let mut error = None;
-    let mut refresh_dirs = std::collections::BTreeSet::new();
-
-    for index in indices {
-        let result = execute_inner(actions[index].clone(), operations, direction).await;
-        completed[index] = result.completed;
-        uncertain[index] = result.uncertain;
-        opposite[index] = result.opposite;
-        remaining[index] = result.remaining;
-        refresh_dirs.extend(result.refresh_dirs);
-        if result.error.is_some() {
-            error = result.error;
-            break;
-        }
+    if direction == Direction::Undo {
+        children.reverse();
     }
-
+    let mut results = Vec::with_capacity(children.len());
+    let mut warnings = Warnings::default();
+    let mut error = None;
+    for child in children {
+        let mut result = if error.is_none() {
+            execute_plan(child, operations, direction).await
+        } else {
+            Execution {
+                remaining: Some(child.into_action()),
+                ..Execution::default()
+            }
+        };
+        if result.error.is_some() {
+            error = result.error.take();
+        }
+        warnings.extend(result.warnings.drain(..));
+        results.push(result);
+    }
+    // Execution order may be reversed, but retained history always keeps the
+    // original order. Move each action into its final partition without cloning
+    // entire unstarted subtrees at every nesting level.
+    if direction == Direction::Undo {
+        results.reverse();
+    }
+    let mut completed = Vec::new();
+    let mut uncertain = Vec::new();
+    let mut opposite = Vec::new();
+    let mut remaining = Vec::new();
+    let mut refresh_dirs = std::collections::BTreeSet::new();
+    for result in results {
+        completed.push(result.completed);
+        uncertain.push(result.uncertain);
+        opposite.push(result.opposite);
+        remaining.push(result.remaining);
+        refresh_dirs.extend(result.refresh_dirs);
+    }
     Execution {
         completed: batch_action(completed, &label),
         uncertain: batch_action(uncertain, &label),
         opposite: batch_action(opposite, &label),
         remaining: batch_action(remaining, &label),
         error,
+        warnings: warnings.into_vec(),
         refresh_dirs: refresh_dirs.into_iter().collect(),
     }
 }
@@ -235,18 +243,21 @@ fn settled_copy(action: Action, outcome: FileBatchOutcome, direction: Direction)
         copied_path,
         parent_dir,
         restore_supported,
+        publication,
         ..
     } = &action
     else {
         unreachable!("copy settlement requires a copy action");
     };
-    let mut error = batch_error(&outcome);
+    let error = batch_error(&outcome);
+    let mut warnings: Warnings = outcome.warning_messages().collect();
     if !outcome.succeeded.contains(copied_path) {
         let message = error.unwrap_or_else(|| "File operation did not complete".into());
-        let failure = if outcome
-            .uncertain
-            .iter()
-            .any(|failure| &failure.path == copied_path)
+        let failure = if outcome.worker_error.is_some()
+            || outcome
+                .uncertain
+                .iter()
+                .any(|failure| &failure.path == copied_path)
         {
             OperationError::Uncertain(message)
         } else {
@@ -254,23 +265,42 @@ fn settled_copy(action: Action, outcome: FileBatchOutcome, direction: Direction)
         };
         return Execution {
             refresh_dirs: outcome.refresh_dirs,
+            warnings: warnings.into_vec(),
             ..failed(action, failure)
         };
     }
-    let recovery = match direction {
+    let mut recovery = match direction {
         Direction::Redo => Some(Recovery::Capture),
         Direction::Undo if !restore_supported => None,
         Direction::Undo => match outcome.artifacts.get(copied_path) {
             Some(artifact) => Some(Recovery::Restore(artifact.clone())),
             None => {
-                error = with_warning(error, "Copy was removed, but its exact trash identity is unavailable; Redo is unavailable");
+                warnings.push("Copy was removed, but its exact trash identity is unavailable; Redo is unavailable");
                 None
             }
         },
     };
+    let publication = if direction == Direction::Redo && publication.is_some() {
+        let restored = outcome
+            .publications
+            .get(copied_path)
+            .filter(|entry| {
+                entry.path == std::path::Path::new(copied_path)
+                    && entry.path.parent() == Some(std::path::Path::new(parent_dir))
+            })
+            .cloned();
+        if restored.is_none() {
+            warnings.push("Copy was restored, but its native publication identity is unavailable; Undo is unavailable");
+            recovery = None;
+        }
+        restored
+    } else {
+        publication.clone()
+    };
     let opposite = recovery.map(|recovery| Action::Copy {
         copied_path: copied_path.clone(),
         parent_dir: parent_dir.clone(),
+        publication,
         restore_supported: *restore_supported,
         recovery,
     });
@@ -278,6 +308,7 @@ fn settled_copy(action: Action, outcome: FileBatchOutcome, direction: Direction)
         completed: Some(action),
         opposite,
         error,
+        warnings: warnings.into_vec(),
         refresh_dirs: outcome.refresh_dirs,
         ..Execution::default()
     }
@@ -293,6 +324,8 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome, direction: Directio
         unreachable!("delete settlement requires a delete action");
     };
     let mut error = batch_error(&outcome);
+    let mut warnings: Warnings = outcome.warning_messages().collect();
+    let worker_uncertain = outcome.worker_error.is_some();
     let succeeded = outcome.succeeded.into_iter().collect::<HashSet<_>>();
     let uncertain = outcome
         .uncertain
@@ -301,7 +334,7 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome, direction: Directio
         .collect::<HashSet<_>>();
     let uncertain_paths: Vec<_> = paths
         .iter()
-        .filter(|path| uncertain.contains(*path))
+        .filter(|path| uncertain.contains(*path) || worker_uncertain && !succeeded.contains(*path))
         .cloned()
         .collect();
     let completed_paths: Vec<_> = paths
@@ -311,7 +344,7 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome, direction: Directio
         .collect();
     let remaining_paths: Vec<_> = paths
         .into_iter()
-        .filter(|path| !succeeded.contains(path) && !uncertain.contains(path))
+        .filter(|path| !worker_uncertain && !succeeded.contains(path) && !uncertain.contains(path))
         .collect();
     let subset =
         |paths: Vec<String>, phase: &Recovery<std::sync::Arc<super::model::RestoreArtifacts>>| {
@@ -330,7 +363,7 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome, direction: Directio
                 .cloned()
                 .collect();
             if recoverable.len() != completed_paths.len() {
-                error = with_warning(error, "Deletion completed, but some exact recovery identities are unavailable; Undo is unavailable for those items");
+                warnings.push("Deletion completed, but some exact recovery identities are unavailable; Undo is unavailable for those items");
             }
             subset(
                 recoverable,
@@ -347,15 +380,9 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome, direction: Directio
         remaining: subset(remaining_paths, &recovery),
         opposite,
         error,
+        warnings: warnings.into_vec(),
         refresh_dirs: outcome.refresh_dirs,
     }
-}
-
-fn with_warning(error: Option<String>, warning: &str) -> Option<String> {
-    Some(match error {
-        Some(error) => format!("{error}; {warning}"),
-        None => warning.into(),
-    })
 }
 
 fn failed(action: Action, error: impl Into<OperationError>) -> Execution {
@@ -380,26 +407,7 @@ fn batch_action(actions: Vec<Option<Action>>, label: &str) -> Option<Action> {
 }
 
 fn batch_error(outcome: &FileBatchOutcome) -> Option<String> {
-    outcome.error()
-}
-
-fn parent(path: &str) -> Result<String, String> {
-    Path::new(path)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(|parent| parent.to_string_lossy().into_owned())
-        .ok_or_else(|| format!("Invalid file history path: {path}"))
-}
-
-fn file_name(path: &str) -> Result<String, String> {
-    Path::new(path)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .ok_or_else(|| format!("Invalid file history path: {path}"))
-}
-
-fn join(parent: &str, name: &str) -> String {
-    Path::new(parent).join(name).to_string_lossy().into_owned()
+    outcome.failure_message()
 }
 
 #[cfg(test)]

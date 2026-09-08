@@ -168,7 +168,7 @@ describe("directoryEvents Tauri adapter", () => {
 
   it("maps observation time and preserves the bounded E2E readiness and receipt protocol", async () => {
     let handler!: (event: {
-      payload: { path: string; observed_at_ms?: number };
+      payload: { path: string; observed_at_ms?: number; origin?: "watcher" | "mutation" };
     }) => void;
     const unlisten = vi.fn();
     tauri.listen.mockImplementation(async (_event, receive) => {
@@ -196,12 +196,24 @@ describe("directoryEvents Tauri adapter", () => {
     expect(callback).toHaveBeenCalledExactlyOnceWith({
       path: "/watched",
       observedAt: 1234,
+      origin: "watcher",
     });
     expect(receipts).toEqual([{
       path: "/watched",
       count: 1,
       observedAt: 1234,
+      origin: "watcher",
+      mutationCount: 0,
+      mutationObservedAt: null,
     }]);
+
+    handler({ payload: { path: "/watched", observed_at_ms: 1250, origin: "mutation" } });
+    expect(callback).toHaveBeenLastCalledWith({ path: "/watched", observedAt: 1250, origin: "mutation" });
+    handler({ payload: { path: "/watched", observed_at_ms: 1300, origin: "watcher" } });
+    expect(receipts.at(-1)).toEqual({
+      path: "/watched", count: 3, observedAt: 1300, origin: "watcher",
+      mutationCount: 1, mutationObservedAt: 1250,
+    });
 
     for (let index = 0; index < 257; index += 1) {
       handler({ payload: { path: `/bounded/${index}` } });
@@ -210,7 +222,9 @@ describe("directoryEvents Tauri adapter", () => {
       document.documentElement.dataset.e2eDirectoryWatcherReceipts ?? "{}",
     );
     expect(Object.keys(retained)).toHaveLength(256);
-    expect(retained["/bounded/256"]).toEqual({ count: 1, observedAt: null });
+    expect(retained["/bounded/256"]).toEqual({
+      count: 1, observedAt: null, origin: "watcher", mutationCount: 0, mutationObservedAt: null,
+    });
 
     subscription.stop();
     expect(unlisten).toHaveBeenCalledOnce();

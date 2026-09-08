@@ -190,7 +190,7 @@ export async function consumeWarmWindow(
  * so activation latency is captured headlessly (and skip pool registration —
  * a self-activated window must never be claimable).
  */
-export function runWarmWindow(measure: boolean): { ready: Promise<boolean>; dispose(): void } {
+export function runWarmWindow(measure: boolean, onActivated?: () => void): { ready: Promise<boolean>; dispose(): void } {
   let started = 0;
   const self = getCurrentWindow();
   const owner = createWarmActivation({
@@ -234,6 +234,7 @@ export function runWarmWindow(measure: boolean): { ready: Promise<boolean>; disp
     shown: () => {
       void logStartupTiming(`Startup(warm-activate): show=${(performance.now() - started).toFixed(1)}ms`).catch(() => {});
     },
+    activated: onActivated,
     reportError: (error) => console.error("Warm window activation failed:", error),
   });
   if (measure) {

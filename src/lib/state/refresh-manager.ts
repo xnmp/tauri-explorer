@@ -9,7 +9,8 @@
  *
  * 1. **This module — WHEN a refresh runs.** Global, per-directory: collapses
  *    duplicate requests from all sources into one per debounce window and
- *    rate-limits storms.
+ *    rate-limits storms. Native mutations reconcile after a fixed coalescing
+ *    window, bypassing the watcher interval without overlapping active scans.
  * 2. **`pane-watch.ts` — WHETHER a watcher-triggered refresh may run.**
  *    Per-pane: the local-mutation cooldown suppresses the watcher's echo of
  *    a mutation the pane already applied to its own entries.
@@ -29,6 +30,8 @@
  * (same callback identity or explicit subscriber key) collapse to one.
  */
 
+import type { DirectoryChangeOrigin } from "./directory-events";
+
 const DEBOUNCE_MS = 150;
 const MIN_INTERVAL_MS = 2000;
 const SLOW_LISTING_MULTIPLIER = 3;
@@ -39,6 +42,8 @@ const MAX_RETAINED_DIRECTORIES = 1024;
 type RefreshCallback = (opts: { silent: boolean }) => void | false | Promise<void>;
 
 interface PendingRefresh {
+  /** First mutation fixes the deadline; later churn cannot postpone it. */
+  mutationRequestedAt: number | null;
   timer: ReturnType<typeof setTimeout> | null;
   callbacks: Map<unknown, { cb: RefreshCallback; silent: boolean }>;
   requestedAt: number;
@@ -99,11 +104,11 @@ function schedule(dirPath: string, pending: PendingRefresh): void {
   const now = Date.now();
   const last = lastRefreshAt.get(dirPath);
   const sinceLastRefresh = last == null ? Infinity : now - last;
-  const sinceLastRequest = now - pending.requestedAt;
+  const sinceLastRequest = now - (pending.mutationRequestedAt ?? pending.requestedAt);
   const delay = Math.max(
     0,
     DEBOUNCE_MS - sinceLastRequest,
-    intervalFor(dirPath) - sinceLastRefresh,
+    pending.mutationRequestedAt != null ? 0 : intervalFor(dirPath) - sinceLastRefresh,
   );
   pending.timer = setTimeout(() => flush(dirPath), delay);
 }
@@ -179,6 +184,8 @@ export function requestRefresh(
   /** Time the underlying change was observed. A delayed watcher notification
    *  observed before the current listing began is already covered by it. */
   observedAt: number = Date.now(),
+  /** Settled native work needs prompt reconciliation; notify storms stay limited. */
+  origin: DirectoryChangeOrigin = "watcher",
 ): void {
   const inFlight = inFlightRefreshes.get(dirPath);
   // A scan covers only the panes participating in that fan-out. A newly
@@ -187,6 +194,7 @@ export function requestRefresh(
 
   const existing = pendingRefreshes.get(dirPath);
   if (existing) {
+    if (origin === "mutation") existing.mutationRequestedAt ??= Date.now();
     existing.callbacks.set(subscriberKey, { cb: explorerRefresh, silent });
     existing.requestedAt = Date.now();
     if (!inFlightRefreshes.has(dirPath)) schedule(dirPath, existing);
@@ -194,6 +202,7 @@ export function requestRefresh(
   }
 
   const pending: PendingRefresh = {
+    mutationRequestedAt: origin === "mutation" ? Date.now() : null,
     callbacks: new Map([[subscriberKey, { cb: explorerRefresh, silent }]]),
     requestedAt: Date.now(),
     timer: null,

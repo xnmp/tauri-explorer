@@ -6,6 +6,12 @@ export type UndoAction =
   | { type: "batch"; actions: UndoAction[]; label: string }
   | { type: "delete"; paths: string[]; parentDir: string };
 
+/** Native completion presentation; replacement authority never enters renderer input. */
+export type HistoryAction =
+  | Exclude<UndoAction, { type: "batch" }>
+  | { type: "replacement"; path: string }
+  | { type: "batch"; actions: HistoryAction[]; label: string };
+
 export type HistoryDirection = "undo" | "redo";
 export interface HistorySummary {
   revision: number;
@@ -16,7 +22,8 @@ export interface HistorySummary {
 }
 export interface HistoryReply {
   summary: HistorySummary;
-  action?: UndoAction;
+  action?: HistoryAction;
+  warnings?: readonly string[];
   error?: string;
 }
 export interface HistoryPort {

@@ -49,8 +49,11 @@ export type FileTransferResult =
       entry: FileEntry | null;
       /** Destination committed, but source cleanup is incomplete. */
       recovery?: FileMutationRecovery;
+      replacement?: { readonly id: string };
+      warning?: string;
     }
-  | { ok: false; error: string };
+  | { ok: false; reason: "skipped" | "cancelled" }
+  | { ok: false; reason: "failed"; error: string };
 
 /**
  * Transfer a single file: detect conflicts, resolve them, execute move/copy,
@@ -89,7 +92,7 @@ export async function performFileTransfer(
   // bogus self-conflict (overwriting a file with itself is a data-loss path;
   // the backend also rejects source == target).
   if (isSameParent && !isCopy) {
-    return { ok: false, error: "skipped" };
+    return { ok: false, reason: "skipped" };
   }
   // COPY into the same parent never overwrites: force overwrite off so the
   // backend generates a "name - Copy" style name, exactly like paste does.
@@ -130,9 +133,8 @@ export async function performFileTransfer(
         destSize: destEntry?.size,
         destModified: destEntry?.modified,
       });
-      if (choice === "skip" || choice === "cancel") {
-        return { ok: false, error: "skipped" };
-      }
+      if (choice === "skip") return { ok: false, reason: "skipped" };
+      if (choice === "cancel") return { ok: false, reason: "cancelled" };
       if (choice === "overwrite") overwrite = true;
     }
   }
@@ -148,19 +150,21 @@ export async function performFileTransfer(
     if (!suppressToast) {
       toastStore.error(result.error);
     }
-    return { ok: false, error: result.error };
+    return { ok: false, reason: "failed", error: result.error };
   }
 
   // --- Post-transfer side effects ---
   const targetName = basename(targetDir);
 
   const recovery = result.data.recovery;
+  const replacement = result.data.replacement;
+  const warning = result.warning;
   if (recovery) {
     // A committed mutation still supersedes the redo branch even when a batch
-    // caller owns history publication. Neither transfer inverse is safe while
-    // the source cleanup outcome is incomplete.
+    // caller owns history publication. Incomplete source cleanup has no safe
+    // inverse.
     await undoStore.invalidateRedo(broadcastToOtherWindows);
-  } else if (!suppressUndo) {
+  } else if (!replacement && !suppressUndo) {
     const action = isCopy
       ? {
           type: "copy" as const,
@@ -186,6 +190,11 @@ export async function performFileTransfer(
     if (broadcastToOtherWindows) {
       toastStore.broadcast(message, "error");
     }
+  } else if (!suppressToast && warning) {
+    toastStore.error(warning);
+    if (broadcastToOtherWindows) {
+      toastStore.broadcast(warning, "error");
+    }
   } else if (!suppressToast) {
     const verb = isCopy ? "Copied" : "Moved";
     const message = `${verb} ${fileName} to ${targetName}`;
@@ -209,5 +218,7 @@ export async function performFileTransfer(
     path: result.data.path,
     entry: result.data.entry,
     ...(recovery ? { recovery } : {}),
+    ...(replacement ? { replacement } : {}),
+    ...(warning ? { warning } : {}),
   };
 }

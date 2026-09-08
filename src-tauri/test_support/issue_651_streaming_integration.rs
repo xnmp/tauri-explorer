@@ -67,7 +67,23 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
             .expect("record search event");
     });
 
-    let watched = tempfile::tempdir().expect("watched search root");
+    // Keep the native parent-role watch inside this fixture. Creating every
+    // root before registration also prevents their own namespace creation
+    // events from racing a later watch installation.
+    let fixture_parent = tempfile::tempdir().expect("private watcher fixture parent");
+    let watched = tempfile::tempdir_in(fixture_parent.path()).expect("watched search root");
+    let overlap_parent =
+        tempfile::tempdir_in(fixture_parent.path()).expect("overlapping parent search root");
+    let rewatched = tempfile::tempdir_in(fixture_parent.path()).expect("rewatched search root");
+    let retired = tempfile::tempdir_in(fixture_parent.path()).expect("retired-owner search root");
+    let cancelled_root =
+        tempfile::tempdir_in(fixture_parent.path()).expect("cancelled search root");
+    let racing_root = tempfile::tempdir_in(fixture_parent.path()).expect("racing search root");
+    let unwatched = tempfile::tempdir_in(fixture_parent.path()).expect("unwatched search root");
+    let overlap_child = overlap_parent.path().join("child");
+    let overlap_deep = overlap_child.join("deep");
+    fs::create_dir_all(&overlap_deep).expect("overlapping child fixture directory");
+
     fs::write(watched.path().join("alpha.txt"), "alpha").expect("alpha fixture");
     fs::write(watched.path().join("beta.txt"), "beta").expect("beta fixture");
     let nested = watched.path().join("nested");
@@ -106,10 +122,6 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         "a nested descendant change must force a fresh recursive walk"
     );
 
-    let overlap_parent = tempfile::tempdir().expect("overlapping parent search root");
-    let overlap_child = overlap_parent.path().join("child");
-    let overlap_deep = overlap_child.join("deep");
-    fs::create_dir_all(&overlap_deep).expect("overlapping child fixture directory");
     fs::write(overlap_deep.join("before-overlap.txt"), "before")
         .expect("overlapping nested fixture");
     let overlap_parent_path = overlap_parent.path().to_string_lossy().into_owned();
@@ -166,7 +178,6 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         "a descendant change under the remaining child watch must force a fresh walk"
     );
 
-    let rewatched = tempfile::tempdir().expect("rewatched search root");
     fs::write(rewatched.path().join("before-gap.txt"), "before").expect("pre-unwatch fixture");
     let rewatched_path = rewatched.path().to_string_lossy().into_owned();
     let gap_lease = tauri::async_runtime::block_on(watch_directory(rewatched_path.clone()))
@@ -193,7 +204,6 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
         "a fresh watch epoch must force a fresh recursive walk"
     );
 
-    let retired = tempfile::tempdir().expect("retired-owner search root");
     fs::write(retired.path().join("before-owner-retirement.txt"), "before")
         .expect("pre-retirement fixture");
     let retired_path = retired.path().to_string_lossy().into_owned();
@@ -268,7 +278,6 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     tauri::async_runtime::block_on(release_directory(replacement_owner, replacement_lease.id))
         .expect("release replacement retirement-root watch");
 
-    let cancelled_root = tempfile::tempdir().expect("cancelled search root");
     for index in 0..100 {
         fs::write(
             cancelled_root.path().join(format!("entry-{index}.txt")),
@@ -292,7 +301,6 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     assert!(wait_for_done(&receiver, retry_id).contains(&"entry-99.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(cancelled_root.path()), 2);
 
-    let racing_root = tempfile::tempdir().expect("racing search root");
     fs::write(racing_root.path().join("seed.txt"), "seed").expect("race seed fixture");
     tauri::async_runtime::block_on(watch_directory(
         racing_root.path().to_string_lossy().into_owned(),
@@ -314,7 +322,6 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     assert!(wait_for_done(&receiver, raced_id).contains(&"raced.txt".to_string()));
     assert_eq!(stream_walk_count_for_test(racing_root.path()), 2);
 
-    let unwatched = tempfile::tempdir().expect("unwatched search root");
     fs::write(unwatched.path().join("before.txt"), "before").expect("unwatched fixture");
     let before_id = start_search(&app_handle, unwatched.path(), "before");
     assert!(wait_for_done(&receiver, before_id).contains(&"before.txt".to_string()));

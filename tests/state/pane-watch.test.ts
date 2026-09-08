@@ -11,6 +11,7 @@ type ScheduledRefresh = {
   silent: boolean;
   key: unknown;
   observedAt?: number;
+  origin?: DirectoryChange["origin"];
 };
 
 const lease = (id: string, path: string): DirectoryWatchLease => ({ id, path });
@@ -36,8 +37,9 @@ function createHarness(
     silent = true,
     key: unknown = callback,
     observedAt?: number,
+    origin?: DirectoryChange["origin"],
   ) => {
-    scheduled.push({ callback, path, silent, key, observedAt });
+    scheduled.push({ callback, path, silent, key, observedAt, origin });
   });
   const watch = createPaneWatch({ refresh, subscribe, release, prepare, schedule });
   return {
@@ -76,6 +78,48 @@ afterEach(() => {
 });
 
 describe("createPaneWatch", () => {
+  it("preserves mutation priority through navigation and rejects its callback after leaving", async () => {
+    const harness = createHarness();
+    await commitPath(harness, "/a", null);
+    const next = harness.watch.begin("/b");
+    await next.ready;
+    const observedAt = Date.now() + 1;
+    harness.notify({ path: "/b", observedAt, origin: "mutation" });
+    harness.notify({ path: "/b", observedAt: observedAt + 1, origin: "watcher" });
+    expect(next.accept(null)).toBe(true);
+    expect(next.commit()).toBe(true);
+    expect(harness.scheduled).toHaveLength(1);
+    expect(harness.scheduled[0]).toMatchObject({ path: "/b", observedAt: observedAt + 1, origin: "mutation" });
+    await harness.scheduled[0].callback({ silent: true });
+    expect(harness.refresh).toHaveBeenCalledOnce();
+    await commitPath(harness, "/c", null);
+    expect(harness.scheduled[0].callback({ silent: true })).toBe(false);
+    expect(harness.refresh).toHaveBeenCalledOnce();
+    await harness.watch.destroy();
+  });
+
+  it("drops mutations covered by navigation and conservatively replays untimestamped changes", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const next = harness.watch.begin("/a");
+    await next.ready;
+    harness.notify({ path: "/a", observedAt: Date.now() - 1, origin: "mutation" });
+    expect(next.accept(null)).toBe(true);
+    expect(next.commit()).toBe(true);
+    expect(harness.scheduled).toHaveLength(0);
+    const again = harness.watch.begin("/a");
+    await again.ready;
+    harness.notify({ path: "/a", observedAt: Date.now(), origin: "mutation" });
+    harness.notify({ path: "/a" });
+    expect(again.accept(null)).toBe(true);
+    expect(again.commit()).toBe(true);
+    expect(harness.scheduled).toHaveLength(1);
+    expect(harness.scheduled[0]).toMatchObject({ path: "/a", origin: "mutation", observedAt: undefined });
+    await harness.scheduled[0].callback({ silent: true });
+    expect(harness.refresh).toHaveBeenCalledOnce();
+    await harness.watch.destroy();
+  });
+
   it("stages an observed path and retains the old lease until UI commit", async () => {
     const harness = createHarness();
     const leaseA = lease("a", "/a");

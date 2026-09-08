@@ -661,10 +661,12 @@ pub(crate) fn delete_item(
     };
     match classify_delete(evidence) {
         DeleteOutcome::Recycled(parsing_name_utf16) => Ok(TrashSuccess {
+            publication: None,
             artifact: Some(Arc::new(TrashArtifact::WindowsShell { parsing_name_utf16 })),
             warning: None,
         }),
         DeleteOutcome::CommittedWithoutArtifact(warning) => Ok(TrashSuccess {
+            publication: None,
             artifact: None,
             warning: Some(warning),
         }),

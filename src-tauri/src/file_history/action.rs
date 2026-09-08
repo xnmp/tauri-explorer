@@ -92,10 +92,28 @@ fn prepare_with_origin(
             Action::Copy {
                 copied_path,
                 parent_dir,
+                publication,
                 ..
             } => {
                 path(copied_path)?;
                 path(parent_dir)?;
+                if renderer && publication.is_some() {
+                    return Err(
+                        "Copy publication identity must come from a native operation".into(),
+                    );
+                }
+                if publication
+                    .as_ref()
+                    .is_some_and(|entry| entry.path != Path::new(copied_path))
+                {
+                    return Err("Copy history path does not match its native publication".into());
+                }
+                if publication
+                    .as_ref()
+                    .is_some_and(|entry| entry.path.parent() != Some(Path::new(parent_dir)))
+                {
+                    return Err("Copy history parent does not match its native publication".into());
+                }
             }
             Action::Delete {
                 paths,
@@ -126,6 +144,32 @@ fn prepare_with_origin(
                     }
                 }
             }
+            Action::Replacement {
+                path: target,
+                recovery,
+            } => {
+                if renderer {
+                    return Err(
+                        "Replacement history must be recorded by the native file operation".into(),
+                    );
+                }
+                path(target)?;
+                let token = recovery
+                    .as_ref()
+                    .ok_or("Replacement history lacks native authority")?;
+                if token.id.len() != 64
+                    || !token
+                        .id
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    || token.revision == 0
+                {
+                    return Err("Replacement history has invalid native identity".into());
+                }
+                for directory in &token.refresh_dirs {
+                    path(directory)?;
+                }
+            }
             Action::Batch { actions, .. } => {
                 for action in actions {
                     validate(action, depth + 1, nodes, renderer)?;
@@ -140,6 +184,7 @@ fn prepare_with_origin(
                 copied_path,
                 parent_dir,
                 recovery,
+                publication,
                 ..
             } => {
                 let restore_supported = trash_restore && !unc(&copied_path);
@@ -148,6 +193,7 @@ fn prepare_with_origin(
                     parent_dir,
                     restore_supported,
                     recovery,
+                    publication,
                 })
             }
             Action::Delete {
@@ -207,12 +253,27 @@ pub fn affected_dirs(action: &Action) -> Vec<String> {
                 dirs.extend(parent(source_path));
                 dirs.extend(parent(dest_path));
             }
-            Action::Copy { copied_path, .. } => {
+            Action::Copy {
+                copied_path,
+                publication,
+                ..
+            } => {
                 dirs.extend(parent(copied_path));
+                dirs.extend(
+                    publication
+                        .as_ref()
+                        .and_then(|entry| entry.path.parent())
+                        .map(|path| path.to_string_lossy().into_owned()),
+                );
             }
             Action::Delete { paths, .. } => {
                 for path in paths {
                     dirs.extend(parent(path));
+                }
+            }
+            Action::Replacement { recovery, .. } => {
+                if let Some(token) = recovery {
+                    dirs.extend(token.refresh_dirs.iter().cloned());
                 }
             }
             Action::Batch { actions, .. } => {

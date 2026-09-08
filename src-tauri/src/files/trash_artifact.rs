@@ -1,4 +1,5 @@
 //! Data-only identities retained by native history, never accepted from IPC.
+use super::entry_version::EntryVersion;
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,7 +20,7 @@ pub(crate) enum TrashArtifact {
         original_path: PathBuf,
         metadata_digest: [u8; 32],
         metadata_identity: EntryIdentity,
-        payload_identity: EntryIdentity,
+        payload_version: EntryVersion,
     },
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     WindowsShell {
@@ -49,6 +50,9 @@ impl TrashArtifact {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TrashSuccess {
     pub artifact: Option<Arc<TrashArtifact>>,
+    /// A restore observes its actual destination parent and published object,
+    /// so its next inverse need not reuse a parent identity from before Undo.
+    pub publication: Option<Arc<super::mutation::PublishedEntry>>,
     pub warning: Option<String>,
 }
 

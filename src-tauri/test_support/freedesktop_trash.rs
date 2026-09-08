@@ -1,4 +1,15 @@
 use super::*;
+
+#[test]
+fn native_names_reject_separators_even_when_path_components_normalize_them() {
+    for name in ["entry/", "entry/.", "./entry", "entry//", "", ".", ".."] {
+        assert!(
+            native_name(std::ffi::OsStr::new(name)).is_err(),
+            "admitted {name:?}"
+        );
+    }
+    assert!(native_name(std::ffi::OsStr::new(".entry")).is_ok());
+}
 use std::{
     fs,
     os::unix::{ffi::OsStrExt, fs::symlink, fs::PermissionsExt},
@@ -36,6 +47,245 @@ fn artifact_paths(success: &TrashSuccess) -> (PathBuf, PathBuf) {
             info
         }),
     )
+}
+
+#[test]
+fn selected_directory_cannot_contain_its_own_trash_destination() {
+    let (_scratch, mut context, source) = fixture();
+    context.data_home = source.join("nested-data");
+    let error = context
+        .trash(&source)
+        .expect_err("self-overlapping trash must be rejected");
+    assert!(matches!(error, AppError::InvalidPath(_)));
+    assert!(source.is_dir());
+    assert!(
+        fs::read_dir(&source).unwrap().next().is_none(),
+        "rejection must precede layout creation"
+    );
+}
+
+#[test]
+fn failed_entropy_does_not_create_or_repair_trash_layout() {
+    for legacy in [false, true] {
+        let (_scratch, mut context, source) = fixture();
+        let path = source.join("untouched");
+        fs::write(&path, b"original").unwrap();
+        let root = context.data_home.join("Trash");
+        if legacy {
+            fs::create_dir_all(&root).unwrap();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let error = context
+            .trash_with(
+                &path,
+                &mut |_| Err(io::Error::other("entropy unavailable")),
+                |_, _, _, _| panic!("preparation must finish before a source can move"),
+                |_, _, _| Ok(()),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("entropy unavailable"));
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        if legacy {
+            assert_eq!(fs::metadata(&root).unwrap().mode() & 0o777, 0o755);
+            assert!(fs::read_dir(&root).unwrap().next().is_none());
+        } else {
+            assert!(!context.data_home.exists());
+        }
+    }
+}
+
+#[test]
+fn execution_never_reallocates_a_prepared_name_that_becomes_occupied() {
+    for location in ["payload", "info", "temporary"] {
+        let (_scratch, context, source) = fixture();
+        let path = source.join("retained");
+        fs::write(&path, b"original").unwrap();
+        let directories = context.open_trash(&TrashLayout::Home).unwrap();
+        let prepared = context.prepare(&path, &mut random_bytes).unwrap();
+        let payload = directories.root_path.join("files").join(&prepared.name);
+        let info = directories.root_path.join("info").join(&prepared.info_name);
+        let temporary = directories
+            .root_path
+            .join("info")
+            .join(&prepared.temporary_name);
+        let occupied = match location {
+            "payload" => &payload,
+            "info" => &info,
+            _ => &temporary,
+        };
+        fs::write(occupied, b"racing occupant").unwrap();
+        let error = prepared
+            .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::AlreadyExists(_) | AppError::Io(_)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+        assert_eq!(fs::read(occupied).unwrap(), b"racing occupant");
+        for other in [&payload, &info, &temporary] {
+            if other != occupied {
+                assert!(!other.exists(), "unexpected artifact {other:?}");
+            }
+        }
+        let total = fs::read_dir(directories.root_path.join("files"))
+            .unwrap()
+            .count()
+            + fs::read_dir(directories.root_path.join("info"))
+                .unwrap()
+                .count();
+        assert_eq!(total, 1, "execution must not generate a new destination");
+    }
+}
+
+#[test]
+fn prepared_source_and_directory_replacement_are_rejected_without_redirection() {
+    for replaced in ["source", "parent", "trash"] {
+        let (scratch, context, source) = fixture();
+        let path = source.join("retained");
+        fs::write(&path, b"original").unwrap();
+        let directories = context.open_trash(&TrashLayout::Home).unwrap();
+        let prepared = context.prepare(&path, &mut random_bytes).unwrap();
+        let saved = scratch.path().join("saved");
+        let original = match replaced {
+            "source" => {
+                fs::rename(&path, &saved).unwrap();
+                fs::write(&path, b"replacement").unwrap();
+                saved.clone()
+            }
+            "parent" => {
+                fs::rename(&source, &saved).unwrap();
+                fs::create_dir(&source).unwrap();
+                fs::write(&path, b"replacement").unwrap();
+                saved.join("retained")
+            }
+            _ => {
+                fs::rename(&directories.root_path, &saved).unwrap();
+                context.open_trash(&TrashLayout::Home).unwrap();
+                path.clone()
+            }
+        };
+        prepared
+            .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+            .unwrap_err();
+        assert_eq!(fs::read(original).unwrap(), b"original");
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            if replaced == "trash" {
+                b"original".as_slice()
+            } else {
+                b"replacement".as_slice()
+            }
+        );
+        assert_eq!(
+            fs::read_dir(directories.root_path.join("files"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert_eq!(
+            fs::read_dir(directories.root_path.join("info"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn existing_layout_allows_sibling_activity_without_directory_ctime_conflicts() {
+    let (_scratch, context, source) = fixture();
+    let first = source.join("first");
+    let second = source.join("second");
+    fs::write(&first, b"first").unwrap();
+    fs::write(&second, b"second").unwrap();
+    context.open_trash(&TrashLayout::Home).unwrap();
+    let first_plan = context.prepare(&first, &mut random_bytes).unwrap();
+    let second_plan = context.prepare(&second, &mut random_bytes).unwrap();
+    for (plan, path, expected) in [
+        (first_plan, first, b"first".as_slice()),
+        (second_plan, second, b"second".as_slice()),
+    ] {
+        let receipt = plan
+            .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+            .unwrap();
+        assert!(!path.exists());
+        assert_eq!(fs::read(artifact_paths(&receipt).0).unwrap(), expected);
+    }
+}
+
+#[test]
+fn first_use_layout_can_be_shared_by_independently_prepared_deletions() {
+    let (_scratch, context, source) = fixture();
+    let first = source.join("first");
+    let second = source.join("second");
+    fs::write(&first, b"first").unwrap();
+    fs::write(&second, b"second").unwrap();
+    let first_plan = context.prepare(&first, &mut random_bytes).unwrap();
+    let second_plan = context.prepare(&second, &mut random_bytes).unwrap();
+    assert!(!context.data_home.exists());
+    for (plan, path, expected) in [
+        (first_plan, first, b"first".as_slice()),
+        (second_plan, second, b"second".as_slice()),
+    ] {
+        let receipt = plan
+            .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+            .unwrap();
+        assert!(!path.exists());
+        assert_eq!(fs::read(artifact_paths(&receipt).0).unwrap(), expected);
+    }
+}
+
+#[test]
+fn execution_cannot_introduce_an_unplanned_permission_repair() {
+    let (_scratch, context, source) = fixture();
+    let path = source.join("retained");
+    fs::write(&path, b"original").unwrap();
+    let directories = context.open_trash(&TrashLayout::Home).unwrap();
+    let prepared = context.prepare(&path, &mut random_bytes).unwrap();
+    fs::set_permissions(&directories.root_path, fs::Permissions::from_mode(0o755)).unwrap();
+    prepared
+        .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+        .unwrap_err();
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert_eq!(
+        fs::metadata(&directories.root_path).unwrap().mode() & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::read_dir(directories.root_path.join("info"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn prepared_source_alias_retarget_does_not_redirect_the_deletion() {
+    let (scratch, context, source) = fixture();
+    let other = scratch.path().join("other");
+    fs::create_dir(&other).unwrap();
+    fs::write(source.join("item"), b"original").unwrap();
+    fs::write(other.join("item"), b"other").unwrap();
+    let alias = scratch.path().join("alias");
+    symlink(&source, &alias).unwrap();
+    let prepared = context
+        .prepare(&alias.join("item"), &mut random_bytes)
+        .unwrap();
+    fs::remove_file(&alias).unwrap();
+    symlink(&other, &alias).unwrap();
+    let receipt = prepared
+        .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+        .unwrap();
+    assert!(!source.join("item").exists());
+    assert_eq!(fs::read(alias.join("item")).unwrap(), b"other");
+    assert_eq!(fs::read(artifact_paths(&receipt).0).unwrap(), b"original");
+    restore(
+        &request(&source.join("item"), &receipt),
+        &batch::DirectoryEffects::default(),
+    )
+    .unwrap();
+    assert_eq!(fs::read(source.join("item")).unwrap(), b"original");
 }
 
 #[test]
@@ -83,6 +333,37 @@ fn two_deletions_of_one_path_restore_their_exact_payloads() {
 }
 
 #[test]
+fn distinct_hardlinks_can_be_trashed_and_restored_in_either_order() {
+    for reversed in [false, true] {
+        let (_scratch, mut context, source) = fixture();
+        let first = source.join("first");
+        let second = source.join("second");
+        fs::write(&first, b"shared bytes").unwrap();
+        fs::hard_link(&first, &second).unwrap();
+        let first_receipt = context.trash(&first).unwrap();
+        let second_receipt = context.trash(&second).unwrap();
+        assert!(!first.exists() && !second.exists());
+        let mut requests = [
+            request(&first, &first_receipt),
+            request(&second, &second_receipt),
+        ];
+        if reversed {
+            requests.reverse();
+        }
+        for request in requests {
+            restore(&request, &batch::DirectoryEffects::default()).unwrap();
+        }
+        assert_eq!(fs::read(&first).unwrap(), b"shared bytes");
+        assert_eq!(fs::read(&second).unwrap(), b"shared bytes");
+        assert_eq!(
+            fs::metadata(&first).unwrap().ino(),
+            fs::metadata(&second).unwrap().ino()
+        );
+        assert_eq!(fs::metadata(&first).unwrap().nlink(), 2);
+    }
+}
+
+#[test]
 fn directories_and_broken_relative_symlinks_round_trip_without_following() {
     let (_scratch, mut context, source) = fixture();
     let directory = source.join("tree");
@@ -106,6 +387,210 @@ fn directories_and_broken_relative_symlinks_round_trip_without_following() {
     )
     .expect("restore symlink");
     assert_eq!(fs::read_link(&link).unwrap(), Path::new("relative/missing"));
+}
+
+#[test]
+fn independently_prepared_hardlinks_remain_executable_and_recoverable() {
+    for reverse_execution in [false, true] {
+        for reverse_restore in [false, true] {
+            let (_scratch, context, source) = fixture();
+            let first = source.join("first");
+            let second = source.join("second");
+            fs::write(&first, b"shared bytes").unwrap();
+            fs::hard_link(&first, &second).unwrap();
+            let mut paths = [&first, &second];
+            if reverse_execution {
+                paths.reverse();
+            }
+            let plans = paths.map(|path| context.prepare(path, &mut random_bytes).unwrap());
+            let receipts = plans.map(|plan| {
+                plan.execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+                    .unwrap()
+            });
+            let mut requests = [
+                request(paths[0], &receipts[0]),
+                request(paths[1], &receipts[1]),
+            ];
+            if reverse_restore {
+                requests.reverse();
+            }
+            for request in requests {
+                restore(&request, &batch::DirectoryEffects::default()).unwrap();
+            }
+            for path in paths {
+                assert_eq!(fs::read(path).unwrap(), b"shared bytes");
+                assert_eq!(fs::metadata(path).unwrap().nlink(), 2);
+            }
+            assert_eq!(
+                fs::metadata(first).unwrap().ino(),
+                fs::metadata(second).unwrap().ino()
+            );
+        }
+    }
+}
+
+#[test]
+fn sibling_link_namespace_changes_do_not_invalidate_a_payload_version() {
+    for after_deletion in [false, true] {
+        let (_scratch, mut context, source) = fixture();
+        let path = source.join("file");
+        let alias = source.join("alias");
+        let extra = source.join("extra");
+        let renamed = source.join("renamed");
+        fs::write(&path, b"retained bytes").unwrap();
+        fs::hard_link(&path, &alias).unwrap();
+        let prepared = context.prepare(&path, &mut random_bytes).unwrap();
+        let receipt = after_deletion.then(|| context.trash(&path).unwrap());
+        fs::hard_link(&alias, &extra).unwrap();
+        fs::rename(&alias, &renamed).unwrap();
+        fs::remove_file(&extra).unwrap();
+        let receipt = receipt.unwrap_or_else(|| {
+            prepared
+                .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+                .unwrap()
+        });
+        restore(
+            &request(&path, &receipt),
+            &batch::DirectoryEffects::default(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"retained bytes");
+        assert_eq!(
+            fs::metadata(&path).unwrap().ino(),
+            fs::metadata(&renamed).unwrap().ino()
+        );
+        assert_eq!(fs::metadata(path).unwrap().nlink(), 2);
+    }
+}
+
+#[test]
+fn a_payload_changed_during_rename_retains_evidence_without_an_undo_receipt() {
+    for report_error in [false, true] {
+        let (_scratch, mut context, source) = fixture();
+        let path = source.join("file");
+        fs::write(&path, b"original").unwrap();
+        let payloads = context.data_home.join("Trash/files");
+        let error = context
+            .trash_with(
+                &path,
+                &mut random_bytes,
+                |parent, name, files, target| {
+                    rename_noreplace_at(parent, name, files, target)?;
+                    fs::write(payloads.join(target), b"changed payload")?;
+                    if report_error {
+                        Err(io::Error::from_raw_os_error(libc::EIO))
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_, _, _| Ok(()),
+            )
+            .unwrap_err();
+        assert!(matches!(error, AppError::MutationUncertain(_)));
+        assert!(!path.exists());
+        let files = context.data_home.join("Trash/files");
+        let entries: Vec<_> = fs::read_dir(files)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(fs::read(&entries[0]).unwrap(), b"changed payload");
+        assert_eq!(
+            fs::read_dir(context.data_home.join("Trash/info"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn changed_content_or_permissions_reject_prepared_deletion_and_restore() {
+    for after_deletion in [false, true] {
+        for permission_change in [false, true] {
+            let (_scratch, mut context, source) = fixture();
+            let path = source.join("file");
+            let alias = source.join("alias");
+            fs::write(&path, b"original").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::hard_link(&path, &alias).unwrap();
+            let prepared = context.prepare(&path, &mut random_bytes).unwrap();
+            let receipt = after_deletion.then(|| context.trash(&path).unwrap());
+            if permission_change {
+                fs::set_permissions(&alias, fs::Permissions::from_mode(0o640)).unwrap();
+            } else {
+                // Same-size write through the remaining link, with a deliberately
+                // distinct timestamp so the assertion does not depend on clock resolution.
+                fs::write(&alias, b"modified").unwrap();
+                File::open(&alias)
+                    .unwrap()
+                    .set_times(
+                        fs::FileTimes::new().set_modified(
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(42),
+                        ),
+                    )
+                    .unwrap();
+            }
+            if let Some(receipt) = receipt {
+                assert!(restore(
+                    &request(&path, &receipt),
+                    &batch::DirectoryEffects::default()
+                )
+                .is_err());
+                assert!(!path.exists());
+                let (payload, info) = artifact_paths(&receipt);
+                assert_eq!(fs::read(payload).unwrap(), fs::read(&alias).unwrap());
+                assert!(info.is_file());
+            } else {
+                assert!(prepared
+                    .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+                    .is_err());
+                assert_eq!(fs::read(&path).unwrap(), fs::read(&alias).unwrap());
+                assert!(!context.data_home.exists());
+            }
+        }
+    }
+}
+
+#[test]
+fn direct_directory_changes_reject_prepared_deletion_and_restore() {
+    for after_deletion in [false, true] {
+        let (_scratch, mut context, source) = fixture();
+        let path = source.join("directory");
+        fs::create_dir(&path).unwrap();
+        let prepared = context.prepare(&path, &mut random_bytes).unwrap();
+        let receipt = after_deletion.then(|| context.trash(&path).unwrap());
+        let directory = receipt
+            .as_ref()
+            .map(|receipt| artifact_paths(receipt).0)
+            .unwrap_or_else(|| path.clone());
+        fs::write(directory.join("new-child"), b"retain child").unwrap();
+        File::open(&directory)
+            .unwrap()
+            .set_times(
+                fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(42)),
+            )
+            .unwrap();
+        if let Some(receipt) = receipt {
+            assert!(restore(
+                &request(&path, &receipt),
+                &batch::DirectoryEffects::default()
+            )
+            .is_err());
+            assert!(!path.exists());
+            assert!(artifact_paths(&receipt).1.exists());
+        } else {
+            assert!(prepared
+                .execute_with(rename_noreplace_at, |_, _, _| Ok(()))
+                .is_err());
+            assert!(!context.data_home.exists());
+        }
+        assert_eq!(
+            fs::read(directory.join("new-child")).unwrap(),
+            b"retain child"
+        );
+    }
 }
 
 #[test]

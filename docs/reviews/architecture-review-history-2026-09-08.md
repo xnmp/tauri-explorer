@@ -1,7 +1,559 @@
 # Architectural review checkpoint archive — through 2026-09-08
 
-Historical evidence moved from the completion ledger without editing its body.
+Historical evidence moved from the completion ledger with claims and limits
+preserved; relative links are adjusted for this directory.
 Use [the current ledger](../review-completion.md) for requirements and status.
+
+## Shared recovery file locks — integration checkpoint
+
+Unix coordinator admission and operation owners now use a shared owned lock guard.
+Every contender independently opens its file; guard destruction unlocks and closes
+without removing durable evidence. Windows uses one exclusive byte at offset 4096,
+beyond the nonce and its bounded overflow read. Each asynchronous request retains
+a dedicated completion event and drains pending work before releasing request
+storage. The remaining Windows identity, private-storage and namespace-durability
+adapter is still required before production recovery can be enabled.
+
+A regression reproduced a coordinator resuming after a detected missing gate was
+restored. Fresh-open and identity failures now permanently fence that connection;
+restoring the original filename cannot silently restore its authority. The test
+also covers a distinct replacement file with otherwise valid private permissions.
+
+Linux recovery tests pass 73 cases (three ignored); the full native file-module
+suite passes 310 (six ignored). All-target Clippy completes with unused recovery
+infrastructure warnings. Windows actual-source compilation, independent review
+and exact validation limits are recorded in
+[the lock evidence](recovery-file-lock-2026-09-08.json).
+These checks do not establish a Windows runtime, complete crash recovery, startup
+speedup or publication. Whole-operation production admission, durable replacement,
+reconciliation/UI, retention and the full release matrix remain outstanding.
+
+## Owned forward entry plans — production checkpoint
+
+The five simple native entry commands now derive filesystem work, refresh parents
+and rename history names from one owned `EntryPlan`. The pure plan performs path
+derivation; the actual blocking worker rechecks source existence and collisions,
+then consumes that exact request. Generic worker ownership follows execution and
+capture destruction. The command and primitive-wrapper paths share the dispatch,
+including inverse rename. Production callers still pass the unit owner; recovery
+admission is not activated by this refactor.
+
+Existing no-op rename, missing-source, uncertain-worker and receipt contracts pass
+through the production entry outcome. Added real-filesystem coverage verifies
+all create modes, a large UTF-8 text payload, symlink effects in a distinct parent,
+and collisions introduced after planning without overwriting bytes or invalidating
+Redo. Planning errors now precede forward-history admission, so malformed requests
+do not publish a transient busy slot; stale-session versus malformed-input error
+precedence can therefore differ.
+
+The full Rust run passes 789 tests with nine ignored and three known sandbox
+cache/socket failures. Those three pass with their required local permissions
+(one thumbnail regression and the 17-test report module). All-target Clippy with
+the native acceptance feature completes; unused recovery infrastructure warnings
+remain. Independent Sol review, source maps and changed-file formatting are
+recorded in [the evidence](owned-entry-plan-2026-09-08.json).
+
+Windows platform research identifies required native identity, privacy, locking
+and namespace-durability contracts in the
+[adapter brief](windows-recovery-adapter-design-2026-09-08.md). No Windows
+adapter or runtime acceptance is claimed. Whole-operation recovery admission,
+durable replacement/resolution, batch ownership, retention and the comprehensive
+release/startup matrix remain required. No measured speedup, publication or
+completed architectural review is claimed by this checkpoint.
+
+## Owned inverse planning — production checkpoint
+
+Native Undo/Redo now executes an owned plan containing its direction, concrete
+requests and exact restore artifacts. Invalid leaves stay in their original
+position, so they cannot erase completed execution-order predecessors. Nested
+batch settlement consumes its children and reconstructs original-order partitions
+without repeatedly cloning unstarted action subtrees. The supervisor retains the
+planned request parents before dispatch for panic invalidation. These parents
+are a refresh projection, not the complete recovery resource set.
+
+A real-filesystem regression reproduced a split path authority: Move execution
+trusted redundant `original_dir` metadata while refresh used `source_path` and
+`dest_path`. Execution now derives the original parent from `source_path` too.
+The regression exercises renderer admission, exact-byte Undo/Redo and an untouched
+unrelated-directory sentinel. The existing landed-basename behavior is preserved;
+the browser fixture follows the same path contract.
+
+The focused native history suite passes 75 tests, including planning-time nested
+failures in both directions and pre-dispatch refresh projection. A direct outer
+supervisor panic after a real native rename verifies affected parents and consumes
+history without retry or an invented opposite, for both Undo and Redo. The three focused
+frontend suites pass 28 tests. All-target Clippy with `e2e-renderer-recovery`
+completes, with existing unused recovery infrastructure warnings; changed Rust
+formatting and source maps pass. Independent GPT-5.6 Sol review accepts the plan,
+path fix and supervisor extraction. The panic test verifies returned refresh
+paths and history settlement; native watcher delivery is not newly observed. See
+[the evidence](owned-inverse-plan-2026-09-08.json).
+
+This change is in the production inverse path, but no production operation yet
+acquires durable recovery admission. Recovery integration, platform adapters,
+durable replacement/resolution, artifact retention, remaining whole-intent
+batches and the full release matrix remain open. There is no new native UI
+acceptance screenshot, Windows/macOS runtime or measured performance result in
+this checkpoint. The review remains incomplete and the changes unpublished.
+
+## Recovery record validation and catalog fallback — integration in progress
+
+Catalog-only discovery now reads existing application storage under its admission
+gate without opening SQLite, creating directories, or probing user/artifact paths.
+Actual filesystem tests retain discoverability with a missing or corrupt index
+and a renamed-away user volume, preserve all evidence, accept canonical parent
+aliases, and reject a symlink substituted for the recovery root. Returned intents
+grant no recovery capabilities; native commands, inspection and resolution remain
+unwired.
+
+A reproduced malformed-intent gap now fails closed: source/destination/root roles,
+subtree access, complete ancestry, distinct identities, duplicate/overlapping paths
+and protected application storage are validated before mutation admission. Indexed
+phase records require their root/publication evidence; manifests require the exact
+opened root identity. Unknown fields, invalid timestamps/kinds, oversized errors
+and malformed native paths are rejected. Native path tags distinguish Linux,
+macOS and Windows rather than only their string encodings. The earlier in-development
+format has not shipped. These are static validation checks, not proof of live
+artifact authority, temporal phase transitions or filesystem durability.
+
+Focused recovery coverage passes 68 tests (two ignored); the full file-module
+suite passes 305 (five ignored). The actual codec/model and their tests compile
+against the Windows target in an isolated dependency-only harness; this does not
+establish Windows coordinator or runtime support. Clippy completes with unused
+infrastructure warnings, and source maps resolve with 415/415 tracked coverage.
+Independent GPT-5.6 Sol review accepts the scoped validators and catalog fallback.
+See [the evidence](recovery-catalog-validation-2026-09-08.json).
+
+The next production work remains whole-mutation admission and worker propagation,
+platform adapters, lazy first-mutation initialization, descriptor-relative manifest
+inspection, reconciliation and recovery actions, durable replacement and UI wiring.
+No crash-recovery vertical, release acceptance or startup improvement is claimed.
+
+## Recovery admission and worker settlement — integration in progress
+
+The Unix recovery coordinator now arbitrates bounded path/subtree claims across
+processes, validates exact owner locks before reclamation, protects its storage
+from managed mutations and rechecks the journal revision around native identity
+capture. Regression tests reproduce stale prepared identity, oversized aggregate
+claims and lossy non-UTF8 database paths. SQLite namespace replacement is detected,
+not atomically prevented against arbitrary same-user writers; ADR 0020 records
+that boundary. These coordinator services still have no production mutation roots.
+
+Production pooled and dedicated batch workers now use one work-before-owner
+destruction primitive. A reproduced dedicated-worker race allowed operation
+capture cleanup after the terminal response; completion now follows cleanup.
+A second reproduced failure silently discarded cleanup panics after every item
+had settled. An optional `workerError` now reaches native history and frontend
+error reporting: confirmed receipts survive, unconfirmed inverse work becomes
+uncertain rather than retryable, and every potentially affected input refreshes.
+Real coordinator tests retain overlapping conflicts through detached worker
+cleanup and verify release before terminal results. Setup captures must be inert
+before execution, and returned values must not carry independent effectful Drop
+owners beyond the worker result.
+
+The integrated Rust library suite passes 773 tests (nine ignored), and 29 focused
+frontend tests plus Svelte typechecking pass. Three initial sandbox failures
+(thumbnail-cache access and two local socket fixtures) pass with the required
+local test permissions. The final file-module suite passes 294 tests (five
+ignored), including an additional unrun/unwinding job regression. All-target
+Clippy completes but still reports unused recovery infrastructure; it is not a
+warning-clean production checkpoint. Independent GPT-5.6 Sol review accepts the scoped worker
+contract and error propagation. See
+[the admission and worker evidence](recovery-admission-workers-2026-09-08.json).
+There is no fresh native app, Windows/macOS runtime, browser visual or startup
+latency acceptance in this checkpoint. The new worker ownership APIs can carry
+real recovery leases; existing production callers do not yet acquire those leases.
+
+Next: thread admission through whole logical mutation roots and their actual
+workers, complete platform adapters and the lazy first-mutation barrier, then
+integrate durable replacement, native recovery commands and UI. Catalog fallback
+discovery/reconciliation, quarantines, artifact identity, overwrite Undo/retention,
+source parking, remaining batches/cancellation and the full release matrix remain
+open. This checkpoint does not complete the review or prove half-bounce startup.
+
+## Durable recovery foundation — in progress
+
+Recovery storage and UI seams now exist, but production file operations do not
+use them yet. The SQLite journal authenticates its bounded schema and revision
+invariants, verifies its durability settings, and uses transactional generation
+checks. A bounded checksummed Unix catalog retains discovery evidence independently
+of SQLite. Exact nonce-bearing OS locks have a real subprocess termination test.
+Catalog retirement captures an entry in a private quarantine before deletion; a
+reproduced namespace-substitution race now preserves unexpected evidence.
+
+The importable recovery store uses revision-ordered snapshots, including explicit
+inspection, and checks current native action capabilities. Subscription replacement
+is independent of delayed old cleanup. The dialog confirms discard and restores
+keyboard focus. It has not yet been mounted in the app or browser-verified.
+
+The preceding foundation checkpoint passed 262 native file tests (four ignored), 17 frontend
+contract/state tests, and Svelte typechecking. Independent Sol reviews found and
+verified fixes for schema/generation validation, subscription lifecycle, stale
+authorization, inspection ordering and catalog retirement. These are infrastructure
+checks, not end-to-end crash recovery or platform release acceptance. See
+[the scoped evidence](durable-recovery-foundation-2026-09-08.json).
+
+At that checkpoint, required next work included secure coordinator initialization and shared cross-process
+admission, complete record validation, indexed/catalog reconciliation, native
+commands and owner retirement, durable replacement integration, post-core-ready UI
+wiring, and boundary-by-boundary process-crash acceptance. Catalog quarantines
+currently block discovery until reconciliation; inode reuse and extreme-umask
+behavior require platform policy. Windows/macOS runtime, overwrite Undo/source
+parking, remaining batches/cancellation, and launch/input latency acceptance remain
+open. No performance improvement or completed review is claimed by this checkpoint.
+
+## Windows batch admission checkpoint
+
+Windows destructive selections now pass shared ordinal path validation after
+stable exact-string deduplication and before worker/history admission. DOS/UNC
+case and ordinary/verbatim aliases are compared by component, so a sibling such
+as `dir-file` cannot hide `dir/child` from selected-ancestor rejection. The same
+parser guards Shell destination verification. Ambiguous namespaces, stream syntax
+and reserved device components cannot become equal merely by removing a prefix.
+
+Depth and aggregate component limits bound parsing/comparison work while retaining
+the existing 32,768-item capacity for ordinary paths. Reserved-name validation
+uses static checks without per-name allocations or Windows comparison calls.
+Independent GPT-5.6 Sol review accepts the static boundary. Maximum-shape Windows
+latency remains unmeasured; neither lexical comparison nor cross-compilation proves
+physical identity through junctions, 8.3 names, hardlinks or mapped shares.
+
+The Linux batch suite passes 20 cases, including actual case-distinct files.
+Linux all-target Clippy and formatting pass; actual Windows source and tests
+pass the Windows-target harness Clippy. Windows tests have not run on a Windows
+host. CI now discovers tests before running its filters, and a reproduced stale
+filter is rejected instead of silently passing zero tests. Maps cover 415/415
+source files. See [the evidence record](windows-batch-admission-2026-09-08.json).
+
+[Proposed ADR 0020](../adr/0020-durable-file-recovery.md) specifies durable artifact
+ownership, bounded discovery, cross-process conflict admission and crash
+reconciliation. It is design, not implemented recovery. The next vertical must
+integrate the journal with replacement ownership and a usable recovery surface
+before source parking. Overwrite Undo, remaining native forward batches,
+progress/cancellation, actual platform and cross-filesystem acceptance, and Mac
+half-bounce measurements remain required. No startup improvement is claimed.
+
+## Linux restore-parent effects checkpoint
+
+Restore-parent creation now has an independent native effect receipt. Before each
+mkdir, the supervisor-owned batch ledger records both the directory and its parent
+for reconciliation. Iterative traversal avoids recursive stack growth; deduplicated
+invalidations have a 32,768-path / 8 MiB bound. Known leaf failures stay retryable,
+uncertain attempts stay consumed pending inspection, and neither invents an inverse
+for the recreated directories. Copy redo, Delete undo and nested partial batches
+carry those effects into native refresh publication.
+
+Six regressions fail before the fix. Real filesystem coverage includes partial
+parent creation, leaf publication failure, panic, concurrent creators, symlink/file
+obstructions, long paths and effect budgets. The full Rust suite passes 650 library
+and nine integration tests serially (seven ignored); Linux all-targets recovery
+Clippy and Windows actual-source harness Clippy pass. The Windows harness is
+compilation evidence only. Maps cover 409/409 sources.
+
+A rebuilt Linux binary passes 11 outcomes in four native specs. The new case
+restores through two missing parents, shows the ancestor in the existing listing,
+and verifies exact bytes through Undo/Redo/Undo while retaining the recreated
+parents. Independent GPT-5.6 Sol source review and native evidence review accept
+the scoped contract. The native case demonstrates UI integration; fault and
+projection tests distinguish explicit auxiliary effects from normal watcher
+delivery. See [the evidence record](restore-parent-effects-2026-09-08.json).
+
+No frontend production code changed and no startup improvement is claimed. Native
+publication waits for batch settlement. Artifact identity, durable recovery,
+remaining forward batch ownership, operation progress/cancellation, Windows/macOS
+runtime and the full product/startup release matrix remain open. This checkpoint
+closes Linux restore-parent effect accounting, not the comprehensive review.
+
+## Windows Shell worker implementation checkpoint
+
+Windows restore now owns an STA for the entire batch and uses a per-item Shell
+completion sink. Only a source-verified root `S_OK` callback with an actual
+requested destination is exact success; alternate destinations and incomplete
+proof remain explicit non-retryable uncertainty. Collision-renaming flags and
+an overwrite/merge veto preserve existing targets. Inventory lookup and completion
+share Windows ordinal path comparison, including case and verbatim DOS aliases.
+Duplicate semantic requests fail before effects.
+
+Forward trash deletion, inverse trash/restore and SCM trash share the platform
+worker. The existing external ledger preserves partial outcomes; native owners
+retain the continuation while it awaits one of four live-thread permits. This
+bounds threads, not all queued requests. The full Linux Rust suite passes 632
+library and nine integration tests (seven ignored); Linux all-targets recovery
+Clippy and workspace formatting pass. Actual Windows source and tests pass a
+Windows-target check and Clippy in the recorded isolated harness, whose explicit
+Tauri/file-helper shims make this compilation evidence, not runtime acceptance.
+The Windows CI workflow is configured to run the real filesystem, collision,
+symlink, mixed-batch, path-spelling and MTA/STA tests. Those Windows tests have
+**not** run on a Windows host yet.
+
+A rebuilt Linux binary passes 10 native compatibility outcomes in four specs,
+including child-owned deletion after native window destruction and shared inverse
+admission/settlement. The surviving selection and directory remain coherent. Independent GPT-5.6 Sol
+review accepts the source and scoped Linux evidence; the native run does not
+directly exercise SCM trash.
+Normal builds exclude the probes; startup JavaScript remains within budget at
+666,786 raw / 217,702 gzip bytes (+6 gzip bytes). No startup improvement is claimed.
+Maps cover 408/408 sources. See
+[the evidence record](windows-shell-worker-checkpoint-2026-09-08.json).
+
+Required work still includes Windows runtime acceptance, source-verified deletion
+receipts and artifact identity, bounded SCM admission and operation progress/cancel,
+Linux restore-parent effects, durable recovery, remaining native forward batches,
+and the complete platform/startup release matrix. A hung Shell call can still
+hold a worker and delay inverse work; this checkpoint does not claim a deadline
+or forced cancellation guarantee.
+
+## Directory and selection reconciliation checkpoint
+
+Complete refreshes now reconcile against both their starting snapshot and current
+pane state. Concurrent local creates, renames, deletions and metadata changes
+survive an older read while unrelated external changes still apply. A fresh
+observation after overlap uses the existing refresh scheduler. Selection, cursor
+and anchor reconcile against the complete listing; missing identities assigned
+while the read was running survive provisionally until that fresh observation.
+Unchanged listings retain their array identity without directory-sized fingerprint
+strings, and streamed chunks accumulate without repeatedly copying the buffer.
+
+Six regressions fail before the fix. Final focused coverage passes 32 cases;
+the full frontend run before final allocation optimizations passes 2,305 unit
+and 30 performance cases, and affected browser coverage passes 71 cases across
+all views. Final Svelte checks are clean; architecture lint and 406/406 source-map
+coverage pass. The rebuilt Linux binary passes 10 outcomes in four specs,
+including deletion of the surviving window's selection by an admitted child
+batch after that child is destroyed. Both file rows and the selected count clear.
+The previous deletion screenshot's stale-selection finding is resolved.
+Independent GPT-5.6 Sol review accepts the source and scoped native evidence.
+See [the evidence record](directory-reconciliation-acceptance-2026-09-08.json).
+
+The reproducible Bun unchanged-listing benchmark (`bun
+scripts/bench-directory-reconciliation.ts`) measures 100k entries at 18.12 ms old
+versus 0.88 ms new p50. This is a comparison microbenchmark, not WebView or startup
+latency; concurrent-mutation reconciliation has additional cost. Normal startup
+JavaScript is 666,782 raw / 217,696 gzip bytes (+448 gzip bytes), within budget.
+Fresh normal builds exclude acceptance probes. Windows restore, durable recovery,
+remaining native batch ownership and the supported-platform/startup acceptance
+matrix remain required. Exactly one trailing scan and strict selection ABA
+ordering are not claimed by this checkpoint.
+
+## Native deletion batch checkpoint
+
+Whole-selection trash and permanent deletion now enter one native-owned command.
+An external worker ledger preserves confirmed siblings after panic, separates
+uncertain attempted work from unstarted inputs, and stops after uncertainty.
+Only confirmed recoverable successes enter Undo; native settlement precedes the
+renderer result. Raw restore IPC is removed. Both dialog and confirmation-free
+entry points expose partial/uncertain errors. Native prefix classification keeps
+Linux double-slash and Windows extended-local paths out of permanent UNC removal.
+
+Linux native acceptance passes 10 outcomes in four specs. The new gated case
+accepts a two-file trash batch, destroys its child window before filesystem
+execution, then verifies both deletions and the surviving listing after external
+release. Independent GPT-5.6 Sol review accepts the log, spec and before/after
+screenshots within that scope. See [the evidence record](native-delete-batches-2026-09-08.json).
+
+Validation: 617 library + nine integration Rust tests pass serially (seven ignored);
+a parallel real-watcher fixture failure passes in isolation. Frontend tests pass
+2,293 + 30 performance cases; Svelte and architecture checks are clean, and
+all-targets recovery-feature Clippy passes. The initial affected browser run
+passes 74 cases; final file-operation cases pass 67, followed by four passing
+corrected Linux delete-dialog cases. Maps cover 405/405 sources. Normal startup
+JavaScript is 665,192 raw / 217,248 gzip bytes, 33 gzip bytes below the preceding
+checkpoint. Fresh normal builds exclude the acceptance probes; no startup latency
+gain or half-bounce result is claimed.
+
+Required follow-up remains explicit: Windows shell restore completion and racing
+destination preservation; Linux restore-parent creation effects; artifact/path
+identity and durable recovery; native deletion progress/cancellation; remaining
+copy/move, paste/drop and grouped-rename ownership; renderer/process recovery and
+supported-platform/startup acceptance. The native after screenshot also exposes
+a stale selection count after external deletion, requiring a selection-refresh
+regression and fix. These are open work, not completed review findings.
+
+## Native forward ownership checkpoint
+
+Five commands (create directory/file, rename, write new text, symlink) now reserve
+native history before filesystem work and settle independently of the invoking
+renderer. Explicit pending/reserved positions preserve admission order and
+protect retained history capacity. Same-name rename preserves Redo, shared Undo
+availability reflects pending participant work, and overlapping partial Redo
+retains only its unfinished work. Typed worker uncertainty now reaches both
+forward and inverse settlement; it cannot silently become a retryable no-effect
+failure. Real filesystem regressions reproduce the classification and ordering
+failures before their fixes.
+
+Current focused evidence: 47 Rust history contracts, five forward filesystem
+classification cases, 2,286 frontend tests plus 30 performance cases, and 74
+Chromium outcomes across all file views. Source-map coverage is 403/403. Normal
+startup JavaScript is 665,578 raw / 217,281 gzip bytes (47 gzip bytes above the
+last checkpoint), within budget; no startup latency improvement is claimed.
+The rebuilt Linux binary passes nine outcomes across four specs: the three new
+forward cases plus shared inverse and ordinary/partial file-operation compatibility.
+Native history exists before renderer publication, exact same-name rename preserves
+Redo, and an accepted child rename completes after native window destruction with
+exact bytes and the surviving window listing. Fresh normal builds exclude all
+acceptance probes. See [the evidence record](native-forward-ownership-2026-09-08.json).
+
+The full Rust suite now passes 599 library and nine integration tests (seven
+ignored), with controlled Bash and isolated XDG data; all-targets recovery-feature
+Clippy is clean. A reproduced crash-report overwrite now uses private staging,
+complete no-replace publication and identities retained across consumption.
+Five focused crash-report contracts pass, with independent review of the
+publication and inverse-uncertainty boundaries. Independent GPT-5.6 Sol review
+accepts the native evidence and its scoped lifetime claims.
+This is acceptance of the five-command boundary. Remaining native batches,
+durable recovery, identity, supported-platform acceptance and actual Mac startup
+measurements remain required by the full review.
+
+## Linux shared-history lifetime acceptance
+
+Native acceptance now verifies shared inverse admission and settlement across
+real windows. A second window cannot execute an already reserved inverse; both
+receive matching passive Redo summaries after completion, and a stale entry ID
+cannot execute again. Destroying the initiating native window after acceptance
+does not abandon the inverse: the survivor receives settlement, performs Redo
+and renders the actual renamed file. Both cases assert exact bytes and correlate
+an external release with the admitted entry ID, direction, token and native PID.
+
+The Linux run passes six outcomes across three specs, including the two new
+cases and ordinary create/rename/trash plus partial Delete/Undo/Redo compatibility.
+Focused validation passes 33 native history contracts and 21 frontend lifetime
+contracts. Svelte, architecture and all-targets recovery-feature Clippy pass;
+source maps cover 400/400 files. Independent GPT-5.6 Sol review accepts the
+scoped native evidence and its stated limits.
+Fresh normal frontend/native builds exclude the probes; startup JavaScript remains
+665,401 raw bytes / 217,234 gzip bytes (two gzip bytes of build variance).
+No startup latency improvement is claimed. See
+[the acceptance record](file-history-lifetime-2026-09-08.json).
+
+This closes the Linux native-window inverse-lifetime gate, not the full history
+or architectural review. Same-window renderer replacement/crash, forward
+mutation/history atomicity, artifact identity, durable transaction recovery,
+Windows/macOS and the wider release acceptance matrix remain open.
+
+## Partial-move recovery checkpoint
+
+Cross-device moves now return a committed destination with an explicit recovery
+receipt if source cleanup fails, including when cleanup already removed some
+children. Paste, drag/drop, transfers, plugins and native history preserve that
+effect, refresh the affected parents, report the incomplete operation and avoid
+recording an inverse that could delete the last surviving copy. Safe siblings
+remain undoable; incomplete cuts conservatively retain their original clipboard
+selection. Overwrite copy/move share an exclusively reserved displaced-original
+owner whose destructor never deletes user data. Rollback refuses destination
+races and reports the retained original path.
+
+This checkpoint passes 2,281 frontend tests plus 30 performance cases (three
+skipped), 577 Rust library tests plus nine integration tests (seven ignored),
+and 74 Chromium outcomes across all three file views. Svelte, architecture and all-targets recovery-feature Clippy checks are clean;
+source maps cover 399/399 files. A freshly rebuilt Linux binary passes six outcomes across four
+specs, including real cross-filesystem source-cleanup failure with exact bytes
+at both locations, a visible incomplete-paste message and rejected unsafe Undo.
+Native acceptance first exposed read-only staged-directory publication failure;
+a failing-before Rust regression now verifies publication and exact final mode,
+and the corrected native case passes. See
+[the checkpoint evidence](file-move-recovery-checkpoint-2026-09-08.json)
+and [the native screenshot](../../screenshots/refactor/repo-health-cleanup/partial-move-recovery.png).
+
+Startup JavaScript is 217,236 gzip bytes, 383 above the preceding checkpoint.
+No startup latency improvement is claimed. Durable transaction journals and
+startup reconciliation, staging/source identity, indeterminate network-filesystem
+outcomes, complete overwrite Undo, atomic forward/history recording and native
+multiwindow/platform acceptance remain open. Parking sources before copying is
+deferred until durable recovery can land with it: otherwise a crash can hide the
+only source before any destination exists. Independent GPT-5.6 Sol review accepts the scoped guarantees and evidence with
+these limits. This is a verified recovery boundary, not completion of the
+comprehensive review.
+
+## Preceding exclusive publication checkpoint
+
+Ordinary copies and new text writes now build their complete payload in an
+exclusively created destination-local staging directory. Shared native
+no-replace rename protects the final destination for ordinary publication,
+move, rename and Linux trash restore; recursive copy no longer truncates
+existing files, merges existing directories or follows destination symlinks.
+Four real-filesystem regression cases failed before this change and pass after
+it. The complete Rust suite passes 566 library and nine integration tests
+(seven ignored), including eight new staging/publication contracts and five
+collision regressions. No frontend or startup payload change is involved;
+no performance improvement is claimed.
+
+All-targets Clippy is clean and source maps cover 398/398 files. A freshly
+rebuilt Linux binary passes five native outcomes across ordinary create/rename/
+trash, delayed create across navigation with a causal watcher update, and
+partial Delete/Undo/Redo. These are compatibility checks; injected construction
+failure and destination races are verified through actual Rust filesystem
+tests. They do not verify cross-device cleanup recovery or native multiwindow
+history ownership.
+See [the publication checkpoint evidence](file-publication-checkpoint-2026-09-08.json).
+
+This is a transaction prerequisite. Case-only renames retain the old platform
+branch. Overwrite displacement, partial cross-device source cleanup, NFS
+indeterminate publication, external staging-namespace replacement, artifact
+identity and combined native forward/history admission remain open. Independent
+review confirms ordinary destination protection and specifically identifies
+the path-based staging ownership limit. Platform API inspection does not replace
+Windows/macOS runtime acceptance. See ADR 0018 for the continuation.
+
+## In-progress native history and mutation receipts
+
+The current working tree moves shared file history into the native process and
+uses `{ path, entry }` mutation receipts, where the committed path remains valid
+as an operation result when presentation metadata is unavailable. See proposed
+[ADR 0018](../adr/0018-native-file-history.md). The old TypeScript executor now lives
+only in the browser fixture backend.
+
+Current integration checks pass 2,275 frontend cases plus 30 performance cases
+(three skipped), 553 Rust library cases plus nine integration cases (seven
+ignored), and 75 Chromium outcomes across the three file views. Svelte reports
+zero errors/warnings; default and recovery-feature Clippy are clean; source maps
+cover 397/397 files. A deterministic metadata-inspection regression fails before
+the change and passes afterward. Startup JavaScript is 216,853 gzip bytes,
+139 above the preceding checkpoint; no startup latency improvement is claimed.
+The rebuilt Linux binary passes five outcomes across three specs: ordinary
+create/rename/trash, delayed create across navigation with a causal watcher
+update, and partial delete followed by Undo/Redo/Undo. These verify native
+compatibility; metadata-failure injection is covered at the Rust receipt seam.
+See [the checkpoint evidence](native-file-history-checkpoint-2026-09-08.json).
+
+This work is not accepted as a complete file-history implementation. Remaining
+boundaries include cross-device cleanup, partial writes/copy cleanup, overwrite
+rollback and displaced-artifact recovery, native artifact identity, atomic
+forward mutation/history admission, cross-window execution and renderer-loss
+acceptance, and supported-platform verification. The proposed ADR records the
+exact limits. The requirement table below continues to define the full goal.
+
+## Preceding committed checkpoint
+
+Checkpoint cfef0dc0 (2026-09-08): bulk trash and restore publish confirmed
+per-path outcomes. Partial undo/redo retains only unfinished work, publishes
+completed effects, and reserves an exact renderer-local history entry across
+concurrent calls, new pushes and explicit clears. Linux restore atomically
+refuses collisions and distinguishes successful payload moves from metadata
+cleanup. Mixed local/network deletion preserves local trash recovery. Rename
+teardown no longer reads a destroyed component-owned derivation.
+
+Frontend tests pass 2,267 cases plus 30 performance cases (three skipped).
+Chromium passes 84 targeted file-operation, delete/restore, clipboard, drag/undo,
+Miller-column and rename outcomes. Rust passes 517 library tests and nine
+integration tests (seven ignored); Clippy is clean. Linux native acceptance
+passes five outcomes across three specs, including real partial delete followed
+by Undo/Redo/Undo with exact file contents and listing assertions.
+Startup JavaScript is 216,714 gzip bytes, 631 above the prior checkpoint;
+this is not a startup speedup claim. See
+[the acceptance artifact](file-outcome-acceptance-2026-09-08.json).
+
+Cross-window inverse admission, Windows shell restore completion, action-level
+recovery capabilities for UNC copies/macOS, broader platform/product/soak
+acceptance and actual Mac half-bounce measurements remain open. The comprehensive
+review is **not complete**.
+
+The branch has unpublished local commits after the published draft PR #684 tip
+`2c2a8121`. Publication is waiting for explicit approval of the public destination
+and payload after automatic approval review rejected prior pushes. No merge or
+release acceptance is implied. The current table and newest sections describe
+current scope; earlier checkpoint sections retain their historical counts and
+limitations and must not be read as current status.
+
 
 ## Historical evidence (superseded by current checkpoints)
 
@@ -765,7 +1317,7 @@ re-discovers/reinstalls failed observation with bounded exponential delay while
 leases remain. Final release removes observation and its deadlines. Shutdown
 rejects late acknowledgements and joins the worker. SCM now uses the same ordered
 frontend owner as graph/cache consumers, retaining failed releases for retry.
-[ADR 0009](adr/0009-git-observation-leases.md) records the contracts and limits.
+[ADR 0009](../adr/0009-git-observation-leases.md) records the contracts and limits.
 
 `git_watch/target.rs` separates discovery and event policy. Worktree `Cargo.lock`
 and backup-named files now invalidate normally; only temporary Git metadata is
@@ -914,7 +1466,7 @@ which resolves after disposal. Independent review exposed a request which could
 resume after lazy loading and dispatch native work after teardown; a regression
 failed before adding the acceptance check around those imports. Already accepted
 navigation, mutation and transfer work remains with its existing domain owner.
-Window-scoped stores retain their data lifetimes. [ADR 0010](adr/0010-page-session-and-core-readiness.md)
+Window-scoped stores retain their data lifetimes. [ADR 0010](../adr/0010-page-session-and-core-readiness.md)
 records these boundaries; this is not a claim to cancel every window operation
 on page teardown.
 
@@ -963,7 +1515,7 @@ leases before recovery and retains observers still shared with live windows.
 Registration that finishes after its owner retires is drained before an ACK can
 be returned. Native event handling does not wait for registration or observer
 destruction. Closing windows which never used Git does not start the worker.
-[ADR 0009](adr/0009-git-observation-leases.md) records the contract.
+[ADR 0009](../adr/0009-git-observation-leases.md) records the contract.
 
 The regression first failed against the unchanged worker behavior with ownership
 arguments mechanically added to expose its missing retirement boundary
@@ -1853,8 +2405,8 @@ A delayed earlier notification cannot satisfy this predicate.
 
 Evidence:
 
-- [Structured two-cycle result](reviews/renderer-recovery-acceptance-2026-09-07.json).
-- [Inspected recovered listing](../screenshots/refactor/repo-health-cleanup/native-renderer-crash-recovery.png)
+- [Structured two-cycle result](renderer-recovery-acceptance-2026-09-07.json).
+- [Inspected recovered listing](../../screenshots/refactor/repo-health-cleanup/native-renderer-crash-recovery.png)
   shows `observed-after-crash-2.txt` in repository-2.
 - Native acceptance exits 0; existing native window destruction, ordinary
   reload, and blank-renderer crash tests pass 3/3 on the same binary.
@@ -1902,7 +2454,7 @@ including all three views, real UI rename followed by multiword type-ahead,
 Miller Enter/Space navigation, address editing, selected directory Open, Preview
 and graph-button ownership. The rebuilt native debug binary passes the original
 Markdown preview/zoom/dock/fullscreen/pointer/keyboard scenario in five seconds.
-Its [inspected screenshot](../screenshots/refactor/repo-health-cleanup/native-preview-resize.png)
+Its [inspected screenshot](../../screenshots/refactor/repo-health-cleanup/native-preview-resize.png)
 shows the real Markdown result. No Windows or macOS runtime acceptance is implied.
 
 The independent review also identified an existing focus/selection split: Tab
@@ -1956,7 +2508,7 @@ without requiring a discarded component to run again. Git request cancellation
 now remains observable until the successful reply is consumed; one canceled
 request cannot remove another lease on the same repository.
 
-Evidence in [the acceptance artifact](reviews/directory-ownership-acceptance-2026-09-08.json):
+Evidence in [the acceptance artifact](directory-ownership-acceptance-2026-09-08.json):
 
 - Before: exact first-child inotify registration remained ten seconds after native
   destruction; the directory was retained throughout the assertion.
@@ -2014,7 +2566,7 @@ refresh after activation, while faults prevent activation. A callback accepted b
 a conservative invalidation; it cannot publish data or restore replacement health.
 ADR 0013 records the boundary and its limits.
 
-Evidence in [the acceptance artifact](reviews/directory-recovery-acceptance-2026-09-08.json):
+Evidence in [the acceptance artifact](directory-recovery-acceptance-2026-09-08.json):
 
 - Before: moving the watched directory and recreating its path left replacement
   contents absent after 27.6 seconds. An independent same-file Markdown overwrite
@@ -2025,8 +2577,8 @@ Evidence in [the acceptance artifact](reviews/directory-recovery-acceptance-2026
   the selected Markdown preview and its 8 KiB metadata.
 - Six native specs / eleven outcomes pass in 51 seconds, including the existing
   refresh/coalescing and directory/Git lifetime regressions. A second two-case run
-  passes and captures inspected [replacement](../screenshots/refactor/repo-health-cleanup/native-directory-replacement.png)
-  and [updated preview](../screenshots/refactor/repo-health-cleanup/native-directory-content-update.png)
+  passes and captures inspected [replacement](../../screenshots/refactor/repo-health-cleanup/native-directory-replacement.png)
+  and [updated preview](../../screenshots/refactor/repo-health-cleanup/native-directory-content-update.png)
   screenshots. These are correctness outcomes, not startup benchmarks.
 - Thirteen injected observation contracts cover faults, rescans, stale callbacks,
   registration interleavings, parent sharing, partial recursive installation,
@@ -2336,3 +2888,105 @@ This does not finish the architectural review. Windows batch case/ancestor alias
 Windows runtime, actual Linux cross-mount acceptance, macOS restore, durable crash
 recovery, remaining whole-intent operations and cancellation, and startup/half-bounce
 measurement remain open. No new performance numbers are claimed.
+
+## Full-width native recovery identity — integration checkpoint
+
+Recovery now separates pure platform-tagged object identity from native capture.
+Windows lookup queries `FileIdInfo` on the supplied handle and retains the full
+volume serial plus 128-bit identifier. Unix descriptor and no-follow metadata
+observations use the same domain value. Full object equality and volume equality
+are distinct; private record decoding rejects foreign-platform, untagged, malformed
+and oversized numeric/identifier shapes. This changes an unshipped record format;
+no production mutation has used it and no legacy data migration is claimed.
+
+Real filesystem tests verify independent opens and hardlinks, retained-handle
+identity across rename/path replacement, and Unix symlink identity. Domain tests
+exercise every Windows ID/volume bit and both Unix 64-bit fields, strict decoding
+and the native wire-size allowance. Resource admission now prices the native
+serialized identity shape instead of embedding a Unix-only byte estimate.
+
+The native file-module suite passes 319 tests (six ignored). All-target Clippy and
+actual-source Windows compilation complete; independent GPT-5.6 Sol review accepts
+the identity seam and accounting update. Detailed evidence and limitations are in
+[the identity checkpoint](recovery-identity-2026-09-08.json).
+This does not establish Windows runtime behavior, immunity to identifier reuse,
+content-version authority or complete recovery. Secure Windows directory/private
+storage and durability support, whole-operation production admission, durable
+replacement/reconciliation/UI, retention and the full release matrix remain open.
+No publication or startup speedup is claimed.
+
+## Native directory and privacy adapters — integration checkpoint
+
+Recovery and Unix trash now share an owned directory facade with platform
+implementations. Windows relative operations use retained directory handles,
+exclusive creation, no-replace rename, typed removal and bounded enumeration.
+Creation applies a protected current-user/SYSTEM descriptor atomically; native
+objects and ordinary inherited child files have separate validation contracts.
+Shared Win32/NT error conversion also serves native identity and locking.
+
+The Linux file suite passes 324 tests (six ignored); the final directory subset
+passes nine, including oversized-name refusal. Windows actual-source compilation
+and Clippy pass. Independent GPT-5.6 Sol source review accepts the corrected
+buffer ownership, access masks and privacy policy. Detailed results, harness
+inputs and qualifications are in the
+[directory checkpoint](recovery-directory-2026-09-08.json).
+
+Windows runtime remains unverified, including independent enumeration through
+`ReOpenFile` on native-created handles and actual ACL inheritance. Windows
+namespace durability remains unimplemented: `Directory::sync` returns
+`Unsupported`. The adapter brief identifies `NtFlushBuffersFileEx` normal mode
+as a concrete qualification candidate, without claiming a proven recovery
+barrier. Private storage integration, whole-operation admission, replacement,
+reconciliation/UI, retention and the full release matrix remain open. No startup
+speedup, publication or complete recovery is claimed.
+
+## Private storage caller integration — checkpoint
+
+Catalog, operation-owner and Unix coordinator validation now use retained file
+handles through one private-storage policy. Windows checks object kind, reparse
+status, link count, delete-pending state and protected ACLs on that handle;
+Unix retains effective-owner and private-mode checks. Identity capture is also
+handle-based. Catalog/owner code now compiles on Windows, and both random
+name/nonce call sites use the system RNG through `getrandom`.
+
+A failing-before regression exposed an open Unix directory handle that remained
+accepted after its entry was removed. The validator now rejects zero-link
+directories. The final Linux file suite passes 328 tests (six ignored), including
+retained-name replacement, hardlink/deletion and widened-permission contracts.
+Independent GPT-5.6 Sol review accepts the caller migration and final fix. See
+[private-storage evidence](reviews/recovery-private-storage-2026-09-08.json).
+
+The expanded Windows Rust check passes with actual source and the matching SQLite
+bindings. This host lacks a Windows C compiler, so the check omits bundled SQLite
+C compilation and executable linking; production configuration remains bundled.
+Windows runtime, namespace durability, resource capture and coordinator enablement
+remain incomplete. Production reservations, durable replacement/reconciliation/UI,
+retention and the full release/performance matrix remain open. No startup speedup,
+publication or complete recovery is claimed.
+
+## Physical namespace conflict index — checkpoint
+
+Missing destinations now conflict through their captured physical ancestor and
+remaining relative suffix, including Linux bind aliases. Every existing ancestor
+is indexed so a later capture after an intermediate directory appears still
+conflicts with the earlier claim. Read/read sharing, unrelated sibling concurrency,
+hardlink conflicts and final symlink ownership remain intact.
+
+Shared component encodings and a minimal covering subtree frontier replace
+repeated long-path parsing and ancestor searches. Five alternating release samples
+of the 1,442-claim/255-ancestor synthetic load give median construction times of
+10,079 ms before and 320 ms after. Peak whole-process RSS increases from 41.5 MiB
+to 52.0 MiB. Host scheduling and some concurrent build activity limit attribution;
+this is an index benchmark, not an application startup measurement.
+
+The production Linux file suite passes 333 tests (seven ignored), and the opt-in
+real bind-mount test passes in a private mount namespace. Mixed native byte names,
+normalized spellings and varied insertion orders are checked against a direct path
+overlap contract. Final malformed ancestry assertions also pass. All-target Clippy
+passes with unused-infrastructure warnings. Independent GPT-5.6 Sol review accepts
+the change; see [resource-index evidence](reviews/recovery-resource-index-2026-09-08.json).
+
+Windows per-directory case/short-name/provider capture and case-insensitive macOS
+volume semantics remain open. Production reservations, durable replacement,
+reconciliation/UI, retention and the full release/performance matrix remain
+incomplete. No startup speedup, publication or complete recovery is claimed.

@@ -236,4 +236,70 @@ describe("refresh-manager", () => {
       intervals: 0,
     });
   });
+  it("refreshes a completed mutation promptly after a recent scan without waiting for the watcher interval", () => {
+    const refresh = vi.fn();
+    requestRefresh(refresh, "/mutation");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    requestRefresh(refresh, "/mutation", true, refresh, Date.now(), "mutation");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    requestRefresh(refresh, "/mutation");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1850);
+    expect(refresh).toHaveBeenCalledTimes(3);
+  });
+
+  it("upgrades pending watcher work and cannot postpone a mutation with later events", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    requestRefresh(first, "/busy");
+    vi.advanceTimersByTime(150);
+    requestRefresh(first, "/busy");
+    vi.advanceTimersByTime(50);
+    requestRefresh(first, "/busy", true, first, Date.now(), "mutation");
+    vi.advanceTimersByTime(50);
+    requestRefresh(second, "/busy", false, second, Date.now(), "mutation");
+    vi.advanceTimersByTime(50);
+    requestRefresh(first, "/busy");
+    vi.advanceTimersByTime(50);
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(second).toHaveBeenCalledExactlyOnceWith({ silent: false });
+  });
+
+  it("waits for the current listing then runs one prompt mutation reconciliation", async () => {
+    let finish!: () => void;
+    const refresh = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    requestRefresh(refresh, "/busy");
+    await vi.advanceTimersByTimeAsync(150);
+    requestRefresh(refresh, "/busy", true, refresh, Date.now(), "mutation");
+    await vi.advanceTimersByTimeAsync(200);
+    requestRefresh(refresh, "/busy");
+    expect(refresh).toHaveBeenCalledOnce();
+    finish();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    requestRefresh(refresh, "/busy");
+    await vi.advanceTimersByTimeAsync(150);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1850);
+    expect(refresh).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops a covered mutation only for subscribers participating in the current listing", async () => {
+    let finish!: () => void;
+    const first = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const second = vi.fn();
+    const observedAt = Date.now();
+    requestRefresh(first, "/busy");
+    await vi.advanceTimersByTimeAsync(150);
+    requestRefresh(first, "/busy", true, first, observedAt, "mutation");
+    requestRefresh(second, "/busy", true, second, observedAt, "mutation");
+    await vi.advanceTimersByTimeAsync(150);
+    finish();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+  });
 });

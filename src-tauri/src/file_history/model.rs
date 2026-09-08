@@ -73,6 +73,15 @@ pub enum Action {
         restore_supported: bool,
         #[serde(skip)]
         recovery: Recovery<Arc<TrashArtifact>>,
+        /// Native-only identity of a publication. Legacy renderer records have
+        /// no observation and retain their existing compatibility behavior.
+        #[serde(skip)]
+        publication: Option<Arc<crate::files::mutation::PublishedEntry>>,
+    },
+    Replacement {
+        path: String,
+        #[serde(skip)]
+        recovery: Option<crate::files::recovery::ReplacementHistory>,
     },
     Batch {
         actions: Vec<Action>,
@@ -104,10 +113,14 @@ impl Action {
                     copied_path,
                     parent_dir,
                     recovery,
+                    publication,
                     ..
                 } => {
                     copied_path.capacity()
                         + parent_dir.capacity()
+                        + publication
+                            .as_ref()
+                            .map_or(0, |entry| entry.retained_bytes())
                         + match recovery {
                             Recovery::Capture => 0,
                             Recovery::Restore(artifact) => artifact.retained_bytes(),
@@ -133,6 +146,18 @@ impl Action {
                                         .sum::<usize>()
                             }
                         }
+                }
+                Self::Replacement { path, recovery } => {
+                    path.capacity()
+                        + recovery.as_ref().map_or(0, |token| {
+                            token.id.capacity()
+                                + token.refresh_dirs.capacity() * std::mem::size_of::<String>()
+                                + token
+                                    .refresh_dirs
+                                    .iter()
+                                    .map(String::capacity)
+                                    .sum::<usize>()
+                        })
                 }
                 Self::Batch { actions, label } => {
                     label.capacity()
@@ -173,6 +198,8 @@ pub struct Execution {
     pub uncertain: Option<Action>,
     pub opposite: Option<Action>,
     pub remaining: Option<Action>,
+    /// Diagnostics from completed work; they never stop a dependent batch.
+    pub warnings: Vec<String>,
     pub error: Option<String>,
 }
 

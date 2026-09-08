@@ -1,10 +1,14 @@
 /** Window-owned projection of native file history. The native process alone
  * admits and executes inverses, including actions shared by multiple windows. */
 import { fileHistoryPort } from "$lib/api/file-history";
-import { emptyHistorySummary, type HistoryDirection, type HistoryPort, type HistoryReply, type HistorySummary, type UndoAction } from "$lib/domain/file-history";
+import { emptyHistorySummary, type HistoryAction, type HistoryDirection, type HistoryPort, type HistoryReply, type HistorySummary, type UndoAction } from "$lib/domain/file-history";
 import { toastStore } from "./toast.svelte";
 
-export interface UndoCompletion { action?: UndoAction; error?: string }
+export interface UndoCompletion {
+  action?: HistoryAction;
+  error?: string;
+  warnings?: readonly string[];
+}
 
 export function createUndoStore(port: HistoryPort, report: (error: string) => void = (error) => { toastStore.error(error); }) {
   const initial = emptyHistorySummary();
@@ -54,6 +58,7 @@ export function createUndoStore(port: HistoryPort, report: (error: string) => vo
       return {
         ...(result.action ? { action: result.action } : {}),
         ...(result.error ? { error: result.error } : {}),
+        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
       };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };

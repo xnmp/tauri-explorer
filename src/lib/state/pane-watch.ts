@@ -52,6 +52,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     const previous = dirty.get(change.path);
     dirty.set(change.path, previous ? {
       path: change.path,
+      origin: previous.origin === "mutation" || change.origin === "mutation" ? "mutation" : "watcher",
       observedAt: previous.observedAt == null || change.observedAt == null
         ? undefined : Math.max(previous.observedAt, change.observedAt),
     } : change);
@@ -64,7 +65,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
         return false;
       }
       return deps.refresh(options);
-    }, change.path, true, key, change.observedAt);
+    }, change.path, true, key, change.observedAt, change.origin);
   }
   function flush(path: string | undefined): void {
     const change = path ? dirty.get(path) : undefined;

@@ -1,5 +1,11 @@
 use super::{cross_device_move, move_entry_with};
 use crate::error::AppError;
+use crate::files::move_plan::MovePlan;
+#[cfg(target_os = "linux")]
+use crate::files::{
+    move_execution,
+    recovery::{Access, ResourceRequest, Runtime, Scope},
+};
 use std::{cell::Cell, fs, path::PathBuf};
 
 struct MoveFixture {
@@ -48,6 +54,168 @@ impl MoveFixture {
             "second contents",
         );
     }
+}
+
+#[cfg(target_os = "linux")]
+fn writing(path: &std::path::Path) -> Vec<ResourceRequest> {
+    vec![ResourceRequest {
+        path: path.to_owned(),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    }]
+}
+
+#[cfg(target_os = "linux")]
+fn assert_move_rejects_live_recovery_claim(claim: impl FnOnce(&MoveFixture) -> PathBuf) {
+    let fixture = MoveFixture::new();
+    let runtime = Runtime::default();
+    let storage = fixture._root.path().join("recovery");
+    let owner = tauri::async_runtime::block_on(
+        runtime
+            .clone()
+            .admit(storage.clone(), writing(&claim(&fixture))),
+    )
+    .unwrap();
+    let plan = MovePlan::new(
+        fixture.source.to_string_lossy().into_owned(),
+        fixture.destination.to_string_lossy().into_owned(),
+        false,
+    )
+    .unwrap();
+
+    let result = tauri::async_runtime::block_on(move_execution::execute(plan, runtime, storage));
+
+    assert!(
+        result.completion.result.is_err(),
+        "a live recovery claim must fence move effects"
+    );
+    fixture.assert_complete_source();
+    assert!(!fixture.target.exists());
+    drop(owner);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn move_rejects_an_outstanding_recovery_source_claim() {
+    assert_move_rejects_live_recovery_claim(|fixture| fixture.source.clone());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn move_rejects_an_outstanding_recovery_target_claim() {
+    assert_move_rejects_live_recovery_claim(|fixture| fixture.target.clone());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn admitted_move_executes_a_normal_file_move() {
+    let fixture = MoveFixture::new();
+    let plan = MovePlan::new(
+        fixture.source.to_string_lossy().into_owned(),
+        fixture.destination.to_string_lossy().into_owned(),
+        false,
+    )
+    .unwrap();
+    let outcome = tauri::async_runtime::block_on(move_execution::execute(
+        plan,
+        Runtime::default(),
+        fixture._root.path().join("recovery"),
+    ));
+    assert!(outcome.completion.result.is_ok());
+    assert!(!fixture.source.exists());
+    fixture.assert_complete_target();
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn admitted_move_resolves_parent_aliases_and_preserves_a_symlink_leaf() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let destination = root.path().join("destination");
+    let source_alias = root.path().join("source-alias");
+    let destination_alias = root.path().join("destination-alias");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&destination).unwrap();
+    std::os::unix::fs::symlink(&source, &source_alias).unwrap();
+    std::os::unix::fs::symlink(&destination, &destination_alias).unwrap();
+    let referent = root.path().join("referent.txt");
+    fs::write(&referent, b"referent bytes").unwrap();
+    std::os::unix::fs::symlink(&referent, source.join("link.txt")).unwrap();
+    let plan = MovePlan::new(
+        source_alias.join("link.txt").to_string_lossy().into_owned(),
+        destination_alias.to_string_lossy().into_owned(),
+        false,
+    )
+    .unwrap();
+    let outcome = tauri::async_runtime::block_on(move_execution::execute(
+        plan,
+        Runtime::default(),
+        root.path().join("recovery"),
+    ));
+
+    let receipt = outcome.completion.result.unwrap();
+    let moved = destination.join("link.txt");
+    assert_eq!(
+        receipt.path,
+        destination_alias.join("link.txt").to_string_lossy()
+    );
+    assert!(fs::symlink_metadata(&moved)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read_link(&moved).unwrap(), referent);
+    assert!(!source.join("link.txt").exists());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn resolved_move_uses_admitted_parent_after_requested_alias_retargets() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let admitted = root.path().join("admitted");
+    let retargeted = root.path().join("retargeted");
+    let requested_alias = root.path().join("requested-alias");
+    let stable_alias = root.path().join("stable-alias");
+    for path in [&source, &admitted, &retargeted] {
+        fs::create_dir(path).unwrap();
+    }
+    fs::write(source.join("item.txt"), b"bound bytes").unwrap();
+    std::os::unix::fs::symlink(&admitted, &requested_alias).unwrap();
+    std::os::unix::fs::symlink(&admitted, &stable_alias).unwrap();
+    let runtime = Runtime::default();
+    let storage = root.path().join("recovery");
+    let plan = MovePlan::new(
+        source.join("item.txt").to_string_lossy().into_owned(),
+        requested_alias.to_string_lossy().into_owned(),
+        false,
+    )
+    .unwrap();
+    let admission =
+        tauri::async_runtime::block_on(runtime.clone().admit(storage.clone(), plan.resources()))
+            .unwrap();
+    let plan = plan
+        .resolve(admission.paths().map(std::path::Path::to_path_buf))
+        .unwrap();
+    fs::remove_file(&requested_alias).unwrap();
+    std::os::unix::fs::symlink(&retargeted, &requested_alias).unwrap();
+
+    let outcome =
+        tauri::async_runtime::block_on(move_execution::execute_owned(plan, admission.context()));
+    let receipt = outcome.completion.result.unwrap();
+    assert_eq!(receipt.path, admitted.join("item.txt").to_string_lossy());
+    assert_eq!(fs::read(admitted.join("item.txt")).unwrap(), b"bound bytes");
+    assert!(!retargeted.join("item.txt").exists());
+    assert!(tauri::async_runtime::block_on(
+        runtime
+            .clone()
+            .admit(storage.clone(), writing(&stable_alias.join("item.txt")),)
+    )
+    .is_err());
+    admission.finish().unwrap();
+    tauri::async_runtime::block_on(runtime.admit(storage, writing(&stable_alias.join("item.txt"))))
+        .unwrap()
+        .finish()
+        .unwrap();
 }
 
 #[test]
@@ -270,4 +438,32 @@ fn failed_overwrite_publication_restores_the_original_and_removes_its_recovery_r
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect::<Vec<_>>();
     assert_eq!(target_entries, vec!["old.txt"]);
+}
+
+#[test]
+fn move_plan_rejects_invalid_or_unbounded_input_before_filesystem_work() {
+    for source in [
+        "".to_owned(),
+        "relative".into(),
+        "/".into(),
+        "/tmp/../entry".into(),
+        "/tmp/a\0b".into(),
+        format!("/{}", "a".repeat(128 * 1024)),
+    ] {
+        assert!(
+            MovePlan::new(source.clone(), "/tmp/destination".into(), false).is_err(),
+            "accepted source {source:?}"
+        );
+    }
+    for destination in [
+        "relative".to_owned(),
+        "/tmp/../destination".into(),
+        "/tmp/a\0b".into(),
+        format!("/{}", "a".repeat(128 * 1024)),
+    ] {
+        assert!(
+            MovePlan::new("/tmp/source".into(), destination.clone(), false).is_err(),
+            "accepted destination {destination:?}"
+        );
+    }
 }

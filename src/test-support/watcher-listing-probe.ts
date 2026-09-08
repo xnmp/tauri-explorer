@@ -1,11 +1,13 @@
 /** Native E2E only: coordinate real mutations while a real listing is held. */
 interface Receipt {
+  origin: "watcher" | "mutation";
   path: string;
   count: number;
   observedAt: number | null;
 }
 
 interface WriteAcknowledgement {
+  origin: Receipt["origin"];
   filename: string;
   startedAt: number;
   receivedAt: number;
@@ -45,7 +47,9 @@ export async function holdListingForWatcherWrites(options: {
       const receipt = new Promise<Receipt & { receivedAt: number }>((resolve) => {
         const onReceipt = (event: Event) => {
           const value = (event as CustomEvent<Receipt>).detail;
-          if (value.path === options.path && value.observedAt != null &&
+          // App publication may absorb its notify echo. Require the settled
+          // mutation receipt; external-only watcher cadence has a separate test.
+          if (value.origin === "mutation" && value.path === options.path && value.observedAt != null &&
               value.observedAt >= startedAt &&
               value.count > (acknowledgements.at(-1)?.count ?? 0)) resolve({ ...value, receivedAt: Date.now() });
         };
@@ -66,7 +70,7 @@ export async function holdListingForWatcherWrites(options: {
         ]), aborted]);
         controller.signal.throwIfAborted();
         acknowledgements.push({
-          filename, startedAt, receivedAt: acknowledgement.receivedAt,
+          filename, startedAt, receivedAt: acknowledgement.receivedAt, origin: acknowledgement.origin,
           observedAt: acknowledgement.observedAt!, count: acknowledgement.count,
         });
         publish("running");

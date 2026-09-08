@@ -150,12 +150,14 @@ pub(super) fn settlement(mut result: Execution, executed: Direction) -> Executio
         let retained = retain(opposite, next, MAX_BYTES.saturating_sub(remaining_bytes));
         result.opposite = retained.action;
         if let Some(warning) = retained.warning {
-            result.error = Some(match result.error {
-                Some(error) => format!("{error}; {warning}"),
-                None => warning,
-            });
+            result.warnings.push(warning);
         }
     }
+    result.warnings = result
+        .warnings
+        .into_iter()
+        .collect::<crate::diagnostics::Warnings>()
+        .into_vec();
     result
 }
 

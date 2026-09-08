@@ -382,11 +382,13 @@ mod native {
                         ctime_seconds: 3,
                         ctime_nanoseconds: 4,
                     },
-                    payload_identity: crate::files::trash_artifact::EntryIdentity {
-                        device: 5,
-                        inode: 6,
-                        ctime_seconds: 7,
-                        ctime_nanoseconds: 8,
+                    payload_version: crate::files::entry_version::EntryVersion {
+                        object: crate::files::object_id::ObjectId::windows(5, [6; 16]),
+                        size: 1,
+                        modified_seconds: 7,
+                        modified_nanos: 8,
+                        directory: false,
+                        symlink: false,
                     },
                 }),
             };

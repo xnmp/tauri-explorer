@@ -1,14 +1,12 @@
 /**
- * Paste operation logic with conflict resolution and progress tracking.
+ * Paste dispatch and cut-paste conflict/progress presentation.
  * Extracted from explorer.svelte.ts.
  *
- * Delegates per-file transfer to performFileTransfer (file-transfer.ts)
- * while managing batch concerns: conflict "apply to all", progress tracking,
- * batch undo, and aggregate toast/broadcast.
+ * Copies use the lazy native session; moves retain their ordered per-entry
+ * path until native move-session integration.
  */
 
-import { estimateSize, cancelCopy } from "$lib/api/files";
-import { type ZipProgressEvent } from "$lib/api/archive";
+import { estimateSize } from "$lib/api/files";
 import { operationsManager } from "./operations.svelte";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
@@ -44,8 +42,14 @@ export async function pasteEntries(
   context: PasteContext,
   onComplete?: () => void,
 ): Promise<string | null> {
+  if (!isCut) {
+    const { copyFiles } = await import("./copy-operations");
+    const result = await copyFiles(sources.map((source) => source.path), context.destPath, context);
+    onComplete?.();
+    return result;
+  }
   const { destPath, existingEntries, onEntriesAdded, onRefresh } = context;
-  const opType = isCut ? "move" as const : "copy" as const;
+  const opType = "move" as const;
   const label = sources.length === 1 ? sources[0].name : `${sources.length} items`;
 
   // Byte totals power the progress bar, but the recursive size scan can take
@@ -60,6 +64,7 @@ export async function pasteEntries(
   const op = operationsManager.startOperation(opType, label, destPath);
 
   const errors: string[] = [];
+  const warnings: string[] = [];
   const newEntries: FileEntry[] = [];
   const undoActions: import("./types").UndoAction[] = [];
   const affectedDirs = new Set<string>();
@@ -68,52 +73,18 @@ export async function pasteEntries(
   let bytesProcessed = 0;
   let cancelledByUser = false;
 
-  // Byte-level progress for the file currently transferring. The backend emits
-  // `copy-progress` for the active copy keyed by `currentJobId`; we blend its
-  // intra-file fraction with the file index so one huge file no longer sits at
-  // 0% until it finishes. A dialog Cancel is relayed to the backend so a copy
-  // can be aborted mid-file, not just between files.
-  let currentIndex = 0;
-  let currentJobId = 0;
-  let unlistenCopyProgress: (() => void) | null = null;
-  try {
-    const { listen } = await import("@tauri-apps/api/event");
-    unlistenCopyProgress = await listen<ZipProgressEvent>("copy-progress", (event) => {
-      const p = event.payload;
-      if (p.jobId !== currentJobId) return;
-      if (operationsManager.isOperationCancelled(op.id)) {
-        void cancelCopy(currentJobId);
-        return;
-      }
-      const intra = p.bytesTotal > 0 ? p.bytesDone / p.bytesTotal : 0;
-      const fraction = (currentIndex + intra) / sources.length;
-      operationsManager.updateProgress(
-        op.id,
-        fraction * 100,
-        totalBytes > 0 ? Math.round(totalBytes * fraction) : undefined,
-        totalBytes > 0 ? totalBytes : undefined,
-      );
-    });
-  } catch {
-    // Not running in Tauri (mock/browser) — copies complete without events.
-  }
-
   // Detect conflicts: which source names already exist in destination
   const existingNames = new Set(existingEntries.map((e) => e.name));
   let globalChoice: ConflictChoice | null = null;
 
   for (let i = 0; i < sources.length; i++) {
-    currentIndex = i;
-    // Fresh job id per source so stale events from a prior file are ignored.
-    currentJobId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     if (operationsManager.isOperationCancelled(op.id)) break;
 
     const source = sources[i];
     const sourceDir = parentDir(source.path);
     const isSameDir = sameDirectory(sourceDir, destPath);
 
-    // Copy to same dir: Rust auto-generates "name - Copy" suffix, no conflict dialog needed.
-    // Cut to same dir: no-op (file is already there).
+    // Cut to the same directory is a no-op.
     const hasConflict = !isSameDir && existingNames.has(source.name);
     let overwrite = false;
 
@@ -142,14 +113,14 @@ export async function pasteEntries(
     }
 
     // Skip no-op: cut-paste to same directory (file is already there)
-    if (isSameDir && isCut) {
+    if (isSameDir) {
       const existing = existingEntries.find((e) => e.name === source.name);
       if (existing) newEntries.push(existing);
       safelyCompletedCutCount++;
     } else {
       // Delegate the actual transfer to shared logic.
       // Paste manages batch undo/toast/broadcast/refresh itself.
-      const result = await performFileTransfer(source.path, destPath, !isCut, {
+      const result = await performFileTransfer(source.path, destPath, false, {
         onRefresh: () => {},
         overwrite,
         skipConflictCheck: true,
@@ -157,7 +128,6 @@ export async function pasteEntries(
         suppressUndo: true,
         suppressBroadcast: true,
         suppressRefresh: true,
-        jobId: currentJobId,
       });
 
       if (result.ok) {
@@ -175,9 +145,12 @@ export async function pasteEntries(
         // name are detected as conflicts (the snapshot taken before the loop
         // doesn't know about entries created during the batch).
         existingNames.add(basename(result.path));
+        if (result.warning) warnings.push(`${source.name}: ${result.warning}`);
         if (result.recovery) {
           errors.push(`${source.name}: ${fileMutationRecoveryMessage(result.recovery)}`);
-        } else if (isCut) {
+        } else if (result.replacement) {
+          safelyCompletedCutCount++;
+        } else {
           safelyCompletedCutCount++;
           undoActions.push({
             type: "move",
@@ -185,19 +158,12 @@ export async function pasteEntries(
             destPath: result.path,
             originalDir: sourceDir,
           });
-        } else {
-          undoActions.push({
-            type: "copy",
-            copiedPath: result.path,
-            parentDir: destPath,
-          });
+
         }
-      } else if (!result.ok && /cancelled/i.test(result.error ?? "")) {
-        // Mid-file cancel relayed to the backend: stop the batch cleanly
-        // rather than reporting it as a failure.
+      } else if (!result.ok && result.reason === "cancelled") {
         cancelledByUser = true;
         break;
-      } else if (!result.ok && result.error && result.error !== "skipped") {
+      } else if (!result.ok && result.reason === "failed") {
         errors.push(`${source.name}: ${result.error}`);
       }
     }
@@ -216,8 +182,6 @@ export async function pasteEntries(
     }
   }
 
-  unlistenCopyProgress?.();
-
   // Push undo action(s) — batch if multiple files
   if (undoActions.length === 1) {
     await undoStore.push(undoActions[0]);
@@ -225,14 +189,14 @@ export async function pasteEntries(
     await undoStore.push({
       type: "batch",
       actions: undoActions,
-      label: `${isCut ? "Moved" : "Copied"} ${undoActions.length} items`,
+      label: `Moved ${undoActions.length} items`,
     });
   }
 
   // The caller clears a cut clipboard on completion. Keep it intact when any
   // source failed, was skipped/cancelled, or needs recovery so the UI does not
   // claim that the whole cut completed.
-  if (!isCut || safelyCompletedCutCount === sources.length) onComplete?.();
+  if (safelyCompletedCutCount === sources.length) onComplete?.();
 
   // The requested operation is incomplete even when some destination effects
   // committed. Keep that distinction in the progress dialog as well as the toast.
@@ -260,6 +224,7 @@ export async function pasteEntries(
   } else if (!operationsManager.isOperationCancelled(op.id)) {
     toastStore.success("Pasted successfully");
   }
+  if (warnings.length > 0) toastStore.error(warnings.join("\n"));
   await onRefresh();
   return error;
 }

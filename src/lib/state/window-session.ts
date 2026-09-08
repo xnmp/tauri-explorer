@@ -27,6 +27,7 @@ import { getCommand, executeCommand } from "./commands.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { terminalPanelStore } from "./terminal.svelte";
 import { windowSizeStore } from "./window-size.svelte";
+import { createFileRecoverySession } from "./file-recovery-session.svelte";
 import { markStartup } from "./startup-timing";
 
 export interface WindowSessionOptions {
@@ -39,6 +40,7 @@ export interface WindowSessionOptions {
 export function startWindowSession(options: WindowSessionOptions) {
   const lifetime = new AbortController();
   const stops: Array<() => void> = [];
+  const recovery = options.picker ? null : createFileRecoverySession();
   let warmPrimeTimer: ReturnType<typeof setTimeout> | undefined;
   const reportError = (error: unknown) => console.error("Window session failed:", error);
   const dispose = () => {
@@ -66,11 +68,21 @@ export function startWindowSession(options: WindowSessionOptions) {
     });
     stops.push(() => { void startup.dispose().catch(reportError); });
     void startup.ready.catch(reportError);
-    if (options.picker) return { dispose, markCoreReady() {} };
+    if (options.picker) return { dispose, recovery, markCoreReady() {}, markBackgroundReady() {} };
+    stops.push(() => { void recovery?.dispose().catch(reportError); });
 
     if (isTauri()) stops.push(windowTabsManager.observeNativeClose());
     const mode = warmMode();
-    const warmWindow = mode !== "off" ? runWarmWindow(mode === "measure") : null;
+    let backgroundReady = false;
+    let foreground = mode === "off";
+    const startRecovery = () => {
+      if (backgroundReady && foreground && !lifetime.signal.aborted) void recovery?.start();
+    };
+    const markBackgroundReady = () => { backgroundReady = true; startRecovery(); };
+    const warmWindow = mode !== "off" ? runWarmWindow(mode === "measure", () => {
+      foreground = true;
+      startRecovery();
+    }) : null;
     if (warmWindow) stops.push(() => warmWindow.dispose());
 
     const plan = planWindowLaunch(window.location.search,
@@ -107,6 +119,7 @@ export function startWindowSession(options: WindowSessionOptions) {
     const markCoreReady = () => {
       if (coreReady || lifetime.signal.aborted) return;
       coreReady = true;
+      markBackgroundReady();
       // Ordinary directory panes already acknowledged this session. Virtual-
       // only windows also participate in shared history, without adding work
       // to the configured foreground-readiness path or acquiring a watcher.
@@ -134,7 +147,7 @@ export function startWindowSession(options: WindowSessionOptions) {
     }));
     windowSizeStore.sync();
     window.addEventListener("resize", windowSizeStore.sync, { signal: lifetime.signal });
-    return { dispose, markCoreReady };
+    return { dispose, recovery, markCoreReady, markBackgroundReady };
   } catch (error) {
     dispose();
     throw error;

@@ -1,0 +1,102 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "uncommitted private-storage caller integration; full architectural review incomplete",
+  "scope": [
+    "Shared supplied-handle private directory/file validation for catalog, operation owner and Unix coordinator",
+    "Windows kind/reparse/link/delete-pending/strict ACL checks, retaining Metadata from the input handle",
+    "Catalog and owner logic compile on Windows without Unix metadata identity or /dev/urandom assumptions",
+    "getrandom system RNG for owner names/nonces and retirement names; errors propagate before creation",
+    "Reproduced and fixed acceptance of a retained Unix directory after removal"
+  ],
+  "verification": {
+    "recovery_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery:: --offline -- --test-threads=1",
+      "passed": 85,
+      "failed": 0,
+      "ignored": 3,
+      "log": "/tmp/recovery-private-storage-linux-first.log",
+      "note": "Before the additional retired-directory regression."
+    },
+    "retired_directory_before_fix": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery::private_storage::tests::retired_directory_is_not_valid_private_storage --offline -- --exact",
+      "exit_code": 101,
+      "passed": 0,
+      "failed": 1,
+      "log": "/tmp/recovery-private-storage-retired-red.log",
+      "reason": "Validator returned success for a real retained directory handle after its namespace entry was removed."
+    },
+    "final_file_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: --offline -- --test-threads=1",
+      "passed": 328,
+      "failed": 0,
+      "ignored": 6,
+      "log": "/tmp/recovery-private-storage-files-final.log"
+    },
+    "linux_clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery --offline",
+      "exit_code": 0,
+      "log": "/tmp/recovery-private-storage-linux-clippy-final.log",
+      "warnings": "129 unused-infrastructure library warnings; five lib-test warnings, four duplicate."
+    },
+    "windows_rust_check": {
+      "command": "cargo clippy --manifest-path /tmp/recovery-private-storage-check/Cargo.toml --target x86_64-pc-windows-gnu --tests --offline",
+      "exit_code": 0,
+      "log": "/tmp/recovery-private-storage-windows-final.log",
+      "warnings": "31 dead-code warnings in the minimal harness.",
+      "manifest": "[package]\nname = \"recovery-private-storage-check\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[dependencies]\nlog = \"0.4\"\ntempfile = \"3\"\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\nwindows-core = \"=0.61.2\"\nwindows = { version = \"=0.61.3\", features = [\"Wdk_Foundation\", \"Wdk_Storage_FileSystem\", \"Win32_Security_Authorization\", \"Win32_Foundation\", \"Win32_Globalization\", \"Win32_Security\", \"Win32_Storage_FileSystem\", \"Win32_System_Com\", \"Win32_System_IO\", \"Win32_System_Threading\", \"Win32_UI_Shell\", \"Win32_UI_Shell_PropertiesSystem\"] }\nthiserror = \"2\"\nrusqlite = \"0.40.2\"\n# Rust-only cross-check; the host lacks a Windows C compiler.\n# Match the shipped SQLite bindings without compiling/linking SQLite C.\nlibsqlite3-sys = { version = \"0.38.2\", features = [\"bundled_bindings\"] }\ngetrandom = \"=0.4.2\"\nsha2 = \"0.11\"\nhex = \"0.4\"\nbase64 = \"0.23\"\n[workspace]\n",
+      "lib_rs": "#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/error.rs\"]\nmod error;\nmod files {\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/windows_io.rs\"]\n    mod windows_io;\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/native_directory.rs\"]\n    mod native_directory;\n    mod recovery {\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/object_id.rs\"]\n        mod object_id;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_identity.rs\"]\n        mod file_identity;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_lock.rs\"]\n        mod file_lock;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/private_storage.rs\"]\n        mod private_storage;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/model.rs\"]\n        mod model;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/native_path.rs\"]\n        mod native_path;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/journal.rs\"]\n        mod journal;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/storage.rs\"]\n        mod storage;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/locks.rs\"]\n        mod locks;\n    }\n}\n",
+      "limits": "Actual Rust source for AppError, journal, catalog, owner, validation, native handles, identity, locks and codecs. Same prebuilt SQLite binding version, but harness disables bundled C compilation and does not link or execute. Production Cargo retains bundled SQLite. The initial bundled attempt failed because x86_64-w64-mingw32-gcc is absent (log /tmp/recovery-private-storage-windows-first.log)."
+    },
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT for private-storage foundation; final retired-directory delta CONFIRMED",
+      "mode": "Read-only source/log review, no Windows execution.",
+      "confirmed": [
+        "Unix effective owner/private mode/regular single-link contract preserved",
+        "Windows supplied-handle reparse/kind/link/delete-pending/strict ACL contract",
+        "Catalog/owner/coordinator caller migration validates opened evidence separately from namespace checks",
+        "System RNG failure precedes namespace creation, exclusive creation retained",
+        "Windows inherited child is rejected as explicit evidence by compiled outcome test",
+        "Unix zero-link directory refusal fixes real retained-but-removed case without requiring conventional two-link directory count"
+      ],
+      "plausible": [
+        "Windows API/ACL behavior until native execution",
+        "SQLite-created sidecar inheritance until Windows runtime validation"
+      ],
+      "refuted_as_current_capability": [
+        "Operational or durable Windows recovery: coordinator remains Unix-only and sync returns Unsupported"
+      ]
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_source_coverage": "415/415",
+      "unresolvable": 0,
+      "note": "New untracked files explicitly mapped; denominator is tracked source."
+    },
+    "formatting": "Changed source rustfmt checks and git diff --check pass."
+  },
+  "documentation": "Current checkpoint replaces previous directory paragraph in the ledger, preserving the full requirement table. Prior checkpoint is archived. Consolidated issue680 lesson under 680-native-mutation-authority.md.",
+  "limitations": [
+    "Validation is a point-in-time observation, not persistent authority against later same-user ACL/link/content changes",
+    "Windows namespace durability, resource capture, coordinator enablement and actual SQLite sidecar qualification remain incomplete",
+    "Production whole-operation reservations remain unacquired; durable replacement, claimed reconciliation/IPC/UI, retention and full crash/cross-filesystem acceptance remain required",
+    "No Windows C build/link/runtime, macOS execution, native UI acceptance or startup measurement; full release/performance gates remain open"
+  ],
+  "publication": "No commit, push or merge this checkpoint.",
+  "source_sha256": {
+    "src-tauri/src/files/recovery/private_storage.rs": "7accc3b77652428f25639be5687c56dab5381f5c037463db4d616d61fc6ccf2e",
+    "src-tauri/src/files/recovery/private_storage/windows.rs": "130567c0633f4658914842ae697db8564941561fa8fdac8ac94e40a26f2b19dc",
+    "src-tauri/src/files/recovery/storage.rs": "c44b2a9c707be67e7f2c96e75883bb271ec1b69b8d351510c650ceec2344d922",
+    "src-tauri/src/files/recovery/locks.rs": "42703bef7539997868b78742f1f7052e0760123b54913b938e9e8fba416ee459",
+    "src-tauri/src/files/recovery/coordinator.rs": "57c512d8ce4af50d9213853177db652ea375bb69b2ad20b41ba4b767db4cf90e",
+    "src-tauri/src/files/recovery/mod.rs": "3d2ff88f610acb86494d2755b83d02688a7186f09fe0f81a9504914a9080495e",
+    "src-tauri/src/files/native_directory.rs": "db825fa2d8b36bb7b6d22e2c465044df85347aaf6964f9128d8cf5ce82fa6c30",
+    "src-tauri/src/files/native_directory/windows_security.rs": "a9be968594c20d80ff15e5a16b82264d34f0e245e0802a773c8ae3a0a84ff41c",
+    "src-tauri/test_support/recovery_private_storage.rs": "7b73a125dc94fa27025cc09570fad82c336e4af21338a9d11308071d08bc8d5e",
+    "src-tauri/test_support/recovery_coordinator.rs": "62b3dd30e0ecd67e79320b1f8575dc43146ad3850d5cf2f3889175863177324d",
+    "src-tauri/Cargo.toml": "affba7eb8327681a3f102f7d0a42ca8f1cb57f0fa03a91e02f8b720017dbf245",
+    "src-tauri/Cargo.lock": "51d70c164d08f3db560e4b6f76af58627be1502d3f91a6463821fd17454286e1"
+  }
+}

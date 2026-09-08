@@ -1,0 +1,80 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "Shared worker setup implemented and reviewed; full architectural review remains active",
+  "implementation": [
+    "Linux production trash constructs its read-only Context and processes the selection in one blocking Job instead of two dispatches",
+    "Ledger::execute_with_setup shares setup/operation/context-cleanup failure classification between pooled and dedicated workers",
+    "Worker-owned context need not be Send; only setup and operation captures cross the dispatch boundary",
+    "Dedicated fresh-thread admission, four-worker bound and STA context lifetime preserved"
+  ],
+  "verification": {
+    "batch": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files::batch:: -- --test-threads=1",
+      "log": "/tmp/recovery-batch-setup-tests.log",
+      "passed": 22,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "filesystem": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files:: -- --test-threads=1",
+      "log": "/tmp/recovery-batch-setup-files.log",
+      "passed": 335,
+      "failed": 0,
+      "ignored": 7,
+      "exit_code": 0
+    },
+    "contracts": [
+      "Real competing coordinator remains excluded during paused pooled setup after caller and admission are dropped; actual write completes before lease reclamation",
+      "Pooled context cleanup retains ownership after waiter cancellation",
+      "Setup error/panic and operation panic release worker lease before terminal result, on both runner types",
+      "Operation-capture and context-destructor panic preserve confirmed receipts and report workerError",
+      "Non-Send pooled context setup/use/drop stay on one worker; later mutation panic retains actual created directory and refresh effects, prior deletion receipt, and untouched final sibling",
+      "Existing real Linux trash and exact-restore contracts pass"
+    ],
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery --offline",
+      "log": "/tmp/recovery-batch-setup-clippy.log",
+      "exit_code": 0,
+      "warnings": "11 existing unused-infrastructure library warnings; 5 test warnings, 4 duplicate"
+    },
+    "formatting": "cargo fmt --manifest-path src-tauri/Cargo.toml --check and git diff --check passed",
+    "maps": "python3 docs/code-map/validate.py --coverage: 415/415 source files; 0 unresolvable references",
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT scoped refactor",
+      "confirmed": [
+        "Setup/operation/context destruction remains inside actual Job ownership",
+        "Partial receipts and directory effects survive later panic",
+        "Dedicated fresh-thread/permit/STA lifetime unchanged",
+        "Linux Context::new satisfies read-only setup contract"
+      ],
+      "qualifications": [
+        "Pre-execution setup/operation capture destruction must be inert",
+        "A second destructor panic during existing unwind aborts the process",
+        "Before first poll or while dedicated work awaits a permit, work is not accepted and inert captures may be dropped by the caller",
+        "No native Windows runtime claim; source review and Linux generic runner tests only"
+      ]
+    }
+  },
+  "next_required_deletion_work": [
+    "Prepare and bind exact source/payload/final metadata/staging/layout paths before one whole-selection reservation",
+    "Claim layout directory creation and permission repair as writes, preserving concurrency for distinct candidate names",
+    "Prevent execution from selecting an unclaimed fallback root or new collision candidate",
+    "Validate physical selection overlap and keep renderer input keys separate from bound native execution/history identities",
+    "Promote durable evidence before artifact effects; retain evidence through ambiguous mutation or failed cleanup"
+  ],
+  "limitations": [
+    "Production trash still supplies unit owner; recovery admission remains unwired",
+    "No measured latency improvement or Mac half-bounce result",
+    "No native binary rebuild/test this checkpoint; previous binary evidence does not cover this change",
+    "No commit, push or merge; complete release/product/platform matrix remains open"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/batch/mod.rs": "a9d1d56fe308b48de8befa206864948b447266bff9df991e91c06a57c09cc28d",
+    "src-tauri/src/files/trash.rs": "017ec99c27cf67617239d40b1845c3ce416ffe0224e58a2207708f15690c8f26",
+    "src-tauri/test_support/file_batch_worker.rs": "3ad5729907df77d00cc52ddfc8937a6dc3d2378654717dc95464b887a3d42a55",
+    "src-tauri/test_support/recovery_context.rs": "df468237d3344c896e7bb4cd5fa52ae6c1827a7db3311e1c1d667cddf617d8bf"
+  }
+}

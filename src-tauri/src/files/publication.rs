@@ -34,7 +34,10 @@ impl StagedEntry {
         parent: &Path,
         build: impl FnOnce(&Path) -> Result<(), AppError>,
     ) -> Result<Self, AppError> {
-        let directory = private_directory(parent, ".tauri-explorer-stage-")?;
+        // Retain a physical namespace from creation onward. A user-facing
+        // symlink alias must not redirect later payload writes or cleanup.
+        let parent = std::fs::canonicalize(parent)?;
+        let directory = private_directory(&parent, ".tauri-explorer-stage-")?;
         let staged = Self {
             payload: directory.path().join("payload"),
             directory,
@@ -48,6 +51,67 @@ impl StagedEntry {
     /// Commit once. An occupied target is an error even if it appeared after
     /// name selection. Cleanup failure after commit cannot revoke success.
     pub(super) fn publish(self, target: &Path) -> Result<(), AppError> {
+        self.publish_with(target, rename_noreplace)
+    }
+
+    /// Retain the staged object's observation and publish relative to the opened
+    /// destination. Reopening the public path afterward could adopt a substitute.
+    #[cfg(target_os = "linux")]
+    pub(super) fn publish_observed(
+        self,
+        target: &Path,
+    ) -> Result<super::mutation::PublishedEntry, AppError> {
+        self.publish_observed_in(target, None)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn publish_observed_in(
+        self,
+        target: &Path,
+        expected_parent: Option<&super::object_id::ObjectId>,
+    ) -> Result<super::mutation::PublishedEntry, AppError> {
+        use super::{
+            file_identity::{of_file, version_at},
+            native_directory::Directory,
+        };
+        let stage = Directory::open(self.directory.path())?;
+        let parent_path =
+            std::fs::canonicalize(target.parent().ok_or_else(|| {
+                AppError::InvalidPath("Copy publication requires a parent".into())
+            })?)?;
+        let parent = Directory::open(&parent_path)?;
+        let identity = of_file(&parent.file)?;
+        if expected_parent.is_some_and(|expected| *expected != identity) {
+            return Err(AppError::Other(
+                "Copy destination directory changed before publication".into(),
+            ));
+        }
+        let physical_parent = parent.path()?;
+        if stage.path()?.parent() != Some(physical_parent.as_path()) {
+            return Err(AppError::Other(
+                "Copy destination changed during staging".into(),
+            ));
+        }
+        let name = target.file_name().ok_or_else(|| {
+            AppError::InvalidPath("Copy publication requires an entry name".into())
+        })?;
+        // Observe before temporary permission changes needed for directory rename.
+        let publication = super::mutation::PublishedEntry {
+            path: physical_parent.join(name),
+            parent: identity,
+            version: version_at(&stage, std::ffi::OsStr::new("payload"))?,
+        };
+        self.publish_with(target, |_, _| {
+            stage.rename_to(std::ffi::OsStr::new("payload"), &parent, name)?;
+            Ok(publication)
+        })
+    }
+
+    fn publish_with<T>(
+        self,
+        target: &Path,
+        publish: impl FnOnce(&Path, &Path) -> io::Result<T>,
+    ) -> Result<T, AppError> {
         // POSIX may require write permission on a directory when moving it
         // between parents (updating '..'). A copied read-only directory must
         // stay writable while unpublished, then regain its final permissions.
@@ -56,9 +120,10 @@ impl StagedEntry {
             Ok(permissions) => permissions,
             Err(error) => return Err(self.abort(error.into())),
         };
-        if let Err(error) = rename_noreplace(&self.payload, target) {
-            return Err(self.abort(error.into()));
-        }
+        let result = match publish(&self.payload, target) {
+            Ok(result) => result,
+            Err(error) => return Err(self.abort(error.into())),
+        };
         #[cfg(unix)]
         if let Some((directory, permissions)) = permissions {
             // Restore through the captured handle, so a post-publication path
@@ -78,7 +143,7 @@ impl StagedEntry {
                 staging_path.display()
             );
         }
-        Ok(())
+        Ok(result)
     }
 
     fn abort(self, cause: AppError) -> AppError {

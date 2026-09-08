@@ -1,13 +1,16 @@
 //! Trash operations publish confirmed outcomes per path, even on partial failure.
 use super::batch::{self, BatchPlan};
 pub use super::batch::{FileBatchOutcome, FileFailure};
+use super::mutation::PublishedEntry;
 use super::trash_artifact::RestoreRequest;
 #[cfg(target_os = "windows")]
 use super::trash_artifact::TrashSuccess;
 use crate::error::AppError;
+#[cfg(not(target_os = "linux"))]
 use std::path::Path;
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// UNC locations have no Recycle Bin. Other paths use the platform trash API.
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
@@ -63,6 +66,7 @@ pub(crate) async fn run_batch(plan: BatchPlan) -> Result<FileBatchOutcome, AppEr
                 if super::is_network_share(Path::new(path)) {
                     super::file_ops::delete_path(path)?;
                     Ok(TrashSuccess {
+                        publication: None,
                         artifact: None,
                         warning: Some("Permanently deleted from a network share, which has no Recycle Bin; Undo is unavailable for this item".into()),
                     })
@@ -75,12 +79,47 @@ pub(crate) async fn run_batch(plan: BatchPlan) -> Result<FileBatchOutcome, AppEr
     }
     #[cfg(target_os = "linux")]
     {
-        let mut context = super::run_blocking(super::freedesktop_trash::Context::new).await?;
-        Ok(batch::run_with_receipts(plan, move |path, _| context.trash(Path::new(path))).await)
+        batch::run_with_setup_owned(
+            (),
+            plan,
+            |paths| super::freedesktop_trash::Context::new()?.prepare_selection(paths),
+            |selection, path, _| selection.execute_next(path),
+        )
+        .await
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         Ok(batch::run(plan, trash_path).await)
+    }
+}
+
+/// Trash only the exact native object published by an ordinary copy. This
+/// inverse is native-owned: callers provide neither a path-only fallback nor a
+/// replacement identity reconstructed from presentation metadata.
+pub(crate) async fn trash_publication(
+    publication: Arc<PublishedEntry>,
+) -> Result<FileBatchOutcome, AppError> {
+    let path = publication.path.to_string_lossy().into_owned();
+    let plan = BatchPlan::new(vec![path]).map_err(AppError::InvalidPath)?;
+    #[cfg(target_os = "linux")]
+    {
+        let worker_owner = Arc::clone(&publication);
+        batch::run_with_setup_owned(
+            worker_owner,
+            plan,
+            move |paths| {
+                super::freedesktop_trash::Context::new()?.prepare_publication(paths, publication)
+            },
+            |selection, path, _| selection.execute_next(path),
+        )
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (publication, plan);
+        Err(AppError::Other(
+            "Exact ordinary-copy Undo is unsupported on this platform".into(),
+        ))
     }
 }
 
@@ -121,8 +160,8 @@ pub(crate) async fn restore_entries(
     }
     #[cfg(target_os = "linux")]
     {
-        Ok(batch::run_with_effects(plan, move |path, effects| {
-            super::freedesktop_trash::restore(&requests[path], effects)
+        Ok(batch::run_with_receipts(plan, move |path, effects| {
+            super::freedesktop_trash::restore_receipt(&requests[path], effects)
         })
         .await)
     }

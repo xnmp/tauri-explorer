@@ -235,6 +235,68 @@ fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
     future.poll(&mut Context::from_waker(Waker::noop()))
 }
 
+struct HeldCleanup {
+    started: SyncSender<()>,
+    release: mpsc::Receiver<()>,
+    path: std::path::PathBuf,
+}
+
+impl HeldCleanup {
+    fn operation(&self, path: &str) -> Result<(), AppError> {
+        fs::write(path, b"operation finished")?;
+        Ok(())
+    }
+}
+
+impl Drop for HeldCleanup {
+    fn drop(&mut self) {
+        self.started.send(()).unwrap();
+        self.release.recv_timeout(DEADLINE).unwrap();
+        fs::write(&self.path, b"cleanup finished").unwrap();
+    }
+}
+
+#[test]
+fn terminal_result_waits_for_operation_capture_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("entry");
+    let cleanup = dir.path().join("cleanup");
+    let (started_tx, started_rx) = mpsc::sync_channel(1);
+    let (release_tx, release_rx) = mpsc::sync_channel(1);
+    let (result_tx, result_rx) = mpsc::sync_channel(1);
+    let held = HeldCleanup {
+        started: started_tx,
+        release: release_rx,
+        path: cleanup.clone(),
+    };
+    let worker_file = file.clone();
+    let caller = thread::spawn(move || {
+        result_tx
+            .send(run(run_dedicated(
+                plan(&[&worker_file]),
+                || Ok(()),
+                move |_, path| held.operation(path),
+            )))
+            .unwrap();
+    });
+    started_rx
+        .recv_timeout(DEADLINE)
+        .expect("operation capture is being dropped");
+    assert_eq!(fs::read(&file).unwrap(), b"operation finished");
+    let premature = result_rx.recv_timeout(Duration::from_millis(100));
+    // Always release and join, including on the old implementation, so a red
+    // regression does not leave a filesystem worker behind the test fixture.
+    release_tx.send(()).unwrap();
+    caller.join().unwrap();
+    assert!(
+        matches!(premature, Err(mpsc::RecvTimeoutError::Timeout)),
+        "terminal outcome escaped while the operation capture could still mutate files"
+    );
+    let outcome = result_rx.recv_timeout(DEADLINE).unwrap().unwrap();
+    assert_eq!(outcome.succeeded, [path_string(&file)]);
+    assert_eq!(fs::read(cleanup).unwrap(), b"cleanup finished");
+}
+
 #[test]
 fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
     let dir = tempfile::tempdir().unwrap();

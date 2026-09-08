@@ -9,6 +9,7 @@ mod config;
 pub mod config_watch;
 mod content_search;
 mod crash_report;
+mod diagnostics;
 pub mod error;
 mod fal;
 mod file_history;
@@ -183,6 +184,9 @@ pub fn run(launch_dir: Option<String>) {
             .build(),
     );
 
+    #[cfg(target_os = "linux")]
+    let builder = builder.manage(files::recovery::Runtime::default());
+
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
         .manage(system::StartupClock(t_start))
@@ -234,6 +238,11 @@ pub fn run(launch_dir: Option<String>) {
             log_startup_timing,
             // Trash operations
             file_mutation::delete_entries,
+            files::recovery::commands::file_recovery_list,
+            files::recovery::commands::file_recovery_subscribe,
+            files::recovery::commands::file_recovery_unsubscribe,
+            files::recovery::commands::file_recovery_inspect,
+            files::recovery::commands::file_recovery_resolve,
             open_recycle_bin,
             // File operations — directory listing
             files::dir_listing::list_directory,
@@ -247,9 +256,12 @@ pub fn run(launch_dir: Option<String>) {
             file_mutation::create_directory,
             file_mutation::create_empty_file,
             file_mutation::rename_entry,
-            files::file_ops::copy_entry,
+            file_mutation::copy_entry,
+            file_mutation::copy_entries,
+            file_mutation::resolve_copy_conflict,
+            file_mutation::cancel_copy_session,
             files::file_ops::cancel_copy,
-            files::file_ops::move_entry,
+            file_mutation::move_entry,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
             file_mutation::write_text_file,
@@ -392,6 +404,8 @@ pub fn run(launch_dir: Option<String>) {
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+            files::recovery::native_probe::seed(app.handle())?;
 
             // Persist panics locally so the next launch can offer a
             // pre-filled GitHub issue (#184). Local files only — no telemetry.

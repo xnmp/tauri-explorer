@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HistoryPort, HistoryReply, HistorySummary, UndoAction } from "$lib/domain/file-history";
+import type { HistoryAction, HistoryPort, HistoryReply, HistorySummary, UndoAction } from "$lib/domain/file-history";
 
 const defaultPort = vi.hoisted(() => ({
   subscribe: vi.fn(() => () => {}),
@@ -35,8 +35,18 @@ function summary(
   return { revision, undoId: null, redoId: null, stackSize: 0, busy: false, ...overrides };
 }
 
-function reply(state: HistorySummary, action?: UndoAction, error?: string): HistoryReply {
-  return { summary: state, ...(action ? { action } : {}), ...(error ? { error } : {}) };
+function reply(
+  state: HistorySummary,
+  action?: HistoryAction,
+  error?: string,
+  warnings?: readonly string[],
+): HistoryReply {
+  return {
+    summary: state,
+    ...(action ? { action } : {}),
+    ...(error ? { error } : {}),
+    ...(warnings ? { warnings } : {}),
+  };
 }
 
 function copied(path: string): UndoAction {
@@ -195,6 +205,38 @@ describe("native undo history projection", () => {
     pending.resolve(reply(summary(2, { redoId: 11 }), copied("/queue/file.txt")));
     await first;
     expect(store.canRedo).toBe(true);
+  });
+
+  it("presents a native replacement completion without pushing renderer authority", async () => {
+    const { store, port, publish } = harness();
+    const replacement: HistoryAction = { type: "replacement", path: "/dest/file.txt" };
+    publish(summary(1, { undoId: 10, stackSize: 1 }));
+    port.execute.mockResolvedValueOnce(reply(summary(2, { redoId: 11 }), replacement));
+
+    expect(await store.undo()).toEqual({ action: replacement });
+    expect(port.execute).toHaveBeenCalledWith("undo", 10);
+    expect(port.push).not.toHaveBeenCalled();
+    expect(store.canRedo).toBe(true);
+  });
+
+  it("preserves warnings independently from completion errors", async () => {
+    const { store, port, publish } = harness();
+    const action: HistoryAction = { type: "replacement", path: "/dest/file.txt" };
+    publish(summary(1, { undoId: 10, stackSize: 1 }));
+    port.execute
+      .mockResolvedValueOnce(reply(summary(2, { redoId: 11 }), action, undefined, ["retained first", "retained second"]))
+      .mockResolvedValueOnce(reply(summary(3, { redoId: 12 }), action, "restore failed", ["artifact retained"]));
+
+    expect(await store.undo()).toEqual({
+      action,
+      warnings: ["retained first", "retained second"],
+    });
+    publish(summary(4, { undoId: 20, stackSize: 1 }));
+    expect(await store.undo()).toEqual({
+      action,
+      error: "restore failed",
+      warnings: ["artifact retained"],
+    });
   });
 
   it("releases local execution ownership after a port rejection so retry can proceed", async () => {

@@ -3,6 +3,7 @@ import type { ApiResult } from "$lib/api/common";
 import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type {
+  HistoryAction,
   HistoryPort,
   HistoryReply,
   HistorySummary,
@@ -39,7 +40,7 @@ const history = vi.hoisted(() => {
   let undoId: number | null = null;
   let stackSize = 0;
   let receive: ((summary: HistorySummary) => void) | undefined;
-  let queuedExecution: Pick<HistoryReply, "action" | "error"> | undefined;
+  let queuedExecution: Pick<HistoryReply, "action" | "error" | "warnings"> | undefined;
 
   const summary = (): HistorySummary => ({
     revision,
@@ -89,8 +90,12 @@ const history = vi.hoisted(() => {
 
   return {
     port,
-    queueExecution(action: UndoAction, error?: string) {
-      queuedExecution = { action, ...(error ? { error } : {}) };
+    queueExecution(action: HistoryAction, error?: string, warnings?: readonly string[]) {
+      queuedExecution = {
+        action,
+        ...(error ? { error } : {}),
+        ...(warnings ? { warnings } : {}),
+      };
     },
     currentUndoId: () => undoId,
     resetCalls() {
@@ -128,6 +133,7 @@ import {
   subscribeToLocalFileChanges,
 } from "$lib/state/file-events";
 import { undoStore } from "$lib/state/undo.svelte";
+import { toastStore } from "$lib/state/toast.svelte";
 
 function entry(
   name: string,
@@ -180,9 +186,81 @@ beforeEach(async () => {
 
 afterEach(async () => {
   dialogStore.closeAll();
+  toastStore.clear();
   await undoStore.clear();
   await Promise.all(explorers.map((explorer) => explorer.destroy()));
   vi.restoreAllMocks();
+});
+
+describe("native history completion presentation", () => {
+  it("presents replacement Undo without publishing it as renderer authority", async () => {
+    const explorer = explorerAt("/A", [entry("report.txt", "/A")]);
+    mocks.load.current = listing({ "/A": [entry("report.txt", "/A")] });
+    await undoStore.push({ type: "copy", copiedPath: "/A/report.txt", parentDir: "/A" });
+    history.queueExecution({ type: "replacement", path: "/A/report.txt" });
+    toastStore.clear();
+
+    expect(await explorer.undo()).toBeNull();
+
+    expect(toastStore.toasts).toEqual([
+      expect.objectContaining({ message: "Undo: Replaced report.txt", type: "info" }),
+    ]);
+    expect(history.port.execute).toHaveBeenCalledOnce();
+    expect(history.port.push).toHaveBeenCalledTimes(1);
+    expect(history.port.push.mock.calls[0][0]).toEqual({
+      type: "copy",
+      copiedPath: "/A/report.txt",
+      parentDir: "/A",
+    });
+  });
+
+  it("reports a warning-only replacement completion as success and preserves Redo", async () => {
+    const explorer = explorerAt("/A", [entry("report.txt", "/A")]);
+    mocks.load.current = listing({ "/A": [entry("report.txt", "/A")] });
+    await undoStore.push({ type: "copy", copiedPath: "/A/report.txt", parentDir: "/A" });
+    history.queueExecution(
+      { type: "replacement", path: "/A/report.txt" },
+      undefined,
+      ["Previous destination retained", "Cleanup is still available in File Recovery"],
+    );
+    toastStore.clear();
+
+    expect(await explorer.undo()).toBeNull();
+
+    expect(undoStore.canRedo).toBe(true);
+    expect(toastStore.toasts).toEqual([
+      expect.objectContaining({
+        message: "Undo: Replaced report.txt\nPrevious destination retained\nCleanup is still available in File Recovery",
+        type: "info",
+      }),
+    ]);
+  });
+
+  it("retains both warnings and the error from a mixed replacement completion", async () => {
+    const explorer = explorerAt("/A", [entry("report.txt", "/A")]);
+    mocks.load.current = listing({ "/A": [entry("report.txt", "/A")] });
+    await undoStore.push({ type: "copy", copiedPath: "/A/report.txt", parentDir: "/A" });
+    history.queueExecution(
+      { type: "replacement", path: "/A/report.txt" },
+      "Could not finish restoring metadata",
+      ["Previous destination remains in File Recovery", "Retry is safe"],
+    );
+    toastStore.clear();
+
+    expect(await explorer.undo()).toBe("Could not finish restoring metadata");
+
+    expect(undoStore.canRedo).toBe(true);
+    expect(toastStore.toasts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        message: "Previous destination remains in File Recovery\nRetry is safe",
+        type: "info",
+      }),
+      expect.objectContaining({
+        message: "Could not finish restoring metadata",
+        type: "error",
+      }),
+    ]));
+  });
 });
 
 describe("deferred rename dialog ownership", () => {

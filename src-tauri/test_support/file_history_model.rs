@@ -5,6 +5,7 @@ const SECOND: u64 = 22;
 
 fn copy(path: &str, restore_supported: bool) -> Action {
     Action::Copy {
+        publication: None,
         recovery: super::Recovery::Capture,
         copied_path: path.into(),
         parent_dir: path

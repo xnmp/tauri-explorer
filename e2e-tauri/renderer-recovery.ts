@@ -32,6 +32,7 @@ const environment: NodeJS.ProcessEnv = {
   XDG_STATE_HOME: path.join(runDirectory, "state"),
   XDG_RUNTIME_DIR: runtime,
   TAURI_E2E_RECOVERY_DIR: fixture,
+  TAURI_E2E_FILE_RECOVERY_DIR: fixture,
 };
 delete environment.WARM_MEASURE;
 const child = spawn(application, [fixture], {
@@ -75,9 +76,24 @@ type CycleEvidence = {
   staleReleaseIgnored: boolean;
   oldLeaseReclaimed: boolean;
   entries: string[];
+  fileRecovery: {
+    oldRegistration: string; newRegistration: string;
+    oldSession: string; newSession: string;
+    oldChannelDroppedBeforeReload: boolean; staleAcquireRejected: boolean; staleReleaseIgnored: boolean;
+    operationId: string; beforeRevision: string; afterRevision: string; beforeGeneration: string; afterGeneration: string;
+  };
 };
 
 function verifyEvidence(state: State): void {
+  const recoveryFixture = JSON.parse(fs.readFileSync(path.join(fixture, "fixture.json"), "utf8")) as {
+    pid: number; id: string; source: string; target: string; root: string;
+  };
+  assert.equal(recoveryFixture.pid, state.processId);
+  assert.equal(fs.readFileSync(recoveryFixture.source, "utf8"), "native copied payload\n");
+  assert.equal(fs.readFileSync(recoveryFixture.target, "utf8"), "native copied payload\n");
+  assert.equal(fs.readFileSync(path.join(recoveryFixture.root, "original"), "utf8"), "native original payload\n");
+  const channelReceipts = fs.readFileSync(path.join(fixture, "channels.jsonl"), "utf8").trim().split("\n")
+    .map(line => JSON.parse(line) as { event: string; registration: string; pid: number });
   assert.ok(Array.isArray(state.cycles), "Missing per-cycle recovery evidence");
   assert.equal(state.cycles.length, 2, "Two recovery cycles must complete");
   const cycles = state.cycles as CycleEvidence[];
@@ -105,6 +121,24 @@ function verifyEvidence(state: State): void {
     assert.equal(cycle.oldLeaseReclaimed, true);
     assert.ok(Array.isArray(cycle.entries) && cycle.entries.every(entry => typeof entry === "string"));
     assert.ok(cycle.entries.includes(cycle.marker), "Recovered listing must show the observed mutation");
+    const recovery = cycle.fileRecovery;
+    assert.ok(recovery, "Missing real recovery-channel crash acceptance");
+    assert.equal(recovery.oldSession, cycle.oldSession);
+    assert.equal(recovery.newSession, cycle.newSession);
+    assert.notEqual(recovery.oldRegistration, recovery.newRegistration);
+    if (index > 0) assert.equal(recovery.oldRegistration, cycles[index - 1].fileRecovery.newRegistration);
+    assert.equal(recovery.oldChannelDroppedBeforeReload, true);
+    assert.equal(recovery.staleAcquireRejected, true);
+    assert.equal(recovery.staleReleaseIgnored, true);
+    assert.match(recovery.operationId, /^[0-9a-f]{64}$/);
+    assert.equal(recovery.operationId, recoveryFixture.id);
+    const dropped = channelReceipts.findIndex(receipt => receipt.event === "dropped"
+      && receipt.registration === recovery.oldRegistration && receipt.pid === state.processId);
+    const acquired = channelReceipts.findIndex(receipt => receipt.event === "received"
+      && receipt.registration === recovery.newRegistration && receipt.pid === state.processId);
+    assert.ok(dropped >= 0 && acquired > dropped, "native drop receipt must precede replacement registration");
+    assert.ok(BigInt(recovery.afterRevision) > BigInt(recovery.beforeRevision));
+    assert.ok(BigInt(recovery.afterGeneration) > BigInt(recovery.beforeGeneration));
   }
 }
 function readState(): State | undefined {
@@ -143,7 +177,7 @@ try {
         if (exited?.code !== 0) throw new Error(`Successful scenario did not exit cleanly: ${JSON.stringify(exited)}`);
         const screenshot = path.join(fixture, "recovered.png");
         if (!fs.existsSync(screenshot)) throw new Error("Recovery screenshot is missing");
-        const destination = "screenshots/refactor/repo-health-cleanup/native-renderer-crash-recovery.png";
+        const destination = "screenshots/refactor/repo-health-cleanup/native-recovery-channel-crash.png";
         fs.mkdirSync(path.dirname(destination), { recursive: true });
         fs.copyFileSync(screenshot, destination);
         console.log(JSON.stringify({ ...state, runDirectory, screenshot: destination }, null, 2));

@@ -113,6 +113,8 @@ describe("performFileTransfer", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a failed transfer");
+    expect(result.reason).toBe("failed");
+    if (result.reason !== "failed") throw new Error("Expected a failed transfer");
     expect(result.error).toBe("permission denied");
   });
 
@@ -170,7 +172,7 @@ describe("performFileTransfer", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a skipped transfer");
-    expect(result.error).toBe("skipped");
+    expect(result.reason).toBe("skipped");
     expect(moveEntryMock).not.toHaveBeenCalled();
   });
 
@@ -186,8 +188,8 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected a skipped transfer");
-    expect(result.error).toBe("skipped");
+    if (result.ok) throw new Error("Expected a cancelled transfer");
+    expect(result.reason).toBe("cancelled");
     expect(moveEntryMock).not.toHaveBeenCalled();
   });
 
@@ -272,6 +274,32 @@ describe("performFileTransfer", () => {
     });
   });
 
+  it("returns a durable replacement warning without publishing ordinary copy Undo", async () => {
+    const warning = "Previous destination retained in File Recovery. Overwrite Undo is not available yet.";
+    copyEntryMock.mockResolvedValue({
+      ok: true,
+      data: { path: "/dest/file.txt", entry: resultEntry, replacement: { id: "replacement-1" } },
+      warning,
+    });
+
+    const result = await performFileTransfer("/src/file.txt", "/dest", true, {
+      onRefresh: noop,
+      overwrite: true,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      path: "/dest/file.txt",
+      entry: resultEntry,
+      replacement: { id: "replacement-1" },
+      warning,
+    });
+    expect(undoPushMock).not.toHaveBeenCalled();
+    expect(invalidateRedoMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledWith(warning);
+    expect(toastShowMock).not.toHaveBeenCalled();
+  });
+
   it("records and publishes a committed move when entry metadata is unavailable", async () => {
     moveEntryMock.mockResolvedValue({
       ok: true,
@@ -335,7 +363,7 @@ describe("performFileTransfer", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a skipped transfer");
-    expect(result.error).toBe("skipped");
+    expect(result.reason).toBe("skipped");
     expect(moveEntryMock).not.toHaveBeenCalled();
     expect(conflictPromptMock).not.toHaveBeenCalled();
   });

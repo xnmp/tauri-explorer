@@ -23,6 +23,8 @@
   import type { PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
+  import FileRecoveryNotice from "$lib/components/FileRecoveryNotice.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
@@ -186,7 +188,24 @@
     return () => cancelAnimationFrame(frame);
   });
 
-  let session: ReturnType<typeof startWindowSession> | undefined;
+  // A failed initial path is still a usable shell for recovery. Keep that
+  // background-service trigger separate from successful startup measurement.
+  $effect(() => {
+    if (!commandsReady || !settingsReady) return;
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (!explorer?.state.error || explorer.state.loading) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => session?.markBackgroundReady());
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
+  let session = $state.raw<ReturnType<typeof startWindowSession> | undefined>();
+  const recoveryCount = $derived(session?.recovery?.state?.items.length ?? 0);
+  const recoveryError = $derived(session?.recovery?.error ?? null);
+  $effect(() => {
+    if (dialogStore.isFileRecoveryOpen) void session?.recovery?.start();
+  });
   onMount(() => {
     session = startWindowSession({
       picker: pickerInfo !== null,
@@ -248,7 +267,14 @@
     {/await}
   {/if}
   {#if settingsStore.showStatusBar}
-    <StatusBar />
+    <StatusBar>
+      <FileRecoveryNotice count={recoveryCount}
+        error={recoveryError} onOpen={() => dialogStore.openFileRecovery()} />
+    </StatusBar>
+  {:else if recoveryCount > 0 || recoveryError}
+    <div class="recovery-attention" aria-live="polite">
+      <FileRecoveryNotice count={recoveryCount} error={recoveryError} onOpen={() => dialogStore.openFileRecovery()} />
+    </div>
   {/if}
 </main>
 
@@ -256,9 +282,19 @@
 <UpdateNotice />
 {/if}
 
-<WindowDialogs {pickerInfo} onFilesChanged={refreshAllPanes} />
+<WindowDialogs {pickerInfo} recovery={session?.recovery} onFilesChanged={refreshAllPanes} />
 
 <style>
+  .recovery-attention {
+    display: flex;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    padding: 3px 12px;
+    background: var(--background-card-secondary);
+    box-shadow: 0 -1px 0 var(--divider);
+    font-size: var(--font-size-caption);
+  }
+
   /* Windows 11 Fluent Design System */
   :global(*) {
     box-sizing: border-box;

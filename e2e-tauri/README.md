@@ -181,3 +181,92 @@ checks both actual removals and the surviving main-window listing. Its paired
 `native-delete-batch-before.png` / `native-delete-batch-after.png` screenshots
 show that exact listing transition. It retains the local-owner retirement
 policy; this is not evidence of process durability or transferable child Undo.
+
+`file-recovery.spec.ts` requires both the `e2e-renderer-recovery` and
+`durable-copy-recovery` build features and
+`VITE_E2E_HOOKS=1`. Run it with an isolated XDG profile and a fresh, existing
+`TAURI_E2E_FILE_RECOVERY_DIR` directory, then select it using
+`bun run test:e2e:tauri --spec e2e-tauri/specs/file-recovery.spec.ts` under the
+Xvfb/window-manager wrapper above. Keep warm-window priming disabled in that
+profile's settings. The test-only setup creates `replacement/` exclusively;
+reusing the fixture fails rather than replacing prior evidence. Ordinary builds
+contain neither the seed nor channel receipts.
+
+The seed uses the real Coordinator, ownership reservation and replacement
+executor to publish a copied file while retaining its original, then drops its
+owner. The suite clicks Inspect/Restore in the actual dialog and reads both
+payloads from disk. Raw probe subscriptions deliberately omit frontend cleanup.
+Native registration IDs (not reusable JavaScript callback IDs) associate channel
+send/drop receipts in `channels.jsonl` with exact window/session/token requests.
+Two reloads and direct native child destruction must release those channels;
+fresh subscriptions must receive the generation advanced by real inspection.
+This suite does not establish renderer-crash cleanup, interrupted registration,
+power-loss durability or other platforms.
+
+The suite also creates a separate ordinary overwrite through the production
+transfer/API/command path. It selects the newly journaled operation by its returned
+ID, cycles actual Explorer Undo/Redo twice with recovery Inspect between every
+effect, then restores through the dialog. It checks original, source and privately
+retained copied bytes and the native completion toasts. The probe forces overwrite and bypasses clipboard/conflict
+UI; it does not qualify those interactions. `native-production-copy-restored.png`
+records the restored native result. The earlier fixture case additionally renames
+its restored target and back through Explorer, verifying refreshed listing names.
+
+The companion `test:e2e:recovery` retained-WebView runner also seeds that fixture.
+It requires two externally killed renderers, observes each native recovery Channel
+drop before reloading the retained WebView, rejects old-session requests, and
+checks new durable-generation callbacks afterward. Its external verifier reads
+both surviving payloads and the ordered native channel receipts. The final image
+is `native-recovery-channel-crash.png`; logs establish cleanup, while the image
+establishes post-crash navigation and selection. In-flight initial subscription
+and action interruption at real IPC boundaries remain separate acceptance work.
+
+
+For replacement command waiter-loss acceptance, also set
+`TAURI_E2E_HISTORY_GATE_DIR` to a fresh existing directory in the isolated fixture.
+The fifth recovery case arms the native history admission barrier for a child-local
+overwrite Undo, destroys that child, confirms its raw Channel dropped, then releases
+work externally. The surviving renderer must receive the exact operation's newer
+recovery generation and show the restored 24-byte listing; target/source/private
+copy bytes are checked directly. Its own Undo/Redo IDs must remain unchanged and
+busy must clear: child-local history is deliberately retired, not transferred.
+The case also inspects the retained operation after completion. Without the gate
+directory this case is skipped. `native-production-copy-redone.png` shows the normal
+Redo toast; `native-replacement-detached-undo.png` shows the refreshed surviving
+listing. This does not prove power loss or same-label renderer reactivation.
+
+
+The sixth and seventh recovery cases exercise the production ordered copy session
+through `copyFiles` and the actual conflict dialog. A mixed ordinary/replacement
+selection is undone/redone twice after its original sources are removed. A separate
+prefix/conflict/suffix selection clicks Cancel, verifies only the prefix was copied,
+and removes that prefix with one Undo. Both assert real filesystem bytes, with
+`native-ordered-copy-redone.png` and `native-ordered-copy-cancelled.png` recording the
+visible results. These cases qualify Linux session/UI integration; browser tests
+separately cover clipboard selection across Details, List and Tiles.
+
+
+`file-move-recovery.spec.ts` additionally checks Linux native move admission through
+in-app cut/paste and two actual Undo/Redo cycles, asserting both source disappearance
+and destination bytes in each direction. Its existing cross-filesystem case still
+asserts retained readable source data and no unsafe inverse after source cleanup
+failure. `native-admitted-move-redone.png` records the successful final Redo. The
+Xvfb run may report an unavailable host clipboard provider; these operations use
+the application's clipboard and do not qualify platform clipboard integration.
+
+### Durable copy release policy
+
+Ordinary release builds leave `durable-copy-recovery` disabled until native
+artifact retirement is implemented (#687). Staged overwrite copies retain their
+previous replacement behavior and exact Linux publication receipts; they do not
+retain the displaced original for durable Undo. Existing journal discovery and
+explicit recovery stay available.
+
+The recovery-copy acceptance build must explicitly opt in:
+
+```sh
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery,durable-copy-recovery
+```
+
+Keep ordinary native smoke builds without `durable-copy-recovery` so the default
+shipping path is also exercised. `e2e-renderer-recovery` does not imply the feature.

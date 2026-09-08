@@ -5,7 +5,8 @@
 //! Renderer-owned leases allow multiple panes viewing the same directory
 //! to share a single OS watch. Debounces events (300ms, trailing) before
 //! emitting `directory-changed`, so bulk operations produce one event per
-//! directory instead of a storm.
+//! directory instead of a storm. App-settled mutations bypass the trailing
+//! debounce and publish on the next flush, retaining priority when coalesced.
 
 use notify::Watcher;
 use serde::Serialize;
@@ -32,11 +33,20 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 /// Poll interval for the debounce flush thread.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
+/// App-settled mutations reconcile promptly; ordinary filesystem churn debounces.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ChangeOrigin {
+    Watcher,
+    Mutation,
+}
+
 /// Event payload emitted to the frontend when a watched directory changes.
 #[derive(Clone, Serialize)]
 struct DirectoryChangedPayload {
+    origin: ChangeOrigin,
     path: String,
-    /// Wall-clock time when notify observed the newest change in this batch.
+    /// Wall-clock time when the newest change in this batch was observed.
     /// The frontend uses this to recognize a delayed notification that is
     /// already covered by a directory listing which started afterward.
     observed_at_ms: u64,
@@ -44,8 +54,23 @@ struct DirectoryChangedPayload {
 
 #[derive(Clone, Copy)]
 struct PendingChange {
+    origin: ChangeOrigin,
     last_event: Instant,
     observed_at_ms: u64,
+}
+
+impl PendingChange {
+    fn merge(&mut self, next: Self) {
+        self.last_event = self.last_event.max(next.last_event);
+        self.observed_at_ms = self.observed_at_ms.max(next.observed_at_ms);
+        if next.origin == ChangeOrigin::Mutation {
+            self.origin = ChangeOrigin::Mutation;
+        }
+    }
+
+    fn ready(self, now: Instant) -> bool {
+        self.origin == ChangeOrigin::Mutation || now.duration_since(self.last_event) >= DEBOUNCE
+    }
 }
 
 /// Native observation and recursive cache coverage shared by directory leases.
@@ -69,7 +94,7 @@ static FS_WATCHER: OnceLock<Mutex<FsWatcher>> = OnceLock::new();
 static TEST_WATCHED_PATHS: OnceLock<Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
 
 /// Directories with pending change events, keyed by the time of the most
-/// recent event. Flushed (emitted) once no new event arrived for DEBOUNCE.
+/// recent event. Watcher batches wait for DEBOUNCE; mutation batches flush promptly.
 static PENDING_CHANGES: OnceLock<Mutex<HashMap<String, PendingChange>>> = OnceLock::new();
 
 fn pending_changes() -> &'static Mutex<HashMap<String, PendingChange>> {
@@ -149,19 +174,21 @@ pub(crate) fn publish_file_changes(paths: &[String]) {
     for path in paths {
         let path = Path::new(path);
         invalidate_directory_caches_for_change(path);
-        queue_directory_change(path);
+        queue_directory_change(path, ChangeOrigin::Mutation);
     }
 }
 
-fn queue_directory_change(path: &Path) {
+fn queue_directory_change(path: &Path, origin: ChangeOrigin) {
     if let Ok(mut pending) = pending_changes().lock() {
-        pending.insert(
-            path.to_string_lossy().into_owned(),
-            PendingChange {
-                last_event: Instant::now(),
-                observed_at_ms: unix_time_ms(),
-            },
-        );
+        let change = PendingChange {
+            origin,
+            last_event: Instant::now(),
+            observed_at_ms: unix_time_ms(),
+        };
+        pending
+            .entry(path.to_string_lossy().into_owned())
+            .and_modify(|previous| previous.merge(change))
+            .or_insert(change);
     }
 }
 
@@ -185,7 +212,7 @@ fn observation(mode: Mode) -> Observation {
                     } else {
                         invalidate_dir_cache_sync(&path.to_string_lossy());
                     }
-                    queue_directory_change(&path);
+                    queue_directory_change(&path, ChangeOrigin::Watcher);
                 }
             }
             Notice::Lost(roots) => {
@@ -193,7 +220,7 @@ fn observation(mode: Mode) -> Observation {
                     invalidate_search_cache_root(&root);
                     if mode == Mode::Direct {
                         invalidate_dir_cache_sync(&root.to_string_lossy());
-                        queue_directory_change(&root);
+                        queue_directory_change(&root, ChangeOrigin::Watcher);
                     }
                 }
             }
@@ -210,7 +237,7 @@ fn observation(mode: Mode) -> Observation {
             Notice::Restored { roots, refresh } => {
                 if mode == Mode::Direct && refresh {
                     for root in roots {
-                        queue_directory_change(&root);
+                        queue_directory_change(&root, ChangeOrigin::Watcher);
                     }
                 }
             }
@@ -301,15 +328,15 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
                 }
             }
 
-            let ready: Vec<(String, u64)> = {
+            let ready: Vec<(String, PendingChange)> = {
                 let Ok(mut pending) = pending_changes().lock() else {
                     continue;
                 };
                 let now = Instant::now();
-                let ready: Vec<(String, u64)> = pending
+                let ready: Vec<(String, PendingChange)> = pending
                     .iter()
-                    .filter(|(_, change)| now.duration_since(change.last_event) >= DEBOUNCE)
-                    .map(|(dir, change)| (dir.clone(), change.observed_at_ms))
+                    .filter(|(_, change)| change.ready(now))
+                    .map(|(dir, change)| (dir.clone(), *change))
                     .collect();
                 for (dir, _) in &ready {
                     pending.remove(dir);
@@ -317,12 +344,13 @@ pub fn init_watcher<R: Runtime>(app: &AppHandle<R>) {
                 ready
             };
 
-            for (dir, observed_at_ms) in ready {
+            for (dir, change) in ready {
                 if let Err(e) = app_handle.emit(
                     "directory-changed",
                     DirectoryChangedPayload {
                         path: dir.clone(),
-                        observed_at_ms,
+                        observed_at_ms: change.observed_at_ms,
+                        origin: change.origin,
                     },
                 ) {
                     log::warn!("Failed to emit directory-changed for {}: {}", dir, e);
@@ -440,3 +468,7 @@ pub async fn unwatch_directory(
         None => Ok(()),
     }
 }
+
+#[cfg(test)]
+#[path = "../../test_support/fs_watcher_changes.rs"]
+mod change_tests;

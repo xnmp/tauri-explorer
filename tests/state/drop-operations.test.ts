@@ -7,11 +7,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const transfer = vi.hoisted(() => vi.fn());
+const copyFiles = vi.hoisted(() => vi.fn(async () => null));
 const undo = vi.hoisted(() => ({ push: vi.fn(), pushAndBroadcast: vi.fn(), invalidateRedo: vi.fn() }));
 const toast = vi.hoisted(() => ({ show: vi.fn(), error: vi.fn(), broadcast: vi.fn() }));
 const broadcast = vi.hoisted(() => vi.fn());
 
 vi.mock("$lib/state/file-transfer", () => ({ performFileTransfer: transfer }));
+vi.mock("$lib/state/copy-operations", () => ({ copyFiles }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
 vi.mock("$lib/state/toast.svelte", () => ({ toastStore: toast }));
 vi.mock("$lib/state/file-events", () => ({ broadcastFileChange: broadcast }));
@@ -69,7 +71,7 @@ describe("handleFileDropMany", () => {
 
   it("unwraps to a single action when all but one item is skipped", async () => {
     transfer
-      .mockResolvedValueOnce({ ok: false, error: "skipped" })
+      .mockResolvedValueOnce({ ok: false, reason: "skipped" })
       .mockResolvedValueOnce({ ok: true, path: "/dest/b.txt", entry: { path: "/dest/b.txt", name: "b.txt" } });
 
     await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", false, opts());
@@ -78,46 +80,53 @@ describe("handleFileDropMany", () => {
     expect(action.type).toBe("move");
   });
 
-  it("uses copy actions and pushAndBroadcast for cross-window copies", async () => {
-    await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", true, {
-      onRefresh: vi.fn(),
-      broadcastToOtherWindows: true,
-    });
-
-    expect(undo.pushAndBroadcast).toHaveBeenCalledTimes(1);
-    const action = undo.pushAndBroadcast.mock.calls[0][0];
-    expect(action.type).toBe("batch");
-    expect(action.actions.every((a: { type: string }) => a.type === "copy")).toBe(true);
-    expect(toast.broadcast).toHaveBeenCalledTimes(1);
-  });
-
-  it("records committed paths and refreshes when batch metadata is unavailable", async () => {
+  it("keeps a successful prefix and stops before the suffix when conflict resolution is cancelled", async () => {
     transfer
-      .mockResolvedValueOnce({ ok: true, path: "/dest/a.txt", entry: null })
-      .mockResolvedValueOnce({ ok: true, path: "/dest/b.txt", entry: null });
-    const options = { onRefresh: vi.fn(), existingNames: new Set<string>() };
+      .mockResolvedValueOnce({ ok: true, path: "/dest/a.txt", entry: { path: "/dest/a.txt", name: "a.txt" } })
+      .mockResolvedValueOnce({ ok: false, reason: "cancelled" });
+    const options = opts();
 
-    await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", true, options);
+    await handleFileDropMany(["/src/a.txt", "/src/b.txt", "/src/c.txt"], "/dest", false, options);
 
+    expect(transfer).toHaveBeenCalledTimes(2);
     expect(undo.push).toHaveBeenCalledWith({
-      type: "batch",
-      actions: [
-        { type: "copy", copiedPath: "/dest/a.txt", parentDir: "/dest" },
-        { type: "copy", copiedPath: "/dest/b.txt", parentDir: "/dest" },
-      ],
-      label: "Copied 2 items",
+      type: "move",
+      sourcePath: "/src/a.txt",
+      destPath: "/dest/a.txt",
+      originalDir: "/src",
     });
-    expect(options.existingNames).toEqual(new Set(["a.txt", "b.txt"]));
     expect(options.onRefresh).toHaveBeenCalledOnce();
     expect(broadcast).toHaveBeenCalledWith(expect.arrayContaining(["/src", "/dest"]));
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  it("delegates an ordered copy batch once and leaves history to the native session", async () => {
+    const onRefresh = vi.fn();
+    await handleFileDropMany(["/src/a.txt", "/src/b.txt"], "/dest", true, {
+      onRefresh,
+      broadcastToOtherWindows: true,
+    });
+
+    expect(copyFiles).toHaveBeenCalledOnce();
+    expect(copyFiles).toHaveBeenCalledWith(["/src/a.txt", "/src/b.txt"], "/dest", {
+      onRefresh, broadcastToOtherWindows: true,
+    });
+    expect(transfer).not.toHaveBeenCalled();
+    expect(undo.pushAndBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("delegates a single copy through the same native copy session", async () => {
+    const options = opts();
+    await handleFileDropMany(["/src/a.txt"], "/dest", true, options);
+    expect(copyFiles).toHaveBeenCalledWith(["/src/a.txt"], "/dest", options);
+    expect(transfer).not.toHaveBeenCalled();
+  });
+
   it("reports failures once without recording undo for failed items", async () => {
     transfer
       .mockResolvedValueOnce({ ok: true, path: "/dest/a.txt", entry: { path: "/dest/a.txt", name: "a.txt" } })
-      .mockResolvedValueOnce({ ok: false, error: "disk full" })
-      .mockResolvedValueOnce({ ok: false, error: "disk full" });
+      .mockResolvedValueOnce({ ok: false, reason: "failed", error: "disk full" })
+      .mockResolvedValueOnce({ ok: false, reason: "failed", error: "disk full" });
 
     await handleFileDropMany(["/s/a.txt", "/s/b.txt", "/s/c.txt"], "/dest", false, opts());
 

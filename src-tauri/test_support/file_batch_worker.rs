@@ -15,6 +15,68 @@ fn plan(paths: &[&Path]) -> BatchPlan {
 }
 
 #[test]
+fn pooled_setup_context_stays_on_its_worker_and_preserves_effects_after_a_later_panic() {
+    struct LocalContext {
+        worker: std::thread::ThreadId,
+        cleanup: std::rc::Rc<std::path::PathBuf>,
+    }
+    impl Drop for LocalContext {
+        fn drop(&mut self) {
+            assert_eq!(self.worker, std::thread::current().id());
+            fs::write(self.cleanup.as_ref(), b"cleanup finished").unwrap();
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first");
+    let active = dir.path().join("active");
+    let last = dir.path().join("last");
+    let created = dir.path().join("created");
+    let cleanup = dir.path().join("cleanup");
+    for path in [&first, &active, &last] {
+        fs::write(path, b"original").unwrap();
+    }
+    let context_cleanup = cleanup.clone();
+    let active_path = path_string(&active);
+    let create_path = created.clone();
+    let caller = std::thread::current().id();
+    let outcome = tauri::async_runtime::block_on(super::run_with_setup_owned(
+        (),
+        plan(&[&first, &active, &last]),
+        move |_| {
+            let worker = std::thread::current().id();
+            assert_ne!(worker, caller);
+            Ok(LocalContext {
+                worker,
+                cleanup: std::rc::Rc::new(context_cleanup),
+            })
+        },
+        move |context, path, effects| {
+            assert_eq!(context.worker, std::thread::current().id());
+            if path == active_path {
+                effects.before_create(&create_path)?;
+                fs::create_dir(&create_path)?;
+                panic!("after auxiliary directory creation");
+            }
+            fs::remove_file(path)?;
+            Ok(Default::default())
+        },
+    ))
+    .unwrap();
+    assert_eq!(outcome.succeeded, [path_string(&first)]);
+    assert_eq!(outcome.uncertain[0].path, path_string(&active));
+    assert_eq!(outcome.unstarted, [path_string(&last)]);
+    assert!(outcome.failed.is_empty());
+    assert!(outcome.refresh_dirs.contains(&path_string(&created)));
+    assert!(outcome.refresh_dirs.contains(&path_string(dir.path())));
+    assert!(!first.exists());
+    assert_eq!(fs::read(active).unwrap(), b"original");
+    assert_eq!(fs::read(last).unwrap(), b"original");
+    assert!(created.is_dir());
+    assert_eq!(fs::read(cleanup).unwrap(), b"cleanup finished");
+}
+
+#[test]
 fn exact_receipts_survive_later_worker_panic_and_never_serialize_to_the_renderer() {
     use crate::files::trash_artifact::{TrashArtifact, TrashSuccess};
     let dir = tempfile::tempdir().unwrap();
@@ -33,6 +95,7 @@ fn exact_receipts_survive_later_worker_panic_and_never_serialize_to_the_renderer
                 panic!("worker exited after an earlier exact receipt");
             }
             Ok(TrashSuccess {
+                publication: None,
                 artifact: Some(receipt.clone()),
                 warning: None,
             })
@@ -56,6 +119,7 @@ fn oversized_receipt_is_a_committed_warning_and_later_items_still_run() {
         plan(&[&paths[0], &paths[1]]),
         move |path, _| {
             Ok(TrashSuccess {
+                publication: None,
                 artifact: Some(Arc::new(TrashArtifact::WindowsShell {
                     parsing_name_utf16: vec![65; if path == large { 16 * 1024 * 1024 } else { 2 }],
                 })),
@@ -78,6 +142,79 @@ fn oversized_receipt_is_a_committed_warning_and_later_items_still_run() {
     assert_eq!(outcome.warnings.len(), 1);
     assert_eq!(outcome.warnings[0].path, path_string(&paths[0]));
     assert!(outcome.error().unwrap().contains("batch memory budget"));
+}
+
+#[cfg(unix)]
+#[test]
+fn trash_and_restored_publications_share_a_budget_without_losing_successes() {
+    use crate::files::{
+        file_identity,
+        mutation::PublishedEntry,
+        trash_artifact::{TrashArtifact, TrashSuccess},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let paths = [
+        dir.path().join("trash"),
+        dir.path().join("large-publication"),
+        dir.path().join("small-publication"),
+    ];
+    fs::write(&paths[2], "restored bytes").unwrap();
+    let small = Arc::new(PublishedEntry {
+        path: paths[2].clone(),
+        parent: file_identity::from_metadata(&fs::metadata(dir.path()).unwrap()),
+        version: file_identity::version_from_metadata(&fs::symlink_metadata(&paths[2]).unwrap())
+            .unwrap(),
+    });
+    let mut large = (*small).clone();
+    large.path = paths[1].clone();
+    large.path.reserve(20 * 1024 * 1024);
+    let large = Arc::new(large);
+    let artifact = Arc::new(TrashArtifact::WindowsShell {
+        parsing_name_utf16: vec![65; 10 * 1024 * 1024],
+    });
+    let first = path_string(&paths[0]);
+    let second = path_string(&paths[1]);
+    let expected = small.clone();
+    let outcome = tauri::async_runtime::block_on(super::run_with_receipts(
+        plan(&[&paths[0], &paths[1], &paths[2]]),
+        move |path, _| {
+            Ok(if path == first {
+                TrashSuccess {
+                    artifact: Some(artifact.clone()),
+                    ..Default::default()
+                }
+            } else {
+                TrashSuccess {
+                    publication: Some(if path == second {
+                        large.clone()
+                    } else {
+                        small.clone()
+                    }),
+                    ..Default::default()
+                }
+            })
+        },
+    ));
+    assert_eq!(
+        outcome.succeeded,
+        paths
+            .iter()
+            .map(|path| path_string(path))
+            .collect::<Vec<_>>()
+    );
+    assert!(outcome.failure_message().is_none());
+    assert!(outcome.artifacts.contains_key(&path_string(&paths[0])));
+    assert!(!outcome.publications.contains_key(&path_string(&paths[1])));
+    assert_eq!(
+        outcome.publications.get(&path_string(&paths[2])),
+        Some(&expected)
+    );
+    assert_eq!(outcome.warnings.len(), 1);
+    assert_eq!(outcome.warnings[0].path, path_string(&paths[1]));
+    assert!(serde_json::to_value(outcome)
+        .unwrap()
+        .get("publications")
+        .is_none());
 }
 
 #[test]

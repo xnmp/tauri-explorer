@@ -72,6 +72,11 @@ export async function handleFileDrop(
   isCopy: boolean,
   options: DropOptions,
 ): Promise<void> {
+  if (isCopy) {
+    const { copyFiles } = await import("./copy-operations");
+    await copyFiles([sourcePath], targetDir, options);
+    return;
+  }
   await performFileTransfer(sourcePath, targetDir, isCopy, {
     onRefresh: options.onRefresh,
     broadcastToOtherWindows: options.broadcastToOtherWindows,
@@ -93,6 +98,11 @@ export async function handleFileDropMany(
   options: DropOptions,
 ): Promise<void> {
   if (sourcePaths.length === 0) return;
+  if (isCopy) {
+    const { copyFiles } = await import("./copy-operations");
+    await copyFiles(sourcePaths, targetDir, options);
+    return;
+  }
   if (sourcePaths.length === 1) {
     await handleFileDrop(sourcePaths[0], targetDir, isCopy, options);
     return;
@@ -101,6 +111,7 @@ export async function handleFileDropMany(
   const actions: UndoAction[] = [];
   const affectedDirs = new Set<string>([targetDir]);
   const recoveryErrors: string[] = [];
+  const warnings: string[] = [];
   let committed = 0;
   let failed = 0;
   let lastError: string | undefined;
@@ -116,9 +127,8 @@ export async function handleFileDropMany(
       broadcastToOtherWindows: options.broadcastToOtherWindows,
     });
     if (!result.ok) {
-      // "skipped" is a user choice (conflict dialog) or a same-parent no-op,
-      // not a failure worth reporting.
-      if (result.error !== "skipped") {
+      if (result.reason === "cancelled") break;
+      if (result.reason === "failed") {
         failed++;
         lastError = result.error;
       }
@@ -128,9 +138,10 @@ export async function handleFileDropMany(
     affectedDirs.add(parentDir(sourcePath));
     // Later items in this batch sharing the landed name must still conflict.
     options.existingNames?.add(basename(result.path));
+    if (result.warning) warnings.push(result.warning);
     if (result.recovery) {
       recoveryErrors.push(fileMutationRecoveryMessage(result.recovery));
-    } else {
+    } else if (!result.replacement) {
       actions.push(
         isCopy
           ? { type: "copy", copiedPath: result.path, parentDir: targetDir }
@@ -145,6 +156,7 @@ export async function handleFileDropMany(
   }
 
   const verb = isCopy ? "Copied" : "Moved";
+  const successful = committed - recoveryErrors.length;
   if (actions.length > 0) {
     const label = `${verb} ${actions.length} items`;
     const action: UndoAction =
@@ -155,11 +167,11 @@ export async function handleFileDropMany(
       await undoStore.push(action);
     }
 
-    const message = `${verb} ${actions.length} item${actions.length === 1 ? "" : "s"} to ${basename(targetDir)}`;
+  }
+  if (successful > 0) {
+    const message = `${verb} ${successful} item${successful === 1 ? "" : "s"} to ${basename(targetDir)}`;
     toastStore.show(message, "info");
-    if (options.broadcastToOtherWindows) {
-      toastStore.broadcast(message, "info");
-    }
+    if (options.broadcastToOtherWindows) toastStore.broadcast(message, "info");
   }
 
   if (committed > 0) {
@@ -175,7 +187,7 @@ export async function handleFileDropMany(
         : `Failed to ${isCopy ? "copy" : "move"} ${failed} item${failed === 1 ? "" : "s"}`
     )
     : null;
-  const problems = [...recoveryErrors, ...(failureMessage ? [failureMessage] : [])];
+  const problems = [...recoveryErrors, ...warnings, ...(failureMessage ? [failureMessage] : [])];
   if (problems.length > 0) {
     const message = problems.join("\n");
     toastStore.error(message);

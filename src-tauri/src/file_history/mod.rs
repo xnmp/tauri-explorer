@@ -3,6 +3,7 @@ mod action;
 mod execution;
 mod forward;
 mod model;
+mod plan;
 mod retention;
 pub(crate) use forward::{run_forward, MutationOutcome, MutationReply};
 pub(crate) use model::ForwardEffect;
@@ -48,6 +49,8 @@ pub struct Reply {
     summary: Summary,
     #[serde(skip_serializing_if = "Option::is_none")]
     action: Option<Action>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -83,6 +86,7 @@ impl Service {
         Reply {
             summary: self.histories.summary(client),
             action,
+            warnings: Vec::new(),
             error,
         }
     }
@@ -164,7 +168,27 @@ pub async fn file_history_clear(
     Ok(service.reply(client, None, None))
 }
 
-struct NativeOperations;
+#[derive(Default)]
+struct NativeOperations {
+    #[cfg(target_os = "linux")]
+    recovery: Option<(crate::files::recovery::Runtime, std::path::PathBuf)>,
+}
+
+impl NativeOperations {
+    fn for_window(window: &tauri::Window) -> Result<Self, AppError> {
+        #[cfg(target_os = "linux")]
+        {
+            Ok(Self {
+                recovery: Some(crate::files::recovery::commands::owner(window)?),
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = window;
+            Ok(Self::default())
+        }
+    }
+}
 
 fn operation_error(error: AppError) -> execution::OperationError {
     match error {
@@ -199,22 +223,117 @@ async fn supervise<T: Send + 'static>(
         .map_err(|error| format!("Native file history execution was interrupted; inspect the affected files before continuing: {error}"))
 }
 
+/// Retain the plan's refresh projection outside the supervised execution. A
+/// panic can lose partial receipts but must not strand history or omit its
+/// potentially changed directories from reconciliation.
+async fn supervise_inverse<F>(
+    prepared: plan::Prepared,
+    work: impl FnOnce(plan::Prepared) -> F + Send + 'static,
+) -> (Execution, Vec<String>)
+where
+    F: Future<Output = Execution> + Send + 'static,
+{
+    let potential_directories = prepared.affected_dirs();
+    match supervise(async move { work(prepared).await }).await {
+        Ok(result) => {
+            let affected = execution_affected(&result);
+            (result, affected)
+        }
+        Err(error) => (
+            Execution {
+                error: Some(error),
+                ..Execution::default()
+            },
+            potential_directories,
+        ),
+    }
+}
+
 impl execution::Operations for NativeOperations {
+    async fn trash_publication(
+        &self,
+        publication: std::sync::Arc<crate::files::mutation::PublishedEntry>,
+    ) -> Result<crate::files::trash::FileBatchOutcome, execution::OperationError> {
+        crate::files::trash::trash_publication(publication)
+            .await
+            .map_err(operation_error)
+    }
+    async fn replacement(
+        &self,
+        history: crate::files::recovery::ReplacementHistory,
+        direction: crate::files::recovery::ReplacementDirection,
+    ) -> Result<crate::files::recovery::ReplacementOutcome, execution::OperationError> {
+        #[cfg(target_os = "linux")]
+        {
+            let (runtime, path) = self.recovery.as_ref().ok_or_else(|| {
+                execution::OperationError::Unchanged("Replacement recovery is unavailable".into())
+            })?;
+            runtime
+                .execute_history(path.clone(), history, direction)
+                .await
+                .map_err(operation_error)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (history, direction);
+            Err(execution::OperationError::Unchanged(
+                "Replacement recovery is unsupported on this host".into(),
+            ))
+        }
+    }
+
     async fn rename(&self, path: String, name: String) -> Result<(), execution::OperationError> {
         crate::files::file_ops::rename_entry(path, name)
             .await
             .map(|_| ())
             .map_err(operation_error)
     }
-    async fn move_entry(
-        &self,
-        path: String,
-        destination: String,
-    ) -> Result<Option<String>, execution::OperationError> {
-        crate::files::file_ops::move_entry(path, destination, Some(false))
-            .await
-            .map(|receipt| receipt.recovery.map(|recovery| recovery.message()))
-            .map_err(operation_error)
+    async fn move_entry(&self, path: String, destination: String) -> execution::MoveResult {
+        let failed = |error| execution::MoveResult {
+            result: Err(error),
+            warning: None,
+            affected: Vec::new(),
+        };
+        let plan = match crate::files::move_plan::MovePlan::new(path, destination, false) {
+            Ok(plan) => plan,
+            Err(error) => return failed(operation_error(error)),
+        };
+        #[cfg(target_os = "linux")]
+        let outcome = match &self.recovery {
+            Some((runtime, storage)) => {
+                crate::files::move_execution::execute(plan, runtime.clone(), storage.clone()).await
+            }
+            // Direct filesystem tests use the default adapter. Live windows
+            // always supply their application-owned recovery runtime.
+            #[cfg(test)]
+            None => crate::files::move_execution::execute_owned(plan, ()).await,
+            #[cfg(not(test))]
+            None => {
+                return failed(execution::OperationError::Unchanged(
+                    "Move recovery ownership is unavailable".into(),
+                ))
+            }
+        };
+        #[cfg(not(target_os = "linux"))]
+        let outcome = crate::files::move_execution::execute_owned(plan, ()).await;
+        let changed = matches!(
+            &outcome.completion.result,
+            Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
+        );
+        execution::MoveResult {
+            result: outcome
+                .completion
+                .result
+                .map(|receipt| receipt.recovery.map(|recovery| recovery.message()))
+                .map_err(operation_error),
+            warning: outcome.completion.warning,
+            // Return physical aliases through the existing outer refresh owner.
+            affected: if changed {
+                outcome.affected
+            } else {
+                Vec::new()
+            },
+        }
     }
     async fn trash_many(
         &self,
@@ -242,6 +361,7 @@ pub async fn file_history_execute(
     expected_entry_id: EntryId,
 ) -> Result<Reply, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let operations = NativeOperations::for_window(&window)?;
     let (client, reservation) = {
         let mut service = service().lock().unwrap();
         let client = service.client(&owner)?;
@@ -258,32 +378,20 @@ pub async fn file_history_execute(
     // Dropping the invoking renderer/IPC future cannot cancel accepted native
     // execution or its completion in another window's shared history.
     tauri::async_runtime::spawn(async move {
-        let action = reservation.action.clone();
-        let (result, affected) = match supervise(async move {
+        let prepared = plan::Prepared::new(reservation.action.clone(), direction);
+        let (result, affected) = supervise_inverse(prepared, move |prepared| async move {
             #[cfg(feature = "e2e-renderer-recovery")]
             acceptance_gate::after_admission(expected_entry_id, direction)
                 .await
                 .expect("Native history acceptance gate failed");
-            execution::execute(action, &NativeOperations, direction).await
+            execution::execute_prepared(prepared, &operations).await
         })
-        .await
-        {
-            Ok(result) => {
-                let affected = execution_affected(&result);
-                (result, affected)
-            }
-            Err(error) => (
-                Execution {
-                    error: Some(error),
-                    ..Execution::default()
-                },
-                action::affected_dirs(&reservation.action),
-            ),
-        };
+        .await;
         let mut service = service().lock().unwrap();
         service.histories.finish(reservation, &result);
         service.publish();
-        let reply = service.reply(client, result.completed, result.error);
+        let mut reply = service.reply(client, result.completed, result.error);
+        reply.warnings = result.warnings;
         drop(service);
         crate::files::fs_watcher::publish_file_changes(&affected);
         reply
@@ -295,3 +403,11 @@ pub async fn file_history_execute(
 #[cfg(test)]
 #[path = "../../test_support/file_history_uncertainty.rs"]
 mod uncertainty_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/file_history_replacement.rs"]
+mod replacement_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/file_history_publication.rs"]
+mod publication_tests;

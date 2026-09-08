@@ -46,6 +46,7 @@ function createDialogStore() {
   let shortcutsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
   let userReportOpen = $state(false);
+  let fileRecoveryOpen = $state(false);
 
   function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
     if (activeDialog === dialogType && session === fileOperationSession) {
@@ -129,6 +130,8 @@ function createDialogStore() {
       return userReportOpen;
     },
 
+    get isFileRecoveryOpen() { return fileRecoveryOpen; },
+
     // File operation actions
     startRename(entry: FileEntry): void {
       fileOperationSession = {};
@@ -154,7 +157,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return modalOwnership.hasOpen || shortcutsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen;
+      return modalOwnership.hasOpen || shortcutsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
     },
 
     // Overlay dialog actions
@@ -249,6 +252,13 @@ function createDialogStore() {
       userReportOpen = false;
     },
 
+    openFileRecovery(): void {
+      commandPaletteOpen = false;
+      fileRecoveryOpen = true;
+    },
+
+    closeFileRecovery(): void { fileRecoveryOpen = false; },
+
     closeAll(): void {
       modalOwnership.closeAll();
       shortcutsOpen = false;
@@ -268,6 +278,7 @@ function createDialogStore() {
       themePickerOpen = false;
       pickerConfig = null;
       userReportOpen = false;
+      fileRecoveryOpen = false;
     },
   };
 }

@@ -15,16 +15,41 @@ use tauri::{Manager, Runtime, Window};
 
 /// Cancellation identity for a native resource lifetime (renderer or request).
 #[derive(Clone, Default, Debug)]
-pub(crate) struct Owner(Arc<AtomicBool>);
+pub(crate) struct Owner(Arc<Lifetime>);
+
+#[derive(Default, Debug)]
+struct Lifetime {
+    retired: AtomicBool,
+    changed: tokio::sync::Notify,
+}
+
 impl Owner {
     pub(crate) fn retire(&self) {
-        self.0.store(true, Ordering::Release);
+        if !self.0.retired.swap(true, Ordering::AcqRel) {
+            self.0.changed.notify_waiters();
+        }
     }
     pub(crate) fn active(&self) -> bool {
-        !self.0.load(Ordering::Acquire)
+        !self.0.retired.load(Ordering::Acquire)
+    }
+
+    /// Blocking workers share the same cancellation identity as async waiters.
+    pub(crate) fn cancellation_flag(&self) -> &AtomicBool {
+        &self.0.retired
     }
     pub(crate) fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// Install the waiter before checking the flag: notify_waiters does not
+    /// retain a permit for a future that has not registered yet.
+    pub(crate) async fn retired(&self) {
+        let notified = self.0.changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.active() {
+            notified.await;
+        }
     }
 }
 

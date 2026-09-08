@@ -18,6 +18,7 @@ fn absolute(parts: &[&str]) -> String {
 
 fn copy(path: String, parent_dir: String, restore_supported: bool) -> Action {
     Action::Copy {
+        publication: None,
         copied_path: path,
         parent_dir,
         restore_supported,
@@ -82,6 +83,46 @@ fn renderer_copy_is_accepted_but_cannot_deserialize_a_recovery_identity() {
         .expect("Copy is retained");
 
     assert_eq!(prepared, copy(path, parent, true));
+}
+
+#[test]
+fn replacement_authority_is_native_only_and_never_serialized_to_the_renderer() {
+    let action = Action::Replacement {
+        path: absolute(&["target.txt"]),
+        recovery: Some(crate::files::recovery::ReplacementHistory {
+            id: "a".repeat(64),
+            revision: 1,
+            refresh_dirs: vec![absolute(&[])],
+        }),
+    };
+    assert_eq!(prepare(action.clone(), true).unwrap(), Some(action.clone()));
+    let wire = serde_json::to_value(&action).unwrap();
+    assert_eq!(wire.as_object().unwrap().len(), 2);
+    assert_eq!(wire["type"], "replacement");
+    assert!(wire.get("recovery").is_none());
+    assert!(prepare_renderer(action.clone(), true).is_err());
+    assert!(prepare_renderer(
+        Action::Batch {
+            actions: vec![Action::Batch {
+                actions: vec![action],
+                label: "inner".into()
+            }],
+            label: "outer".into()
+        },
+        true
+    )
+    .is_err());
+    let incoming: Action = serde_json::from_value(serde_json::json!({
+        "type": "replacement", "path": absolute(&["target.txt"]),
+        "recovery": { "id": "a".repeat(64), "revision": 1, "refresh_dirs": [absolute(&[])] }
+    }))
+    .unwrap();
+    assert!(matches!(
+        &incoming,
+        Action::Replacement { recovery: None, .. }
+    ));
+    assert!(prepare(incoming.clone(), true).is_err());
+    assert!(prepare_renderer(incoming, true).is_err());
 }
 
 #[test]
@@ -153,6 +194,7 @@ fn retained_bytes_include_opaque_recovery_payloads() {
     let parent = absolute(&["copies"]);
     let capture = copy(path.clone(), parent.clone(), true);
     let restore = Action::Copy {
+        publication: None,
         copied_path: path,
         parent_dir: parent,
         restore_supported: true,

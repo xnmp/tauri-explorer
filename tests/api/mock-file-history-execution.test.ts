@@ -36,13 +36,13 @@ describe("executeUndo", () => {
     expect(api.renameEntry).toHaveBeenCalledWith("/docs/report.txt", "notes.txt");
   });
 
-  it("calls moveEntry with destPath and originalDir for move actions", async () => {
+  it.each(["/a", "/unrelated"])("undo uses the source parent with legacy originalDir %s", async (originalDir) => {
     const api = mockApi();
     const action: UndoAction = {
       type: "move",
       sourcePath: "/a/file.txt",
       destPath: "/b/file.txt",
-      originalDir: "/a",
+      originalDir,
     };
 
     const result = await executeUndo(action, api);
@@ -169,13 +169,13 @@ describe("executeRedo", () => {
     expect(api.renameEntry).toHaveBeenCalledWith("/docs/notes.txt", "report.txt");
   });
 
-  it("moves from originalDir back to destDir for move actions", async () => {
+  it.each(["/a", "/unrelated"])("redo uses the source parent with legacy originalDir %s", async (originalDir) => {
     const api = mockApi();
     const action: UndoAction = {
       type: "move",
       sourcePath: "/a/file.txt",
       destPath: "/b/file.txt",
-      originalDir: "/a",
+      originalDir,
     };
 
     const result = await executeRedo(action, api);

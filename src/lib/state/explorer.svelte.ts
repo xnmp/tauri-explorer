@@ -627,6 +627,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   function makePasteContext(origin: ReturnType<typeof captureMutation>) {
     let selectionCurrent = captureSelection();
+    const pastedPaths = new Set<string>();
     return {
       destPath: origin.path,
       existingEntries: coreState.entries,
@@ -634,10 +635,12 @@ function createExplorerState(seed?: ExplorerSeed) {
         if (!origin.current()) return;
         const newPaths = new Set(entries.map((entry) => entry.path));
         coreState.entries = [...coreState.entries.filter((entry) => !newPaths.has(entry.path)), ...entries];
+        for (const path of newPaths) pastedPaths.add(path);
         if (entries.length > 0 && selectionCurrent()) {
-          setSelection(newPaths);
-          coreState.cursorPath = entries[0].path;
-          coreState.selectionAnchorPath = entries[0].path;
+          setSelection(pastedPaths);
+          const first = pastedPaths.values().next().value!;
+          coreState.cursorPath = first;
+          coreState.selectionAnchorPath = first;
           selectionCurrent = captureSelection();
         }
       },
@@ -722,11 +725,16 @@ function createExplorerState(seed?: ExplorerSeed) {
     const origin = captureMutation();
     if (!origin.current()) return "Pane is closed";
     const result = await undoStore[direction]();
+    const warnings = result.warnings?.join("\n");
     if (result.action) {
       // Native history publishes confirmed effects even if this pane closes.
-      if (!result.error) toastStore.show(`${direction === "undo" ? "Undo" : "Redo"}: ${undoActionLabel(result.action)}`, "info");
+      if (!result.error) {
+        const completion = `${direction === "undo" ? "Undo" : "Redo"}: ${undoActionLabel(result.action)}`;
+        toastStore.show(warnings ? `${completion}\n${warnings}` : completion, "info");
+      }
       if (origin.current()) await refresh({ silent: true });
     }
+    if (warnings && result.error) toastStore.show(warnings, "info");
     if (result.error) toastStore.error(result.error);
     return result.error ?? null;
   }

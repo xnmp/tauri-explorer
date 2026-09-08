@@ -3,9 +3,9 @@ import { holdListingForWatcherWrites } from "../src/test-support/watcher-listing
 
 let events: EventTarget;
 let dataset: Record<string, string>;
-function receipt(path: string, count: number, observedAt = Date.now()) {
+function receipt(path: string, count: number, observedAt = Date.now(), origin: "watcher" | "mutation" = "mutation") {
   events.dispatchEvent(Object.assign(new Event("e2e-directory-watcher-receipt"), {
-    detail: { path, count, observedAt },
+    detail: { path, count, observedAt, origin },
   }));
 }
 const result = () => JSON.parse(dataset.e2eWatcherWriteOperation);
@@ -29,6 +29,7 @@ describe("native held-listing write protocol", () => {
     await vi.advanceTimersByTimeAsync(0);
     receipt("/elsewhere", 100);
     receipt("/fixture", 1, Date.now() - 1);
+    receipt("/fixture", 100, Date.now(), "watcher");
     await vi.advanceTimersByTimeAsync(0);
     expect(writes).toEqual(["/fixture/unique-0.txt"]);
     for (let count = 1; count <= 3; count++) {
@@ -44,6 +45,7 @@ describe("native held-listing write protocol", () => {
     expect(writes).toEqual([0, 1, 2].map(i => `/fixture/unique-${i}.txt`));
     expect(result().status).toBe("completed");
     expect(result().acknowledgements.map((ack: { count: number }) => ack.count)).toEqual([1, 2, 3]);
+    expect(result().acknowledgements.map((ack: { origin: string }) => ack.origin)).toEqual(["mutation", "mutation", "mutation"]);
     expect(vi.getTimerCount()).toBe(0);
   });
 

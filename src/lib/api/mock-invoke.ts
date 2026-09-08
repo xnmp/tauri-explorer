@@ -8,11 +8,12 @@ import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/f
 import { createMockFileHistory } from "./mock-file-history";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
-import { parentDir, basename } from "$lib/domain/path";
+import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import { broadcastFileChange } from "$lib/state/file-events";
 import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/git";
+import type { CopyDecision, CopySessionEvent, CopySessionOutcome } from "$lib/domain/copy-session";
 
 // Deterministic, varied timestamps: each created entry gets a distinct
 // modified time (1h apart from a fixed base) so sort-by-modified is testable.
@@ -38,6 +39,12 @@ function file(name: string, path: string, size: number): FileEntry {
 // to mirror the backend (#129); the frontend resolves it via is_directory_empty,
 // which consults this map for such folders.
 const mockDirEmpty: Record<string, boolean> = {};
+
+interface MockCopyControl {
+  cancelled: boolean;
+  pending?: { item: number; nonce: string; resolve: (decision: CopyDecision) => void };
+}
+const mockCopyControls = new Map<string, MockCopyControl>();
 
 function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boolean): FileEntry {
   if (is_empty !== undefined) mockDirEmpty[path] = is_empty;
@@ -1576,7 +1583,10 @@ const mockCommands: Record<string, CommandHandler> = {
     const existingIdx = dest.findIndex((e) => e.name === finalName);
     if (existingIdx >= 0) dest[existingIdx] = newEntry;
     else dest.push(newEntry);
-    return mutationReceipt(newEntry);
+    return {
+      ...mutationReceipt(newEntry),
+      ...(existingIdx >= 0 ? { replacement: { id: crypto.randomUUID().replaceAll("-", "").repeat(2) } } : {}),
+    };
   },
 
   move_entry: (args) => {
@@ -2157,6 +2167,19 @@ if (typeof window !== "undefined") {
     return [...lines, ""].join("\n");
   },
   native_resource_session: ({ historyChannel }) => mockFileHistory.register(historyChannel as (summary: HistorySummary) => void),
+  resolve_copy_conflict: ({ requestId, item, nonce, decision }) => {
+    const pending = mockCopyControls.get(requestId as string)?.pending;
+    if (!pending || pending.item !== item || pending.nonce !== nonce) throw new Error("Copy conflict is stale");
+    pending.resolve(decision as CopyDecision);
+    return null;
+  },
+  cancel_copy_session: ({ requestId }) => {
+    const control = mockCopyControls.get(requestId as string);
+    if (!control) throw new Error("Copy session is closed");
+    control.cancelled = true;
+    control.pending?.resolve({ choice: "cancel", applyToAll: false });
+    return null;
+  },
   file_history_push: ({ action }) => mockFileHistory.push(action as UndoAction),
   file_history_clear: () => mockFileHistory.clear(),
   file_history_execute: ({ direction, expectedEntryId }) => mockFileHistory.execute(direction as HistoryDirection, expectedEntryId as number),
@@ -2975,6 +2998,72 @@ function loadMockConfigSeed(): Record<string, string> {
 /** Match the native application boundary; inverse execution calls the raw
  * fixture command below so it cannot recursively record forward history. */
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (cmd === "copy_entries") {
+    const request = args!.request as {
+      requestId: string; sources: string[]; destDir: string;
+    };
+    const { requestId, sources, destDir } = request;
+    const send = args!.events as (event: CopySessionEvent) => void;
+    const control: MockCopyControl = { cancelled: false };
+    mockCopyControls.set(requestId, control);
+    const items: CopySessionOutcome["items"] = [];
+    let applyToAll: CopyDecision | null = null;
+    send({ type: "ready" });
+    try {
+      for (let item = 0; item < sources.length; item += 1) {
+        if (control.cancelled) break;
+        const source = sources[item];
+        const sourceEntry = (mockFiles[parentDir(source)] ?? []).find(({ path }) => path === source);
+        if (!sourceEntry) {
+          items.push({ status: "failed", error: "Source not found" });
+          continue;
+        }
+        const existing = (mockFiles[destDir] ?? []).find(({ name }) => name === basename(source));
+        let decision: CopyDecision | null = null;
+        if (existing && !sameDirectory(parentDir(source), destDir)) {
+          decision = applyToAll;
+        }
+        if (existing && !sameDirectory(parentDir(source), destDir) && !decision) {
+          const nonce = crypto.randomUUID();
+          decision = await new Promise<CopyDecision>((resolve) => {
+            control.pending = { item, nonce, resolve };
+            send({ type: "conflict", item, nonce, conflict: {
+              fileName: basename(source), sourcePath: source, remaining: sources.length - item - 1,
+              sourceSize: sourceEntry.size, sourceModified: sourceEntry.modified,
+              destSize: existing.size, destModified: existing.modified,
+            } });
+          });
+          control.pending = undefined;
+          if (decision.applyToAll) applyToAll = decision;
+        }
+        if (decision?.choice === "cancel") control.cancelled = true;
+        if (control.cancelled) break;
+        if (decision?.choice === "skip") { items.push({ status: "skipped" }); continue; }
+        send({ type: "started", item, total: sources.length });
+        try {
+          const receipt = await invokeMockCommand<FileMutationReceipt>("copy_entry", {
+            source, destDir, overwrite: decision?.choice === "overwrite",
+          });
+          items.push({ status: "succeeded", receipt });
+          send({ type: "completed", item, total: sources.length, entry: receipt.entry });
+        } catch (error) {
+          items.push({ status: "failed", error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      while (items.length < sources.length) items.push({ status: "unstarted" });
+      const outcome: CopySessionOutcome = { items, cancelled: control.cancelled, warnings: [] };
+      const actions: UndoAction[] = items.flatMap((result) => result.status === "succeeded" && !result.receipt.replacement
+        ? [{ type: "copy" as const, copiedPath: result.receipt.path, parentDir: destDir }] : []);
+      const action: UndoAction | null = actions.length === 0 ? null : actions.length === 1 ? actions[0]
+        : { type: "batch", actions, label: `Copy ${actions.length} items` };
+      const history = items.some(({ status }) => status === "succeeded")
+        ? mockFileHistory.push(action).summary
+        : mockFileHistory.summary();
+      return { result: outcome, history } as T;
+    } finally {
+      mockCopyControls.delete(requestId);
+    }
+  }
   const result = await invokeMockCommand<unknown>(cmd, args);
   if (cmd === "delete_entries") {
     const outcome = result as FileBatchOutcome;
@@ -2991,7 +3080,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       : actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" };
     return { result, history: mockFileHistory.push(action).summary } as T;
   }
-  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink"].includes(cmd)) {
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "copy_entry", "move_entry"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
       return { result, history: mockFileHistory.summary() } as T;
@@ -3000,7 +3089,9 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       ? { type: "rename", path: receipt.path, oldName: basename(args!.path as string), newName: args!.newName as string }
       : null;
     const history = mockFileHistory.push(action);
-    return { result, history: history.summary } as T;
+    return { result, history: history.summary,
+      ...(receipt.replacement ? { warning: "Previous destination retained in File Recovery. Overwrite Undo is not available yet." } : {}),
+    } as T;
   }
   return result as T;
 }

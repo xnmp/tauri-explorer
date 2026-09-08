@@ -1,0 +1,70 @@
+{
+  "checkpoint": "Ordered native paste/drop copy sessions",
+  "date": "2026-09-09",
+  "status": "Accepted local historical checkpoint; full review incomplete",
+  "validation": {
+    "rust": {
+      "passed": 1135,
+      "ignored": 19,
+      "seconds": 20.24,
+      "earlier_run": "One streaming-watch failure; exact test passed isolated and full repeat passed. Original transient trigger not established."
+    },
+    "frontend": {
+      "unit_passed": 2385,
+      "perf_passed": 30,
+      "skipped": 3,
+      "typecheck": "0 errors, 0 warnings"
+    },
+    "native": {
+      "passed": 7,
+      "seconds": 10.2,
+      "platform": "Linux WebKitGTK",
+      "binary_sha256": "e0ec9fb77e9355cedc8afcb0a8eb87d22ec9c4a2820854b2a70f7158412dfae9",
+      "scope": "Recovery/lifetime regressions, grouped mixed-copy Undo/Redo after source removal, Cancel preserving prefix and stopping suffix; actual filesystem assertions."
+    },
+    "browser": {
+      "passed": 9,
+      "seconds": 11.2,
+      "scope": "Chromium mock backend: copy/paste across Details/List/Tiles plus clipboard and grouped drop Undo."
+    },
+    "bundle": {
+      "startup_chunks": 48,
+      "startup_raw_bytes": 672918,
+      "startup_gzip_bytes": 220171,
+      "main_gzip_bytes": 91849
+    },
+    "clippy": "PASS with 8 warnings"
+  },
+  "independent_review": {
+    "agent": "effective_claims_adversary_sol",
+    "model": "GPT-5.6 Sol",
+    "verdict": "CONFIRMED scoped source contracts and log counts"
+  },
+  "limits": [
+    "Moves/cut-paste remained renderer-orchestrated; ordinary recovery admission, artifact retirement/retention and release qualification remained open.",
+    "Checked copy publication and durable replacement qualified only on Linux; top-level entry observations are not recursive content hashes.",
+    "No measured throughput or macOS startup/half-bounce claim; startup gzip increased 911 bytes from prior checkpoint.",
+    "This historical record was reconstructed from retained logs during the subsequent move-admission checkpoint after discovering that importing the code-map CLI had exited the earlier artifact writer. Source hashes below cover only unchanged copy-session files; contemporaneous integration-file hashes were not retained.",
+    "Binary hashes identify the tested binary, not reproducible-build source attestation. Temporary logs may expire."
+  ],
+  "logs": {
+    "/tmp/copy-session-rust-repeat.log": "085d529e581d286bede29572a97f509366e3ceae7aef108a26acdad42fcc9d5a",
+    "/tmp/copy-session-clippy.log": "e14aeb8502d24af2869bbd0ff6a58103cab093061544322fad6fc869aecc264b",
+    "/tmp/copy-session-observation-repro.log": "9b4085011439f6b8bf421d18efa5d308cf52f75776a06ae380648a7ef846af0e",
+    "/tmp/copy-session-vitest-full.log": "87756332c7a91fafd9339cd7dd782a3573933ff6c9d378646a68c662be1d8119",
+    "/tmp/copy-session-frontend-check.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/copy-session-native-build.log": "d2b67f834075f148fa9cd9da6a93a6551c69ee73060c66e66e6e7b55f5794219",
+    "/tmp/copy-session-native-ui.log": "66abbfbdbcb26670956d146cab492cfc2a4e1bd41804fa1fb5bece1609f42b1d",
+    "/tmp/copy-session-browser-views.log": "ffa35dd5577a184dc38df08e648e6df220758e44270e6e51f35870f0b14d12ea",
+    "/tmp/copy-session-bundle.log": "422d3e920e9bd3160458c5076e587a4ff2b3d53fdcb22659cb1c6b0326900fcd"
+  },
+  "sources": {
+    "src-tauri/src/files/copy_session.rs": "e57655328f449425986e54ef3057b62a5143540376addf09d64e0c731516e612",
+    "src-tauri/src/files/copy_session/model.rs": "9dd11206362fa5c630f1db9716af744eb9eedf3164cc9c479567ca681b30d474",
+    "src-tauri/src/files/copy_session/control.rs": "b116ec2f213507b30e4a4e1e23106b58ee84ace9cc3a9dddc319d594a713475f",
+    "src-tauri/src/files/copy_session/worker.rs": "d1255db17590a50ccba5db10e502b8a6ee2d4482a7a8f7f0cbe1776fe748a8e6",
+    "src/lib/domain/copy-session.ts": "9dc96ec1a79c910788adc72555f416d1ab6676246a5fa7d0b726378c9ed3bce8",
+    "src/lib/api/copy-session.ts": "d9fbd00dc1f28c86eeec70a58fd7227e4593d986763116ffe3a6f21872ea8a7a",
+    "src/lib/state/copy-operations.ts": "233d24fd523da6e171eec195afd5e23e30ff5fe9c22500453dd56c0a138d1fb7"
+  }
+}

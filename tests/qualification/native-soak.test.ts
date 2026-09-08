@@ -18,14 +18,18 @@ describe("native product qualification contract", () => {
       "recovery",
     ];
 
-    expect(NATIVE_QUALIFICATION_MATRIX.length).toBeGreaterThanOrEqual(expectedRisks.length);
+    expect(NATIVE_QUALIFICATION_MATRIX.length).toBeGreaterThanOrEqual(
+      expectedRisks.length,
+    );
     expect(NATIVE_QUALIFICATION_MATRIX.length).toBeLessThanOrEqual(16);
     expect(new Set(NATIVE_QUALIFICATION_MATRIX.map(({ id }) => id)).size).toBe(
       NATIVE_QUALIFICATION_MATRIX.length,
     );
 
     for (const risk of expectedRisks) {
-      expect(NATIVE_QUALIFICATION_MATRIX.some((entry) => entry.risk === risk)).toBe(true);
+      expect(
+        NATIVE_QUALIFICATION_MATRIX.some((entry) => entry.risk === risk),
+      ).toBe(true);
     }
 
     for (const entry of NATIVE_QUALIFICATION_MATRIX) {
@@ -33,7 +37,9 @@ describe("native product qualification contract", () => {
       expect(entry.scenario.length).toBeGreaterThan(20);
       expect(entry.userVisibleOutcome.length).toBeGreaterThan(20);
       if (entry.required) {
-        expect(["native-webdriver", "real-macos-process"]).toContain(entry.proof);
+        expect(["native-webdriver", "real-macos-process"]).toContain(
+          entry.proof,
+        );
       }
     }
 
@@ -62,6 +68,7 @@ describe("native product qualification contract", () => {
         release: "6.12.10",
         arch: "x64",
         webview: "WebKitGTK 2.48.1",
+        displayScale: 2,
       },
       configuration: {
         durationMs: 14_400_000,
@@ -77,16 +84,42 @@ describe("native product qualification contract", () => {
         { rssBytes: 130, sampledAtMs: 14_400_000 },
       ],
       scenarios: [
-        { id: "window-workspace", cycle: 1, durationMs: 10, outcome: "passed", failureArtifacts: [] },
-        { id: "plugin-preview", cycle: 1, durationMs: 30, outcome: "passed", failureArtifacts: [] },
-        { id: "input-interruption", cycle: 1, durationMs: 20, outcome: "passed", failureArtifacts: [] },
-        { id: "window-workspace", cycle: 2, durationMs: 40, outcome: "passed", failureArtifacts: [] },
+        {
+          id: "window-workspace",
+          cycle: 1,
+          durationMs: 10,
+          outcome: "passed",
+          failureArtifacts: [],
+        },
+        {
+          id: "plugin-preview",
+          cycle: 1,
+          durationMs: 30,
+          outcome: "passed",
+          failureArtifacts: [],
+        },
+        {
+          id: "input-interruption",
+          cycle: 1,
+          durationMs: 20,
+          outcome: "passed",
+          failureArtifacts: [],
+        },
+        {
+          id: "window-workspace",
+          cycle: 2,
+          durationMs: 40,
+          outcome: "passed",
+          failureArtifacts: [],
+        },
         {
           id: "plugin-preview",
           cycle: 2,
           durationMs: 50,
           outcome: "failed",
-          failureArtifacts: ["artifacts/seed-issue-688-repro-seed/cycle-2-plugin-preview.png"],
+          failureArtifacts: [
+            "artifacts/seed-issue-688-repro-seed/cycle-2-plugin-preview.png",
+          ],
         },
       ],
     });
@@ -94,9 +127,22 @@ describe("native product qualification contract", () => {
     expect(report).toMatchObject({
       schemaVersion: 1,
       build: { commit: "0123456789abcdef", profile: "debug-custom-protocol" },
-      platform: { os: "linux", release: "6.12.10", webview: "WebKitGTK 2.48.1" },
-      configuration: { seed: "issue-688-repro-seed", durationMs: 14_400_000, maxCycles: 500 },
-      resources: { baselineRssBytes: 100, finalRssBytes: 130, peakRssBytes: 160 },
+      platform: {
+        os: "linux",
+        release: "6.12.10",
+        webview: "WebKitGTK 2.48.1",
+        displayScale: 2,
+      },
+      configuration: {
+        seed: "issue-688-repro-seed",
+        durationMs: 14_400_000,
+        maxCycles: 500,
+      },
+      resources: {
+        baselineRssBytes: 100,
+        finalRssBytes: 130,
+        peakRssBytes: 160,
+      },
       timings: { sampleCount: 5, p50Ms: 30, p95Ms: 50 },
       passed: false,
     });

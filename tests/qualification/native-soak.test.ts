@@ -99,6 +99,7 @@ describe("native product qualification contract", () => {
         maxCycles: 500,
         seed: "issue-688-repro-seed",
         scenarios: SOAK_SCENARIOS,
+        expectedDisplayScale: 2,
       },
       startedAt: "2026-09-09T00:00:00.000Z",
       finishedAt: "2026-09-09T04:00:00.000Z",
@@ -195,7 +196,10 @@ describe("native product qualification contract", () => {
       "SOAK_DURATION_MS",
     );
     expect(() =>
-      resolveSoakConfiguration({ SOAK_MAX_CYCLES: "not-a-number" }),
+      resolveSoakConfiguration({
+        SOAK_MAX_CYCLES: "not-a-number",
+        SOAK_EXPECTED_DISPLAY_SCALE: "1",
+      }),
     ).toThrow("SOAK_MAX_CYCLES");
   });
 
@@ -225,6 +229,7 @@ describe("native product qualification contract", () => {
         maxCycles: 1,
         seed: "failure-seed",
         scenarios: SOAK_SCENARIOS,
+        expectedDisplayScale: 1,
       },
       startedAt: "2026-09-09T00:00:00.000Z",
       finishedAt: "2026-09-09T00:00:01.000Z",
@@ -263,6 +268,10 @@ describe("native product qualification contract", () => {
     const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
     const smokeConfig = fs.readFileSync("e2e-tauri/wdio.conf.ts", "utf8");
     const soakConfig = fs.readFileSync("e2e-tauri/wdio.soak.conf.ts", "utf8");
+    const soakSpec = fs.readFileSync(
+      "e2e-tauri/soak/native-soak.spec.ts",
+      "utf8",
+    );
 
     expect(packageJson.scripts["test:e2e:tauri"]).toBe(
       "wdio run e2e-tauri/wdio.conf.ts",
@@ -270,8 +279,16 @@ describe("native product qualification contract", () => {
     expect(packageJson.scripts["test:e2e:tauri:soak"]).toBe(
       "wdio run e2e-tauri/wdio.soak.conf.ts",
     );
+    expect(packageJson.scripts["build:native:qualification"]).toBe(
+      "bun run scripts/build-native-qualification.ts",
+    );
     expect(smokeConfig).not.toContain("soak/**/*.spec.ts");
     expect(soakConfig).toContain('specs: ["./soak/**/*.spec.ts"]');
+    expect(soakSpec).toContain(
+      "executeQualificationRun<NativeQualificationReport>",
+    );
+    expect(soakSpec).toContain("Record<SoakScenario");
+    expect(soakSpec).toContain("await scenarioActions[scenario](cycle)");
   });
 
   it("ties the reported source commit and profile to the exact launched binary", () => {

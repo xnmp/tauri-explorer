@@ -37,14 +37,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build frontend
-        run: bun run build
-
-      - name: Build app (embedded assets)
-        # custom-protocol is what makes the binary serve the bundled dist
-        # instead of dialing the dev server on localhost:1420.
-        run: cargo build --features tauri/custom-protocol
-        working-directory: src-tauri
+      - name: Build app and record exact qualification provenance
+        env:
+          # The macOS process probe needs production code, not WebDriver hooks.
+          NATIVE_QUALIFICATION_E2E_HOOKS: "0"
+        run: bun run build:native:qualification
 
       # WARM_MEASURE uses the app's real hidden WKWebView activation probe. The
       # qualifier requires both native cold and warm markers on every sample,

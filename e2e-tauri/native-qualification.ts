@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
 export type NativePlatform = "linux" | "windows" | "macos";
 
 export type QualificationRisk =
@@ -41,7 +45,7 @@ export interface SoakConfiguration {
   maxCycles?: number;
   seed: string;
   scenarios: readonly SoakScenario[];
-  expectedDisplayScale?: number;
+  expectedDisplayScale: number;
 }
 
 export interface ResourceMeasurement {
@@ -103,6 +107,19 @@ export interface NativeQualificationReportInput {
   resources: readonly ResourceMeasurement[];
   scenarios: readonly ScenarioMeasurement[];
   runErrors?: readonly string[];
+}
+
+export interface NativeBuildManifest {
+  schemaVersion: 1;
+  sourceCommit: string;
+  profile: string;
+  buildCommand: readonly string[];
+  startedAt: string;
+  completedAt: string;
+  binary: string;
+  binarySha256: string;
+  binaryBytes: number;
+  binaryModifiedAt: string;
 }
 
 /**
@@ -278,15 +295,13 @@ export function resolveSoakConfiguration(
       env.SOAK_SEED?.trim() ||
       `native-soak-${new Date().toISOString().slice(0, 10)}`,
     scenarios: SOAK_SCENARIOS,
+    expectedDisplayScale: positiveNumber(
+      "SOAK_EXPECTED_DISPLAY_SCALE",
+      env.SOAK_EXPECTED_DISPLAY_SCALE,
+    ),
   };
   if (env.SOAK_MAX_CYCLES !== undefined) {
     resolved.maxCycles = positiveNumber("SOAK_MAX_CYCLES", env.SOAK_MAX_CYCLES);
-  }
-  if (env.SOAK_EXPECTED_DISPLAY_SCALE !== undefined) {
-    resolved.expectedDisplayScale = positiveNumber(
-      "SOAK_EXPECTED_DISPLAY_SCALE",
-      env.SOAK_EXPECTED_DISPLAY_SCALE,
-    );
   }
   return resolved;
 }
@@ -355,6 +370,79 @@ export function writeQualificationArtifact(
   fs.renameSync(temporaryPath, outputPath);
 }
 
+export function readVerifiedNativeBuildManifest(
+  manifestPath: string,
+): NativeQualificationReport["build"] {
+  const manifest = JSON.parse(
+    fs.readFileSync(manifestPath, "utf8"),
+  ) as NativeBuildManifest;
+  if (
+    manifest.schemaVersion !== 1 ||
+    !manifest.sourceCommit ||
+    !manifest.profile ||
+    !Array.isArray(manifest.buildCommand) ||
+    !manifest.startedAt ||
+    !manifest.completedAt
+  ) {
+    throw new Error(`native build manifest is incomplete: ${manifestPath}`);
+  }
+  const binary = path.resolve(manifest.binary);
+  const stat = fs.statSync(binary);
+  const actualSha256 = createHash("sha256")
+    .update(fs.readFileSync(binary))
+    .digest("hex");
+  if (
+    actualSha256 !== manifest.binarySha256 ||
+    stat.size !== manifest.binaryBytes ||
+    stat.mtime.toISOString() !== manifest.binaryModifiedAt
+  ) {
+    throw new Error(
+      `native binary does not match its build manifest: ${binary}`,
+    );
+  }
+  return {
+    commit: manifest.sourceCommit,
+    profile: manifest.profile,
+    binary,
+    binarySha256: actualSha256,
+    binaryBytes: stat.size,
+    binaryModifiedAt: stat.mtime.toISOString(),
+  };
+}
+
+export async function executeQualificationRun<T>(options: {
+  outputPath: string;
+  execute: (runErrors: string[]) => Promise<void>;
+  createReport: (runErrors: readonly string[]) => T;
+}): Promise<T> {
+  const runErrors: string[] = [];
+  let failure: unknown;
+  try {
+    await options.execute(runErrors);
+  } catch (error) {
+    failure = error;
+    runErrors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  let report: T;
+  try {
+    report = options.createReport(runErrors);
+  } catch (error) {
+    failure ??= error;
+    runErrors.push(
+      `report construction failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    writeQualificationArtifact(options.outputPath, {
+      passed: false,
+      runErrors,
+    });
+    throw failure;
+  }
+  writeQualificationArtifact(options.outputPath, report);
+  if (failure) throw failure;
+  return report;
+}
+
 export interface MacStartupMeasurement {
   coldTotalMs: number;
   warmShowMs: number;
@@ -381,5 +469,3 @@ export function summarizeDurations(values: readonly number[]): {
     p95Ms: nearestRank(values, 0.95),
   };
 }
-import fs from "node:fs";
-import path from "node:path";

@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -7,6 +6,7 @@ import path from "node:path";
 
 import {
   parseMacStartupLog,
+  readVerifiedNativeBuildManifest,
   summarizeDurations,
   writeQualificationArtifact,
   type MacStartupMeasurement,
@@ -25,9 +25,13 @@ if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
   throw new Error("MAC_STARTUP_TIMEOUT_MS must be a positive number");
 }
 
-const binary = path.resolve(
-  process.env.MAC_STARTUP_BINARY ?? "src-tauri/target/debug/tauri-explorer",
+const build = readVerifiedNativeBuildManifest(
+  path.resolve(
+    process.env.NATIVE_BUILD_MANIFEST ??
+      "qualification-results/native-build.json",
+  ),
 );
+const binary = build.binary;
 const outputDir = path.resolve(
   process.env.MAC_STARTUP_OUTPUT_DIR ?? "qualification-results/macos-startup",
 );
@@ -96,7 +100,6 @@ async function runSample(
   }
 }
 
-const stat = fs.statSync(binary);
 const startedAt = new Date().toISOString();
 const samples: Array<MacStartupMeasurement & { log: string }> = [];
 const errors: string[] = [];
@@ -114,18 +117,7 @@ for (let index = 1; index <= sampleCount; index += 1) {
 
 const report = {
   schemaVersion: 1,
-  build: {
-    commit: Bun.spawnSync(["git", "rev-parse", "HEAD"])
-      .stdout.toString()
-      .trim(),
-    profile: process.env.MAC_STARTUP_BUILD_PROFILE ?? "debug-custom-protocol",
-    binary,
-    binarySha256: createHash("sha256")
-      .update(fs.readFileSync(binary))
-      .digest("hex"),
-    binaryBytes: stat.size,
-    binaryModifiedAt: stat.mtime.toISOString(),
-  },
+  build,
   platform: { os: "macos", release: os.release(), arch: os.arch() },
   scenario: {
     id: "macos-cold-warm-startup",

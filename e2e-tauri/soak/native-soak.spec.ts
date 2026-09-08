@@ -1,6 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,12 +7,14 @@ import path from "node:path";
 import {
   SOAK_SCENARIOS,
   buildNativeQualificationReport,
+  executeQualificationRun,
+  readVerifiedNativeBuildManifest,
   resolveSoakConfiguration,
   type NativeQualificationReport,
   type NativePlatform,
   type ResourceMeasurement,
   type ScenarioMeasurement,
-  writeNativeQualificationReport,
+  type SoakScenario,
 } from "../native-qualification";
 import { domText, entryNames, navigateTo } from "../specs/helpers";
 
@@ -284,6 +285,12 @@ async function runThemeAccessibilityZoom(): Promise<void> {
         "first native keyboard theme toggle did not change the rendered theme",
     },
   );
+  await browser.keys(["Control", "0"]);
+  expect(
+    Number.parseFloat(
+      await browser.execute(() => document.documentElement.style.zoom),
+    ),
+  ).toBe(100);
   await assertExplorerUsable();
   await assertInsideViewport(".file-list");
 
@@ -291,7 +298,6 @@ async function runThemeAccessibilityZoom(): Promise<void> {
   await assertInsideViewport(".command-palette-dialog");
   await browser.keys("Escape");
 
-  await browser.keys(["Control", "0"]);
   await browser.keys(["Control", "-"]);
   await browser.keys(["Control", "-"]);
   expect(
@@ -352,39 +358,13 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function captureBuildIdentity(
-  runErrors: string[],
-): NativeQualificationReport["build"] {
-  const binaryName =
-    process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer";
-  const binary = path.resolve("src-tauri", "target", "debug", binaryName);
-  try {
-    const stat = fs.statSync(binary);
-    return {
-      commit: execFileSync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-      }).trim(),
-      profile:
-        process.env.SOAK_BUILD_PROFILE ?? "debug-custom-protocol-e2e-hooks",
-      binary,
-      binarySha256: createHash("sha256")
-        .update(fs.readFileSync(binary))
-        .digest("hex"),
-      binaryBytes: stat.size,
-      binaryModifiedAt: stat.mtime.toISOString(),
-    };
-  } catch (error) {
-    runErrors.push(`build identity unavailable: ${errorText(error)}`);
-    return {
-      commit: "unavailable",
-      profile: process.env.SOAK_BUILD_PROFILE ?? "unavailable",
-      binary,
-      binarySha256: "unavailable",
-      binaryBytes: 0,
-      binaryModifiedAt: new Date(0).toISOString(),
-    };
-  }
-}
+const scenarioActions: Record<SoakScenario, (cycle: number) => Promise<void>> =
+  {
+    "window-workspace": runWindowWorkspace,
+    "plugin-churn": async () => runPluginChurn(),
+    "theme-accessibility-zoom": async () => runThemeAccessibilityZoom(),
+    "preview-native-input": runPreviewNativeInput,
+  };
 
 describe("extended real-native qualification soak", () => {
   it("keeps observable explorer workflows usable through deterministic churn", async () => {
@@ -392,8 +372,16 @@ describe("extended real-native qualification soak", () => {
     const started = Date.now();
     const measurements: ScenarioMeasurement[] = [];
     const resources: ResourceMeasurement[] = [];
-    const runErrors: string[] = [];
-    const build = captureBuildIdentity(runErrors);
+    const binaryName =
+      process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer";
+    let build: NativeQualificationReport["build"] = {
+      commit: "unavailable",
+      profile: "unavailable",
+      binary: path.resolve("src-tauri", "target", "debug", binaryName),
+      binarySha256: "unavailable",
+      binaryBytes: 0,
+      binaryModifiedAt: new Date(0).toISOString(),
+    };
     const platform: NativeQualificationReport["platform"] = {
       os: nativePlatform(),
       release: os.release(),
@@ -405,123 +393,120 @@ describe("extended real-native qualification soak", () => {
       "qualification-results",
       `${nativePlatform()}-${seed}.json`,
     );
-    let failure: unknown;
 
-    const sampleResource = (stage: string): void => {
-      try {
-        resources.push(sampleNativeRss(Date.now() - started));
-      } catch (error) {
-        runErrors.push(`${stage} RSS unavailable: ${errorText(error)}`);
-      }
-    };
-
-    try {
-      initializeScratchWorkspaces();
-      await $(".file-list").waitForDisplayed({ timeout: 15_000 });
-      platform.webview = await browser.execute(() => navigator.userAgent);
-      platform.displayScale = await browser.execute(
-        () => window.devicePixelRatio,
-      );
-      if (
-        configuration.expectedDisplayScale !== undefined &&
-        Math.abs(platform.displayScale - configuration.expectedDisplayScale) >
-          0.01
-      ) {
-        throw new Error(
-          `native display scale ${platform.displayScale} did not match required ${configuration.expectedDisplayScale}`,
-        );
-      }
-      sampleResource("baseline");
-
-      for (
-        let cycle = 1;
-        Date.now() - started < durationMs && (!maxCycles || cycle <= maxCycles);
-        cycle += 1
-      ) {
-        for (const scenario of scenarioOrder(cycle)) {
-          const scenarioStarted = Date.now();
-          const failureArtifacts: string[] = [];
+    const report = await executeQualificationRun<NativeQualificationReport>({
+      outputPath: reportPath,
+      execute: async (runErrors) => {
+        const sampleResource = (stage: string): void => {
           try {
-            await interruptSurface(cycle);
-            if (scenario === "window-workspace")
-              await runWindowWorkspace(cycle);
-            if (scenario === "plugin-churn") await runPluginChurn();
-            if (scenario === "theme-accessibility-zoom")
-              await runThemeAccessibilityZoom();
-            if (scenario === "preview-native-input")
-              await runPreviewNativeInput(cycle);
-            await assertExplorerUsable();
-            sampleResource(`cycle ${cycle} ${scenario}`);
-            measurements.push({
-              id: scenario,
-              cycle,
-              durationMs: Date.now() - scenarioStarted,
-              outcome: "passed",
-              failureArtifacts,
-            });
+            resources.push(sampleNativeRss(Date.now() - started));
           } catch (error) {
-            const artifactDir = path.resolve(
-              "qualification-results",
-              `seed-${seed}`,
-            );
-            try {
-              fs.mkdirSync(artifactDir, { recursive: true });
-              const screenshot = path.join(
-                artifactDir,
-                `cycle-${cycle}-${scenario}.png`,
-              );
-              await browser.saveScreenshot(screenshot);
-              failureArtifacts.push(screenshot);
-            } catch (screenshotError) {
-              runErrors.push(
-                `failure screenshot unavailable: ${errorText(screenshotError)}`,
-              );
-            }
-            for (const logPath of [
-              path.resolve("e2e-tauri", "logs", "msedgedriver.log"),
-              path.resolve("logs"),
-            ]) {
-              if (fs.existsSync(logPath)) failureArtifacts.push(logPath);
-            }
-            measurements.push({
-              id: scenario,
-              cycle,
-              durationMs: Date.now() - scenarioStarted,
-              outcome: "failed",
-              failureArtifacts,
-            });
-            failure = error;
-            break;
+            runErrors.push(`${stage} RSS unavailable: ${errorText(error)}`);
           }
-        }
-        if (failure) break;
-      }
-    } catch (error) {
-      failure = error;
-      runErrors.push(
-        `run failed before scenario completion: ${errorText(error)}`,
-      );
-    } finally {
-      sampleResource("final");
-      const report = buildNativeQualificationReport({
-        build,
-        platform,
-        configuration,
-        startedAt: startedAt.toISOString(),
-        finishedAt: new Date().toISOString(),
-        resources,
-        scenarios: measurements,
-        runErrors,
-      });
-      writeNativeQualificationReport(reportPath, report);
-      if (scratchRoot) fs.rmSync(scratchRoot, { recursive: true, force: true });
-      if (!failure && !report.passed) {
-        failure = new Error(
-          runErrors.join("; ") || "native qualification did not pass",
-        );
-      }
-    }
+        };
 
-    if (failure) throw failure;
+        try {
+          try {
+            build = readVerifiedNativeBuildManifest(
+              path.resolve(
+                process.env.NATIVE_BUILD_MANIFEST ??
+                  "qualification-results/native-build.json",
+              ),
+            );
+          } catch (error) {
+            runErrors.push(`build provenance unavailable: ${errorText(error)}`);
+          }
+          initializeScratchWorkspaces();
+          await $(".file-list").waitForDisplayed({ timeout: 15_000 });
+          platform.webview = await browser.execute(() => navigator.userAgent);
+          platform.displayScale = await browser.execute(
+            () => window.devicePixelRatio,
+          );
+          if (
+            Math.abs(
+              platform.displayScale - configuration.expectedDisplayScale,
+            ) > 0.01
+          ) {
+            throw new Error(
+              `native display scale ${platform.displayScale} did not match required ${configuration.expectedDisplayScale}`,
+            );
+          }
+          sampleResource("baseline");
+
+          for (
+            let cycle = 1;
+            Date.now() - started < durationMs &&
+            (!maxCycles || cycle <= maxCycles);
+            cycle += 1
+          ) {
+            for (const scenario of scenarioOrder(cycle)) {
+              const scenarioStarted = Date.now();
+              const failureArtifacts: string[] = [];
+              try {
+                await interruptSurface(cycle);
+                await scenarioActions[scenario](cycle);
+                await assertExplorerUsable();
+                sampleResource(`cycle ${cycle} ${scenario}`);
+                measurements.push({
+                  id: scenario,
+                  cycle,
+                  durationMs: Date.now() - scenarioStarted,
+                  outcome: "passed",
+                  failureArtifacts,
+                });
+              } catch (error) {
+                const artifactDir = path.resolve(
+                  "qualification-results",
+                  `seed-${seed}`,
+                );
+                try {
+                  fs.mkdirSync(artifactDir, { recursive: true });
+                  const screenshot = path.join(
+                    artifactDir,
+                    `cycle-${cycle}-${scenario}.png`,
+                  );
+                  await browser.saveScreenshot(screenshot);
+                  failureArtifacts.push(screenshot);
+                } catch (screenshotError) {
+                  runErrors.push(
+                    `failure screenshot unavailable: ${errorText(screenshotError)}`,
+                  );
+                }
+                for (const logPath of [
+                  path.resolve("e2e-tauri", "logs", "msedgedriver.log"),
+                  path.resolve("logs"),
+                ]) {
+                  if (fs.existsSync(logPath)) failureArtifacts.push(logPath);
+                }
+                measurements.push({
+                  id: scenario,
+                  cycle,
+                  durationMs: Date.now() - scenarioStarted,
+                  outcome: "failed",
+                  failureArtifacts,
+                });
+                throw error;
+              }
+            }
+          }
+        } finally {
+          sampleResource("final");
+          if (scratchRoot)
+            fs.rmSync(scratchRoot, { recursive: true, force: true });
+        }
+      },
+      createReport: (runErrors) =>
+        buildNativeQualificationReport({
+          build,
+          platform,
+          configuration,
+          startedAt: startedAt.toISOString(),
+          finishedAt: new Date().toISOString(),
+          resources,
+          scenarios: measurements,
+          runErrors,
+        }),
+    });
+    if (!report.passed) throw new Error(report.runErrors.join("; "));
   });
 });

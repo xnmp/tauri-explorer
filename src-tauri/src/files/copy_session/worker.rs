@@ -85,8 +85,6 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
             .map(files::file_identity::version_from_metadata)
             .transpose()?,
     });
-    #[cfg(not(target_os = "linux"))]
-    let observation = None;
     let conflict = if source_parent == destination {
         None
     } else {
@@ -115,6 +113,7 @@ fn inspect(source: String, destination: String, remaining: usize) -> Result<Insp
         } else {
             source_meta.len()
         },
+        #[cfg(target_os = "linux")]
         observation,
     })
 }

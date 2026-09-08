@@ -449,3 +449,21 @@ observation also watches the parent. Use a private parent and precreate the root
 so this cache-contract test does not depend on unrelated tempfile traffic or its
 own queued root-creation events. Diagnostics did not establish overflow or a
 production watcher defect; keep that uncertainty separate from the fixture fix.
+
+
+## Keep platform qualification separate from production admission
+
+A full Windows cross-check with the real MinGW dependencies exposed two release
+CI failures hidden by the Linux checks: the WebView initialization plugin needed
+an explicit unit configuration type, and unadmitted recovery infrastructure was
+compiled into Windows production despite having no callers. All-target Clippy
+also caught Unix-only test imports and helpers.
+
+Keep portable IPC/history contracts in `recovery/model.rs` and Unix executor
+journal authority in `recovery/durable_model.rs`. Retain Windows identity,
+directory, private-storage, file-lock, path-codec and journal adapters under tests
+until production admission is qualified. Linux copy observations cannot be
+constructed on other platforms; shared dispatch accepts `None` there. Do not
+hide these boundaries with blanket dead-code suppression. Cross-compilation
+checks source and test reachability, but cannot establish native durability,
+Windows filesystem behavior, or macOS startup latency.

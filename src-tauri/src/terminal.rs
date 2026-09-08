@@ -565,6 +565,7 @@ fn spawn_shell(
         .map_err(|e| AppError::Other(format!("openpty failed: {e}")))?;
 
     let shell = default_shell();
+    #[cfg(unix)]
     let shell_basename = std::path::Path::new(&shell)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -944,7 +945,9 @@ pub async fn terminal_status(window: tauri::Window, id: u64) -> Result<TerminalS
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::sync::mpsc;
+    #[cfg(unix)]
     use std::time::Duration;
 
     fn reserve_started(label: &str) -> (u64, Arc<AtomicBool>) {
@@ -953,6 +956,7 @@ mod tests {
         (id, token)
     }
 
+    #[cfg(unix)]
     fn running_child(id: u64) -> SharedChild {
         let map = terminals()
             .lock()
@@ -964,6 +968,7 @@ mod tests {
         handle.child.clone()
     }
 
+    #[cfg(unix)]
     fn kill_test_terminal(id: u64) {
         let _ = kill_child(&running_child(id));
     }

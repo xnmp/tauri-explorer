@@ -22,11 +22,17 @@ impl PublishedEntry {
 }
 
 /// Objects inspected for an ordered copy before requesting an overwrite choice.
+#[cfg(target_os = "linux")]
 pub(crate) struct CopyObservation {
     pub source: super::entry_version::EntryVersion,
     pub parent: super::object_id::ObjectId,
     pub target: Option<super::entry_version::EntryVersion>,
 }
+
+/// Other platforms cannot supply an observation until their copy adapters are
+/// qualified. Shared copy dispatch accepts only `None` on these platforms.
+#[cfg(not(target_os = "linux"))]
+pub(crate) enum CopyObservation {}
 
 #[derive(Debug, Serialize)]
 pub struct FileMutationReceipt {

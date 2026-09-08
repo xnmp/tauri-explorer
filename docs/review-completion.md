@@ -76,6 +76,29 @@ macOS and the Mac half-bounce measurement remain open gates. Existing experiment
 profiles already at capacity still need explicit recovery/retirement support; this
 change prevents normal builds from accumulating further permanent copy records.
 
+## Windows compilation — release-critical follow-up
+
+A full Windows GNU cross-check reproduced a Tauri WebView plugin configuration
+inference error and strict all-target Clippy failures. The plugin now declares
+its unit configuration. Portable recovery IPC/history stays available on every
+platform; Unix journal authority is separated into `recovery/durable_model.rs`.
+Windows qualification adapters remain compiled in tests without entering
+production admission. Platform-only helper/import boundaries and the thumbnail
+priority guard's lexical lifetime now compile cleanly on Windows.
+
+Windows strict all-target Clippy passes with `e2e-webview2-attach`. Both Linux
+strict Clippy configurations pass, as do **1,154 + nine** default Rust tests and
+**1,152 + nine** opt-in tests (19 ignored library fixtures each). The initial
+sandboxed test failures are retained in the evidence; complete suites pass with
+local socket/cache permissions. Independent Sol review found no release blocker.
+The moved durable validation body is byte-identical to the preceding checkpoint.
+Formatting, diff checks and source-map coverage pass.
+
+[Windows platform evidence](reviews/release-windows-platform-boundaries-2026-09-09.json)
+records commands, logs, hashes and limits. This is compilation coverage, not
+Windows runtime acceptance. Native Windows/macOS qualification and the Mac
+half-bounce measurement remain open; no additional architecture scope was added.
+
 ## Native move reservation and path binding — preceding checkpoint
 
 Forward moves now acquire the acknowledged renderer/history owner and Linux recovery

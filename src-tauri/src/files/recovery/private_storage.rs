@@ -49,6 +49,7 @@ fn private_owner(metadata: &Metadata) -> bool {
     metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0
 }
 
+#[cfg(unix)]
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }

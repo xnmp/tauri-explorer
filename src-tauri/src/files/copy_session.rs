@@ -27,6 +27,7 @@ pub(crate) struct Inspection {
     pub presentation: String,
     pub conflict: Option<Conflict>,
     pub bytes: u64,
+    #[cfg(target_os = "linux")]
     pub observation: Option<super::mutation::CopyObservation>,
 }
 

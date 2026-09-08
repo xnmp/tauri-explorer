@@ -1,10 +1,9 @@
 use super::FileMutationReceipt;
 use crate::error::AppError;
+#[cfg(unix)]
+use crate::files::file_ops::create_symlink;
 use crate::files::{
-    file_ops::{
-        create_directory, create_empty_file, create_symlink, move_entry, rename_entry,
-        write_text_file,
-    },
+    file_ops::{create_directory, create_empty_file, move_entry, rename_entry, write_text_file},
     FileEntry, FileKind,
 };
 use std::{fs, path::Path};

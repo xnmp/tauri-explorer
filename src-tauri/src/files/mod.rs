@@ -12,6 +12,7 @@ pub mod drives;
 pub(crate) mod entry_plan;
 mod entry_version;
 pub mod external_apps;
+#[cfg(any(unix, test))]
 mod file_identity;
 pub mod file_ops;
 #[cfg(target_os = "linux")]
@@ -21,6 +22,7 @@ pub mod git_status;
 pub(crate) mod move_execution;
 pub(crate) mod move_plan;
 pub(crate) mod mutation;
+#[cfg(any(unix, test))]
 mod native_directory;
 mod object_id;
 mod publication;
@@ -38,7 +40,7 @@ mod trash_mounts;
 #[cfg(any(target_os = "windows", test))]
 mod trash_outcome;
 mod watch_observation;
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 mod windows_io;
 #[cfg(target_os = "windows")]
 mod windows_paths;

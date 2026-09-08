@@ -330,6 +330,10 @@ mod tests {
 
         let first = persist_crash_report(&crashes, 1_000, b"first crash").unwrap();
         let second = persist_crash_report(&crashes, 1_000, b"second crash").unwrap();
+        assert_ne!(
+            first, second,
+            "same-second crashes need distinct report paths"
+        );
 
         let mut reports = std::fs::read_dir(&crashes)
             .unwrap()

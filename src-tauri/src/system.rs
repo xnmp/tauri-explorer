@@ -2,6 +2,7 @@
 //! Extracted from lib.rs so the entry point is pure wiring.
 
 use std::ffi::OsString;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::PathBuf;
 
 use crate::error::AppError;

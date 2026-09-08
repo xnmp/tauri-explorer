@@ -28,6 +28,7 @@ enum Identity {
 impl ObjectId {
     /// Largest native JSON identity, including its platform tag and keys.
     /// Resource admission uses this before allocating serialized claim arrays.
+    #[cfg(any(unix, test))]
     pub(super) const MAX_ENCODED_BYTES: usize = if cfg!(windows) { 133 } else { 79 };
 
     #[cfg(unix)]
@@ -39,7 +40,7 @@ impl ObjectId {
         Self(identity)
     }
 
-    #[cfg(windows)]
+    #[cfg(all(windows, test))]
     pub(super) fn windows(volume_serial: u64, file_id: [u8; 16]) -> Self {
         Self(Identity::Windows {
             volume_serial,
@@ -49,6 +50,7 @@ impl ObjectId {
 
     /// Volume equality is weaker than object equality and never crosses an OS
     /// namespace, even when the numeric volume identifiers happen to match.
+    #[cfg(any(unix, test))]
     pub(super) fn same_volume(self, other: Self) -> bool {
         self.0.volume() == other.0.volume()
     }

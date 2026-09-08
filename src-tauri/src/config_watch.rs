@@ -461,8 +461,9 @@ mod tests {
     use super::{
         pending, reconcile_watch_plan, settings_path, watched_config_name, WatchPlan,
         WatchRegistration, WatchState, BOOKMARKS_FILE, FOLDER_VIEWS_FILE, SETTINGS_FILE,
-        THEMES_DIR, WATCH_PLAN_REFRESH_INTERVAL,
     };
+    #[cfg(unix)]
+    use super::{THEMES_DIR, WATCH_PLAN_REFRESH_INTERVAL};
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};

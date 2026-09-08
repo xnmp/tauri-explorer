@@ -176,7 +176,7 @@ pub fn run(launch_dir: Option<String>) {
     // into every spawning page so fresh and warm descendants preserve them.
     #[cfg(all(target_os = "windows", feature = "e2e-webview2-attach"))]
     let builder = builder.plugin(
-        tauri::plugin::Builder::new("e2e-webview-environment")
+        tauri::plugin::Builder::<_, ()>::new("e2e-webview-environment")
             .js_init_script(format!(
                 "Object.defineProperty(window, '__E2E_WEBVIEW_BROWSER_ARGS__', {{ value: {} }});",
                 serde_json::to_string(&e2e_webview2_browser_args()).unwrap()

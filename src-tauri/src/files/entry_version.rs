@@ -24,6 +24,7 @@ pub(crate) struct EntryVersion {
     pub gid: u32,
 }
 
+#[cfg(unix)]
 impl EntryVersion {
     pub(super) fn validate(&self) -> std::io::Result<()> {
         let valid = self.modified_nanos < 1_000_000_000 && !(self.directory && self.symlink);

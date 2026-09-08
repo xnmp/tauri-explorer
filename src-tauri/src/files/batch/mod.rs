@@ -204,6 +204,7 @@ pub(super) async fn run_with_receipts_owned<O: Send + 'static>(
 /// dedicated worker instead when the context requires a fresh OS thread. Setup
 /// receives the ledger's immutable paths, so a prepared context can preserve
 /// request identity without cloning every path or inventing its own ordering.
+#[cfg(any(target_os = "linux", test))]
 pub(super) async fn run_with_setup_owned<O: Send + 'static, C: 'static>(
     owner: O,
     plan: BatchPlan,

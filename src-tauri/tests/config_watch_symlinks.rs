@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -20,7 +22,6 @@ fn reported_name_after_external_write(config_dir: &Path, changed: &Path) -> Opti
     None
 }
 
-#[cfg(unix)]
 #[test]
 fn reports_writes_to_symlinked_settings_targets() {
     let temp = tempfile::tempdir().expect("temporary directory");
@@ -39,7 +40,6 @@ fn reports_writes_to_symlinked_settings_targets() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn reports_writes_to_symlinked_theme_targets() {
     let temp = tempfile::tempdir().expect("temporary directory");
@@ -58,7 +58,6 @@ fn reports_writes_to_symlinked_theme_targets() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn reports_writes_after_a_symlink_target_is_replaced() {
     let temp = tempfile::tempdir().expect("temporary directory");

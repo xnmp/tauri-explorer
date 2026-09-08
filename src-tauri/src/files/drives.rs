@@ -62,6 +62,7 @@ pub struct Drive {
 }
 
 impl Drive {
+    #[cfg(not(target_os = "windows"))]
     fn simple(name: String, path: String, kind: DriveKind) -> Self {
         Drive {
             name,

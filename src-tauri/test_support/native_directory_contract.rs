@@ -26,6 +26,7 @@ fn independent_enumerations_retain_the_anchor_after_its_name_is_replaced() {
     let root = tempfile::tempdir().unwrap();
     let parent = Directory::open(root.path()).unwrap();
     let child = parent.create_directory(OsStr::new("child")).unwrap();
+    assert!(child.metadata().unwrap().is_dir());
     child
         .create_file(OsStr::new("payload"))
         .unwrap()
@@ -113,4 +114,23 @@ fn a_dangling_symlink_is_an_existing_entry_and_is_never_followed() {
     directory.unlink(OsStr::new("link"), false).unwrap();
     assert!(!directory.entry_exists(OsStr::new("link")).unwrap());
     assert!(!root.path().join("missing").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_volume_name_limit_is_enforced_and_durability_fails_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = Directory::open(root.path()).unwrap();
+    let maximum = directory.name_max().unwrap();
+    assert!((1..=32_767).contains(&maximum));
+    let accepted = "a".repeat(maximum);
+    directory.create_file(OsStr::new(&accepted)).unwrap();
+    assert!(directory.entry_exists(OsStr::new(&accepted)).unwrap());
+    let oversized = "b".repeat(maximum + 1);
+    assert!(directory.create_file(OsStr::new(&oversized)).is_err());
+    assert_eq!(directory.names(1).unwrap(), vec![OsStr::new(&accepted)]);
+    assert_eq!(
+        directory.sync().unwrap_err().kind(),
+        std::io::ErrorKind::Unsupported
+    );
 }

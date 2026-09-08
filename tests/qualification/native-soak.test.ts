@@ -11,6 +11,7 @@ import {
   executeQualificationRun,
   parseMacStartupLog,
   readVerifiedNativeBuildManifest,
+  resolveNativeApplication,
   resolveSoakConfiguration,
   type QualificationRisk,
   writeNativeQualificationReport,
@@ -277,7 +278,7 @@ describe("native product qualification contract", () => {
       "wdio run e2e-tauri/wdio.conf.ts",
     );
     expect(packageJson.scripts["test:e2e:tauri:soak"]).toBe(
-      "wdio run e2e-tauri/wdio.soak.conf.ts",
+      "bun run scripts/run-native-soak.ts",
     );
     expect(packageJson.scripts["build:native:qualification"]).toBe(
       "bun run scripts/build-native-qualification.ts",
@@ -289,6 +290,11 @@ describe("native product qualification contract", () => {
     );
     expect(soakSpec).toContain("Record<SoakScenario");
     expect(soakSpec).toContain("await scenarioActions[scenario](cycle)");
+    const runner = fs.readFileSync("scripts/run-native-soak.ts", "utf8");
+    expect(runner).toContain("NATIVE_BUILD_MANIFEST: manifestPath");
+    expect(runner).toContain(
+      "WebDriver exited before the native report was emitted",
+    );
   });
 
   it("ties the reported source commit and profile to the exact launched binary", () => {
@@ -331,6 +337,11 @@ describe("native product qualification contract", () => {
       binary,
       binarySha256: sha256,
     });
+    expect(
+      resolveNativeApplication("/wrong/default/binary", {
+        NATIVE_BUILD_MANIFEST: manifestPath,
+      }),
+    ).toBe(binary);
     fs.appendFileSync(binary, " tampered");
     expect(() => readVerifiedNativeBuildManifest(manifestPath)).toThrow(
       "does not match",

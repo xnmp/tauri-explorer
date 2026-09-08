@@ -116,10 +116,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cargo test --manifest-path src-tauri/Cargo.toml --lib files::batch::dedicated_tests -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --lib files::restore_outcome -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --lib files::trash::windows_index_tests -- --test-threads=1
-          cargo test --manifest-path src-tauri/Cargo.toml --lib git::tests::trash_untracked -- --test-threads=1
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
+          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked; do
+            # Cargo succeeds with zero matching tests. Fail explicitly when a
+            # source/module move leaves one of these acceptance filters stale.
+            if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then
+              echo "::error::No Rust contracts match $filter"
+              exit 1
+            fi
+            cargo test --manifest-path src-tauri/Cargo.toml --lib "$filter" -- --test-threads=1
+          done
 
       - name: Windows Rust lint
         if: runner.os == 'Windows'

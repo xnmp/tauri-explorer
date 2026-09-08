@@ -441,6 +441,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `freedesktop_trash.rs` — Linux exact trash receipts, exclusive metadata publication, descriptor-relative no-replace moves, identity verification and restore.
 - `trash_mounts.rs` — lossless Linux mountinfo parsing and mount-ID-aware trash placement, including bind mounts.
 - `windows_restore.rs` — STA-owned Windows Shell delete/restore, exact Recycle Bin locators, source-verified callbacks and collision-preserving flags.
+- `windows_paths.rs` — Windows ordinal path comparison and component-aware alias/ancestor rejection before destructive batch admission; receipt spellings remain unchanged.
 - `trash_outcome.rs` — pure Windows delete callback classification; committed recovery warnings remain distinct from uncertain and unchanged outcomes.
 - `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
 - `restore_parents.rs` — iterative Linux restore-parent creation; bounded supervisor-owned invalidations survive partial creation and panic independently of leaf completion.

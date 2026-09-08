@@ -48,5 +48,9 @@ This is live-session trash identity, not a durable transaction journal. Process
 recovery, persistent manifests, overwrite recovery, native cancellation and
 source parking still require the broader operation design. macOS programmatic
 restore remains unavailable. Windows runtime, real Linux cross-mount acceptance,
-Windows batch alias admission, and namespace interference require further proof.
+Windows physical aliases and namespace interference require further proof.
+Shared Windows batch spelling validation is implemented with cross-target checks;
+its runtime and maximum-input latency acceptance remain outstanding. Durable
+ownership and discovery are specified separately in proposed
+[ADR 0020](0020-durable-file-recovery.md).
 No startup or deletion-throughput improvement is claimed by this migration.

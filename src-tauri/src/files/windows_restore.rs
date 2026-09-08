@@ -7,9 +7,9 @@ use super::trash_artifact::{RestoreRequest, TrashArtifact, TrashSuccess};
 use super::trash_outcome::{
     classify_delete, DeleteCompletionEvidence, DeleteItemCompletion, DeleteOutcome, DeletedArtifact,
 };
+pub(crate) use super::windows_paths::WindowsPathKey;
 use crate::error::AppError;
 use std::{
-    cmp::Ordering,
     ffi::{c_void, OsStr, OsString},
     marker::PhantomData,
     os::windows::ffi::{OsStrExt, OsStringExt},
@@ -21,7 +21,6 @@ use windows::{
     core::{implement, Error as WindowsError, HRESULT, PCWSTR},
     Win32::{
         Foundation::E_ABORT,
-        Globalization::{CompareStringOrdinal, CSTR_EQUAL, CSTR_GREATER_THAN, CSTR_LESS_THAN},
         System::Com::{
             CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
             COINIT_APARTMENTTHREADED,
@@ -425,55 +424,10 @@ fn shell_filesystem_name(path: &Path) -> Vec<u16> {
     name
 }
 
-/// Pre-encoded Windows path ordering key for case-insensitive native identity.
-/// Only verbatim DOS-drive paths are folded onto their ordinary spelling; UNC
-/// and device prefixes retain their distinct namespace semantics.
-#[derive(Clone, Debug)]
-pub(crate) struct WindowsPathKey(Vec<u16>);
-
-impl WindowsPathKey {
-    pub(crate) fn new(path: &Path) -> Self {
-        let mut path: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .map(|unit| {
-                if unit == b'/' as u16 {
-                    b'\\' as u16
-                } else {
-                    unit
-                }
-            })
-            .collect();
-        const VERBATIM: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
-        let verbatim_dos_drive = path.starts_with(&VERBATIM)
-            && path.get(4).is_some_and(|unit| {
-                (*unit >= b'A' as u16 && *unit <= b'Z' as u16)
-                    || (*unit >= b'a' as u16 && *unit <= b'z' as u16)
-            })
-            && path.get(5) == Some(&(b':' as u16))
-            && path.get(6) == Some(&(b'\\' as u16));
-        if verbatim_dos_drive {
-            path.drain(..VERBATIM.len());
-        }
-        Self(path)
-    }
-
-    pub(crate) fn compare(&self, other: &Self) -> Result<Ordering, AppError> {
-        match unsafe { CompareStringOrdinal(&self.0, &other.0, true) } {
-            result if result == CSTR_LESS_THAN => Ok(Ordering::Less),
-            result if result == CSTR_EQUAL => Ok(Ordering::Equal),
-            result if result == CSTR_GREATER_THAN => Ok(Ordering::Greater),
-            _ => Err(AppError::Other(
-                "Windows could not compare native path identities".into(),
-            )),
-        }
-    }
-}
-
 fn windows_path_eq(left: &Path, right: &Path) -> bool {
     WindowsPathKey::new(left)
         .compare(&WindowsPathKey::new(right))
-        .is_ok_and(|ordering| ordering == Ordering::Equal)
+        .is_ok_and(|ordering| ordering.is_eq())
 }
 
 fn shell_item_path(item: &IShellItem) -> Result<PathBuf, String> {

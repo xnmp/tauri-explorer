@@ -257,14 +257,12 @@ mod native {
             compare(r"C:\Work\Ä.txt", r"\\?\c:\work\ä.TXT"),
             Ordering::Equal
         );
-        assert_ne!(
-            compare(r"\\?\UNC\server\share\item", r"UNC\server\share\item"),
-            Ordering::Equal
-        );
-        assert_ne!(
-            compare(r"\\?\Volume{1234}\item", r"Volume{1234}\item"),
-            Ordering::Equal
-        );
+        assert!(WindowsPathKey::new(Path::new(r"\\?\UNC\server\share\item"))
+            .compare(&WindowsPathKey::new(Path::new(r"UNC\server\share\item")))
+            .is_err());
+        assert!(WindowsPathKey::new(Path::new(r"\\?\Volume{1234}\item"))
+            .compare(&WindowsPathKey::new(Path::new(r"Volume{1234}\item")))
+            .is_err());
     }
 
     #[test]

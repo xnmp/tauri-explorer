@@ -28,6 +28,8 @@ mod trash_mounts;
 mod trash_outcome;
 mod watch_observation;
 #[cfg(target_os = "windows")]
+mod windows_paths;
+#[cfg(target_os = "windows")]
 mod windows_restore;
 
 use chrono::{DateTime, Local};

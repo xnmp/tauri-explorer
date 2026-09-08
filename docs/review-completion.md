@@ -5,6 +5,37 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Windows batch admission checkpoint
+
+Windows destructive selections now pass shared ordinal path validation after
+stable exact-string deduplication and before worker/history admission. DOS/UNC
+case and ordinary/verbatim aliases are compared by component, so a sibling such
+as `dir-file` cannot hide `dir/child` from selected-ancestor rejection. The same
+parser guards Shell destination verification. Ambiguous namespaces, stream syntax
+and reserved device components cannot become equal merely by removing a prefix.
+
+Depth and aggregate component limits bound parsing/comparison work while retaining
+the existing 32,768-item capacity for ordinary paths. Reserved-name validation
+uses static checks without per-name allocations or Windows comparison calls.
+Independent GPT-5.6 Sol review accepts the static boundary. Maximum-shape Windows
+latency remains unmeasured; neither lexical comparison nor cross-compilation proves
+physical identity through junctions, 8.3 names, hardlinks or mapped shares.
+
+The Linux batch suite passes 20 cases, including actual case-distinct files.
+Linux all-target Clippy and formatting pass; actual Windows source and tests
+pass the Windows-target harness Clippy. Windows tests have not run on a Windows
+host. CI now discovers tests before running its filters, and a reproduced stale
+filter is rejected instead of silently passing zero tests. Maps cover 415/415
+source files. See [the evidence record](reviews/windows-batch-admission-2026-09-08.json).
+
+[Proposed ADR 0020](adr/0020-durable-file-recovery.md) specifies durable artifact
+ownership, bounded discovery, cross-process conflict admission and crash
+reconciliation. It is design, not implemented recovery. The next vertical must
+integrate the journal with replacement ownership and a usable recovery surface
+before source parking. Overwrite Undo, remaining native forward batches,
+progress/cancellation, actual platform and cross-filesystem acceptance, and Mac
+half-bounce measurements remain required. No startup improvement is claimed.
+
 ## Linux restore-parent effects checkpoint
 
 Restore-parent creation now has an independent native effect receipt. Before each
@@ -338,6 +369,7 @@ limitations and must not be read as current status.
 | 7. Native identity | Verify equivalent separator/case/trailing-slash paths against real native watches; retain case-sensitive Linux/WSL semantics and native IPC arguments | Windows acceptance outstanding; shared owner already implemented |
 | 8. Interaction consistency | Audit transition-all, semantic colors, address focus commands, theme controls; immediate pointer feedback, browser/native outcome coverage | 27 transition-all rules removed, 13 inactive aliases repaired, DnD uses semantic tokens. Ctrl+L targets active pane and respects hidden address bars/terminal ownership. Focused unit and Chromium address/theme/hover outcomes pass (all three file views). Independent review confirmed focus/transition contracts and exposed a white child-text override on bright accents; corrected to inherit on-accent color with a regression. Native maximize/restore and pointer-captured divider outcomes now pass, with stale-gesture and late-listener regressions and independent review. Graph detail expansion has a reproduced/fixed WebKit scrollbar feedback loop. The following checkpoint aligns the full graph header and metadata table, preserves complete reference access and restores native/custom button keyboard ownership in focused Chromium/WebKit, unit and integrated browser acceptance. File-list cursor/selection separation, off-screen Tab recovery and keyboard inline-editor return now have 111 Chromium outcomes and four Linux native outcomes, with backward native traversal limited by driver delivery. The wider theme/native interaction matrix remains pending |
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
+| File operation ownership and recovery | Native whole-intent copy/move/paste/drop/grouped rename, conflict revalidation, bounded progress/cancellation; exact inverse artifacts; durable discovery/reconciliation before source parking; overwrite Undo and explicit artifact retention; real crash and cross-filesystem acceptance | Five simple forward commands and selection deletion have native ownership; Linux exact trash identity and shared history have scoped native acceptance. Windows batch spelling validation is implemented and cross-compiled; runtime/physical-identity acceptance remains open. Durable journal/discovery, overwrite Undo, remaining forward batches and cancellation are still implementation work, with Windows/macOS and real cross-filesystem acceptance outstanding. See ADRs 0018–0020 and the latest exact-trash/Windows admission evidence. |
 | Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. The focused resize migration is implemented; the wider themes/accessibility/platform matrix remains outstanding |
 | Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | Outstanding |
 

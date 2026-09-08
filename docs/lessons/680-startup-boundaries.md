@@ -962,3 +962,20 @@ rejecting group/other write. Restrict this migration to forward discovery: exact
 restore must validate without chmodding a substituted receipt directory. A full
 Cargo test run can replace the debug application binary; rebuild with the native
 acceptance features and record its actual hash before attributing UI evidence.
+
+### Windows batch identity and test discovery
+
+Native `Path` component ordering does not supply Windows case folding. Perform
+stable exact-string deduplication first, then reject semantic aliases and
+ancestor/descendant selections before workers or history admission. Compare
+components with Windows ordinal semantics; sorting complete strings can place
+`dir-file` between `dir` and `dir/child`. Ordinary/verbatim alias folding also
+needs a shared parser for callback verification: reserved DOS names, stream
+syntax and ambiguous components must not acquire false identity by stripping a
+namespace prefix. Bound parser/comparison work without shrinking ordinary
+maximum-sized selections unnecessarily. Physical aliases still need handles.
+
+Cargo returns success when a filter matches no tests. Module extraction left the
+Windows `windows_index_tests` CI filter pointing at a removed module. Discover
+actual tests first and reject missing filters before treating a run as evidence.
+Cross-target compilation does not execute Windows path or Shell contracts.

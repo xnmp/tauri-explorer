@@ -25,3 +25,4 @@ decision during review.
 | [0017](0017-file-batch-outcomes.md) | File batch outcomes and undo progress | Accepted |
 | [0018](0018-native-file-history.md) | Native file history and committed mutation receipts | Proposed |
 | [0019](0019-exact-trash-recovery.md) | Exact trash receipts and bounded recovery retention | Proposed |
+| [0020](0020-durable-file-recovery.md) | Durable artifact ownership, discovery and reconciliation | Proposed |

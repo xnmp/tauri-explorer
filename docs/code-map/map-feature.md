@@ -190,6 +190,7 @@ backend for E2E/browser).
 - `src-tauri/src/files/freedesktop_trash.rs`, `files/trash_mounts.rs` — Linux mount-aware trash placement, exclusive metadata publication and descriptor-relative no-replace moves with captured identity verification.
 - `src-tauri/src/files/restore_parents.rs` — recreate Linux restore parents with conservative directory effects in the external batch ledger; native history carries them to refresh publication even when the requested leaf remains uncompleted.
 - `src-tauri/src/files/windows_restore.rs`, `files/restore_outcome.rs`, `files/trash_outcome.rs` — Windows STA delete/restore with exact Shell receipt capture, source-verified completion and pure outcome classification.
+- `src-tauri/src/files/windows_paths.rs` — ordinal DOS/UNC alias comparison and bounded component-aware batch validation, shared with native Shell source/destination verification.
 - FLOW: delete → native whole-selection admission → per-path execution → native inverse for confirmed recoverable successes → settled reply → view reconciliation. Ctrl+Z reserves the exact history entry; uncertain paths are consumed, completed paths move to redo, failed/unstarted paths remain retryable (ADRs 0017/0018).
 
 ## Thumbnails

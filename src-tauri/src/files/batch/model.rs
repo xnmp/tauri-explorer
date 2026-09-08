@@ -41,19 +41,24 @@ impl BatchPlan {
             .into_iter()
             .filter(|path| seen.insert(path.clone()))
             .collect();
-        // Component ordering places a selected ancestor immediately before
-        // its first selected descendant. Hashing every ancestor prefix would
-        // make admission quadratic for deeply nested input paths.
-        let mut native: Vec<_> = paths.iter().map(Path::new).collect();
-        native.sort_unstable();
-        for pair in native.windows(2) {
-            if pair[0] == pair[1] {
-                return Err("File batch contains multiple spellings of the same path".into());
-            }
-            if pair[1].starts_with(pair[0]) {
-                return Err(
-                    "Select either a directory or its descendants in one file batch".into(),
-                );
+        #[cfg(target_os = "windows")]
+        crate::files::windows_paths::validate_selection(&paths)?;
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Component ordering places a selected ancestor immediately before
+            // its first selected descendant. Hashing every ancestor prefix would
+            // make admission quadratic for deeply nested input paths.
+            let mut native: Vec<_> = paths.iter().map(Path::new).collect();
+            native.sort_unstable();
+            for pair in native.windows(2) {
+                if pair[0] == pair[1] {
+                    return Err("File batch contains multiple spellings of the same path".into());
+                }
+                if pair[1].starts_with(pair[0]) {
+                    return Err(
+                        "Select either a directory or its descendants in one file batch".into(),
+                    );
+                }
             }
         }
         Ok(Self { paths })

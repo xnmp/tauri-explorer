@@ -283,6 +283,66 @@ fn exact_duplicates_are_removed_stably_before_execution() {
     assert!(outcome.unstarted.is_empty());
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_aliases_and_case_folded_ancestors_fail_batch_admission() {
+    for paths in [
+        vec![r"C:\Work\file.txt", r"c:\WORK\FILE.TXT"],
+        vec![r"C:\Work\file.txt", r"\\?\C:\Work\file.txt"],
+        vec![r"\\server\share\file", r"\\?\UNC\SERVER\SHARE\file"],
+        vec![r"C:\Work\dir", r"C:\Work\dir-file", r"c:\work\DIR\child"],
+        vec![r"C:\Work\file", r"C:\Work\file::$DATA"],
+    ] {
+        assert!(
+            BatchPlan::new(paths.iter().map(|path| (*path).to_owned()).collect()).is_err(),
+            "ambiguous Windows selection was admitted: {paths:?}"
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_batch_retains_original_spelling_and_exact_duplicate_order() {
+    let paths = vec![
+        r"C:/Mixed/First.TXT".to_owned(),
+        r"\\?\D:\Other\Second.txt".to_owned(),
+    ];
+    let plan = BatchPlan::new(vec![paths[0].clone(), paths[1].clone(), paths[0].clone()]).unwrap();
+    assert_eq!(plan.paths, paths);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_component_budget_admits_the_full_path_count_at_ordinary_depth() {
+    let parents = (0..14)
+        .map(|index| format!("dir{index}"))
+        .collect::<Vec<_>>()
+        .join(r"\");
+    let paths: Vec<_> = (0..32_768)
+        .map(|index| format!(r"C:\{parents}\file-{index}.txt"))
+        .collect();
+    let admitted = BatchPlan::new(paths.clone()).unwrap();
+    assert_eq!(admitted.paths, paths);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_batch_keeps_case_distinct_files_independent() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = [root.path().join("item"), root.path().join("ITEM")];
+    fs::write(&paths[0], b"lower").unwrap();
+    fs::write(&paths[1], b"upper").unwrap();
+    let spellings: Vec<_> = paths.iter().map(|path| path_string(path)).collect();
+    let plan = BatchPlan::new(spellings.clone()).unwrap();
+    assert_eq!(plan.paths, spellings);
+    let outcome = tauri::async_runtime::block_on(run(plan, move |path| {
+        fs::remove_file(path)?;
+        Ok(())
+    }));
+    assert_eq!(outcome.succeeded, spellings);
+    assert!(paths.iter().all(|path| !path.exists()));
+}
+
 #[test]
 fn empty_batch_has_no_effects_or_outcome_partitions() {
     let calls = Arc::new(Mutex::new(0usize));

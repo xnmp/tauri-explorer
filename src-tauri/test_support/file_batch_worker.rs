@@ -15,6 +15,72 @@ fn plan(paths: &[&Path]) -> BatchPlan {
 }
 
 #[test]
+fn exact_receipts_survive_later_worker_panic_and_never_serialize_to_the_renderer() {
+    use crate::files::trash_artifact::{TrashArtifact, TrashSuccess};
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    let first_path = path_string(&first);
+    let expected = Arc::new(TrashArtifact::WindowsShell {
+        parsing_name_utf16: vec![65, 66],
+    });
+    let receipt = expected.clone();
+    let succeeded = first_path.clone();
+    let outcome = tauri::async_runtime::block_on(super::run_with_receipts(
+        plan(&[&first, &second]),
+        move |path, _| {
+            if path != succeeded {
+                panic!("worker exited after an earlier exact receipt");
+            }
+            Ok(TrashSuccess {
+                artifact: Some(receipt.clone()),
+                warning: None,
+            })
+        },
+    ));
+    assert_eq!(outcome.artifacts.get(&first_path), Some(&expected));
+    assert_eq!(outcome.succeeded, std::slice::from_ref(&first_path));
+    assert_eq!(outcome.uncertain[0].path, path_string(&second));
+    let wire = serde_json::to_value(&outcome).unwrap();
+    assert!(wire.get("artifacts").is_none());
+    assert_eq!(wire["succeeded"][0], first_path);
+}
+
+#[test]
+fn oversized_receipt_is_a_committed_warning_and_later_items_still_run() {
+    use crate::files::trash_artifact::{TrashArtifact, TrashSuccess};
+    let dir = tempfile::tempdir().unwrap();
+    let paths = [dir.path().join("large"), dir.path().join("small")];
+    let large = path_string(&paths[0]);
+    let outcome = tauri::async_runtime::block_on(super::run_with_receipts(
+        plan(&[&paths[0], &paths[1]]),
+        move |path, _| {
+            Ok(TrashSuccess {
+                artifact: Some(Arc::new(TrashArtifact::WindowsShell {
+                    parsing_name_utf16: vec![65; if path == large { 16 * 1024 * 1024 } else { 2 }],
+                })),
+                warning: None,
+            })
+        },
+    ));
+    assert_eq!(
+        outcome.succeeded,
+        paths
+            .iter()
+            .map(|path| path_string(path))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        outcome.failed.is_empty() && outcome.uncertain.is_empty() && outcome.unstarted.is_empty()
+    );
+    assert!(!outcome.artifacts.contains_key(&path_string(&paths[0])));
+    assert!(outcome.artifacts.contains_key(&path_string(&paths[1])));
+    assert_eq!(outcome.warnings.len(), 1);
+    assert_eq!(outcome.warnings[0].path, path_string(&paths[0]));
+    assert!(outcome.error().unwrap().contains("batch memory budget"));
+}
+
+#[test]
 fn worker_panic_preserves_settled_effects_and_marks_only_the_active_item_uncertain() {
     let dir = tempfile::tempdir().unwrap();
     let first = dir.path().join("first.txt");

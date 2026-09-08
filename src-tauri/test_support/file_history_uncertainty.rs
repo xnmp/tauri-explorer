@@ -10,6 +10,105 @@ use crate::{
 };
 use std::{fs, path::Path};
 
+#[cfg(target_os = "linux")]
+#[test]
+fn undo_restores_its_own_deletion_when_the_same_path_is_trashed_again_externally() {
+    const CASE: &str = "file_history::uncertainty_tests::undo_restores_its_own_deletion_when_the_same_path_is_trashed_again_externally";
+    const CHILD: &str = "TAURI_HISTORY_TRASH_IDENTITY_CHILD";
+    if std::env::var(CHILD).as_deref() != Ok(CASE) {
+        let root = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", CASE, "--nocapture", "--test-threads=1"])
+            .env(CHILD, CASE)
+            .env("XDG_DATA_HOME", root.path().join("data"))
+            .env("TAURI_HISTORY_TRASH_IDENTITY_ROOT", root.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("running 1 test"),
+            "isolated history identity test failed\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    let root =
+        std::path::PathBuf::from(std::env::var_os("TAURI_HISTORY_TRASH_IDENTITY_ROOT").unwrap());
+    let directory = root.join("files");
+    fs::create_dir_all(&directory).unwrap();
+    let file = directory.join("same-name.txt");
+    let requested = file.to_string_lossy().into_owned();
+    fs::write(&file, b"bytes deleted by this history entry").unwrap();
+    let deletion =
+        tauri::async_runtime::block_on(NativeOperations.trash_many(vec![requested.clone()]))
+            .unwrap();
+    assert_eq!(deletion.succeeded, std::slice::from_ref(&requested));
+    let action = Action::Delete {
+        recovery: super::model::Recovery::Restore(std::sync::Arc::new(deletion.artifacts)),
+        paths: deletion.succeeded,
+        parent_dir: directory.to_string_lossy().into_owned(),
+    };
+    let mut histories = Histories::default();
+    histories.register(1);
+    histories.push(1, Some(action), false).unwrap();
+    let before: std::collections::HashSet<_> = trash::os_limited::list()
+        .unwrap()
+        .into_iter()
+        .map(|item| item.id)
+        .collect();
+
+    fs::write(&file, b"unrelated newer deletion").unwrap();
+    trash::delete(&file).unwrap();
+    let external = trash::os_limited::list()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.original_path() == file && !before.contains(&item.id))
+        .unwrap();
+    // Only the external item's timestamp changes. Make ordering deterministic
+    // without sleeping or modifying the original item's identity/metadata.
+    let info = Path::new(&external.id);
+    let text = fs::read_to_string(info)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            if line.starts_with("DeletionDate=") {
+                "DeletionDate=2035-01-01T00:00:00"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    fs::write(info, text).unwrap();
+
+    let reservation = histories
+        .begin(1, Direction::Undo, histories.summary(1).undo_id.unwrap())
+        .unwrap();
+    let result = tauri::async_runtime::block_on(execution::execute(
+        reservation.action.clone(),
+        &NativeOperations,
+        Direction::Undo,
+    ));
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        b"bytes deleted by this history entry",
+        "Undo must restore its captured artifact, not the newest matching pathname"
+    );
+    let payload = info
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("files")
+        .join(info.file_stem().unwrap());
+    assert_eq!(fs::read(payload).unwrap(), b"unrelated newer deletion");
+    histories.finish(reservation, &result);
+    assert!(histories.summary(1).redo_id.is_some());
+}
+
 #[test]
 fn auxiliary_directory_effects_publish_without_completing_a_history_action() {
     let root = tempfile::tempdir().unwrap();
@@ -48,14 +147,14 @@ impl Operations for PanicAfterRename {
     ) -> Result<Option<String>, OperationError> {
         NativeOperations.move_entry(path, destination).await
     }
-    async fn trash(&self, path: String) -> Result<(), OperationError> {
-        NativeOperations.trash(path).await
-    }
     async fn trash_many(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
         NativeOperations.trash_many(paths).await
     }
-    async fn restore(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
-        NativeOperations.restore(paths).await
+    async fn restore(
+        &self,
+        requests: Vec<crate::files::trash_artifact::RestoreRequest>,
+    ) -> Result<FileBatchOutcome, OperationError> {
+        NativeOperations.restore(requests).await
     }
 }
 

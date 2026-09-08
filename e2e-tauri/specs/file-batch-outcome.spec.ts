@@ -1,9 +1,10 @@
 /** Partial native batch outcomes must drive undo history from actual successes. */
-import { browser, expect } from "@wdio/globals";
+import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { entryNames, navigateTo } from "./helpers";
+import { execFileSync } from "node:child_process";
+import { domText, entryNames, navigateTo } from "./helpers";
 
 // Keep trash and restore on the home filesystem. Linux cannot always trash
 // `/tmp` entries when it is a separate tmpfs without its own Trash directory.
@@ -168,6 +169,72 @@ describe("native partial file-operation outcomes", () => {
         operationResults,
       }));
       throw error;
+    }
+  });
+
+  it("restores its own deletion after an external deletion reuses the same path", async function () {
+    if (process.platform !== "linux") this.skip();
+    this.timeout(120_000);
+    const name = `exact-identity-${suffix}.txt`;
+    const target = path.join(scratch, name);
+    const ownedContents = `Application deletion: original bytes ${suffix}\n`;
+    const externalContents = `External deletion: replacement bytes ${suffix}\n`;
+    const trashRoot = path.join(process.env.XDG_DATA_HOME ?? path.join(os.homedir(), ".local/share"), "Trash");
+    const infoRoot = path.join(trashRoot, "info");
+    let externalInfo: string | undefined;
+    let externalPayload: string | undefined;
+    fs.writeFileSync(target, ownedContents);
+    try {
+      await navigateTo(scratch);
+      await waitForListed(name, true);
+      const token = `capture-${crypto.randomUUID()}`;
+      expect((await dispatchOperation({ op: "capture-delete", paths: [target], token }, "captured")).error).toBeNull();
+      expect((await dispatchOperation({ op: "confirm-captured-delete", token }, "completed")).error).toBeNull();
+      await waitForDisk(target, false);
+      await waitForListed(name, false);
+
+      const before = new Set(fs.readdirSync(infoRoot));
+      fs.writeFileSync(target, externalContents);
+      // A real external trash operation must not replace the app's receipt.
+      execFileSync("gio", ["trash", target], { timeout: 20_000 });
+      const added = fs.readdirSync(infoRoot).filter((entry) => !before.has(entry));
+      expect(added).toHaveLength(1);
+      externalInfo = path.join(infoRoot, added[0]);
+      externalPayload = path.join(trashRoot, "files", added[0].replace(/\.trashinfo$/, ""));
+      expect(fs.readFileSync(externalPayload, "utf8")).toBe(externalContents);
+      // Deterministically make only the external item newest for the old
+      // timestamp-based implementation; the app's captured metadata is untouched.
+      fs.writeFileSync(externalInfo, fs.readFileSync(externalInfo, "utf8")
+        .replace(/^DeletionDate=.*$/m, "DeletionDate=2035-01-01T00:00:00"));
+
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect((await historyOperation("undo")).error).toBeNull();
+        await waitForListed(name, true);
+        expect(fs.readFileSync(target, "utf8")).toBe(ownedContents);
+        expect(fs.readFileSync(externalPayload, "utf8")).toBe(externalContents);
+        if (cycle === 0) {
+          expect((await historyOperation("redo")).error).toBeNull();
+          await waitForDisk(target, false);
+          await waitForListed(name, false);
+        }
+      }
+      await $(`.entry-item[data-path$="/${name}"]`).click();
+      if (!await $(".preview-pane").isDisplayed()) await browser.keys(" ");
+      await browser.waitUntil(async () => (await domText(".preview-text")).includes(ownedContents.trim()), {
+        timeoutMsg: "the restored original bytes did not appear in the native preview",
+      });
+      const proof = path.resolve("screenshots/refactor/repo-health-cleanup");
+      fs.mkdirSync(proof, { recursive: true });
+      await browser.saveScreenshot(path.join(proof, "native-exact-trash-identity.png"));
+      await browser.keys(" ");
+      await $(".preview-pane").waitForDisplayed({ reverse: true });
+    } finally {
+      if (!fs.existsSync(target)) await historyOperation("undo").catch(() => undefined);
+      if (externalPayload && fs.existsSync(externalPayload)
+        && fs.readFileSync(externalPayload, "utf8") === externalContents) {
+        fs.unlinkSync(externalPayload);
+        if (externalInfo) fs.rmSync(externalInfo, { force: true });
+      }
     }
   });
 

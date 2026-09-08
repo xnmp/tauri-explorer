@@ -408,6 +408,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_mutation.rs` — typed create/rename/new-text/symlink and whole-selection deletion commands settle native history and affected parents before returning outcomes.
 - `file_history/action.rs` — action shape/capability admission and affected-parent projection.
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
+- `file_history/retention.rs` — complete history-entry budget for forward and inverse recovery; preserves unfinished work and a dependency-safe prefix of the opposite execution with explicit warnings.
 - `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
 - `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
@@ -435,8 +436,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `publication.rs` — owns unpublished copy/write payloads in an exclusive staging directory; shared native no-replace rename for ordinary publication, move, rename and Linux trash restore.
 - `batch/mod.rs` — shared supervisor-owned ledger for pool work and fresh thread-affine restore batches; completed siblings survive panic and uncertain work stops the batch.
 - `batch/model.rs` — bounded stable batch admission, component-aware overlap rejection, and succeeded/failed/uncertain/unstarted outcome partitions.
-- `trash.rs` — history-free trash and restore primitives; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
-- `windows_restore.rs` — STA-owned Windows Shell restore, source-verified completion callbacks, collision-preserving flags, and ordinal path comparison.
+- `trash.rs` — platform trash dispatch and exact receipt restore; ordered per-path outcomes and explicit UNC permanent-removal warnings (ADR 0017).
+- `trash_artifact.rs` — native-only data identities and restore requests, shared with history without filesystem handles or renderer authority.
+- `freedesktop_trash.rs` — Linux exact trash receipts, exclusive metadata publication, descriptor-relative no-replace moves, identity verification and restore.
+- `trash_mounts.rs` — lossless Linux mountinfo parsing and mount-ID-aware trash placement, including bind mounts.
+- `windows_restore.rs` — STA-owned Windows Shell delete/restore, exact Recycle Bin locators, source-verified callbacks and collision-preserving flags.
+- `trash_outcome.rs` — pure Windows delete callback classification; committed recovery warnings remain distinct from uncertain and unchanged outcomes.
 - `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
 - `restore_parents.rs` — iterative Linux restore-parent creation; bounded supervisor-owned invalidations survive partial creation and panic independently of leaf completion.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.

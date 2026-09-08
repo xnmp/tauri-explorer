@@ -5,6 +5,7 @@ const SECOND: u64 = 22;
 
 fn copy(path: &str, restore_supported: bool) -> Action {
     Action::Copy {
+        recovery: super::Recovery::Capture,
         copied_path: path.into(),
         parent_dir: path
             .rsplit_once('/')
@@ -16,6 +17,7 @@ fn copy(path: &str, restore_supported: bool) -> Action {
 
 fn deleted(paths: &[&str]) -> Action {
     Action::Delete {
+        recovery: super::Recovery::Capture,
         paths: paths.iter().map(|path| (*path).into()).collect(),
         parent_dir: "/trash".into(),
     }

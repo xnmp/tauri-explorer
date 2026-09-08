@@ -4,6 +4,7 @@ export interface FileBatchOutcome {
   failed: { path: string; error: string }[];
   uncertain?: { path: string; error: string }[];
   unstarted?: string[];
+  warnings?: { path: string; error: string }[];
 }
 
 /** Port result: transport/admission failure is distinct from per-item failure. */
@@ -14,6 +15,7 @@ export type FileBatchResult =
 export function fileBatchError(outcome: FileBatchOutcome): string | null {
   const errors = outcome.failed.map(({ path, error }) => `${path}: ${error}`);
   errors.push(...(outcome.uncertain ?? []).map(({ path, error }) => `${path}: outcome is uncertain; inspect the affected files before continuing: ${error}`));
+  errors.push(...(outcome.warnings ?? []).map(({ path, error }) => `${path}: ${error}`));
   if (outcome.unstarted?.length) errors.push(`${outcome.unstarted.length} items were not started`);
   return errors.length ? errors.join("; ") : null;
 }

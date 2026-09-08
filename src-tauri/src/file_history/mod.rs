@@ -3,9 +3,10 @@ mod action;
 mod execution;
 mod forward;
 mod model;
+mod retention;
 pub(crate) use forward::{run_forward, MutationOutcome, MutationReply};
-pub(crate) use model::Action;
 pub(crate) use model::ForwardEffect;
+pub(crate) use model::{Action, Recovery};
 #[cfg(feature = "e2e-renderer-recovery")]
 #[path = "../../test_support/file_history_gate.rs"]
 mod acceptance_gate;
@@ -132,7 +133,7 @@ pub async fn file_history_push(
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     // Shape/capability normalization is outside the shared history lock.
     let action = match action {
-        Some(action) => action::prepare(action, !cfg!(target_os = "macos")),
+        Some(action) => action::prepare_renderer(action, !cfg!(target_os = "macos")),
         None => Ok(None),
     };
     let mut service = service().lock().unwrap();
@@ -215,11 +216,6 @@ impl execution::Operations for NativeOperations {
             .map(|receipt| receipt.recovery.map(|recovery| recovery.message()))
             .map_err(operation_error)
     }
-    async fn trash(&self, path: String) -> Result<(), execution::OperationError> {
-        crate::files::trash::move_to_trash(path)
-            .await
-            .map_err(operation_error)
-    }
     async fn trash_many(
         &self,
         paths: Vec<String>,
@@ -230,9 +226,9 @@ impl execution::Operations for NativeOperations {
     }
     async fn restore(
         &self,
-        paths: Vec<String>,
+        requests: Vec<crate::files::trash_artifact::RestoreRequest>,
     ) -> Result<crate::files::trash::FileBatchOutcome, execution::OperationError> {
-        crate::files::trash::restore_from_trash(paths)
+        crate::files::trash::restore_entries(requests)
             .await
             .map_err(operation_error)
     }

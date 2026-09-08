@@ -916,7 +916,7 @@ copying the streaming buffer or constructing directory-sized fingerprint strings
 
 `trash::list` and `trash::delete` initialize thread-local STA state. Reusing a
 Tokio blocking thread can encounter an existing MTA or leave an STA for unrelated
-work. Construct the apartment, enumerate inventory and execute a whole batch on
+work. Construct the apartment and execute a whole batch on
 one fresh worker; retain a bounded worker permit through resource destruction.
 Native task ownership must cover the asynchronous permit wait too. Keep the
 per-item ledger outside the worker so panic cannot erase confirmed siblings.
@@ -926,8 +926,8 @@ and require an actual source-matching root `PostMoveItem` with `S_OK`; other
 nonnegative Shell statuses can mean skipped or merged work. Descendant callbacks
 cannot impersonate the root. Reject overwrite/merge transfer flags, disable
 connected-item expansion, and report an alternate actual path without inferring
-its cause. Use the same ordinal path comparison for inventory lookup and outcome
-checking; raw case-sensitive keys fail after the Shell canonicalizes casing.
+its cause. Use ordinal path comparison for callback outcome checking; raw
+case-sensitive keys fail after the Shell canonicalizes casing.
 Only DOS-drive verbatim prefixes may collapse onto ordinary drive spellings.
 Linux tests and a Windows-target compile cannot prove Windows Shell behavior;
 keep real post-queue collision and relative-symlink tests in Windows acceptance.
@@ -941,3 +941,24 @@ directory invalidations before each mkdir in the supervisor-owned batch ledger,
 and carry them through Copy redo, Delete undo and nested partial batches. Keep
 these refresh effects separate from success, retry and inverse ownership. Never
 remove created parents as an inferred rollback: concurrent users may own contents.
+
+### A pathname cannot identify a deletion
+
+Undo selected the wrong version when an external process trashed a replacement
+at the same original path. Capture an exact artifact during deletion and retain
+it on the history leaf; never choose an inverse by newest timestamp. Redo must
+capture a new receipt, and partial settlement must filter receipts with paths.
+Committed deletion without recovery is success with a warning, never retry work.
+
+Budget the complete history entry and both partial-settlement positions. A
+filesystem receipt batch can fit its cap while duplicated keys and grouped action
+containers exceed history's cap. Retain remaining work first, report dropped
+recovery, and keep only a contiguous prefix of dependent opposite operations in
+their next execution order.
+
+Legacy `trash` 5.x mount-local directories inherit the process umask. Safely
+adopt owned `0755` layouts through opened descriptors, preserving owner bits and
+rejecting group/other write. Restrict this migration to forward discovery: exact
+restore must validate without chmodding a substituted receipt directory. A full
+Cargo test run can replace the debug application binary; rebuild with the native
+acceptance features and record its actual hash before attributing UI evidence.

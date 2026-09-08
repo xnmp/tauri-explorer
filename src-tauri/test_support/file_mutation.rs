@@ -103,55 +103,116 @@ fn create_without_an_inverse_still_invalidates_redo_and_reconciles() {
 }
 
 #[test]
-fn delete_batch_groups_confirmed_successes_by_parent_in_input_order() {
+fn delete_batch_groups_exact_receipts_by_parent_in_input_order() {
+    use crate::{file_history::Recovery, files::trash_artifact::TrashArtifact};
+    use std::{collections::BTreeMap, sync::Arc};
     let root = tempfile::tempdir().unwrap();
-    let first_parent = root.path().join("first-parent");
-    let second_parent = root.path().join("second-parent");
-    fs::create_dir_all(&first_parent).unwrap();
-    fs::create_dir_all(&second_parent).unwrap();
-    let first = first_parent.join("first.txt");
-    let second = second_parent.join("second.txt");
-    let third = first_parent.join("third.txt");
-    for path in [&first, &second, &third] {
-        fs::write(path, "delete me").unwrap();
-    }
-    let paths = vec![native(&first), native(&second), native(&third)];
-    let result = tauri::async_runtime::block_on(async {
-        let outcome = batch::run(
-            batch::BatchPlan::new(paths.clone()).unwrap(),
-            file_ops::delete_path,
-        )
-        .await;
-        delete_outcome(outcome, false)
-    });
-
+    let first_parent = native(&root.path().join("first-parent"));
+    let second_parent = native(&root.path().join("second-parent"));
+    let first = native(&root.path().join("first-parent/first.txt"));
+    let second = native(&root.path().join("second-parent/second.txt"));
+    let third = native(&root.path().join("first-parent/third.txt"));
+    let paths = vec![first.clone(), second.clone(), third.clone()];
+    let artifacts: BTreeMap<_, _> = paths
+        .iter()
+        .map(|path| {
+            (
+                path.clone(),
+                Arc::new(TrashArtifact::WindowsShell {
+                    parsing_name_utf16: format!("opaque identity for {path}")
+                        .encode_utf16()
+                        .collect(),
+                }),
+            )
+        })
+        .collect();
+    let result = delete_outcome(
+        batch::FileBatchOutcome {
+            succeeded: paths.clone(),
+            artifacts: artifacts.clone(),
+            ..Default::default()
+        },
+        false,
+    );
     assert_eq!(result.result.as_ref().unwrap().succeeded, paths);
-    assert!(!first.exists());
-    assert!(!second.exists());
-    assert!(!third.exists());
     assert_eq!(
         result.affected,
-        vec![native(&first_parent), native(&second_parent)],
+        vec![first_parent.clone(), second_parent.clone()]
     );
     assert_eq!(
         match result.effect {
             ForwardEffect::Changed(Some(action)) => action,
-            _ => panic!("confirmed trashable deletions require one inverse"),
+            _ => panic!("confirmed receipts require an inverse"),
         },
         Action::Batch {
             actions: vec![
                 Action::Delete {
-                    paths: vec![native(&first), native(&third)],
-                    parent_dir: native(&first_parent),
+                    paths: vec![first.clone(), third.clone()],
+                    parent_dir: first_parent,
+                    recovery: Recovery::Restore(Arc::new(BTreeMap::from([
+                        (first.clone(), artifacts[&first].clone()),
+                        (third.clone(), artifacts[&third].clone()),
+                    ]))),
                 },
                 Action::Delete {
-                    paths: vec![native(&second)],
-                    parent_dir: native(&second_parent),
+                    paths: vec![second.clone()],
+                    parent_dir: second_parent,
+                    recovery: Recovery::Restore(Arc::new(BTreeMap::from([(
+                        second.clone(),
+                        artifacts[&second].clone()
+                    )]))),
                 },
             ],
             label: "Delete".into(),
-        },
+        }
     );
+}
+
+#[test]
+fn deleted_item_without_an_exact_receipt_is_not_retryable_or_undoable() {
+    let root = tempfile::tempdir().unwrap();
+    let path = native(&root.path().join("deleted.txt"));
+    let result = delete_outcome(
+        batch::FileBatchOutcome {
+            succeeded: vec![path.clone()],
+            ..Default::default()
+        },
+        false,
+    );
+    assert!(matches!(result.effect, ForwardEffect::Changed(None)));
+    assert_eq!(result.affected, [native(root.path())]);
+    let outcome = result.result.unwrap();
+    assert_eq!(outcome.succeeded, [path]);
+    assert!(outcome.failed.is_empty());
+    if !cfg!(target_os = "macos") {
+        assert!(outcome.error().unwrap().contains("Undo is unavailable"));
+    }
+}
+
+#[test]
+fn committed_delete_warning_reaches_the_caller_without_becoming_retryable() {
+    let root = tempfile::tempdir().unwrap();
+    let path = native(&root.path().join("deleted.txt"));
+    let warning = "Permanently deleted from a network share; Undo is unavailable";
+    let result = delete_outcome(
+        batch::FileBatchOutcome {
+            succeeded: vec![path.clone()],
+            warnings: vec![batch::FileFailure {
+                path: path.clone(),
+                error: warning.into(),
+            }],
+            ..Default::default()
+        },
+        false,
+    );
+    assert!(matches!(result.effect, ForwardEffect::Changed(None)));
+    let outcome = result.result.unwrap();
+    assert_eq!(outcome.succeeded, [path]);
+    assert!(outcome.failed.is_empty());
+    assert!(outcome.uncertain.is_empty());
+    assert!(outcome.unstarted.is_empty());
+    assert_eq!(outcome.warnings.len(), 1);
+    assert!(outcome.error().unwrap().contains(warning));
 }
 
 #[test]

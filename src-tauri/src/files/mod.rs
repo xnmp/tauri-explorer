@@ -8,6 +8,8 @@ mod directory_watches;
 pub mod drives;
 pub mod external_apps;
 pub mod file_ops;
+#[cfg(target_os = "linux")]
+mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
 pub(crate) mod mutation;
@@ -19,6 +21,11 @@ mod restore_outcome;
 mod restore_parents;
 pub mod shortcuts;
 pub mod trash;
+pub(crate) mod trash_artifact;
+#[cfg(target_os = "linux")]
+mod trash_mounts;
+#[cfg(any(target_os = "windows", test))]
+mod trash_outcome;
 mod watch_observation;
 #[cfg(target_os = "windows")]
 mod windows_restore;

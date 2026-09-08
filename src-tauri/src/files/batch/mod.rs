@@ -1,6 +1,7 @@
 //! One worker with progress owned by its asynchronous supervisor.
 //! A worker panic cannot erase already settled sibling effects.
 mod model;
+use super::trash_artifact::TrashSuccess;
 use crate::error::AppError;
 pub(crate) use model::BatchPlan;
 use model::ItemState;
@@ -66,14 +67,35 @@ impl Ledger {
         }
     }
 
-    fn execute(&self, mut operation: impl FnMut(&str, &DirectoryEffects) -> Result<(), AppError>) {
+    fn execute(
+        &self,
+        mut operation: impl FnMut(&str, &DirectoryEffects) -> Result<TrashSuccess, AppError>,
+    ) {
+        // Transient receipt storage only. Native history independently budgets
+        // its complete grouped action and both partial-settlement positions.
+        let mut artifact_bytes = 0usize;
         for (index, path) in self.paths.iter().enumerate() {
             self.states
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())[index] = ItemState::Active;
             // Do not hold the ledger lock across a syscall or error formatting.
             let state = match operation(path, &self.directories) {
-                Ok(()) => ItemState::Succeeded,
+                Ok(mut success) => {
+                    if let Some(artifact) = &success.artifact {
+                        let bytes = artifact.retained_bytes() + path.len();
+                        if bytes > 32 * 1024 * 1024 - artifact_bytes {
+                            success.artifact = None;
+                            let message = "Deletion completed, but its recovery identity exceeds the batch memory budget; Undo is unavailable for this item";
+                            success.warning = Some(match success.warning {
+                                Some(warning) => format!("{warning}; {message}"),
+                                None => message.into(),
+                            });
+                        } else {
+                            artifact_bytes += bytes;
+                        }
+                    }
+                    ItemState::Succeeded(success)
+                }
                 Err(error @ (AppError::WorkerFailed(_) | AppError::MutationUncertain(_))) => {
                     ItemState::Uncertain(error.to_string())
                 }
@@ -111,7 +133,17 @@ pub(crate) async fn run(
 
 pub(crate) async fn run_with_effects(
     plan: BatchPlan,
-    operation: impl FnMut(&str, &DirectoryEffects) -> Result<(), AppError> + Send + 'static,
+    mut operation: impl FnMut(&str, &DirectoryEffects) -> Result<(), AppError> + Send + 'static,
+) -> FileBatchOutcome {
+    run_with_receipts(plan, move |path, effects| {
+        operation(path, effects).map(|()| TrashSuccess::default())
+    })
+    .await
+}
+
+pub(crate) async fn run_with_receipts(
+    plan: BatchPlan,
+    operation: impl FnMut(&str, &DirectoryEffects) -> Result<TrashSuccess, AppError> + Send + 'static,
 ) -> FileBatchOutcome {
     let ledger = Ledger::new(plan);
     let worker_ledger = ledger.clone();
@@ -129,6 +161,18 @@ pub(crate) async fn run_dedicated<C: 'static>(
     plan: BatchPlan,
     setup: impl FnOnce() -> Result<C, AppError> + Send + 'static,
     mut operation: impl FnMut(&mut C, &str) -> Result<(), AppError> + Send + 'static,
+) -> Result<FileBatchOutcome, AppError> {
+    run_dedicated_receipts(plan, setup, move |context, path| {
+        operation(context, path).map(|()| TrashSuccess::default())
+    })
+    .await
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) async fn run_dedicated_receipts<C: 'static>(
+    plan: BatchPlan,
+    setup: impl FnOnce() -> Result<C, AppError> + Send + 'static,
+    mut operation: impl FnMut(&mut C, &str) -> Result<TrashSuccess, AppError> + Send + 'static,
 ) -> Result<FileBatchOutcome, AppError> {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     // Shell work includes forward deletions and SCM trash as well as the one

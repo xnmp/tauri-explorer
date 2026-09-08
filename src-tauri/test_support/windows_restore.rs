@@ -145,14 +145,20 @@ mod native {
     use crate::{
         error::AppError,
         files::{
-            trash::restore_from_trash,
-            windows_restore::{restore_item, restore_item_before_perform, StaApartment},
+            trash::restore_entries,
+            trash_artifact::{RestoreRequest, TrashArtifact},
+            windows_restore::{
+                delete_item, restore_exact, restore_item, restore_item_before_perform,
+                StaApartment, WindowsPathKey,
+            },
         },
     };
     use std::{
+        cmp::Ordering,
         fs,
         os::windows::fs::{symlink_dir, symlink_file},
         path::Path,
+        sync::Arc,
         thread,
     };
 
@@ -163,6 +169,236 @@ mod native {
             .filter(|item| item.original_path() == path)
             .max_by_key(|item| item.time_deleted)
             .expect("trashed fixture")
+    }
+
+    fn exact_request(
+        path: &Path,
+        success: crate::files::trash_artifact::TrashSuccess,
+    ) -> RestoreRequest {
+        let artifact = success.artifact.expect("exact Recycle Bin artifact");
+        assert!(success.warning.is_none(), "exact recycling must not warn");
+        assert!(matches!(artifact.as_ref(), TrashArtifact::WindowsShell {
+            parsing_name_utf16
+        } if !parsing_name_utf16.is_empty()));
+        RestoreRequest {
+            path: path.to_string_lossy().into_owned(),
+            artifact,
+        }
+    }
+
+    #[test]
+    fn app_owned_delete_receipt_restores_exact_file_without_inventory() {
+        thread::spawn(|| {
+            let apartment = StaApartment::new().expect("STA");
+            let directory = tempfile::tempdir().expect("fixture directory");
+            let path = directory.path().join("captured-exact.txt");
+            fs::write(&path, b"captured exact bytes").expect("write fixture");
+
+            let request = exact_request(
+                &path,
+                delete_item(&apartment, &path).expect("delete with receipt"),
+            );
+            assert!(!path.exists(), "source must be recycled");
+            restore_exact(&apartment, &request).expect("restore captured item");
+
+            assert_eq!(
+                fs::read(&path).expect("restored file"),
+                b"captured exact bytes"
+            );
+        })
+        .join()
+        .expect("delete/restore thread");
+    }
+
+    #[test]
+    fn exact_receipt_restores_through_alternate_case_and_verbatim_requested_spelling() {
+        thread::spawn(|| {
+            let apartment = StaApartment::new().expect("STA");
+            let directory = tempfile::tempdir().expect("fixture directory");
+            for verbatim in [false, true] {
+                let original = directory
+                    .path()
+                    .join(format!("CapturedCase-{verbatim}.TXT"));
+                let contents = format!("exact captured bytes {verbatim}");
+                fs::write(&original, contents.as_bytes()).expect("write fixture");
+                let success = delete_item(&apartment, &original).expect("delete with receipt");
+                let spelling = original
+                    .to_string_lossy()
+                    .replace('/', "\\")
+                    .to_ascii_lowercase();
+                let plain = spelling.strip_prefix("\\\\?\\").unwrap_or(&spelling);
+                let requested = if verbatim {
+                    format!("\\\\?\\{plain}")
+                } else {
+                    plain.to_owned()
+                };
+                let mut request = exact_request(&original, success);
+                request.path = requested;
+
+                restore_exact(&apartment, &request).expect("restore exact captured item");
+                assert_eq!(
+                    fs::read(&original).expect("restored file"),
+                    contents.as_bytes()
+                );
+            }
+        })
+        .join()
+        .expect("delete/restore thread");
+    }
+
+    #[test]
+    fn ordinal_keys_fold_unicode_case_without_aliasing_device_namespaces() {
+        let compare = |left: &str, right: &str| {
+            WindowsPathKey::new(Path::new(left))
+                .compare(&WindowsPathKey::new(Path::new(right)))
+                .expect("Windows ordinal comparison")
+        };
+        assert_eq!(
+            compare(r"C:\Work\Ä.txt", r"\\?\c:\work\ä.TXT"),
+            Ordering::Equal
+        );
+        assert_ne!(
+            compare(r"\\?\UNC\server\share\item", r"UNC\server\share\item"),
+            Ordering::Equal
+        );
+        assert_ne!(
+            compare(r"\\?\Volume{1234}\item", r"Volume{1234}\item"),
+            Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn exact_locator_distinguishes_two_recycled_versions_of_the_same_path() {
+        thread::spawn(|| {
+            let apartment = StaApartment::new().expect("STA");
+            let directory = tempfile::tempdir().expect("fixture directory");
+            let path = directory.path().join("same-path.txt");
+            fs::write(&path, b"older bytes").expect("older fixture");
+            let older = exact_request(
+                &path,
+                delete_item(&apartment, &path).expect("delete older version"),
+            );
+            fs::write(&path, b"newer bytes").expect("newer fixture");
+            let newer = exact_request(
+                &path,
+                delete_item(&apartment, &path).expect("delete newer version"),
+            );
+
+            restore_exact(&apartment, &older).expect("restore exact older version");
+            assert_eq!(fs::read(&path).expect("older restored"), b"older bytes");
+            fs::remove_file(&path).expect("remove older restored version");
+            restore_exact(&apartment, &newer).expect("restore exact newer version");
+            assert_eq!(fs::read(&path).expect("newer restored"), b"newer bytes");
+        })
+        .join()
+        .expect("delete/restore thread");
+    }
+
+    #[test]
+    fn app_owned_receipts_restore_directories_and_relative_symlinks() {
+        thread::spawn(|| {
+            let apartment = StaApartment::new().expect("STA");
+            let directory = tempfile::tempdir().expect("fixture directory");
+            let tree = directory.path().join("captured-tree");
+            let target = directory.path().join("target.txt");
+            let link = directory.path().join("captured-link");
+            fs::create_dir(&tree).expect("create tree");
+            fs::write(tree.join("child.txt"), b"tree bytes").expect("tree child");
+            fs::write(&target, b"target bytes").expect("target");
+            symlink_file("target.txt", &link).expect("relative link");
+
+            let tree_request =
+                exact_request(&tree, delete_item(&apartment, &tree).expect("delete tree"));
+            let link_request =
+                exact_request(&link, delete_item(&apartment, &link).expect("delete link"));
+            restore_exact(&apartment, &tree_request).expect("restore tree");
+            restore_exact(&apartment, &link_request).expect("restore link");
+
+            assert_eq!(
+                fs::read(tree.join("child.txt")).expect("tree child"),
+                b"tree bytes"
+            );
+            assert_eq!(
+                fs::read_link(&link).expect("restored link"),
+                Path::new("target.txt")
+            );
+            assert_eq!(fs::read(&target).expect("target intact"), b"target bytes");
+        })
+        .join()
+        .expect("delete/restore thread");
+    }
+
+    #[test]
+    fn exact_receipt_collision_keeps_existing_file_and_consumes_restore() {
+        thread::spawn(|| {
+            let apartment = StaApartment::new().expect("STA");
+            let directory = tempfile::tempdir().expect("fixture directory");
+            let path = directory.path().join("captured-collision.txt");
+            fs::write(&path, b"trashed bytes").expect("write fixture");
+            let request = exact_request(
+                &path,
+                delete_item(&apartment, &path).expect("delete with receipt"),
+            );
+            fs::write(&path, b"existing sentinel").expect("collision sentinel");
+
+            let result = restore_exact(&apartment, &request);
+            assert!(matches!(result, Err(AppError::MutationUncertain(_))));
+            assert_eq!(fs::read(&path).expect("sentinel"), b"existing sentinel");
+            let alternate = fs::read_dir(directory.path())
+                .expect("list parent")
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|candidate| candidate != &path)
+                .expect("alternate restored file");
+            assert_eq!(fs::read(alternate).expect("alternate"), b"trashed bytes");
+        })
+        .join()
+        .expect("delete/restore thread");
+    }
+
+    #[test]
+    fn restore_exact_rejects_empty_or_non_windows_artifacts_before_shell_work() {
+        thread::spawn(|| {
+            let apartment = StaApartment::new().expect("STA");
+            let empty = RestoreRequest {
+                path: r"C:\fixture\item.txt".into(),
+                artifact: Arc::new(TrashArtifact::WindowsShell {
+                    parsing_name_utf16: Vec::new(),
+                }),
+            };
+            assert!(matches!(
+                restore_exact(&apartment, &empty),
+                Err(AppError::InvalidPath(_))
+            ));
+
+            let wrong_platform = RestoreRequest {
+                path: r"C:\fixture\item.txt".into(),
+                artifact: Arc::new(TrashArtifact::Freedesktop {
+                    root: "root".into(),
+                    name: "name".into(),
+                    original_path: "original".into(),
+                    metadata_digest: [0; 32],
+                    metadata_identity: crate::files::trash_artifact::EntryIdentity {
+                        device: 1,
+                        inode: 2,
+                        ctime_seconds: 3,
+                        ctime_nanoseconds: 4,
+                    },
+                    payload_identity: crate::files::trash_artifact::EntryIdentity {
+                        device: 5,
+                        inode: 6,
+                        ctime_seconds: 7,
+                        ctime_nanoseconds: 8,
+                    },
+                }),
+            };
+            assert!(matches!(
+                restore_exact(&apartment, &wrong_platform),
+                Err(AppError::InvalidPath(_))
+            ));
+        })
+        .join()
+        .expect("validation thread");
     }
 
     #[test]
@@ -322,54 +558,68 @@ mod native {
 
     #[test]
     fn mixed_batch_keeps_exact_success_and_stops_after_collision() {
-        let directory = tempfile::tempdir().expect("fixture directory");
-        let exact = directory.path().join("01-exact.txt");
-        let collision = directory.path().join("02-collision.txt");
-        let later = directory.path().join("03-later.txt");
-        fs::write(&exact, b"exact bytes").expect("exact fixture");
-        fs::write(&collision, b"collision bytes").expect("collision fixture");
-        fs::write(&later, b"later bytes").expect("later fixture");
-        trash::delete(&exact).expect("trash exact fixture");
-        trash::delete(&collision).expect("trash collision fixture");
-        trash::delete(&later).expect("trash later fixture");
-        fs::write(&collision, b"existing sentinel").expect("collision sentinel");
-        let exact_string = exact.to_string_lossy().into_owned();
-        let collision_string = collision.to_string_lossy().into_owned();
-        let later_string = later.to_string_lossy().into_owned();
+        thread::spawn(|| {
+            let apartment = StaApartment::new().expect("STA");
+            let directory = tempfile::tempdir().expect("fixture directory");
+            let exact = directory.path().join("01-exact.txt");
+            let collision = directory.path().join("02-collision.txt");
+            let later = directory.path().join("03-later.txt");
+            fs::write(&exact, b"exact bytes").expect("exact fixture");
+            fs::write(&collision, b"collision bytes").expect("collision fixture");
+            fs::write(&later, b"later bytes").expect("later fixture");
+            let first_request = exact_request(
+                &exact,
+                delete_item(&apartment, &exact).expect("delete exact fixture"),
+            );
+            let collision_request = exact_request(
+                &collision,
+                delete_item(&apartment, &collision).expect("delete collision fixture"),
+            );
+            let later_request = exact_request(
+                &later,
+                delete_item(&apartment, &later).expect("delete later fixture"),
+            );
+            fs::write(&collision, b"existing sentinel").expect("collision sentinel");
+            let exact_string = exact.to_string_lossy().into_owned();
+            let collision_string = collision.to_string_lossy().into_owned();
+            let later_string = later.to_string_lossy().into_owned();
 
-        let outcome = tauri::async_runtime::block_on(restore_from_trash(vec![
-            exact_string.clone(),
-            collision_string.clone(),
-            later_string.clone(),
-        ]))
-        .expect("restore batch");
+            let outcome = tauri::async_runtime::block_on(restore_entries(vec![
+                first_request,
+                collision_request,
+                later_request.clone(),
+            ]))
+            .expect("restore batch");
 
-        assert_eq!(outcome.succeeded, vec![exact_string]);
-        assert!(outcome.failed.is_empty());
-        assert_eq!(outcome.uncertain.len(), 1);
-        assert_eq!(outcome.uncertain[0].path, collision_string);
-        assert_eq!(outcome.unstarted, vec![later_string.clone()]);
-        assert_eq!(fs::read(&exact).expect("exact restored"), b"exact bytes");
-        assert_eq!(
-            fs::read(&collision).expect("collision sentinel"),
-            b"existing sentinel"
-        );
-        assert!(!later.exists(), "later item must remain unstarted in trash");
+            assert_eq!(outcome.succeeded, vec![exact_string]);
+            assert!(outcome.failed.is_empty());
+            assert_eq!(outcome.uncertain.len(), 1);
+            assert_eq!(outcome.uncertain[0].path, collision_string);
+            assert_eq!(outcome.unstarted, vec![later_string.clone()]);
+            assert_eq!(fs::read(&exact).expect("exact restored"), b"exact bytes");
+            assert_eq!(
+                fs::read(&collision).expect("collision sentinel"),
+                b"existing sentinel"
+            );
+            assert!(!later.exists(), "later item must remain unstarted in trash");
 
-        let alternate = fs::read_dir(directory.path())
-            .expect("list fixture parent")
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .find(|candidate| candidate != &exact && candidate != &collision)
-            .expect("collision alternate");
-        assert_eq!(
-            fs::read(&alternate).expect("collision alternate"),
-            b"collision bytes"
-        );
+            let alternate = fs::read_dir(directory.path())
+                .expect("list fixture parent")
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .find(|candidate| candidate != &exact && candidate != &collision)
+                .expect("collision alternate");
+            assert_eq!(
+                fs::read(&alternate).expect("collision alternate"),
+                b"collision bytes"
+            );
 
-        let cleanup = tauri::async_runtime::block_on(restore_from_trash(vec![later_string]))
-            .expect("restore unstarted cleanup item");
-        assert_eq!(cleanup.succeeded.len(), 1);
-        assert_eq!(fs::read(&later).expect("later cleanup"), b"later bytes");
+            let cleanup = tauri::async_runtime::block_on(restore_entries(vec![later_request]))
+                .expect("restore unstarted cleanup item");
+            assert_eq!(cleanup.succeeded, vec![later_string]);
+            assert_eq!(fs::read(&later).expect("later cleanup"), b"later bytes");
+        })
+        .join()
+        .expect("mixed restore thread");
     }
 }

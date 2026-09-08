@@ -1,5 +1,5 @@
 //! Admission policy and projections for recorded file actions.
-use super::model::Action;
+use super::model::{Action, Recovery};
 use std::{collections::BTreeSet, path::Path};
 
 fn unc(path: &str) -> bool {
@@ -8,8 +8,50 @@ fn unc(path: &str) -> bool {
 
 /// Cap both recursive shape and retained allocation before history takes
 /// ownership. Recoverability comes from the host at admission, never the caller.
+#[cfg(test)]
 pub fn prepare(action: Action, trash_restore: bool) -> Result<Option<Action>, String> {
-    fn validate(action: &Action, depth: usize, nodes: &mut usize) -> Result<(), String> {
+    let action = prepare_with_origin(action, trash_restore, false)?;
+    check_budget(action)
+}
+
+fn check_budget(action: Option<Action>) -> Result<Option<Action>, String> {
+    if action
+        .as_ref()
+        .is_some_and(|action| super::model::entry_bytes(action) > super::model::MAX_BYTES)
+    {
+        return Err("File history action exceeds its memory budget".into());
+    }
+    Ok(action)
+}
+
+pub(super) fn prepare_forward(
+    action: Action,
+    trash_restore: bool,
+) -> Result<super::retention::Retained, String> {
+    Ok(match prepare_with_origin(action, trash_restore, false)? {
+        Some(action) => super::retention::retain(
+            action,
+            super::model::Direction::Undo,
+            super::model::MAX_BYTES,
+        ),
+        None => super::retention::Retained {
+            action: None,
+            warning: None,
+        },
+    })
+}
+
+fn prepare_with_origin(
+    action: Action,
+    trash_restore: bool,
+    renderer: bool,
+) -> Result<Option<Action>, String> {
+    fn validate(
+        action: &Action,
+        depth: usize,
+        nodes: &mut usize,
+        renderer: bool,
+    ) -> Result<(), String> {
         *nodes += 1;
         if depth > 64 || *nodes > 100_000 {
             return Err("File history action is too large".into());
@@ -55,7 +97,16 @@ pub fn prepare(action: Action, trash_restore: bool) -> Result<Option<Action>, St
                 path(copied_path)?;
                 path(parent_dir)?;
             }
-            Action::Delete { paths, parent_dir } => {
+            Action::Delete {
+                paths,
+                parent_dir,
+                recovery,
+            } => {
+                if renderer {
+                    return Err(
+                        "Deletion history must be recorded by the native file operation".into(),
+                    );
+                }
                 *nodes += paths.len();
                 if *nodes > 100_000 {
                     return Err("File history action is too large".into());
@@ -64,10 +115,20 @@ pub fn prepare(action: Action, trash_restore: bool) -> Result<Option<Action>, St
                 for item in paths {
                     path(item)?;
                 }
+                if let Recovery::Restore(artifacts) = recovery {
+                    let unique = paths.iter().collect::<BTreeSet<_>>();
+                    if unique.len() != artifacts.len()
+                        || paths.iter().any(|path| !artifacts.contains_key(path))
+                    {
+                        return Err(
+                            "Delete history paths do not match their recovery artifacts".into()
+                        );
+                    }
+                }
             }
             Action::Batch { actions, .. } => {
                 for action in actions {
-                    validate(action, depth + 1, nodes)?;
+                    validate(action, depth + 1, nodes, renderer)?;
                 }
             }
         }
@@ -78,6 +139,7 @@ pub fn prepare(action: Action, trash_restore: bool) -> Result<Option<Action>, St
             Action::Copy {
                 copied_path,
                 parent_dir,
+                recovery,
                 ..
             } => {
                 let restore_supported = trash_restore && !unc(&copied_path);
@@ -85,14 +147,24 @@ pub fn prepare(action: Action, trash_restore: bool) -> Result<Option<Action>, St
                     copied_path,
                     parent_dir,
                     restore_supported,
+                    recovery,
                 })
             }
-            Action::Delete { paths, parent_dir } => {
+            Action::Delete {
+                paths,
+                parent_dir,
+                recovery,
+            } => {
                 let paths: Vec<_> = paths
                     .into_iter()
                     .filter(|path| trash_restore && !unc(path))
                     .collect();
-                (!paths.is_empty()).then_some(Action::Delete { paths, parent_dir })
+                let recovery = recovery.subset(&paths);
+                (!paths.is_empty()).then_some(Action::Delete {
+                    paths,
+                    parent_dir,
+                    recovery,
+                })
             }
             Action::Batch { actions, label } => {
                 let actions: Vec<_> = actions
@@ -104,11 +176,14 @@ pub fn prepare(action: Action, trash_restore: bool) -> Result<Option<Action>, St
             action => Some(action),
         }
     }
-    validate(&action, 0, &mut 0)?;
-    if action.retained_bytes() > 32 * 1024 * 1024 {
-        return Err("File history action exceeds its memory budget".into());
-    }
+    validate(&action, 0, &mut 0, renderer)?;
     Ok(normalize(action, trash_restore))
+}
+
+/// Renderer input can describe newly copied/moved entries, but only native
+/// deletion completion can mint a restorable Delete action.
+pub fn prepare_renderer(action: Action, trash_restore: bool) -> Result<Option<Action>, String> {
+    check_budget(prepare_with_origin(action, trash_restore, true)?)
 }
 
 pub fn affected_dirs(action: &Action) -> Vec<String> {

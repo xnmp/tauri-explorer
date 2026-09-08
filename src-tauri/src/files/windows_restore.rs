@@ -3,6 +3,10 @@
 use super::restore_outcome::{
     classify_completion, CompletionEvidence, ItemCompletion, RestoreOutcome,
 };
+use super::trash_artifact::{RestoreRequest, TrashArtifact, TrashSuccess};
+use super::trash_outcome::{
+    classify_delete, DeleteCompletionEvidence, DeleteItemCompletion, DeleteOutcome, DeletedArtifact,
+};
 use crate::error::AppError;
 use std::{
     cmp::Ordering,
@@ -25,8 +29,10 @@ use windows::{
         UI::Shell::{
             FileOperation, IFileOperation, IFileOperationProgressSink,
             IFileOperationProgressSink_Impl, IShellItem, SHCreateItemFromParsingName,
-            FOFX_EARLYFAILURE, FOF_NOERRORUI, FOF_NO_CONNECTED_ELEMENTS, FOF_RENAMEONCOLLISION,
-            FOF_SILENT, SICHINT_CANONICAL, SIGDN_FILESYSPATH, TSF_OVERWRITE_EXIST,
+            FOFX_EARLYFAILURE, FOFX_RECYCLEONDELETE, FOF_NOERRORUI, FOF_NO_CONNECTED_ELEMENTS,
+            FOF_RENAMEONCOLLISION, FOF_SILENT, FOF_WANTNUKEWARNING, SICHINT_CANONICAL,
+            SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_FILESYSPATH, TSF_DELETE_RECYCLE_IF_POSSIBLE,
+            TSF_OVERWRITE_EXIST,
         },
     },
 };
@@ -71,24 +77,42 @@ struct SinkState {
     rejected_transfer_flags: Option<u32>,
 }
 
+#[derive(Debug)]
+struct DeleteCallback {
+    hresult: i32,
+    artifact: DeletedArtifact,
+}
+
+#[derive(Debug, Default)]
+struct DeleteSinkState {
+    count: usize,
+    first: Option<DeleteCallback>,
+    invalid_source: Option<String>,
+    rejected_transfer_flags: Option<u32>,
+}
+
+enum SinkMode {
+    Move {
+        state: Arc<Mutex<SinkState>>,
+        requested: PathBuf,
+    },
+    Delete {
+        state: Arc<Mutex<DeleteSinkState>>,
+    },
+}
+
 #[implement(IFileOperationProgressSink, Agile = false)]
-struct MoveSink {
-    state: Arc<Mutex<SinkState>>,
-    requested: PathBuf,
+struct ShellSink {
+    mode: SinkMode,
     source: IShellItem,
 }
 
-impl MoveSink {
-    fn record(
+impl ShellSink {
+    fn source_matches(
         &self,
         callback_source: windows::core::Ref<'_, IShellItem>,
-        hresult: HRESULT,
-        created: windows::core::Ref<'_, IShellItem>,
-    ) {
-        // A directory operation may report descendants. Only the exact Shell
-        // item queued by this adapter can prove completion of the root item.
-        // Perform the COM comparison before taking the state lock.
-        let source_match = callback_source
+    ) -> Result<bool, String> {
+        callback_source
             .ok()
             .map_err(|error| format!("the callback source was null: {error}"))
             .and_then(|callback_source| {
@@ -98,8 +122,19 @@ impl MoveSink {
                 }
                 .map(|ordering| ordering == 0)
                 .map_err(|error| format!("the callback source could not be compared: {error}"))
-            });
-        match source_match {
+            })
+    }
+
+    fn record_move(
+        &self,
+        callback_source: windows::core::Ref<'_, IShellItem>,
+        hresult: HRESULT,
+        created: windows::core::Ref<'_, IShellItem>,
+    ) {
+        // A directory operation may report descendants. Only the exact Shell
+        // item queued by this adapter can prove completion of the root item.
+        // Perform the COM comparison before taking the state lock.
+        match self.source_matches(callback_source) {
             Ok(true) => {}
             Ok(false) => {
                 self.record_invalid_source("the callback described a different Shell item".into());
@@ -114,11 +149,13 @@ impl MoveSink {
             .ok()
             .map_err(|error| format!("the Shell returned no created item: {error}"))
             .and_then(shell_item_path);
+        let SinkMode::Move { state, requested } = &self.mode else {
+            return;
+        };
         let requested_matches_actual = actual_path
             .as_ref()
-            .is_ok_and(|actual| windows_path_eq(&self.requested, actual));
-        let mut state = self
-            .state
+            .is_ok_and(|actual| windows_path_eq(requested, actual));
+        let mut state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.count = state.count.saturating_add(1);
@@ -131,19 +168,98 @@ impl MoveSink {
         }
     }
 
-    fn record_invalid_source(&self, error: String) {
-        let mut state = self
-            .state
+    fn pre_delete(
+        &self,
+        flags: u32,
+        callback_source: windows::core::Ref<'_, IShellItem>,
+    ) -> windows::core::Result<()> {
+        let SinkMode::Delete { state } = &self.mode else {
+            return Ok(());
+        };
+        match self.source_matches(callback_source) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.record_invalid_source("the callback described a different Shell item".into());
+                return Ok(());
+            }
+            Err(error) => {
+                self.record_invalid_source(error);
+                return Ok(());
+            }
+        }
+        if flags & TSF_DELETE_RECYCLE_IF_POSSIBLE.0 as u32 == 0 {
+            state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .rejected_transfer_flags = Some(flags);
+            return Err(WindowsError::from_hresult(E_ABORT));
+        }
+        Ok(())
+    }
+
+    fn record_delete(
+        &self,
+        callback_source: windows::core::Ref<'_, IShellItem>,
+        hresult: HRESULT,
+        created: windows::core::Ref<'_, IShellItem>,
+    ) {
+        match self.source_matches(callback_source) {
+            Ok(true) => {}
+            Ok(false) => {
+                self.record_invalid_source("the callback described a different Shell item".into());
+                return;
+            }
+            Err(error) => {
+                self.record_invalid_source(error);
+                return;
+            }
+        }
+        let artifact = created
+            .as_ref()
+            .map_or(DeletedArtifact::Missing, |created| {
+                shell_item_parsing_name(created)
+                    .map(DeletedArtifact::ParsingName)
+                    .unwrap_or_else(DeletedArtifact::Unavailable)
+            });
+        let SinkMode::Delete { state } = &self.mode else {
+            return;
+        };
+        let mut state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state.invalid_source.is_none() {
-            state.invalid_source = Some(error);
+        state.count = state.count.saturating_add(1);
+        if state.first.is_none() {
+            state.first = Some(DeleteCallback {
+                hresult: hresult.0,
+                artifact,
+            });
+        }
+    }
+
+    fn record_invalid_source(&self, error: String) {
+        match &self.mode {
+            SinkMode::Move { state, .. } => {
+                let mut state = state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if state.invalid_source.is_none() {
+                    state.invalid_source = Some(error);
+                }
+            }
+            SinkMode::Delete { state } => {
+                let mut state = state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if state.invalid_source.is_none() {
+                    state.invalid_source = Some(error);
+                }
+            }
         }
     }
 }
 
 #[allow(non_snake_case)]
-impl IFileOperationProgressSink_Impl for MoveSink_Impl {
+impl IFileOperationProgressSink_Impl for ShellSink_Impl {
     fn StartOperations(&self) -> windows::core::Result<()> {
         Ok(())
     }
@@ -179,12 +295,14 @@ impl IFileOperationProgressSink_Impl for MoveSink_Impl {
         _psidestinationfolder: windows::core::Ref<'_, IShellItem>,
         _psznewname: &PCWSTR,
     ) -> windows::core::Result<()> {
-        if dwflags & TSF_OVERWRITE_EXIST.0 as u32 != 0 {
-            self.state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .rejected_transfer_flags = Some(dwflags);
-            return Err(WindowsError::from_hresult(E_ABORT));
+        if let SinkMode::Move { state, .. } = &self.mode {
+            if dwflags & TSF_OVERWRITE_EXIST.0 as u32 != 0 {
+                state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .rejected_transfer_flags = Some(dwflags);
+                return Err(WindowsError::from_hresult(E_ABORT));
+            }
         }
         Ok(())
     }
@@ -198,7 +316,9 @@ impl IFileOperationProgressSink_Impl for MoveSink_Impl {
         hrmove: HRESULT,
         psinewlycreated: windows::core::Ref<'_, IShellItem>,
     ) -> windows::core::Result<()> {
-        self.record(psiitem, hrmove, psinewlycreated);
+        if matches!(&self.mode, SinkMode::Move { .. }) {
+            self.record_move(psiitem, hrmove, psinewlycreated);
+        }
         Ok(())
     }
 
@@ -226,19 +346,22 @@ impl IFileOperationProgressSink_Impl for MoveSink_Impl {
 
     fn PreDeleteItem(
         &self,
-        _dwflags: u32,
-        _psiitem: windows::core::Ref<'_, IShellItem>,
+        dwflags: u32,
+        psiitem: windows::core::Ref<'_, IShellItem>,
     ) -> windows::core::Result<()> {
-        Ok(())
+        self.pre_delete(dwflags, psiitem)
     }
 
     fn PostDeleteItem(
         &self,
         _dwflags: u32,
-        _psiitem: windows::core::Ref<'_, IShellItem>,
-        _hrdelete: HRESULT,
-        _psinewlycreated: windows::core::Ref<'_, IShellItem>,
+        psiitem: windows::core::Ref<'_, IShellItem>,
+        hrdelete: HRESULT,
+        psinewlycreated: windows::core::Ref<'_, IShellItem>,
     ) -> windows::core::Result<()> {
+        if matches!(&self.mode, SinkMode::Delete { .. }) {
+            self.record_delete(psiitem, hrdelete, psinewlycreated);
+        }
         Ok(())
     }
 
@@ -283,6 +406,23 @@ impl IFileOperationProgressSink_Impl for MoveSink_Impl {
 
 fn to_wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
+}
+
+fn shell_filesystem_name(path: &Path) -> Vec<u16> {
+    let mut name: Vec<u16> = path.as_os_str().encode_wide().collect();
+    const VERBATIM: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    let verbatim_dos_drive = name.starts_with(&VERBATIM)
+        && name.get(4).is_some_and(|unit| {
+            (*unit >= b'A' as u16 && *unit <= b'Z' as u16)
+                || (*unit >= b'a' as u16 && *unit <= b'z' as u16)
+        })
+        && name.get(5) == Some(&(b':' as u16))
+        && name.get(6) == Some(&(b'\\' as u16));
+    if verbatim_dos_drive {
+        name.drain(..VERBATIM.len());
+    }
+    name.push(0);
+    name
 }
 
 /// Pre-encoded Windows path ordering key for case-insensitive native identity.
@@ -344,6 +484,17 @@ fn shell_item_path(item: &IShellItem) -> Result<PathBuf, String> {
     Ok(PathBuf::from(path))
 }
 
+fn shell_item_parsing_name(item: &IShellItem) -> Result<Vec<u16>, String> {
+    let display = unsafe { item.GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING) }
+        .map_err(|error| format!("the Shell did not provide an absolute parsing name: {error}"))?;
+    let name = unsafe { display.as_wide().to_vec() };
+    unsafe { CoTaskMemFree(Some(display.as_ptr().cast::<c_void>())) };
+    if name.is_empty() {
+        return Err("the Shell returned an empty absolute parsing name".into());
+    }
+    Ok(name)
+}
+
 fn windows_error(context: &str, error: WindowsError) -> AppError {
     AppError::Other(format!("{context}: {error}"))
 }
@@ -367,6 +518,28 @@ fn callback_evidence(state: &Arc<Mutex<SinkState>>) -> ItemCompletion {
         },
         _ => ItemCompletion::Duplicate,
     }
+}
+
+fn delete_callback_evidence(state: &Arc<Mutex<DeleteSinkState>>) -> (DeleteItemCompletion, bool) {
+    let mut state = state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let other_activity = state.invalid_source.is_some();
+    let item = match state.count {
+        0 => state.invalid_source.take().map_or(
+            DeleteItemCompletion::Missing,
+            DeleteItemCompletion::InvalidSource,
+        ),
+        1 => match state.first.take() {
+            Some(callback) => DeleteItemCompletion::One {
+                hresult: callback.hresult,
+                artifact: callback.artifact,
+            },
+            None => DeleteItemCompletion::Missing,
+        },
+        _ => DeleteItemCompletion::Duplicate,
+    };
+    (item, other_activity)
 }
 
 fn restore_item_inner(
@@ -402,9 +575,11 @@ fn restore_item_inner(
         )?;
 
     let state = Arc::new(Mutex::new(SinkState::default()));
-    let sink: IFileOperationProgressSink = MoveSink {
-        state: Arc::clone(&state),
-        requested: requested.clone(),
+    let sink: IFileOperationProgressSink = ShellSink {
+        mode: SinkMode::Move {
+            state: Arc::clone(&state),
+            requested: requested.clone(),
+        },
         source: source.clone(),
     }
     .into();
@@ -442,6 +617,106 @@ pub(crate) fn restore_item(
     item: trash::TrashItem,
 ) -> Result<(), AppError> {
     restore_item_inner(apartment, item, |_| Ok(()))
+}
+
+/// Restore the exact Shell item captured by the corresponding delete callback.
+/// No Recycle Bin inventory lookup or same-path heuristic is involved.
+pub(crate) fn restore_exact(
+    apartment: &StaApartment,
+    request: &RestoreRequest,
+) -> Result<(), AppError> {
+    let TrashArtifact::WindowsShell { parsing_name_utf16 } = request.artifact.as_ref() else {
+        return Err(AppError::InvalidPath(
+            "Trash history item does not contain a Windows Shell identity".into(),
+        ));
+    };
+    if parsing_name_utf16.is_empty() || parsing_name_utf16.contains(&0) {
+        return Err(AppError::InvalidPath(
+            "Invalid Windows Recycle Bin identity".into(),
+        ));
+    }
+    let path = Path::new(&request.path);
+    let original_parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| AppError::InvalidPath(format!("Invalid restore path: {}", request.path)))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| AppError::InvalidPath(format!("Invalid restore path: {}", request.path)))?;
+    let item = trash::TrashItem {
+        id: OsString::from_wide(parsing_name_utf16),
+        name: name.to_os_string(),
+        original_parent: original_parent.to_path_buf(),
+        time_deleted: 0,
+    };
+    restore_item(apartment, item)
+}
+
+/// Delete one exact source through the Shell and capture its exact Recycle Bin
+/// identity. The caller owns the STA and must keep all COM work on its thread.
+pub(crate) fn delete_item(
+    _apartment: &StaApartment,
+    source_path: &Path,
+) -> Result<TrashSuccess, AppError> {
+    let operation: IFileOperation = unsafe {
+        CoCreateInstance(&FileOperation, None, CLSCTX_INPROC_SERVER)
+            .map_err(|error| windows_error("Could not create the Windows trash operation", error))?
+    };
+    let flags = FOF_SILENT
+        | FOF_NOERRORUI
+        | FOF_NO_CONNECTED_ELEMENTS
+        | FOF_WANTNUKEWARNING
+        | FOFX_EARLYFAILURE
+        | FOFX_RECYCLEONDELETE;
+    unsafe { operation.SetOperationFlags(flags) }
+        .map_err(|error| windows_error("Could not configure the Windows trash operation", error))?;
+
+    let source_name = shell_filesystem_name(source_path);
+    let source: IShellItem =
+        unsafe { SHCreateItemFromParsingName(PCWSTR(source_name.as_ptr()), None) }
+            .map_err(|error| windows_error("Could not open the item to recycle", error))?;
+    let state = Arc::new(Mutex::new(DeleteSinkState::default()));
+    let sink: IFileOperationProgressSink = ShellSink {
+        mode: SinkMode::Delete {
+            state: Arc::clone(&state),
+        },
+        source: source.clone(),
+    }
+    .into();
+    unsafe { operation.DeleteItem(&source, &sink) }
+        .map_err(|error| windows_error("Could not queue the Windows trash operation", error))?;
+
+    // From this point onward only source-verified callback evidence can settle
+    // the effect; probing the original path would introduce a TOCTOU alias.
+    let perform_error = unsafe { operation.PerformOperations() }
+        .err()
+        .map(|error| error.to_string());
+    let aborted = unsafe { operation.GetAnyOperationsAborted() }
+        .map(|aborted| aborted.as_bool())
+        .map_err(|error| error.to_string());
+    let (item, other_activity) = delete_callback_evidence(&state);
+    let evidence = DeleteCompletionEvidence {
+        item,
+        other_activity,
+        rejected_transfer_flags: state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .rejected_transfer_flags,
+        perform_error,
+        aborted,
+    };
+    match classify_delete(evidence) {
+        DeleteOutcome::Recycled(parsing_name_utf16) => Ok(TrashSuccess {
+            artifact: Some(Arc::new(TrashArtifact::WindowsShell { parsing_name_utf16 })),
+            warning: None,
+        }),
+        DeleteOutcome::CommittedWithoutArtifact(warning) => Ok(TrashSuccess {
+            artifact: None,
+            warning: Some(warning),
+        }),
+        DeleteOutcome::Unchanged(error) => Err(AppError::Other(error)),
+        DeleteOutcome::Uncertain(error) => Err(AppError::MutationUncertain(error)),
+    }
 }
 
 #[cfg(test)]

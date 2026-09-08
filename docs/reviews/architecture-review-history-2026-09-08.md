@@ -2297,3 +2297,42 @@ completion and capabilities for operations whose inverse cannot be recovered
 (macOS trash restoration and UNC-copy redo). Linux cleanup failure can leave a
 metadata-only entry in external trash tools. These are explicit limitations,
 not claims of complete release acceptance.
+
+
+## Exact trash receipts and bounded recovery (2026-09-08)
+
+Native history now restores the artifact captured by its own deletion. A real
+regression showed the former newest-path lookup restoring an external replacement
+instead. Linux captures its exact Freedesktop metadata/payload identity; Windows
+captures the source-verified Shell completion's exact Recycle Bin locator.
+Copy/Delete alternate capture and restore phases, retain matching path/receipt
+subsets through partial failure, and reject renderer-supplied deletion history.
+The old inventory/timestamp restore implementation and its test-only duplicate
+were removed; existing collision/parent-effect tests use the production receipt
+API. Known completed deletion without recovery carries a warning and is consumed.
+
+One retention policy now accounts for grouped paths, receipt maps and history
+entry overhead. It budgets remaining and opposite positions together, prioritizes
+unfinished work, and retains only a contiguous safe prefix of dependent opposite
+operations in their next execution order. The reproduced oversized-receipt case
+now retains fitting recovery and warns instead of silently losing all Undo.
+
+Independent review caught and corrected source substitution after Linux rename,
+non-normal XDG suffix handling, legacy trash permissions, accidental permission
+changes during restore, and Windows skipped-root/descendant callback ambiguity.
+Forward discovery can safely narrow owned legacy directories while preserving
+owner permissions; restore validates without performing that migration.
+
+[Structured evidence](exact-trash-identity-2026-09-08.json) records 707 Rust library
+and 9 integration passes (7 ignored), Linux all-target Clippy, Windows actual-source
+cross-target harness checks, four frontend contract tests, clean typecheck/build,
+and 10 native outcomes across four files. The new native case uses real external
+`gio trash`, then verifies original bytes after Undo/Redo/Undo while the external
+replacement remains in trash; the selected file's preview shows the original
+bytes. An independent Sol reviewer accepted the source and native evidence within
+those bounds. Source-map coverage is 414/414.
+
+This does not finish the architectural review. Windows batch case/ancestor aliases,
+Windows runtime, actual Linux cross-mount acceptance, macOS restore, durable crash
+recovery, remaining whole-intent operations and cancellation, and startup/half-bounce
+measurement remain open. No new performance numbers are claimed.

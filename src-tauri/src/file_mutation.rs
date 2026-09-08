@@ -2,7 +2,7 @@
 //! reusable by inverses without recursively recording another forward action.
 use crate::{
     error::AppError,
-    file_history::{self, Action, ForwardEffect, MutationOutcome, MutationReply},
+    file_history::{self, Action, ForwardEffect, MutationOutcome, MutationReply, Recovery},
     files::{batch::FileBatchOutcome, file_ops, mutation::FileMutationReceipt},
     renderer_owner,
 };
@@ -18,6 +18,9 @@ fn delete_effect(outcome: &FileBatchOutcome, permanent: bool) -> ForwardEffect {
     let mut groups: Vec<(String, Vec<String>)> = Vec::new();
     let mut indices = std::collections::HashMap::new();
     for path in &outcome.succeeded {
+        if !outcome.artifacts.contains_key(path) {
+            continue;
+        }
         let directory = parent(path)
             .into_iter()
             .next()
@@ -30,7 +33,17 @@ fn delete_effect(outcome: &FileBatchOutcome, permanent: bool) -> ForwardEffect {
     }
     let mut actions: Vec<_> = groups
         .into_iter()
-        .map(|(parent_dir, paths)| Action::Delete { paths, parent_dir })
+        .map(|(parent_dir, paths)| {
+            let artifacts = paths
+                .iter()
+                .map(|path| (path.clone(), outcome.artifacts[path].clone()))
+                .collect();
+            Action::Delete {
+                paths,
+                parent_dir,
+                recovery: Recovery::Restore(std::sync::Arc::new(artifacts)),
+            }
+        })
         .collect();
     let inverse = match actions.len() {
         0 => None,
@@ -43,7 +56,22 @@ fn delete_effect(outcome: &FileBatchOutcome, permanent: bool) -> ForwardEffect {
     ForwardEffect::Changed(inverse)
 }
 
-fn delete_outcome(result: FileBatchOutcome, permanent: bool) -> MutationOutcome<FileBatchOutcome> {
+fn delete_outcome(
+    mut result: FileBatchOutcome,
+    permanent: bool,
+) -> MutationOutcome<FileBatchOutcome> {
+    if !permanent && !cfg!(target_os = "macos") {
+        for path in &result.succeeded {
+            if !result.artifacts.contains_key(path)
+                && !result.warnings.iter().any(|warning| &warning.path == path)
+            {
+                result.warnings.push(crate::files::batch::FileFailure {
+                    path: path.clone(),
+                    error: "Deletion completed, but no exact recovery identity is available; Undo is unavailable for this item".into(),
+                });
+            }
+        }
+    }
     let effect = delete_effect(&result, permanent);
     let mut affected: Vec<_> = result
         .affected_paths()

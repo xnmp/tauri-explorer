@@ -1,17 +1,17 @@
 #![cfg(target_os = "linux")]
 
-use super::{
-    batch, move_multiple_to_trash, move_to_trash, restore_from_trash, restore_item_with, BatchPlan,
+use super::{batch, move_multiple_to_trash, restore_entries, BatchPlan};
+use crate::{
+    error::AppError,
+    files::trash_artifact::{RestoreRequest, TrashArtifact},
 };
-use crate::error::AppError;
-use serde::Serialize;
-use serde_json::Value;
 use std::{
     env, fs,
     future::Future,
     os::unix::fs::{symlink, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 const CHILD_CASE: &str = "TAURI_EXPLORER_TRASH_TEST_CASE";
@@ -20,6 +20,20 @@ const TEST_MODULE: &str = "files::trash::file_batch_outcomes";
 
 struct IsolatedTrash {
     root: PathBuf,
+}
+
+impl IsolatedTrash {
+    fn file(&self, name: &str, contents: &str) -> PathBuf {
+        let files = self.root.join("files");
+        fs::create_dir_all(&files).expect("create fixture files directory");
+        let path = files.join(name);
+        fs::write(&path, contents).expect("write fixture file");
+        path
+    }
+
+    fn missing_file(&self, name: &str) -> PathBuf {
+        self.root.join("files").join(name)
+    }
 }
 
 struct PermissionGuard {
@@ -34,7 +48,7 @@ impl PermissionGuard {
             .permissions()
             .mode();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o500))
-            .expect("make owned trash metadata directory read-only");
+            .expect("make owned directory read-only");
         Self { path, mode }
     }
 }
@@ -42,21 +56,38 @@ impl PermissionGuard {
 impl Drop for PermissionGuard {
     fn drop(&mut self) {
         fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode))
-            .expect("restore owned trash metadata permissions");
+            .expect("restore owned directory permissions");
     }
 }
 
-impl IsolatedTrash {
-    fn file(&self, name: &str, contents: &str) -> PathBuf {
-        let files = self.root.join("files");
-        fs::create_dir_all(&files).expect("create fixture files directory");
-        let path = files.join(name);
-        fs::write(&path, contents).expect("write fixture file");
-        path
+#[derive(Clone)]
+struct ExactTrash {
+    requested_path: String,
+    artifact: Arc<TrashArtifact>,
+}
+
+impl ExactTrash {
+    fn request(&self) -> RestoreRequest {
+        RestoreRequest {
+            path: self.requested_path.clone(),
+            artifact: self.artifact.clone(),
+        }
     }
 
-    fn missing_file(&self, name: &str) -> PathBuf {
-        self.root.join("files").join(name)
+    fn payload(&self) -> PathBuf {
+        let TrashArtifact::Freedesktop { root, name, .. } = self.artifact.as_ref() else {
+            panic!("Linux deletion returned a non-Freedesktop receipt");
+        };
+        root.join("files").join(name)
+    }
+
+    fn info(&self) -> PathBuf {
+        let TrashArtifact::Freedesktop { root, name, .. } = self.artifact.as_ref() else {
+            panic!("Linux deletion returned a non-Freedesktop receipt");
+        };
+        let mut info = name.clone();
+        info.push(".trashinfo");
+        root.join("info").join(info)
     }
 }
 
@@ -100,342 +131,207 @@ fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn assert_batch_outcome<T: Serialize>(
-    outcome: T,
-    expected_succeeded: &[String],
-    expected_failed: &[String],
+fn assert_known_outcome(
+    outcome: &batch::FileBatchOutcome,
+    succeeded: &[String],
+    failed: &[String],
 ) {
-    let serialized = serde_json::to_value(outcome).expect("serialize file batch outcome");
-    let succeeded = serialized
-        .get("succeeded")
-        .and_then(Value::as_array)
-        .expect("outcome has succeeded paths");
-    let succeeded = succeeded
+    assert_eq!(&outcome.succeeded, succeeded);
+    assert_eq!(
+        outcome
+            .failed
+            .iter()
+            .map(|failure| failure.path.clone())
+            .collect::<Vec<_>>(),
+        failed
+    );
+    assert!(outcome
+        .failed
         .iter()
-        .map(|path| {
-            path.as_str()
-                .expect("succeeded path is a string")
-                .to_owned()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(succeeded, expected_succeeded);
-
-    let failed = serialized
-        .get("failed")
-        .and_then(Value::as_array)
-        .expect("outcome has failed entries");
-    let failed_paths = failed
-        .iter()
-        .map(|failure| {
-            let error = failure
-                .get("error")
-                .and_then(Value::as_str)
-                .expect("failed entry has an error string");
-            assert!(!error.trim().is_empty(), "failed entry explains its error");
-            failure
-                .get("path")
-                .and_then(Value::as_str)
-                .expect("failed entry has a path string")
-                .to_owned()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(failed_paths, expected_failed);
-
-    let uncertain = serialized
-        .get("uncertain")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    assert_eq!(
-        uncertain, 0,
-        "known outcomes must not be reported uncertain"
-    );
-    let unstarted = serialized
-        .get("unstarted")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    assert_eq!(unstarted, 0, "known outcomes must not stop the batch");
+        .all(|failure| !failure.error.trim().is_empty()));
+    assert!(outcome.uncertain.is_empty());
+    assert!(outcome.unstarted.is_empty());
 }
 
-fn assert_uncertain_outcome<T: Serialize>(outcome: T, expected_path: &str) {
-    let serialized = serde_json::to_value(outcome).expect("serialize file batch outcome");
-    assert_eq!(
-        serialized
-            .get("succeeded")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len),
-        0
-    );
-    assert_eq!(
-        serialized
-            .get("failed")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len),
-        0,
-        "an error after entering the trash API has unknown mutation state"
-    );
-    let uncertain = serialized
-        .get("uncertain")
-        .and_then(Value::as_array)
-        .expect("uncertain outcome is serialized");
-    assert_eq!(uncertain.len(), 1);
-    assert_eq!(
-        uncertain[0].get("path").and_then(Value::as_str),
-        Some(expected_path)
-    );
-    assert!(uncertain[0]
-        .get("error")
-        .and_then(Value::as_str)
-        .is_some_and(|error| error.contains("did not finish")));
+fn trash_exact(requested_path: String) -> ExactTrash {
+    let outcome = run(move_multiple_to_trash(vec![requested_path.clone()]))
+        .expect("trash returns a batch receipt");
+    assert_known_outcome(&outcome, std::slice::from_ref(&requested_path), &[]);
+    assert!(outcome.warnings.is_empty());
+    let artifact = outcome
+        .artifacts
+        .get(&requested_path)
+        .cloned()
+        .expect("successful local trash returns exact recovery identity");
+    ExactTrash {
+        requested_path,
+        artifact,
+    }
 }
 
-fn trash(path: &Path) {
-    run(move_to_trash(path_string(path))).expect("seed isolated trash fixture");
-}
-
-fn owned_trash_items(path: &Path) -> Vec<trash::TrashItem> {
-    trash::os_limited::list()
-        .expect("list isolated trash")
-        .into_iter()
-        .filter(|item| item.original_path() == path)
-        .collect()
-}
-
-fn trashed_payload(item: &trash::TrashItem) -> PathBuf {
-    let info_path = Path::new(&item.id);
-    let trash_root = info_path
-        .parent()
-        .and_then(Path::parent)
-        .expect("trash info resides below the trash root");
-    let payload_name = info_path
-        .file_stem()
-        .expect("trash info has a payload name");
-    trash_root.join("files").join(payload_name)
-}
-
-fn set_deletion_date(item: &trash::TrashItem, date: &str) {
-    let info_path = Path::new(&item.id);
-    let info = fs::read_to_string(info_path).expect("read owned trash metadata");
-    let mut replaced = false;
-    let rewritten = info
-        .lines()
-        .map(|line| {
-            if line.starts_with("DeletionDate=") {
-                replaced = true;
-                format!("DeletionDate={date}")
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(replaced, "owned trash metadata has a deletion date");
-    fs::write(info_path, format!("{rewritten}\n")).expect("update owned trash metadata");
+fn restore_exact(items: impl IntoIterator<Item = ExactTrash>) -> batch::FileBatchOutcome {
+    let requests = items.into_iter().map(|item| item.request()).collect();
+    run(restore_entries(requests)).expect("exact restore returns a batch outcome")
 }
 
 #[test]
-fn bulk_trash_reports_success_when_another_path_is_missing() {
+fn bulk_trash_retains_success_and_receipt_when_another_path_is_missing() {
     isolated(
-        "bulk_trash_reports_success_when_another_path_is_missing",
+        "bulk_trash_retains_success_and_receipt_when_another_path_is_missing",
         |fixture| {
             let valid = fixture.file("accepted.txt", "accepted");
             let missing = fixture.missing_file("missing.txt");
             let valid_string = path_string(&valid);
             let missing_string = path_string(&missing);
-
-            let result = run(move_multiple_to_trash(vec![
+            let outcome = run(move_multiple_to_trash(vec![
                 valid_string.clone(),
                 valid_string.clone(),
                 missing_string.clone(),
-            ]));
+            ]))
+            .expect("per-file failures remain inside the batch outcome");
 
-            assert!(
-                !valid.exists(),
-                "the valid file was durably moved despite the sibling failure"
+            assert!(!valid.exists());
+            assert_known_outcome(
+                &outcome,
+                std::slice::from_ref(&valid_string),
+                std::slice::from_ref(&missing_string),
             );
-            let outcome = result.expect("per-file failures are returned inside the batch outcome");
-            assert_batch_outcome(outcome, &[valid_string], &[missing_string]);
+            assert!(outcome.artifacts.contains_key(&valid_string));
+            assert!(!outcome.artifacts.contains_key(&missing_string));
         },
     );
 }
 
 #[test]
-fn double_slash_local_path_is_trashed_and_restored_on_linux() {
+fn double_slash_local_path_uses_an_exact_linux_trash_receipt() {
     isolated(
-        "double_slash_local_path_is_trashed_and_restored_on_linux",
+        "double_slash_local_path_uses_an_exact_linux_trash_receipt",
         |fixture| {
             let path = fixture.file("double-slash-local.txt", "exact local contents");
-            let local_spelling = format!("/{}", path_string(&path));
-            assert!(local_spelling.starts_with("//"));
-
-            let trashed = run(move_multiple_to_trash(vec![local_spelling.clone()]))
-                .expect("local double-slash path returns a trash outcome");
-            assert!(!path.exists(), "local path was moved out of its directory");
+            let spelling = format!("/{}", path_string(&path));
+            assert!(spelling.starts_with("//"));
+            let trashed = trash_exact(spelling.clone());
+            assert!(!path.exists());
             assert_eq!(
-                owned_trash_items(&path).len(),
-                1,
-                "Linux double-slash spelling must use Trash, not permanent removal"
+                fs::read(trashed.payload()).unwrap(),
+                b"exact local contents"
             );
-            assert_batch_outcome(trashed, std::slice::from_ref(&local_spelling), &[]);
 
-            let restored = run(restore_from_trash(vec![local_spelling.clone()]))
-                .expect("trashed local double-slash path can be restored");
-            assert_eq!(
-                fs::read_to_string(&path).expect("restored local path exists"),
-                "exact local contents"
-            );
-            assert_batch_outcome(restored, &[local_spelling], &[]);
+            let outcome = restore_exact([trashed]);
+            assert_eq!(fs::read(&path).unwrap(), b"exact local contents");
+            assert_known_outcome(&outcome, &[spelling], &[]);
         },
     );
 }
 
 #[test]
-fn trash_api_failure_is_uncertain_instead_of_a_proven_unchanged_failure() {
+fn unwritable_trash_setup_is_a_known_unchanged_failure() {
     isolated(
-        "trash_api_failure_is_uncertain_instead_of_a_proven_unchanged_failure",
+        "unwritable_trash_setup_is_a_known_unchanged_failure",
         |fixture| {
-            let path = fixture.file("trash-api-failure.txt", "source bytes");
-            let path_string = path_string(&path);
-            let permissions = PermissionGuard::deny_writes(fixture.root.join("xdg-data"));
+            let path = fixture.file("trash-setup-failure.txt", "source bytes");
+            let requested = path_string(&path);
+            let _permissions = PermissionGuard::deny_writes(fixture.root.join("xdg-data"));
+            let outcome = run(move_multiple_to_trash(vec![requested.clone()]))
+                .expect("setup failure is represented by the batch outcome");
 
-            let outcome = run(move_multiple_to_trash(vec![path_string.clone()]))
-                .expect("trash API failure is represented by the batch receipt");
-            assert_uncertain_outcome(outcome, &path_string);
-
-            drop(permissions);
+            assert_eq!(fs::read(&path).unwrap(), b"source bytes");
+            assert_known_outcome(&outcome, &[], &[requested]);
+            assert!(outcome.artifacts.is_empty());
         },
     );
 }
 
 #[test]
-fn restore_reports_an_unmatched_path_without_discarding_a_valid_restore() {
+fn duplicate_exact_restore_request_is_rejected_before_any_payload_moves() {
     isolated(
-        "restore_reports_an_unmatched_path_without_discarding_a_valid_restore",
+        "duplicate_exact_restore_request_is_rejected_before_any_payload_moves",
         |fixture| {
-            let valid = fixture.file("restorable.txt", "restored contents");
-            let missing = fixture.missing_file("never-trashed.txt");
-            trash(&valid);
-            let valid_string = path_string(&valid);
-            let missing_string = path_string(&missing);
+            let path = fixture.file("duplicate.txt", "retained payload");
+            let trashed = trash_exact(path_string(&path));
+            let payload = trashed.payload();
+            let error = run(restore_entries(vec![trashed.request(), trashed.request()]))
+                .expect_err("one artifact cannot be assigned twice");
 
-            let result = run(restore_from_trash(vec![
-                valid_string.clone(),
-                missing_string.clone(),
-            ]));
-
-            assert_eq!(
-                fs::read_to_string(&valid).expect("valid item was restored"),
-                "restored contents"
-            );
-            let outcome = result.expect("an unmatched path is a per-file restore failure");
-            assert_batch_outcome(outcome, &[valid_string], &[missing_string]);
+            assert!(matches!(error, AppError::InvalidPath(_)));
+            assert!(!path.exists());
+            assert_eq!(fs::read(payload).unwrap(), b"retained payload");
         },
     );
 }
 
 #[test]
-fn restore_reports_prior_success_when_a_later_target_collides() {
+fn exact_restore_reports_prior_success_when_a_later_target_collides() {
     isolated(
-        "restore_reports_prior_success_when_a_later_target_collides",
+        "exact_restore_reports_prior_success_when_a_later_target_collides",
         |fixture| {
-            let restored = fixture.file("restored-first.txt", "first contents");
-            let collision = fixture.file("collision.txt", "trashed contents");
-            trash(&restored);
-            trash(&collision);
-            fs::write(&collision, "existing target").expect("create restore collision");
-            let restored_string = path_string(&restored);
-            let collision_string = path_string(&collision);
+            let first_path = fixture.file("restored-first.txt", "first contents");
+            let collision_path = fixture.file("collision.txt", "trashed contents");
+            let first = trash_exact(path_string(&first_path));
+            let collision = trash_exact(path_string(&collision_path));
+            fs::write(&collision_path, b"existing target").unwrap();
+            let outcome = restore_exact([first.clone(), collision.clone()]);
 
-            let result = run(restore_from_trash(vec![
-                restored_string.clone(),
-                collision_string.clone(),
-            ]));
-
-            assert_eq!(
-                fs::read_to_string(&restored).expect("earlier item was restored"),
-                "first contents"
+            assert_eq!(fs::read(&first_path).unwrap(), b"first contents");
+            assert_eq!(fs::read(&collision_path).unwrap(), b"existing target");
+            assert_eq!(fs::read(collision.payload()).unwrap(), b"trashed contents");
+            assert_known_outcome(
+                &outcome,
+                std::slice::from_ref(&first.requested_path),
+                std::slice::from_ref(&collision.requested_path),
             );
-            assert_eq!(
-                fs::read_to_string(&collision).expect("colliding target remains"),
-                "existing target"
-            );
-            let outcome = result.expect("a restore collision is a per-file failure");
-            assert_batch_outcome(outcome, &[restored_string], &[collision_string]);
         },
     );
 }
 
 #[test]
-fn restore_chooses_the_newest_owned_item_for_an_original_path() {
+fn same_path_versions_restore_by_receipt_instead_of_deletion_timestamp() {
     isolated(
-        "restore_chooses_the_newest_owned_item_for_an_original_path",
+        "same_path_versions_restore_by_receipt_instead_of_deletion_timestamp",
         |fixture| {
             let path = fixture.file("versioned.txt", "older contents");
-            trash(&path);
-            fs::write(&path, "newer contents").expect("write replacement version");
-            trash(&path);
+            let requested = path_string(&path);
+            let older = trash_exact(requested.clone());
+            fs::write(&path, b"newer contents").unwrap();
+            let newer = trash_exact(requested.clone());
 
-            let items = owned_trash_items(&path);
-            assert_eq!(items.len(), 2, "both owned versions are in isolated trash");
-            for item in &items {
-                match fs::read_to_string(trashed_payload(item))
-                    .expect("read owned trashed payload")
-                    .as_str()
-                {
-                    "older contents" => set_deletion_date(item, "2001-01-01T00:00:00"),
-                    "newer contents" => set_deletion_date(item, "2031-01-01T00:00:00"),
-                    contents => panic!("unexpected owned trash payload: {contents}"),
-                }
-            }
-            let path_string = path_string(&path);
-
-            let result = run(restore_from_trash(vec![path_string.clone()]));
-
-            assert_eq!(
-                fs::read_to_string(&path).expect("newest item was restored"),
-                "newer contents"
-            );
-            let outcome = result.expect("newest matching item restores successfully");
-            assert_batch_outcome(outcome, &[path_string], &[]);
+            let first = restore_exact([older]);
+            assert_known_outcome(&first, std::slice::from_ref(&requested), &[]);
+            assert_eq!(fs::read(&path).unwrap(), b"older contents");
+            fs::remove_file(&path).unwrap();
+            let second = restore_exact([newer]);
+            assert_known_outcome(&second, std::slice::from_ref(&requested), &[]);
+            assert_eq!(fs::read(path).unwrap(), b"newer contents");
         },
     );
 }
 
 #[test]
-fn restored_payload_is_success_even_when_trash_metadata_cleanup_fails() {
+fn restored_payload_succeeds_when_metadata_cleanup_fails_and_stale_info_is_ignored() {
     isolated(
-        "restored_payload_is_success_even_when_trash_metadata_cleanup_fails",
+        "restored_payload_succeeds_when_metadata_cleanup_fails_and_stale_info_is_ignored",
         |fixture| {
             let path = fixture.file("cleanup-failure.txt", "durable contents");
-            trash(&path);
-            let item = owned_trash_items(&path)
-                .into_iter()
-                .next()
-                .expect("owned item is present in isolated trash");
-            let info_dir = Path::new(&item.id)
-                .parent()
-                .expect("trash metadata has a parent")
-                .to_owned();
-            let permissions = PermissionGuard::deny_writes(info_dir);
-            let path_string = path_string(&path);
-
-            let first_restore = run(restore_from_trash(vec![path_string.clone()]))
-                .expect("metadata cleanup failure is represented by the per-file outcome");
-            assert_eq!(
-                fs::read_to_string(&path).expect("payload was durably restored"),
-                "durable contents"
+            let requested = path_string(&path);
+            let first = trash_exact(requested.clone());
+            let stale_info = first.info();
+            let permissions = PermissionGuard::deny_writes(
+                stale_info.parent().expect("metadata directory").to_owned(),
             );
-            assert_batch_outcome(first_restore, std::slice::from_ref(&path_string), &[]);
 
+            let first_outcome = restore_exact([first]);
+            assert_known_outcome(&first_outcome, std::slice::from_ref(&requested), &[]);
+            assert_eq!(fs::read(&path).unwrap(), b"durable contents");
+            assert!(stale_info.exists());
             drop(permissions);
-            let redo = run(move_multiple_to_trash(vec![path_string.clone()]))
-                .expect("redo trash returns a per-file outcome");
-            assert_batch_outcome(redo, std::slice::from_ref(&path_string), &[]);
-            let second_restore = run(restore_from_trash(vec![path_string.clone()]))
-                .expect("the next restore returns a per-file outcome");
-            assert_batch_outcome(second_restore, std::slice::from_ref(&path_string), &[]);
-            assert_eq!(
-                fs::read_to_string(&path).expect("the next undo restored the payload"),
-                "durable contents"
+
+            let second = trash_exact(requested.clone());
+            let second_outcome = restore_exact([second]);
+            assert_known_outcome(&second_outcome, &[requested], &[]);
+            assert_eq!(fs::read(path).unwrap(), b"durable contents");
+            assert!(
+                stale_info.exists(),
+                "exact restore never consumes stale metadata"
             );
         },
     );
@@ -447,42 +343,27 @@ fn broken_symlink_restores_and_an_existing_broken_symlink_is_a_collision() {
         "broken_symlink_restores_and_an_existing_broken_symlink_is_a_collision",
         |fixture| {
             let files = fixture.root.join("files");
-            fs::create_dir_all(&files).expect("create fixture files directory");
-            let restored = files.join("restored-link");
-            let collision = files.join("collision-link");
+            fs::create_dir_all(&files).unwrap();
+            let restored_path = files.join("restored-link");
+            let collision_path = files.join("collision-link");
             let restored_target = PathBuf::from("missing-restored-target");
-            let trashed_collision_target = PathBuf::from("missing-trashed-target");
-            let existing_collision_target = PathBuf::from("missing-existing-target");
-            symlink(&restored_target, &restored).expect("create restorable broken symlink");
-            symlink(&trashed_collision_target, &collision)
-                .expect("create colliding broken symlink for trash");
-            trash(&restored);
-            trash(&collision);
-            symlink(&existing_collision_target, &collision)
-                .expect("create broken symlink at restore target");
-            let restored_string = path_string(&restored);
-            let collision_string = path_string(&collision);
+            let trashed_target = PathBuf::from("missing-trashed-target");
+            let occupant_target = PathBuf::from("missing-existing-target");
+            symlink(&restored_target, &restored_path).unwrap();
+            symlink(&trashed_target, &collision_path).unwrap();
+            let restored = trash_exact(path_string(&restored_path));
+            let collision = trash_exact(path_string(&collision_path));
+            symlink(&occupant_target, &collision_path).unwrap();
 
-            let outcome = run(restore_from_trash(vec![
-                restored_string.clone(),
-                collision_string.clone(),
-            ]))
-            .expect("symlink restores return a per-file outcome");
-
-            assert!(fs::symlink_metadata(&restored)
-                .expect("broken symlink was restored")
-                .file_type()
-                .is_symlink());
-            assert_eq!(
-                fs::read_link(&restored).expect("read restored broken symlink"),
-                restored_target
+            let outcome = restore_exact([restored.clone(), collision.clone()]);
+            assert_eq!(fs::read_link(&restored_path).unwrap(), restored_target);
+            assert_eq!(fs::read_link(&collision_path).unwrap(), occupant_target);
+            assert_eq!(fs::read_link(collision.payload()).unwrap(), trashed_target);
+            assert_known_outcome(
+                &outcome,
+                std::slice::from_ref(&restored.requested_path),
+                std::slice::from_ref(&collision.requested_path),
             );
-            assert_eq!(
-                fs::read_link(&collision).expect("read colliding broken symlink"),
-                existing_collision_target,
-                "no-replace restore preserves the existing link"
-            );
-            assert_batch_outcome(outcome, &[restored_string], &[collision_string]);
         },
     );
 }
@@ -492,42 +373,36 @@ fn directory_restore_continues_after_a_sibling_target_collision() {
     isolated(
         "directory_restore_continues_after_a_sibling_target_collision",
         |fixture| {
-            let restored = fixture.root.join("files/restored-directory");
-            let collision = fixture.root.join("files/collision-directory");
-            fs::create_dir_all(&restored).expect("create restorable directory");
-            fs::create_dir_all(&collision).expect("create colliding directory for trash");
-            fs::write(restored.join("restored.txt"), "restored child")
-                .expect("write restorable child");
-            fs::write(collision.join("trashed.txt"), "trashed child").expect("write trashed child");
-            trash(&restored);
-            trash(&collision);
-            fs::create_dir(&collision).expect("create directory at restore target");
-            fs::write(collision.join("existing.txt"), "existing child")
-                .expect("write existing collision child");
-            let restored_string = path_string(&restored);
-            let collision_string = path_string(&collision);
+            let restored_path = fixture.root.join("files/restored-directory");
+            let collision_path = fixture.root.join("files/collision-directory");
+            fs::create_dir_all(&restored_path).unwrap();
+            fs::create_dir_all(&collision_path).unwrap();
+            fs::write(restored_path.join("restored.txt"), b"restored child").unwrap();
+            fs::write(collision_path.join("trashed.txt"), b"trashed child").unwrap();
+            let restored = trash_exact(path_string(&restored_path));
+            let collision = trash_exact(path_string(&collision_path));
+            fs::create_dir(&collision_path).unwrap();
+            fs::write(collision_path.join("existing.txt"), b"existing child").unwrap();
 
-            let outcome = run(restore_from_trash(vec![
-                collision_string.clone(),
-                restored_string.clone(),
-            ]))
-            .expect("directory restores return a per-file outcome");
-
+            let outcome = restore_exact([collision.clone(), restored.clone()]);
             assert_eq!(
-                fs::read_to_string(restored.join("restored.txt"))
-                    .expect("directory and its child were restored"),
-                "restored child"
+                fs::read(restored_path.join("restored.txt")).unwrap(),
+                b"restored child"
             );
             assert_eq!(
-                fs::read_to_string(collision.join("existing.txt"))
-                    .expect("existing collision directory remains intact"),
-                "existing child"
+                fs::read(collision_path.join("existing.txt")).unwrap(),
+                b"existing child"
             );
-            assert!(
-                !collision.join("trashed.txt").exists(),
-                "failed restore does not merge the trashed tree into the target"
+            assert!(!collision_path.join("trashed.txt").exists());
+            assert_eq!(
+                fs::read(collision.payload().join("trashed.txt")).unwrap(),
+                b"trashed child"
             );
-            assert_batch_outcome(outcome, &[restored_string], &[collision_string]);
+            assert_known_outcome(
+                &outcome,
+                std::slice::from_ref(&restored.requested_path),
+                std::slice::from_ref(&collision.requested_path),
+            );
         },
     );
 }
@@ -538,226 +413,154 @@ fn restore_recreates_missing_parent_hierarchy_and_reports_only_refresh_effects_f
         "restore_recreates_missing_parent_hierarchy_and_reports_only_refresh_effects_for_it",
         |fixture| {
             let existing = fixture.root.join("existing-ancestor");
-            let recreated_first = existing.join("recreated-first");
-            let recreated_second = recreated_first.join("recreated-second");
-            fs::create_dir_all(&recreated_second).expect("create original parent hierarchy");
-            let restored = recreated_second.join("restored.txt");
-            fs::write(&restored, "exact restored bytes").expect("write restorable file");
-            trash(&restored);
-            fs::remove_dir(&recreated_second).expect("remove empty immediate parent");
-            fs::remove_dir(&recreated_first).expect("remove empty parent");
-            assert!(existing.is_dir(), "nearest existing ancestor remains");
-            let restored_string = path_string(&restored);
+            let first = existing.join("recreated-first");
+            let second = first.join("recreated-second");
+            fs::create_dir_all(&second).unwrap();
+            let path = second.join("restored.txt");
+            fs::write(&path, b"exact restored bytes").unwrap();
+            let trashed = trash_exact(path_string(&path));
+            fs::remove_dir(&second).unwrap();
+            fs::remove_dir(&first).unwrap();
 
-            let outcome = run(restore_from_trash(vec![restored_string.clone()]))
-                .expect("restore with missing parents returns a batch outcome");
-
-            assert_eq!(
-                fs::read_to_string(&restored).expect("file and parent hierarchy were restored"),
-                "exact restored bytes"
-            );
-            assert_batch_outcome(&outcome, std::slice::from_ref(&restored_string), &[]);
+            let outcome = restore_exact([trashed.clone()]);
+            assert_eq!(fs::read(&path).unwrap(), b"exact restored bytes");
+            assert_known_outcome(&outcome, std::slice::from_ref(&trashed.requested_path), &[]);
             assert_eq!(
                 outcome.refresh_dirs,
                 [
                     path_string(&existing),
-                    path_string(&recreated_first),
-                    path_string(&recreated_second),
-                ],
-                "refresh effects cover the existing ancestor and each recreated directory"
-            );
-            assert_eq!(
-                outcome.affected_paths().cloned().collect::<Vec<_>>(),
-                [restored_string],
-                "recreated parents are not fictional leaf successes"
-            );
-            assert!(
-                serde_json::to_value(&outcome)
-                    .expect("serialize public batch outcome")
-                    .get("refresh_dirs")
-                    .is_none(),
-                "native refresh effects are not part of the IPC batch contract"
-            );
-        },
-    );
-}
-
-#[test]
-fn restore_with_an_existing_parent_has_no_auxiliary_refresh_directories() {
-    isolated(
-        "restore_with_an_existing_parent_has_no_auxiliary_refresh_directories",
-        |fixture| {
-            let restored = fixture.file("existing-parent.txt", "exact existing-parent bytes");
-            let parent = restored.parent().unwrap().to_owned();
-            trash(&restored);
-            assert!(parent.is_dir(), "original parent remains available");
-            let restored_string = path_string(&restored);
-
-            let outcome = run(restore_from_trash(vec![restored_string.clone()]))
-                .expect("restore into existing parent returns a batch outcome");
-
-            assert_eq!(
-                fs::read_to_string(&restored).expect("file was restored"),
-                "exact existing-parent bytes"
-            );
-            assert_batch_outcome(&outcome, std::slice::from_ref(&restored_string), &[]);
-            assert!(
-                outcome.refresh_dirs.is_empty(),
-                "an already-existing hierarchy has no auxiliary directory effects"
-            );
-            assert_eq!(
-                outcome.affected_paths().cloned().collect::<Vec<_>>(),
-                [restored_string]
-            );
-        },
-    );
-}
-
-#[test]
-fn failed_leaf_publication_retains_payload_and_reports_recreated_parent_refreshes() {
-    isolated(
-        "failed_leaf_publication_retains_payload_and_reports_recreated_parent_refreshes",
-        |fixture| {
-            let existing = fixture.root.join("failure-existing-ancestor");
-            let recreated_first = existing.join("failure-recreated-first");
-            let recreated_second = recreated_first.join("failure-recreated-second");
-            fs::create_dir_all(&recreated_second).expect("create original parent hierarchy");
-            let restored = recreated_second.join("restored.txt");
-            fs::write(&restored, "retryable exact bytes").expect("write restorable file");
-            trash(&restored);
-            let item = owned_trash_items(&restored)
-                .into_iter()
-                .next()
-                .expect("owned item is present in isolated trash");
-            let payload = trashed_payload(&item);
-            fs::remove_dir(&recreated_second).expect("remove empty immediate parent");
-            fs::remove_dir(&recreated_first).expect("remove empty parent");
-            let restored_string = path_string(&restored);
-            let worker_payload = payload.clone();
-            let worker_target = restored.clone();
-            let mut item = Some(item);
-
-            let outcome = run(batch::run_with_effects(
-                BatchPlan::new(vec![restored_string.clone()]).unwrap(),
-                move |path, effects| {
-                    assert_eq!(path, path_string(&worker_target));
-                    restore_item_with(item.take().unwrap(), effects, |source, target| {
-                        assert_eq!(source, worker_payload);
-                        assert_eq!(target, worker_target);
-                        Err(AppError::PermissionDenied(
-                            "injected rejection before leaf publication".into(),
-                        ))
-                    })
-                },
-            ));
-
-            assert_batch_outcome(&outcome, &[], std::slice::from_ref(&restored_string));
-            assert_eq!(
-                outcome.refresh_dirs,
-                [
-                    path_string(&existing),
-                    path_string(&recreated_first),
-                    path_string(&recreated_second),
+                    path_string(&first),
+                    path_string(&second)
                 ]
             );
             assert_eq!(
-                fs::read_to_string(&payload).expect("failed publication retains trash payload"),
-                "retryable exact bytes"
+                outcome.affected_paths().cloned().collect::<Vec<_>>(),
+                [trashed.requested_path]
             );
-            assert!(
-                !restored.exists(),
-                "failed publication does not create the leaf"
-            );
-            assert!(
-                fs::read_dir(&recreated_second)
-                    .expect("recreated immediate parent exists")
-                    .next()
-                    .is_none(),
-                "only the parent hierarchy changed"
-            );
-
-            let retry = run(restore_from_trash(vec![restored_string.clone()]))
-                .expect("failed leaf remains available for an actual restore retry");
-            assert_batch_outcome(&retry, std::slice::from_ref(&restored_string), &[]);
-            assert!(retry.refresh_dirs.is_empty());
-            assert_eq!(
-                fs::read_to_string(&restored).expect("retry restored the retained payload"),
-                "retryable exact bytes"
-            );
+            assert!(serde_json::to_value(&outcome)
+                .expect("serialize public outcome")
+                .get("refresh_dirs")
+                .is_none());
         },
     );
 }
 
 #[test]
-fn publication_panic_retains_parent_effects_and_payload_for_inspected_recovery() {
+fn restore_with_existing_parent_has_no_auxiliary_refresh_directories() {
     isolated(
-        "publication_panic_retains_parent_effects_and_payload_for_inspected_recovery",
+        "restore_with_existing_parent_has_no_auxiliary_refresh_directories",
         |fixture| {
-            let existing = fixture.root.join("panic-existing-ancestor");
-            let recreated_first = existing.join("panic-recreated-first");
-            let recreated_second = recreated_first.join("panic-recreated-second");
-            fs::create_dir_all(&recreated_second).expect("create original parent hierarchy");
-            let restored = recreated_second.join("restored.txt");
-            fs::write(&restored, "panic recovery exact bytes").expect("write restorable file");
-            trash(&restored);
-            let item = owned_trash_items(&restored)
-                .into_iter()
-                .next()
-                .expect("owned item is present in isolated trash");
-            let payload = trashed_payload(&item);
-            fs::remove_dir(&recreated_second).expect("remove empty immediate parent");
-            fs::remove_dir(&recreated_first).expect("remove empty parent");
-            let restored_string = path_string(&restored);
-            let worker_payload = payload.clone();
-            let worker_target = restored.clone();
-            let mut item = Some(item);
+            let path = fixture.file("existing-parent.txt", "exact bytes");
+            let trashed = trash_exact(path_string(&path));
+            let outcome = restore_exact([trashed.clone()]);
+
+            assert_eq!(fs::read(&path).unwrap(), b"exact bytes");
+            assert_known_outcome(&outcome, std::slice::from_ref(&trashed.requested_path), &[]);
+            assert!(outcome.refresh_dirs.is_empty());
+        },
+    );
+}
+
+#[test]
+fn failed_leaf_publication_retains_exact_payload_and_parent_refreshes() {
+    isolated(
+        "failed_leaf_publication_retains_exact_payload_and_parent_refreshes",
+        |fixture| {
+            let existing = fixture.root.join("failure-existing-ancestor");
+            let first = existing.join("failure-recreated-first");
+            let second = first.join("failure-recreated-second");
+            fs::create_dir_all(&second).unwrap();
+            let path = second.join("restored.txt");
+            fs::write(&path, b"retryable exact bytes").unwrap();
+            let trashed = trash_exact(path_string(&path));
+            let payload = trashed.payload();
+            fs::remove_dir(&second).unwrap();
+            fs::remove_dir(&first).unwrap();
+            let worker = trashed.request();
 
             let outcome = run(batch::run_with_effects(
-                BatchPlan::new(vec![restored_string.clone()]).unwrap(),
+                BatchPlan::new(vec![trashed.requested_path.clone()]).unwrap(),
                 move |_, effects| {
-                    restore_item_with(item.take().unwrap(), effects, |source, target| {
-                        assert_eq!(source, worker_payload);
-                        assert_eq!(target, worker_target);
-                        panic!("injected panic before leaf publication");
-                    })
+                    crate::files::freedesktop_trash::restore_with_before_publish(
+                        &worker,
+                        effects,
+                        || {
+                            Err(AppError::PermissionDenied(
+                                "injected rejection before leaf publication".into(),
+                            ))
+                        },
+                    )
+                },
+            ));
+
+            assert_known_outcome(&outcome, &[], std::slice::from_ref(&trashed.requested_path));
+            assert_eq!(
+                outcome.refresh_dirs,
+                [
+                    path_string(&existing),
+                    path_string(&first),
+                    path_string(&second)
+                ]
+            );
+            assert_eq!(fs::read(&payload).unwrap(), b"retryable exact bytes");
+            assert!(!path.exists());
+
+            let retry = restore_exact([trashed]);
+            assert!(retry.refresh_dirs.is_empty());
+            assert_eq!(fs::read(path).unwrap(), b"retryable exact bytes");
+        },
+    );
+}
+
+#[test]
+fn publication_panic_retains_parent_effects_and_exact_payload_for_inspection() {
+    isolated(
+        "publication_panic_retains_parent_effects_and_exact_payload_for_inspection",
+        |fixture| {
+            let existing = fixture.root.join("panic-existing-ancestor");
+            let first = existing.join("panic-recreated-first");
+            let second = first.join("panic-recreated-second");
+            fs::create_dir_all(&second).unwrap();
+            let path = second.join("restored.txt");
+            fs::write(&path, b"panic recovery exact bytes").unwrap();
+            let trashed = trash_exact(path_string(&path));
+            let payload = trashed.payload();
+            fs::remove_dir(&second).unwrap();
+            fs::remove_dir(&first).unwrap();
+            let worker = trashed.request();
+
+            let outcome = run(batch::run_with_effects(
+                BatchPlan::new(vec![trashed.requested_path.clone()]).unwrap(),
+                move |_, effects| {
+                    crate::files::freedesktop_trash::restore_with_before_publish(
+                        &worker,
+                        effects,
+                        || panic!("injected panic before leaf publication"),
+                    )
                 },
             ));
 
             assert!(outcome.succeeded.is_empty());
             assert!(outcome.failed.is_empty());
             assert_eq!(outcome.uncertain.len(), 1);
-            assert_eq!(outcome.uncertain[0].path, restored_string);
+            assert_eq!(outcome.uncertain[0].path, trashed.requested_path);
             assert!(outcome.uncertain[0]
                 .error
                 .contains("injected panic before leaf publication"));
-            assert!(outcome.unstarted.is_empty());
             assert_eq!(
                 outcome.refresh_dirs,
                 [
                     path_string(&existing),
-                    path_string(&recreated_first),
-                    path_string(&recreated_second),
-                ],
-                "directory effects survive worker unwind"
+                    path_string(&first),
+                    path_string(&second)
+                ]
             );
-            assert_eq!(
-                fs::read_to_string(&payload).expect("panic retains trash payload"),
-                "panic recovery exact bytes"
-            );
-            assert!(!restored.exists());
+            assert_eq!(fs::read(&payload).unwrap(), b"panic recovery exact bytes");
+            assert!(!path.exists());
 
-            // The test inspected both the surviving payload and missing
-            // destination before this direct recovery. History must consume an
-            // uncertain action rather than automatically offering it to retry.
-            let recovery = run(restore_from_trash(vec![restored_string.clone()]))
-                .expect("inspected panic-retained payload can be recovered explicitly");
-            assert_batch_outcome(&recovery, &[restored_string], &[]);
+            let recovery = restore_exact([trashed]);
             assert!(recovery.refresh_dirs.is_empty());
-            assert_eq!(
-                fs::read_to_string(&restored)
-                    .expect("explicit recovery restored panic-retained payload"),
-                "panic recovery exact bytes"
-            );
+            assert_eq!(fs::read(path).unwrap(), b"panic recovery exact bytes");
         },
     );
 }

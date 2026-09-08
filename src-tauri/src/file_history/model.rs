@@ -1,4 +1,5 @@
 //! File history policy. No runtime, window, IPC, or filesystem dependencies.
+use crate::files::trash_artifact::TrashArtifact;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -7,6 +8,46 @@ use std::{
 
 pub type ClientId = u64;
 pub type EntryId = u64;
+
+/// Recovery belongs to its leaf, so sharing and retirement follow history.
+/// Capture is the next trash operation; Restore contains its exact receipt.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Recovery<T> {
+    #[default]
+    Capture,
+    Restore(T),
+}
+
+pub type RestoreArtifacts = BTreeMap<String, Arc<TrashArtifact>>;
+
+// Conservative BTree node bound includes the sparsely occupied root and Arc
+// allocation. Keep leaf accounting shared with the recovery retention fitter.
+pub(super) const ARTIFACT_MAP_OVERHEAD: usize =
+    std::mem::size_of::<RestoreArtifacts>() + 2 * std::mem::size_of::<usize>() + 1024;
+pub(super) fn artifact_item_bytes(path: &String, artifact: &TrashArtifact) -> usize {
+    path.capacity()
+        + artifact.retained_bytes()
+        + 3 * std::mem::size_of::<(String, Arc<TrashArtifact>)>()
+        + 32
+}
+
+impl Recovery<Arc<RestoreArtifacts>> {
+    pub fn subset(&self, paths: &[String]) -> Self {
+        match self {
+            Self::Capture => Self::Capture,
+            Self::Restore(artifacts) => Self::Restore(Arc::new(
+                paths
+                    .iter()
+                    .filter_map(|path| {
+                        artifacts
+                            .get(path)
+                            .map(|artifact| (path.clone(), artifact.clone()))
+                    })
+                    .collect(),
+            )),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -30,6 +71,8 @@ pub enum Action {
         parent_dir: String,
         #[serde(default)]
         restore_supported: bool,
+        #[serde(skip)]
+        recovery: Recovery<Arc<TrashArtifact>>,
     },
     Batch {
         actions: Vec<Action>,
@@ -38,6 +81,8 @@ pub enum Action {
     Delete {
         paths: Vec<String>,
         parent_dir: String,
+        #[serde(skip)]
+        recovery: Recovery<Arc<RestoreArtifacts>>,
     },
 }
 
@@ -58,12 +103,36 @@ impl Action {
                 Self::Copy {
                     copied_path,
                     parent_dir,
+                    recovery,
                     ..
-                } => copied_path.capacity() + parent_dir.capacity(),
-                Self::Delete { paths, parent_dir } => {
+                } => {
+                    copied_path.capacity()
+                        + parent_dir.capacity()
+                        + match recovery {
+                            Recovery::Capture => 0,
+                            Recovery::Restore(artifact) => artifact.retained_bytes(),
+                        }
+                }
+                Self::Delete {
+                    paths,
+                    parent_dir,
+                    recovery,
+                } => {
                     parent_dir.capacity()
                         + paths.capacity() * std::mem::size_of::<String>()
                         + paths.iter().map(String::capacity).sum::<usize>()
+                        + match recovery {
+                            Recovery::Capture => 0,
+                            // Conservatively account map nodes as well as the
+                            // keys and shared artifact allocations they retain.
+                            Recovery::Restore(artifacts) => {
+                                ARTIFACT_MAP_OVERHEAD
+                                    + artifacts
+                                        .iter()
+                                        .map(|(path, artifact)| artifact_item_bytes(path, artifact))
+                                        .sum::<usize>()
+                            }
+                        }
                 }
                 Self::Batch { actions, label } => {
                     label.capacity()
@@ -235,7 +304,13 @@ pub struct Histories {
 }
 
 const MAX_ENTRIES: usize = 256;
-const MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(super) const MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(super) const ENTRY_OVERHEAD: usize =
+    std::mem::size_of::<Entry>() + 2 * std::mem::size_of::<usize>() + std::mem::size_of::<Slot>();
+
+pub(super) fn entry_bytes(action: &Action) -> usize {
+    action.retained_bytes() + ENTRY_OVERHEAD
+}
 const MAX_PENDING_FORWARDS: usize = 128;
 
 fn replace_slot(entries: &mut Vec<Slot>, id: EntryId, replacement: Option<&Slot>) {
@@ -308,7 +383,7 @@ impl Histories {
         self.next_entry
     }
     fn ready(id: EntryId, action: Action, continuation_of: Option<EntryId>) -> Slot {
-        let bytes = action.retained_bytes() + std::mem::size_of::<Entry>();
+        let bytes = entry_bytes(&action);
         Slot::Ready(Arc::new(Entry {
             id,
             action,
@@ -545,6 +620,15 @@ impl Histories {
         if self.running != Some(reservation.id) {
             return;
         }
+        debug_assert!(
+            result
+                .remaining
+                .iter()
+                .chain(&result.opposite)
+                .map(entry_bytes)
+                .sum::<usize>()
+                <= MAX_BYTES
+        );
         // A partial result is new work with a fresh ID: a stale original request
         // must never be able to execute the remaining subset automatically.
         let remaining = result

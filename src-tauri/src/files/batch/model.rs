@@ -1,8 +1,10 @@
 //! Pure batch admission and outcome projection. Paths retain their IPC spelling.
+use crate::files::trash_artifact::{TrashArtifact, TrashSuccess};
 use serde::Serialize;
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     path::{Component, Path},
+    sync::Arc,
 };
 
 const MAX_PATHS: usize = 32_768;
@@ -67,6 +69,10 @@ pub struct FileFailure {
 /// Disjoint partitions of admitted inputs, preserving input order within each.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct FileBatchOutcome {
+    #[serde(skip)]
+    pub(crate) artifacts: BTreeMap<String, Arc<TrashArtifact>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) warnings: Vec<FileFailure>,
     /// Native reconciliation effects independent of requested-item success.
     /// These are conservative invalidations, not created-directory ownership.
     /// The native coordinator publishes them; they are not a renderer receipt.
@@ -99,6 +105,11 @@ impl FileBatchOutcome {
                 item.path, item.error
             )
         }));
+        errors.extend(
+            self.warnings
+                .iter()
+                .map(|item| format!("{}: {}", item.path, item.error)),
+        );
         if !self.unstarted.is_empty() {
             errors.push(format!("{} items were not started", self.unstarted.len()));
         }
@@ -111,7 +122,7 @@ pub(super) enum ItemState {
     #[default]
     Unstarted,
     Active,
-    Succeeded,
+    Succeeded(TrashSuccess),
     Failed(String),
     Uncertain(String),
 }
@@ -124,7 +135,18 @@ pub(super) fn settle(
     let mut outcome = FileBatchOutcome::default();
     for (path, state) in paths.into_iter().zip(states) {
         match state {
-            ItemState::Succeeded => outcome.succeeded.push(path),
+            ItemState::Succeeded(success) => {
+                if let Some(artifact) = success.artifact {
+                    outcome.artifacts.insert(path.clone(), artifact);
+                }
+                if let Some(error) = success.warning {
+                    outcome.warnings.push(FileFailure {
+                        path: path.clone(),
+                        error,
+                    });
+                }
+                outcome.succeeded.push(path);
+            }
             ItemState::Failed(error) => outcome.failed.push(FileFailure { path, error }),
             ItemState::Uncertain(error) => outcome.uncertain.push(FileFailure { path, error }),
             ItemState::Active => outcome.uncertain.push(FileFailure {

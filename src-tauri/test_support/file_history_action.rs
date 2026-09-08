@@ -1,5 +1,9 @@
-use super::{affected_dirs, prepare, Action};
-use std::path::Path;
+use super::{affected_dirs, prepare, prepare_renderer, Action};
+use crate::{
+    file_history::model::{Recovery, RestoreArtifacts},
+    files::trash_artifact::TrashArtifact,
+};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 fn absolute(parts: &[&str]) -> String {
     parts
@@ -17,7 +21,20 @@ fn copy(path: String, parent_dir: String, restore_supported: bool) -> Action {
         copied_path: path,
         parent_dir,
         restore_supported,
+        recovery: Recovery::Capture,
     }
+}
+
+fn artifact(id: &str) -> Arc<TrashArtifact> {
+    Arc::new(TrashArtifact::WindowsShell {
+        parsing_name_utf16: id.encode_utf16().collect(),
+    })
+}
+
+fn restore_artifacts(
+    entries: impl IntoIterator<Item = (String, Arc<TrashArtifact>)>,
+) -> Recovery<Arc<RestoreArtifacts>> {
+    Recovery::Restore(Arc::new(entries.into_iter().collect::<BTreeMap<_, _>>()))
 }
 
 fn prepared(action: Action, trash_restore: bool) -> Action {
@@ -44,6 +61,110 @@ fn host_capability_overwrites_a_forged_copy_restore_flag() {
 }
 
 #[test]
+fn renderer_copy_is_accepted_but_cannot_deserialize_a_recovery_identity() {
+    let path = absolute(&["copies", "report.txt"]);
+    let parent = absolute(&["copies"]);
+    let json = serde_json::json!({
+        "type": "copy",
+        "copiedPath": path.clone(),
+        "parentDir": parent.clone(),
+        "restoreSupported": false,
+        "recovery": {
+            "Restore": {
+                "WindowsShell": { "parsingNameUtf16": [102, 111, 114, 103, 101, 100] }
+            }
+        }
+    });
+    let incoming: Action = serde_json::from_value(json).expect("valid public Copy action");
+
+    let prepared = prepare_renderer(incoming, true)
+        .expect("renderer Copy remains supported")
+        .expect("Copy is retained");
+
+    assert_eq!(prepared, copy(path, parent, true));
+}
+
+#[test]
+fn renderer_delete_is_rejected_even_when_nested_beside_safe_actions() {
+    let copied = copy(
+        absolute(&["copies", "safe.txt"]),
+        absolute(&["copies"]),
+        false,
+    );
+    let deleted = absolute(&["trash", "native-only.txt"]);
+    let action = Action::Batch {
+        label: "mixed forged history".into(),
+        actions: vec![
+            copied,
+            Action::Batch {
+                label: "nested".into(),
+                actions: vec![Action::Delete {
+                    paths: vec![deleted],
+                    parent_dir: absolute(&["trash"]),
+                    recovery: Recovery::Capture,
+                }],
+            },
+        ],
+    };
+
+    assert!(prepare_renderer(action, true)
+        .unwrap_err()
+        .contains("native file operation"));
+}
+
+#[test]
+fn native_delete_restore_requires_exactly_one_artifact_for_every_path() {
+    let first = absolute(&["trash", "first.txt"]);
+    let second = absolute(&["trash", "second.txt"]);
+    let parent = absolute(&["trash"]);
+    let missing = Action::Delete {
+        paths: vec![first.clone(), second.clone()],
+        parent_dir: parent.clone(),
+        recovery: restore_artifacts([(first.clone(), artifact("only-first"))]),
+    };
+    let extra_path = absolute(&["trash", "extra.txt"]);
+    let extra = Action::Delete {
+        paths: vec![first.clone(), second.clone()],
+        parent_dir: parent.clone(),
+        recovery: restore_artifacts([
+            (first.clone(), artifact("first")),
+            (second.clone(), artifact("second")),
+            (extra_path, artifact("extra")),
+        ]),
+    };
+
+    for action in [missing, extra] {
+        assert!(prepare(action, true)
+            .unwrap_err()
+            .contains("do not match their recovery artifacts"));
+    }
+
+    let exact = Action::Delete {
+        paths: vec![first.clone(), second.clone()],
+        parent_dir: parent,
+        recovery: restore_artifacts([(first, artifact("first")), (second, artifact("second"))]),
+    };
+    assert_eq!(prepared(exact.clone(), true), exact);
+}
+
+#[test]
+fn retained_bytes_include_opaque_recovery_payloads() {
+    let path = absolute(&["copies", "large-artifact.txt"]);
+    let parent = absolute(&["copies"]);
+    let capture = copy(path.clone(), parent.clone(), true);
+    let restore = Action::Copy {
+        copied_path: path,
+        parent_dir: parent,
+        restore_supported: true,
+        recovery: Recovery::Restore(Arc::new(TrashArtifact::WindowsShell {
+            parsing_name_utf16: vec![7; 4096],
+        })),
+    };
+
+    assert!(restore.retained_bytes() >= capture.retained_bytes() + 4096 * 2);
+}
+
+#[test]
 #[cfg(windows)]
 fn host_prunes_unrecoverable_delete_paths_and_empty_nested_batches() {
     let local = absolute(&["trash", "local.txt"]);
@@ -55,12 +176,14 @@ fn host_prunes_unrecoverable_delete_paths_and_empty_nested_batches() {
             Action::Delete {
                 paths: vec![remote.clone()],
                 parent_dir: parent.clone(),
+                recovery: Recovery::Capture,
             },
             Action::Batch {
                 label: "nested".into(),
                 actions: vec![Action::Delete {
                     paths: vec![local.clone(), remote],
                     parent_dir: parent.clone(),
+                    recovery: Recovery::Capture,
                 }],
             },
         ],
@@ -75,6 +198,7 @@ fn host_prunes_unrecoverable_delete_paths_and_empty_nested_batches() {
                 actions: vec![Action::Delete {
                     paths: vec![local],
                     parent_dir: parent,
+                    recovery: Recovery::Capture,
                 }],
             }],
         }
@@ -89,6 +213,7 @@ fn double_leading_slash_is_a_local_trash_path() {
     let action = Action::Delete {
         paths: vec![path.clone()],
         parent_dir: parent.clone(),
+        recovery: Recovery::Capture,
     };
     assert_eq!(prepared(action.clone(), true), action);
     assert_eq!(
@@ -106,6 +231,7 @@ fn unavailable_trash_restore_prunes_delete_actions_completely() {
             absolute(&["trash", "two.txt"]),
         ],
         parent_dir: parent,
+        recovery: Recovery::Capture,
     };
 
     assert_eq!(prepare(action, false).unwrap(), None);
@@ -170,6 +296,7 @@ fn node_limit_counts_each_path_in_a_delete_action() {
     let action = Action::Delete {
         paths: vec![path; 100_000],
         parent_dir: absolute(&["many"]),
+        recovery: Recovery::Capture,
     };
 
     assert!(prepare(action, true).unwrap_err().contains("too large"));
@@ -217,6 +344,7 @@ fn affected_directories_are_distinct_parents_derived_from_effect_paths() {
                     deleted_one.clone(),
                 ],
                 parent_dir: forged_parent.clone(),
+                recovery: Recovery::Capture,
             },
         ],
     };
@@ -252,6 +380,7 @@ fn extended_local_disks_remain_restorable_but_network_shares_do_not() {
         let action = Action::Delete {
             paths: vec![path.into()],
             parent_dir: r"C:\folder".into(),
+            recovery: Recovery::Capture,
         };
         assert_eq!(prepared(action.clone(), true), action);
     }
@@ -259,6 +388,7 @@ fn extended_local_disks_remain_restorable_but_network_shares_do_not() {
         let action = Action::Delete {
             paths: vec![path.into()],
             parent_dir: r"\\server\share".into(),
+            recovery: Recovery::Capture,
         };
         assert_eq!(prepare(action, true).unwrap(), None);
     }

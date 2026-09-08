@@ -294,8 +294,9 @@ is reported and consumed without an unsafe automatic retry. Missing, duplicate,
 unverifiable or failed root completion, and any overwrite/merge veto, remain
 uncertain. `GetAnyOperationsAborted` is queried after every `PerformOperations`.
 Windows ordinal path comparison handles casing and verbatim DOS-drive spellings
-for both inventory lookup and callback destinations; semantic duplicate requests
-fail before restoration. Device/UNC namespace aliases are not silently collapsed.
+for callback destinations. Exact receipts replace inventory lookup under
+[ADR 0019](0019-exact-trash-recovery.md). Case-alias and ancestor admission in
+the shared batch planner still needs Windows-specific validation.
 
 This is implementation under validation, not Windows runtime acceptance. The
 Windows CI job is configured to run the actual adapter's filesystem, collision, relative
@@ -306,9 +307,10 @@ and worker tests cannot establish Shell behavior. Microsoft documents
 [actual move completion and collision names](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postmoveitem),
 [overwrite/merge transfer semantics](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/ne-shobjidl_core-_transfer_source_flags),
 and [abort acknowledgement](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-getanyoperationsaborted).
-Artifact identity (including symlinked parent spellings), durable recovery,
-other-platform restore-parent effects, and native batch progress/cancellation remain
-required follow-up work. Linux evidence cannot establish Windows behavior.
+Exact trash identity (including symlinked parent spellings) is now implemented
+under ADR 0019. Durable recovery, other-platform restore-parent effects, and
+native batch progress/cancellation remain required follow-up work. Linux
+evidence cannot establish Windows behavior.
 
 ## Linux restore-parent effects
 

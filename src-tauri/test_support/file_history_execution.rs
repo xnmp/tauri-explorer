@@ -1,22 +1,22 @@
 use super::{execute, OperationError, Operations};
 use crate::{
-    file_history::model::{Action, Direction},
+    file_history::model::{Action, Direction, Recovery, RestoreArtifacts},
     files::trash::{FileBatchOutcome, FileFailure},
+    files::trash_artifact::{RestoreRequest, TrashArtifact},
 };
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     future::Future,
     path::PathBuf,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 #[derive(Clone, Debug, PartialEq)]
 enum Call {
     Rename(String, String),
     Move(String, String),
-    Trash(String),
     TrashMany(Vec<String>),
-    Restore(Vec<String>),
+    Restore(Vec<(String, String)>),
 }
 
 enum Reply {
@@ -104,18 +104,22 @@ impl Operations for FakeOperations {
             .map_err(OperationError::from)
     }
 
-    async fn trash(&self, path: String) -> Result<(), OperationError> {
-        self.unit(Call::Trash(path)).map_err(OperationError::from)
-    }
-
     async fn trash_many(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
         self.batch(Call::TrashMany(paths))
             .map_err(OperationError::from)
     }
 
-    async fn restore(&self, paths: Vec<String>) -> Result<FileBatchOutcome, OperationError> {
-        self.batch(Call::Restore(paths))
-            .map_err(OperationError::from)
+    async fn restore(
+        &self,
+        requests: Vec<RestoreRequest>,
+    ) -> Result<FileBatchOutcome, OperationError> {
+        self.batch(Call::Restore(
+            requests
+                .into_iter()
+                .map(|request| (request.path, artifact_id(&request.artifact)))
+                .collect(),
+        ))
+        .map_err(OperationError::from)
     }
 }
 
@@ -145,6 +149,53 @@ fn rename(name: &str) -> Action {
     }
 }
 
+fn artifact(id: &str) -> Arc<TrashArtifact> {
+    Arc::new(TrashArtifact::WindowsShell {
+        parsing_name_utf16: id.encode_utf16().collect(),
+    })
+}
+
+fn artifact_id(artifact: &TrashArtifact) -> String {
+    match artifact {
+        TrashArtifact::WindowsShell { parsing_name_utf16 } => {
+            String::from_utf16(parsing_name_utf16).expect("fixture artifact is valid UTF-16")
+        }
+        TrashArtifact::Freedesktop { name, .. } => name.to_string_lossy().into_owned(),
+    }
+}
+
+fn artifacts(
+    entries: impl IntoIterator<Item = (String, Arc<TrashArtifact>)>,
+) -> Arc<RestoreArtifacts> {
+    Arc::new(entries.into_iter().collect::<BTreeMap<_, _>>())
+}
+
+fn copy_action(
+    copied_path: String,
+    parent_dir: String,
+    restore_supported: bool,
+    recovery: Recovery<Arc<TrashArtifact>>,
+) -> Action {
+    Action::Copy {
+        copied_path,
+        parent_dir,
+        restore_supported,
+        recovery,
+    }
+}
+
+fn delete_action(
+    paths: Vec<String>,
+    parent_dir: String,
+    recovery: Recovery<Arc<RestoreArtifacts>>,
+) -> Action {
+    Action::Delete {
+        paths,
+        parent_dir,
+        recovery,
+    }
+}
+
 fn batch_outcome(succeeded: Vec<String>, failed: Vec<(String, &str)>) -> FileBatchOutcome {
     batch_outcome_with_refresh(succeeded, failed, Vec::new())
 }
@@ -155,6 +206,8 @@ fn batch_outcome_with_refresh(
     refresh_dirs: Vec<String>,
 ) -> FileBatchOutcome {
     FileBatchOutcome {
+        artifacts: BTreeMap::new(),
+        warnings: Vec::new(),
         uncertain: Vec::new(),
         unstarted: Vec::new(),
         refresh_dirs,
@@ -174,6 +227,58 @@ fn assert_refresh_dirs(actual: &[String], expected: &[String]) {
     let actual = actual.iter().collect::<HashSet<_>>();
     let expected = expected.iter().collect::<HashSet<_>>();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn redo_warns_and_retains_a_fitting_inverse_when_receipts_expand_history_memory() {
+    let parent = path(&format!("work/{}", "d".repeat(2000)));
+    let paths = [format!("{parent}/first"), format!("{parent}/second")];
+    let artifacts = paths
+        .iter()
+        .map(|path| {
+            (
+                path.clone(),
+                Arc::new(TrashArtifact::WindowsShell {
+                    parsing_name_utf16: vec![65; (16 * 1024 * 1024 - 4000) / 2],
+                }),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    // The filesystem receipt batch fits its transient budget, but a complete
+    // history entry additionally owns grouped paths, map keys and containers.
+    assert!(
+        artifacts
+            .iter()
+            .map(|(path, artifact)| path.len() + artifact.retained_bytes())
+            .sum::<usize>()
+            < 32 * 1024 * 1024
+    );
+    let operations = FakeOperations::new([Reply::Batch(Ok(FileBatchOutcome {
+        succeeded: paths.to_vec(),
+        artifacts,
+        ..Default::default()
+    }))]);
+    let action = delete_action(paths.to_vec(), parent, Recovery::Capture);
+    let result = run(execute(action, &operations, Direction::Redo));
+
+    assert!(result
+        .error
+        .as_deref()
+        .is_some_and(|warning| warning.contains("memory budget")));
+    assert!(
+        result.remaining.is_none(),
+        "completed deletion cannot be retried"
+    );
+    let Some(Action::Delete {
+        paths: retained, ..
+    }) = result.opposite
+    else {
+        panic!("retain fitting recovery");
+    };
+    assert_eq!(retained, [paths[0].clone()]);
+    assert!(
+        matches!(result.completed, Some(Action::Delete { paths: completed, .. }) if completed == paths)
+    );
 }
 
 #[test]
@@ -312,152 +417,325 @@ fn a_failed_leaf_remains_retryable_without_an_opposite() {
 }
 
 #[test]
-fn delete_partitions_receipts_in_original_action_order() {
+fn delete_undo_restores_exact_artifacts_and_partitions_in_original_order() {
     let first = path("delete/first.txt");
     let second = path("delete/second.txt");
     let third = path("delete/third.txt");
-    let parent_dir = path("delete");
-    let action = Action::Delete {
-        paths: vec![first.clone(), second.clone(), third.clone()],
-        parent_dir: parent_dir.clone(),
-    };
+    let parent = path("delete");
+    let first_artifact = artifact("artifact-first");
+    let second_artifact = artifact("artifact-second");
+    let third_artifact = artifact("artifact-third");
+    let action = delete_action(
+        vec![first.clone(), second.clone(), third.clone()],
+        parent.clone(),
+        Recovery::Restore(artifacts([
+            (first.clone(), first_artifact),
+            (second.clone(), second_artifact),
+            (third.clone(), third_artifact),
+        ])),
+    );
     let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome(
         vec![third.clone(), first.clone()],
         vec![(second.clone(), "missing from trash")],
     )))]);
 
     let result = run(execute(action, &operations, Direction::Undo));
-    let completed = Action::Delete {
-        paths: vec![first.clone(), third.clone()],
-        parent_dir: parent_dir.clone(),
-    };
 
-    assert_eq!(result.completed, Some(completed.clone()));
-    assert_eq!(result.opposite, Some(completed));
+    assert_eq!(
+        operations.calls(),
+        vec![Call::Restore(vec![
+            (first.clone(), "artifact-first".into()),
+            (second.clone(), "artifact-second".into()),
+            (third.clone(), "artifact-third".into()),
+        ])]
+    );
+    assert_eq!(
+        result.completed,
+        Some(delete_action(
+            vec![first.clone(), third.clone()],
+            parent.clone(),
+            Recovery::Restore(artifacts([
+                (first.clone(), artifact("artifact-first")),
+                (third.clone(), artifact("artifact-third")),
+            ])),
+        ))
+    );
+    assert_eq!(
+        result.opposite,
+        Some(delete_action(
+            vec![first.clone(), third.clone()],
+            parent.clone(),
+            Recovery::Capture,
+        ))
+    );
     assert_eq!(
         result.remaining,
-        Some(Action::Delete {
-            paths: vec![second.clone()],
-            parent_dir,
-        })
+        Some(delete_action(
+            vec![second.clone()],
+            parent,
+            Recovery::Restore(artifacts([(second.clone(), artifact("artifact-second"))])),
+        ))
     );
     assert_eq!(
         result.error.as_deref(),
         Some(format!("{second}: missing from trash").as_str())
     );
+}
+
+#[test]
+fn same_original_path_uses_the_artifact_owned_by_this_history_leaf() {
+    let copied_path = path("same/path.txt");
+    let own_artifact = artifact("history-owned-artifact");
+    let unrelated = artifact("newer-unrelated-artifact");
+    let action = copy_action(
+        copied_path.clone(),
+        path("same"),
+        true,
+        Recovery::Restore(own_artifact),
+    );
+    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome(
+        vec![copied_path.clone()],
+        Vec::new(),
+    )))]);
+
+    let result = run(execute(action.clone(), &operations, Direction::Redo));
+
     assert_eq!(
         operations.calls(),
-        vec![Call::Restore(vec![first, second, third])]
+        vec![Call::Restore(vec![(
+            copied_path.clone(),
+            "history-owned-artifact".into(),
+        )])],
+        "the unrelated newer artifact must never be selected"
+    );
+    assert_ne!(artifact_id(&unrelated), "history-owned-artifact");
+    assert_eq!(result.completed, Some(action));
+    assert_eq!(
+        result.opposite,
+        Some(copy_action(
+            copied_path,
+            path("same"),
+            true,
+            Recovery::Capture,
+        ))
     );
 }
 
 #[test]
-fn mixed_delete_outcome_consumes_uncertain_paths_and_stops_outer_siblings() {
+fn copy_undo_captures_a_fresh_receipt_for_each_redo_cycle() {
+    let copied_path = path("local/copied.txt");
+    let initial = copy_action(copied_path.clone(), path("local"), true, Recovery::Capture);
+    let first_artifact = artifact("first-trash-artifact");
+    let second_artifact = artifact("second-trash-artifact");
+    let mut first_outcome = batch_outcome(vec![copied_path.clone()], Vec::new());
+    first_outcome
+        .artifacts
+        .insert(copied_path.clone(), first_artifact);
+    let restore_outcome = batch_outcome(vec![copied_path.clone()], Vec::new());
+    let mut second_outcome = batch_outcome(vec![copied_path.clone()], Vec::new());
+    second_outcome
+        .artifacts
+        .insert(copied_path.clone(), second_artifact);
+    let operations = FakeOperations::new([
+        Reply::Batch(Ok(first_outcome)),
+        Reply::Batch(Ok(restore_outcome)),
+        Reply::Batch(Ok(second_outcome)),
+    ]);
+
+    let first_undo = run(execute(initial.clone(), &operations, Direction::Undo));
+    let first_redo_action = first_undo.opposite.expect("first Undo creates Redo");
+    let redo = run(execute(first_redo_action, &operations, Direction::Redo));
+    let second_undo_action = redo.opposite.expect("Redo creates a fresh Undo capture");
+    let second_undo = run(execute(second_undo_action, &operations, Direction::Undo));
+
+    assert_eq!(first_undo.completed, Some(initial));
+    assert!(matches!(
+        second_undo.opposite,
+        Some(Action::Copy {
+            recovery: Recovery::Restore(ref receipt),
+            ..
+        }) if artifact_id(receipt) == "second-trash-artifact"
+    ));
+    assert_eq!(
+        operations.calls(),
+        vec![
+            Call::TrashMany(vec![copied_path.clone()]),
+            Call::Restore(vec![(copied_path.clone(), "first-trash-artifact".into())]),
+            Call::TrashMany(vec![copied_path]),
+        ]
+    );
+}
+
+#[test]
+fn confirmed_copy_removal_without_a_receipt_is_consumed_without_redo() {
+    let copied_path = path("local/no-receipt.txt");
+    let action = copy_action(copied_path.clone(), path("local"), true, Recovery::Capture);
+    let mut outcome = batch_outcome(vec![copied_path.clone()], Vec::new());
+    outcome.warnings.push(FileFailure {
+        path: copied_path.clone(),
+        error: "receipt capture failed".into(),
+    });
+    let operations = FakeOperations::new([Reply::Batch(Ok(outcome))]);
+
+    let result = run(execute(action.clone(), &operations, Direction::Undo));
+
+    assert_eq!(result.completed, Some(action));
+    assert_eq!(result.opposite, None);
+    assert_eq!(result.remaining, None);
+    let error = result.error.expect("lost recovery identity is visible");
+    assert!(error.contains("receipt capture failed"));
+    assert!(error.contains("Redo is unavailable"));
+    assert_eq!(operations.calls(), vec![Call::TrashMany(vec![copied_path])]);
+}
+
+#[test]
+fn wrong_copy_phase_fails_before_calling_a_filesystem_port() {
+    let copied_path = path("local/copied.txt");
+    let operations = FakeOperations::default();
+    let undo_with_restore = copy_action(
+        copied_path.clone(),
+        path("local"),
+        true,
+        Recovery::Restore(artifact("already-trashed")),
+    );
+    let redo_with_capture = copy_action(copied_path, path("local"), true, Recovery::Capture);
+
+    let undo = run(execute(
+        undo_with_restore.clone(),
+        &operations,
+        Direction::Undo,
+    ));
+    let redo = run(execute(
+        redo_with_capture.clone(),
+        &operations,
+        Direction::Redo,
+    ));
+
+    assert_eq!(undo.remaining, Some(undo_with_restore));
+    assert_eq!(redo.remaining, Some(redo_with_capture));
+    assert!(undo.error.unwrap().contains("exact recovery identity"));
+    assert!(redo.error.unwrap().contains("exact recovery identity"));
+    assert!(operations.calls().is_empty());
+}
+
+#[test]
+fn missing_delete_artifact_fails_the_whole_restore_before_port_dispatch() {
+    let first = path("delete/first.txt");
+    let missing = path("delete/missing.txt");
+    let action = delete_action(
+        vec![first.clone(), missing.clone()],
+        path("delete"),
+        Recovery::Restore(artifacts([(first, artifact("first-artifact"))])),
+    );
+    let operations = FakeOperations::default();
+
+    let result = run(execute(action.clone(), &operations, Direction::Undo));
+
+    assert_eq!(result.remaining, Some(action));
+    assert_eq!(result.completed, None);
+    assert_eq!(result.opposite, None);
+    assert!(result.error.unwrap().contains(&missing));
+    assert!(operations.calls().is_empty());
+}
+
+#[test]
+fn delete_redo_partitions_fresh_artifacts_and_consumes_uncertainty() {
     let succeeded = path("delete/succeeded.txt");
+    let no_receipt = path("delete/no-receipt.txt");
     let failed = path("delete/failed.txt");
     let uncertain = path("delete/uncertain.txt");
     let unstarted = path("delete/unstarted.txt");
-    let parent_dir = path("delete");
-    let delete = Action::Delete {
-        paths: vec![
+    let parent = path("delete");
+    let action = delete_action(
+        vec![
             succeeded.clone(),
+            no_receipt.clone(),
             failed.clone(),
             uncertain.clone(),
             unstarted.clone(),
         ],
-        parent_dir: parent_dir.clone(),
-    };
-    let never_attempted = rename("outer-never-attempted");
-    let completed_last = rename("outer-completed-last");
-    let action = Action::Batch {
-        actions: vec![never_attempted.clone(), delete, completed_last.clone()],
-        label: "mixed delete outcome".into(),
-    };
-    let operations = FakeOperations::new([
-        Reply::Unit(Ok(())),
-        Reply::Batch(Ok(FileBatchOutcome {
-            succeeded: vec![succeeded.clone()],
-            failed: vec![FileFailure {
-                path: failed.clone(),
-                error: "permission denied".into(),
-            }],
-            uncertain: vec![FileFailure {
-                path: uncertain.clone(),
-                error: "worker exited".into(),
-            }],
-            unstarted: vec![unstarted.clone()],
-            refresh_dirs: Vec::new(),
-        })),
-    ]);
+        parent.clone(),
+        Recovery::Capture,
+    );
+    let mut outcome = batch_outcome(
+        vec![no_receipt.clone(), succeeded.clone()],
+        vec![(failed.clone(), "permission denied")],
+    );
+    outcome
+        .artifacts
+        .insert(succeeded.clone(), artifact("fresh-succeeded"));
+    outcome.uncertain.push(FileFailure {
+        path: uncertain.clone(),
+        error: "worker exited".into(),
+    });
+    outcome.unstarted.push(unstarted.clone());
+    let operations = FakeOperations::new([Reply::Batch(Ok(outcome))]);
 
-    let result = run(execute(action, &operations, Direction::Undo));
-    let completed_delete = Action::Delete {
-        paths: vec![succeeded.clone()],
-        parent_dir: parent_dir.clone(),
-    };
-    let uncertain_delete = Action::Delete {
-        paths: vec![uncertain.clone()],
-        parent_dir: parent_dir.clone(),
-    };
-    let remaining_delete = Action::Delete {
-        paths: vec![failed.clone(), unstarted.clone()],
-        parent_dir,
-    };
+    let result = run(execute(action, &operations, Direction::Redo));
 
     assert_eq!(
         operations.calls(),
-        vec![
-            Call::Rename(
-                path("work/outer-completed-last-new.txt"),
-                "outer-completed-last-old.txt".into(),
-            ),
-            Call::Restore(vec![succeeded, failed.clone(), uncertain, unstarted,]),
-        ],
-    );
-    assert_eq!(
-        result.completed,
-        Some(Action::Batch {
-            actions: vec![completed_delete.clone(), completed_last.clone()],
-            label: "mixed delete outcome".into(),
-        }),
+        vec![Call::TrashMany(vec![
+            succeeded.clone(),
+            no_receipt.clone(),
+            failed.clone(),
+            uncertain.clone(),
+            unstarted.clone(),
+        ])]
     );
     assert_eq!(
         result.opposite,
-        Some(Action::Batch {
-            actions: vec![completed_delete, completed_last],
-            label: "mixed delete outcome".into(),
-        }),
+        Some(delete_action(
+            vec![succeeded.clone()],
+            parent.clone(),
+            Recovery::Restore(artifacts([(
+                succeeded.clone(),
+                artifact("fresh-succeeded"),
+            )])),
+        ))
+    );
+    assert_eq!(
+        result.completed,
+        Some(delete_action(
+            vec![succeeded.clone(), no_receipt.clone()],
+            parent.clone(),
+            Recovery::Capture,
+        ))
     );
     assert_eq!(
         result.uncertain,
-        Some(Action::Batch {
-            actions: vec![uncertain_delete],
-            label: "mixed delete outcome".into(),
-        }),
+        Some(delete_action(
+            vec![uncertain],
+            parent.clone(),
+            Recovery::Capture,
+        ))
     );
     assert_eq!(
         result.remaining,
-        Some(Action::Batch {
-            actions: vec![never_attempted, remaining_delete],
-            label: "mixed delete outcome".into(),
-        }),
+        Some(delete_action(
+            vec![failed, unstarted],
+            parent,
+            Recovery::Capture,
+        ))
     );
     let error = result
         .error
-        .expect("mixed outcome reports its incomplete paths");
-    assert!(error.contains(&format!("{failed}: permission denied")));
+        .expect("partial result reports every limitation");
+    assert!(error.contains("permission denied"));
     assert!(error.contains("outcome is uncertain"));
-    assert!(error.contains("1 items were not started"));
+    assert!(error.contains("not started"));
+    assert!(error.contains("Undo is unavailable"));
 }
 
 #[test]
-fn delete_redo_uses_bulk_trash_and_retains_an_outer_failure() {
+fn delete_redo_transport_failure_retains_capture_phase() {
     let first = path("redo/first.txt");
     let second = path("redo/second.txt");
-    let action = Action::Delete {
-        paths: vec![first.clone(), second.clone()],
-        parent_dir: path("redo"),
-    };
+    let action = delete_action(
+        vec![first.clone(), second.clone()],
+        path("redo"),
+        Recovery::Capture,
+    );
     let operations = FakeOperations::new([Reply::Batch(Err("trash transport stopped".into()))]);
 
     let result = run(execute(action.clone(), &operations, Direction::Redo));
@@ -473,14 +751,18 @@ fn delete_redo_uses_bulk_trash_and_retains_an_outer_failure() {
 }
 
 #[test]
-fn copy_undo_completes_without_manufacturing_unsupported_redo() {
+fn unsupported_copy_undo_completes_without_manufacturing_redo() {
     let copied_path = path("network/copied.txt");
-    let action = Action::Copy {
-        copied_path: copied_path.clone(),
-        parent_dir: path("network"),
-        restore_supported: false,
-    };
-    let operations = FakeOperations::new([Reply::Unit(Ok(()))]);
+    let action = copy_action(
+        copied_path.clone(),
+        path("network"),
+        false,
+        Recovery::Capture,
+    );
+    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome(
+        vec![copied_path.clone()],
+        Vec::new(),
+    )))]);
 
     let result = run(execute(action.clone(), &operations, Direction::Undo));
 
@@ -488,41 +770,21 @@ fn copy_undo_completes_without_manufacturing_unsupported_redo() {
     assert_eq!(result.opposite, None);
     assert_eq!(result.remaining, None);
     assert_eq!(result.error, None);
-    assert_eq!(operations.calls(), vec![Call::Trash(copied_path)]);
+    assert_eq!(operations.calls(), vec![Call::TrashMany(vec![copied_path])]);
 }
 
 #[test]
-fn recoverable_copy_undo_records_the_same_action_for_redo() {
-    let copied_path = path("local/copied.txt");
-    let action = Action::Copy {
-        copied_path: copied_path.clone(),
-        parent_dir: path("local"),
-        restore_supported: true,
-    };
-    let operations = FakeOperations::new([Reply::Unit(Ok(()))]);
-
-    let result = run(execute(action.clone(), &operations, Direction::Undo));
-
-    assert_eq!(result.completed, Some(action.clone()));
-    assert_eq!(result.opposite, Some(action));
-    assert_eq!(result.remaining, None);
-    assert_eq!(result.error, None);
-    assert_eq!(operations.calls(), vec![Call::Trash(copied_path)]);
-}
-
-#[test]
-fn unsupported_copy_redo_fails_before_calling_the_restore_port() {
-    let action = Action::Copy {
-        copied_path: path("network/copied.txt"),
-        parent_dir: path("network"),
-        restore_supported: false,
-    };
+fn unsupported_copy_redo_fails_before_restore_dispatch() {
+    let action = copy_action(
+        path("network/copied.txt"),
+        path("network"),
+        false,
+        Recovery::Restore(artifact("unused")),
+    );
     let operations = FakeOperations::default();
 
     let result = run(execute(action.clone(), &operations, Direction::Redo));
 
-    assert_eq!(result.completed, None);
-    assert_eq!(result.opposite, None);
     assert_eq!(result.remaining, Some(action));
     assert_eq!(
         result.error.as_deref(),
@@ -532,139 +794,77 @@ fn unsupported_copy_redo_fails_before_calling_the_restore_port() {
 }
 
 #[test]
-fn recoverable_copy_redo_requires_its_exact_restore_receipt() {
-    let copied_path = path("local/copied.txt");
-    let action = Action::Copy {
-        copied_path: copied_path.clone(),
-        parent_dir: path("local"),
-        restore_supported: true,
-    };
-    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome(
-        Vec::new(),
-        vec![(copied_path.clone(), "payload missing")],
-    )))]);
-
-    let result = run(execute(action.clone(), &operations, Direction::Redo));
-
-    assert_eq!(result.completed, None);
-    assert_eq!(result.opposite, None);
-    assert_eq!(result.remaining, Some(action));
-    assert_eq!(
-        result.error.as_deref(),
-        Some(format!("{copied_path}: payload missing").as_str())
+fn copy_redo_preserves_refresh_effects_on_success_and_failure() {
+    let succeeded_path = path("restore/success/copied.txt");
+    let failed_path = path("restore/failure/copied.txt");
+    let succeeded = copy_action(
+        succeeded_path.clone(),
+        path("restore/success"),
+        true,
+        Recovery::Restore(artifact("success-artifact")),
     );
-    assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
-}
-
-#[test]
-fn successful_copy_redo_preserves_refresh_effects_outside_history_partitions() {
-    let copied_path = path("restore/new-parent/copied.txt");
-    let action = Action::Copy {
-        copied_path: copied_path.clone(),
-        parent_dir: path("restore/new-parent"),
-        restore_supported: true,
-    };
-    let refresh_dirs = vec![path("restore"), path("restore/new-parent")];
-    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome_with_refresh(
-        vec![copied_path.clone()],
-        Vec::new(),
-        refresh_dirs.clone(),
-    )))]);
-
-    let result = run(execute(action.clone(), &operations, Direction::Redo));
-
-    assert_eq!(result.completed, Some(action.clone()));
-    assert_eq!(result.opposite, Some(action));
-    assert_eq!(result.remaining, None);
-    assert_eq!(result.error, None);
-    assert_refresh_dirs(&result.refresh_dirs, &refresh_dirs);
-    assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
-}
-
-#[test]
-fn failed_copy_redo_preserves_refresh_effects_without_claiming_completion() {
-    let copied_path = path("restore/created-parent/missing.txt");
-    let action = Action::Copy {
-        copied_path: copied_path.clone(),
-        parent_dir: path("restore/created-parent"),
-        restore_supported: true,
-    };
-    let refresh_dirs = vec![path("restore"), path("restore/created-parent")];
-    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome_with_refresh(
-        Vec::new(),
-        vec![(copied_path.clone(), "payload missing")],
-        refresh_dirs.clone(),
-    )))]);
-
-    let result = run(execute(action.clone(), &operations, Direction::Redo));
-
-    assert_eq!(result.completed, None);
-    assert_eq!(result.opposite, None);
-    assert_eq!(result.remaining, Some(action));
-    assert_eq!(
-        result.error.as_deref(),
-        Some(format!("{copied_path}: payload missing").as_str())
+    let failed = copy_action(
+        failed_path.clone(),
+        path("restore/failure"),
+        true,
+        Recovery::Restore(artifact("failure-artifact")),
     );
-    assert_refresh_dirs(&result.refresh_dirs, &refresh_dirs);
-    assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
-}
+    let success_refresh = vec![path("restore"), path("restore/success")];
+    let failure_refresh = vec![path("restore/failure")];
+    let operations = FakeOperations::new([
+        Reply::Batch(Ok(batch_outcome_with_refresh(
+            vec![succeeded_path.clone()],
+            Vec::new(),
+            success_refresh.clone(),
+        ))),
+        Reply::Batch(Ok(batch_outcome_with_refresh(
+            Vec::new(),
+            vec![(failed_path.clone(), "payload missing")],
+            failure_refresh.clone(),
+        ))),
+    ]);
 
-#[test]
-fn partial_delete_undo_preserves_refresh_effects_independently_of_receipt_subsets() {
-    let restored = path("delete/missing-parent/restored.txt");
-    let blocked = path("delete/missing-parent/blocked.txt");
-    let parent_dir = path("delete/missing-parent");
-    let action = Action::Delete {
-        paths: vec![restored.clone(), blocked.clone()],
-        parent_dir: parent_dir.clone(),
-    };
-    let refresh_dirs = vec![path("delete"), parent_dir.clone()];
-    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome_with_refresh(
-        vec![restored.clone()],
-        vec![(blocked.clone(), "restore blocked")],
-        refresh_dirs.clone(),
-    )))]);
+    let success = run(execute(succeeded.clone(), &operations, Direction::Redo));
+    let failure = run(execute(failed.clone(), &operations, Direction::Redo));
 
-    let result = run(execute(action, &operations, Direction::Undo));
-    let completed = Action::Delete {
-        paths: vec![restored.clone()],
-        parent_dir: parent_dir.clone(),
-    };
-
-    assert_eq!(result.completed, Some(completed.clone()));
-    assert_eq!(result.opposite, Some(completed));
+    assert_eq!(success.completed, Some(succeeded));
     assert_eq!(
-        result.remaining,
-        Some(Action::Delete {
-            paths: vec![blocked.clone()],
-            parent_dir,
-        })
+        success.opposite,
+        Some(copy_action(
+            succeeded_path.clone(),
+            path("restore/success"),
+            true,
+            Recovery::Capture,
+        ))
     );
-    assert_eq!(
-        result.error.as_deref(),
-        Some(format!("{blocked}: restore blocked").as_str())
-    );
-    assert_refresh_dirs(&result.refresh_dirs, &refresh_dirs);
+    assert_refresh_dirs(&success.refresh_dirs, &success_refresh);
+    assert_eq!(failure.remaining, Some(failed));
+    assert_refresh_dirs(&failure.refresh_dirs, &failure_refresh);
     assert_eq!(
         operations.calls(),
-        vec![Call::Restore(vec![restored, blocked])]
+        vec![
+            Call::Restore(vec![(succeeded_path, "success-artifact".into())]),
+            Call::Restore(vec![(failed_path, "failure-artifact".into())]),
+        ]
     );
 }
 
 #[test]
-fn nested_batch_retains_all_refresh_effects_when_a_child_stops_execution() {
+fn nested_batch_retains_refresh_effects_and_exact_restore_requests_when_stopped() {
     let restored_path = path("nested/first/restored.txt");
-    let restored = Action::Copy {
-        copied_path: restored_path.clone(),
-        parent_dir: path("nested/first"),
-        restore_supported: true,
-    };
     let blocked_path = path("nested/blocked/missing.txt");
-    let blocked = Action::Copy {
-        copied_path: blocked_path.clone(),
-        parent_dir: path("nested/blocked"),
-        restore_supported: true,
-    };
+    let restored = copy_action(
+        restored_path.clone(),
+        path("nested/first"),
+        true,
+        Recovery::Restore(artifact("nested-first")),
+    );
+    let blocked = copy_action(
+        blocked_path.clone(),
+        path("nested/blocked"),
+        true,
+        Recovery::Restore(artifact("nested-blocked")),
+    );
     let nested_later = rename("nested-later");
     let nested = Action::Batch {
         actions: vec![blocked.clone(), nested_later],
@@ -702,7 +902,12 @@ fn nested_batch_retains_all_refresh_effects_when_a_child_stops_execution() {
     assert_eq!(
         result.opposite,
         Some(Action::Batch {
-            actions: vec![restored],
+            actions: vec![copy_action(
+                restored_path.clone(),
+                path("nested/first"),
+                true,
+                Recovery::Capture,
+            )],
             label: "outer restore".into(),
         })
     );
@@ -713,38 +918,31 @@ fn nested_batch_retains_all_refresh_effects_when_a_child_stops_execution() {
             label: "outer restore".into(),
         })
     );
-    assert_eq!(
-        result.error.as_deref(),
-        Some(format!("{blocked_path}: restore blocked").as_str())
-    );
     assert_refresh_dirs(&result.refresh_dirs, &[first_refresh, blocked_refresh]);
     assert_eq!(
         operations.calls(),
         vec![
-            Call::Restore(vec![restored_path]),
-            Call::Restore(vec![blocked_path]),
+            Call::Restore(vec![(restored_path, "nested-first".into())]),
+            Call::Restore(vec![(blocked_path, "nested-blocked".into())]),
         ]
     );
 }
 
 #[test]
-fn uncertain_copy_redo_is_consumed_without_an_inverse_or_retry() {
+fn uncertain_copy_restore_is_consumed_without_inverse_or_retry() {
     let copied_path = path("local/uncertain-copy.txt");
-    let action = Action::Copy {
-        copied_path: copied_path.clone(),
-        parent_dir: path("local"),
-        restore_supported: true,
-    };
-    let operations = FakeOperations::new([Reply::Batch(Ok(FileBatchOutcome {
-        succeeded: Vec::new(),
-        failed: Vec::new(),
-        uncertain: vec![FileFailure {
-            path: copied_path.clone(),
-            error: "restore worker exited".into(),
-        }],
-        unstarted: Vec::new(),
-        refresh_dirs: Vec::new(),
-    }))]);
+    let action = copy_action(
+        copied_path.clone(),
+        path("local"),
+        true,
+        Recovery::Restore(artifact("uncertain-artifact")),
+    );
+    let mut outcome = batch_outcome(Vec::new(), Vec::new());
+    outcome.uncertain.push(FileFailure {
+        path: copied_path.clone(),
+        error: "restore worker exited".into(),
+    });
+    let operations = FakeOperations::new([Reply::Batch(Ok(outcome))]);
 
     let result = run(execute(action.clone(), &operations, Direction::Redo));
 
@@ -752,38 +950,44 @@ fn uncertain_copy_redo_is_consumed_without_an_inverse_or_retry() {
     assert_eq!(result.uncertain, Some(action));
     assert_eq!(result.opposite, None);
     assert_eq!(result.remaining, None);
-    let error = result
-        .error
-        .expect("uncertain restore requires reconciliation");
-    assert!(error.contains("may have completed"));
-    assert!(error.contains("restore worker exited"));
-    assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
+    assert!(result.error.unwrap().contains("may have completed"));
+    assert_eq!(
+        operations.calls(),
+        vec![Call::Restore(vec![(
+            copied_path,
+            "uncertain-artifact".into()
+        )])]
+    );
 }
 
 #[test]
-fn batch_invalidation_keeps_completed_one_way_copy_out_of_redo() {
+fn mixed_batch_keeps_recoverable_rename_when_one_way_copy_is_removed() {
     let rename = rename("recoverable");
     let copied_path = path("network/one-way.txt");
-    let copy = Action::Copy {
-        copied_path: copied_path.clone(),
-        parent_dir: path("network"),
-        restore_supported: false,
-    };
+    let copy = copy_action(
+        copied_path.clone(),
+        path("network"),
+        false,
+        Recovery::Capture,
+    );
     let action = Action::Batch {
         actions: vec![rename.clone(), copy.clone()],
         label: "mixed capability".into(),
     };
-    let operations = FakeOperations::new([Reply::Unit(Ok(())), Reply::Unit(Ok(()))]);
+    let operations = FakeOperations::new([
+        Reply::Batch(Ok(batch_outcome(vec![copied_path.clone()], Vec::new()))),
+        Reply::Unit(Ok(())),
+    ]);
 
     let result = run(execute(action.clone(), &operations, Direction::Undo));
 
     assert_eq!(
         operations.calls(),
         vec![
-            Call::Trash(copied_path),
+            Call::TrashMany(vec![copied_path]),
             Call::Rename(
                 path("work/recoverable-new.txt"),
-                "recoverable-old.txt".into()
+                "recoverable-old.txt".into(),
             ),
         ]
     );

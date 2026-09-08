@@ -328,7 +328,10 @@ fn dedicated_sta_does_not_change_a_fresh_mta_caller_apartment() {
 #[cfg(target_os = "windows")]
 #[test]
 fn public_trash_and_restore_batches_preserve_an_mta_caller_and_exact_file_bytes() {
-    use crate::files::trash::{move_multiple_to_trash, move_to_trash, restore_from_trash};
+    use crate::files::{
+        trash::{move_multiple_to_trash, restore_entries},
+        trash_artifact::RestoreRequest,
+    };
 
     thread::Builder::new()
         .name("public-trash-mta-caller-test".into())
@@ -347,23 +350,37 @@ fn public_trash_and_restore_batches_preserve_an_mta_caller_and_exact_file_bytes(
             let second_path = path_string(&second);
             let single_path = path_string(&single);
 
-            // Delay assertions until after the restore attempt so a failed
-            // outcome has the best chance of returning this fixture from the
-            // real Recycle Bin before the test reports it.
+            // Retain the deletion outcomes: their exact artifacts are the only
+            // authority the restore batch may use.
             let trashed = run(move_multiple_to_trash(vec![
                 first_path.clone(),
                 second_path.clone(),
             ]));
             let after_batch_apartment = current_apartment();
             let batch_sources_absent = !first.exists() && !second.exists();
-            let single_trashed = run(move_to_trash(single_path.clone()));
+            let single_trashed = run(move_multiple_to_trash(vec![single_path.clone()]));
             let after_single_apartment = current_apartment();
             let single_source_absent = !single.exists();
-            let restored = run(restore_from_trash(vec![
-                first_path.clone(),
-                second_path.clone(),
-                single_path.clone(),
-            ]));
+            let requests = [&first_path, &second_path]
+                .into_iter()
+                .map(|path| RestoreRequest {
+                    path: path.clone(),
+                    artifact: trashed
+                        .as_ref()
+                        .expect("public batch trash call completes")
+                        .artifacts[path]
+                        .clone(),
+                })
+                .chain(std::iter::once_with(|| RestoreRequest {
+                    path: single_path.clone(),
+                    artifact: single_trashed
+                        .as_ref()
+                        .expect("public single-item trash call completes")
+                        .artifacts[&single_path]
+                        .clone(),
+                }))
+                .collect();
+            let restored = run(restore_entries(requests));
             let after_restore_apartment = current_apartment();
 
             let trashed = trashed.expect("public batch trash call completes");
@@ -371,7 +388,11 @@ fn public_trash_and_restore_batches_preserve_an_mta_caller_and_exact_file_bytes(
             assert!(trashed.failed.is_empty());
             assert!(trashed.uncertain.is_empty());
             assert!(trashed.unstarted.is_empty());
-            single_trashed.expect("public single-item trash call completes");
+            let single_trashed = single_trashed.expect("public single-item trash call completes");
+            assert_eq!(single_trashed.succeeded, std::slice::from_ref(&single_path));
+            assert!(single_trashed.failed.is_empty());
+            assert!(single_trashed.uncertain.is_empty());
+            assert!(single_trashed.unstarted.is_empty());
             assert!(batch_sources_absent);
             assert!(single_source_absent);
             assert_eq!(after_batch_apartment, APTTYPE_MTA);

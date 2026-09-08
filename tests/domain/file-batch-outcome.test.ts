@@ -38,4 +38,15 @@ describe("file batch outcomes", () => {
   it("returns no error for an entirely successful batch", () => {
     expect(fileBatchError({ succeeded: ["/docs/removed.txt"], failed: [] })).toBeNull();
   });
+
+  it("reports a committed warning while retaining the completed path for reconciliation", () => {
+    const outcome: FileBatchOutcome = {
+      succeeded: ["/docs/removed.txt"],
+      failed: [],
+      warnings: [{ path: "/docs/removed.txt", error: "Undo is unavailable" }],
+    };
+
+    expect(fileBatchError(outcome)).toBe("/docs/removed.txt: Undo is unavailable");
+    expect(affectedBatchPaths(outcome)).toEqual(["/docs/removed.txt"]);
+  });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,7 +8,9 @@ import {
   NATIVE_QUALIFICATION_MATRIX,
   SOAK_SCENARIOS,
   buildNativeQualificationReport,
+  executeQualificationRun,
   parseMacStartupLog,
+  readVerifiedNativeBuildManifest,
   resolveSoakConfiguration,
   type QualificationRisk,
   writeNativeQualificationReport,
@@ -269,5 +272,72 @@ describe("native product qualification contract", () => {
     );
     expect(smokeConfig).not.toContain("soak/**/*.spec.ts");
     expect(soakConfig).toContain('specs: ["./soak/**/*.spec.ts"]');
+  });
+
+  it("ties the reported source commit and profile to the exact launched binary", () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "native-build-manifest-"),
+    );
+    const binary = path.join(dir, "tauri-explorer");
+    const manifestPath = path.join(dir, "native-build.json");
+    fs.writeFileSync(binary, "qualification binary");
+    const stat = fs.statSync(binary);
+    const sha256 = createHash("sha256")
+      .update(fs.readFileSync(binary))
+      .digest("hex");
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        sourceCommit: "built-source-commit",
+        profile: "debug-custom-protocol-e2e-hooks",
+        buildCommand: [
+          "bun",
+          "run",
+          "tauri",
+          "build",
+          "--debug",
+          "--no-bundle",
+        ],
+        startedAt: "2026-09-09T00:00:00.000Z",
+        completedAt: "2026-09-09T00:01:00.000Z",
+        binary,
+        binarySha256: sha256,
+        binaryBytes: stat.size,
+        binaryModifiedAt: stat.mtime.toISOString(),
+      }),
+    );
+
+    expect(readVerifiedNativeBuildManifest(manifestPath)).toMatchObject({
+      commit: "built-source-commit",
+      profile: "debug-custom-protocol-e2e-hooks",
+      binary,
+      binarySha256: sha256,
+    });
+    fs.appendFileSync(binary, " tampered");
+    expect(() => readVerifiedNativeBuildManifest(manifestPath)).toThrow(
+      "does not match",
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("emits a failed artifact when the runner throws before native scenarios start", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-run-finalizer-"));
+    const outputPath = path.join(dir, "early-failure.json");
+
+    await expect(
+      executeQualificationRun({
+        outputPath,
+        execute: async () => {
+          throw new Error("initial native UI unavailable");
+        },
+        createReport: (runErrors) => ({ passed: false, runErrors }),
+      }),
+    ).rejects.toThrow("initial native UI unavailable");
+    expect(JSON.parse(fs.readFileSync(outputPath, "utf8"))).toEqual({
+      passed: false,
+      runErrors: ["initial native UI unavailable"],
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

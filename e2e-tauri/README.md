@@ -56,3 +56,32 @@ must use the programmatic CDP attach path.
 ## Adding specs
 
 Specs live in `specs/`. Keep this suite **small** — it's slow (full Tauri build per run) and has more platform-specific flake than the browser Playwright suite. Only add tests here that genuinely need the real binary (native shortcuts, WebView-specific rendering, IPC contract). Prefer Playwright for everything else.
+
+## Extended native qualification soak
+
+The hours-long qualification suite is deliberately opt-in and is not selected
+by `test:e2e:tauri` or the pull-request smoke workflow. Build the embedded debug
+binary exactly as above, then run:
+
+```bash
+SOAK_DURATION_MS=14400000 \
+SOAK_MAX_CYCLES=500 \
+SOAK_SEED=release-1.8.1-linux \
+bun run test:e2e:tauri:soak
+```
+
+Omit `SOAK_MAX_CYCLES` to run for the full duration. A bounded harness check can
+set `SOAK_MAX_CYCLES=1`; that still launches the real application and exercises
+every scenario once. The deterministic seed rotates scenario/interruption order
+and is written into the report so a failing order can be replayed.
+
+Reports are written under `qualification-results/` and contain the exact commit,
+build profile, OS/release/architecture, WebView user agent, display scale,
+configuration, RSS baseline/final/peak, scenario-duration p50/p95, and every
+scenario result. A failed assertion takes a screenshot named with the seed,
+cycle, and scenario, records it in the JSON report, and fails the command.
+
+This runner supports Linux/WebKitGTK and Windows/WebView2. It makes no macOS UI
+claim because WKWebView has no supported tauri-driver backend. The real macOS
+process startup gate remains `.github/workflows/macos-smoke.yml`; its startup
+logs are the source for cold/warm timing qualification, not browser tests.

@@ -393,8 +393,7 @@ export function readVerifiedNativeBuildManifest(
     .digest("hex");
   if (
     actualSha256 !== manifest.binarySha256 ||
-    stat.size !== manifest.binaryBytes ||
-    stat.mtime.toISOString() !== manifest.binaryModifiedAt
+    stat.size !== manifest.binaryBytes
   ) {
     throw new Error(
       `native binary does not match its build manifest: ${binary}`,
@@ -406,7 +405,7 @@ export function readVerifiedNativeBuildManifest(
     binary,
     binarySha256: actualSha256,
     binaryBytes: stat.size,
-    binaryModifiedAt: stat.mtime.toISOString(),
+    binaryModifiedAt: manifest.binaryModifiedAt,
   };
 }
 

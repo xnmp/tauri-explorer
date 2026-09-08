@@ -14,7 +14,8 @@ fn publishing_a_read_only_directory_preserves_its_contents_and_final_permissions
         fs::set_permissions(payload, fs::Permissions::from_mode(0o555))?;
         payload_path = Some(payload.to_owned());
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
 
     let result = staged.publish(&target);
     let contents = fs::read_to_string(target.join("content"));
@@ -27,7 +28,10 @@ fn publishing_a_read_only_directory_preserves_its_contents_and_final_permissions
         }
     }
 
-    assert!(result.is_ok(), "read-only directory publication failed: {result:?}");
+    assert!(
+        result.is_ok(),
+        "read-only directory publication failed: {result:?}"
+    );
     assert_eq!(contents.unwrap(), "keep");
     assert_eq!(mode.unwrap(), 0o555);
     assert_eq!(fs::read_dir(parent.path()).unwrap().count(), 1);

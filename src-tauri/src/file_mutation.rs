@@ -72,15 +72,21 @@ pub(crate) async fn delete_entries(
     directories.sort_unstable();
     directories.dedup();
     file_history::run_forward(owner, false, directories, async move {
-        let result = batch::run(plan, move |path| {
-            if permanent {
-                file_ops::delete_path(path)
-            } else {
-                trash::trash_path(path)
-            }
-        })
-        .await;
-        delete_outcome(result, permanent)
+        let result = if permanent {
+            Ok(batch::run(plan, file_ops::delete_path).await)
+        } else {
+            trash::run_batch(plan).await
+        };
+        match result {
+            Ok(result) => delete_outcome(result, permanent),
+            // Dedicated-worker setup is explicitly nonmutating. Once an item
+            // starts, the external ledger returns its per-path outcome instead.
+            Err(error) => MutationOutcome {
+                result: Err(error),
+                effect: ForwardEffect::Unchanged,
+                affected: Vec::new(),
+            },
+        }
     })
     .await
 }

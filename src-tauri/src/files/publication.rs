@@ -64,7 +64,10 @@ impl StagedEntry {
             // Restore through the captured handle, so a post-publication path
             // replacement cannot redirect this metadata change to another entry.
             if let Err(error) = directory.set_permissions(permissions) {
-                log::warn!("Published {} but could not restore its directory permissions: {error}", target.display());
+                log::warn!(
+                    "Published {} but could not restore its directory permissions: {error}",
+                    target.display()
+                );
             }
         }
         let staging_path = self.directory.path().to_owned();

@@ -1088,26 +1088,29 @@ pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Res
 /// Move selected untracked files to the operating system trash/recycle bin.
 #[tauri::command]
 pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
-    run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
-        let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
-        let mut failures = Vec::new();
-        for relative in relative_paths {
-            let path = workdir.join(relative);
-            if let Err(error) = crate::files::trash::trash_or_remove(&path) {
-                failures.push(format!("{} ({error})", path.display()));
-            }
+    // Keep both preflight and the platform-worker handoff owned by native work.
+    // Closing the invoking renderer must not drop the continuation between them.
+    tauri::async_runtime::spawn(async move {
+        let absolute_paths = run_blocking(move |_cancel| {
+            let repo = open_repo(Path::new(&repo_path))?;
+            let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+            Ok(relative_paths
+                .into_iter()
+                .map(|relative| workdir.join(relative).to_string_lossy().into_owned())
+                .collect())
+        })
+        .await?;
+        // Trash owns the platform worker: Windows Shell operations cannot inherit
+        // whichever COM apartment an unrelated pooled Git task left behind.
+        let outcome = crate::files::trash::move_multiple_to_trash(absolute_paths).await?;
+        match outcome.error() {
+            None => Ok(()),
+            Some(error) if !outcome.uncertain.is_empty() => Err(AppError::MutationUncertain(error)),
+            Some(error) => Err(AppError::Other(error)),
         }
-        if !failures.is_empty() {
-            return Err(AppError::Other(format!(
-                "failed to move {} selected item(s) to trash: {}",
-                failures.len(),
-                failures.join(", ")
-            )));
-        }
-        Ok(())
     })
     .await
+    .map_err(|error| AppError::WorkerFailed(error.to_string()))?
 }
 
 /// Resolve the repo root that contains `path`, or `None` if outside any repo.

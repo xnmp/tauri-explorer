@@ -1,0 +1,201 @@
+{
+  "checkpoint": "Windows Shell worker and restore implementation; Linux compatibility accepted, Windows runtime pending",
+  "baseCommit": "7dbd364466d8130f3284f47e8c22549642802b40",
+  "sourceSha256": {
+    "src-tauri/src/files/batch/mod.rs": "e8fc899374574d0791f277346d280783055c8c730f9f2797ad1982248f8f08f1",
+    "src-tauri/src/files/trash.rs": "3515e67bde2eb19aa884be236f67d21f37681596c15b58fc7284df2857eb069b",
+    "src-tauri/src/files/windows_restore.rs": "70be543d98aa534eefda692d215c902fe3c98fa36dfa853e241c85834c63c965",
+    "src-tauri/src/files/restore_outcome.rs": "68b737696bc58041551f30103800cc331bad3dc66820a510a4ddd01470464d15",
+    "src-tauri/src/file_mutation.rs": "6c811d4f9f624354f8c1f32a4b0f9e0649ce6a88f8af6724303b7242d9bfdde8",
+    "src-tauri/src/git.rs": "1e4f72b6caf47cad2f40f9f9383abbfe5ea97bc2e0c20265d2a9c894fa4badf2",
+    "src-tauri/test_support/file_batch_dedicated.rs": "9bc4a194925a95348277246deaf8389686e3aec60149f31e0e9f9e02051b47f6",
+    "src-tauri/test_support/windows_restore.rs": "d828008c89a0387d6fd786cb415557d5f2e99fe1b1da3bdf662d91c4ceef0d02",
+    "src-tauri/test_support/windows_restore_index.rs": "1ef3a82a1b0e4dcffd158226d5ed9a06a8b1b12e0891e7ce218363a01020fa9e",
+    ".github/workflows/e2e-tauri.yml": "2e4e50af7244119d9f34ebf2ed74753dc57075494dccdea4bf61059cc7ffd057"
+  },
+  "normalBuild": {
+    "sha256": "ffe01651aa9babc0a71df66679b164dad524c8220929d0b42916126108e21e5a",
+    "nativeProbePresent": {
+      "TAURI_E2E_HISTORY_GATE_DIR": false,
+      "Native forward admission gate failed": false,
+      "next-forward.accepted.json": false
+    },
+    "frontendProbePresent": {
+      "e2eHistoryReady": false,
+      "e2eFileMutationProbe": false,
+      "e2e-history-operation": false
+    }
+  },
+  "linuxAcceptanceBuildSha256": "32e0d9ad830cbe614393143a1a7265530a75289483ccc29c459ba123d56163bd",
+  "linuxNativeCompatibility": {
+    "runnerExitCode": 0,
+    "passed": 10,
+    "specFiles": 4,
+    "log": "/tmp/windows-shell-native.log",
+    "cases": [
+      {
+        "case": "native-forward-held-result",
+        "held": {
+          "status": "held",
+          "heldAt": 1788831294658,
+          "targetPath": "/home/chong/.tauri-explorer-forward-history-uSVCVO/held-493db31d.txt",
+          "resultPath": "/home/chong/.tauri-explorer-forward-history-uSVCVO/held-493db31d-renamed.txt",
+          "token": "rename-held-2f675a5f-364f-4e99-a460-d96488819634",
+          "command": "rename_entry"
+        },
+        "admitted": {
+          "revision": 3,
+          "undoId": 1,
+          "redoId": null,
+          "stackSize": 1,
+          "busy": false
+        },
+        "afterRenderer": {
+          "revision": 3,
+          "undoId": 1,
+          "redoId": null,
+          "stackSize": 1,
+          "busy": false
+        },
+        "afterUndo": {
+          "revision": 5,
+          "undoId": null,
+          "redoId": 2,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-same-name",
+        "seeded": {
+          "revision": 10,
+          "undoId": null,
+          "redoId": 4,
+          "stackSize": 0,
+          "busy": false
+        },
+        "afterNoOp": {
+          "revision": 12,
+          "undoId": null,
+          "redoId": 4,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-batch-renderer-destroy",
+        "accepted": {
+          "direction": "forward",
+          "entryId": 7,
+          "pid": 1741982,
+          "token": "d2d14c11-81f2-4ece-8d18-f3886775a209"
+        },
+        "deleted": [
+          "/home/chong/.tauri-explorer-forward-history-uSVCVO/child-batch-a-f6b002e6.txt",
+          "/home/chong/.tauri-explorer-forward-history-uSVCVO/child-batch-b-f6b002e6.txt"
+        ],
+        "survivorEntries": [
+          "held-493db31d.txt",
+          "same-4a85af3d-renamed.txt"
+        ],
+        "survivorHistory": {
+          "revision": 18,
+          "undoId": null,
+          "redoId": null,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-renderer-destroy",
+        "accepted": {
+          "direction": "forward",
+          "entryId": 8,
+          "pid": 1741982,
+          "token": "376d70a7-cb03-4d5b-8c2c-09d2327505da"
+        },
+        "original": "/home/chong/.tauri-explorer-forward-history-uSVCVO/child-52f3e768.txt",
+        "renamed": "/home/chong/.tauri-explorer-forward-history-uSVCVO/child-52f3e768-renamed.txt",
+        "survivorEntries": [
+          "child-52f3e768-renamed.txt",
+          "held-493db31d.txt",
+          "same-4a85af3d-renamed.txt"
+        ],
+        "survivorHistory": {
+          "revision": 22,
+          "undoId": null,
+          "redoId": null,
+          "stackSize": 0,
+          "busy": false
+        }
+      }
+    ]
+  },
+  "screenshots": [
+    "screenshots/refactor/repo-health-cleanup/native-shell-worker-before.png",
+    "screenshots/refactor/repo-health-cleanup/native-shell-worker-after.png"
+  ],
+  "checks": {
+    "rust": {
+      "libraryPassed": 632,
+      "integrationPassed": 9,
+      "ignored": 7,
+      "serial": true,
+      "log": "/tmp/windows-shell-rust-full.log"
+    },
+    "linuxClippy": "all-targets, e2e-renderer-recovery, -D warnings passed",
+    "rustfmt": "workspace check passed after formatting five pre-existing files",
+    "focusedBatchPassed": 15,
+    "pureCompletionPolicyPassed": 10,
+    "existingLinuxTrashPassed": 9,
+    "maps": "408/408"
+  },
+  "windowsCrossCheck": {
+    "target": "x86_64-pc-windows-gnu",
+    "checkCommand": "cargo check --offline --tests --target x86_64-pc-windows-gnu",
+    "checkExitCode": 0,
+    "checkLog": "/tmp/windows-shell-cross-check.log",
+    "clippyCommand": "cargo clippy --offline --tests --target x86_64-pc-windows-gnu -- -D warnings",
+    "clippyExitCode": 0,
+    "clippyLog": "/tmp/windows-shell-cross-clippy.log",
+    "manifest": "[package]\nname = \"windows-restore-check\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n[dependencies]\nlog = \"0.4\"\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\ntempfile = \"3\"\nthiserror = \"2\"\ntokio = { version = \"1\", features = [\"rt\", \"sync\"] }\ntrash = \"=5.2.6\"\nwindows = { version = \"=0.61.3\", features = [\"Win32_Foundation\", \"Win32_Globalization\", \"Win32_System_Com\", \"Win32_UI_Shell\", \"Win32_UI_Shell_PropertiesSystem\"] }\nwindows-core = \"=0.61.2\"\n\n[workspace]\n",
+    "harness": "//! Cross-target compile harness for the actual Windows restore integration.\n//!\n//! The shims below replace unrelated Tauri application infrastructure only;\n//! batch, trash, error, adapter, policy, and their source-included tests are\n//! imported directly from the repository files.\n\nextern crate self as tauri;\n\n#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/error.rs\"]\npub mod error;\n\npub mod async_runtime {\n    use std::future::Future;\n\n    pub fn spawn_blocking<F, R>(function: F) -> tokio::task::JoinHandle<R>\n    where\n        F: FnOnce() -> R + Send + 'static,\n        R: Send + 'static,\n    {\n        tokio::task::spawn_blocking(function)\n    }\n\n    pub fn block_on<F: Future>(future: F) -> F::Output {\n        tokio::runtime::Builder::new_current_thread()\n            .enable_all()\n            .build()\n            .expect(\"build shim runtime\")\n            .block_on(future)\n    }\n}\n\npub mod files {\n    use crate::error::AppError;\n    use std::path::Path;\n\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/batch/mod.rs\"]\n    pub mod batch;\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/restore_outcome.rs\"]\n    pub mod restore_outcome;\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/trash.rs\"]\n    pub mod trash;\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/windows_restore.rs\"]\n    pub mod windows_restore;\n\n    // Explicit shims for unrelated file infrastructure referenced by trash.rs.\n    pub(crate) fn is_network_share(_path: &Path) -> bool {\n        false\n    }\n\n    // Retained as an explicit shim for source compatibility with files/mod.rs;\n    // current Windows trash paths use the dedicated worker directly.\n    #[allow(dead_code)]\n    pub(crate) async fn run_blocking<T, F>(function: F) -> Result<T, AppError>\n    where\n        T: Send + 'static,\n        F: FnOnce() -> Result<T, AppError> + Send + 'static,\n    {\n        match crate::async_runtime::spawn_blocking(function).await {\n            Ok(result) => result,\n            Err(error) => Err(AppError::WorkerFailed(error.to_string())),\n        }\n    }\n\n    pub mod file_ops {\n        use crate::error::AppError;\n        use std::{fs, path::Path};\n\n        pub(crate) fn remove_entry_at(path: &Path) -> Result<(), AppError> {\n            let metadata = fs::symlink_metadata(path)?;\n            if metadata.is_dir() {\n                fs::remove_dir_all(path)?;\n            } else if metadata.file_type().is_symlink() {\n                fs::remove_file(path).or_else(|_| fs::remove_dir(path))?;\n            } else {\n                fs::remove_file(path)?;\n            }\n            Ok(())\n        }\n    }\n}\n",
+    "scope": "Actual error, batch, trash/index, adapter/policy and included test sources. Explicit shims for unrelated Tauri runtime/file helpers. This is compilation, not test execution or a full Windows application build.",
+    "windowsRuntimeTestsExecuted": 0
+  },
+  "windowsRuntimeAcceptance": {
+    "status": "pending",
+    "configuredIn": ".github/workflows/e2e-tauri.yml",
+    "contracts": [
+      "exact file and nonempty directory restore",
+      "file and directory collision introduced after MoveItem queue, sentinel preservation and alternate bytes",
+      "relative file and directory symlinks",
+      "mixed exact/uncertain/unstarted batch outcomes",
+      "MTA caller isolated from STA worker and public trash/restore entry points",
+      "alternate-case and verbatim DOS requests, semantic duplicate rejection, Unicode/device namespace comparison",
+      "SCM untracked-trash filesystem outcomes"
+    ]
+  },
+  "startupBundle": {
+    "chunks": 44,
+    "rawBytes": 666786,
+    "gzipBytes": 217702,
+    "gzipDeltaFromBase": 6,
+    "claim": "No frontend feature source changed and no startup latency improvement is claimed."
+  },
+  "limits": [
+    "Four permits bound live Shell threads, not every queued IPC request. Native forwards are capped at128; SCM pending work requires its own admission policy.",
+    "The native owner retains queued work; the primitive by itself only detaches after thread spawn. Hung Shell calls are not forcibly cancelled and can block inverse progress.",
+    "Windows deletion still uses the dependency operation/abort result; source-verified item completion is implemented for restore.",
+    "Equal-timestamp trash versions, symlink/canonical aliases, broader Windows ancestor aliases and artifact identity remain unresolved.",
+    "Durable journals, process/renderer crash recovery, Linux restore-parent effects, progress/cancellation and remaining transfer/grouped-rename ownership remain required.",
+    "Linux native screenshots and tests do not establish Windows/macOS behavior or Mac half-bounce readiness.",
+    "SCM filesystem behavior is covered by Rust tests; this native desktop run does not directly exercise its command route."
+  ],
+  "independentReview": {
+    "model": "GPT-5.6 Sol",
+    "sourceVerdict": "CONFIRMED within stated scope and qualifications",
+    "linuxNativeVerdict": "ACCEPT",
+    "scope": "Shared ledger, STA ownership, callback/source/collision policy, ordinal lookup and Linux 10-outcome native compatibility. No Windows runtime claim."
+  }
+}

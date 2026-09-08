@@ -13,9 +13,13 @@ pub mod git_status;
 pub(crate) mod mutation;
 mod publication;
 mod replacement;
+#[cfg(any(target_os = "windows", test))]
+mod restore_outcome;
 pub mod shortcuts;
 pub mod trash;
 mod watch_observation;
+#[cfg(target_os = "windows")]
+mod windows_restore;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};

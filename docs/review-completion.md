@@ -5,6 +5,45 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Windows Shell worker implementation checkpoint
+
+Windows restore now owns an STA for the entire batch and uses a per-item Shell
+completion sink. Only a source-verified root `S_OK` callback with an actual
+requested destination is exact success; alternate destinations and incomplete
+proof remain explicit non-retryable uncertainty. Collision-renaming flags and
+an overwrite/merge veto preserve existing targets. Inventory lookup and completion
+share Windows ordinal path comparison, including case and verbatim DOS aliases.
+Duplicate semantic requests fail before effects.
+
+Forward trash deletion, inverse trash/restore and SCM trash share the platform
+worker. The existing external ledger preserves partial outcomes; native owners
+retain the continuation while it awaits one of four live-thread permits. This
+bounds threads, not all queued requests. The full Linux Rust suite passes 632
+library and nine integration tests (seven ignored); Linux all-targets recovery
+Clippy and workspace formatting pass. Actual Windows source and tests pass a
+Windows-target check and Clippy in the recorded isolated harness, whose explicit
+Tauri/file-helper shims make this compilation evidence, not runtime acceptance.
+The Windows CI workflow is configured to run the real filesystem, collision,
+symlink, mixed-batch, path-spelling and MTA/STA tests. Those Windows tests have
+**not** run on a Windows host yet.
+
+A rebuilt Linux binary passes 10 native compatibility outcomes in four specs,
+including child-owned deletion after native window destruction and shared inverse
+admission/settlement. The surviving selection and directory remain coherent. Independent GPT-5.6 Sol
+review accepts the source and scoped Linux evidence; the native run does not
+directly exercise SCM trash.
+Normal builds exclude the probes; startup JavaScript remains within budget at
+666,786 raw / 217,702 gzip bytes (+6 gzip bytes). No startup improvement is claimed.
+Maps cover 408/408 sources. See
+[the evidence record](reviews/windows-shell-worker-checkpoint-2026-09-08.json).
+
+Required work still includes Windows runtime acceptance, source-verified deletion
+receipts and artifact identity, bounded SCM admission and operation progress/cancel,
+Linux restore-parent effects, durable recovery, remaining native forward batches,
+and the complete platform/startup release matrix. A hung Shell call can still
+hold a worker and delay inverse work; this checkpoint does not claim a deadline
+or forced cancellation guarantee.
+
 ## Directory and selection reconciliation checkpoint
 
 Complete refreshes now reconcile against both their starting snapshot and current

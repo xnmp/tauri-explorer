@@ -110,7 +110,8 @@ pub async fn native_resource_session(
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         termination::ensure(&webview, &slot).await?;
         Ok(())
-    }).await?;
+    })
+    .await?;
     crate::file_history::register(owner, history_channel)?;
     Ok(session)
 }
@@ -121,7 +122,11 @@ async fn acknowledge_session(
 ) -> Result<(String, Owner), AppError> {
     // Capture the requesting document before the UI-thread installation can
     // yield. A delayed old invocation must never adopt its replacement.
-    let session = slot.scope.lock().unwrap().session()
+    let session = slot
+        .scope
+        .lock()
+        .unwrap()
+        .session()
         .ok_or_else(|| AppError::Other("Native window is closed".into()))?;
     ensure.await?;
     let owner = slot.watch_owner(&session)?;

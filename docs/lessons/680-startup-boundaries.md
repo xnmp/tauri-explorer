@@ -911,3 +911,23 @@ snapshot identities too and provisionally preserve newly assigned missing paths.
 Do not reconcile against filtered visibility or incomplete stream chunks. Compare
 all FileEntry fields directly, preserve equal array identity, and avoid repeatedly
 copying the streaming buffer or constructing directory-sized fingerprint strings.
+
+### Windows Shell batches require their own apartment and completion proof
+
+`trash::list` and `trash::delete` initialize thread-local STA state. Reusing a
+Tokio blocking thread can encounter an existing MTA or leave an STA for unrelated
+work. Construct the apartment, enumerate inventory and execute a whole batch on
+one fresh worker; retain a bounded worker permit through resource destruction.
+Native task ownership must cover the asynchronous permit wait too. Keep the
+per-item ledger outside the worker so panic cannot erase confirmed siblings.
+
+`PerformOperations` success alone does not prove a move. Inspect the abort query
+and require an actual source-matching root `PostMoveItem` with `S_OK`; other
+nonnegative Shell statuses can mean skipped or merged work. Descendant callbacks
+cannot impersonate the root. Reject overwrite/merge transfer flags, disable
+connected-item expansion, and report an alternate actual path without inferring
+its cause. Use the same ordinal path comparison for inventory lookup and outcome
+checking; raw case-sensitive keys fail after the Shell canonicalizes casing.
+Only DOS-drive verbatim prefixes may collapse onto ordinary drive spellings.
+Linux tests and a Windows-target compile cannot prove Windows Shell behavior;
+keep real post-queue collision and relative-symlink tests in Windows acceptance.

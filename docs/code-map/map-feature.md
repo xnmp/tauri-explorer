@@ -183,9 +183,10 @@ backend for E2E/browser).
 - `src-tauri/src/file_history/forward.rs`, `src-tauri/src/file_mutation.rs`, `api/file-mutations.ts` — accepted create/rename/new-text/symlink and whole-selection deletion work settles native history before IPC results; forward and inverse slots preserve admission order across out-of-order completions. Other forward batches still require migration.
 - `src-tauri/src/file_history/action.rs`, `file_history/execution.rs` — host capability normalization, affected parents and ordered partial inverse receipts.
 - `api/mock-file-history.ts`, `api/mock-file-history-execution.ts` — browser-only history simulation, never native acceptance evidence.
-- `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed`/`uncertain`/`unstarted` receipts for `deleteEntries` and `restoreFromTrash`.
+- `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed`/`uncertain`/`unstarted` receipts for `deleteEntries`; trash restore is native inverse work.
 - `src-tauri/src/files/batch/mod.rs`, `files/batch/model.rs` — bounded, stable selection admission and worker-independent progress; confirmed siblings survive a panic, uncertain work stops later attempts.
 - `src-tauri/src/files/trash.rs` — trash/restore primitives, native Windows-prefix UNC removal and Linux `renameat2(RENAME_NOREPLACE)` restore boundary; `files/file_ops.rs` owns explicit permanent deletion.
+- `src-tauri/src/files/windows_restore.rs`, `files/restore_outcome.rs` — Windows STA restore with source-verified per-item completion and pure outcome classification; inventory and destination checks share ordinal path comparison.
 - FLOW: delete → native whole-selection admission → per-path execution → native inverse for confirmed recoverable successes → settled reply → view reconciliation. Ctrl+Z reserves the exact history entry; uncertain paths are consumed, completed paths move to redo, failed/unstarted paths remain retryable (ADRs 0017/0018).
 
 ## Thumbnails

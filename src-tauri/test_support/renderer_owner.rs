@@ -13,26 +13,30 @@ fn acknowledge(_slot: &WindowOwner) {}
 #[test]
 fn delayed_acknowledgement_cannot_adopt_a_replacement_renderer() {
     tauri::async_runtime::block_on(async {
-    let slot = Arc::new(WindowOwner::default());
-    let old_slot = slot.clone();
-    let (started, waiting) = tokio::sync::oneshot::channel();
-    let (resume, resumed) = tokio::sync::oneshot::channel();
-    let old = tokio::spawn(async move {
-        acknowledge_session(&old_slot, async {
-            started.send(()).unwrap();
-            resumed.await.unwrap();
-            Ok(())
-        }).await
-    });
-    waiting.await.unwrap();
-    slot.scope.lock().unwrap().advance();
-    acknowledge(&slot);
-    let (_, replacement) = acknowledge_session(&slot, async { Ok(()) }).await.unwrap();
-    resume.send(()).unwrap();
+        let slot = Arc::new(WindowOwner::default());
+        let old_slot = slot.clone();
+        let (started, waiting) = tokio::sync::oneshot::channel();
+        let (resume, resumed) = tokio::sync::oneshot::channel();
+        let old = tokio::spawn(async move {
+            acknowledge_session(&old_slot, async {
+                started.send(()).unwrap();
+                resumed.await.unwrap();
+                Ok(())
+            })
+            .await
+        });
+        waiting.await.unwrap();
+        slot.scope.lock().unwrap().advance();
+        acknowledge(&slot);
+        let (_, replacement) = acknowledge_session(&slot, async { Ok(()) }).await.unwrap();
+        resume.send(()).unwrap();
 
-    let error = old.await.unwrap().expect_err("old registration must not replace the new renderer's channel");
-    assert_eq!(error.to_string(), "Native resource renderer was replaced");
-    assert!(replacement.active());
+        let error = old
+            .await
+            .unwrap()
+            .expect_err("old registration must not replace the new renderer's channel");
+        assert_eq!(error.to_string(), "Native resource renderer was replaced");
+        assert!(replacement.active());
     });
 }
 

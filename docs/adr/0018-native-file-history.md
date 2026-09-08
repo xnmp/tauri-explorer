@@ -266,13 +266,45 @@ Windows UNC classification uses native `Prefix::UNC`/`VerbatimUNC`, excluding
 extended local disks. Unix double-leading-slash paths remain ordinary local
 trash paths. The dialog likewise applies network-share wording only on Windows.
 
-This boundary does not close the remaining platform/recovery work. In particular,
-the current Windows `trash` dependency's restore implementation uses a racy
-existence check and `FOF_NO_UI`, and does not inspect shell cancellation after
-`PerformOperations`. A native STA restore adapter must preserve racing targets
-and classify per-item completion before Windows acceptance. Microsoft documents
+The Windows restore adapter now replaces the dependency's racy existence check
+and broad `FOF_NO_UI` completion assumption. One fresh named thread per entire
+restore batch constructs an STA, enumerates the Recycle Bin, restores each item,
+and drops all COM objects. The shared external ledger retains settled siblings
+across worker panic. An asynchronous oneshot reports completion without blocking
+an async/pool thread on a join. Setup is nonmutating; its failures precede item
+admission. Dropping this primitive's waiter does not stop its thread, but history
+settlement still requires the existing independently owned native inverse task.
+Windows Explorer and SCM trash deletion use the same dedicated worker entry,
+including single-item inverses. Native forward/inverse/SCM tasks retain the
+continuation through asynchronous worker admission. A lazy four-permit semaphore
+bounds live Shell worker threads, with each permit held through context teardown
+even if its waiter disappears. This bounds threads, not every queued IPC request;
+SCM queue admission and fair inverse scheduling remain part of operation-lifecycle
+work. A hung Shell operation is not cancellable through this adapter. Deletion
+still uses the dependency's operation/abort result; only restore currently has
+this application's source-verified per-item completion callback.
+
+Each item has its own `IFileOperation`. Explicit collision-renaming flags preserve
+occupied destinations, `FOF_NO_CONNECTED_ELEMENTS` confines the intent, and the
+progress sink rejects overwrite-or-merge transfer flags. Completion requires one
+matching root `IShellItem` callback, `S_OK` (not another nonnegative Shell status),
+and an actual destination. Descendant callbacks cannot impersonate that root.
+Exact completion wins over operation-level error/abort noise; an alternate path
+is reported and consumed without an unsafe automatic retry. Missing, duplicate,
+unverifiable or failed root completion, and any overwrite/merge veto, remain
+uncertain. `GetAnyOperationsAborted` is queried after every `PerformOperations`.
+Windows ordinal path comparison handles casing and verbatim DOS-drive spellings
+for both inventory lookup and callback destinations; semantic duplicate requests
+fail before restoration. Device/UNC namespace aliases are not silently collapsed.
+
+This is implementation under validation, not Windows runtime acceptance. The
+Windows CI job is configured to run the actual adapter's filesystem, collision, relative
+symlink, mixed-batch, path-spelling and apartment-isolation tests. Linux policy
+and worker tests cannot establish Shell behavior. Microsoft documents
+[STA confinement](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-ifileoperation),
 [operation flags](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-setoperationflags),
 [actual move completion and collision names](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postmoveitem),
+[overwrite/merge transfer semantics](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/ne-shobjidl_core-_transfer_source_flags),
 and [abort acknowledgement](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-getanyoperationsaborted).
 Artifact identity (including symlinked parent spellings), durable recovery,
 restore-parent creation effects, and native batch progress/cancellation remain

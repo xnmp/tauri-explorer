@@ -433,9 +433,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mutation.rs` — committed-path receipt with an optional subsequent FileEntry snapshot; presentation metadata cannot revoke a committed mutation.
 - `replacement.rs` — explicit retained ownership of overwritten destinations; no-replace rollback shared by copy/move, retained-original reporting after partial source cleanup.
 - `publication.rs` — owns unpublished copy/write payloads in an exclusive staging directory; shared native no-replace rename for ordinary publication, move, rename and Linux trash restore.
-- `batch/mod.rs` — one blocking worker with supervisor-owned progress; completed siblings survive panic and uncertain work stops the batch.
+- `batch/mod.rs` — shared supervisor-owned ledger for pool work and fresh thread-affine restore batches; completed siblings survive panic and uncertain work stops the batch.
 - `batch/model.rs` — bounded stable batch admission, component-aware overlap rejection, and succeeded/failed/uncertain/unstarted outcome partitions.
 - `trash.rs` — history-free trash and restore primitives; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
+- `windows_restore.rs` — STA-owned Windows Shell restore, source-verified completion callbacks, collision-preserving flags, and ordinal path comparison.
+- `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.

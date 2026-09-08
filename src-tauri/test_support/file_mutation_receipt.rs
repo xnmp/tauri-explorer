@@ -16,7 +16,9 @@ fn path_string(path: &Path) -> String {
 fn require_entry(receipt: FileMutationReceipt, expected_path: &Path) -> FileEntry {
     let expected = path_string(expected_path);
     assert_eq!(receipt.path, expected);
-    let entry = receipt.entry.expect("successful metadata inspection should provide an entry");
+    let entry = receipt
+        .entry
+        .expect("successful metadata inspection should provide an entry");
     assert_eq!(entry.path, expected);
     entry
 }
@@ -28,7 +30,9 @@ fn committed_mutation_survives_a_failed_optional_inspection() {
     fs::write(&path, "durable contents").unwrap();
 
     let receipt = FileMutationReceipt::inspect(&path, |_| {
-        Err(AppError::Other("injected metadata inspection failure".into()))
+        Err(AppError::Other(
+            "injected metadata inspection failure".into(),
+        ))
     });
 
     assert_eq!(receipt.path, path_string(&path));
@@ -57,31 +61,24 @@ fn create_directory_file_and_rename_commands_return_committed_receipts() {
     let parent = path_string(dir.path());
 
     let created_dir = dir.path().join("created-dir");
-    let directory = tauri::async_runtime::block_on(create_directory(
-        parent.clone(),
-        "created-dir".into(),
-    ))
-    .unwrap();
+    let directory =
+        tauri::async_runtime::block_on(create_directory(parent.clone(), "created-dir".into()))
+            .unwrap();
     let directory_entry = require_entry(directory, &created_dir);
     assert!(matches!(directory_entry.kind, FileKind::Directory));
     assert_eq!(directory_entry.is_empty, Some(true));
 
     let original = dir.path().join("original.txt");
-    let file = tauri::async_runtime::block_on(create_empty_file(
-        parent,
-        "original.txt".into(),
-    ))
-    .unwrap();
+    let file =
+        tauri::async_runtime::block_on(create_empty_file(parent, "original.txt".into())).unwrap();
     let file_entry = require_entry(file, &original);
     assert!(matches!(file_entry.kind, FileKind::File));
     assert_eq!(file_entry.size, 0);
 
     let renamed = dir.path().join("renamed.txt");
-    let receipt = tauri::async_runtime::block_on(rename_entry(
-        path_string(&original),
-        "renamed.txt".into(),
-    ))
-    .unwrap();
+    let receipt =
+        tauri::async_runtime::block_on(rename_entry(path_string(&original), "renamed.txt".into()))
+            .unwrap();
     assert_eq!(require_entry(receipt, &renamed).name, "renamed.txt");
     assert!(!original.exists());
     assert!(renamed.is_file());
@@ -117,7 +114,10 @@ fn move_and_write_commands_return_paths_for_their_actual_artifacts() {
     .unwrap();
     let written_entry = require_entry(written, &written_path);
     assert_eq!(written_entry.size, 16);
-    assert_eq!(fs::read_to_string(written_path).unwrap(), "written contents");
+    assert_eq!(
+        fs::read_to_string(written_path).unwrap(),
+        "written contents"
+    );
 }
 
 #[cfg(unix)]
@@ -128,11 +128,9 @@ fn symlink_command_returns_the_link_path_and_link_metadata() {
     let link = dir.path().join("target-link");
     fs::write(&target, "target contents").unwrap();
 
-    let receipt = tauri::async_runtime::block_on(create_symlink(
-        path_string(&target),
-        path_string(&link),
-    ))
-    .unwrap();
+    let receipt =
+        tauri::async_runtime::block_on(create_symlink(path_string(&target), path_string(&link)))
+            .unwrap();
     let entry = require_entry(receipt, &link);
 
     assert!(entry.is_symlink);

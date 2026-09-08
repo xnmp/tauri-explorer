@@ -180,6 +180,7 @@ fn execution_affected(result: &Execution) -> Vec<String> {
         .iter()
         .chain(&result.uncertain)
         .flat_map(action::affected_dirs)
+        .chain(result.refresh_dirs.iter().cloned())
         .collect();
     affected.sort_unstable();
     affected.dedup();

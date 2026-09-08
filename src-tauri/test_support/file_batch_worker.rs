@@ -251,3 +251,61 @@ fn component_order_detects_ancestors_without_rejecting_similar_sibling_names() {
     let deep = root.path().join("component/".repeat(10_000)).join("leaf");
     assert!(BatchPlan::new(vec![path_string(&deep), path_string(&deep.join("child"))]).is_err());
 }
+
+#[test]
+fn directory_effects_survive_worker_panic_without_claiming_leaf_success() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("created");
+    let leaf = directory.join("not-restored.txt");
+    let worker_directory = directory.clone();
+    let outcome = tauri::async_runtime::block_on(super::run_with_effects(
+        plan(&[&leaf]),
+        move |_, effects| {
+            effects.before_create(&worker_directory)?;
+            fs::create_dir(&worker_directory)?;
+            panic!("interrupted after creating parent");
+        },
+    ));
+    assert!(directory.is_dir());
+    assert!(!leaf.exists());
+    assert!(outcome.succeeded.is_empty());
+    assert_eq!(outcome.uncertain[0].path, path_string(&leaf));
+    assert_eq!(
+        outcome.refresh_dirs,
+        [path_string(root.path()), path_string(&directory)]
+    );
+}
+
+#[test]
+fn directory_effect_budget_stops_before_unrecorded_mutation_and_deduplicates() {
+    for component_size in [8, 1024] {
+        let root = tempfile::tempdir().unwrap();
+        let leaf = root.path().join("not-restored.txt");
+        let worker_root = root.path().to_owned();
+        let outcome = tauri::async_runtime::block_on(super::run_with_effects(
+            plan(&[&leaf]),
+            move |path, effects| {
+                let repeated = worker_root.join("repeated");
+                for _ in 0..40_000 {
+                    effects.before_create(&repeated)?;
+                }
+                for index in 0..32_768 {
+                    let name = format!("{index:08}{}", "x".repeat(component_size));
+                    effects.before_create(&worker_root.join(name))?;
+                }
+                fs::write(path, b"must not run after exhausted budget")?;
+                Ok(())
+            },
+        ));
+        assert!(!leaf.exists());
+        assert!(outcome.succeeded.is_empty());
+        assert!(outcome.uncertain.is_empty());
+        assert!(outcome.failed[0].error.contains("path count or size limit"));
+        assert!(outcome.refresh_dirs.len() <= 32_768);
+        assert!(outcome.refresh_dirs.iter().map(String::len).sum::<usize>() <= 8 * 1024 * 1024);
+        assert!(
+            outcome.refresh_dirs.len() > 2,
+            "duplicates must not exhaust the budget"
+        );
+    }
+}

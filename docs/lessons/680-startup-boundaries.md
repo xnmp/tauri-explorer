@@ -931,3 +931,13 @@ checking; raw case-sensitive keys fail after the Shell canonicalizes casing.
 Only DOS-drive verbatim prefixes may collapse onto ordinary drive spellings.
 Linux tests and a Windows-target compile cannot prove Windows Shell behavior;
 keep real post-queue collision and relative-symlink tests in Windows acceptance.
+
+### Restore parents are independent filesystem effects
+
+Restoring a trashed file can recreate its ancestors before leaf publication fails.
+Do not infer all refresh targets from completed/uncertain history actions: a known
+failed leaf can still leave new directories behind. Record conservative parent and
+directory invalidations before each mkdir in the supervisor-owned batch ledger,
+and carry them through Copy redo, Delete undo and nested partial batches. Keep
+these refresh effects separate from success, retry and inverse ownership. Never
+remove created parents as an inferred rollback: concurrent users may own contents.

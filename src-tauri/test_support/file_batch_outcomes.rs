@@ -1,6 +1,9 @@
 #![cfg(target_os = "linux")]
 
-use super::{move_multiple_to_trash, move_to_trash, restore_from_trash};
+use super::{
+    batch, move_multiple_to_trash, move_to_trash, restore_from_trash, restore_item_with, BatchPlan,
+};
+use crate::error::AppError;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -525,6 +528,236 @@ fn directory_restore_continues_after_a_sibling_target_collision() {
                 "failed restore does not merge the trashed tree into the target"
             );
             assert_batch_outcome(outcome, &[restored_string], &[collision_string]);
+        },
+    );
+}
+
+#[test]
+fn restore_recreates_missing_parent_hierarchy_and_reports_only_refresh_effects_for_it() {
+    isolated(
+        "restore_recreates_missing_parent_hierarchy_and_reports_only_refresh_effects_for_it",
+        |fixture| {
+            let existing = fixture.root.join("existing-ancestor");
+            let recreated_first = existing.join("recreated-first");
+            let recreated_second = recreated_first.join("recreated-second");
+            fs::create_dir_all(&recreated_second).expect("create original parent hierarchy");
+            let restored = recreated_second.join("restored.txt");
+            fs::write(&restored, "exact restored bytes").expect("write restorable file");
+            trash(&restored);
+            fs::remove_dir(&recreated_second).expect("remove empty immediate parent");
+            fs::remove_dir(&recreated_first).expect("remove empty parent");
+            assert!(existing.is_dir(), "nearest existing ancestor remains");
+            let restored_string = path_string(&restored);
+
+            let outcome = run(restore_from_trash(vec![restored_string.clone()]))
+                .expect("restore with missing parents returns a batch outcome");
+
+            assert_eq!(
+                fs::read_to_string(&restored).expect("file and parent hierarchy were restored"),
+                "exact restored bytes"
+            );
+            assert_batch_outcome(&outcome, std::slice::from_ref(&restored_string), &[]);
+            assert_eq!(
+                outcome.refresh_dirs,
+                [
+                    path_string(&existing),
+                    path_string(&recreated_first),
+                    path_string(&recreated_second),
+                ],
+                "refresh effects cover the existing ancestor and each recreated directory"
+            );
+            assert_eq!(
+                outcome.affected_paths().cloned().collect::<Vec<_>>(),
+                [restored_string],
+                "recreated parents are not fictional leaf successes"
+            );
+            assert!(
+                serde_json::to_value(&outcome)
+                    .expect("serialize public batch outcome")
+                    .get("refresh_dirs")
+                    .is_none(),
+                "native refresh effects are not part of the IPC batch contract"
+            );
+        },
+    );
+}
+
+#[test]
+fn restore_with_an_existing_parent_has_no_auxiliary_refresh_directories() {
+    isolated(
+        "restore_with_an_existing_parent_has_no_auxiliary_refresh_directories",
+        |fixture| {
+            let restored = fixture.file("existing-parent.txt", "exact existing-parent bytes");
+            let parent = restored.parent().unwrap().to_owned();
+            trash(&restored);
+            assert!(parent.is_dir(), "original parent remains available");
+            let restored_string = path_string(&restored);
+
+            let outcome = run(restore_from_trash(vec![restored_string.clone()]))
+                .expect("restore into existing parent returns a batch outcome");
+
+            assert_eq!(
+                fs::read_to_string(&restored).expect("file was restored"),
+                "exact existing-parent bytes"
+            );
+            assert_batch_outcome(&outcome, std::slice::from_ref(&restored_string), &[]);
+            assert!(
+                outcome.refresh_dirs.is_empty(),
+                "an already-existing hierarchy has no auxiliary directory effects"
+            );
+            assert_eq!(
+                outcome.affected_paths().cloned().collect::<Vec<_>>(),
+                [restored_string]
+            );
+        },
+    );
+}
+
+#[test]
+fn failed_leaf_publication_retains_payload_and_reports_recreated_parent_refreshes() {
+    isolated(
+        "failed_leaf_publication_retains_payload_and_reports_recreated_parent_refreshes",
+        |fixture| {
+            let existing = fixture.root.join("failure-existing-ancestor");
+            let recreated_first = existing.join("failure-recreated-first");
+            let recreated_second = recreated_first.join("failure-recreated-second");
+            fs::create_dir_all(&recreated_second).expect("create original parent hierarchy");
+            let restored = recreated_second.join("restored.txt");
+            fs::write(&restored, "retryable exact bytes").expect("write restorable file");
+            trash(&restored);
+            let item = owned_trash_items(&restored)
+                .into_iter()
+                .next()
+                .expect("owned item is present in isolated trash");
+            let payload = trashed_payload(&item);
+            fs::remove_dir(&recreated_second).expect("remove empty immediate parent");
+            fs::remove_dir(&recreated_first).expect("remove empty parent");
+            let restored_string = path_string(&restored);
+            let worker_payload = payload.clone();
+            let worker_target = restored.clone();
+            let mut item = Some(item);
+
+            let outcome = run(batch::run_with_effects(
+                BatchPlan::new(vec![restored_string.clone()]).unwrap(),
+                move |path, effects| {
+                    assert_eq!(path, path_string(&worker_target));
+                    restore_item_with(item.take().unwrap(), effects, |source, target| {
+                        assert_eq!(source, worker_payload);
+                        assert_eq!(target, worker_target);
+                        Err(AppError::PermissionDenied(
+                            "injected rejection before leaf publication".into(),
+                        ))
+                    })
+                },
+            ));
+
+            assert_batch_outcome(&outcome, &[], std::slice::from_ref(&restored_string));
+            assert_eq!(
+                outcome.refresh_dirs,
+                [
+                    path_string(&existing),
+                    path_string(&recreated_first),
+                    path_string(&recreated_second),
+                ]
+            );
+            assert_eq!(
+                fs::read_to_string(&payload).expect("failed publication retains trash payload"),
+                "retryable exact bytes"
+            );
+            assert!(
+                !restored.exists(),
+                "failed publication does not create the leaf"
+            );
+            assert!(
+                fs::read_dir(&recreated_second)
+                    .expect("recreated immediate parent exists")
+                    .next()
+                    .is_none(),
+                "only the parent hierarchy changed"
+            );
+
+            let retry = run(restore_from_trash(vec![restored_string.clone()]))
+                .expect("failed leaf remains available for an actual restore retry");
+            assert_batch_outcome(&retry, std::slice::from_ref(&restored_string), &[]);
+            assert!(retry.refresh_dirs.is_empty());
+            assert_eq!(
+                fs::read_to_string(&restored).expect("retry restored the retained payload"),
+                "retryable exact bytes"
+            );
+        },
+    );
+}
+
+#[test]
+fn publication_panic_retains_parent_effects_and_payload_for_inspected_recovery() {
+    isolated(
+        "publication_panic_retains_parent_effects_and_payload_for_inspected_recovery",
+        |fixture| {
+            let existing = fixture.root.join("panic-existing-ancestor");
+            let recreated_first = existing.join("panic-recreated-first");
+            let recreated_second = recreated_first.join("panic-recreated-second");
+            fs::create_dir_all(&recreated_second).expect("create original parent hierarchy");
+            let restored = recreated_second.join("restored.txt");
+            fs::write(&restored, "panic recovery exact bytes").expect("write restorable file");
+            trash(&restored);
+            let item = owned_trash_items(&restored)
+                .into_iter()
+                .next()
+                .expect("owned item is present in isolated trash");
+            let payload = trashed_payload(&item);
+            fs::remove_dir(&recreated_second).expect("remove empty immediate parent");
+            fs::remove_dir(&recreated_first).expect("remove empty parent");
+            let restored_string = path_string(&restored);
+            let worker_payload = payload.clone();
+            let worker_target = restored.clone();
+            let mut item = Some(item);
+
+            let outcome = run(batch::run_with_effects(
+                BatchPlan::new(vec![restored_string.clone()]).unwrap(),
+                move |_, effects| {
+                    restore_item_with(item.take().unwrap(), effects, |source, target| {
+                        assert_eq!(source, worker_payload);
+                        assert_eq!(target, worker_target);
+                        panic!("injected panic before leaf publication");
+                    })
+                },
+            ));
+
+            assert!(outcome.succeeded.is_empty());
+            assert!(outcome.failed.is_empty());
+            assert_eq!(outcome.uncertain.len(), 1);
+            assert_eq!(outcome.uncertain[0].path, restored_string);
+            assert!(outcome.uncertain[0]
+                .error
+                .contains("injected panic before leaf publication"));
+            assert!(outcome.unstarted.is_empty());
+            assert_eq!(
+                outcome.refresh_dirs,
+                [
+                    path_string(&existing),
+                    path_string(&recreated_first),
+                    path_string(&recreated_second),
+                ],
+                "directory effects survive worker unwind"
+            );
+            assert_eq!(
+                fs::read_to_string(&payload).expect("panic retains trash payload"),
+                "panic recovery exact bytes"
+            );
+            assert!(!restored.exists());
+
+            // The test inspected both the surviving payload and missing
+            // destination before this direct recovery. History must consume an
+            // uncertain action rather than automatically offering it to retry.
+            let recovery = run(restore_from_trash(vec![restored_string.clone()]))
+                .expect("inspected panic-retained payload can be recovered explicitly");
+            assert_batch_outcome(&recovery, &[restored_string], &[]);
+            assert!(recovery.refresh_dirs.is_empty());
+            assert_eq!(
+                fs::read_to_string(&restored)
+                    .expect("explicit recovery restored panic-retained payload"),
+                "panic recovery exact bytes"
+            );
         },
     );
 }

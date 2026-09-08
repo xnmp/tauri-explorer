@@ -186,6 +186,7 @@ backend for E2E/browser).
 - `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed`/`uncertain`/`unstarted` receipts for `deleteEntries`; trash restore is native inverse work.
 - `src-tauri/src/files/batch/mod.rs`, `files/batch/model.rs` — bounded, stable selection admission and worker-independent progress; confirmed siblings survive a panic, uncertain work stops later attempts.
 - `src-tauri/src/files/trash.rs` — trash/restore primitives, native Windows-prefix UNC removal and Linux `renameat2(RENAME_NOREPLACE)` restore boundary; `files/file_ops.rs` owns explicit permanent deletion.
+- `src-tauri/src/files/restore_parents.rs` — recreate Linux restore parents with conservative directory effects in the external batch ledger; native history carries them to refresh publication even when the requested leaf remains uncompleted.
 - `src-tauri/src/files/windows_restore.rs`, `files/restore_outcome.rs` — Windows STA restore with source-verified per-item completion and pure outcome classification; inventory and destination checks share ordinal path comparison.
 - FLOW: delete → native whole-selection admission → per-path execution → native inverse for confirmed recoverable successes → settled reply → view reconciliation. Ctrl+Z reserves the exact history entry; uncertain paths are consumed, completed paths move to redo, failed/unstarted paths remain retryable (ADRs 0017/0018).
 

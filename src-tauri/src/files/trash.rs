@@ -84,14 +84,25 @@ fn trashed_payload(item: &trash::TrashItem) -> Result<PathBuf, AppError> {
 }
 
 #[cfg(target_os = "linux")]
-fn restore_item(item: trash::TrashItem) -> Result<(), AppError> {
+fn restore_item(item: trash::TrashItem, effects: &batch::DirectoryEffects) -> Result<(), AppError> {
+    restore_item_with(item, effects, |source, target| {
+        super::publication::rename_noreplace(source, target).map_err(AppError::from)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn restore_item_with(
+    item: trash::TrashItem,
+    effects: &batch::DirectoryEffects,
+    publish: impl FnOnce(&Path, &Path) -> Result<(), AppError>,
+) -> Result<(), AppError> {
     let payload = trashed_payload(&item)?;
     let original = item.original_path();
-    std::fs::create_dir_all(&item.original_parent)?;
+    super::restore_parents::create(&item.original_parent, effects)?;
     // Atomically refuse every existing target, including broken symlinks and
     // empty directories. A check followed by rename can overwrite a racing
     // creation; reserving a placeholder can strand it when the move fails.
-    super::publication::rename_noreplace(&payload, &original)?;
+    publish(&payload, &original)?;
     // The payload is already restored. Metadata cleanup cannot turn that
     // durable success into a failed inverse that history would retry.
     if let Err(error) = std::fs::remove_file(&item.id) {
@@ -101,7 +112,10 @@ fn restore_item(item: trash::TrashItem) -> Result<(), AppError> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn restore_item(item: trash::TrashItem) -> Result<(), AppError> {
+fn restore_item(
+    item: trash::TrashItem,
+    _effects: &batch::DirectoryEffects,
+) -> Result<(), AppError> {
     trash::os_limited::restore_all([item]).map_err(|error| {
         AppError::MutationUncertain(format!("Restoring from trash did not finish: {error}"))
     })
@@ -250,8 +264,8 @@ pub(crate) async fn restore_from_trash(paths: Vec<String>) -> Result<FileBatchOu
     }
     let requested = plan.paths.clone();
     let mut newest = super::run_blocking(move || index_restore_items(&requested)).await?;
-    Ok(batch::run(plan, move |path| {
-        restore_item(take_restore_item(&mut newest, path)?)
+    Ok(batch::run_with_effects(plan, move |path, effects| {
+        restore_item(take_restore_item(&mut newest, path)?, effects)
     })
     .await)
 }

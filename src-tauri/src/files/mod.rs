@@ -15,6 +15,8 @@ mod publication;
 mod replacement;
 #[cfg(any(target_os = "windows", test))]
 mod restore_outcome;
+#[cfg(target_os = "linux")]
+mod restore_parents;
 pub mod shortcuts;
 pub mod trash;
 mod watch_observation;

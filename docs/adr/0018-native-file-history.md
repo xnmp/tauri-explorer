@@ -307,5 +307,27 @@ and worker tests cannot establish Shell behavior. Microsoft documents
 [overwrite/merge transfer semantics](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/ne-shobjidl_core-_transfer_source_flags),
 and [abort acknowledgement](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-getanyoperationsaborted).
 Artifact identity (including symlinked parent spellings), durable recovery,
-restore-parent creation effects, and native batch progress/cancellation remain
+other-platform restore-parent effects, and native batch progress/cancellation remain
 required follow-up work. Linux evidence cannot establish Windows behavior.
+
+## Linux restore-parent effects
+
+Recursive parent creation is a separate filesystem effect from restoring the
+requested leaf. Rust's [`create_dir_all`](https://doc.rust-lang.org/std/fs/fn.create_dir_all.html)
+can leave created ancestors behind on failure. Linux restore now walks missing
+ancestors iteratively and records the target directory and its parent before each
+`mkdir`. Directory symlinks and concurrent directory creation retain standard
+filesystem behavior; files and broken symlinks remain obstructions.
+
+The supervisor-owned `DirectoryEffects` ledger deduplicates these conservative
+invalidations and retains them across worker unwind. Its 32,768-path / 8 MiB
+budget is checked before each further mutation. Exhaustion stops creation with
+the already recorded effects intact. `FileBatchOutcome.refresh_dirs` is a
+native-only receipt: Copy, Delete and nested history execution carry it into
+the existing native refresh publisher independently of action completion.
+
+Creating a parent does not restore the leaf, create an inverse for that parent,
+or confer ownership that would justify deleting it during rollback. A known leaf
+publication failure stays retryable; worker uncertainty stays consumed pending
+inspection. Publication occurs at batch settlement. Ancestor replacement races,
+artifact identity and durable recovery remain separate open requirements.

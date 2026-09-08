@@ -10,6 +10,23 @@ use crate::{
 };
 use std::{fs, path::Path};
 
+#[test]
+fn auxiliary_directory_effects_publish_without_completing_a_history_action() {
+    let root = tempfile::tempdir().unwrap();
+    let action = fixture(root.path(), "remaining");
+    let parent = root.path().to_string_lossy().into_owned();
+    let child = root.path().join("recreated").to_string_lossy().into_owned();
+    let result = super::model::Execution {
+        remaining: Some(action),
+        refresh_dirs: vec![child.clone(), parent.clone(), child.clone()],
+        error: Some("leaf was not restored".into()),
+        ..super::model::Execution::default()
+    };
+    assert_eq!(execution_affected(&result), [parent, child]);
+    assert!(result.completed.is_none());
+    assert!(result.opposite.is_none());
+}
+
 struct PanicAfterRename;
 impl Operations for PanicAfterRename {
     async fn rename(&self, path: String, name: String) -> Result<(), OperationError> {

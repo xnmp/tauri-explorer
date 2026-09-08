@@ -97,6 +97,7 @@ fn execute_inner<'a, O: Operations>(
                             opposite: None,
                             remaining: None,
                             error: Some(recovery),
+                            ..Execution::default()
                         },
                         Ok(None) => settled(action, Ok(()), true),
                         Err(error) => failed(action, error),
@@ -121,22 +122,27 @@ fn execute_inner<'a, O: Operations>(
                     ),
                 ),
                 Direction::Redo => match operations.restore(vec![copied_path.clone()]).await {
-                    Ok(outcome) if outcome.succeeded.iter().any(|path| path == copied_path) => {
-                        settled(action, Ok(()), true)
-                    }
                     Ok(outcome) => {
-                        let error =
-                            batch_error(&outcome).unwrap_or_else(|| "File was not restored".into());
-                        let error = if outcome
-                            .uncertain
-                            .iter()
-                            .any(|failure| &failure.path == copied_path)
-                        {
-                            OperationError::Uncertain(error)
+                        let result = if outcome.succeeded.iter().any(|path| path == copied_path) {
+                            settled(action, Ok(()), true)
                         } else {
-                            OperationError::Unchanged(error)
+                            let error = batch_error(&outcome)
+                                .unwrap_or_else(|| "File was not restored".into());
+                            let error = if outcome
+                                .uncertain
+                                .iter()
+                                .any(|failure| &failure.path == copied_path)
+                            {
+                                OperationError::Uncertain(error)
+                            } else {
+                                OperationError::Unchanged(error)
+                            };
+                            failed(action, error)
                         };
-                        failed(action, error)
+                        Execution {
+                            refresh_dirs: outcome.refresh_dirs,
+                            ..result
+                        }
                     }
                     Err(error) => failed(action, error),
                 },
@@ -171,6 +177,7 @@ async fn execute_batch<O: Operations>(
         Direction::Redo => (0..actions.len()).collect::<Vec<_>>(),
     };
     let mut error = None;
+    let mut refresh_dirs = std::collections::BTreeSet::new();
 
     for index in indices {
         let result = execute_inner(actions[index].clone(), operations, direction).await;
@@ -178,6 +185,7 @@ async fn execute_batch<O: Operations>(
         uncertain[index] = result.uncertain;
         opposite[index] = result.opposite;
         remaining[index] = result.remaining;
+        refresh_dirs.extend(result.refresh_dirs);
         if result.error.is_some() {
             error = result.error;
             break;
@@ -190,6 +198,7 @@ async fn execute_batch<O: Operations>(
         opposite: batch_action(opposite, &label),
         remaining: batch_action(remaining, &label),
         error,
+        refresh_dirs: refresh_dirs.into_iter().collect(),
     }
 }
 
@@ -247,6 +256,7 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome) -> Execution {
             parent_dir,
         }),
         error: error.or_else(|| has_remaining.then(|| "Some files were not processed".into())),
+        refresh_dirs: outcome.refresh_dirs,
     }
 }
 

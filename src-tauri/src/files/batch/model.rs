@@ -67,6 +67,11 @@ pub struct FileFailure {
 /// Disjoint partitions of admitted inputs, preserving input order within each.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct FileBatchOutcome {
+    /// Native reconciliation effects independent of requested-item success.
+    /// These are conservative invalidations, not created-directory ownership.
+    /// The native coordinator publishes them; they are not a renderer receipt.
+    #[serde(skip)]
+    pub(crate) refresh_dirs: Vec<String>,
     pub(crate) succeeded: Vec<String>,
     pub(crate) failed: Vec<FileFailure>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

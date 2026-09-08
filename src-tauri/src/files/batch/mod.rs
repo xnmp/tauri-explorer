@@ -7,10 +7,54 @@ use model::ItemState;
 pub use model::{FileBatchOutcome, FileFailure};
 use std::sync::{Arc, Mutex};
 
+/// Conservative directory invalidations retained outside the filesystem worker.
+/// Register before a syscall so unwinding cannot erase a possible side effect.
+#[derive(Clone, Default)]
+pub(crate) struct DirectoryEffects(Arc<Mutex<DirectoryEffectState>>);
+
+#[derive(Default)]
+struct DirectoryEffectState {
+    paths: std::collections::HashSet<String>,
+    bytes: usize,
+}
+
+impl DirectoryEffects {
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn before_create(&self, directory: &std::path::Path) -> Result<(), AppError> {
+        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        for path in directory.parent().into_iter().chain(Some(directory)) {
+            let path = path.to_string_lossy();
+            if state.paths.contains(path.as_ref()) {
+                continue;
+            }
+            // Auxiliary paths can amplify a deeply nested batch. Stop before
+            // the next syscall rather than dropping invalidations or growing
+            // retained memory without a bound.
+            if state.paths.len() >= 32_768 || path.len() > 8 * 1024 * 1024 - state.bytes {
+                return Err(AppError::Other(
+                    "Restore directory reconciliation exceeds its path count or size limit".into(),
+                ));
+            }
+            state.bytes += path.len();
+            state.paths.insert(path.into_owned());
+        }
+        Ok(())
+    }
+
+    fn take(&self) -> Vec<String> {
+        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        let mut paths: Vec<_> = std::mem::take(&mut state.paths).into_iter().collect();
+        state.bytes = 0;
+        paths.sort_unstable();
+        paths
+    }
+}
+
 #[derive(Clone)]
 struct Ledger {
     paths: Arc<Vec<String>>,
     states: Arc<Mutex<Vec<ItemState>>>,
+    directories: DirectoryEffects,
 }
 
 impl Ledger {
@@ -18,16 +62,17 @@ impl Ledger {
         Self {
             states: Arc::new(Mutex::new(vec![ItemState::Unstarted; plan.paths.len()])),
             paths: Arc::new(plan.paths),
+            directories: DirectoryEffects::default(),
         }
     }
 
-    fn execute(&self, mut operation: impl FnMut(&str) -> Result<(), AppError>) {
+    fn execute(&self, mut operation: impl FnMut(&str, &DirectoryEffects) -> Result<(), AppError>) {
         for (index, path) in self.paths.iter().enumerate() {
             self.states
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())[index] = ItemState::Active;
             // Do not hold the ledger lock across a syscall or error formatting.
-            let state = match operation(path) {
+            let state = match operation(path, &self.directories) {
                 Ok(()) => ItemState::Succeeded,
                 Err(error @ (AppError::WorkerFailed(_) | AppError::MutationUncertain(_))) => {
                     ItemState::Uncertain(error.to_string())
@@ -51,13 +96,22 @@ impl Ledger {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()),
         );
-        model::settle(Arc::unwrap_or_clone(self.paths), states, worker_error)
+        let mut outcome = model::settle(Arc::unwrap_or_clone(self.paths), states, worker_error);
+        outcome.refresh_dirs = self.directories.take();
+        outcome
     }
 }
 
 pub(crate) async fn run(
     plan: BatchPlan,
-    operation: impl FnMut(&str) -> Result<(), AppError> + Send + 'static,
+    mut operation: impl FnMut(&str) -> Result<(), AppError> + Send + 'static,
+) -> FileBatchOutcome {
+    run_with_effects(plan, move |path, _| operation(path)).await
+}
+
+pub(crate) async fn run_with_effects(
+    plan: BatchPlan,
+    operation: impl FnMut(&str, &DirectoryEffects) -> Result<(), AppError> + Send + 'static,
 ) -> FileBatchOutcome {
     let ledger = Ledger::new(plan);
     let worker_ledger = ledger.clone();
@@ -100,7 +154,7 @@ pub(crate) async fn run_dedicated<C: 'static>(
                     // also runs here before publishing the terminal outcome.
                     let result = catch_unwind(AssertUnwindSafe(|| {
                         let mut context = context;
-                        worker_ledger.execute(|path| operation(&mut context, path));
+                        worker_ledger.execute(|path, _| operation(&mut context, path));
                     }));
                     Ok(result.err().map(panic_message))
                 }

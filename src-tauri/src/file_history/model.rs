@@ -98,6 +98,8 @@ pub struct Summary {
 /// copy can remove it on a platform that cannot subsequently restore it.
 #[derive(Clone, Debug, Default)]
 pub struct Execution {
+    /// Auxiliary filesystem effects do not imply a completed history action.
+    pub refresh_dirs: Vec<String>,
     pub completed: Option<Action>,
     pub uncertain: Option<Action>,
     pub opposite: Option<Action>,

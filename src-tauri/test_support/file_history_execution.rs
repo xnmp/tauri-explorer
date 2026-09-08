@@ -3,7 +3,12 @@ use crate::{
     file_history::model::{Action, Direction},
     files::trash::{FileBatchOutcome, FileFailure},
 };
-use std::{collections::VecDeque, future::Future, path::PathBuf, sync::Mutex};
+use std::{
+    collections::{HashSet, VecDeque},
+    future::Future,
+    path::PathBuf,
+    sync::Mutex,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 enum Call {
@@ -141,9 +146,18 @@ fn rename(name: &str) -> Action {
 }
 
 fn batch_outcome(succeeded: Vec<String>, failed: Vec<(String, &str)>) -> FileBatchOutcome {
+    batch_outcome_with_refresh(succeeded, failed, Vec::new())
+}
+
+fn batch_outcome_with_refresh(
+    succeeded: Vec<String>,
+    failed: Vec<(String, &str)>,
+    refresh_dirs: Vec<String>,
+) -> FileBatchOutcome {
     FileBatchOutcome {
         uncertain: Vec::new(),
         unstarted: Vec::new(),
+        refresh_dirs,
         succeeded,
         failed: failed
             .into_iter()
@@ -153,6 +167,13 @@ fn batch_outcome(succeeded: Vec<String>, failed: Vec<(String, &str)>) -> FileBat
             })
             .collect(),
     }
+}
+
+fn assert_refresh_dirs(actual: &[String], expected: &[String]) {
+    assert_eq!(actual.len(), expected.len());
+    let actual = actual.iter().collect::<HashSet<_>>();
+    let expected = expected.iter().collect::<HashSet<_>>();
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -365,6 +386,7 @@ fn mixed_delete_outcome_consumes_uncertain_paths_and_stops_outer_siblings() {
                 error: "worker exited".into(),
             }],
             unstarted: vec![unstarted.clone()],
+            refresh_dirs: Vec::new(),
         })),
     ]);
 
@@ -535,6 +557,177 @@ fn recoverable_copy_redo_requires_its_exact_restore_receipt() {
 }
 
 #[test]
+fn successful_copy_redo_preserves_refresh_effects_outside_history_partitions() {
+    let copied_path = path("restore/new-parent/copied.txt");
+    let action = Action::Copy {
+        copied_path: copied_path.clone(),
+        parent_dir: path("restore/new-parent"),
+        restore_supported: true,
+    };
+    let refresh_dirs = vec![path("restore"), path("restore/new-parent")];
+    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome_with_refresh(
+        vec![copied_path.clone()],
+        Vec::new(),
+        refresh_dirs.clone(),
+    )))]);
+
+    let result = run(execute(action.clone(), &operations, Direction::Redo));
+
+    assert_eq!(result.completed, Some(action.clone()));
+    assert_eq!(result.opposite, Some(action));
+    assert_eq!(result.remaining, None);
+    assert_eq!(result.error, None);
+    assert_refresh_dirs(&result.refresh_dirs, &refresh_dirs);
+    assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
+}
+
+#[test]
+fn failed_copy_redo_preserves_refresh_effects_without_claiming_completion() {
+    let copied_path = path("restore/created-parent/missing.txt");
+    let action = Action::Copy {
+        copied_path: copied_path.clone(),
+        parent_dir: path("restore/created-parent"),
+        restore_supported: true,
+    };
+    let refresh_dirs = vec![path("restore"), path("restore/created-parent")];
+    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome_with_refresh(
+        Vec::new(),
+        vec![(copied_path.clone(), "payload missing")],
+        refresh_dirs.clone(),
+    )))]);
+
+    let result = run(execute(action.clone(), &operations, Direction::Redo));
+
+    assert_eq!(result.completed, None);
+    assert_eq!(result.opposite, None);
+    assert_eq!(result.remaining, Some(action));
+    assert_eq!(
+        result.error.as_deref(),
+        Some(format!("{copied_path}: payload missing").as_str())
+    );
+    assert_refresh_dirs(&result.refresh_dirs, &refresh_dirs);
+    assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
+}
+
+#[test]
+fn partial_delete_undo_preserves_refresh_effects_independently_of_receipt_subsets() {
+    let restored = path("delete/missing-parent/restored.txt");
+    let blocked = path("delete/missing-parent/blocked.txt");
+    let parent_dir = path("delete/missing-parent");
+    let action = Action::Delete {
+        paths: vec![restored.clone(), blocked.clone()],
+        parent_dir: parent_dir.clone(),
+    };
+    let refresh_dirs = vec![path("delete"), parent_dir.clone()];
+    let operations = FakeOperations::new([Reply::Batch(Ok(batch_outcome_with_refresh(
+        vec![restored.clone()],
+        vec![(blocked.clone(), "restore blocked")],
+        refresh_dirs.clone(),
+    )))]);
+
+    let result = run(execute(action, &operations, Direction::Undo));
+    let completed = Action::Delete {
+        paths: vec![restored.clone()],
+        parent_dir: parent_dir.clone(),
+    };
+
+    assert_eq!(result.completed, Some(completed.clone()));
+    assert_eq!(result.opposite, Some(completed));
+    assert_eq!(
+        result.remaining,
+        Some(Action::Delete {
+            paths: vec![blocked.clone()],
+            parent_dir,
+        })
+    );
+    assert_eq!(
+        result.error.as_deref(),
+        Some(format!("{blocked}: restore blocked").as_str())
+    );
+    assert_refresh_dirs(&result.refresh_dirs, &refresh_dirs);
+    assert_eq!(
+        operations.calls(),
+        vec![Call::Restore(vec![restored, blocked])]
+    );
+}
+
+#[test]
+fn nested_batch_retains_all_refresh_effects_when_a_child_stops_execution() {
+    let restored_path = path("nested/first/restored.txt");
+    let restored = Action::Copy {
+        copied_path: restored_path.clone(),
+        parent_dir: path("nested/first"),
+        restore_supported: true,
+    };
+    let blocked_path = path("nested/blocked/missing.txt");
+    let blocked = Action::Copy {
+        copied_path: blocked_path.clone(),
+        parent_dir: path("nested/blocked"),
+        restore_supported: true,
+    };
+    let nested_later = rename("nested-later");
+    let nested = Action::Batch {
+        actions: vec![blocked.clone(), nested_later],
+        label: "nested restore".into(),
+    };
+    let outer_later = rename("outer-later");
+    let action = Action::Batch {
+        actions: vec![restored.clone(), nested.clone(), outer_later.clone()],
+        label: "outer restore".into(),
+    };
+    let first_refresh = path("nested/first");
+    let blocked_refresh = path("nested/blocked");
+    let operations = FakeOperations::new([
+        Reply::Batch(Ok(batch_outcome_with_refresh(
+            vec![restored_path.clone()],
+            Vec::new(),
+            vec![first_refresh.clone()],
+        ))),
+        Reply::Batch(Ok(batch_outcome_with_refresh(
+            Vec::new(),
+            vec![(blocked_path.clone(), "restore blocked")],
+            vec![blocked_refresh.clone()],
+        ))),
+    ]);
+
+    let result = run(execute(action, &operations, Direction::Redo));
+
+    assert_eq!(
+        result.completed,
+        Some(Action::Batch {
+            actions: vec![restored.clone()],
+            label: "outer restore".into(),
+        })
+    );
+    assert_eq!(
+        result.opposite,
+        Some(Action::Batch {
+            actions: vec![restored],
+            label: "outer restore".into(),
+        })
+    );
+    assert_eq!(
+        result.remaining,
+        Some(Action::Batch {
+            actions: vec![nested, outer_later],
+            label: "outer restore".into(),
+        })
+    );
+    assert_eq!(
+        result.error.as_deref(),
+        Some(format!("{blocked_path}: restore blocked").as_str())
+    );
+    assert_refresh_dirs(&result.refresh_dirs, &[first_refresh, blocked_refresh]);
+    assert_eq!(
+        operations.calls(),
+        vec![
+            Call::Restore(vec![restored_path]),
+            Call::Restore(vec![blocked_path]),
+        ]
+    );
+}
+
+#[test]
 fn uncertain_copy_redo_is_consumed_without_an_inverse_or_retry() {
     let copied_path = path("local/uncertain-copy.txt");
     let action = Action::Copy {
@@ -550,6 +743,7 @@ fn uncertain_copy_redo_is_consumed_without_an_inverse_or_retry() {
             error: "restore worker exited".into(),
         }],
         unstarted: Vec::new(),
+        refresh_dirs: Vec::new(),
     }))]);
 
     let result = run(execute(action.clone(), &operations, Direction::Redo));

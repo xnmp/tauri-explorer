@@ -5,6 +5,37 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Linux restore-parent effects checkpoint
+
+Restore-parent creation now has an independent native effect receipt. Before each
+mkdir, the supervisor-owned batch ledger records both the directory and its parent
+for reconciliation. Iterative traversal avoids recursive stack growth; deduplicated
+invalidations have a 32,768-path / 8 MiB bound. Known leaf failures stay retryable,
+uncertain attempts stay consumed pending inspection, and neither invents an inverse
+for the recreated directories. Copy redo, Delete undo and nested partial batches
+carry those effects into native refresh publication.
+
+Six regressions fail before the fix. Real filesystem coverage includes partial
+parent creation, leaf publication failure, panic, concurrent creators, symlink/file
+obstructions, long paths and effect budgets. The full Rust suite passes 650 library
+and nine integration tests serially (seven ignored); Linux all-targets recovery
+Clippy and Windows actual-source harness Clippy pass. The Windows harness is
+compilation evidence only. Maps cover 409/409 sources.
+
+A rebuilt Linux binary passes 11 outcomes in four native specs. The new case
+restores through two missing parents, shows the ancestor in the existing listing,
+and verifies exact bytes through Undo/Redo/Undo while retaining the recreated
+parents. Independent GPT-5.6 Sol source review and native evidence review accept
+the scoped contract. The native case demonstrates UI integration; fault and
+projection tests distinguish explicit auxiliary effects from normal watcher
+delivery. See [the evidence record](reviews/restore-parent-effects-2026-09-08.json).
+
+No frontend production code changed and no startup improvement is claimed. Native
+publication waits for batch settlement. Artifact identity, durable recovery,
+remaining forward batch ownership, operation progress/cancellation, Windows/macOS
+runtime and the full product/startup release matrix remain open. This checkpoint
+closes Linux restore-parent effect accounting, not the comprehensive review.
+
 ## Windows Shell worker implementation checkpoint
 
 Windows restore now owns an STA for the entire batch and uses a per-item Shell

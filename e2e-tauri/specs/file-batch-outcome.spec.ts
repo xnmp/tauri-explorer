@@ -170,4 +170,50 @@ describe("native partial file-operation outcomes", () => {
       throw error;
     }
   });
+
+  it("restores a deleted file through missing parents and refreshes the visible ancestor", async function () {
+    if (process.platform !== "linux") this.skip();
+    this.timeout(120_000);
+    const outerName = `recreated-parent-${suffix}`;
+    const outer = path.join(scratch, outerName);
+    const parent = path.join(outer, "nested");
+    const leaf = path.join(parent, "restored.txt");
+    const contents = `restore through missing parents ${suffix}\n`;
+    const proof = path.resolve("screenshots/refactor/repo-health-cleanup");
+    fs.mkdirSync(parent, { recursive: true });
+    fs.writeFileSync(leaf, contents);
+    try {
+      await navigateTo(parent);
+      await waitForListed("restored.txt", true);
+      const token = `capture-${crypto.randomUUID()}`;
+      expect((await dispatchOperation({ op: "capture-delete", paths: [leaf], token }, "captured")).error).toBeNull();
+      expect((await dispatchOperation({ op: "confirm-captured-delete", token }, "completed")).error).toBeNull();
+      await waitForDisk(leaf, false);
+      await navigateTo(scratch);
+      fs.rmdirSync(parent);
+      fs.rmdirSync(outer);
+      await waitForListed(outerName, false);
+      fs.mkdirSync(proof, { recursive: true });
+      await browser.saveScreenshot(path.join(proof, "native-restore-parents-before.png"));
+
+      expect((await historyOperation("undo")).error).toBeNull();
+      await waitForDisk(leaf, true);
+      expect(fs.readFileSync(leaf, "utf8")).toBe(contents);
+      await waitForListed(outerName, true);
+      await browser.saveScreenshot(path.join(proof, "native-restore-parents-after.png"));
+      await navigateTo(parent);
+      await waitForListed("restored.txt", true);
+
+      expect((await historyOperation("redo")).error).toBeNull();
+      await waitForDisk(leaf, false);
+      await waitForListed("restored.txt", false);
+      expect(fs.statSync(parent).isDirectory()).toBe(true);
+      expect((await historyOperation("undo")).error).toBeNull();
+      await waitForListed("restored.txt", true);
+      expect(fs.readFileSync(leaf, "utf8")).toBe(contents);
+    } finally {
+      if (!fs.existsSync(leaf)) await historyOperation("undo").catch(() => undefined);
+      await navigateTo(scratch);
+    }
+  });
 });

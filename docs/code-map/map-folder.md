@@ -438,6 +438,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `trash.rs` — history-free trash and restore primitives; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
 - `windows_restore.rs` — STA-owned Windows Shell restore, source-verified completion callbacks, collision-preserving flags, and ordinal path comparison.
 - `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
+- `restore_parents.rs` — iterative Linux restore-parent creation; bounded supervisor-owned invalidations survive partial creation and panic independently of leaf completion.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.

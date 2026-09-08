@@ -28,6 +28,7 @@ fn completed(action: &Action, opposite: Option<Action>) -> Execution {
         opposite,
         remaining: None,
         error: None,
+        ..Execution::default()
     }
 }
 
@@ -186,6 +187,7 @@ fn partial_path_subsets_retry_only_remaining_work_and_redo_in_lifo_order() {
             opposite: Some(a.clone()),
             remaining: Some(b.clone()),
             error: Some("b restore failed".into()),
+            ..Execution::default()
         },
     );
 
@@ -250,6 +252,7 @@ fn admitted_partial_redo_retains_its_remaining_work_after_a_new_push() {
             opposite: Some(a),
             remaining: Some(b.clone()),
             error: Some("b delete failed".into()),
+            ..Execution::default()
         },
     );
 
@@ -716,6 +719,7 @@ fn admitted_partial_redo_keeps_its_retry_and_opposite_below_a_newer_forward() {
             opposite: Some(completed_subset.clone()),
             remaining: Some(remaining_subset.clone()),
             error: Some("b failed".into()),
+            ..Execution::default()
         };
 
         if forward_finishes_first {
@@ -742,6 +746,7 @@ fn admitted_partial_redo_keeps_its_retry_and_opposite_below_a_newer_forward() {
                 opposite: None,
                 remaining: Some(remaining_subset.clone()),
                 error: Some("still unavailable".into()),
+                ..Execution::default()
             },
         );
         assert!(histories

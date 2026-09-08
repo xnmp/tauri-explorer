@@ -83,7 +83,7 @@ verified build profile and binary SHA-256/size/mtime, OS/release/architecture,
 WebView user agent, display scale, configuration, RSS baseline/final/peak,
 scenario-duration p50/p95, and every scenario result. A failed assertion takes a screenshot named with the seed,
 cycle, and scenario, records it in the JSON report, and fails the command.
-The optional expected-display-scale value makes a DPI qualification leg fail
+The required expected-display-scale value makes a DPI qualification leg fail
 instead of silently running at the wrong native runner scale.
 
 This runner supports Linux/WebKitGTK and Windows/WebView2. It makes no macOS UI

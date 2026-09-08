@@ -30,7 +30,11 @@ The report records reproducible input, the platform and
 WebView, asserted display scale, exact binary SHA-256/size/mtime, scenario timing
 p50/p95, RSS baseline/final/peak, and failure screenshot paths. Sampling or
 early-run failures still produce a failed report with nullable resource fields
-and explicit run errors.
+and explicit run errors. Failed native runs also retain their seed-specific
+WebDriver output and reference it from `failureArtifacts`; macOS startup logs
+normalize Rust `ns`, `µs`, `ms`, and `s` duration markers before calculating
+percentiles and treat either an exit code or termination signal as a failed
+survival sample.
 
 Browser Playwright remains useful for broader visual combinations but cannot
 qualify native timing, resource, cache, watcher, or race claims. macOS currently

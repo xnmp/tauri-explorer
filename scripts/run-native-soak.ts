@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  addQualificationFailureArtifact,
   buildNativeQualificationReport,
   readVerifiedNativeBuildManifest,
   resolveSoakConfiguration,
@@ -44,7 +45,12 @@ const reportPath = path.resolve(
   "qualification-results",
   `${nativePlatform()}-${configuration.seed}.json`,
 );
+const driverLogPath = path.resolve(
+  "qualification-results",
+  `${nativePlatform()}-${configuration.seed}-webdriver.log`,
+);
 fs.rmSync(reportPath, { force: true });
+fs.mkdirSync(path.dirname(driverLogPath), { recursive: true });
 let build;
 try {
   build = readVerifiedNativeBuildManifest(manifestPath);
@@ -62,22 +68,47 @@ try {
   throw error;
 }
 
+const driverLog = fs.createWriteStream(driverLogPath, { flags: "w" });
 const child = Bun.spawn(
   ["bunx", "wdio", "run", "e2e-tauri/wdio.soak.conf.ts"],
   {
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
     env: {
       ...process.env,
       NATIVE_BUILD_MANIFEST: manifestPath,
     },
   },
 );
-const exitCode = await child.exited;
 
+async function relayOutput(
+  stream: ReadableStream<Uint8Array>,
+  destination: NodeJS.WriteStream,
+): Promise<void> {
+  const reader = stream.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    destination.write(value);
+    driverLog.write(value);
+  }
+}
+
+const output = Promise.all([
+  relayOutput(child.stdout, process.stdout),
+  relayOutput(child.stderr, process.stderr),
+]);
+const exitCode = await child.exited;
+await output;
+await new Promise<void>((resolve, reject) => {
+  driverLog.once("error", reject);
+  driverLog.end(resolve);
+});
+
+let report: Record<string, unknown>;
 if (!fs.existsSync(reportPath)) {
   const message = `WebDriver exited before the native report was emitted (code ${exitCode})`;
-  const fallback = buildNativeQualificationReport({
+  report = buildNativeQualificationReport({
     build,
     platform: {
       os: nativePlatform(),
@@ -93,11 +124,17 @@ if (!fs.existsSync(reportPath)) {
     scenarios: [],
     runErrors: [message],
   });
-  writeQualificationArtifact(reportPath, fallback);
+} else {
+  report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
 }
 
+if (exitCode !== 0 || !report.passed) {
+  report = addQualificationFailureArtifact(report, driverLogPath);
+}
+writeQualificationArtifact(reportPath, report);
+
 if (exitCode !== 0) throw new Error(`native soak WebDriver exited ${exitCode}`);
-const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as {
-  passed?: boolean;
-};
 if (!report.passed) throw new Error("native soak report did not pass");

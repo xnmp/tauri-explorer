@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -51,6 +52,13 @@ export interface SoakConfiguration {
 export interface ResourceMeasurement {
   rssBytes: number;
   sampledAtMs: number;
+}
+
+export interface NativeProcessRow {
+  pid: number;
+  parentPid: number;
+  rssBytes: number;
+  executable: string;
 }
 
 export interface ScenarioMeasurement {
@@ -418,6 +426,53 @@ export function resolveNativeApplication(
     : defaultApplication;
 }
 
+export function measureProcessTreeRss(
+  rows: readonly NativeProcessRow[],
+  expectedBinary: string,
+  sampledAtMs: number,
+): ResourceMeasurement {
+  const normalizedBinary = path.resolve(expectedBinary).toLowerCase();
+  const processIds = new Set(
+    rows
+      .filter(
+        ({ executable }) =>
+          path.resolve(executable).toLowerCase() === normalizedBinary,
+      )
+      .map(({ pid }) => pid),
+  );
+  if (processIds.size === 0)
+    throw new Error(`native process not found at ${expectedBinary}`);
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of rows) {
+      if (processIds.has(row.parentPid) && !processIds.has(row.pid)) {
+        processIds.add(row.pid);
+        changed = true;
+      }
+    }
+  }
+
+  return {
+    rssBytes: rows
+      .filter(({ pid }) => processIds.has(pid))
+      .reduce((total, { rssBytes }) => total + rssBytes, 0),
+    sampledAtMs,
+  };
+}
+
+export function addQualificationFailureArtifact<
+  T extends { failureArtifacts?: readonly string[] },
+>(report: T, artifact: string): T & { failureArtifacts: string[] } {
+  return {
+    ...report,
+    failureArtifacts: [
+      ...new Set([...(report.failureArtifacts ?? []), artifact]),
+    ],
+  };
+}
+
 export async function executeQualificationRun<T>(options: {
   outputPath: string;
   execute: (runErrors: string[]) => Promise<void>;
@@ -456,14 +511,153 @@ export interface MacStartupMeasurement {
   warmShowMs: number;
 }
 
+export interface NativeStartupChild {
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  once: EventEmitter["once"];
+  removeListener: EventEmitter["removeListener"];
+  kill(signal?: NodeJS.Signals): boolean;
+}
+
+function durationToMilliseconds(value: string, unit: string): number {
+  const duration = Number(value);
+  switch (unit) {
+    case "ns":
+      return duration / 1_000_000;
+    case "us":
+    case "µs":
+    case "μs":
+      return duration / 1_000;
+    case "ms":
+      return duration;
+    case "s":
+      return duration * 1_000;
+    default:
+      throw new Error(`unsupported startup duration unit: ${unit}`);
+  }
+}
+
 export function parseMacStartupLog(log: string): MacStartupMeasurement {
-  const cold = log.match(/Startup:.*?total=([\d.]+)ms/);
-  const warm = log.match(/Startup\(warm-activate\):\s*show=([\d.]+)ms/);
+  const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
+  const cold = log.match(new RegExp(`Startup:.*?total=${duration}`));
+  const warm = log.match(
+    new RegExp(`Startup\\(warm-activate\\):\\s*show=${duration}`),
+  );
   if (!cold)
     throw new Error("cold Startup marker missing from macOS process log");
   if (!warm)
     throw new Error("warm-activate marker missing from macOS process log");
-  return { coldTotalMs: Number(cold[1]), warmShowMs: Number(warm[1]) };
+  return {
+    coldTotalMs: durationToMilliseconds(cold[1], cold[2]),
+    warmShowMs: durationToMilliseconds(warm[1], warm[2]),
+  };
+}
+
+export function waitForMacStartupProcess(
+  child: NativeStartupChild,
+  readLog: () => string,
+  options: { timeoutMs: number; survivalMs: number; pollMs?: number },
+): Promise<MacStartupMeasurement> {
+  return new Promise((resolve, reject) => {
+    let completed = false;
+    let survivalTimer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = (): void => {
+      clearTimeout(timeoutTimer);
+      clearInterval(pollTimer);
+      if (survivalTimer) clearTimeout(survivalTimer);
+      child.removeListener("exit", onExit);
+      child.removeListener("error", onError);
+    };
+    const fail = (error: Error): void => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      reject(error);
+    };
+    const onExit = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ): void => {
+      fail(
+        new Error(
+          `application exited before startup qualification completed (code ${code}, signal ${signal ?? "none"})`,
+        ),
+      );
+    };
+    const onError = (error: Error): void => {
+      fail(new Error(`application process error: ${error.message}`));
+    };
+    const succeedAfterSurvival = (
+      measurement: MacStartupMeasurement,
+    ): void => {
+      clearInterval(pollTimer);
+      clearTimeout(timeoutTimer);
+      survivalTimer = setTimeout(() => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          onExit(child.exitCode, child.signalCode);
+          return;
+        }
+        if (completed) return;
+        completed = true;
+        cleanup();
+        resolve(measurement);
+      }, options.survivalMs);
+    };
+    const inspectLog = (): void => {
+      if (survivalTimer || completed) return;
+      try {
+        succeedAfterSurvival(parseMacStartupLog(readLog()));
+      } catch {
+        // Both native markers are required; keep collecting until the bound.
+      }
+    };
+
+    const timeoutTimer = setTimeout(
+      () =>
+        fail(
+          new Error(
+            `startup markers missing after ${options.timeoutMs}ms`,
+          ),
+        ),
+      options.timeoutMs,
+    );
+    const pollTimer = setInterval(inspectLog, options.pollMs ?? 25);
+    child.once("exit", onExit);
+    child.once("error", onError);
+    inspectLog();
+  });
+}
+
+async function waitForProcessExit(
+  child: NativeStartupChild,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return new Promise((resolve) => {
+    const onExit = (): void => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+    const timeout = setTimeout(() => {
+      child.removeListener("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+export async function stopNativeStartupProcess(
+  child: NativeStartupChild,
+  options: { gracefulTimeoutMs: number; forceTimeoutMs: number } = {
+    gracefulTimeoutMs: 5_000,
+    forceTimeoutMs: 2_000,
+  },
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill();
+  if (await waitForProcessExit(child, options.gracefulTimeoutMs)) return;
+  child.kill("SIGKILL");
+  await waitForProcessExit(child, options.forceTimeoutMs);
 }
 
 export function summarizeDurations(values: readonly number[]): {

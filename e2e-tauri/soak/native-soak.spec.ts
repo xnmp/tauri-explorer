@@ -8,6 +8,7 @@ import {
   SOAK_SCENARIOS,
   buildNativeQualificationReport,
   executeQualificationRun,
+  measureProcessTreeRss,
   readVerifiedNativeBuildManifest,
   resolveSoakConfiguration,
   type NativeQualificationReport,
@@ -104,44 +105,12 @@ function processRows(): Array<{
     }));
 }
 
-function sampleNativeRss(sampledAtMs: number): ResourceMeasurement {
-  const binaryName =
-    process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer";
-  const expectedBinary = path.resolve(
-    "src-tauri",
-    "target",
-    "debug",
-    binaryName,
-  );
+function sampleNativeRss(
+  sampledAtMs: number,
+  expectedBinary: string,
+): ResourceMeasurement {
   const rows = processRows();
-  const rootIds = new Set(
-    rows
-      .filter(
-        ({ executable }) =>
-          path.resolve(executable).toLowerCase() ===
-          expectedBinary.toLowerCase(),
-      )
-      .map(({ pid }) => pid),
-  );
-  if (rootIds.size === 0)
-    throw new Error(`native process not found at ${expectedBinary}`);
-
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const row of rows) {
-      if (rootIds.has(row.parentPid) && !rootIds.has(row.pid)) {
-        rootIds.add(row.pid);
-        changed = true;
-      }
-    }
-  }
-  return {
-    rssBytes: rows
-      .filter(({ pid }) => rootIds.has(pid))
-      .reduce((total, { rssBytes }) => total + rssBytes, 0),
-    sampledAtMs,
-  };
+  return measureProcessTreeRss(rows, expectedBinary, sampledAtMs);
 }
 
 async function assertUsable(expectedPath: string): Promise<void> {
@@ -273,6 +242,12 @@ async function runThemeAccessibilityZoom(): Promise<void> {
     () => document.documentElement.dataset.theme ?? "",
   );
   await openPalette("Toggle Dark/Light Theme");
+  expect(await $(".command-palette-overlay").getAttribute("role")).toBe(
+    "dialog",
+  );
+  expect(
+    await $(".command-palette-overlay").getAttribute("aria-label"),
+  ).toBe("Command palette");
   expect(await $(".commands-list").getAttribute("role")).toBe("listbox");
   await browser.keys("Enter");
   await browser.waitUntil(
@@ -399,7 +374,9 @@ describe("extended real-native qualification soak", () => {
       execute: async (runErrors) => {
         const sampleResource = (stage: string): void => {
           try {
-            resources.push(sampleNativeRss(Date.now() - started));
+            resources.push(
+              sampleNativeRss(Date.now() - started, build.binary),
+            );
           } catch (error) {
             runErrors.push(`${stage} RSS unavailable: ${errorText(error)}`);
           }

@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process";
-import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import {
-  parseMacStartupLog,
   readVerifiedNativeBuildManifest,
+  stopNativeStartupProcess,
   summarizeDurations,
+  waitForMacStartupProcess,
   writeQualificationArtifact,
   type MacStartupMeasurement,
 } from "../e2e-tauri/native-qualification";
@@ -53,49 +53,13 @@ async function runSample(
   child.stderr.on("data", (chunk) => (log += chunk.toString()));
 
   try {
-    const measurement = await new Promise<MacStartupMeasurement>(
-      (resolve, reject) => {
-        const timeout = setTimeout(
-          () =>
-            reject(new Error(`startup markers missing after ${timeoutMs}ms`)),
-          timeoutMs,
-        );
-        const poll = setInterval(() => {
-          try {
-            const parsed = parseMacStartupLog(log);
-            clearInterval(poll);
-            clearTimeout(timeout);
-            resolve(parsed);
-          } catch {
-            // Both native markers are required; keep collecting until the bound.
-          }
-        }, 25);
-        child.once("exit", (code) => {
-          clearInterval(poll);
-          clearTimeout(timeout);
-          reject(
-            new Error(
-              `application exited before both startup markers (code ${code})`,
-            ),
-          );
-        });
-      },
-    );
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-    if (child.exitCode !== null) {
-      throw new Error(
-        "application exited during the post-startup survival check",
-      );
-    }
+    const measurement = await waitForMacStartupProcess(child, () => log, {
+      timeoutMs,
+      survivalMs: 5_000,
+    });
     return { ...measurement, log: logPath };
   } finally {
-    if (child.exitCode === null) {
-      child.kill();
-      await Promise.race([
-        once(child, "exit"),
-        new Promise((resolve) => setTimeout(resolve, 5_000)),
-      ]);
-    }
+    await stopNativeStartupProcess(child);
     fs.writeFileSync(logPath, log);
   }
 }

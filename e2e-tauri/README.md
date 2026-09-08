@@ -67,6 +67,7 @@ binary exactly as above, then run:
 SOAK_DURATION_MS=14400000 \
 SOAK_MAX_CYCLES=500 \
 SOAK_SEED=release-1.8.1-linux \
+SOAK_EXPECTED_DISPLAY_SCALE=2 \
 bun run test:e2e:tauri:soak
 ```
 
@@ -80,8 +81,12 @@ build profile, OS/release/architecture, WebView user agent, display scale,
 configuration, RSS baseline/final/peak, scenario-duration p50/p95, and every
 scenario result. A failed assertion takes a screenshot named with the seed,
 cycle, and scenario, records it in the JSON report, and fails the command.
+The optional expected-display-scale value makes a DPI qualification leg fail
+instead of silently running at the wrong native runner scale.
 
 This runner supports Linux/WebKitGTK and Windows/WebView2. It makes no macOS UI
 claim because WKWebView has no supported tauri-driver backend. The real macOS
-process startup gate remains `.github/workflows/macos-smoke.yml`; its startup
-logs are the source for cold/warm timing qualification, not browser tests.
+process gate in `.github/workflows/macos-smoke.yml` runs 30 cold plus
+`WARM_MEASURE=1` activation samples, checks post-startup survival, and uploads
+its exact-binary JSON report and logs. Those native logs, not browser tests, are
+the source for macOS p50/p95 timing qualification.

@@ -22,8 +22,10 @@ case marked as native acceptance.
 ## Run record
 
 Archive the generated JSON together with the built binary identity and WDIO
-artifact directory. For Linux and Windows, use the opt-in command documented in
-`e2e-tauri/README.md`. The report records reproducible input, the platform and
+artifact directory. For Linux and Windows, use the clean-worktree build wrapper
+and opt-in command documented in `e2e-tauri/README.md`; the runner rejects a
+binary whose hash, size, or modification time differs from that build manifest.
+The report records reproducible input, the platform and
 WebView, asserted display scale, exact binary SHA-256/size/mtime, scenario timing
 p50/p95, RSS baseline/final/peak, and failure screenshot paths. Sampling or
 early-run failures still produce a failed report with nullable resource fields

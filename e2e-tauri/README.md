@@ -60,10 +60,12 @@ Specs live in `specs/`. Keep this suite **small** — it's slow (full Tauri buil
 ## Extended native qualification soak
 
 The hours-long qualification suite is deliberately opt-in and is not selected
-by `test:e2e:tauri` or the pull-request smoke workflow. Build the embedded debug
-binary exactly as above, then run:
+by `test:e2e:tauri` or the pull-request smoke workflow. Start from a clean
+worktree and build through the qualification wrapper so the source commit and
+profile are tied to the exact binary hash in `qualification-results/native-build.json`:
 
 ```bash
+bun run build:native:qualification
 SOAK_DURATION_MS=14400000 \
 SOAK_MAX_CYCLES=500 \
 SOAK_SEED=release-1.8.1-linux \
@@ -77,9 +79,9 @@ every scenario once. The deterministic seed rotates scenario/interruption order
 and is written into the report so a failing order can be replayed.
 
 Reports are written under `qualification-results/` and contain the exact commit,
-build profile, OS/release/architecture, WebView user agent, display scale,
-configuration, RSS baseline/final/peak, scenario-duration p50/p95, and every
-scenario result. A failed assertion takes a screenshot named with the seed,
+verified build profile and binary SHA-256/size/mtime, OS/release/architecture,
+WebView user agent, display scale, configuration, RSS baseline/final/peak,
+scenario-duration p50/p95, and every scenario result. A failed assertion takes a screenshot named with the seed,
 cycle, and scenario, records it in the JSON report, and fails the command.
 The optional expected-display-scale value makes a DPI qualification leg fail
 instead of silently running at the wrong native runner scale.

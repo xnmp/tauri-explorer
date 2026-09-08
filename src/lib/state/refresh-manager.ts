@@ -15,7 +15,7 @@
  *    a mutation the pane already applied to its own entries.
  * 3. **`pane-refresh.ts` — HOW a refresh is applied.** Per-pane: fetches
  *    without touching UI state and drops the result when the entry
- *    fingerprint is unchanged (no flash) or the pane navigated away.
+ *    listing is unchanged (no flash) or the pane navigated away.
  *
  * A single file operation can trigger 2-3 refresh cycles through different
  * paths (onRefresh callback, broadcastFileChange, filesystem watcher).

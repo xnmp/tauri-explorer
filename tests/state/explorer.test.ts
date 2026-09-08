@@ -168,6 +168,42 @@ describe("streaming ingest", () => {
   });
 });
 
+describe("refresh selection reconciliation", () => {
+  it("removes externally deleted selections from public Explorer state", async () => {
+    const removed = entry("removed.txt");
+    const survivor = entry("survivor.txt");
+    const external = entry("external.txt");
+    const explorer = createExplorerState({
+      currentPath: "/root",
+      entries: [removed, survivor],
+      sortBy: "name",
+      sortAscending: true,
+      viewMode: "details",
+    });
+
+    try {
+      explorer.selectEntry(survivor);
+      explorer.selectEntry(removed, { ctrlKey: true });
+      expect(explorer.selectedPaths.size).toBe(2);
+      expect(explorer.getSelectedEntries().map(({ path }) => path).sort()).toEqual(
+        [removed.path, survivor.path].sort(),
+      );
+      expect(explorer.state.cursorPath).toBe(removed.path);
+      expect(explorer.state.selectionAnchorPath).toBe(removed.path);
+
+      loadImpl.current = staticLoad({ "/root": [survivor, external] });
+      await explorer.refresh({ silent: true });
+
+      expect(explorer.selectedPaths.size).toBe(1);
+      expect(explorer.getSelectedEntries().map(({ path }) => path)).toEqual([survivor.path]);
+      expect(explorer.state.cursorPath).toBeNull();
+      expect(explorer.state.selectionAnchorPath).toBeNull();
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});
+
 describe("inline new-entry creation kind (#436)", () => {
   it("startInlineNewFolder / startInlineNewFile toggle the active kind, cancel clears", () => {
     const explorer = createExplorerState();

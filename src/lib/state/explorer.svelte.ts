@@ -440,6 +440,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     coreState,
     dirListing,
     allowRefresh: watch.allowRefresh,
+    setSelection,
+    requestReconcile: (path) => watch.changed({ path }),
     navigateToParent,
   });
 

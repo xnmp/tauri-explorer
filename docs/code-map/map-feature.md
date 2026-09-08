@@ -55,7 +55,8 @@ backend for E2E/browser).
 - `src-tauri/src/files/directory_watches.rs` — pure directory lease/retirement policy with injected OS observation; shares registrations and retries/rebuilds failed forced cleanup without granting cache coverage to retired owners.
 
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
-- `state/pane-refresh.ts` — `createPaneRefresh`: re-list without UI flash (fingerprint diff)
+- `state/pane-refresh.ts` — `createPaneRefresh`: complete-listing reconciliation without UI flash
+- `domain/directory-reconciliation.ts` — reconcile external listings with concurrent mutations and selected path identities
 - `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
 - `state/pane-watch.ts` — observed navigation tickets keep the old directory lease until commit, replay pending-target changes and gate refresh during navigation.
 - `state/directory-events.ts` — shared ready-before-scan native event hub with acquisition retry and late-listener retirement.

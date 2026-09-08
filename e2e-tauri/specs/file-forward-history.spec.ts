@@ -474,9 +474,11 @@ gatedDescribe("native forward mutation history ownership", () => {
     await navigateTo(scratch);
     await waitForListed(path.basename(first), true);
     await waitForListed(path.basename(second), true);
+    await $(`.entry-item[data-path="${first}"]`).click();
+    await expect($(".status-bar .selected-info")).toHaveText(/1 selected/);
     const proofDirectory = path.resolve("screenshots/refactor/repo-health-cleanup");
     fs.mkdirSync(proofDirectory, { recursive: true });
-    await browser.saveScreenshot(path.join(proofDirectory, "native-delete-batch-before.png"));
+    await browser.saveScreenshot(path.join(proofDirectory, "native-refresh-selection-before.png"));
 
     const opened = await freshWindow(scratch);
     expect(opened.kind).toBe("fresh");
@@ -521,7 +523,8 @@ gatedDescribe("native forward mutation history ownership", () => {
       });
       await waitForListed(path.basename(first), false);
       await waitForListed(path.basename(second), false);
-      await browser.saveScreenshot(path.join(proofDirectory, "native-delete-batch-after.png"));
+      await expect($(".status-bar .selected-info")).not.toBeExisting();
+      await browser.saveScreenshot(path.join(proofDirectory, "native-refresh-selection-after.png"));
       const survivor = await currentSummary();
       expect(survivor.undoId).toBeNull();
       expect(survivor.redoId).toBeNull();

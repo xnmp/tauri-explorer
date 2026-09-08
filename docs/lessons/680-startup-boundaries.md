@@ -898,3 +898,16 @@ Every delete entry point must present returned failures. The confirmation-free
 `startDelete` path previously discarded `confirmDelete`'s error string, hiding
 partial and uncertain outcomes. Its regression calls the public Explorer method
 and observes both the retained rows and the uncertainty toast.
+
+### Complete refreshes reconcile both entries and selection
+
+A real child-window deletion cleared surviving-pane rows but left its status
+bar reporting a selected file. Membership belongs to complete directory state,
+so reconcile selection/cursor/anchor there instead of patching the status bar.
+The read can race local receipts: merge against its starting snapshot so a
+concurrent create/rename is not erased, then schedule a fresh observation through
+`pane-watch`/`refresh-manager`. Metadata-null receipts can change selection alone;
+snapshot identities too and provisionally preserve newly assigned missing paths.
+Do not reconcile against filtered visibility or incomplete stream chunks. Compare
+all FileEntry fields directly, preserve equal array identity, and avoid repeatedly
+copying the streaming buffer or constructing directory-sized fingerprint strings.

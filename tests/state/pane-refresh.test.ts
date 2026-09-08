@@ -10,7 +10,7 @@ vi.mock("../../src/lib/state/toast.svelte", () => ({
   toastStore: { show: (...args: unknown[]) => toastShow(...args) },
 }));
 
-import { createPaneRefresh, entriesFingerprint } from "../../src/lib/state/pane-refresh";
+import { createPaneRefresh } from "../../src/lib/state/pane-refresh";
 import type { ExplorerCoreState } from "../../src/lib/state/types";
 import type { FileEntry } from "../../src/lib/domain/file";
 import type { createDirectoryListing } from "../../src/lib/state/directory-listing";
@@ -78,27 +78,27 @@ function makeRefresh(
 ) {
   const allowRefresh = vi.fn(overrides?.allowRefresh ?? (() => true));
   const navigateToParent = vi.fn(async () => {});
+  const setSelection = vi.fn((next: Iterable<string>) => {
+    const nextSet = new Set(next);
+    for (const path of [...state.selectedPaths]) {
+      if (!nextSet.has(path)) state.selectedPaths.delete(path);
+    }
+    for (const path of nextSet) state.selectedPaths.add(path);
+  });
+  const requestReconcile = vi.fn();
   const refresh = createPaneRefresh({
     coreState: state,
     dirListing: listing,
     allowRefresh,
     navigateToParent,
+    setSelection,
+    requestReconcile,
   });
-  return { refresh, allowRefresh, navigateToParent };
+  return { refresh, allowRefresh, navigateToParent, setSelection, requestReconcile };
 }
 
 beforeEach(() => {
   toastShow.mockClear();
-});
-
-describe("entriesFingerprint", () => {
-  it("changes when path, size or mtime changes", () => {
-    const base = [entry("a", 1)];
-    expect(entriesFingerprint(base)).toBe(entriesFingerprint([entry("a", 1)]));
-    expect(entriesFingerprint(base)).not.toBe(entriesFingerprint([entry("a", 2)]));
-    expect(entriesFingerprint(base)).not.toBe(entriesFingerprint([entry("b", 1)]));
-    expect(entriesFingerprint([])).toBe("");
-  });
 });
 
 describe("createPaneRefresh", () => {
@@ -181,8 +181,220 @@ describe("createPaneRefresh", () => {
     expect(toastShow).not.toHaveBeenCalled();
   });
 
+  it("reconciles selection against a completed external listing", async () => {
+    const removed = entry("removed");
+    const survivor = entry("survivor");
+    const external = entry("external");
+    const state = coreState([removed, survivor]);
+    state.selectedPaths = new Set([removed.path, survivor.path]);
+    state.selectionAnchorPath = removed.path;
+    state.cursorPath = removed.path;
+    const { refresh } = makeRefresh(
+      state,
+      fakeListing({ entries: [survivor, external] }),
+    );
+
+    await refresh({ silent: true });
+
+    expect(state.entries.map(({ path }) => path)).toEqual([survivor.path, external.path]);
+    expect([...state.selectedPaths]).toEqual([survivor.path]);
+    expect(state.selectionAnchorPath).toBeNull();
+    expect(state.cursorPath).toBeNull();
+  });
+
+  it("clears selection and cursor identities when the completed listing is empty", async () => {
+    const removed = entry("removed");
+    const state = coreState([removed]);
+    state.selectedPaths = new Set([removed.path]);
+    state.selectionAnchorPath = removed.path;
+    state.cursorPath = removed.path;
+    const { refresh } = makeRefresh(state, fakeListing({ entries: [] }));
+
+    await refresh({ silent: true });
+
+    expect(state.entries).toEqual([]);
+    expect(state.selectedPaths.size).toBe(0);
+    expect(state.selectionAnchorPath).toBeNull();
+    expect(state.cursorPath).toBeNull();
+  });
+
+  it("waits for the final streamed listing before reconciling selection", async () => {
+    const removed = entry("removed");
+    const streamedSurvivor = entry("streamed-survivor");
+    const state = coreState([removed, streamedSurvivor]);
+    state.selectedPaths = new Set([removed.path, streamedSurvivor.path]);
+    state.selectionAnchorPath = removed.path;
+    state.cursorPath = removed.path;
+    let callbacks: LoadArgs[1] | null = null;
+    const listing = {
+      load: vi.fn(async (path: string, nextCallbacks: LoadArgs[1]) => {
+        callbacks = nextCallbacks;
+        return { ok: true as const, path, entries: [], streaming: true };
+      }),
+      cleanup: async () => {},
+    } as DirListing;
+    const { refresh } = makeRefresh(state, listing);
+
+    const pending = refresh({ silent: true });
+    await Promise.resolve();
+    callbacks!.onEntries([streamedSurvivor]);
+
+    expect([...state.selectedPaths]).toEqual([removed.path, streamedSurvivor.path]);
+    expect(state.cursorPath).toBe(removed.path);
+
+    callbacks!.onDone();
+    await pending;
+
+    expect([...state.selectedPaths]).toEqual([streamedSurvivor.path]);
+    expect(state.selectionAnchorPath).toBeNull();
+    expect(state.cursorPath).toBeNull();
+  });
+
+  it("leaves selection untouched when a streamed refresh is cancelled", async () => {
+    const selected = entry("selected");
+    const state = coreState([selected]);
+    state.selectedPaths = new Set([selected.path]);
+    state.selectionAnchorPath = selected.path;
+    state.cursorPath = selected.path;
+    const { refresh } = makeRefresh(
+      state,
+      fakeListing({
+        entries: [entry("replacement")],
+        beforeStream: ({ onCancelled }) => onCancelled?.(),
+      }),
+    );
+
+    await refresh({ silent: true });
+
+    expect(state.entries.map(({ path }) => path)).toEqual([selected.path]);
+    expect([...state.selectedPaths]).toEqual([selected.path]);
+    expect(state.selectionAnchorPath).toBe(selected.path);
+    expect(state.cursorPath).toBe(selected.path);
+  });
+
+  it("uses the selection current at commit time when the user selects during the fetch", async () => {
+    const initial = entry("initial");
+    const selectedDuringFetch = entry("selected-during-fetch");
+    const external = entry("external");
+    const state = coreState([initial, selectedDuringFetch]);
+    state.selectedPaths = new Set([initial.path]);
+    state.selectionAnchorPath = initial.path;
+    state.cursorPath = initial.path;
+    const { refresh } = makeRefresh(
+      state,
+      fakeListing({
+        entries: [initial, selectedDuringFetch, external],
+        beforeStream: () => {
+          state.selectedPaths.clear();
+          state.selectedPaths.add(selectedDuringFetch.path);
+          state.selectionAnchorPath = selectedDuringFetch.path;
+          state.cursorPath = selectedDuringFetch.path;
+        },
+      }),
+    );
+
+    await refresh({ silent: true });
+
+    expect([...state.selectedPaths]).toEqual([selectedDuringFetch.path]);
+    expect(state.selectionAnchorPath).toBe(selectedDuringFetch.path);
+    expect(state.cursorPath).toBe(selectedDuringFetch.path);
+  });
+
+  it.each([
+    {
+      operation: "create",
+      currentEntries: [entry("old"), entry("stable"), entry("locally-created")],
+      selected: entry("locally-created"),
+    },
+    {
+      operation: "rename",
+      currentEntries: [entry("renamed"), entry("stable")],
+      selected: entry("renamed"),
+    },
+  ])(
+    "does not overwrite a concurrent local $operation with an older listing",
+    async ({ currentEntries, selected }) => {
+      const old = entry("old");
+      const stable = entry("stable");
+      const external = entry("incoming-external");
+      const state = coreState([old, stable]);
+      state.selectedPaths = new Set([old.path]);
+      state.selectionAnchorPath = old.path;
+      state.cursorPath = old.path;
+      const { refresh, requestReconcile } = makeRefresh(
+        state,
+        fakeListing({
+          entries: [old, stable, external],
+          beforeStream: () => {
+            state.entries = currentEntries;
+            state.selectedPaths.clear();
+            state.selectedPaths.add(selected.path);
+            state.selectionAnchorPath = selected.path;
+            state.cursorPath = selected.path;
+          },
+        }),
+      );
+
+      await refresh({ silent: true });
+
+      expect(state.entries.some(({ path }) => path === external.path)).toBe(true);
+      expect(state.entries.some(({ path }) => path === selected.path)).toBe(true);
+      expect(state.entries.some(({ path }) => path === old.path)).toBe(
+        currentEntries.some(({ path }) => path === old.path),
+      );
+      expect([...state.selectedPaths]).toEqual([selected.path]);
+      expect(state.selectionAnchorPath).toBe(selected.path);
+      expect(state.cursorPath).toBe(selected.path);
+      expect(requestReconcile).toHaveBeenCalledExactlyOnceWith("/d");
+    },
+  );
+
+  it(
+    "provisionally retains a metadata-null create or rename identity until a fresh listing resolves it",
+    async () => {
+      const old = entry("old");
+      const committedPath = entry("committed-without-metadata").path;
+      const state = coreState([old]);
+      state.selectedPaths = new Set([old.path]);
+      state.selectionAnchorPath = old.path;
+      state.cursorPath = old.path;
+      let assignCommittedIdentity = true;
+      const listing = fakeListing({
+        entries: [old],
+        beforeStream: () => {
+          if (!assignCommittedIdentity) return;
+          state.selectedPaths.clear();
+          state.selectedPaths.add(committedPath);
+          state.selectionAnchorPath = committedPath;
+          state.cursorPath = committedPath;
+          assignCommittedIdentity = false;
+        },
+      });
+      const { refresh, requestReconcile } = makeRefresh(state, listing);
+
+      await refresh({ silent: true });
+
+      expect([...state.selectedPaths]).toEqual([committedPath]);
+      expect(state.selectionAnchorPath).toBe(committedPath);
+      expect(state.cursorPath).toBe(committedPath);
+      expect(requestReconcile).toHaveBeenCalledExactlyOnceWith("/d");
+
+      requestReconcile.mockClear();
+      await refresh({ silent: true });
+
+      expect(state.selectedPaths.size).toBe(0);
+      expect(state.selectionAnchorPath).toBeNull();
+      expect(state.cursorPath).toBeNull();
+      expect(requestReconcile).not.toHaveBeenCalled();
+    },
+  );
+
   it("discards the result when the pane navigated away mid-fetch", async () => {
-    const state = coreState([entry("old")]);
+    const old = entry("old");
+    const state = coreState([old]);
+    state.selectedPaths = new Set([old.path]);
+    state.selectionAnchorPath = old.path;
+    state.cursorPath = old.path;
     const { refresh } = makeRefresh(
       state,
       fakeListing({
@@ -196,6 +408,9 @@ describe("createPaneRefresh", () => {
     await refresh();
 
     expect(state.entries.map((e) => e.name)).toEqual(["old"]);
+    expect([...state.selectedPaths]).toEqual([old.path]);
+    expect(state.selectionAnchorPath).toBe(old.path);
+    expect(state.cursorPath).toBe(old.path);
     expect(toastShow).not.toHaveBeenCalled();
   });
 

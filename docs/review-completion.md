@@ -5,6 +5,38 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Directory and selection reconciliation checkpoint
+
+Complete refreshes now reconcile against both their starting snapshot and current
+pane state. Concurrent local creates, renames, deletions and metadata changes
+survive an older read while unrelated external changes still apply. A fresh
+observation after overlap uses the existing refresh scheduler. Selection, cursor
+and anchor reconcile against the complete listing; missing identities assigned
+while the read was running survive provisionally until that fresh observation.
+Unchanged listings retain their array identity without directory-sized fingerprint
+strings, and streamed chunks accumulate without repeatedly copying the buffer.
+
+Six regressions fail before the fix. Final focused coverage passes 32 cases;
+the full frontend run before final allocation optimizations passes 2,305 unit
+and 30 performance cases, and affected browser coverage passes 71 cases across
+all views. Final Svelte checks are clean; architecture lint and 406/406 source-map
+coverage pass. The rebuilt Linux binary passes 10 outcomes in four specs,
+including deletion of the surviving window's selection by an admitted child
+batch after that child is destroyed. Both file rows and the selected count clear.
+The previous deletion screenshot's stale-selection finding is resolved.
+Independent GPT-5.6 Sol review accepts the source and scoped native evidence.
+See [the evidence record](reviews/directory-reconciliation-acceptance-2026-09-08.json).
+
+The reproducible Bun unchanged-listing benchmark (`bun
+scripts/bench-directory-reconciliation.ts`) measures 100k entries at 18.12 ms old
+versus 0.88 ms new p50. This is a comparison microbenchmark, not WebView or startup
+latency; concurrent-mutation reconciliation has additional cost. Normal startup
+JavaScript is 666,782 raw / 217,696 gzip bytes (+448 gzip bytes), within budget.
+Fresh normal builds exclude acceptance probes. Windows restore, durable recovery,
+remaining native batch ownership and the supported-platform/startup acceptance
+matrix remain required. Exactly one trailing scan and strict selection ABA
+ordering are not claimed by this checkpoint.
+
 ## Native deletion batch checkpoint
 
 Whole-selection trash and permanent deletion now enter one native-owned command.

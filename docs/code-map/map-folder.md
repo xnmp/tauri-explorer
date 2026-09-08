@@ -270,6 +270,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-launch-plan.ts` — pure initial-directory/view and restoration policy across main and child windows.
 - `window-input.ts` — launch, warm-window and directory-seed validation; shared parse/producer budgets and canonical explorer seed shape.
 
+- `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.

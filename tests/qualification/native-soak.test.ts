@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import {
   NATIVE_QUALIFICATION_MATRIX,
+  SOAK_SCENARIOS,
   buildNativeQualificationReport,
+  parseMacStartupLog,
+  resolveSoakConfiguration,
   type QualificationRisk,
+  writeNativeQualificationReport,
 } from "../../e2e-tauri/native-qualification";
 
 describe("native product qualification contract", () => {
@@ -29,6 +36,17 @@ describe("native product qualification contract", () => {
     for (const risk of expectedRisks) {
       expect(
         NATIVE_QUALIFICATION_MATRIX.some((entry) => entry.risk === risk),
+      ).toBe(true);
+    }
+
+    for (const scenario of SOAK_SCENARIOS) {
+      expect(
+        NATIVE_QUALIFICATION_MATRIX.some(
+          (entry) =>
+            entry.soakScenario === scenario &&
+            entry.required &&
+            entry.proof === "native-webdriver",
+        ),
       ).toBe(true);
     }
 
@@ -149,5 +167,103 @@ describe("native product qualification contract", () => {
     expect(report.failureArtifacts).toEqual([
       "artifacts/seed-issue-688-repro-seed/cycle-2-plugin-preview.png",
     ]);
+  });
+
+  it("resolves a replayable bounded configuration and rejects invalid limits", () => {
+    expect(
+      resolveSoakConfiguration({
+        SOAK_DURATION_MS: "60000",
+        SOAK_MAX_CYCLES: "3",
+        SOAK_SEED: "replay-me",
+        SOAK_EXPECTED_DISPLAY_SCALE: "2",
+      }),
+    ).toEqual({
+      durationMs: 60_000,
+      maxCycles: 3,
+      seed: "replay-me",
+      scenarios: SOAK_SCENARIOS,
+      expectedDisplayScale: 2,
+    });
+    expect(() => resolveSoakConfiguration({ SOAK_DURATION_MS: "0" })).toThrow(
+      "SOAK_DURATION_MS",
+    );
+    expect(() =>
+      resolveSoakConfiguration({ SOAK_MAX_CYCLES: "not-a-number" }),
+    ).toThrow("SOAK_MAX_CYCLES");
+  });
+
+  it("writes a readable failure report even when native sampling is unavailable", () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "native-qualification-report-"),
+    );
+    const output = path.join(dir, "failed.json");
+    const report = buildNativeQualificationReport({
+      build: {
+        commit: "source-commit",
+        profile: "debug-custom-protocol-e2e-hooks",
+        binary: "/tmp/tauri-explorer",
+        binarySha256: "abc123",
+        binaryBytes: 42,
+        binaryModifiedAt: "2026-09-09T00:00:00.000Z",
+      },
+      platform: {
+        os: "linux",
+        release: "test",
+        arch: "x64",
+        webview: "unavailable",
+        displayScale: null,
+      },
+      configuration: {
+        durationMs: 1,
+        maxCycles: 1,
+        seed: "failure-seed",
+        scenarios: SOAK_SCENARIOS,
+      },
+      startedAt: "2026-09-09T00:00:00.000Z",
+      finishedAt: "2026-09-09T00:00:01.000Z",
+      resources: [],
+      scenarios: [],
+      runErrors: ["baseline RSS unavailable: native process not found"],
+    });
+
+    writeNativeQualificationReport(output, report);
+    expect(JSON.parse(fs.readFileSync(output, "utf8"))).toMatchObject({
+      build: { binarySha256: "abc123", binaryBytes: 42 },
+      resources: {
+        baselineRssBytes: null,
+        finalRssBytes: null,
+        peakRssBytes: null,
+      },
+      runErrors: ["baseline RSS unavailable: native process not found"],
+      passed: false,
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("parses real macOS cold and warm startup markers", () => {
+    expect(
+      parseMacStartupLog(
+        "Startup: pre-builder=4.0ms builder→setup=79.2ms total=83.2ms\n" +
+          "Startup(warm-activate): show=4.4ms\n",
+      ),
+    ).toEqual({ coldTotalMs: 83.2, warmShowMs: 4.4 });
+    expect(() => parseMacStartupLog("Startup: total=83.2ms")).toThrow(
+      "warm-activate",
+    );
+  });
+
+  it("keeps the hours-long runner opt-in and out of the bounded smoke config", () => {
+    const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    const smokeConfig = fs.readFileSync("e2e-tauri/wdio.conf.ts", "utf8");
+    const soakConfig = fs.readFileSync("e2e-tauri/wdio.soak.conf.ts", "utf8");
+
+    expect(packageJson.scripts["test:e2e:tauri"]).toBe(
+      "wdio run e2e-tauri/wdio.conf.ts",
+    );
+    expect(packageJson.scripts["test:e2e:tauri:soak"]).toBe(
+      "wdio run e2e-tauri/wdio.soak.conf.ts",
+    );
+    expect(smokeConfig).not.toContain("soak/**/*.spec.ts");
+    expect(soakConfig).toContain('specs: ["./soak/**/*.spec.ts"]');
   });
 });

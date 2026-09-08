@@ -1,12 +1,7 @@
 import { config as baseConfig } from "./wdio.conf";
+import { resolveSoakConfiguration } from "./native-qualification";
 
-const durationMs = Number.parseInt(
-  process.env.SOAK_DURATION_MS ?? "14400000",
-  10,
-);
-if (!Number.isFinite(durationMs) || durationMs <= 0) {
-  throw new Error("SOAK_DURATION_MS must be a positive integer");
-}
+const { durationMs } = resolveSoakConfiguration(process.env);
 
 export const config: WebdriverIO.Config = {
   ...baseConfig,

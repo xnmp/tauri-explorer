@@ -80,6 +80,9 @@ describe("native product qualification contract", () => {
         commit: "0123456789abcdef",
         profile: "debug-custom-protocol",
         binary: "/qualification/tauri-explorer",
+        binarySha256: "deadbeef",
+        binaryBytes: 1234,
+        binaryModifiedAt: "2026-09-08T23:59:00.000Z",
       },
       platform: {
         os: "linux",
@@ -92,7 +95,7 @@ describe("native product qualification contract", () => {
         durationMs: 14_400_000,
         maxCycles: 500,
         seed: "issue-688-repro-seed",
-        scenarios: ["window-workspace", "plugin-preview", "input-interruption"],
+        scenarios: SOAK_SCENARIOS,
       },
       startedAt: "2026-09-09T00:00:00.000Z",
       finishedAt: "2026-09-09T04:00:00.000Z",
@@ -157,6 +160,7 @@ describe("native product qualification contract", () => {
         maxCycles: 500,
       },
       resources: {
+        sampleCount: 3,
         baselineRssBytes: 100,
         finalRssBytes: 130,
         peakRssBytes: 160,

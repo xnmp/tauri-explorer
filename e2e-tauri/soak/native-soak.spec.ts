@@ -1,66 +1,45 @@
 import { browser, $, $$, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import {
+  SOAK_SCENARIOS,
   buildNativeQualificationReport,
+  resolveSoakConfiguration,
+  type NativeQualificationReport,
   type NativePlatform,
   type ResourceMeasurement,
   type ScenarioMeasurement,
-  type SoakConfiguration,
+  writeNativeQualificationReport,
 } from "../native-qualification";
 import { domText, entryNames, navigateTo } from "../specs/helpers";
 
-const DEFAULT_DURATION_MS = 4 * 60 * 60 * 1_000;
-const durationMs = Number.parseInt(
-  process.env.SOAK_DURATION_MS ?? String(DEFAULT_DURATION_MS),
-  10,
-);
-const maxCycles = process.env.SOAK_MAX_CYCLES
-  ? Number.parseInt(process.env.SOAK_MAX_CYCLES, 10)
-  : undefined;
-if (!Number.isFinite(durationMs) || durationMs <= 0) {
-  throw new Error("SOAK_DURATION_MS must be a positive integer");
-}
-if (
-  maxCycles !== undefined &&
-  (!Number.isFinite(maxCycles) || maxCycles <= 0)
-) {
-  throw new Error("SOAK_MAX_CYCLES must be a positive integer when provided");
-}
-const seed =
-  process.env.SOAK_SEED ??
-  `native-soak-${new Date().toISOString().slice(0, 10)}`;
-const scenarios = [
-  "window-workspace",
-  "plugin-churn",
-  "theme-accessibility-zoom",
-  "preview-native-input",
-] as const;
-const configuration: SoakConfiguration = {
-  durationMs,
-  maxCycles,
-  seed,
-  scenarios,
-};
+const configuration = resolveSoakConfiguration(process.env);
+const { durationMs, maxCycles, seed } = configuration;
+const scenarios = SOAK_SCENARIOS;
 
-const scratchRoot = fs.mkdtempSync(
-  path.join(os.tmpdir(), "tauri-native-soak-"),
-);
-const workspaceA = path.join(scratchRoot, "workspace-a");
-const workspaceB = path.join(scratchRoot, "workspace-b");
-fs.mkdirSync(workspaceA);
-fs.mkdirSync(workspaceB);
-fs.writeFileSync(
-  path.join(workspaceA, "qualification.md"),
-  "# Native qualification\n\nreal backend",
-);
-fs.writeFileSync(
-  path.join(workspaceB, "interruptions.txt"),
-  "native interruption survived",
-);
+let scratchRoot = "";
+let workspaceA = "";
+let workspaceB = "";
+
+function initializeScratchWorkspaces(): void {
+  scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tauri-native-soak-"));
+  workspaceA = path.join(scratchRoot, "workspace-a");
+  workspaceB = path.join(scratchRoot, "workspace-b");
+  fs.mkdirSync(workspaceA);
+  fs.mkdirSync(workspaceB);
+  fs.writeFileSync(
+    path.join(workspaceA, "qualification.md"),
+    "# Native qualification\n\nreal backend",
+  );
+  fs.writeFileSync(
+    path.join(workspaceB, "interruptions.txt"),
+    "native interruption survived",
+  );
+}
 
 function nativePlatform(): NativePlatform {
   if (process.platform === "win32") return "windows";
@@ -175,6 +154,34 @@ async function assertUsable(expectedPath: string): Promise<void> {
   );
 }
 
+async function assertExplorerUsable(): Promise<void> {
+  await expect($(".file-list")).toBeDisplayed();
+  await browser.waitUntil(
+    async () =>
+      ((await $(".status-path").getAttribute("title")) ?? "").length > 0,
+    {
+      timeoutMsg: "visible explorer lost its active path after a soak scenario",
+    },
+  );
+}
+
+async function assertInsideViewport(selector: string): Promise<void> {
+  const contained = await browser.execute((target: string) => {
+    const element = document.querySelector(target);
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.left >= 0 &&
+      rect.top >= 0 &&
+      rect.right <= window.innerWidth + 1 &&
+      rect.bottom <= window.innerHeight + 1
+    );
+  }, selector);
+  expect(contained).toBe(true);
+}
+
 async function openPalette(query: string): Promise<void> {
   await browser.keys(["Control", "Shift", "p"]);
   const input = $(".command-palette-dialog .search-input");
@@ -277,6 +284,13 @@ async function runThemeAccessibilityZoom(): Promise<void> {
         "first native keyboard theme toggle did not change the rendered theme",
     },
   );
+  await assertExplorerUsable();
+  await assertInsideViewport(".file-list");
+
+  await openPalette("Toggle Dark/Light Theme");
+  await assertInsideViewport(".command-palette-dialog");
+  await browser.keys("Escape");
+
   await browser.keys(["Control", "0"]);
   await browser.keys(["Control", "-"]);
   await browser.keys(["Control", "-"]);
@@ -285,6 +299,12 @@ async function runThemeAccessibilityZoom(): Promise<void> {
       await browser.execute(() => document.documentElement.style.zoom),
     ),
   ).toBe(80);
+  await assertExplorerUsable();
+  await assertInsideViewport(".file-list");
+  await openPalette("Toggle Dark/Light Theme");
+  await assertInsideViewport(".command-palette-dialog");
+  await browser.keys("Escape");
+
   await browser.keys(["Control", "0"]);
   for (let step = 0; step < 5; step += 1) await browser.keys(["Control", "="]);
   expect(
@@ -292,8 +312,10 @@ async function runThemeAccessibilityZoom(): Promise<void> {
       await browser.execute(() => document.documentElement.style.zoom),
     ),
   ).toBe(150);
+  await assertExplorerUsable();
+  await assertInsideViewport(".file-list");
   await openPalette("Toggle Dark/Light Theme");
-  await expect($(".command-palette-dialog")).toBeDisplayed();
+  await assertInsideViewport(".command-palette-dialog");
   await browser.keys("Escape");
   await browser.keys(["Control", "0"]);
 }
@@ -326,99 +348,180 @@ async function runPreviewNativeInput(cycle: number): Promise<void> {
   );
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function captureBuildIdentity(
+  runErrors: string[],
+): NativeQualificationReport["build"] {
+  const binaryName =
+    process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer";
+  const binary = path.resolve("src-tauri", "target", "debug", binaryName);
+  try {
+    const stat = fs.statSync(binary);
+    return {
+      commit: execFileSync("git", ["rev-parse", "HEAD"], {
+        encoding: "utf8",
+      }).trim(),
+      profile:
+        process.env.SOAK_BUILD_PROFILE ?? "debug-custom-protocol-e2e-hooks",
+      binary,
+      binarySha256: createHash("sha256")
+        .update(fs.readFileSync(binary))
+        .digest("hex"),
+      binaryBytes: stat.size,
+      binaryModifiedAt: stat.mtime.toISOString(),
+    };
+  } catch (error) {
+    runErrors.push(`build identity unavailable: ${errorText(error)}`);
+    return {
+      commit: "unavailable",
+      profile: process.env.SOAK_BUILD_PROFILE ?? "unavailable",
+      binary,
+      binarySha256: "unavailable",
+      binaryBytes: 0,
+      binaryModifiedAt: new Date(0).toISOString(),
+    };
+  }
+}
+
 describe("extended real-native qualification soak", () => {
   it("keeps observable explorer workflows usable through deterministic churn", async () => {
     const startedAt = new Date();
     const started = Date.now();
     const measurements: ScenarioMeasurement[] = [];
     const resources: ResourceMeasurement[] = [];
+    const runErrors: string[] = [];
+    const build = captureBuildIdentity(runErrors);
+    const platform: NativeQualificationReport["platform"] = {
+      os: nativePlatform(),
+      release: os.release(),
+      arch: os.arch(),
+      webview: "unavailable",
+      displayScale: null,
+    };
+    const reportPath = path.resolve(
+      "qualification-results",
+      `${nativePlatform()}-${seed}.json`,
+    );
     let failure: unknown;
 
-    await $(".file-list").waitForDisplayed({ timeout: 15_000 });
-    resources.push(sampleNativeRss(0));
-
-    for (
-      let cycle = 1;
-      Date.now() - started < durationMs && (!maxCycles || cycle <= maxCycles);
-      cycle += 1
-    ) {
-      for (const scenario of scenarioOrder(cycle)) {
-        const scenarioStarted = Date.now();
-        const failureArtifacts: string[] = [];
-        try {
-          await interruptSurface(cycle);
-          if (scenario === "window-workspace") await runWindowWorkspace(cycle);
-          if (scenario === "plugin-churn") await runPluginChurn();
-          if (scenario === "theme-accessibility-zoom")
-            await runThemeAccessibilityZoom();
-          if (scenario === "preview-native-input")
-            await runPreviewNativeInput(cycle);
-          measurements.push({
-            id: scenario,
-            cycle,
-            durationMs: Date.now() - scenarioStarted,
-            outcome: "passed",
-            failureArtifacts,
-          });
-        } catch (error) {
-          const artifactDir = path.resolve(
-            "qualification-results",
-            `seed-${seed}`,
-          );
-          fs.mkdirSync(artifactDir, { recursive: true });
-          const screenshot = path.join(
-            artifactDir,
-            `cycle-${cycle}-${scenario}.png`,
-          );
-          await browser.saveScreenshot(screenshot);
-          failureArtifacts.push(screenshot);
-          measurements.push({
-            id: scenario,
-            cycle,
-            durationMs: Date.now() - scenarioStarted,
-            outcome: "failed",
-            failureArtifacts,
-          });
-          failure = error;
-          break;
-        }
+    const sampleResource = (stage: string): void => {
+      try {
         resources.push(sampleNativeRss(Date.now() - started));
+      } catch (error) {
+        runErrors.push(`${stage} RSS unavailable: ${errorText(error)}`);
       }
-      if (failure) break;
+    };
+
+    try {
+      initializeScratchWorkspaces();
+      await $(".file-list").waitForDisplayed({ timeout: 15_000 });
+      platform.webview = await browser.execute(() => navigator.userAgent);
+      platform.displayScale = await browser.execute(
+        () => window.devicePixelRatio,
+      );
+      if (
+        configuration.expectedDisplayScale !== undefined &&
+        Math.abs(platform.displayScale - configuration.expectedDisplayScale) >
+          0.01
+      ) {
+        throw new Error(
+          `native display scale ${platform.displayScale} did not match required ${configuration.expectedDisplayScale}`,
+        );
+      }
+      sampleResource("baseline");
+
+      for (
+        let cycle = 1;
+        Date.now() - started < durationMs && (!maxCycles || cycle <= maxCycles);
+        cycle += 1
+      ) {
+        for (const scenario of scenarioOrder(cycle)) {
+          const scenarioStarted = Date.now();
+          const failureArtifacts: string[] = [];
+          try {
+            await interruptSurface(cycle);
+            if (scenario === "window-workspace")
+              await runWindowWorkspace(cycle);
+            if (scenario === "plugin-churn") await runPluginChurn();
+            if (scenario === "theme-accessibility-zoom")
+              await runThemeAccessibilityZoom();
+            if (scenario === "preview-native-input")
+              await runPreviewNativeInput(cycle);
+            await assertExplorerUsable();
+            sampleResource(`cycle ${cycle} ${scenario}`);
+            measurements.push({
+              id: scenario,
+              cycle,
+              durationMs: Date.now() - scenarioStarted,
+              outcome: "passed",
+              failureArtifacts,
+            });
+          } catch (error) {
+            const artifactDir = path.resolve(
+              "qualification-results",
+              `seed-${seed}`,
+            );
+            try {
+              fs.mkdirSync(artifactDir, { recursive: true });
+              const screenshot = path.join(
+                artifactDir,
+                `cycle-${cycle}-${scenario}.png`,
+              );
+              await browser.saveScreenshot(screenshot);
+              failureArtifacts.push(screenshot);
+            } catch (screenshotError) {
+              runErrors.push(
+                `failure screenshot unavailable: ${errorText(screenshotError)}`,
+              );
+            }
+            for (const logPath of [
+              path.resolve("e2e-tauri", "logs", "msedgedriver.log"),
+              path.resolve("logs"),
+            ]) {
+              if (fs.existsSync(logPath)) failureArtifacts.push(logPath);
+            }
+            measurements.push({
+              id: scenario,
+              cycle,
+              durationMs: Date.now() - scenarioStarted,
+              outcome: "failed",
+              failureArtifacts,
+            });
+            failure = error;
+            break;
+          }
+        }
+        if (failure) break;
+      }
+    } catch (error) {
+      failure = error;
+      runErrors.push(
+        `run failed before scenario completion: ${errorText(error)}`,
+      );
+    } finally {
+      sampleResource("final");
+      const report = buildNativeQualificationReport({
+        build,
+        platform,
+        configuration,
+        startedAt: startedAt.toISOString(),
+        finishedAt: new Date().toISOString(),
+        resources,
+        scenarios: measurements,
+        runErrors,
+      });
+      writeNativeQualificationReport(reportPath, report);
+      if (scratchRoot) fs.rmSync(scratchRoot, { recursive: true, force: true });
+      if (!failure && !report.passed) {
+        failure = new Error(
+          runErrors.join("; ") || "native qualification did not pass",
+        );
+      }
     }
 
-    resources.push(sampleNativeRss(Date.now() - started));
-    const binaryName =
-      process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer";
-    const userAgent = await browser.execute(() => navigator.userAgent);
-    const report = buildNativeQualificationReport({
-      build: {
-        commit: execFileSync("git", ["rev-parse", "HEAD"], {
-          encoding: "utf8",
-        }).trim(),
-        profile: "debug-custom-protocol-e2e-hooks",
-        binary: path.resolve("src-tauri", "target", "debug", binaryName),
-      },
-      platform: {
-        os: nativePlatform(),
-        release: os.release(),
-        arch: os.arch(),
-        webview: userAgent,
-        displayScale: await browser.execute(() => window.devicePixelRatio),
-      },
-      configuration,
-      startedAt: startedAt.toISOString(),
-      finishedAt: new Date().toISOString(),
-      resources,
-      scenarios: measurements,
-    });
-    fs.mkdirSync("qualification-results", { recursive: true });
-    fs.writeFileSync(
-      path.join("qualification-results", `${nativePlatform()}-${seed}.json`),
-      `${JSON.stringify(report, null, 2)}\n`,
-    );
-    fs.rmSync(scratchRoot, { recursive: true, force: true });
     if (failure) throw failure;
-    expect(report.passed).toBe(true);
   });
 });

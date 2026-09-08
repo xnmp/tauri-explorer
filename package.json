@@ -23,6 +23,7 @@
     "test:e2e:perf": "playwright test e2e/performance.spec.ts",
     "test:e2e:tauri": "wdio run e2e-tauri/wdio.conf.ts",
     "test:e2e:tauri:soak": "wdio run e2e-tauri/wdio.soak.conf.ts",
+    "test:qualify:macos-startup": "bun run scripts/qualify-macos-startup.ts",
     "test:load": "scripts/fsync-safe.sh playwright test -c playwright.load.config.ts",
     "lint:arch": "node scripts/arch-lint.mjs --strict",
     "perf:check": "bun run scripts/perf-check.ts",

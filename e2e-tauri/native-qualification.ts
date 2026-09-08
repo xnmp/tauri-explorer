@@ -16,6 +16,15 @@ export type QualificationProof =
   | "unsupported"
   | "not-implemented";
 
+export const SOAK_SCENARIOS = [
+  "window-workspace",
+  "plugin-churn",
+  "theme-accessibility-zoom",
+  "preview-native-input",
+] as const;
+
+export type SoakScenario = (typeof SOAK_SCENARIOS)[number];
+
 export interface QualificationCase {
   id: string;
   risk: QualificationRisk;
@@ -24,13 +33,15 @@ export interface QualificationCase {
   userVisibleOutcome: string;
   proof: QualificationProof;
   required: boolean;
+  soakScenario?: SoakScenario;
 }
 
 export interface SoakConfiguration {
   durationMs: number;
   maxCycles?: number;
   seed: string;
-  scenarios: readonly string[];
+  scenarios: readonly SoakScenario[];
+  expectedDisplayScale?: number;
 }
 
 export interface ResourceMeasurement {
@@ -52,21 +63,25 @@ export interface NativeQualificationReport {
     commit: string;
     profile: string;
     binary: string;
+    binarySha256: string;
+    binaryBytes: number;
+    binaryModifiedAt: string;
   };
   platform: {
     os: NativePlatform;
     release: string;
     arch: string;
     webview: string;
-    displayScale: number;
+    displayScale: number | null;
   };
   configuration: SoakConfiguration;
   startedAt: string;
   finishedAt: string;
   resources: {
-    baselineRssBytes: number;
-    finalRssBytes: number;
-    peakRssBytes: number;
+    sampleCount: number;
+    baselineRssBytes: number | null;
+    finalRssBytes: number | null;
+    peakRssBytes: number | null;
   };
   timings: {
     sampleCount: number;
@@ -75,6 +90,7 @@ export interface NativeQualificationReport {
   };
   scenarios: readonly ScenarioMeasurement[];
   failureArtifacts: readonly string[];
+  runErrors: readonly string[];
   passed: boolean;
 }
 
@@ -86,6 +102,7 @@ export interface NativeQualificationReportInput {
   finishedAt: string;
   resources: readonly ResourceMeasurement[];
   scenarios: readonly ScenarioMeasurement[];
+  runErrors?: readonly string[];
 }
 
 /**
@@ -104,6 +121,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "Every surviving window renders the requested workspace path and a usable file listing.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "window-workspace",
   },
   {
     id: "windows-window-workspace-churn",
@@ -115,6 +133,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "Every surviving window renders the requested workspace path and a usable file listing.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "window-workspace",
   },
   {
     id: "native-plugin-churn",
@@ -126,6 +145,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "The demo command appears when enabled, shows its success toast, and disappears when disabled.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "plugin-churn",
   },
   {
     id: "linux-theme-accessibility",
@@ -137,6 +157,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "The first keyboard invocation changes the rendered theme and the labelled palette remains operable.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "theme-accessibility-zoom",
   },
   {
     id: "windows-theme-accessibility",
@@ -148,6 +169,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "The first keyboard invocation changes the rendered theme and the labelled palette remains operable.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "theme-accessibility-zoom",
   },
   {
     id: "native-preview-pair",
@@ -159,6 +181,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "Markdown headings and exact plain-text content render in the native preview pane after selection.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "preview-native-input",
   },
   {
     id: "native-zoom-pair",
@@ -170,6 +193,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "The visible explorer and keyboard palette remain inside the viewport and usable at each zoom level.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "theme-accessibility-zoom",
   },
   {
     id: "native-keyboard-input",
@@ -181,6 +205,7 @@ export const NATIVE_QUALIFICATION_MATRIX: readonly QualificationCase[] = [
       "The active file row visibly receives selection and the explorer remains responsive to shortcuts.",
     proof: "native-webdriver",
     required: true,
+    soakScenario: "preview-native-input",
   },
   {
     id: "macos-startup-measurement",
@@ -227,26 +252,55 @@ function nearestRank(
   return sorted[rank - 1];
 }
 
+function positiveNumber(
+  name: string,
+  value: string | undefined,
+  fallback?: number,
+): number {
+  if (value === undefined && fallback !== undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number`);
+  }
+  return parsed;
+}
+
+export function resolveSoakConfiguration(
+  env: Record<string, string | undefined>,
+): SoakConfiguration {
+  const resolved: SoakConfiguration = {
+    durationMs: positiveNumber(
+      "SOAK_DURATION_MS",
+      env.SOAK_DURATION_MS,
+      14_400_000,
+    ),
+    seed:
+      env.SOAK_SEED?.trim() ||
+      `native-soak-${new Date().toISOString().slice(0, 10)}`,
+    scenarios: SOAK_SCENARIOS,
+  };
+  if (env.SOAK_MAX_CYCLES !== undefined) {
+    resolved.maxCycles = positiveNumber("SOAK_MAX_CYCLES", env.SOAK_MAX_CYCLES);
+  }
+  if (env.SOAK_EXPECTED_DISPLAY_SCALE !== undefined) {
+    resolved.expectedDisplayScale = positiveNumber(
+      "SOAK_EXPECTED_DISPLAY_SCALE",
+      env.SOAK_EXPECTED_DISPLAY_SCALE,
+    );
+  }
+  return resolved;
+}
+
 export function buildNativeQualificationReport(
   input: NativeQualificationReportInput,
 ): NativeQualificationReport {
-  if (input.resources.length === 0) {
-    throw new Error(
-      "native qualification requires at least one resource measurement",
-    );
-  }
   if (!input.configuration.seed || input.configuration.durationMs <= 0) {
     throw new Error(
       "native qualification requires a seed and a positive duration",
     );
   }
-  if (input.scenarios.length === 0) {
-    throw new Error(
-      "native qualification requires at least one scenario result",
-    );
-  }
-
   const durations = input.scenarios.map(({ durationMs }) => durationMs);
+  const runErrors = [...(input.runErrors ?? [])];
   const failureArtifacts = [
     ...new Set(
       input.scenarios.flatMap(({ failureArtifacts }) => failureArtifacts),
@@ -261,11 +315,13 @@ export function buildNativeQualificationReport(
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
     resources: {
-      baselineRssBytes: input.resources[0].rssBytes,
-      finalRssBytes: input.resources[input.resources.length - 1].rssBytes,
-      peakRssBytes: Math.max(
-        ...input.resources.map(({ rssBytes }) => rssBytes),
-      ),
+      sampleCount: input.resources.length,
+      baselineRssBytes: input.resources[0]?.rssBytes ?? null,
+      finalRssBytes: input.resources.at(-1)?.rssBytes ?? null,
+      peakRssBytes:
+        input.resources.length > 0
+          ? Math.max(...input.resources.map(({ rssBytes }) => rssBytes))
+          : null,
     },
     timings: {
       sampleCount: durations.length,
@@ -274,6 +330,56 @@ export function buildNativeQualificationReport(
     },
     scenarios: input.scenarios,
     failureArtifacts,
-    passed: input.scenarios.every(({ outcome }) => outcome === "passed"),
+    runErrors,
+    passed:
+      input.scenarios.length > 0 &&
+      runErrors.length === 0 &&
+      input.scenarios.every(({ outcome }) => outcome === "passed"),
   };
 }
+
+export function writeNativeQualificationReport(
+  outputPath: string,
+  report: NativeQualificationReport,
+): void {
+  writeQualificationArtifact(outputPath, report);
+}
+
+export function writeQualificationArtifact(
+  outputPath: string,
+  report: unknown,
+): void {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  const temporaryPath = `${outputPath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(report, null, 2)}\n`);
+  fs.renameSync(temporaryPath, outputPath);
+}
+
+export interface MacStartupMeasurement {
+  coldTotalMs: number;
+  warmShowMs: number;
+}
+
+export function parseMacStartupLog(log: string): MacStartupMeasurement {
+  const cold = log.match(/Startup:.*?total=([\d.]+)ms/);
+  const warm = log.match(/Startup\(warm-activate\):\s*show=([\d.]+)ms/);
+  if (!cold)
+    throw new Error("cold Startup marker missing from macOS process log");
+  if (!warm)
+    throw new Error("warm-activate marker missing from macOS process log");
+  return { coldTotalMs: Number(cold[1]), warmShowMs: Number(warm[1]) };
+}
+
+export function summarizeDurations(values: readonly number[]): {
+  sampleCount: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+} {
+  return {
+    sampleCount: values.length,
+    p50Ms: nearestRank(values, 0.5),
+    p95Ms: nearestRank(values, 0.95),
+  };
+}
+import fs from "node:fs";
+import path from "node:path";

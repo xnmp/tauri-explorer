@@ -35,7 +35,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
 }
 
 /** Structured error from Tauri backend */
-export type AppErrorKind = "not_found" | "permission_denied" | "already_exists" | "invalid_path" | "io" | "worker_failed" | "other";
+export type AppErrorKind = "not_found" | "permission_denied" | "already_exists" | "invalid_path" | "io" | "worker_failed" | "mutation_uncertain" | "other";
 
 export interface AppError {
   kind: AppErrorKind;
@@ -43,7 +43,7 @@ export interface AppError {
 }
 
 const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
-  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "worker_failed", "other",
+  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "worker_failed", "mutation_uncertain", "other",
 ]);
 
 /** Extract error message from Tauri command error (structured or string) */

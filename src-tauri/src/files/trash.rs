@@ -1,69 +1,35 @@
 //! Trash operations publish confirmed outcomes per path, even on partial failure.
+use super::batch::{self, BatchPlan};
+pub use super::batch::{FileBatchOutcome, FileFailure};
 use crate::error::AppError;
-use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, Serialize)]
-pub struct FileFailure {
-    pub(crate) path: String,
-    pub(crate) error: String,
-}
-
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct FileBatchOutcome {
-    pub(crate) succeeded: Vec<String>,
-    pub(crate) failed: Vec<FileFailure>,
-}
-
-impl FileBatchOutcome {
-    fn collect(
-        paths: Vec<String>,
-        mut operation: impl FnMut(&str) -> Result<(), AppError>,
-    ) -> Self {
-        let mut outcome = Self::default();
-        let mut visited = HashSet::with_capacity(paths.len());
-        for path in paths {
-            if !visited.insert(path.clone()) {
-                continue;
-            }
-            match operation(&path) {
-                Ok(()) => outcome.succeeded.push(path),
-                Err(error) => outcome.failed.push(FileFailure {
-                    path,
-                    error: error.to_string(),
-                }),
-            }
-        }
-        outcome
-    }
-}
-
 /// UNC locations have no Recycle Bin. Other paths use the platform trash API.
 pub(crate) fn trash_or_remove(path: &Path) -> Result<(), AppError> {
-    let text = path.to_string_lossy();
-    if text.starts_with("\\\\") || text.starts_with("//") {
-        return super::file_ops::remove_entry_at(path);
+    if super::is_network_share(path) {
+        return super::file_ops::remove_entry_at(path)
+            .map_err(|error| AppError::MutationUncertain(error.to_string()));
     }
-    trash::delete(path)
-        .map_err(|error| AppError::Other(format!("Failed to move to trash: {error}")))
+    trash::delete(path).map_err(|error| {
+        AppError::MutationUncertain(format!("Moving item to trash did not finish: {error}"))
+    })
 }
 
-fn trash_path(path: &str) -> Result<(), AppError> {
+pub(crate) fn trash_path(path: &str) -> Result<(), AppError> {
     let pathbuf = PathBuf::from(path);
     // lstat preserves broken symlinks and reports actual permission/IO errors.
     std::fs::symlink_metadata(&pathbuf)?;
     trash_or_remove(&pathbuf)
 }
 
-#[tauri::command]
 pub async fn move_to_trash(path: String) -> Result<(), AppError> {
     super::run_blocking(move || trash_path(&path)).await
 }
 
-#[tauri::command]
 pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<FileBatchOutcome, AppError> {
-    super::run_blocking(move || Ok(FileBatchOutcome::collect(paths, trash_path))).await
+    let plan = BatchPlan::new(paths).map_err(AppError::InvalidPath)?;
+    Ok(batch::run(plan, trash_path).await)
 }
 
 #[cfg(target_os = "linux")]
@@ -97,18 +63,20 @@ fn restore_item(item: trash::TrashItem) -> Result<(), AppError> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn restore_item(item: trash::TrashItem) -> Result<(), AppError> {
-    trash::os_limited::restore_all([item])
-        .map_err(|error| AppError::Other(format!("Failed to restore from trash: {error}")))
+    trash::os_limited::restore_all([item]).map_err(|error| {
+        AppError::MutationUncertain(format!("Restoring from trash did not finish: {error}"))
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
-#[tauri::command]
-pub async fn restore_from_trash(paths: Vec<String>) -> Result<FileBatchOutcome, AppError> {
-    super::run_blocking(move || {
+pub(crate) async fn restore_from_trash(paths: Vec<String>) -> Result<FileBatchOutcome, AppError> {
+    let plan = BatchPlan::new(paths).map_err(AppError::InvalidPath)?;
+    if plan.paths.is_empty() {
+        return Ok(FileBatchOutcome::default());
+    }
+    let paths = plan.paths.clone();
+    let mut newest = super::run_blocking(move || {
         use std::collections::{hash_map::Entry, HashMap};
-        if paths.is_empty() {
-            return Ok(FileBatchOutcome::default());
-        }
         let items = trash::os_limited::list()
             .map_err(|error| AppError::Other(format!("Failed to list trash: {error}")))?;
         // Index once; repeatedly filtering/sorting the entire bin for every
@@ -141,19 +109,20 @@ pub async fn restore_from_trash(paths: Vec<String>) -> Result<FileBatchOutcome, 
                 _ => {}
             }
         }
-        Ok(FileBatchOutcome::collect(paths, |path| {
-            let item = newest
-                .remove(Path::new(path))
-                .ok_or_else(|| AppError::NotFound(format!("No matching trash item: {path}")))?;
-            restore_item(item)
-        }))
+        Ok(newest)
     })
-    .await
+    .await?;
+    Ok(batch::run(plan, move |path| {
+        let item = newest
+            .remove(Path::new(path))
+            .ok_or_else(|| AppError::NotFound(format!("No matching trash item: {path}")))?;
+        restore_item(item)
+    })
+    .await)
 }
 
 #[cfg(target_os = "macos")]
-#[tauri::command]
-pub async fn restore_from_trash(_paths: Vec<String>) -> Result<FileBatchOutcome, AppError> {
+pub(crate) async fn restore_from_trash(_paths: Vec<String>) -> Result<FileBatchOutcome, AppError> {
     Err(AppError::Other(
         "Cannot undo delete on macOS — use Finder to restore from Trash".to_string(),
     ))

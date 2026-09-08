@@ -1,6 +1,7 @@
 //! File operations module for Tauri commands.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s, tauri-explorer-9djf.6
 
+pub mod batch;
 pub mod dir_listing;
 mod directory_cache;
 mod directory_watches;
@@ -20,6 +21,14 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
+/// Native path prefixes distinguish remote shares from extended local paths.
+/// On Unix, even a double leading slash has no Windows prefix.
+pub(crate) fn is_network_share(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(path.components().next(), Some(Component::Prefix(prefix))
+        if matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
+}
 
 /// Run a blocking closure on the async runtime's blocking thread pool so
 /// heavy filesystem work doesn't stall the main async executor.

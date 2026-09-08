@@ -174,17 +174,18 @@ backend for E2E/browser).
 ## Delete / trash / undo
 
 - `components/DeleteDialog.svelte` — confirms explicit permanent deletion and explains mixed local/UNC disposition.
-- `state/pane-mutations.ts` — publishes only confirmed deleted paths, groups their actual parents and excludes permanently removed UNC paths from undo.
+- `state/pane-mutations.ts` — submits one native deletion intent; removes only confirmed rows and reconciles confirmed/uncertain parents.
 - `domain/file-history.ts`, `api/file-history.ts`, `api/native-resource-session.ts` — typed native history requests and ordered revisioned summary channel on the existing renderer acknowledgement.
 - `state/undo.svelte.ts` — window projection captures expected native entry IDs, including the exact receipt of already queued local writes.
 - `state/undo-helpers.ts` — action labels.
 - `src-tauri/src/file_history/mod.rs`, `file_history/model.rs` — native admission and execution survive invoking renderer closure; shared entries settle surviving participants once.
-- `src-tauri/src/file_history/forward.rs`, `src-tauri/src/file_mutation.rs`, `api/file-mutations.ts` — accepted create/rename/new-text/symlink work settles native history before IPC results; forward and inverse slots preserve admission order across out-of-order completions. Other forward batches still require migration.
+- `src-tauri/src/file_history/forward.rs`, `src-tauri/src/file_mutation.rs`, `api/file-mutations.ts` — accepted create/rename/new-text/symlink and whole-selection deletion work settles native history before IPC results; forward and inverse slots preserve admission order across out-of-order completions. Other forward batches still require migration.
 - `src-tauri/src/file_history/action.rs`, `file_history/execution.rs` — host capability normalization, affected parents and ordered partial inverse receipts.
 - `api/mock-file-history.ts`, `api/mock-file-history-execution.ts` — browser-only history simulation, never native acceptance evidence.
-- `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed` receipts for `deleteMultipleEntries` and `restoreFromTrash`.
-- `src-tauri/src/files/trash.rs` — trash/restore commands, UNC removal and Linux `renameat2(RENAME_NOREPLACE)` restore boundary; `files/file_ops.rs` owns explicit permanent deletion.
-- FLOW: delete → native per-path outcome → publish/push inverse for confirmed successes → Ctrl+Z reserves the exact history entry → restore outcome moves completed paths to redo and retains only unfinished paths for retry (ADR 0017).
+- `domain/file-batch-outcome.ts`, `api/files.ts` — typed `succeeded`/`failed`/`uncertain`/`unstarted` receipts for `deleteEntries` and `restoreFromTrash`.
+- `src-tauri/src/files/batch/mod.rs`, `files/batch/model.rs` — bounded, stable selection admission and worker-independent progress; confirmed siblings survive a panic, uncertain work stops later attempts.
+- `src-tauri/src/files/trash.rs` — trash/restore primitives, native Windows-prefix UNC removal and Linux `renameat2(RENAME_NOREPLACE)` restore boundary; `files/file_ops.rs` owns explicit permanent deletion.
+- FLOW: delete → native whole-selection admission → per-path execution → native inverse for confirmed recoverable successes → settled reply → view reconciliation. Ctrl+Z reserves the exact history entry; uncertain paths are consumed, completed paths move to redo, failed/unstarted paths remain retryable (ADRs 0017/0018).
 
 ## Thumbnails
 

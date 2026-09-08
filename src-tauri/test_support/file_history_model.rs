@@ -325,14 +325,14 @@ fn forward_slots_preserve_admission_order_when_work_finishes_out_of_order() {
     assert_eq!(pending.undo_id, None);
     assert_eq!(pending.stack_size, 0);
 
-    histories.finish_forward(newer, ForwardEffect::Committed(Some(newer_action.clone())));
+    histories.finish_forward(newer, ForwardEffect::Changed(Some(newer_action.clone())));
     let newer_id = histories.summary(FIRST).undo_id.unwrap();
     assert!(histories
         .begin(FIRST, Direction::Undo, newer_id)
         .unwrap_err()
         .contains("still in progress"));
 
-    histories.finish_forward(older, ForwardEffect::Committed(Some(older_action.clone())));
+    histories.finish_forward(older, ForwardEffect::Changed(Some(older_action.clone())));
     assert!(!histories.summary(FIRST).busy);
     let undo_newer = histories.begin(FIRST, Direction::Undo, newer_id).unwrap();
     assert_eq!(undo_newer.action, newer_action);
@@ -363,7 +363,7 @@ fn legacy_push_after_forward_admission_remains_the_newer_undo_intent() {
     let newer_id = histories.summary(FIRST).undo_id.unwrap();
     assert!(histories.summary(FIRST).busy);
 
-    histories.finish_forward(older, ForwardEffect::Committed(Some(older_action.clone())));
+    histories.finish_forward(older, ForwardEffect::Changed(Some(older_action.clone())));
     let undo_newer = histories.begin(FIRST, Direction::Undo, newer_id).unwrap();
     assert_eq!(undo_newer.action, newer_action);
     histories.finish(
@@ -401,7 +401,7 @@ fn unchanged_forward_preserves_redo_but_committed_without_inverse_clears_it() {
         histories.finish_forward(
             forward,
             if committed {
-                ForwardEffect::Committed(None)
+                ForwardEffect::Changed(None)
             } else {
                 ForwardEffect::Unchanged
             },
@@ -434,7 +434,7 @@ fn shared_forward_tracks_only_captured_live_participants() {
     histories.retire(SECOND);
     histories.register(LATE);
     assert!(!histories.summary(LATE).busy);
-    histories.finish_forward(forward, ForwardEffect::Committed(Some(action)));
+    histories.finish_forward(forward, ForwardEffect::Changed(Some(action)));
 
     for client in [FIRST, LATE] {
         let summary = histories.summary(client);
@@ -517,9 +517,9 @@ fn duplicate_forward_settlement_cannot_publish_an_action_twice() {
     let forward = histories.begin_forward(FIRST, false).unwrap();
     histories.finish_forward(
         forward.clone(),
-        ForwardEffect::Committed(Some(action.clone())),
+        ForwardEffect::Changed(Some(action.clone())),
     );
-    histories.finish_forward(forward, ForwardEffect::Committed(Some(action.clone())));
+    histories.finish_forward(forward, ForwardEffect::Changed(Some(action.clone())));
 
     let summary = histories.summary(FIRST);
     assert_eq!(summary.stack_size, 1);
@@ -654,17 +654,11 @@ fn admitted_redo_opposite_stays_below_a_newer_forward_in_both_finish_orders() {
         let newer_action = copy("/ordered/forward.txt", true);
         let forward = histories.begin_forward(FIRST, false).unwrap();
         if forward_finishes_first {
-            histories.finish_forward(
-                forward,
-                ForwardEffect::Committed(Some(newer_action.clone())),
-            );
+            histories.finish_forward(forward, ForwardEffect::Changed(Some(newer_action.clone())));
             histories.finish(redo, &completed(&older_action, Some(older_action.clone())));
         } else {
             histories.finish(redo, &completed(&older_action, Some(older_action.clone())));
-            histories.finish_forward(
-                forward,
-                ForwardEffect::Committed(Some(newer_action.clone())),
-            );
+            histories.finish_forward(forward, ForwardEffect::Changed(Some(newer_action.clone())));
         }
 
         let undo_newer = histories
@@ -725,17 +719,11 @@ fn admitted_partial_redo_keeps_its_retry_and_opposite_below_a_newer_forward() {
         };
 
         if forward_finishes_first {
-            histories.finish_forward(
-                forward,
-                ForwardEffect::Committed(Some(newer_action.clone())),
-            );
+            histories.finish_forward(forward, ForwardEffect::Changed(Some(newer_action.clone())));
             histories.finish(redo, &partial);
         } else {
             histories.finish(redo, &partial);
-            histories.finish_forward(
-                forward,
-                ForwardEffect::Committed(Some(newer_action.clone())),
-            );
+            histories.finish_forward(forward, ForwardEffect::Changed(Some(newer_action.clone())));
         }
 
         let retry = histories

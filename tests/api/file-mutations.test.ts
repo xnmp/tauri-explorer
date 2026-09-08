@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileMutationReceipt } from "$lib/domain/file";
+import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { HistorySummary } from "$lib/domain/file-history";
 
 const mocks = vi.hoisted(() => ({
@@ -79,6 +80,45 @@ describe("invokeFileMutation", () => {
     expect(result).toEqual({
       ok: true,
       data: { path: "/docs/renamed.txt", entry: null },
+    });
+  });
+
+  it("consumes native history before exposing the complete per-path batch outcome", async () => {
+    const events: string[] = [];
+    const summary = history(10);
+    const outcome: FileBatchOutcome = {
+      succeeded: ["/docs/removed.txt"],
+      failed: [{ path: "/docs/locked.txt", error: "Permission denied" }],
+      uncertain: [{ path: "/docs/unknown.txt", error: "worker exited" }],
+      unstarted: ["/docs/later.txt"],
+    };
+    mocks.invoke.mockResolvedValue({ result: outcome, history: summary });
+    mocks.receiveSummary.mockImplementation(() => { events.push("summary"); });
+
+    const result = await invokeFileMutation<FileBatchOutcome>("delete_entries", {
+      paths: [
+        "/docs/removed.txt",
+        "/docs/locked.txt",
+        "/docs/unknown.txt",
+        "/docs/later.txt",
+      ],
+      permanent: true,
+    }).then((value) => {
+      events.push("resolved");
+      return value;
+    });
+
+    expect(events).toEqual(["summary", "resolved"]);
+    expect(result).toEqual({ ok: true, data: outcome });
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith("delete_entries", {
+      paths: [
+        "/docs/removed.txt",
+        "/docs/locked.txt",
+        "/docs/unknown.txt",
+        "/docs/later.txt",
+      ],
+      permanent: true,
+      sessionId: "session-17",
     });
   });
 

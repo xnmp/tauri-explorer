@@ -404,7 +404,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
 - `file_history/model.rs` — pure per-client/shared history admission, reserved forward/opposite ordering, partial settlement, branch/clear retirement and retained-history bounds.
 - `file_history/forward.rs` — native forward admission and supervised settlement independent of the invoking renderer.
-- `file_mutation.rs` — typed create/rename/new-text/symlink commands classify committed, unchanged and uncertain filesystem outcomes before history publication.
+- `file_mutation.rs` — typed create/rename/new-text/symlink and whole-selection deletion commands settle native history and affected parents before returning outcomes.
 - `file_history/action.rs` — action shape/capability admission and affected-parent projection.
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
@@ -432,7 +432,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mutation.rs` — committed-path receipt with an optional subsequent FileEntry snapshot; presentation metadata cannot revoke a committed mutation.
 - `replacement.rs` — explicit retained ownership of overwritten destinations; no-replace rollback shared by copy/move, retained-original reporting after partial source cleanup.
 - `publication.rs` — owns unpublished copy/write payloads in an exclusive staging directory; shared native no-replace rename for ordinary publication, move, rename and Linux trash restore.
-- `trash.rs` — single/bulk trash and restore commands; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
+- `batch/mod.rs` — one blocking worker with supervisor-owned progress; completed siblings survive panic and uncertain work stops the batch.
+- `batch/model.rs` — bounded stable batch admission, component-aware overlap rejection, and succeeded/failed/uncertain/unstarted outcome partitions.
+- `trash.rs` — history-free trash and restore primitives; ordered per-path outcomes, UNC removal, and Linux atomic no-replace restore commit/metadata cleanup boundary (ADR 0017).
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.

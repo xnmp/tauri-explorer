@@ -31,6 +31,9 @@ pub enum AppError {
     #[error("Background task failed: {0}")]
     WorkerFailed(String),
 
+    #[error("File operation may have changed files: {0}")]
+    MutationUncertain(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -61,6 +64,7 @@ impl Serialize for AppError {
             AppError::InvalidPath(_) => "invalid_path",
             AppError::Io(_) => "io",
             AppError::WorkerFailed(_) => "worker_failed",
+            AppError::MutationUncertain(_) => "mutation_uncertain",
             AppError::Other(_) => "other",
         };
         map.serialize_entry("kind", kind)?;

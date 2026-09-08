@@ -5,6 +5,40 @@ including its remaining numbered recommendations and release acceptance matrix.
 The earlier 121-file overhaul is the starting point, not the completion criterion.
 No row is complete merely because its implementation exists or a mock agrees.
 
+## Native deletion batch checkpoint
+
+Whole-selection trash and permanent deletion now enter one native-owned command.
+An external worker ledger preserves confirmed siblings after panic, separates
+uncertain attempted work from unstarted inputs, and stops after uncertainty.
+Only confirmed recoverable successes enter Undo; native settlement precedes the
+renderer result. Raw restore IPC is removed. Both dialog and confirmation-free
+entry points expose partial/uncertain errors. Native prefix classification keeps
+Linux double-slash and Windows extended-local paths out of permanent UNC removal.
+
+Linux native acceptance passes 10 outcomes in four specs. The new gated case
+accepts a two-file trash batch, destroys its child window before filesystem
+execution, then verifies both deletions and the surviving listing after external
+release. Independent GPT-5.6 Sol review accepts the log, spec and before/after
+screenshots within that scope. See [the evidence record](reviews/native-delete-batches-2026-09-08.json).
+
+Validation: 617 library + nine integration Rust tests pass serially (seven ignored);
+a parallel real-watcher fixture failure passes in isolation. Frontend tests pass
+2,293 + 30 performance cases; Svelte and architecture checks are clean, and
+all-targets recovery-feature Clippy passes. The initial affected browser run
+passes 74 cases; final file-operation cases pass 67, followed by four passing
+corrected Linux delete-dialog cases. Maps cover 405/405 sources. Normal startup
+JavaScript is 665,192 raw / 217,248 gzip bytes, 33 gzip bytes below the preceding
+checkpoint. Fresh normal builds exclude the acceptance probes; no startup latency
+gain or half-bounce result is claimed.
+
+Required follow-up remains explicit: Windows shell restore completion and racing
+destination preservation; Linux restore-parent creation effects; artifact/path
+identity and durable recovery; native deletion progress/cancellation; remaining
+copy/move, paste/drop and grouped-rename ownership; renderer/process recovery and
+supported-platform/startup acceptance. The native after screenshot also exposes
+a stale selection count after external deletion, requiring a selection-refresh
+regression and fix. These are open work, not completed review findings.
+
 ## Native forward ownership checkpoint
 
 Five commands (create directory/file, rename, write new text, symlink) now reserve

@@ -167,7 +167,9 @@ struct NativeOperations;
 
 fn operation_error(error: AppError) -> execution::OperationError {
     match error {
-        AppError::WorkerFailed(_) => execution::OperationError::Uncertain(error.to_string()),
+        AppError::WorkerFailed(_) | AppError::MutationUncertain(_) => {
+            execution::OperationError::Uncertain(error.to_string())
+        }
         _ => execution::OperationError::Unchanged(error.to_string()),
     }
 }

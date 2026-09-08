@@ -10,9 +10,9 @@ pub mod config_watch;
 mod content_search;
 mod crash_report;
 pub mod error;
+mod fal;
 mod file_history;
 mod file_mutation;
-mod fal;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
 pub mod files;
@@ -80,7 +80,6 @@ mod wsl;
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, open_recycle_bin, set_window_theme, LaunchCwd,
 };
-use files::trash::{move_multiple_to_trash, move_to_trash, restore_from_trash};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 // Keep this pre-webview seed aligned with the domain source of truth:
@@ -234,10 +233,8 @@ pub fn run(launch_dir: Option<String>) {
             update_check::check_for_update,
             log_startup_timing,
             // Trash operations
-            move_to_trash,
-            move_multiple_to_trash,
+            file_mutation::delete_entries,
             open_recycle_bin,
-            restore_from_trash,
             // File operations — directory listing
             files::dir_listing::list_directory,
             files::dir_listing::invalidate_dir_cache,
@@ -256,7 +253,6 @@ pub fn run(launch_dir: Option<String>) {
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
             file_mutation::write_text_file,
-            files::file_ops::delete_entry_permanent,
             file_mutation::create_symlink,
             files::file_ops::estimate_size,
             files::file_ops::check_paths_exist,

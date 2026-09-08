@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiResult } from "$lib/api/common";
 import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
+import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type {
   HistoryPort,
   HistoryReply,
@@ -29,9 +30,7 @@ const mocks = vi.hoisted(() => ({
   load: { current: (async () => ({ ok: false, error: "unset" })) as Load },
   cleanup: vi.fn(async () => {}),
   renameEntry: vi.fn(),
-  deleteEntry: vi.fn(),
-  deleteMultipleEntries: vi.fn(),
-  deleteEntryPermanent: vi.fn(),
+  deleteEntries: vi.fn(),
 }));
 
 const history = vi.hoisted(() => {
@@ -114,9 +113,7 @@ vi.mock("$lib/state/directory-listing", () => ({
 vi.mock("$lib/api/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("$lib/api/files")>()),
   renameEntry: mocks.renameEntry,
-  deleteEntry: mocks.deleteEntry,
-  deleteMultipleEntries: mocks.deleteMultipleEntries,
-  deleteEntryPermanent: mocks.deleteEntryPermanent,
+  deleteEntries: mocks.deleteEntries,
 }));
 
 vi.mock("$lib/api/file-history", () => ({ fileHistoryPort: history.port }));
@@ -178,9 +175,7 @@ beforeEach(async () => {
   mocks.load.current = async () => ({ ok: false, error: "unset" });
   mocks.cleanup.mockClear();
   mocks.renameEntry.mockReset();
-  mocks.deleteEntry.mockReset();
-  mocks.deleteMultipleEntries.mockReset();
-  mocks.deleteEntryPermanent.mockReset();
+  mocks.deleteEntries.mockReset();
 });
 
 afterEach(async () => {
@@ -258,12 +253,12 @@ describe("deferred rename dialog ownership", () => {
 });
 
 describe("deferred delete ownership", () => {
-  it("keeps a newer directory and delete dialog while publishing delete and undo for the origin parent", async () => {
+  it("keeps a newer directory and delete dialog while publishing the native batch outcome for the origin parent", async () => {
     const victim = entry("old.txt", "/A");
     const current = entry("current.txt", "/B");
     const secondVictim = entry("new-delete.txt", "/B");
-    const request = deferred<ApiResult<void>>();
-    mocks.deleteEntry.mockReturnValueOnce(request.promise);
+    const request = deferred<ApiResult<FileBatchOutcome>>();
+    mocks.deleteEntries.mockReturnValueOnce(request.promise);
     mocks.load.current = listing({ "/B": [current, secondVictim] });
     const explorer = explorerAt("/A", [victim]);
     const changes: string[][] = [];
@@ -276,7 +271,7 @@ describe("deferred delete ownership", () => {
       expect(await explorer.navigateTo("/B")).toBe(true);
       explorer.startDelete(secondVictim);
 
-      request.resolve({ ok: true, data: undefined });
+      request.resolve({ ok: true, data: { succeeded: [victim.path], failed: [] } });
       expect(await pending).toBeNull();
 
       expect(explorer.currentPath).toBe("/B");
@@ -288,16 +283,8 @@ describe("deferred delete ownership", () => {
       expect(dialogStore.isDeleteOpen).toBe(true);
       expect(dialogStore.deletingEntry?.path).toBe(secondVictim.path);
       expect(changes).toEqual([["/A"]]);
-      const action: UndoAction = { type: "delete", paths: [victim.path], parentDir: "/A" };
-      expect(history.port.push).toHaveBeenCalledWith(action, false);
-
-      const expectedEntryId = history.currentUndoId();
-      expect(expectedEntryId).not.toBeNull();
-      history.queueExecution(action);
-      changes.length = 0;
-      expect(await explorer.undo()).toBeNull();
-      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
-      expect(changes).toEqual([]);
+      expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([victim.path], false);
+      expect(history.port.push).not.toHaveBeenCalled();
       expect(explorer.currentPath).toBe("/B");
     } finally {
       unsubscribe();
@@ -307,8 +294,8 @@ describe("deferred delete ownership", () => {
   it("retains accepted effects after pane disposal without closing another pane's dialog", async () => {
     const victim = entry("old.txt", "/A");
     const other = entry("other.txt", "/B");
-    const request = deferred<ApiResult<void>>();
-    mocks.deleteEntry.mockReturnValueOnce(request.promise);
+    const request = deferred<ApiResult<FileBatchOutcome>>();
+    mocks.deleteEntries.mockReturnValueOnce(request.promise);
     mocks.load.current = listing({ "/B": [other] });
     const origin = explorerAt("/A", [victim]);
     const surviving = explorerAt("/B", [other]);
@@ -321,23 +308,14 @@ describe("deferred delete ownership", () => {
       await origin.destroy();
 
       surviving.startDelete(other);
-      request.resolve({ ok: true, data: undefined });
+      request.resolve({ ok: true, data: { succeeded: [victim.path], failed: [] } });
       expect(await pending).toBeNull();
 
       expect(dialogStore.isDeleteOpen).toBe(true);
       expect(dialogStore.deletingEntry?.path).toBe(other.path);
       expect(changes).toEqual([["/A"]]);
-      expect(undoStore.canUndo).toBe(true);
-      const action: UndoAction = { type: "delete", paths: [victim.path], parentDir: "/A" };
-      expect(history.port.push).toHaveBeenCalledWith(action, false);
-
-      const expectedEntryId = history.currentUndoId();
-      expect(expectedEntryId).not.toBeNull();
-      history.queueExecution(action);
-      changes.length = 0;
-      expect(await surviving.undo()).toBeNull();
-      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
-      expect(changes).toEqual([]);
+      expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([victim.path], false);
+      expect(history.port.push).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
     }
@@ -346,24 +324,29 @@ describe("deferred delete ownership", () => {
   it("does not let an explicit deletion borrow and close an already-active dialog", async () => {
     const dialogTarget = entry("dialog.txt", "/B");
     const externalTarget = entry("external.txt", "/Miller");
-    const request = deferred<ApiResult<void>>();
-    mocks.deleteEntry.mockReturnValueOnce(request.promise);
+    const request = deferred<ApiResult<FileBatchOutcome>>();
+    mocks.deleteEntries.mockReturnValueOnce(request.promise);
     const explorer = explorerAt("/B", [dialogTarget]);
 
     explorer.startDelete(dialogTarget);
     const pending = explorer.confirmDelete([externalTarget], false);
 
-    request.resolve({ ok: true, data: undefined });
+    request.resolve({ ok: true, data: { succeeded: [externalTarget.path], failed: [] } });
     expect(await pending).toBeNull();
 
     expect(dialogStore.isDeleteOpen).toBe(true);
     expect(dialogStore.deletingEntry?.path).toBe(dialogTarget.path);
+    expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([externalTarget.path], false);
+    expect(history.port.push).not.toHaveBeenCalled();
   });
 
-  it("publishes an explicit external Miller-column deletion and its undo to that entry's parent", async () => {
+  it("publishes an explicit external Miller-column deletion to that entry's parent without a renderer history push", async () => {
     const current = entry("current.txt", "/Active");
     const external = entry("external.txt", "/Miller");
-    mocks.deleteEntry.mockResolvedValueOnce({ ok: true, data: undefined });
+    mocks.deleteEntries.mockResolvedValueOnce({
+      ok: true,
+      data: { succeeded: [external.path], failed: [] },
+    });
     mocks.load.current = listing({ "/Active": [current] });
     const explorer = explorerAt("/Active", [current]);
     const changes: string[][] = [];
@@ -373,56 +356,41 @@ describe("deferred delete ownership", () => {
       expect(await explorer.confirmDelete([external], false)).toBeNull();
       expect(explorer.displayEntries.map(({ path }) => path)).toEqual([current.path]);
       expect(changes).toEqual([["/Miller"]]);
-      const action: UndoAction = {
-        type: "delete",
-        paths: [external.path],
-        parentDir: "/Miller",
-      };
-      expect(history.port.push).toHaveBeenCalledWith(action, false);
-
-      const expectedEntryId = history.currentUndoId();
-      expect(expectedEntryId).not.toBeNull();
-      history.queueExecution(action);
-      changes.length = 0;
-      expect(await explorer.undo()).toBeNull();
-      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
-      expect(changes).toEqual([]);
+      expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith([external.path], false);
+      expect(history.port.push).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
     }
   });
 
-  it("keeps distinct undo roots and notifications for a multi-parent deletion", async () => {
+  it("calls one native batch and publishes succeeded and uncertain parents only", async () => {
     const first = entry("first.txt", "/A");
     const second = entry("second.txt", "/B");
+    const uncertain = entry("uncertain.txt", "/C");
     const current = entry("current.txt", "/Active");
-    mocks.deleteMultipleEntries.mockImplementationOnce(async (paths: string[]) => ({ ok: true, data: { succeeded: paths, failed: [] } }));
+    mocks.deleteEntries.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        succeeded: [first.path],
+        failed: [{ path: second.path, error: "Permission denied" }],
+        uncertain: [{ path: uncertain.path, error: "worker exited" }],
+      },
+    });
     mocks.load.current = listing({ "/Active": [current] });
     const explorer = explorerAt("/Active", [current]);
     const changes: string[][] = [];
     const unsubscribe = subscribeToLocalFileChanges((paths) => changes.push(paths));
 
     try {
-      expect(await explorer.confirmDelete([first, second], false)).toBeNull();
-      expect(mocks.deleteMultipleEntries).toHaveBeenCalledWith([first.path, second.path]);
-      expect(changes).toEqual([["/A", "/B"]]);
-      const action: UndoAction = {
-        type: "batch",
-        actions: [
-          { type: "delete", paths: [first.path], parentDir: "/A" },
-          { type: "delete", paths: [second.path], parentDir: "/B" },
-        ],
-        label: "Delete",
-      };
-      expect(history.port.push).toHaveBeenCalledWith(action, false);
-
-      const expectedEntryId = history.currentUndoId();
-      expect(expectedEntryId).not.toBeNull();
-      history.queueExecution(action);
-      changes.length = 0;
-      expect(await explorer.undo()).toBeNull();
-      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
-      expect(changes).toEqual([]);
+      const error = await explorer.confirmDelete([first, second, uncertain], false);
+      expect(error).toContain(`${second.path}: Permission denied`);
+      expect(error).toContain(`${uncertain.path}: outcome is uncertain`);
+      expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith(
+        [first.path, second.path, uncertain.path],
+        false,
+      );
+      expect(changes).toEqual([["/A", "/C"]]);
+      expect(history.port.push).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
     }
@@ -431,15 +399,23 @@ describe("deferred delete ownership", () => {
   it("publishes each successful permanent deletion even when another parent fails", async () => {
     const removed = entry("removed.txt", "/A");
     const retained = entry("retained.txt", "/B");
-    mocks.deleteEntryPermanent
-      .mockResolvedValueOnce({ ok: true, data: undefined })
-      .mockResolvedValueOnce({ ok: false, error: "permission denied" });
+    mocks.deleteEntries.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        succeeded: [removed.path],
+        failed: [{ path: retained.path, error: "permission denied" }],
+      },
+    });
     const explorer = explorerAt("/A", [removed]);
     const changes: string[][] = [];
     const unsubscribe = subscribeToLocalFileChanges((paths) => changes.push(paths));
 
     try {
-      expect(await explorer.confirmDelete([removed, retained], true)).toBe("permission denied");
+      expect(await explorer.confirmDelete([removed, retained], true)).toContain("permission denied");
+      expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith(
+        [removed.path, retained.path],
+        true,
+      );
       expect(explorer.displayEntries).toEqual([]);
       expect(changes).toEqual([["/A"]]);
       expect(undoStore.canUndo).toBe(false);
@@ -454,8 +430,8 @@ describe("deferred delete ownership", () => {
     const nested = `${target.path}/one/two`;
     const child = entry("child.txt", nested);
     const survivor = entry("survivor.txt", "/A");
-    const request = deferred<ApiResult<void>>();
-    mocks.deleteEntry.mockReturnValueOnce(request.promise);
+    const request = deferred<ApiResult<FileBatchOutcome>>();
+    mocks.deleteEntries.mockReturnValueOnce(request.promise);
     mocks.load.current = listing({
       [nested]: [child],
       "/A": [survivor],
@@ -466,7 +442,7 @@ describe("deferred delete ownership", () => {
     const pending = explorer.confirmDelete();
     expect(await explorer.navigateTo(nested)).toBe(true);
 
-    request.resolve({ ok: true, data: undefined });
+    request.resolve({ ok: true, data: { succeeded: [target.path], failed: [] } });
     expect(await pending).toBeNull();
 
     expect(explorer.currentPath).toBe("/A");
@@ -475,35 +451,34 @@ describe("deferred delete ownership", () => {
 });
 
 describe("bulk trash receipts", () => {
-  it("retains failed entries and records only successful paths for undo", async () => {
+  it("removes and deselects only succeeded paths while retaining partial failures", async () => {
     const removed = entry("removed.txt", "/A");
-    const failed = entry("denied.txt", "/B");
-    mocks.deleteMultipleEntries.mockResolvedValueOnce({ ok: true, data: {
+    const failed = entry("denied.txt", "/A");
+    mocks.deleteEntries.mockResolvedValueOnce({ ok: true, data: {
       succeeded: [removed.path], failed: [{ path: failed.path, error: "Permission denied" }],
     } });
-    const explorer = explorerAt("/A", [removed]);
+    const explorer = explorerAt("/A", [removed, failed]);
+    explorer.selectEntry(removed);
+    explorer.selectEntry(failed, { ctrlKey: true });
     const changes: string[][] = [];
     const unsubscribe = subscribeToLocalFileChanges((paths) => changes.push(paths));
     try {
-      const error = await explorer.confirmDelete([removed, failed], false);
+      await explorer.startDelete([removed, failed]);
+      const error = await explorer.confirmDelete();
       expect(error).toContain("Permission denied");
-      expect(explorer.displayEntries).toEqual([]);
+      expect(explorer.displayEntries).toEqual([failed]);
+      expect([...explorer.selectedPaths]).toEqual([failed.path]);
+      expect(dialogStore.isDeleteOpen).toBe(true);
+      expect(dialogStore.deletingEntries.map(({ path }) => path)).toEqual([
+        removed.path,
+        failed.path,
+      ]);
       expect(changes).toEqual([["/A"]]);
-      const action: UndoAction = {
-        type: "delete",
-        paths: [removed.path],
-        parentDir: "/A",
-      };
-      expect(history.port.push).toHaveBeenCalledWith(action, false);
-      const expectedEntryId = history.currentUndoId();
-      expect(expectedEntryId).not.toBeNull();
-      history.queueExecution(action);
-      changes.length = 0;
-      mocks.load.current = listing({ "/A": [removed] });
-      expect(await explorer.undo()).toBeNull();
-      expect(history.port.execute).toHaveBeenCalledWith("undo", expectedEntryId);
-      expect(changes).toEqual([]);
-      expect(explorer.displayEntries.map(({ path }) => path)).toEqual([removed.path]);
+      expect(mocks.deleteEntries).toHaveBeenCalledExactlyOnceWith(
+        [removed.path, failed.path],
+        false,
+      );
+      expect(history.port.push).not.toHaveBeenCalled();
     } finally {
       unsubscribe();
     }

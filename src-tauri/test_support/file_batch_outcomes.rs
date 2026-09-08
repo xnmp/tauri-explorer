@@ -137,6 +137,52 @@ fn assert_batch_outcome<T: Serialize>(
         })
         .collect::<Vec<_>>();
     assert_eq!(failed_paths, expected_failed);
+
+    let uncertain = serialized
+        .get("uncertain")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    assert_eq!(
+        uncertain, 0,
+        "known outcomes must not be reported uncertain"
+    );
+    let unstarted = serialized
+        .get("unstarted")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    assert_eq!(unstarted, 0, "known outcomes must not stop the batch");
+}
+
+fn assert_uncertain_outcome<T: Serialize>(outcome: T, expected_path: &str) {
+    let serialized = serde_json::to_value(outcome).expect("serialize file batch outcome");
+    assert_eq!(
+        serialized
+            .get("succeeded")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        0
+    );
+    assert_eq!(
+        serialized
+            .get("failed")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        0,
+        "an error after entering the trash API has unknown mutation state"
+    );
+    let uncertain = serialized
+        .get("uncertain")
+        .and_then(Value::as_array)
+        .expect("uncertain outcome is serialized");
+    assert_eq!(uncertain.len(), 1);
+    assert_eq!(
+        uncertain[0].get("path").and_then(Value::as_str),
+        Some(expected_path)
+    );
+    assert!(uncertain[0]
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(|error| error.contains("did not finish")));
 }
 
 fn trash(path: &Path) {
@@ -205,6 +251,54 @@ fn bulk_trash_reports_success_when_another_path_is_missing() {
             );
             let outcome = result.expect("per-file failures are returned inside the batch outcome");
             assert_batch_outcome(outcome, &[valid_string], &[missing_string]);
+        },
+    );
+}
+
+#[test]
+fn double_slash_local_path_is_trashed_and_restored_on_linux() {
+    isolated(
+        "double_slash_local_path_is_trashed_and_restored_on_linux",
+        |fixture| {
+            let path = fixture.file("double-slash-local.txt", "exact local contents");
+            let local_spelling = format!("/{}", path_string(&path));
+            assert!(local_spelling.starts_with("//"));
+
+            let trashed = run(move_multiple_to_trash(vec![local_spelling.clone()]))
+                .expect("local double-slash path returns a trash outcome");
+            assert!(!path.exists(), "local path was moved out of its directory");
+            assert_eq!(
+                owned_trash_items(&path).len(),
+                1,
+                "Linux double-slash spelling must use Trash, not permanent removal"
+            );
+            assert_batch_outcome(trashed, std::slice::from_ref(&local_spelling), &[]);
+
+            let restored = run(restore_from_trash(vec![local_spelling.clone()]))
+                .expect("trashed local double-slash path can be restored");
+            assert_eq!(
+                fs::read_to_string(&path).expect("restored local path exists"),
+                "exact local contents"
+            );
+            assert_batch_outcome(restored, &[local_spelling], &[]);
+        },
+    );
+}
+
+#[test]
+fn trash_api_failure_is_uncertain_instead_of_a_proven_unchanged_failure() {
+    isolated(
+        "trash_api_failure_is_uncertain_instead_of_a_proven_unchanged_failure",
+        |fixture| {
+            let path = fixture.file("trash-api-failure.txt", "source bytes");
+            let path_string = path_string(&path);
+            let permissions = PermissionGuard::deny_writes(fixture.root.join("xdg-data"));
+
+            let outcome = run(move_multiple_to_trash(vec![path_string.clone()]))
+                .expect("trash API failure is represented by the batch receipt");
+            assert_uncertain_outcome(outcome, &path_string);
+
+            drop(permissions);
         },
     );
 }

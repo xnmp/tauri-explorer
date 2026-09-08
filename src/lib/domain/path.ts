@@ -27,7 +27,10 @@ export function toForwardSlashes(path: string): string {
  * locations, so deletes there are permanent rather than recoverable.
  */
 export function isUncPath(path: string): boolean {
-  return path.startsWith("\\\\") || path.startsWith("//");
+  const normalized = toForwardSlashes(path);
+  if (normalized.startsWith("//?/")) return /^\/\/\?\/UNC\/[^/]+\/[^/]+/.test(normalized);
+  if (normalized.startsWith("//./")) return false;
+  return /^\/\/[^/]+\/[^/]+/.test(normalized);
 }
 
 /** Normalize all forward-slash separators to backslashes. */

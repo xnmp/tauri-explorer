@@ -7,21 +7,20 @@
  * borrow the exact editor opening that admitted the operation.
  */
 
-import { createDirectory, createEmptyFile, renameEntry as apiRenameEntry, deleteEntry, deleteMultipleEntries, deleteEntryPermanent, createSymlink as apiCreateSymlink } from "$lib/api/files";
+import { createDirectory, createEmptyFile, renameEntry as apiRenameEntry, deleteEntries, createSymlink as apiCreateSymlink } from "$lib/api/files";
 import { extractArchive as apiExtractArchive, compressToZip as apiCompressToZip, cancelCompress as apiCancelCompress, cancelExtract as apiCancelExtract, type ZipProgressEvent } from "$lib/api/archive";
 import { type ApiResult } from "$lib/api/common";
 import { operationsManager } from "./operations.svelte";
 import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
-import { fileBatchError } from "$lib/domain/file-batch-outcome";
-import type { ExplorerCoreState, UndoAction } from "./types";
+import { affectedBatchPaths, fileBatchError } from "$lib/domain/file-batch-outcome";
+import type { ExplorerCoreState } from "./types";
 import { broadcastFileChange } from "./file-events";
 import { clipboardStore } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
-import { undoStore } from "./undo.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { toastStore } from "./toast.svelte";
 import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
-import { basename, joinPath, isInsideDir, isUncPath, parentDir } from "$lib/domain/path";
+import { basename, joinPath, isInsideDir, parentDir } from "$lib/domain/path";
 
 export interface PaneMutationContext {
   coreState: ExplorerCoreState;
@@ -130,47 +129,15 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     const requestedPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
     const paths = [...new Set(entries.map((e) => e.path))];
-    // UNC paths are removed by the native trash adapter; only those paths
-    // are excluded from undo, rather than making a mixed selection permanent.
-    const isPermanent = requestedPermanent;
-
-    let result: { ok: boolean; error?: string };
-    const removed: string[] = [];
-
-    if (isPermanent) {
-      const errors: string[] = [];
-      for (const path of paths) {
-        const r = await deleteEntryPermanent(path);
-        if (!r.ok) errors.push(r.error);
-        else removed.push(path);
-      }
-      result = errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true };
-    } else {
-      if (paths.length === 1) {
-        result = await deleteEntry(paths[0]);
-        if (result.ok) removed.push(paths[0]);
-      } else {
-        const batch = await deleteMultipleEntries(paths);
-        if (batch.ok) {
-          removed.push(...batch.data.succeeded);
-          const error = fileBatchError(batch.data);
-          result = error ? { ok: false, error } : { ok: true };
-        } else result = batch;
-      }
-    }
+    const batch = await deleteEntries(paths, requestedPermanent);
+    if (!batch.ok) return batch.error;
+    if (batch.warning) toastStore.error(batch.warning);
+    const removed = batch.data.succeeded;
+    const error = fileBatchError(batch.data);
+    const affected = affectedBatchPaths(batch.data);
+    if (affected.length) broadcastFileChange([...new Set(affected.map(parentDir))]);
 
     if (removed.length > 0) {
-      if (!isPermanent) {
-        const groups = new Map<string, string[]>();
-        for (const path of removed.filter((path) => !isUncPath(path))) {
-          const parent = parentDir(path);
-          const group = groups.get(parent);
-          if (group) group.push(path);
-          else groups.set(parent, [path]);
-        }
-        const actions: UndoAction[] = [...groups].map(([parentDir, paths]) => ({ type: "delete", paths, parentDir }));
-        if (actions.length) await undoStore.push(actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" });
-      }
       const deletedPaths = new Set(removed);
       if (origin.current()) {
         coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
@@ -178,12 +145,11 @@ export function createPaneMutations(ctx: PaneMutationContext) {
           [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
         );
       }
-      if (result.ok) dialogStore.cancelDelete(session);
-      broadcastFileChange([...new Set(removed.map(parentDir))]);
+      if (!error) dialogStore.cancelDelete(session);
       await navigateAwayIfNeeded(deletedPaths);
       frecencyStore.pruneNonExistent();
     }
-    return result.ok ? null : result.error ?? "Unknown error";
+    return error;
   }
 
   async function createSymlinkForEntry(path: string): Promise<void> {

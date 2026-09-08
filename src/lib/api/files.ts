@@ -6,7 +6,7 @@
  * dedicated sibling modules and are imported directly by feature consumers.
  */
 
-import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
+import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import {
@@ -202,69 +202,26 @@ export async function renameEntry(
   }
 }
 
-/**
- * Delete a file or directory by moving it to the system trash/recycle bin.
- *
- * Uses Tauri command for cross-platform trash support:
- * - Windows: Recycle Bin
- * - macOS: Trash
- * - Linux: Freedesktop Trash
- *
- * @param path - Full path to file/directory to delete
- * @returns Result indicating success or error message
- */
-export async function deleteEntry(path: string): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("move_to_trash", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
+/** Native-owned deletion of the complete selection, with per-path outcomes. */
+export async function deleteEntries(paths: string[], permanent = false): Promise<ApiResult<FileBatchOutcome>> {
+  for (const path of paths) {
+    const guard = virtualPathGuard(path);
+    if (guard) return guard;
   }
+  return invokeFileMutation<FileBatchOutcome>("delete_entries", { paths, permanent });
 }
 
-/**
- * Move multiple files/directories to the system trash.
- *
- * @param paths - Array of full paths to delete
- * @returns Per-path outcomes; an outer error means the batch could not be classified
- */
-export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<FileBatchOutcome>> {
-  try {
-    const data = await invoke<FileBatchOutcome>("move_multiple_to_trash", { paths });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+async function deleteOne(path: string, permanent: boolean): Promise<ApiResult<void>> {
+  const result = await deleteEntries([path], permanent);
+  if (!result.ok) return result;
+  const error = fileBatchError(result.data);
+  return error ? { ok: false, error } : { ok: true, data: undefined, ...(result.warning ? { warning: result.warning } : {}) };
 }
 
-/** Permanently delete a file or directory (bypasses trash). */
-export async function deleteEntryPermanent(path: string): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("delete_entry_permanent", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
+export const deleteEntry = (path: string): Promise<ApiResult<void>> => deleteOne(path, false);
+export const deleteEntryPermanent = (path: string): Promise<ApiResult<void>> => deleteOne(path, true);
+export const deleteMultipleEntries = (paths: string[]): Promise<ApiResult<FileBatchOutcome>> => deleteEntries(paths);
 
-/**
- * Restore files from the system trash by their original paths.
- *
- * @param paths - Array of original paths to restore
- * @returns Per-path outcomes; successful paths remain valid when siblings fail
- */
-export async function restoreFromTrash(paths: string[]): Promise<ApiResult<FileBatchOutcome>> {
-  try {
-    const data = await invoke<FileBatchOutcome>("restore_from_trash", { paths });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
 
 /**
  * Copy a file or directory to a destination.

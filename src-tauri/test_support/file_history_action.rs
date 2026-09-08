@@ -4,7 +4,10 @@ use std::path::Path;
 fn absolute(parts: &[&str]) -> String {
     parts
         .iter()
-        .fold(std::env::temp_dir().join("file-history-action"), |base, part| base.join(part))
+        .fold(
+            std::env::temp_dir().join("file-history-action"),
+            |base, part| base.join(part),
+        )
         .to_string_lossy()
         .into_owned()
 }
@@ -19,11 +22,6 @@ fn copy(path: String, parent_dir: String, restore_supported: bool) -> Action {
 
 fn prepared(action: Action, trash_restore: bool) -> Action {
     prepare(action, trash_restore).unwrap().unwrap()
-}
-
-#[cfg(unix)]
-fn unc_path() -> String {
-    "//server/share/unrestorable.txt".into()
 }
 
 #[cfg(windows)]
@@ -46,6 +44,7 @@ fn host_capability_overwrites_a_forged_copy_restore_flag() {
 }
 
 #[test]
+#[cfg(windows)]
 fn host_prunes_unrecoverable_delete_paths_and_empty_nested_batches() {
     let local = absolute(&["trash", "local.txt"]);
     let parent = absolute(&["trash"]);
@@ -83,10 +82,29 @@ fn host_prunes_unrecoverable_delete_paths_and_empty_nested_batches() {
 }
 
 #[test]
+#[cfg(unix)]
+fn double_leading_slash_is_a_local_trash_path() {
+    let path = "//local/directory/item.txt".to_owned();
+    let parent = "//local/directory".to_owned();
+    let action = Action::Delete {
+        paths: vec![path.clone()],
+        parent_dir: parent.clone(),
+    };
+    assert_eq!(prepared(action.clone(), true), action);
+    assert_eq!(
+        prepared(copy(path.clone(), parent.clone(), false), true),
+        copy(path, parent, true)
+    );
+}
+
+#[test]
 fn unavailable_trash_restore_prunes_delete_actions_completely() {
     let parent = absolute(&["trash"]);
     let action = Action::Delete {
-        paths: vec![absolute(&["trash", "one.txt"]), absolute(&["trash", "two.txt"])],
+        paths: vec![
+            absolute(&["trash", "one.txt"]),
+            absolute(&["trash", "two.txt"]),
+        ],
         parent_dir: parent,
     };
 
@@ -99,7 +117,11 @@ fn malformed_or_non_absolute_paths_are_rejected() {
     let cases = [
         copy("relative/file.txt".into(), valid_parent.clone(), true),
         copy(absolute(&["valid", "file.txt"]), "relative".into(), true),
-        copy(format!("{}\0suffix", absolute(&["valid", "file.txt"])), valid_parent, true),
+        copy(
+            format!("{}\0suffix", absolute(&["valid", "file.txt"])),
+            valid_parent,
+            true,
+        ),
         Action::Move {
             source_path: absolute(&["source", "file.txt"]),
             dest_path: String::new(),
@@ -108,7 +130,9 @@ fn malformed_or_non_absolute_paths_are_rejected() {
     ];
 
     for action in cases {
-        assert!(prepare(action, true).unwrap_err().contains("absolute paths"));
+        assert!(prepare(action, true)
+            .unwrap_err()
+            .contains("absolute paths"));
     }
 }
 
@@ -121,17 +145,15 @@ fn malformed_rename_names_are_rejected() {
             old_name: "old.txt".into(),
             new_name: name.into(),
         };
-        assert!(prepare(action, true).unwrap_err().contains("Invalid file history entry name"));
+        assert!(prepare(action, true)
+            .unwrap_err()
+            .contains("Invalid file history entry name"));
     }
 }
 
 #[test]
 fn recursive_depth_limit_rejects_an_excessively_nested_batch() {
-    let mut action = copy(
-        absolute(&["deep", "file.txt"]),
-        absolute(&["deep"]),
-        true,
-    );
+    let mut action = copy(absolute(&["deep", "file.txt"]), absolute(&["deep"]), true);
     for depth in 0..65 {
         action = Action::Batch {
             actions: vec![action],
@@ -155,7 +177,11 @@ fn node_limit_counts_each_path_in_a_delete_action() {
 
 #[test]
 fn retained_allocation_limit_rejects_one_oversized_action() {
-    let oversized = format!("{}{}", absolute(&["large", ""]), "x".repeat(33 * 1024 * 1024));
+    let oversized = format!(
+        "{}{}",
+        absolute(&["large", ""]),
+        "x".repeat(33 * 1024 * 1024)
+    );
     let action = copy(oversized, absolute(&["large"]), true);
 
     assert!(prepare(action, true).unwrap_err().contains("memory budget"));
@@ -185,7 +211,11 @@ fn affected_directories_are_distinct_parents_derived_from_effect_paths() {
             },
             copy(copied_path.clone(), forged_parent.clone(), true),
             Action::Delete {
-                paths: vec![deleted_one.clone(), deleted_two.clone(), deleted_one.clone()],
+                paths: vec![
+                    deleted_one.clone(),
+                    deleted_two.clone(),
+                    deleted_one.clone(),
+                ],
                 parent_dir: forged_parent.clone(),
             },
         ],
@@ -199,7 +229,13 @@ fn affected_directories_are_distinct_parents_derived_from_effect_paths() {
         deleted_two,
     ]
     .into_iter()
-    .map(|path| Path::new(&path).parent().unwrap().to_string_lossy().into_owned())
+    .map(|path| {
+        Path::new(&path)
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned()
+    })
     .collect::<Vec<_>>();
     expected.sort();
     expected.dedup();
@@ -207,4 +243,23 @@ fn affected_directories_are_distinct_parents_derived_from_effect_paths() {
     let actual = affected_dirs(&action);
     assert_eq!(actual, expected);
     assert!(!actual.contains(&forged_parent));
+}
+
+#[test]
+#[cfg(windows)]
+fn extended_local_disks_remain_restorable_but_network_shares_do_not() {
+    for path in [r"\\?\C:\folder\item.txt", r"C:\folder\item.txt"] {
+        let action = Action::Delete {
+            paths: vec![path.into()],
+            parent_dir: r"C:\folder".into(),
+        };
+        assert_eq!(prepared(action.clone(), true), action);
+    }
+    for path in [r"\\?\UNC\server\share\item.txt", r"\\server\share\item.txt"] {
+        let action = Action::Delete {
+            paths: vec![path.into()],
+            parent_dir: r"\\server\share".into(),
+        };
+        assert_eq!(prepare(action, true).unwrap(), None);
+    }
 }

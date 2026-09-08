@@ -5,7 +5,10 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::publication::{rename_noreplace, StagedEntry};
-use super::{mutation::{FileMutationReceipt, FileMutationRecovery}, run_blocking, SizeEstimate};
+use super::{
+    mutation::{FileMutationReceipt, FileMutationRecovery},
+    run_blocking, SizeEstimate,
+};
 use crate::error::AppError;
 use crate::progress::ProgressTracker;
 use crate::task_registry::TaskRegistry;
@@ -200,7 +203,10 @@ pub async fn get_home_directory() -> Result<String, AppError> {
 }
 
 /// Create a new directory.
-pub async fn create_directory(parent_path: String, name: String) -> Result<FileMutationReceipt, AppError> {
+pub async fn create_directory(
+    parent_path: String,
+    name: String,
+) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&name)?;
 
     run_blocking(move || {
@@ -228,7 +234,10 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileM
 }
 
 /// Create a new empty file (touch). Fails if a file/dir already exists there.
-pub async fn create_empty_file(parent_path: String, name: String) -> Result<FileMutationReceipt, AppError> {
+pub async fn create_empty_file(
+    parent_path: String,
+    name: String,
+) -> Result<FileMutationReceipt, AppError> {
     validate_entry_name(&name)?;
 
     run_blocking(move || {
@@ -453,12 +462,7 @@ fn copy_entry_inner(
                     source
                 )));
             }
-            return copy_entry_overwriting(
-                source_path,
-                dest_dir_path,
-                &target,
-                tracker,
-            );
+            return copy_entry_overwriting(source_path, dest_dir_path, &target, tracker);
         } else {
             target = generate_copy_name(dest_dir_path, source_name, source_path.is_dir());
         }
@@ -550,10 +554,14 @@ fn move_entry_with(
     let target_exists = entry_exists(&target);
     if target_exists {
         if !overwrite.unwrap_or(false) {
-            return Err(AppError::AlreadyExists(target.to_string_lossy().into_owned()));
+            return Err(AppError::AlreadyExists(
+                target.to_string_lossy().into_owned(),
+            ));
         }
         if is_same_entry(&source_path, &target) {
-            return Err(AppError::InvalidPath(format!("Source and destination are the same: {source}")));
+            return Err(AppError::InvalidPath(format!(
+                "Source and destination are the same: {source}"
+            )));
         }
     }
 
@@ -808,7 +816,10 @@ fn mime_for_extension(path: &Path) -> &'static str {
 }
 
 /// Write text content to a new file.
-pub async fn write_text_file(path: String, content: String) -> Result<FileMutationReceipt, AppError> {
+pub async fn write_text_file(
+    path: String,
+    content: String,
+) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || {
         let file_path = PathBuf::from(&path);
 
@@ -835,25 +846,23 @@ pub async fn write_text_file(path: String, content: String) -> Result<FileMutati
 }
 
 /// Delete a file or directory permanently (not to trash).
-#[tauri::command]
 pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
-    run_blocking(move || {
-        let file_path = PathBuf::from(&path);
+    run_blocking(move || delete_path(&path)).await
+}
 
-        let meta =
-            fs::symlink_metadata(&file_path).map_err(|_| AppError::NotFound(path.clone()))?;
-
-        let is_dir = meta.is_dir();
-        remove_entry_at(&file_path)?;
-
-        log::info!("Permanently deleted entry (is_dir={})", is_dir);
-        Ok(())
-    })
-    .await
+pub(crate) fn delete_path(path: &str) -> Result<(), AppError> {
+    let file_path = Path::new(path);
+    let meta = fs::symlink_metadata(file_path)?;
+    remove_entry_at(file_path).map_err(|error| AppError::MutationUncertain(error.to_string()))?;
+    log::info!("Permanently deleted entry (is_dir={})", meta.is_dir());
+    Ok(())
 }
 
 /// Create a symbolic link.
-pub async fn create_symlink(target_path: String, link_path: String) -> Result<FileMutationReceipt, AppError> {
+pub async fn create_symlink(
+    target_path: String,
+    link_path: String,
+) -> Result<FileMutationReceipt, AppError> {
     run_blocking(move || {
         let target = PathBuf::from(&target_path);
         let link = PathBuf::from(&link_path);
@@ -962,7 +971,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.entry.as_ref().unwrap().name, "new_folder");
-        assert!(matches!(result.entry.as_ref().unwrap().kind, super::super::FileKind::Directory));
+        assert!(matches!(
+            result.entry.as_ref().unwrap().kind,
+            super::super::FileKind::Directory
+        ));
         assert!(dir.path().join("new_folder").exists());
     }
 
@@ -976,7 +988,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.entry.as_ref().unwrap().name, "notes.txt");
-        assert!(matches!(result.entry.as_ref().unwrap().kind, super::super::FileKind::File));
+        assert!(matches!(
+            result.entry.as_ref().unwrap().kind,
+            super::super::FileKind::File
+        ));
         let created = dir.path().join("notes.txt");
         assert!(created.exists());
         assert_eq!(std::fs::metadata(&created).unwrap().len(), 0);

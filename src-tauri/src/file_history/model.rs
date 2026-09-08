@@ -214,12 +214,11 @@ impl ForwardReservation {
     }
 }
 
-/// Only a known no-effect failure preserves Redo. A committed or uncertain
-/// effect supersedes it even when no safe inverse can be retained.
+/// History projection of a forward outcome. Confirmed or uncertain effects
+/// supersede Redo; only confirmed recoverable effects may supply an inverse.
 pub enum ForwardEffect {
     Unchanged,
-    Committed(Option<Action>),
-    Uncertain,
+    Changed(Option<Action>),
 }
 
 /// One application authority, with independent window histories and explicitly
@@ -360,9 +359,7 @@ impl Histories {
         }
         let changed = !matches!(&effect, ForwardEffect::Unchanged);
         let replacement = match effect {
-            ForwardEffect::Committed(Some(action)) => {
-                Some(Self::ready(reservation.id, action, None))
-            }
+            ForwardEffect::Changed(Some(action)) => Some(Self::ready(reservation.id, action, None)),
             _ => None,
         };
         for ticket in reservation.tickets {

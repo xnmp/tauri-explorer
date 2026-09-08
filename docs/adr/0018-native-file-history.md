@@ -205,9 +205,9 @@ parents; known batch effects and unstarted siblings remain distinct. Real
 filesystem write/rename-then-panic regressions cover these adapter boundaries.
 This does not resolve indeterminate ordinary filesystem errors on network mounts.
 
-The current migration covers those five commands only. Delete, permanent delete,
-copy/move, paste/drop and grouped rename still require native logical-batch
-ownership. It does not establish a durable transaction journal, artifact identity,
+The initial migration covered those five commands. Whole-selection deletion
+is extended below; copy/move, paste/drop and grouped rename still require native
+logical-batch ownership. It does not establish a durable transaction journal, artifact identity,
 or recovery after native-process termination. Existing per-renderer history
 retirement policy remains in force; local history does not migrate to another
 window when its owner closes.
@@ -241,3 +241,39 @@ Retention is bounded at 256 entries and 32 MiB **per registered client**, with
 shared entries retained by reference. This is not an application-wide memory
 budget and does not bound all transient execution clones or retained filesystem
 artifacts. No startup latency improvement is claimed by this migration.
+
+### Native whole-selection deletion
+
+`delete_entries` admits the complete validated selection through `run_forward`.
+Trash and permanent deletion use one blocking worker with a supervisor-owned
+progress ledger. The four input partitions are confirmed success, unchanged
+failure, uncertain attempted work and unstarted work. A worker panic preserves
+settled siblings, consumes the active uncertain item, and stops before later
+items. Ordinary preflight failures permit later items to run. Path count and
+bytes are bounded before stable deduplication; component ordering rejects
+ancestor/descendant selections without repeatedly hashing every ancestor prefix.
+The worker shares immutable paths with its supervisor rather than cloning them.
+
+Confirmed trash successes form one native history action, grouped by actual
+parent in stable order; native platform policy filters unrecoverable paths.
+Permanent deletion has no inverse. Any confirmed or uncertain effect supersedes
+Redo, but only confirmed recoverable effects enter the inverse. The renderer
+receives settled history with the batch outcome, removes only confirmed entries,
+and reconciles confirmed and uncertain parents. Restore remains an internal
+inverse primitive, not a separately registered renderer command.
+
+Windows UNC classification uses native `Prefix::UNC`/`VerbatimUNC`, excluding
+extended local disks. Unix double-leading-slash paths remain ordinary local
+trash paths. The dialog likewise applies network-share wording only on Windows.
+
+This boundary does not close the remaining platform/recovery work. In particular,
+the current Windows `trash` dependency's restore implementation uses a racy
+existence check and `FOF_NO_UI`, and does not inspect shell cancellation after
+`PerformOperations`. A native STA restore adapter must preserve racing targets
+and classify per-item completion before Windows acceptance. Microsoft documents
+[operation flags](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-setoperationflags),
+[actual move completion and collision names](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperationprogresssink-postmoveitem),
+and [abort acknowledgement](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ifileoperation-getanyoperationsaborted).
+Artifact identity (including symlinked parent spellings), durable recovery,
+restore-parent creation effects, and native batch progress/cancellation remain
+required follow-up work. Linux evidence cannot establish Windows behavior.

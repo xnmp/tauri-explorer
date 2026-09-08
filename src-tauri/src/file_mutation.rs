@@ -3,10 +3,87 @@
 use crate::{
     error::AppError,
     file_history::{self, Action, ForwardEffect, MutationOutcome, MutationReply},
-    files::{file_ops, mutation::FileMutationReceipt},
+    files::{batch::FileBatchOutcome, file_ops, mutation::FileMutationReceipt},
     renderer_owner,
 };
 use std::{future::Future, path::Path};
+
+fn delete_effect(outcome: &FileBatchOutcome, permanent: bool) -> ForwardEffect {
+    if outcome.succeeded.is_empty() && outcome.uncertain.is_empty() {
+        return ForwardEffect::Unchanged;
+    }
+    if permanent {
+        return ForwardEffect::Changed(None);
+    }
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    let mut indices = std::collections::HashMap::new();
+    for path in &outcome.succeeded {
+        let directory = parent(path)
+            .into_iter()
+            .next()
+            .expect("validated deletion parent");
+        let index = *indices.entry(directory.clone()).or_insert_with(|| {
+            groups.push((directory, Vec::new()));
+            groups.len() - 1
+        });
+        groups[index].1.push(path.clone());
+    }
+    let mut actions: Vec<_> = groups
+        .into_iter()
+        .map(|(parent_dir, paths)| Action::Delete { paths, parent_dir })
+        .collect();
+    let inverse = match actions.len() {
+        0 => None,
+        1 => actions.pop(),
+        _ => Some(Action::Batch {
+            actions,
+            label: "Delete".into(),
+        }),
+    };
+    ForwardEffect::Changed(inverse)
+}
+
+fn delete_outcome(result: FileBatchOutcome, permanent: bool) -> MutationOutcome<FileBatchOutcome> {
+    let effect = delete_effect(&result, permanent);
+    let mut affected: Vec<_> = result
+        .affected_paths()
+        .flat_map(|path| parent(path))
+        .collect();
+    affected.sort_unstable();
+    affected.dedup();
+    MutationOutcome {
+        result: Ok(result),
+        effect,
+        affected,
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn delete_entries(
+    window: tauri::Window,
+    session_id: String,
+    paths: Vec<String>,
+    permanent: bool,
+) -> Result<MutationReply<FileBatchOutcome>, AppError> {
+    use crate::files::{batch, trash};
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let plan = batch::BatchPlan::new(paths).map_err(AppError::InvalidPath)?;
+    let mut directories: Vec<_> = plan.paths.iter().flat_map(|path| parent(path)).collect();
+    directories.sort_unstable();
+    directories.dedup();
+    file_history::run_forward(owner, false, directories, async move {
+        let result = batch::run(plan, move |path| {
+            if permanent {
+                file_ops::delete_path(path)
+            } else {
+                trash::trash_path(path)
+            }
+        })
+        .await;
+        delete_outcome(result, permanent)
+    })
+    .await
+}
 
 fn parent(path: &str) -> Vec<String> {
     Path::new(path)
@@ -24,7 +101,9 @@ async fn outcome(
     let result = work.await;
     let effect = match &result {
         Ok(receipt) => classify(receipt),
-        Err(AppError::WorkerFailed(_)) => ForwardEffect::Uncertain,
+        Err(AppError::WorkerFailed(_) | AppError::MutationUncertain(_)) => {
+            ForwardEffect::Changed(None)
+        }
         Err(_) => ForwardEffect::Unchanged,
     };
     let affected = if matches!(effect, ForwardEffect::Unchanged) {
@@ -49,7 +128,7 @@ fn rename_effect(
     if old_name == new_name {
         return ForwardEffect::Unchanged;
     }
-    ForwardEffect::Committed(Some(Action::Rename {
+    ForwardEffect::Changed(Some(Action::Rename {
         path: receipt.path.clone(),
         old_name,
         new_name,
@@ -85,7 +164,7 @@ pub(crate) async fn create_directory(
         session_id,
         vec![parent_path.clone()],
         file_ops::create_directory(parent_path, name),
-        |_| ForwardEffect::Committed(None),
+        |_| ForwardEffect::Changed(None),
     )
     .await
 }
@@ -102,7 +181,7 @@ pub(crate) async fn create_empty_file(
         session_id,
         vec![parent_path.clone()],
         file_ops::create_empty_file(parent_path, name),
-        |_| ForwardEffect::Committed(None),
+        |_| ForwardEffect::Changed(None),
     )
     .await
 }
@@ -141,7 +220,7 @@ pub(crate) async fn write_text_file(
         session_id,
         parent(&path),
         file_ops::write_text_file(path, content),
-        |_| ForwardEffect::Committed(None),
+        |_| ForwardEffect::Changed(None),
     )
     .await
 }
@@ -158,7 +237,7 @@ pub(crate) async fn create_symlink(
         session_id,
         parent(&link_path),
         file_ops::create_symlink(target_path, link_path),
-        |_| ForwardEffect::Committed(None),
+        |_| ForwardEffect::Changed(None),
     )
     .await
 }

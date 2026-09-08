@@ -142,6 +142,8 @@ fn rename(name: &str) -> Action {
 
 fn batch_outcome(succeeded: Vec<String>, failed: Vec<(String, &str)>) -> FileBatchOutcome {
     FileBatchOutcome {
+        uncertain: Vec::new(),
+        unstarted: Vec::new(),
         succeeded,
         failed: failed
             .into_iter()
@@ -329,6 +331,104 @@ fn delete_partitions_receipts_in_original_action_order() {
 }
 
 #[test]
+fn mixed_delete_outcome_consumes_uncertain_paths_and_stops_outer_siblings() {
+    let succeeded = path("delete/succeeded.txt");
+    let failed = path("delete/failed.txt");
+    let uncertain = path("delete/uncertain.txt");
+    let unstarted = path("delete/unstarted.txt");
+    let parent_dir = path("delete");
+    let delete = Action::Delete {
+        paths: vec![
+            succeeded.clone(),
+            failed.clone(),
+            uncertain.clone(),
+            unstarted.clone(),
+        ],
+        parent_dir: parent_dir.clone(),
+    };
+    let never_attempted = rename("outer-never-attempted");
+    let completed_last = rename("outer-completed-last");
+    let action = Action::Batch {
+        actions: vec![never_attempted.clone(), delete, completed_last.clone()],
+        label: "mixed delete outcome".into(),
+    };
+    let operations = FakeOperations::new([
+        Reply::Unit(Ok(())),
+        Reply::Batch(Ok(FileBatchOutcome {
+            succeeded: vec![succeeded.clone()],
+            failed: vec![FileFailure {
+                path: failed.clone(),
+                error: "permission denied".into(),
+            }],
+            uncertain: vec![FileFailure {
+                path: uncertain.clone(),
+                error: "worker exited".into(),
+            }],
+            unstarted: vec![unstarted.clone()],
+        })),
+    ]);
+
+    let result = run(execute(action, &operations, Direction::Undo));
+    let completed_delete = Action::Delete {
+        paths: vec![succeeded.clone()],
+        parent_dir: parent_dir.clone(),
+    };
+    let uncertain_delete = Action::Delete {
+        paths: vec![uncertain.clone()],
+        parent_dir: parent_dir.clone(),
+    };
+    let remaining_delete = Action::Delete {
+        paths: vec![failed.clone(), unstarted.clone()],
+        parent_dir,
+    };
+
+    assert_eq!(
+        operations.calls(),
+        vec![
+            Call::Rename(
+                path("work/outer-completed-last-new.txt"),
+                "outer-completed-last-old.txt".into(),
+            ),
+            Call::Restore(vec![succeeded, failed.clone(), uncertain, unstarted,]),
+        ],
+    );
+    assert_eq!(
+        result.completed,
+        Some(Action::Batch {
+            actions: vec![completed_delete.clone(), completed_last.clone()],
+            label: "mixed delete outcome".into(),
+        }),
+    );
+    assert_eq!(
+        result.opposite,
+        Some(Action::Batch {
+            actions: vec![completed_delete, completed_last],
+            label: "mixed delete outcome".into(),
+        }),
+    );
+    assert_eq!(
+        result.uncertain,
+        Some(Action::Batch {
+            actions: vec![uncertain_delete],
+            label: "mixed delete outcome".into(),
+        }),
+    );
+    assert_eq!(
+        result.remaining,
+        Some(Action::Batch {
+            actions: vec![never_attempted, remaining_delete],
+            label: "mixed delete outcome".into(),
+        }),
+    );
+    let error = result
+        .error
+        .expect("mixed outcome reports its incomplete paths");
+    assert!(error.contains(&format!("{failed}: permission denied")));
+    assert!(error.contains("outcome is uncertain"));
+    assert!(error.contains("1 items were not started"));
+}
+
+#[test]
 fn delete_redo_uses_bulk_trash_and_retains_an_outer_failure() {
     let first = path("redo/first.txt");
     let second = path("redo/second.txt");
@@ -431,6 +531,38 @@ fn recoverable_copy_redo_requires_its_exact_restore_receipt() {
         result.error.as_deref(),
         Some(format!("{copied_path}: payload missing").as_str())
     );
+    assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
+}
+
+#[test]
+fn uncertain_copy_redo_is_consumed_without_an_inverse_or_retry() {
+    let copied_path = path("local/uncertain-copy.txt");
+    let action = Action::Copy {
+        copied_path: copied_path.clone(),
+        parent_dir: path("local"),
+        restore_supported: true,
+    };
+    let operations = FakeOperations::new([Reply::Batch(Ok(FileBatchOutcome {
+        succeeded: Vec::new(),
+        failed: Vec::new(),
+        uncertain: vec![FileFailure {
+            path: copied_path.clone(),
+            error: "restore worker exited".into(),
+        }],
+        unstarted: Vec::new(),
+    }))]);
+
+    let result = run(execute(action.clone(), &operations, Direction::Redo));
+
+    assert_eq!(result.completed, None);
+    assert_eq!(result.uncertain, Some(action));
+    assert_eq!(result.opposite, None);
+    assert_eq!(result.remaining, None);
+    let error = result
+        .error
+        .expect("uncertain restore requires reconciliation");
+    assert!(error.contains("may have completed"));
+    assert!(error.contains("restore worker exited"));
     assert_eq!(operations.calls(), vec![Call::Restore(vec![copied_path])]);
 }
 

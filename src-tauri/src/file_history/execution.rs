@@ -124,10 +124,20 @@ fn execute_inner<'a, O: Operations>(
                     Ok(outcome) if outcome.succeeded.iter().any(|path| path == copied_path) => {
                         settled(action, Ok(()), true)
                     }
-                    Ok(outcome) => failed(
-                        action,
-                        batch_error(&outcome).unwrap_or_else(|| "File was not restored".into()),
-                    ),
+                    Ok(outcome) => {
+                        let error =
+                            batch_error(&outcome).unwrap_or_else(|| "File was not restored".into());
+                        let error = if outcome
+                            .uncertain
+                            .iter()
+                            .any(|failure| &failure.path == copied_path)
+                        {
+                            OperationError::Uncertain(error)
+                        } else {
+                            OperationError::Unchanged(error)
+                        };
+                        failed(action, error)
+                    }
                     Err(error) => failed(action, error),
                 },
             },
@@ -200,6 +210,16 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome) -> Execution {
     };
     let error = batch_error(&outcome);
     let succeeded = outcome.succeeded.into_iter().collect::<HashSet<_>>();
+    let uncertain = outcome
+        .uncertain
+        .into_iter()
+        .map(|failure| failure.path)
+        .collect::<HashSet<_>>();
+    let uncertain_paths = paths
+        .iter()
+        .filter(|path| uncertain.contains(*path))
+        .cloned()
+        .collect::<Vec<_>>();
     let completed_paths = paths
         .iter()
         .filter(|path| succeeded.contains(*path))
@@ -207,7 +227,7 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome) -> Execution {
         .collect::<Vec<_>>();
     let remaining_paths = paths
         .into_iter()
-        .filter(|path| !succeeded.contains(path))
+        .filter(|path| !succeeded.contains(path) && !uncertain.contains(path))
         .collect::<Vec<_>>();
     let has_remaining = !remaining_paths.is_empty();
     let completed = (!completed_paths.is_empty()).then(|| Action::Delete {
@@ -217,7 +237,10 @@ fn settled_delete(action: Action, outcome: FileBatchOutcome) -> Execution {
 
     Execution {
         opposite: completed.clone(),
-        uncertain: None,
+        uncertain: (!uncertain_paths.is_empty()).then(|| Action::Delete {
+            paths: uncertain_paths,
+            parent_dir: parent_dir.clone(),
+        }),
         completed,
         remaining: (!remaining_paths.is_empty()).then_some(Action::Delete {
             paths: remaining_paths,
@@ -249,14 +272,7 @@ fn batch_action(actions: Vec<Option<Action>>, label: &str) -> Option<Action> {
 }
 
 fn batch_error(outcome: &FileBatchOutcome) -> Option<String> {
-    (!outcome.failed.is_empty()).then(|| {
-        outcome
-            .failed
-            .iter()
-            .map(|failure| format!("{}: {}", failure.path, failure.error))
-            .collect::<Vec<_>>()
-            .join("; ")
-    })
+    outcome.error()
 }
 
 fn parent(path: &str) -> Result<String, String> {

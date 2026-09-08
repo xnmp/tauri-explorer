@@ -881,3 +881,20 @@ The real Linux cross-device acceptance caught this before source cleanup ran;
   complete private content before exposing a discoverable name; reserve its
   identity across both unseen and consumed states so later reports cannot
   replace earlier `.seen` evidence.
+
+Native deletion batches need progress outside their blocking worker. A panic
+must not erase earlier confirmed effects, and uncertain work must not be
+retried as a known failure. Admit the full selection before execution; preserve
+stable per-path outcomes and derive the inverse only from confirmed successes.
+Tests now exercise real write/remove effects followed by worker loss.
+
+Do not use a double slash as a platform-independent UNC test. Linux `//` paths
+are local, while Windows extended local `\\?\C:\...` paths are also not network
+shares. Use native path prefixes for destructive decisions. The Linux regression
+proves the old rule permanently removed its fixture instead of creating a Trash
+item, and verifies exact-byte restoration with the corrected rule.
+
+Every delete entry point must present returned failures. The confirmation-free
+`startDelete` path previously discarded `confirmDelete`'s error string, hiding
+partial and uncertain outcomes. Its regression calls the public Explorer method
+and observes both the retained rows and the uncertainty toast.

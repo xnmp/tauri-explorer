@@ -3,7 +3,7 @@ use super::model::Action;
 use std::{collections::BTreeSet, path::Path};
 
 fn unc(path: &str) -> bool {
-    path.starts_with("//") || path.starts_with("\\\\")
+    crate::files::is_network_share(Path::new(path))
 }
 
 /// Cap both recursive shape and retained allocation before history takes

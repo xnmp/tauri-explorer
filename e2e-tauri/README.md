@@ -173,3 +173,11 @@ before native window destruction; external release then verifies exact committed
 bytes and the survivor's actual listing. The child's local history intentionally
 retires, so this is accepted forward-work lifetime coverage, not shared local
 Undo persistence or recovery after native-process termination.
+
+
+The `file-forward-history` acceptance suite additionally gates a complete
+multi-file trash intent, destroys the native child before releasing it, and
+checks both actual removals and the surviving main-window listing. Its paired
+`native-delete-batch-before.png` / `native-delete-batch-after.png` screenshots
+show that exact listing transition. It retains the local-owner retirement
+policy; this is not evidence of process durability or transferable child Undo.

@@ -7,6 +7,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import { isUncPath } from "$lib/domain/path";
+  import { isWindows } from "$lib/domain/platform";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -20,7 +21,7 @@
     // Location policy applies per entry in the native adapter. A network
     // sibling must not turn an ordinary local trash request into removal.
     const isPermanent = dialogStore.isPermanentDelete;
-    const hasPermanentItems = isPermanent || entries.some((entry) => isUncPath(entry.path));
+    const hasPermanentItems = isPermanent || (isWindows && entries.some((entry) => isUncPath(entry.path)));
     const isMultiple = entries.length > 1;
     // Close the dialog immediately — progress and completion are reported
     // through toast notifications so the UI doesn't appear stuck.
@@ -77,7 +78,7 @@
   {@const isMultiple = entries.length > 1}
   {@const singleEntry = entries[0]}
   {@const hasFolders = entries.some((e) => e.kind === "directory")}
-  {@const forcedByLocation = !dialogStore.isPermanentDelete && entries.some((e) => isUncPath(e.path))}
+  {@const forcedByLocation = isWindows && !dialogStore.isPermanentDelete && entries.some((e) => isUncPath(e.path))}
   {@const mixedLocations = forcedByLocation && entries.some((entry) => !isUncPath(entry.path))}
   {@const isPermanent = dialogStore.isPermanentDelete || (forcedByLocation && !mixedLocations)}
   <div class="dialog modal-card">

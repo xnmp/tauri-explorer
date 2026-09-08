@@ -22,7 +22,7 @@ interface HistoryEnvelope {
 
 interface FileOperationResult {
   token: string;
-  status: "completed";
+  status: "captured" | "completed";
   completedAt: number;
   error: string | null;
 }
@@ -117,7 +117,12 @@ async function clearHistory(): Promise<void> {
 
 async function startFileOperation(
   token: string,
-  detail: { op: "rename" | "undo" | "redo"; path?: string; name?: string },
+  detail: {
+    op: "rename" | "undo" | "redo" | "capture-delete" | "confirm-captured-delete";
+    path?: string;
+    paths?: string[];
+    name?: string;
+  },
 ): Promise<void> {
   await browser.execute((operation) => {
     delete document.documentElement.dataset.e2eFileOperationResult;
@@ -125,13 +130,16 @@ async function startFileOperation(
   }, { token, ...detail });
 }
 
-async function waitForFileOperation(token: string): Promise<FileOperationResult> {
+async function waitForFileOperation(
+  token: string,
+  status: FileOperationResult["status"] = "completed",
+): Promise<FileOperationResult> {
   await browser.waitUntil(async () => await browser.execute((operationToken) => {
     const encoded = document.documentElement.dataset.e2eFileOperationResult;
     if (!encoded) return false;
     const result = JSON.parse(encoded) as FileOperationResult;
-    return result.token === operationToken && result.status === "completed";
-  }, token), {
+    return result.token === operationToken.token && result.status === operationToken.status;
+  }, { token, status }), {
     timeout: 25_000,
     timeoutMsg: `file operation ${token} did not finish`,
   });
@@ -255,6 +263,20 @@ function forceReleaseForward(gate: ForwardGate): void {
   gateArtifacts.add(pending);
   fs.writeFileSync(pending, gate.token);
   fs.renameSync(pending, gate.release);
+}
+
+function cleanupForwardGate(gate: ForwardGate): void {
+  const artifacts = [
+    gate.arm,
+    gate.accepted,
+    gate.release,
+    gate.released,
+    path.join(gateDirectory, `next-forward.${gate.token}.pending`),
+  ].filter((artifact): artifact is string => artifact !== undefined);
+  for (const artifact of artifacts) {
+    fs.rmSync(artifact, { force: true });
+    gateArtifacts.delete(artifact);
+  }
 }
 
 async function releaseForward(gate: ForwardGate): Promise<void> {
@@ -436,6 +458,91 @@ gatedDescribe("native forward mutation history ownership", () => {
 
     expect((await fileOperation({ op: "redo" })).error).toBeNull();
     expectOnlyPath(renamed, original, contents);
+  });
+
+  it("completes an accepted whole child trash batch after that renderer is destroyed", async function () {
+    this.timeout(120_000);
+    await browser.switchToWindow(mainHandle);
+    await clearHistory();
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const first = path.join(scratch, `child-batch-a-${suffix}.txt`);
+    const second = path.join(scratch, `child-batch-b-${suffix}.txt`);
+    const firstContents = `destroyed batch owner A ${suffix}\n`;
+    const secondContents = `destroyed batch owner B ${suffix}\n`;
+    fs.writeFileSync(first, firstContents);
+    fs.writeFileSync(second, secondContents);
+    await navigateTo(scratch);
+    await waitForListed(path.basename(first), true);
+    await waitForListed(path.basename(second), true);
+    const proofDirectory = path.resolve("screenshots/refactor/repo-health-cleanup");
+    fs.mkdirSync(proofDirectory, { recursive: true });
+    await browser.saveScreenshot(path.join(proofDirectory, "native-delete-batch-before.png"));
+
+    const opened = await freshWindow(scratch);
+    expect(opened.kind).toBe("fresh");
+    childHandle = await switchToLabel(opened.label);
+    await $(".file-list").waitForExist({ timeout: 20_000 });
+    await waitForHistoryReady();
+    await waitForListed(path.basename(first), true);
+    await waitForListed(path.basename(second), true);
+    await clearHistory();
+
+    const operationToken = `child-delete-batch-${crypto.randomUUID()}`;
+    await startFileOperation(operationToken, {
+      op: "capture-delete",
+      paths: [first, second],
+    });
+    expect((await waitForFileOperation(operationToken, "captured")).error).toBeNull();
+    const gate = armForwardGate(scratch);
+    let gateSettled = false;
+    try {
+      await startFileOperation(operationToken, { op: "confirm-captured-delete" });
+      const accepted = await waitForForwardAccepted(gate);
+      expect(fs.readFileSync(first, "utf8")).toBe(firstContents);
+      expect(fs.readFileSync(second, "utf8")).toBe(secondContents);
+      await waitForSummary(
+        (summary) => summary.busy && summary.undoId === null,
+        "show the whole child delete reservation as pending",
+      );
+
+      await destroyCurrentWindow(childHandle);
+      childHandle = "";
+      await browser.switchToWindow(mainHandle);
+      const survivorBeforeRelease = await currentSummary();
+      expect(survivorBeforeRelease.undoId).toBeNull();
+      expect(survivorBeforeRelease.redoId).toBeNull();
+      expect(survivorBeforeRelease.busy).toBe(false);
+
+      await releaseForward(gate);
+      gateSettled = true;
+      await browser.waitUntil(() => !fs.existsSync(first) && !fs.existsSync(second), {
+        timeout: 20_000,
+        timeoutMsg: "accepted child trash batch did not commit after renderer destruction",
+      });
+      await waitForListed(path.basename(first), false);
+      await waitForListed(path.basename(second), false);
+      await browser.saveScreenshot(path.join(proofDirectory, "native-delete-batch-after.png"));
+      const survivor = await currentSummary();
+      expect(survivor.undoId).toBeNull();
+      expect(survivor.redoId).toBeNull();
+      expect(survivor.busy).toBe(false);
+      console.log(JSON.stringify({
+        case: "native-forward-batch-renderer-destroy",
+        accepted,
+        deleted: [first, second],
+        survivorEntries: await entryNames(),
+        survivorHistory: survivor,
+      }));
+    } finally {
+      forceReleaseForward(gate);
+      if (gate.released) {
+        try {
+          const released = await waitForJson<ForwardReleased>(gate.released, "batch failure-path release");
+          gateSettled ||= released.token === gate.token && released.status === "released";
+        } catch { /* preserve the primary assertion failure */ }
+      }
+      if (gateSettled) cleanupForwardGate(gate);
+    }
   });
 
   it("completes an accepted child rename after that renderer is destroyed", async function () {

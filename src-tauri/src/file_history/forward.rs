@@ -49,17 +49,17 @@ pub(crate) async fn run_forward<T: Send + 'static>(
             Ok(outcome) => outcome,
             Err(error) => MutationOutcome {
                 result: Err(AppError::Other(error)),
-                effect: ForwardEffect::Uncertain,
+                effect: ForwardEffect::Changed(None),
                 affected: potential_directories,
             },
         };
         let (effect, warning) = match outcome.effect {
-            ForwardEffect::Committed(Some(action)) => match action::prepare(action, !cfg!(target_os = "macos")) {
-                Ok(action) => (ForwardEffect::Committed(action), None),
+            ForwardEffect::Changed(Some(action)) => match action::prepare(action, !cfg!(target_os = "macos")) {
+                Ok(action) => (ForwardEffect::Changed(action), None),
                 Err(error) => {
                     let warning = format!("File operation completed, but its Undo history could not be recorded: {error}");
                     log::warn!("{warning}");
-                    (ForwardEffect::Committed(None), Some(warning))
+                    (ForwardEffect::Changed(None), Some(warning))
                 }
             },
             effect => (effect, None),

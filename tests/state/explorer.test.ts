@@ -22,9 +22,10 @@ import type { DirectoryListingCallbacks, DirectoryListingResult } from "$lib/sta
 // drive per test. This is the only seam mocked — all navigation/history/
 // selection logic under test is the real module.
 type LoadFn = (path: string, cbs: DirectoryListingCallbacks) => Promise<DirectoryListingResult>;
-const { loadImpl, cleanupMock } = vi.hoisted(() => ({
+const { loadImpl, cleanupMock, deleteEntriesMock } = vi.hoisted(() => ({
   loadImpl: { current: (async () => ({ ok: false, error: "unset" })) as LoadFn },
   cleanupMock: vi.fn(async () => {}),
+  deleteEntriesMock: vi.fn(),
 }));
 
 vi.mock("$lib/state/directory-listing", () => ({
@@ -34,7 +35,14 @@ vi.mock("$lib/state/directory-listing", () => ({
   }),
 }));
 
+vi.mock("$lib/api/files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("$lib/api/files")>()),
+  deleteEntries: deleteEntriesMock,
+}));
+
 import { createExplorerState } from "$lib/state/explorer.svelte";
+import { settingsStore } from "$lib/state/settings.svelte";
+import { toastStore } from "$lib/state/toast.svelte";
 
 function entry(name: string, dir = "/root"): FileEntry {
   return { name, path: `${dir}/${name}`, kind: "file", size: 1, modified: "2026-01-01T00:00:00Z" };
@@ -52,10 +60,15 @@ function staticLoad(map: Record<string, FileEntry[]>): LoadFn {
 beforeEach(() => {
   localStorage.clear();
   loadImpl.current = (async () => ({ ok: false, error: "unset" })) as LoadFn;
+  deleteEntriesMock.mockReset();
+  settingsStore.reset();
+  toastStore.clear();
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  settingsStore.reset();
+  toastStore.clear();
 });
 
 describe("navigation commits path, entries and selection", () => {
@@ -178,6 +191,55 @@ describe("inline new-entry creation kind (#436)", () => {
     explorer.startInlineNewFolder();
     expect(explorer.isCreatingFolder).toBe(true);
     expect(explorer.newEntryKind).toBe("folder");
+  });
+});
+
+describe("delete without confirmation", () => {
+  it("surfaces an incomplete native batch while removing only confirmed successes", async () => {
+    const removed = entry("removed.txt");
+    const uncertain = entry("uncertain.txt");
+    const unstarted = entry("unstarted.txt");
+    deleteEntriesMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        succeeded: [removed.path],
+        failed: [],
+        uncertain: [{ path: uncertain.path, error: "worker exited" }],
+        unstarted: [unstarted.path],
+      },
+    });
+    settingsStore.toggleConfirmDelete();
+    const explorer = createExplorerState({
+      currentPath: "/root",
+      entries: [removed, uncertain, unstarted],
+      sortBy: "name",
+      sortAscending: true,
+      viewMode: "details",
+    });
+
+    try {
+      await explorer.startDelete([removed, uncertain, unstarted]);
+
+      expect(deleteEntriesMock).toHaveBeenCalledExactlyOnceWith(
+        [removed.path, uncertain.path, unstarted.path],
+        false,
+      );
+      expect(explorer.displayEntries.map(({ path }) => path)).toEqual([
+        uncertain.path,
+        unstarted.path,
+      ]);
+      expect(toastStore.toasts).toEqual([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining(
+            `${uncertain.path}: outcome is uncertain; inspect the affected files before continuing: worker exited`,
+          ),
+        }),
+      ]);
+      expect(toastStore.toasts[0].message).toContain("1 items were not started");
+    } finally {
+      await explorer.destroy();
+    }
   });
 });
 

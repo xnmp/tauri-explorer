@@ -64,12 +64,12 @@ describe("fs-ops contract — mock agrees with real backend (fixtures)", () => {
     expect(names).not.toContain(fx.rename.original);
   });
 
-  it("delete_entry_permanent: entry disappears from the listing", async () => {
+  it("delete_entries: permanently removed entry disappears from the listing", async () => {
     const parent = await freshDir();
     await mockInvoke("write_text_file", { path: `${parent}/${fx.delete.target}`, content: "x" });
     expect((await list(parent)).entries.map((e) => e.name)).toContain(fx.delete.target);
 
-    await mockInvoke("delete_entry_permanent", { path: `${parent}/${fx.delete.target}` });
+    await mockInvoke("delete_entries", { paths: [`${parent}/${fx.delete.target}`], permanent: true });
     expect((await list(parent)).entries.map((e) => e.name)).not.toContain(fx.delete.target);
   });
 });

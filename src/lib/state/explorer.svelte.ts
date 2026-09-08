@@ -540,9 +540,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (arr.length === 0) return;
 
     if (!settingsStore.confirmDelete) {
-      // Delete immediately — confirmDelete handles the undo push, entry
-      // removal, navigating away from deleted dirs and frecency pruning.
-      await mutations.confirmDelete(arr, false);
+      const error = await mutations.confirmDelete(arr, false);
+      if (error) toastStore.error(`Delete failed: ${error}`);
       return;
     }
 

@@ -1539,6 +1539,8 @@ const mockCommands: Record<string, CommandHandler> = {
 
   move_multiple_to_trash: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, true)),
 
+  delete_entries: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, !args.permanent)),
+
   restore_from_trash: (args) => mockBatch(args.paths as string[], restoreMockEntry),
 
   copy_entry: (args) => {
@@ -2974,6 +2976,21 @@ function loadMockConfigSeed(): Record<string, string> {
  * fixture command below so it cannot recursively record forward history. */
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const result = await invokeMockCommand<unknown>(cmd, args);
+  if (cmd === "delete_entries") {
+    const outcome = result as FileBatchOutcome;
+    if (!outcome.succeeded.length) return { result, history: mockFileHistory.summary() } as T;
+    const groups = new Map<string, string[]>();
+    for (const path of outcome.succeeded) {
+      const directory = parentDir(path);
+      const paths = groups.get(directory) ?? [];
+      paths.push(path);
+      groups.set(directory, paths);
+    }
+    const actions: UndoAction[] = [...groups].map(([parentDir, paths]) => ({ type: "delete", paths, parentDir }));
+    const action: UndoAction | null = args!.permanent ? null
+      : actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" };
+    return { result, history: mockFileHistory.push(action).summary } as T;
+  }
   if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {

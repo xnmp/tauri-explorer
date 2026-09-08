@@ -410,6 +410,15 @@ export function readVerifiedNativeBuildManifest(
   };
 }
 
+export function resolveNativeApplication(
+  defaultApplication: string,
+  env: Record<string, string | undefined>,
+): string {
+  return env.NATIVE_BUILD_MANIFEST
+    ? readVerifiedNativeBuildManifest(env.NATIVE_BUILD_MANIFEST).binary
+    : defaultApplication;
+}
+
 export async function executeQualificationRun<T>(options: {
   outputPath: string;
   execute: (runErrors: string[]) => Promise<void>;

@@ -22,7 +22,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:perf": "playwright test e2e/performance.spec.ts",
     "test:e2e:tauri": "wdio run e2e-tauri/wdio.conf.ts",
-    "test:e2e:tauri:soak": "wdio run e2e-tauri/wdio.soak.conf.ts",
+    "test:e2e:tauri:soak": "bun run scripts/run-native-soak.ts",
     "test:qualify:macos-startup": "bun run scripts/qualify-macos-startup.ts",
     "build:native:qualification": "bun run scripts/build-native-qualification.ts",
     "test:load": "scripts/fsync-safe.sh playwright test -c playwright.load.config.ts",

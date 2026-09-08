@@ -4,17 +4,14 @@ import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import { resolveNativeApplication } from "./native-qualification";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
 const binaryName = isWindows ? "tauri-explorer.exe" : "tauri-explorer";
-const application = path.resolve(
-  here,
-  "..",
-  "src-tauri",
-  "target",
-  "debug",
-  binaryName,
+const application = resolveNativeApplication(
+  path.resolve(here, "..", "src-tauri", "target", "debug", binaryName),
+  process.env,
 );
 
 const tauriDriverBin = path.resolve(
@@ -41,7 +38,10 @@ const driverLogPath = path.join(here, "logs", "msedgedriver.log");
 let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
 
-const waitForPort = async (port: number, timeoutMs: number): Promise<boolean> => {
+const waitForPort = async (
+  port: number,
+  timeoutMs: number,
+): Promise<boolean> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const reachable = await new Promise<boolean>((resolve) => {
@@ -128,7 +128,9 @@ export const config: WebdriverIO.Config = {
     }
 
     if (!nativeDriver) {
-      throw new Error("TAURI_NATIVE_DRIVER must point to msedgedriver.exe on Windows");
+      throw new Error(
+        "TAURI_NATIVE_DRIVER must point to msedgedriver.exe on Windows",
+      );
     }
 
     const debugPort = await reservePort();
@@ -148,17 +150,15 @@ export const config: WebdriverIO.Config = {
     });
     if (!(await waitForPort(debugPort, 30_000))) {
       stopProcesses();
-      throw new Error(`WebView2 debug port ${debugPort} did not become reachable`);
+      throw new Error(
+        `WebView2 debug port ${debugPort} did not become reachable`,
+      );
     }
 
     mkdirSync(path.dirname(driverLogPath), { recursive: true });
     driverProcess = spawn(
       nativeDriver,
-      [
-        `--port=${driverPort}`,
-        "--verbose",
-        `--log-path=${driverLogPath}`,
-      ],
+      [`--port=${driverPort}`, "--verbose", `--log-path=${driverLogPath}`],
       { stdio: ["ignore", process.stdout, process.stderr] },
     );
     if (!(await waitForPort(driverPort, 10_000))) {

@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Governs: `e2e-tauri/native-qualification.ts`, `e2e-tauri/soak/native-soak.spec.ts`, `scripts/run-native-soak.ts`, `scripts/qualify-macos-startup.ts`
+Governs: `e2e-tauri/native-qualification.ts`, `e2e-tauri/wdio.conf.ts`, `e2e-tauri/wdio.soak.conf.ts`, `e2e-tauri/soak/native-soak.spec.ts`, `scripts/run-native-soak.ts`, `scripts/qualify-macos-startup.ts`
 
 ## Context
 
@@ -32,6 +32,15 @@ force timeout is a qualification failure; it propagates into the run's failed
 JSON report and prevents later samples from starting. Process output is retained
 even when cleanup fails. A successful `kill()` call alone never proves cleanup:
 the terminal child event does.
+
+WebdriverIO awaits `afterSession` hooks but does not make an ordinary hook
+rejection determine the command exit status. The worker therefore records any
+cleanup rejection in run-scoped temporary state created by `onPrepare`, and the
+launcher consumes that state in `onComplete`. Launcher completion fails when a
+marker exists and removes the temporary state afterward. The outer qualification
+runner treats that nonzero or signalled subprocess outcome as authoritative: it
+changes any previously emitted report to `passed: false`, appends the exit code
+and signal to `runErrors`, and retains the scenarios and process log.
 
 The runner tees child stdout and stderr into a run-specific log and references
 that log from every failed report, including failures before a WebDriver session

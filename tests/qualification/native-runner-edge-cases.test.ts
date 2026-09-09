@@ -10,6 +10,9 @@ import {
   executeLoggedQualificationProcess,
   measureProcessTreeRss,
   parseMacStartupLog,
+  resolveQualificationArtifactPath,
+  resolveSoakArtifactPaths,
+  resolveSoakConfiguration,
   stopNativeStartupProcess,
   waitForMacStartupProcess,
   type NativeStartupChild,
@@ -19,10 +22,11 @@ class FakeStartupChild extends EventEmitter implements NativeStartupChild {
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   readonly killSignals: Array<NodeJS.Signals | undefined> = [];
+  onKill?: (signal: NodeJS.Signals | undefined) => boolean;
 
   kill(signal?: NodeJS.Signals): boolean {
     this.killSignals.push(signal);
-    return true;
+    return this.onKill?.(signal) ?? true;
   }
 
   exit(code: number | null, signal: NodeJS.Signals | null): void {
@@ -93,25 +97,82 @@ describe("native qualification process boundaries", () => {
     const timeoutAssertion = expect(timeout).rejects.toThrow(
       "startup markers missing after 100ms",
     );
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(150);
     await timeoutAssertion;
     expect(vi.getTimerCount()).toBe(0);
     expect(timedOut.listenerCount("exit")).toBe(0);
     expect(timedOut.listenerCount("error")).toBe(0);
   });
 
-  it("escalates an unresponsive startup process to a force kill", async () => {
+  it("fails cleanup when a force-killed process remains alive", async () => {
     vi.useFakeTimers();
     const child = new FakeStartupChild();
     const stopped = stopNativeStartupProcess(child, {
       gracefulTimeoutMs: 100,
       forceTimeoutMs: 50,
     });
+    const assertion = expect(stopped).rejects.toThrow(
+      "remained alive after SIGKILL",
+    );
 
     await vi.advanceTimersByTimeAsync(150);
-    await stopped;
+    await assertion;
     expect(child.killSignals).toEqual([undefined, "SIGKILL"]);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("confirms forced exit and rejects a refused force kill", async () => {
+    vi.useFakeTimers();
+    const exited = new FakeStartupChild();
+    exited.onKill = (signal) => {
+      if (signal === "SIGKILL") exited.exit(null, signal);
+      return true;
+    };
+    const stopped = stopNativeStartupProcess(exited, {
+      gracefulTimeoutMs: 100,
+      forceTimeoutMs: 50,
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(stopped).resolves.toBeUndefined();
+    expect(exited.killSignals).toEqual([undefined, "SIGKILL"]);
+
+    const rejected = new FakeStartupChild();
+    rejected.onKill = (signal) => signal !== "SIGKILL";
+    const failed = stopNativeStartupProcess(rejected, {
+      gracefulTimeoutMs: 100,
+      forceTimeoutMs: 50,
+    });
+    const failureAssertion = expect(failed).rejects.toThrow(
+      "SIGKILL was rejected",
+    );
+    await vi.advanceTimersByTimeAsync(150);
+    await failureAssertion;
+    expect(rejected.killSignals).toEqual([undefined, "SIGKILL"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps hostile replay seeds inside the qualification artifact root", () => {
+    const root = path.resolve("qualification-results");
+    const rawSeed = "../../outside/../release seed";
+    const configuration = resolveSoakConfiguration({
+      SOAK_SEED: rawSeed,
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    });
+    const artifacts = resolveSoakArtifactPaths(root, "linux", rawSeed);
+
+    expect(configuration.seed).toBe(rawSeed);
+    expect(artifacts.seedComponent).not.toContain("/");
+    expect(artifacts.seedComponent).not.toContain("..");
+    for (const artifact of [
+      artifacts.report,
+      artifacts.driverLog,
+      artifacts.failureDirectory,
+    ]) {
+      expect(path.relative(root, artifact)).not.toMatch(/^\.\.(?:[/\\]|$)/);
+    }
+    expect(() =>
+      resolveQualificationArtifactPath(root, "../escaped.json"),
+    ).toThrow("outside qualification root");
   });
 
   it("attributes RSS to the verified launched binary and its descendants", () => {

@@ -179,12 +179,12 @@ jobs:
           find src-tauri/target -path '*/.fingerprint/*' -type f -name '*.json' -print \
             | sort > native-contract-diagnostics/cargo-fingerprints.txt || true
           cat > native-contract-diagnostics/comparison-guide.txt <<'EOF'
-Compare two artifacts with the same target_cache_key and runner identity.
-Use provenance.txt cache-hit, cache_storage_bytes, and uncompressed
-cache_transfer_estimate_bytes fields, the two timing files, cache-outcome.txt
-end_to_end_seconds, and Actions cache logs for actual transfer bytes. Retain
-revision and run attempt with the comparison result.
-EOF
+          Compare two artifacts with the same target_cache_key and runner identity.
+          Use provenance.txt cache-hit, cache_storage_bytes, and uncompressed
+          cache_transfer_estimate_bytes fields, the two timing files, cache-outcome.txt
+          end_to_end_seconds, and Actions cache logs for actual transfer bytes. Retain
+          revision and run attempt with the comparison result.
+          EOF
 
       - name: Upload native contract diagnostics
         if: always()

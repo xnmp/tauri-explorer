@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildNativeQualificationReport,
+  createNativeProcessCleanupHooks,
   executeLoggedQualificationProcess,
   measureProcessTreeRss,
   parseMacStartupLog,
@@ -204,6 +205,24 @@ describe("native qualification process boundaries", () => {
     expect(stuckDriver.killSignals).toEqual([undefined, "SIGKILL"]);
     expect(application.killSignals).toEqual([undefined]);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("propagates worker cleanup failures through native run completion", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
+    const markerDirectory = path.join(dir, "failures");
+    const hooks = createNativeProcessCleanupHooks(markerDirectory, async () => {
+      throw new Error("WebDriver remained alive after SIGKILL");
+    });
+
+    hooks.prepare();
+    await expect(hooks.cleanup()).rejects.toThrow(
+      "WebDriver remained alive after SIGKILL",
+    );
+    expect(() => hooks.complete()).toThrow(
+      "native qualification cleanup failed: WebDriver remained alive after SIGKILL",
+    );
+    expect(fs.readdirSync(markerDirectory)).toHaveLength(1);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   it("keeps hostile replay seeds inside the qualification artifact root", () => {

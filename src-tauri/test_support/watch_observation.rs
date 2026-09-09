@@ -276,6 +276,109 @@ fn create(path: &Path) -> Event {
 }
 
 #[test]
+fn windows_modification_preserves_names_but_renames_and_unknown_events_do_not() {
+    assert!(!changes_names(EventKind::Modify(ModifyKind::Any), true));
+    assert!(changes_names(EventKind::Modify(ModifyKind::Any), false));
+    for kind in [
+        EventKind::Any,
+        EventKind::Other,
+        EventKind::Create(CreateKind::Any),
+        EventKind::Remove(notify::event::RemoveKind::Any),
+        EventKind::Modify(ModifyKind::Name(notify::event::RenameMode::Any)),
+    ] {
+        assert!(changes_names(kind, true), "{kind:?} must invalidate names");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn root_modification_received_before_activation_is_delivered_if_activation_wins() {
+    for mode in [Mode::Direct, Mode::Recursive] {
+        let root = PathBuf::from(r"C:\registration\racing");
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let received = Arc::clone(&notices);
+        let source = Source::new(
+            HashSet::from([root.clone()]),
+            mode,
+            Arc::new(move |notice| received.lock().unwrap().push(notice)),
+        );
+        // The callback captured its receipt state, but activation completed
+        // before classification/defer_change. Exercise that exact ordering.
+        let receipt_state = source.state.load(Ordering::Acquire);
+        assert_eq!(source.activate(), Some(false));
+        source.event_received(
+            Ok(Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.clone())),
+            receipt_state,
+        );
+        let delivered = notices.lock().unwrap();
+        assert!(
+            matches!(delivered.as_slice(), [Notice::Changed { path, names: true }] if path == &root)
+        );
+        drop(delivered);
+        notices.lock().unwrap().clear();
+        source.retire();
+        source.event_received(
+            Ok(Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root)),
+            receipt_state,
+        );
+        assert!(notices.lock().unwrap().is_empty());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_root_modification_during_registration_preserves_coverage_and_catches_up() {
+    let root = PathBuf::from(r"C:\registration\quiet");
+    let mut fixture = fixture(Mode::Direct);
+    fixture.native.event_during_watch_once(
+        root.parent().unwrap(),
+        Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.clone()),
+    );
+    fixture.observation.add(&root, true).unwrap();
+    assert!(fixture.observation.healthy(&root));
+    assert_eq!(
+        take_notices(&fixture.notices),
+        vec![
+            RecordedNotice::Invalidated(vec![root.clone()]),
+            RecordedNotice::Restored {
+                roots: vec![root.clone()],
+                refresh: true
+            },
+        ]
+    );
+
+    let generation = fixture.native.latest_generation();
+    fixture.native.emit(
+        generation,
+        Ok(Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.clone())),
+    );
+    assert!(take_notices(&fixture.notices).is_empty());
+    assert!(fixture.observation.healthy(&root));
+    fixture.native.emit(
+        generation,
+        Ok(Event::new(EventKind::Modify(ModifyKind::Any)).add_path(root.join("file.txt"))),
+    );
+    assert_eq!(
+        take_notices(&fixture.notices),
+        vec![RecordedNotice::Changed {
+            path: root.clone(),
+            names: false
+        },]
+    );
+    fixture.native.emit(
+        generation,
+        Ok(Event::new(EventKind::Modify(ModifyKind::Name(
+            notify::event::RenameMode::From,
+        )))
+        .add_path(root.clone())),
+    );
+    assert_eq!(
+        take_notices(&fixture.notices),
+        vec![RecordedNotice::Lost(vec![root]), RecordedNotice::Wake,]
+    );
+}
+
+#[test]
 fn errors_pathless_events_and_rescans_fail_closed_recover_and_ignore_stale_callbacks() {
     let root = PathBuf::from("/watched");
     let mut fixture = fixture(Mode::Direct);

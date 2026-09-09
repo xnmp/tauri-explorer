@@ -32,6 +32,20 @@ const FAULTED: u8 = 2;
 const RETIRED: u8 = 4;
 const DIRTY: u8 = 8;
 
+fn changes_names(kind: EventKind, windows: bool) -> bool {
+    // ReadDirectoryChangesW reports FILE_ACTION_MODIFIED as Modify(Any).
+    // Names have separate add/remove/rename actions on this backend.
+    if windows && kind == EventKind::Modify(notify::event::ModifyKind::Any) {
+        return false;
+    }
+    !matches!(
+        kind,
+        EventKind::Modify(
+            notify::event::ModifyKind::Data(_) | notify::event::ModifyKind::Metadata(_)
+        )
+    )
+}
+
 struct Source {
     // A new source latches faults before activation. Retired sources reject new
     // callbacks; an already accepted callback may finish conservative invalidation.
@@ -105,7 +119,10 @@ impl Source {
         }
     }
     fn event(&self, result: notify::Result<Event>) {
-        if self.state.load(Ordering::Acquire) & RETIRED != 0 {
+        self.event_received(result, self.state.load(Ordering::Acquire));
+    }
+    fn event_received(&self, result: notify::Result<Event>, received_state: u8) {
+        if received_state & RETIRED != 0 {
             return;
         }
         let event = match result {
@@ -129,15 +146,28 @@ impl Source {
         if event.kind.is_access() {
             return;
         }
-        // Unknown changes may include renames; only explicit content/metadata
-        // changes can preserve a name/path cache and the identity of its root.
-        let names = !matches!(
-            event.kind,
-            EventKind::Modify(
-                notify::event::ModifyKind::Data(_) | notify::event::ModifyKind::Metadata(_)
-            )
-        );
+        // Preserve root identity for content/metadata notifications, including
+        // Windows' generic modification action. Unknown actions stay conservative.
+        let names = changes_names(event.kind, cfg!(target_os = "windows"));
         let roots = self.roots.read().unwrap();
+        let mut changed = HashSet::new();
+        if cfg!(target_os = "windows")
+            && received_state & ACTIVE == 0
+            && event.kind == EventKind::Modify(notify::event::ModifyKind::Any)
+        {
+            // Before root registration, the parent can be our only observer.
+            // A root timestamp change may cover child churn in that gap. Keep
+            // a catch-up scan without declaring identity lost. Use the normal
+            // delivery path if activation wins before we can latch DIRTY.
+            changed.extend(
+                event
+                    .paths
+                    .iter()
+                    .filter(|path| roots.contains(*path))
+                    .cloned(),
+            );
+        }
+        let registration_change = !changed.is_empty();
         if names
             && event.paths.iter().any(|path| {
                 roots
@@ -151,10 +181,9 @@ impl Source {
             self.fault();
             return;
         }
-        if self.mode == Mode::Recursive && !names {
+        if self.mode == Mode::Recursive && !names && !registration_change {
             return;
         }
-        let mut changed = HashSet::new();
         for path in &event.paths {
             match self.mode {
                 Mode::Direct => {
@@ -170,6 +199,7 @@ impl Source {
             }
         }
         drop(roots);
+        let names = names || registration_change;
         if !changed.is_empty() && self.defer_change() {
             log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
                 "directory source={:p} classification=deferred changed={changed:?}", self);

@@ -30,7 +30,13 @@ fn native_observer(
                     .map_err(|error| AppError::Other(error.to_string()))?,
             )
         };
-    target::install(target, |root, mode| watcher.watch(root, mode))?;
+    target::install(target, |root, mode| {
+        let result = watcher.watch(root, mode);
+        log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+            "git physical registration key={:?} path={root:?} mode={mode:?} result={result:?}",
+            target.key);
+        result
+    })?;
     Ok(Box::new(watcher))
 }
 

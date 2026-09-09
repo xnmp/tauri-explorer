@@ -18,6 +18,19 @@ fn repo() -> TempDir {
     dir
 }
 
+fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
 fn run<F: std::future::Future>(future: F) -> F::Output {
     tokio::runtime::Builder::new_current_thread()
         .enable_time()
@@ -411,6 +424,70 @@ fn native_observer_recovers_after_root_moves_and_observes_worktree_lock_files() 
     while changed.try_recv().is_ok() {}
     std::fs::write(dir.path().join("Cargo.lock"), "changed after recovery").unwrap();
     assert_eq!(receive(&changed), lease.repo_root);
+    run(service.release(&owner, lease.id)).unwrap();
+    run(service.release(&owner, second.id)).unwrap();
+}
+
+#[test]
+fn native_observer_watches_descendants_of_a_copied_replacement_root() {
+    let dir = repo();
+    let destination = TempDir::new().unwrap();
+    let retired = destination.path().join("retired");
+    let proof_path = dir.path().join(".git").join("post-recovery-proof");
+    let (installed_tx, installed) = mpsc::channel();
+    let (changed_tx, changed) = mpsc::channel();
+    let (proof_tx, proof) = mpsc::channel();
+    let watched_proof = proof_path.clone();
+    let owner = Owner::default();
+    let service = Service::spawn(
+        Box::new(move |target, callback| {
+            let proof_tx = proof_tx.clone();
+            let watched_proof = watched_proof.clone();
+            let observer = super::native_observer(
+                target,
+                Box::new(move |event| {
+                    if event
+                        .as_ref()
+                        .is_ok_and(|event| event.paths.iter().any(|path| path == &watched_proof))
+                    {
+                        let _ = proof_tx.send(());
+                    }
+                    callback(event);
+                }),
+            )?;
+            installed_tx.send(()).unwrap();
+            Ok(observer)
+        }),
+        Box::new(move |key| {
+            changed_tx.send(key.to_owned()).unwrap();
+            Ok(())
+        }),
+        Timing {
+            debounce: Duration::from_millis(5),
+            retry: Duration::from_millis(5),
+            retry_cap: Duration::from_millis(20),
+        },
+    )
+    .unwrap();
+    let path = dir.path().to_path_buf();
+    let path_string = path.to_string_lossy().into_owned();
+    let lease = run(service.acquire(&owner, path_string.clone())).unwrap();
+    receive(&installed);
+
+    std::fs::rename(&path, &retired).unwrap();
+    assert_eq!(receive(&changed), lease.repo_root);
+    copy_tree(&retired, &path);
+    receive(&installed);
+    assert_eq!(receive(&changed), lease.repo_root);
+
+    // Recovery must cover the replacement tree, rather than merely publishing
+    // the refresh caused by losing the original root.
+    let second = run(service.acquire(&owner, path_string)).unwrap();
+    while changed.try_recv().is_ok() {}
+    std::fs::write(proof_path, "changed").unwrap();
+    receive(&proof);
+    assert_eq!(receive(&changed), lease.repo_root);
+
     run(service.release(&owner, lease.id)).unwrap();
     run(service.release(&owner, second.id)).unwrap();
 }

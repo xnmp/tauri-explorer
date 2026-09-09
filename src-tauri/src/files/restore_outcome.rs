@@ -2,9 +2,12 @@
 //!
 //! `HRESULT::is_ok` is deliberately insufficient here: the Shell copy engine
 //! uses non-negative status codes for skipped and deferred work. Only an exact
-//! `S_OK` item callback with an actual destination proves this restore.
+//! status with an authoritative, matching destination proves this restore.
 
 use std::path::PathBuf;
+
+const S_OK: i32 = 0;
+const COPYENGINE_S_DONT_PROCESS_CHILDREN: i32 = 0x0027_0008;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ItemCompletion {
@@ -61,7 +64,7 @@ pub(crate) fn classify_completion(evidence: CompletionEvidence) -> RestoreOutcom
     }
     match &evidence.item {
         ItemCompletion::One {
-            hresult: 0,
+            hresult: S_OK | COPYENGINE_S_DONT_PROCESS_CHILDREN,
             actual_path: Ok(_),
             requested_matches_actual: true,
         } => RestoreOutcome::Exact,

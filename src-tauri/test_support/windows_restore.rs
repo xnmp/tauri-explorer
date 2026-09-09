@@ -31,6 +31,39 @@ fn exact_item_callback_is_authoritative_over_global_operation_status() {
 }
 
 #[test]
+fn exact_dont_process_children_with_matching_destination_is_exact() {
+    assert_eq!(
+        classify_completion(evidence(ItemCompletion::One {
+            hresult: 0x0027_0008,
+            actual_path: Ok(PathBuf::from("C:/restored/item.txt")),
+            requested_matches_actual: true,
+        })),
+        RestoreOutcome::Exact
+    );
+}
+
+#[test]
+fn dont_process_children_without_exact_destination_remains_uncertain() {
+    for item in [
+        ItemCompletion::One {
+            hresult: 0x0027_0008,
+            actual_path: Ok(PathBuf::from("C:/restored/item (2).txt")),
+            requested_matches_actual: false,
+        },
+        ItemCompletion::One {
+            hresult: 0x0027_0008,
+            actual_path: Err("null created item".into()),
+            requested_matches_actual: false,
+        },
+    ] {
+        assert!(matches!(
+            classify_completion(evidence(item)),
+            RestoreOutcome::Uncertain(_)
+        ));
+    }
+}
+
+#[test]
 fn mismatched_destination_reports_actual_path_without_claiming_the_cause() {
     let actual = PathBuf::from("C:/restored/item (2).txt");
     let outcome = classify_completion(evidence(ItemCompletion::One {
@@ -60,6 +93,18 @@ fn shell_success_status_that_can_mean_skipped_is_not_a_completion() {
         panic!("a skipped Shell status must remain uncertain");
     };
     assert!(message.contains("0x00270005"));
+}
+
+#[test]
+fn arbitrary_nonnegative_status_with_matching_destination_is_not_exact() {
+    let outcome = classify_completion(evidence(ItemCompletion::One {
+        hresult: 0x0027_000B,
+        actual_path: Ok(PathBuf::from("C:/restored/item.txt")),
+        requested_matches_actual: true,
+    }));
+
+    assert!(matches!(outcome, RestoreOutcome::Uncertain(message)
+        if message.contains("0x0027000B")));
 }
 
 #[test]
@@ -166,12 +211,17 @@ mod native {
         // GetTempPath may use 8.3 ancestors while Shell inventory expands them.
         // Resolve the surviving parent, keeping the deleted leaf (including a
         // symlink) untouched, then compare the supported native spellings.
-        let expected = fs::canonicalize(path.parent().expect("fixture parent"))
-            .expect("resolve fixture parent")
-            .join(path.file_name().expect("fixture leaf"));
+        let expected_parent = fs::canonicalize(path.parent().expect("fixture parent"))
+            .expect("resolve fixture parent");
+        let expected = expected_parent.join(path.file_name().expect("fixture leaf"));
         let expected = WindowsPathKey::new(&expected);
-        trash::os_limited::list()
-            .expect("list Recycle Bin")
+        let items = trash::os_limited::list().expect("list Recycle Bin");
+        let same_leaf: Vec<_> = items
+            .iter()
+            .filter(|item| item.original_path().file_name() == path.file_name())
+            .map(|item| item.original_path())
+            .collect();
+        items
             .into_iter()
             .filter(|item| {
                 WindowsPathKey::new(&item.original_path())
@@ -179,7 +229,11 @@ mod native {
                     .is_ok_and(|ordering| ordering == Ordering::Equal)
             })
             .max_by_key(|item| item.time_deleted)
-            .expect("trashed fixture")
+            .unwrap_or_else(|| {
+                panic!(
+                    "trashed fixture missing: expected raw {path:?}, canonical parent {expected_parent:?}, same-leaf inventory originals {same_leaf:?}"
+                )
+            })
     }
 
     #[test]

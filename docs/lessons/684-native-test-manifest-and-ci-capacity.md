@@ -85,6 +85,37 @@ Collect all independent Windows contract families even after one fails, retain
 a failing final exit status, and run lint and GUI smoke when their build/driver
 prerequisites succeeded. Never turn these checks into `continue-on-error` gates.
 
+The completed `a5fced4b` run confirmed deletion receipts and Git trash paths,
+then exposed the same `0x00270008` on restore-side `PostMoveItem`. Its exact
+destination is authoritative only when it matches the request; do not generalize
+this to every nonnegative status. Native restore tests must still prove bytes,
+directory descendants and symlinks after the classifier accepts the callback.
+
+Windows notify maps `FILE_ACTION_MODIFIED` to `Modify(Any)`, whereas add/remove
+and rename have distinct actions. An active root modification does not establish
+identity loss. During registration, however, a nonrecursive parent may be the
+only observer and its root timestamp change may cover child churn. Capture the
+callback's receipt state: retain a catch-up while pending, or deliver a root
+invalidation if activation wins before the dirty latch. Ignoring that race loses
+the notification. Preserve the same protection for recursive filename caches.
+See [FILE_NOTIFY_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-file_notify_information)
+and [ReadDirectoryChangesW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-readdirectorychangesw).
+
+Copied-root watcher regressions must require receipt of the exact post-recovery
+write before accepting a service invalidation. Merely draining a channel is not
+enough: delayed native copy events can arrive afterward and falsely satisfy it.
+
+FilePicker's old private slash splitting turned a drive path into `/C:\\...`.
+Reuse the cross-platform breadcrumb parser, retain drive/UNC roots, and assert
+the path returned by Select as well as the columns. Browser mock coverage does
+not establish real Windows or network directory contents.
+
+The terminal-resize native test must create its own nonempty directory. A
+persisted startup directory can be empty or removed by an earlier spec. Tauri
+application logs also live outside the checkout: copy only the configured app's
+`logs` directory into artifacts, or existing frontend launch diagnostics are lost
+when WebKitWebDriver does not forward the application stdout.
+
 Animation tests must establish their target lifecycle before browser round trips
 consume it. For rapid tab-close Undo, capture Svelte's public `outrostart`, then
 inspect animations in a microtask after that task registers them. Hold the exact

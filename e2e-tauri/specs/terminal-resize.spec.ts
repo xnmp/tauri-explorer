@@ -1,11 +1,21 @@
 import { browser, $, expect } from "@wdio/globals";
-import { domText } from "./helpers";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { domText, navigateTo } from "./helpers";
+
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-terminal-resize-"));
+const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
 
 /** Real WebKitGTK, PTY output/scrollback, and pointer capture under root zoom. */
 (process.platform === "linux" ? describe : describe.skip)("native terminal resizing", () => {
+  before(() => fs.writeFileSync(fixtureEntry, "terminal resize fixture"));
+  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+
   it("keeps a zoomed drag continuous with scrollback and the shell usable after keyboard resize", async () => {
     await browser.setWindowSize(1280, 900);
-    const entry = await $(".explorer-pane.active .entry-item");
+    await navigateTo(scratch);
+    const entry = await $(`.explorer-pane.active .entry-item[data-path="${fixtureEntry}"]`);
     await entry.waitForDisplayed();
     await entry.click();
     for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);

@@ -299,15 +299,72 @@ This closes release-profile, foreground-only and same-binary warm measurement
 gaps. It does **not** meet the half-bounce target or establish presented-frame or
 input latency. Shared-runner OS caches are uncontrolled; earlier debug numbers
 are not a comparable baseline from which to claim a code-induced speedup.
+The measured cold-start gap and phase attribution/interactive-Mac acceptance
+follow-up are now [#696](https://github.com/xnmp/tauri-explorer/issues/696), keeping
+further optimization outside this frozen release-fix pass. The earlier #688
+qualification-tooling issue was completed by #689; that does not establish the
+half-bounce target. Existing native release blockers remain in #684.
 
 At this head, frontend validation passed 2,417 unit tests (three skipped), 30
 performance tests, typecheck, architecture lint and the bundle budget. Both
 Chromium shards passed: 389 clean passes plus 387 passes and one accepted retry.
 Rust passed 1,155 default-policy and 1,153 opt-in library tests, each with 19
 ignored tests and nine passing integration tests; strict Clippy and code maps
-passed. The separate performance workflow passed. WebKit and native gates remain
-live at this checkpoint; the local rejection-fixture fix `8586faaf` is outside
-these run identities and still needs native execution.
+passed. The separate performance workflow passed. WebKit accepted 745 applicable
+tests (one retry), with 32 skipped, and both protected browser aggregates passed.
+The local rejection-fixture fix `8586faaf` is outside these run identities.
+
+The completed [native run](https://github.com/xnmp/tauri-explorer/actions/runs/34340731336)
+passed 32/36 Linux spec files and 30/35 Windows spec files. Windows native path,
+deletion-receipt and Git-trash contracts now pass, as does MSVC strict Clippy.
+Batch and restore contracts still fail: restore callbacks report the exact
+requested destination with `0x00270008`, and two legacy inventory fixtures cannot
+find their deleted item. Linux watcher recovery, renderer reclamation and transfer
+rejection pass; Linux concurrent-window creation remains unresolved.
+
+## Bounded corrections after `a5fced4b`
+
+- Restore classification accepts the observed `COPYENGINE_S_DONT_PROCESS_CHILDREN`
+  move status only with an authoritative matching destination. Unsafe transfer
+  flags, ambiguous callbacks, mismatches and other positive statuses remain
+  uncertain. Thirteen portable contracts pass; independent review accepts the
+  narrow policy. Native directory contents, bytes and symlinks still need proof.
+  The legacy inventory finder now logs expected and candidate paths on failure;
+  its matching policy is unchanged pending actual evidence.
+- FilePicker reuses the existing cross-platform breadcrumb parser instead of
+  prepending `/` to Windows paths. Drive and UNC navigation retain their roots
+  and return the selected native path. The new browser regression fails on the
+  pre-fix component (two columns instead of four); all ten picker tests pass with
+  the fix. [Browser evidence](../screenshots/refactor/repo-health-cleanup/file-picker-windows-path.png)
+  demonstrates UNC columns and selection, not real network filesystem contents.
+- Windows root `Modify(Any)` notifications no longer imply lost root identity.
+  Active child modifications still refresh direct listings. Notifications received
+  during registration retain a conservative catch-up, including when activation
+  wins before classification; pending root changes also invalidate recursive
+  filename caches. Independent review exposed and corrected that race. The quiet
+  initial scan-count gate remains open; its assertions have not been relaxed.
+- A native copied-root Git regression requires receipt of the exact post-recovery
+  descendant write before accepting service invalidation. It passes on Linux;
+  Windows CI now runs native watcher and observation contracts. Debug logs record
+  each physical registration. The Windows Git failure is not yet fixed: recovery
+  completes, then no descendant event arrives. The small-copy regression does not
+  force a copy/registration overlap.
+- The Linux terminal-resize fixture now creates and navigates to its own nonempty
+  directory. The remaining Linux SCM chord, panel text and concurrent-window
+  failures need native diagnosis. CI now collects Tauri's actual application log
+  directory, including existing frontend launch-failure diagnostics; previously
+  the checkout-relative artifact paths produced no Linux artifact.
+
+These corrections require a fresh native run. PR #684 remains draft and is not
+release-accepted. Broader startup optimization remains #696; no further feature
+or architecture expansion is included here.
+
+Local final validation: 13 restore, 14 observation and 18 Git-watch tests pass
+(one manual Git measurement ignored), alongside Linux/Windows GNU all-target
+strict Clippy, Svelte and native TypeScript, architecture lint, formatting and
+485/485 map coverage. The startup bundle remains within budget at 49 chunks /
+220,403 gzip bytes. Windows-only observation tests compile; the native gate must
+execute them. Independent review accepts the final activation/retirement paths.
 
 ## Release stabilization — preceding checkpoint
 

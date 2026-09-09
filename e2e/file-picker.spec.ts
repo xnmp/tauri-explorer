@@ -141,6 +141,47 @@ test.describe("File picker mode", () => {
       }),
     ).toBeVisible();
   });
+
+  test("preserves Windows drive and UNC roots through navigation and selection", async ({ page }) => {
+    const driveFolder = "C:\\Users\\runneradmin\\picker-fixture";
+    await page.goto(
+      `/?picker=open&token=windows-paths&multiple=0&directory=1&folder=${encodeURIComponent(driveFolder)}`,
+    );
+
+    const columns = page.locator(".column");
+    await expect(columns).toHaveCount(4);
+    expect(await columns.evaluateAll((items) =>
+      items.map((item) => (item as HTMLElement).dataset.path),
+    )).toEqual([
+      "C:\\",
+      "C:\\Users",
+      "C:\\Users\\runneradmin",
+      driveFolder,
+    ]);
+    await page.locator(".btn-select").click();
+    expect(await readResponse(page)).toMatchObject({
+      token: "windows-paths",
+      cancelled: false,
+      paths: [driveFolder],
+    });
+
+    await page.evaluate(() => localStorage.removeItem("mock-picker-response"));
+    const uncFolder = "\\\\server\\share\\folder";
+    const address = page.locator(".address-input");
+    await address.fill(uncFolder);
+    await address.press("Enter");
+
+    await expect(columns).toHaveCount(2);
+    expect(await columns.evaluateAll((items) =>
+      items.map((item) => (item as HTMLElement).dataset.path),
+    )).toEqual(["\\\\server\\share", uncFolder]);
+    await page.locator(".btn-select").click();
+    expect(await readResponse(page)).toMatchObject({
+      token: "windows-paths",
+      cancelled: false,
+      paths: [uncFolder],
+    });
+  });
 });
 
 test.describe("Picker quick open (#190)", () => {

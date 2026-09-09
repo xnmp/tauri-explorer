@@ -117,13 +117,13 @@ jobs:
       # Linux mocks and Rust cfg checks cannot prove Shell completion or
       # destination preservation. Exercise the actual Windows adapter, including
       # a collision introduced after MoveItem queues the restore.
-      - name: Windows native restore contracts
+      - name: Windows native restore and watcher contracts
         if: runner.os == 'Windows'
         shell: bash
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
           contract_status=0
-          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked; do
+          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked files::watch_observation:: git_watch::tests::native_observer; do
             # Cargo succeeds with zero matching tests. Fail explicitly when a
             # source/module move leaves one of these acceptance filters stale.
             if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then
@@ -172,6 +172,28 @@ jobs:
           VITE_E2E_NO_WARM_PRIME: "1"
           RUST_LOG: debug
         run: bun run test:e2e:tauri
+
+      # Tauri writes frontend/native failures outside the checkout. In particular,
+      # WebKitWebDriver need not forward the app's stdout to tauri-driver.
+      - name: Collect native application logs
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          const data = process.platform === 'win32'
+            ? process.env.LOCALAPPDATA
+            : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+          if (!data) throw new Error('Native application data directory is unavailable');
+          const source = path.join(data, 'io.github.xnmp.tauri-explorer', 'logs');
+          if (fs.existsSync(source)) {
+            fs.cpSync(source, 'e2e-tauri/logs/application', { recursive: true });
+          } else {
+            console.log(`No native application logs at ${source}`);
+          }
+          JS
 
       - name: Upload WDIO logs
         if: always()

@@ -86,6 +86,10 @@ cycle, and scenario, records it in the JSON report, and fails the command.
 The required expected-display-scale value makes a DPI qualification leg fail
 instead of silently running at the wrong native runner scale.
 
+The report retains `SOAK_SEED` exactly for replay and ordering. Artifact names
+use a bounded readable form plus a hash, and the runner rejects any resolved
+report, log, or screenshot directory outside `qualification-results/`.
+
 This runner supports Linux/WebKitGTK and Windows/WebView2. It makes no macOS UI
 claim because WKWebView has no supported tauri-driver backend. The real macOS
 process gate in `.github/workflows/macos-smoke.yml` runs 30 cold plus

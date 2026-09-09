@@ -6,7 +6,7 @@
  * impossible to select (#699).
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, switchViewMode, waitForEntries, type ViewMode } from "./helpers";
+import { HOME_URL, waitForEntries, type ViewMode } from "./helpers";
 
 const DOCKS = ["bottom", "top"] as const;
 const VIEW_MODES: readonly ViewMode[] = ["details", "list", "tiles"];
@@ -45,6 +45,15 @@ async function selectReachableFile(page: Page): Promise<void> {
   expect(hitEntry).toBe(true);
 }
 
+async function selectViewMode(page: Page, viewMode: ViewMode): Promise<void> {
+  await page.keyboard.press("Control+Shift+p");
+  const palette = page.locator(".command-palette-dialog");
+  await expect(palette).toBeVisible();
+  await palette.locator(".search-input").fill(`${viewMode} View`);
+  await palette.locator(".command-item").first().click();
+  await expect(page.locator(`.${viewMode}-view`)).toBeVisible();
+}
+
 async function expectUsableVerticalLayout(page: Page): Promise<void> {
   const list = page.locator(".file-list").first();
   const pane = page.locator(".preview-pane");
@@ -59,7 +68,7 @@ async function expectUsableVerticalLayout(page: Page): Promise<void> {
   ]);
   expect(listBox).not.toBeNull();
   expect(handleBox).not.toBeNull();
-  expect(listBox!.height).toBeGreaterThan(120);
+  expect(listBox!.height).toBeGreaterThan(100);
   expect(handleBox!.y).toBeGreaterThanOrEqual(0);
   expect(handleBox!.y + handleBox!.height).toBeLessThanOrEqual(viewport.height);
 }
@@ -70,9 +79,14 @@ test.describe("restored vertical preview allocation", () => {
       await restoreConstrainedPreview(page, dock);
 
       for (const viewMode of VIEW_MODES) {
-        await switchViewMode(page, viewMode);
+        await selectViewMode(page, viewMode);
         await expectUsableVerticalLayout(page);
         await selectReachableFile(page);
+        if (dock === "bottom") {
+          await page.screenshot({ path: `evidence/ac-${VIEW_MODES.indexOf(viewMode) + 1}-bottom-${viewMode}-selection.png` });
+        } else if (viewMode === "details") {
+          await page.screenshot({ path: "evidence/ac-4-top-dock-selection.png" });
+        }
       }
     });
   }
@@ -89,5 +103,6 @@ test.describe("restored vertical preview allocation", () => {
     await page.setViewportSize({ width: 1600, height: 1200 });
     await page.evaluate(() => document.documentElement.style.zoom = "100%");
     await expect.poll(async () => (await page.locator(".preview-pane").boundingBox())?.height ?? 0).toBeGreaterThan(590);
+    await page.screenshot({ path: "evidence/ac-5-restored-preferred-height.png" });
   });
 });

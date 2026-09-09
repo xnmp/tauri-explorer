@@ -638,7 +638,13 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       <PaneContainer />
       {#if settingsStore.showPreviewPane}
         {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
-          <div class="preview-island" class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}>
+          <div
+            class="preview-island"
+            class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}
+            style={settingsStore.resolvedPreviewPanePosition !== "right"
+              ? `height: min(${settingsStore.previewPaneHeight || 240}px, max(4px, calc(100% - 120px)));`
+              : undefined}
+          >
             <PreviewPane />
           </div>
         {/await}

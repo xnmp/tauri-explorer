@@ -15,7 +15,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { resolveLaunchHomePath, startWindowTitleSync } from "$lib/state/window-title.svelte";
-  import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
+  import { markStartup, reportStartupReady } from "$lib/state/startup-timing";
   import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
@@ -401,19 +401,34 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     };
   })();
 
-  // Cold-start timing: fire once when the first directory listing is visible
-  // (active explorer has entries and is no longer loading). Reports a summary
-  // to the Rust log so it sits next to the backend `Startup:` line. Idempotent
-  // via reportFirstPaint's internal guard; the effect just stops reading once
-  // it has fired. See src/lib/state/startup-timing.ts.
-  let firstPaintReported = false;
+  // Readiness requires configured settings, registered commands, and a
+  // completed listing (including an empty directory). Two frame callbacks let
+  // Svelte commit the functional UI before IPC; they are not evidence that the
+  // operating-system compositor presented pixels.
+  let firstPaintReported = $state(false);
+  let commandsReady = $state(false);
+  let settingsReady = $state(false);
+  let listingReadyReported = $state(false);
+  let readinessFrameScheduled = false;
   $effect(() => {
-    if (firstPaintReported) return;
+    if (listingReadyReported) return;
     const explorer = windowTabsManager.getActiveExplorer();
-    if (explorer && !explorer.state.loading && explorer.displayEntries.length > 0) {
-      firstPaintReported = true;
-      reportFirstPaint();
-    }
+    if (!explorer?.currentPath || explorer.state.loading || explorer.state.error) return;
+    listingReadyReported = true;
+    markStartup("list-ready");
+  });
+  $effect(() => {
+    if (firstPaintReported || readinessFrameScheduled || !commandsReady || !settingsReady) return;
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (!explorer?.currentPath || explorer.state.loading || explorer.state.error) return;
+    readinessFrameScheduled = true;
+    markStartup("app-ready");
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        firstPaintReported = true;
+        reportStartupReady();
+      });
+    });
   });
 
   onMount(() => {
@@ -479,6 +494,8 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     settingsStore.init().then(() => {
       themeStore.syncFromSettings();
       void pluginRegistry.initPlugins();
+      markStartup("settings-ready");
+      settingsReady = true;
     });
     bookmarksStore.init();
     folderViewsStore.init();
@@ -554,7 +571,11 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     }
 
     // Register all commands for the command palette (deferred to next tick)
-    queueMicrotask(() => registerAllCommands());
+    queueMicrotask(() => {
+      registerAllCommands();
+      markStartup("commands-ready");
+      commandsReady = true;
+    });
 
     // Once this window is idle, prime the global warm-window pool so the next
     // Ctrl+N activates a pre-warmed window instead of paying webview-create

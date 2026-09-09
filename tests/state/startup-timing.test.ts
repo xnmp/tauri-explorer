@@ -22,7 +22,7 @@ vi.mock(import("../../src/lib/api/common"), async (importOriginal) => {
 (globalThis as { window?: unknown }).window = (globalThis as { window?: unknown }).window ?? {};
 (window as { __BOOT_T0__?: number }).__BOOT_T0__ = 0;
 
-import { markStartup, reportFirstPaint } from "../../src/lib/state/startup-timing";
+import { markStartup, reportStartupReady } from "../../src/lib/state/startup-timing";
 
 beforeEach(() => {
   invokeMock.mockClear();
@@ -32,7 +32,7 @@ describe("startup-timing", () => {
   it("forwards a single summary to log_startup_timing on first report", () => {
     markStartup("bundle-exec");
     markStartup("mount");
-    reportFirstPaint();
+    reportStartupReady();
 
     expect(invokeMock).toHaveBeenCalledTimes(1);
     const [cmd, args] = invokeMock.mock.calls[0];
@@ -41,15 +41,16 @@ describe("startup-timing", () => {
     expect(summary).toContain("Startup(webview):");
     expect(summary).toContain("bundle-exec=");
     expect(summary).toContain("mount=");
-    expect(summary).toContain("list-visible=");
+    expect(summary).toContain("boot-epoch-ms=");
+    expect(summary).toContain("ui-ready=");
     expect(summary).toMatch(/total=[\d.]+ms/);
   });
 
   it("is idempotent — repeated reports and late marks do not re-send", () => {
     // (module state persists across tests in-file; first report already fired)
-    reportFirstPaint();
+    reportStartupReady();
     markStartup("too-late");
-    reportFirstPaint();
+    reportStartupReady();
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

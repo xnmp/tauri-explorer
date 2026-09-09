@@ -7,6 +7,12 @@ use std::path::PathBuf;
 use crate::error::AppError;
 use crate::files;
 
+/// Correlates the native monotonic readiness endpoint with webview wall time.
+pub struct StartupClock {
+    pub started: std::time::Instant,
+    pub epoch_ms: f64,
+}
+
 /// Stores the working directory from which the app was launched.
 pub struct LaunchCwd(pub String);
 
@@ -288,8 +294,24 @@ pub fn is_launcher_artifact_cwd(cwd: &std::path::Path, exe_dir: Option<&std::pat
 /// (boot→first directory visible) halves of cold start can be read together
 /// from the log file — durable in release builds without devtools.
 #[tauri::command]
-pub async fn log_startup_timing(summary: String) {
+pub async fn log_startup_timing(
+    window: tauri::Window,
+    clock: tauri::State<'_, StartupClock>,
+    summary: String,
+) -> Result<(), AppError> {
     log::info!("{}", summary);
+    if window.label() == "main" {
+        let receipt_epoch_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs_f64() * 1000.0)
+            .unwrap_or(f64::NAN);
+        log::info!(
+            "Startup(native-ready): app-run-to-ready={:.1}ms receipt-epoch-ms={:.3}",
+            clock.started.elapsed().as_secs_f64() * 1000.0,
+            receipt_epoch_ms,
+        );
+    }
+    Ok(())
 }
 
 /// Set the window theme (light/dark) to sync NSAppearance with the app theme.

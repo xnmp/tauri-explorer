@@ -8,7 +8,7 @@ import {
 
 const attributedLog = [
   "Startup(native-window): app-run-epoch-ms=1000.0 window-built=100.0ms",
-  "Startup(webview): boot-epoch-ms=1300.0 bundle-exec=50.0ms list-ready=400.0ms ui-ready=450.0ms total=450.0ms",
+  "Startup(webview): boot-epoch-ms=1300.0 bundle-exec=50.0ms commands-ready=100.0ms settings-ready=300.0ms list-ready=350.0ms app-ready=400.0ms ui-ready=450.0ms total=450.0ms",
   "Startup(native-ready): app-run-to-ready=810.0ms receipt-epoch-ms=1800.0",
   "Startup(warm-activate): show=4.0ms",
 ].join("\n");
@@ -20,7 +20,8 @@ describe("macOS startup phase attribution", () => {
       readinessTotalMs: 810,
       warmShowMs: 4,
       phases: {
-        frameworkNavigationMs: 300,
+        nativeWindowMs: 100,
+        frameworkNavigationMs: 200,
         documentBootMs: 50,
         requiredAppWorkMs: 350,
         frameSchedulingMs: 50,
@@ -35,7 +36,7 @@ describe("macOS startup phase attribution", () => {
   it("rejects missing and inconsistent observable phase markers", () => {
     expect(() =>
       parseAttributedMacStartupLog(
-        attributedLog.replace(" list-ready=400.0ms", ""),
+        attributedLog.replace(" list-ready=350.0ms", ""),
       ),
     ).toThrow("list-ready");
     expect(() =>
@@ -60,7 +61,8 @@ describe("macOS startup phase attribution", () => {
 
     expect(summarizeMacStartupPhases([first, second])).toMatchObject({
       readinessTotalMs: { p50: 810, p95: 910 },
-      frameworkNavigationMs: { p50: 300, p95: 300 },
+      nativeWindowMs: { p50: 100, p95: 100 },
+      frameworkNavigationMs: { p50: 200, p95: 200 },
       documentBootMs: { p50: 50, p95: 50 },
       requiredAppWorkMs: { p50: 350, p95: 350 },
       frameSchedulingMs: { p50: 50, p95: 50 },

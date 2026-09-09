@@ -117,6 +117,10 @@ pub(crate) fn init_test_logger() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
     let t_start = std::time::Instant::now();
+    let t_start_epoch_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64() * 1000.0)
+        .unwrap_or(f64::NAN);
 
     // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
     #[cfg(target_os = "linux")]
@@ -158,12 +162,16 @@ pub fn run(launch_dir: Option<String>) {
 
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd_for_state))
+        .manage(system::StartupClock {
+            started: t_start,
+            epoch_ms: t_start_epoch_ms,
+        })
         .plugin({
             let mut targets = vec![
                 Target::new(TargetKind::LogDir { file_name: None }),
                 Target::new(TargetKind::Webview),
             ];
-            if cfg!(debug_assertions) {
+            if cfg!(debug_assertions) || std::env::var("TAURI_EXPLORER_LOG_STDOUT").is_ok() {
                 targets.push(Target::new(TargetKind::Stdout));
             }
             tauri_plugin_log::Builder::new()
@@ -473,6 +481,7 @@ pub fn run(launch_dir: Option<String>) {
             }
 
             builder.build()?;
+            let t_window_built = std::time::Instant::now();
 
             // WARM_MEASURE=1: also spawn a hidden measure-mode warm window
             // (see runWarmWindow in warm-window.ts). It boots, self-fires one
@@ -497,6 +506,11 @@ pub fn run(launch_dir: Option<String>) {
                 t_plugins - t_start,
                 t_setup - t_plugins,
                 t_setup - t_start,
+            );
+            log::info!(
+                "Startup(native-window): app-run-epoch-ms={:.3} window-built={:.1}ms",
+                t_start_epoch_ms,
+                (t_window_built - t_start).as_secs_f64() * 1000.0,
             );
             Ok(())
         })

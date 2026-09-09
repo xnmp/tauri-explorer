@@ -1,15 +1,19 @@
 import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import {
   readVerifiedNativeBuildManifest,
+  parseAttributedMacStartupLog,
+  qualifyHalfBounce,
   stopNativeStartupProcess,
   summarizeDurations,
+  summarizeMacStartupPhases,
   waitForMacStartupProcess,
   writeQualificationArtifact,
-  type MacStartupMeasurement,
+  type AttributedMacStartupMeasurement,
 } from "../e2e-tauri/native-qualification";
 
 if (process.platform !== "darwin") {
@@ -18,6 +22,22 @@ if (process.platform !== "darwin") {
 
 const sampleCount = Number(process.env.MAC_STARTUP_SAMPLES ?? "30");
 const timeoutMs = Number(process.env.MAC_STARTUP_TIMEOUT_MS ?? "30000");
+const warmSetting = process.env.MAC_STARTUP_WARM_MEASURE ?? "1";
+if (warmSetting !== "0" && warmSetting !== "1") {
+  throw new Error("MAC_STARTUP_WARM_MEASURE must be 0 or 1");
+}
+const measureWarm = warmSetting === "1";
+const deadlineValue = process.env.MAC_STARTUP_HALF_BOUNCE_DEADLINE_MS;
+const halfBounceDeadlineMs = deadlineValue === undefined ? null : Number(deadlineValue);
+if (halfBounceDeadlineMs !== null && (!Number.isFinite(halfBounceDeadlineMs) || halfBounceDeadlineMs <= 0)) {
+  throw new Error("MAC_STARTUP_HALF_BOUNCE_DEADLINE_MS must be a positive number");
+}
+const firstFunctionalFrame = process.env.MAC_STARTUP_FIRST_FRAME_OBSERVED === "1"
+  ? "observed" as const
+  : "not-observed" as const;
+const inputOutcome = process.env.MAC_STARTUP_INPUT_VERIFIED === "1"
+  ? "verified" as const
+  : "not-verified" as const;
 if (!Number.isInteger(sampleCount) || sampleCount < 2) {
   throw new Error("MAC_STARTUP_SAMPLES must be an integer of at least 2");
 }
@@ -36,28 +56,43 @@ const outputDir = path.resolve(
   process.env.MAC_STARTUP_OUTPUT_DIR ?? "qualification-results/macos-startup",
 );
 fs.mkdirSync(outputDir, { recursive: true });
+const sampleEnvironment: NodeJS.ProcessEnv = {
+  ...process.env,
+  RUST_LOG: "info",
+  TAURI_EXPLORER_LOG_STDOUT: "1",
+};
+delete sampleEnvironment.WARM_MEASURE;
+if (measureWarm) sampleEnvironment.WARM_MEASURE = "1";
 
 async function runSample(
   index: number,
-): Promise<MacStartupMeasurement & { log: string }> {
+): Promise<AttributedMacStartupMeasurement & { log: string }> {
   const logPath = path.join(
     outputDir,
     `sample-${String(index).padStart(2, "0")}.log`,
   );
   let log = "";
   const child = spawn(binary, [], {
-    env: { ...process.env, RUST_LOG: "info", WARM_MEASURE: "1" },
+    env: sampleEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", (chunk) => (log += chunk.toString()));
   child.stderr.on("data", (chunk) => (log += chunk.toString()));
 
   try {
-    const measurement = await waitForMacStartupProcess(child, () => log, {
+    await waitForMacStartupProcess(child, () => log, {
       timeoutMs,
       survivalMs: 5_000,
+      measureWarm,
     });
-    return { ...measurement, log: logPath };
+    return {
+      ...parseAttributedMacStartupLog(log, {
+        firstFunctionalFrame,
+        inputOutcome,
+        measureWarm,
+      }),
+      log: logPath,
+    };
   } finally {
     try {
       await stopNativeStartupProcess(child);
@@ -68,7 +103,7 @@ async function runSample(
 }
 
 const startedAt = new Date().toISOString();
-const samples: Array<MacStartupMeasurement & { log: string }> = [];
+const samples: Array<AttributedMacStartupMeasurement & { log: string }> = [];
 const errors: string[] = [];
 
 for (let index = 1; index <= sampleCount; index += 1) {
@@ -83,14 +118,27 @@ for (let index = 1; index <= sampleCount; index += 1) {
 }
 
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   build,
-  platform: { os: "macos", release: os.release(), arch: os.arch() },
+  platform: {
+    os: "macos",
+    release: os.release(),
+    arch: os.arch(),
+    hardwareModel: execFileSync("/usr/sbin/sysctl", ["-n", "hw.model"], { encoding: "utf8" }).trim(),
+    cpu: os.cpus()[0]?.model ?? "unknown",
+    memoryBytes: os.totalmem(),
+  },
   scenario: {
-    id: "macos-cold-warm-startup",
+    id: measureWarm ? "macos-cold-warm-startup" : "macos-foreground-startup",
     requestedSamples: sampleCount,
     timeoutMs,
-    warmMeasure: true,
+    warmMeasure: measureWarm,
+    launchMethod: "direct verified application binary (Launch Services and Dock unmeasured)",
+    cachePolicy: "fresh process per sample; operating-system caches uncontrolled",
+    focus: "foreground requested; focus outcome not independently observed",
+    visibility: "native window configured visible; compositor presentation not observed",
+    frameCriterion: "two browser animation-frame callbacks after required app work; not proof of presented pixels",
+    inputCriterion: "external interactive input outcome; not exercised by this direct-process probe",
   },
   startedAt,
   finishedAt: new Date().toISOString(),
@@ -98,8 +146,10 @@ const report = {
     samples.map(({ coldTotalMs }) => coldTotalMs),
   ),
   warmActivation: summarizeDurations(
-    samples.map(({ warmShowMs }) => warmShowMs),
+    samples.flatMap(({ warmShowMs }) => warmShowMs === null ? [] : [warmShowMs]),
   ),
+  phaseAttribution: summarizeMacStartupPhases(samples),
+  halfBounce: qualifyHalfBounce(samples, halfBounceDeadlineMs),
   samples,
   artifacts: fs
     .readdirSync(outputDir)

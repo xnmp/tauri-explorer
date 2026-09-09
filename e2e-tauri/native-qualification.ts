@@ -659,11 +659,12 @@ export async function executeQualificationRun<T>(options: {
 
 export interface MacStartupMeasurement {
   coldTotalMs: number;
-  warmShowMs: number;
+  warmShowMs: number | null;
 }
 
 /** Observable phase attribution emitted by the macOS startup qualifier. */
 export interface MacStartupPhases {
+  nativeWindowMs: number;
   frameworkNavigationMs: number;
   documentBootMs: number;
   requiredAppWorkMs: number;
@@ -722,7 +723,202 @@ function durationToMilliseconds(value: string, unit: string): number {
   }
 }
 
-export function parseMacStartupLog(log: string): MacStartupMeasurement {
+function requiredNumber(
+  match: RegExpMatchArray | null,
+  index: number,
+  marker: string,
+): number {
+  if (!match) throw new Error(`${marker} marker missing from macOS process log`);
+  const value = Number(match[index]);
+  if (!Number.isFinite(value)) throw new Error(`${marker} marker is not finite`);
+  return value;
+}
+
+/**
+ * Parse correlated native and webview markers into user-facing phase evidence.
+ * Wall-clock correlation is used only at the two cross-runtime boundaries;
+ * any disagreement with the native monotonic total remains unattributed.
+ */
+export function parseAttributedMacStartupLog(
+  log: string,
+  outcomes: Pick<
+    AttributedMacStartupMeasurement,
+    "firstFunctionalFrame" | "inputOutcome"
+  > & { measureWarm?: boolean } = {
+    firstFunctionalFrame: "not-observed",
+    inputOutcome: "not-verified",
+  },
+): AttributedMacStartupMeasurement {
+  const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
+  const nativeWindow = log.match(
+    new RegExp(
+      `Startup\\(native-window\\):\\s*app-run-epoch-ms=([\\d.]+)\\s+window-built=${duration}`,
+    ),
+  );
+  const webviewLine = log.match(/Startup\(webview\):[^\n]*/)?.[0] ?? null;
+  const ready = log.match(
+    new RegExp(
+      `Startup\\(native-ready\\):\\s*app-run-to-ready=${duration}\\s+receipt-epoch-ms=([\\d.]+)`,
+    ),
+  );
+  const warm = log.match(
+    new RegExp(`Startup\\(warm-activate\\):\\s*show=${duration}`),
+  );
+
+  const appRunEpochMs = requiredNumber(nativeWindow, 1, "native-window");
+  if (!nativeWindow) throw new Error("native-window marker missing from macOS process log");
+  const windowBuiltMs = durationToMilliseconds(nativeWindow[2], nativeWindow[3]);
+  const webviewMarker = (name: string): number =>
+    requiredNumber(
+      webviewLine?.match(new RegExp(`${name}=([\\d.]+)ms`)) ?? null,
+      1,
+      name,
+    );
+  const bootEpochMs = requiredNumber(
+    webviewLine?.match(/boot-epoch-ms=([\d.]+)/) ?? null,
+    1,
+    "boot-epoch-ms",
+  );
+  const bundleExecMs = webviewMarker("bundle-exec");
+  const listReadyMs = webviewMarker("list-ready");
+  const settingsReadyMs = webviewMarker("settings-ready");
+  const commandsReadyMs = webviewMarker("commands-ready");
+  const appReadyMs = webviewMarker("app-ready");
+  const uiReadyMs = webviewMarker("ui-ready");
+  const webviewTotalMs = webviewMarker("total");
+  if (!ready) throw new Error("native-ready marker missing from macOS process log");
+  const readinessTotalMs = durationToMilliseconds(ready[1], ready[2]);
+  const receiptEpochMs = requiredNumber(ready, 3, "receipt-epoch-ms");
+  if (outcomes.measureWarm !== false && !warm) {
+    throw new Error("warm-activate marker missing from macOS process log");
+  }
+  const warmShowMs = outcomes.measureWarm !== false && warm
+    ? durationToMilliseconds(warm[1], warm[2])
+    : null;
+
+  if (
+    bundleExecMs < 0 ||
+    listReadyMs < bundleExecMs ||
+    settingsReadyMs < bundleExecMs ||
+    commandsReadyMs < bundleExecMs ||
+    appReadyMs < Math.max(listReadyMs, settingsReadyMs, commandsReadyMs) ||
+    uiReadyMs < appReadyMs ||
+    webviewTotalMs !== uiReadyMs
+  ) {
+    throw new Error("webview startup markers are not ordered");
+  }
+  const windowBuiltEpochMs = appRunEpochMs + windowBuiltMs;
+  if (bootEpochMs < windowBuiltEpochMs) {
+    throw new Error("document boot precedes the native window-built marker");
+  }
+  const uiReadyEpochMs = bootEpochMs + uiReadyMs;
+  if (receiptEpochMs < uiReadyEpochMs) {
+    throw new Error("readiness receipt precedes the ui-ready marker");
+  }
+
+  const phases: MacStartupPhases = {
+    nativeWindowMs: windowBuiltMs,
+    frameworkNavigationMs: bootEpochMs - windowBuiltEpochMs,
+    documentBootMs: bundleExecMs,
+    requiredAppWorkMs: appReadyMs - bundleExecMs,
+    frameSchedulingMs: uiReadyMs - appReadyMs,
+    readinessIpcMs: receiptEpochMs - uiReadyEpochMs,
+    unattributedMs: 0,
+  };
+  const attributedMs =
+    phases.frameworkNavigationMs +
+    phases.nativeWindowMs +
+    phases.documentBootMs +
+    phases.requiredAppWorkMs +
+    phases.frameSchedulingMs +
+    phases.readinessIpcMs;
+  phases.unattributedMs = Number((readinessTotalMs - attributedMs).toFixed(3));
+
+  return {
+    coldTotalMs: readinessTotalMs,
+    readinessTotalMs,
+    warmShowMs,
+    phases,
+    firstFunctionalFrame: outcomes.firstFunctionalFrame,
+    inputOutcome: outcomes.inputOutcome,
+  };
+}
+
+type CompactDurationSummary = {
+  sampleCount: number;
+  p50: number | null;
+  p95: number | null;
+};
+
+function compactSummary(values: readonly number[]): CompactDurationSummary {
+  const summary = summarizeDurations(values);
+  return {
+    sampleCount: summary.sampleCount,
+    p50: summary.p50Ms,
+    p95: summary.p95Ms,
+  };
+}
+
+export function summarizeMacStartupPhases(
+  samples: readonly AttributedMacStartupMeasurement[],
+): Record<keyof MacStartupPhases | "readinessTotalMs", CompactDurationSummary> {
+  const phase = (key: keyof MacStartupPhases): number[] =>
+    samples.map((sample) => sample.phases[key]);
+  return {
+    readinessTotalMs: compactSummary(samples.map((sample) => sample.readinessTotalMs)),
+    nativeWindowMs: compactSummary(phase("nativeWindowMs")),
+    frameworkNavigationMs: compactSummary(phase("frameworkNavigationMs")),
+    documentBootMs: compactSummary(phase("documentBootMs")),
+    requiredAppWorkMs: compactSummary(phase("requiredAppWorkMs")),
+    frameSchedulingMs: compactSummary(phase("frameSchedulingMs")),
+    readinessIpcMs: compactSummary(phase("readinessIpcMs")),
+    unattributedMs: compactSummary(phase("unattributedMs")),
+  };
+}
+
+export function qualifyHalfBounce(
+  samples: readonly AttributedMacStartupMeasurement[],
+  deadlineMs: number | null,
+): HalfBounceQualification {
+  if (deadlineMs === null) {
+    return {
+      status: "unqualified",
+      deadlineMs,
+      reason: "no measured half-bounce deadline was supplied",
+    };
+  }
+  if (
+    samples.length === 0 ||
+    samples.some(
+      (sample) =>
+        sample.firstFunctionalFrame !== "observed" ||
+        sample.inputOutcome !== "verified",
+    )
+  ) {
+    return {
+      status: "unqualified",
+      deadlineMs,
+      reason: "visible functional-frame and verified-input evidence is incomplete",
+    };
+  }
+  const p95 = summarizeDurations(samples.map((sample) => sample.readinessTotalMs)).p95Ms!;
+  return p95 <= deadlineMs
+    ? {
+        status: "qualified",
+        deadlineMs,
+        reason: `readiness p95 ${p95.toFixed(1)}ms met the measured ${deadlineMs.toFixed(1)}ms deadline`,
+      }
+    : {
+        status: "missed",
+        deadlineMs,
+        reason: `readiness p95 ${p95.toFixed(1)}ms exceeded the measured ${deadlineMs.toFixed(1)}ms deadline`,
+      };
+}
+
+export function parseMacStartupLog(
+  log: string,
+  options: { measureWarm?: boolean } = {},
+): MacStartupMeasurement {
   const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
   const cold = log.match(new RegExp(`Startup:.*?total=${duration}`));
   const warm = log.match(
@@ -730,18 +926,26 @@ export function parseMacStartupLog(log: string): MacStartupMeasurement {
   );
   if (!cold)
     throw new Error("cold Startup marker missing from macOS process log");
-  if (!warm)
+  if (options.measureWarm !== false && !warm)
     throw new Error("warm-activate marker missing from macOS process log");
   return {
     coldTotalMs: durationToMilliseconds(cold[1], cold[2]),
-    warmShowMs: durationToMilliseconds(warm[1], warm[2]),
+    warmShowMs:
+      options.measureWarm !== false && warm
+        ? durationToMilliseconds(warm[1], warm[2])
+        : null,
   };
 }
 
 export function waitForMacStartupProcess(
   child: NativeStartupChild,
   readLog: () => string,
-  options: { timeoutMs: number; survivalMs: number; pollMs?: number },
+  options: {
+    timeoutMs: number;
+    survivalMs: number;
+    pollMs?: number;
+    measureWarm?: boolean;
+  },
 ): Promise<MacStartupMeasurement> {
   return new Promise((resolve, reject) => {
     let completed = false;
@@ -789,7 +993,7 @@ export function waitForMacStartupProcess(
     const inspectLog = (): void => {
       if (survivalTimer || completed) return;
       try {
-        succeedAfterSurvival(parseMacStartupLog(readLog()));
+        succeedAfterSurvival(parseMacStartupLog(readLog(), options));
       } catch {
         // Both native markers are required; keep collecting until the bound.
       }

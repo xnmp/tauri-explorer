@@ -82,6 +82,10 @@ jobs:
         shell: bash
         run: bun install --frozen-lockfile
 
+      - name: Typecheck native suite
+        shell: bash
+        run: bun run check:e2e:tauri
+
       # Build through the Tauri CLI, not `cargo build`. A bare cargo debug
       # build omits the `tauri/custom-protocol` feature, so the binary serves
       # `build.devUrl` (localhost:1420) and the suite silently needs a Vite dev

@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   readVerifiedNativeBuildManifest,
   buildMacStartupQualificationReport,
+  loadInteractiveMacStartupEvidence,
   parseAttributedMacStartupLog,
   resolveQualificationArtifactPath,
   stopNativeStartupProcess,
@@ -21,13 +22,15 @@ if (process.platform !== "darwin") {
 
 const sampleCount = Number(process.env.MAC_STARTUP_SAMPLES ?? "30");
 const timeoutMs = Number(process.env.MAC_STARTUP_TIMEOUT_MS ?? "30000");
-const warmSetting = process.env.MAC_STARTUP_WARM_MEASURE ?? "1";
+const warmSetting =
+  process.env.MAC_STARTUP_WARM_MEASURE ??
+  (process.env.MAC_STARTUP_INTERACTIVE_EVIDENCE ? "0" : "1");
 if (warmSetting !== "0" && warmSetting !== "1") {
   throw new Error("MAC_STARTUP_WARM_MEASURE must be 0 or 1");
 }
 const measureWarm = warmSetting === "1";
 const deadlineValue = process.env.MAC_STARTUP_HALF_BOUNCE_DEADLINE_MS;
-const halfBounceDeadlineMs = deadlineValue === undefined ? null : Number(deadlineValue);
+let halfBounceDeadlineMs = deadlineValue === undefined ? null : Number(deadlineValue);
 if (halfBounceDeadlineMs !== null && (!Number.isFinite(halfBounceDeadlineMs) || halfBounceDeadlineMs <= 0)) {
   throw new Error("MAC_STARTUP_HALF_BOUNCE_DEADLINE_MS must be a positive number");
 }
@@ -56,6 +59,24 @@ const outputDir = resolveQualificationArtifactPath(
   requestedOutputDir,
 );
 fs.mkdirSync(outputDir, { recursive: true });
+const hardwareModel = execFileSync("/usr/sbin/sysctl", ["-n", "hw.model"], {
+  encoding: "utf8",
+}).trim();
+const interactiveEvidence = process.env.MAC_STARTUP_INTERACTIVE_EVIDENCE
+  ? loadInteractiveMacStartupEvidence(
+      process.env.MAC_STARTUP_INTERACTIVE_EVIDENCE,
+      qualificationRoot,
+      build,
+      hardwareModel,
+      sampleCount,
+    )
+  : null;
+if (interactiveEvidence && measureWarm) {
+  throw new Error("interactive Launch Services evidence cannot be combined with the warm-window probe");
+}
+if (interactiveEvidence) {
+  halfBounceDeadlineMs = interactiveEvidence.halfBounceDeadlineMs;
+}
 const sampleEnvironment: NodeJS.ProcessEnv = {
   ...process.env,
   RUST_LOG: "info",
@@ -108,42 +129,83 @@ const startedAt = new Date().toISOString();
 const samples: Array<AttributedMacStartupMeasurement & { log: string }> = [];
 const errors: string[] = [];
 
-for (let index = 1; index <= sampleCount; index += 1) {
-  try {
-    samples.push(await runSample(index));
-  } catch (error) {
-    errors.push(
-      `sample ${index}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    break;
+if (interactiveEvidence) {
+  for (const [index, evidence] of interactiveEvidence.samples.entries()) {
+    try {
+      const log = fs.readFileSync(evidence.log, "utf8");
+      samples.push({
+        ...parseAttributedMacStartupLog(log, {
+          firstFunctionalFrame: "observed",
+          firstFunctionalFrameMs: evidence.firstFunctionalFrameMs,
+          inputOutcome: "verified",
+          inputReadyMs: evidence.inputReadyMs,
+          measureWarm: false,
+        }),
+        log: evidence.log,
+      });
+    } catch (error) {
+      errors.push(
+        `interactive sample ${index + 1}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      break;
+    }
+  }
+} else {
+  for (let index = 1; index <= sampleCount; index += 1) {
+    try {
+      samples.push(await runSample(index));
+    } catch (error) {
+      errors.push(
+        `sample ${index}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      break;
+    }
   }
 }
 
-const artifacts = fs
+const generatedArtifacts = fs
   .readdirSync(outputDir)
   .filter((name) => name.endsWith(".log"))
   .map((name) => resolveQualificationArtifactPath(outputDir, name));
+const interactiveArtifacts = interactiveEvidence?.samples.flatMap((sample) => [
+  sample.log,
+  sample.launchRecording,
+  sample.nativeTrace,
+]) ?? [];
+const artifacts = [...new Set([...generatedArtifacts, ...interactiveArtifacts])];
 const report = buildMacStartupQualificationReport({
   build,
   platform: {
     os: "macos",
     release: os.release(),
     arch: os.arch(),
-    hardwareModel: execFileSync("/usr/sbin/sysctl", ["-n", "hw.model"], { encoding: "utf8" }).trim(),
+    hardwareModel,
     cpu: os.cpus()[0]?.model ?? "unknown",
     memoryBytes: os.totalmem(),
   },
   scenario: {
-    id: measureWarm ? "macos-cold-warm-startup" : "macos-foreground-startup",
+    id: interactiveEvidence
+      ? "macos-interactive-startup"
+      : measureWarm
+        ? "macos-cold-warm-startup"
+        : "macos-foreground-startup",
     requestedSamples: sampleCount,
     timeoutMs,
     warmMeasure: measureWarm,
-    launchMethod: "direct verified application binary (Launch Services and Dock unmeasured)",
-    cachePolicy: "fresh process per sample; operating-system caches uncontrolled",
-    focus: "foreground requested; focus outcome not independently observed",
-    visibility: "native window configured visible; compositor presentation not observed",
-    frameCriterion: "two browser animation-frame callbacks after required app work; not proof of presented pixels",
-    inputCriterion: "external interactive input outcome; not exercised by this direct-process probe",
+    launchMethod: interactiveEvidence?.launchMethod ??
+      "direct verified application binary (Launch Services and Dock unmeasured)",
+    cachePolicy: interactiveEvidence?.cachePolicy ??
+      "fresh process per sample; operating-system caches uncontrolled",
+    focus: interactiveEvidence?.focus ??
+      "foreground requested; focus outcome not independently observed",
+    visibility: interactiveEvidence?.visibility ??
+      "native window configured visible; compositor presentation not observed",
+    frameCriterion: interactiveEvidence
+      ? "externally timed first presented functional frame with per-sample launch recording"
+      : "two browser animation-frame callbacks after required app work; not proof of presented pixels",
+    inputCriterion: interactiveEvidence
+      ? "externally timed successful real-input outcome with per-sample native trace"
+      : "external interactive input outcome; not exercised by this direct-process probe",
   },
   startedAt,
   finishedAt: new Date().toISOString(),

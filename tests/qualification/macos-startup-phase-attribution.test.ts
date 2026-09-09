@@ -1,7 +1,11 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
   buildMacStartupQualificationReport,
+  loadInteractiveMacStartupEvidence,
   parseAttributedMacStartupLog,
   qualifyHalfBounce,
   summarizeMacStartupPhases,
@@ -178,5 +182,111 @@ describe("macOS startup phase attribution", () => {
       halfBounce: { status: "unqualified", deadlineMs: 900 },
       passed: true,
     });
+  });
+
+  it("ingests same-build normal-launch recordings, traces, and timed outcomes", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "interactive-mac-startup-"));
+    const log = path.join(root, "sample-01.log");
+    const recording = path.join(root, "sample-01.mov");
+    const trace = path.join(root, "sample-01.trace");
+    const evidencePath = path.join(root, "interactive.json");
+    fs.writeFileSync(log, attributedLog);
+    fs.writeFileSync(recording, "dock and functional frame recording");
+    fs.writeFileSync(trace, "native trace and successful input receipt");
+    const build = {
+      schemaVersion: 1 as const,
+      sourceCommit: "abc123",
+      profile: "release-custom-protocol-production-hooks",
+      buildCommand: ["bun", "run", "tauri", "build"],
+      startedAt: "2026-09-09T00:00:00.000Z",
+      completedAt: "2026-09-09T00:01:00.000Z",
+      binary: "/tmp/tauri-explorer",
+      binarySha256: "deadbeef",
+      binaryBytes: 42,
+      binaryModifiedAt: "2026-09-09T00:01:00.000Z",
+    };
+    fs.writeFileSync(
+      evidencePath,
+      JSON.stringify({
+        buildSha256: "deadbeef",
+        hardwareModel: "Mac16,1",
+        launchMethod: "launch-services-normal-application-launch",
+        cachePolicy: "cold launch after reboot; caches recorded",
+        focus: "frontmost application",
+        visibility: "Dock and first functional frame recorded",
+        halfBounceDeadlineMs: 900,
+        samples: [{
+          log,
+          firstFunctionalFrameMs: 700,
+          inputReadyMs: 810,
+          launchRecording: recording,
+          nativeTrace: trace,
+        }],
+      }),
+    );
+
+    try {
+      const evidence = loadInteractiveMacStartupEvidence(
+        evidencePath,
+        root,
+        build,
+        "Mac16,1",
+        1,
+      );
+      const sample = parseAttributedMacStartupLog(
+        fs.readFileSync(evidence.samples[0].log, "utf8"),
+        {
+          firstFunctionalFrame: "observed",
+          firstFunctionalFrameMs: evidence.samples[0].firstFunctionalFrameMs,
+          inputOutcome: "verified",
+          inputReadyMs: evidence.samples[0].inputReadyMs,
+          measureWarm: false,
+        },
+      );
+      const report = buildMacStartupQualificationReport({
+        build,
+        platform: {
+          os: "macos",
+          release: "25.6",
+          arch: "arm64",
+          hardwareModel: evidence.hardwareModel,
+          cpu: "Apple M4",
+          memoryBytes: 16_000_000_000,
+        },
+        scenario: {
+          id: "macos-interactive-startup",
+          requestedSamples: 1,
+          timeoutMs: 30_000,
+          warmMeasure: false,
+          launchMethod: evidence.launchMethod,
+          cachePolicy: evidence.cachePolicy,
+          focus: evidence.focus,
+          visibility: evidence.visibility,
+          frameCriterion: "per-sample launch recording",
+          inputCriterion: "per-sample verified input trace",
+        },
+        startedAt: "2026-09-09T01:00:00.000Z",
+        finishedAt: "2026-09-09T01:01:00.000Z",
+        samples: [{ ...sample, log }],
+        artifacts: [log, recording, trace],
+        errors: [],
+        halfBounceDeadlineMs: evidence.halfBounceDeadlineMs,
+      });
+      expect(report).toMatchObject({
+        build: { binarySha256: "deadbeef" },
+        platform: { hardwareModel: "Mac16,1" },
+        scenario: { launchMethod: "launch-services-normal-application-launch" },
+        samples: [{
+          firstFunctionalFrame: "observed",
+          firstFunctionalFrameMs: 700,
+          inputOutcome: "verified",
+          inputReadyMs: 810,
+        }],
+        halfBounce: { status: "qualified", deadlineMs: 900 },
+      });
+      expect(report.artifacts).toEqual([log, recording, trace]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

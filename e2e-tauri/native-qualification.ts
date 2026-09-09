@@ -696,6 +696,88 @@ export interface HalfBounceQualification {
   reason: string;
 }
 
+export interface InteractiveMacStartupEvidence {
+  buildSha256: string;
+  hardwareModel: string;
+  launchMethod: "launch-services-normal-application-launch";
+  cachePolicy: string;
+  focus: string;
+  visibility: string;
+  halfBounceDeadlineMs: number;
+  samples: Array<{
+    log: string;
+    firstFunctionalFrameMs: number;
+    inputReadyMs: number;
+    launchRecording: string;
+    nativeTrace: string;
+  }>;
+}
+
+/** Load externally captured, same-run interactive evidence without trusting paths or provenance. */
+export function loadInteractiveMacStartupEvidence(
+  evidencePath: string,
+  qualificationRoot: string,
+  build: NativeBuildManifest,
+  hardwareModel: string,
+  requestedSamples: number,
+): InteractiveMacStartupEvidence {
+  const safeEvidencePath = resolveQualificationArtifactPath(
+    qualificationRoot,
+    path.resolve(evidencePath),
+  );
+  const evidence = JSON.parse(
+    fs.readFileSync(safeEvidencePath, "utf8"),
+  ) as InteractiveMacStartupEvidence;
+  if (evidence.buildSha256 !== build.binarySha256) {
+    throw new Error("interactive evidence build SHA-256 does not match the verified binary");
+  }
+  if (evidence.hardwareModel !== hardwareModel) {
+    throw new Error("interactive evidence hardware model does not match this Mac");
+  }
+  if (evidence.launchMethod !== "launch-services-normal-application-launch") {
+    throw new Error("interactive evidence must use the normal Launch Services application path");
+  }
+  if (
+    !Number.isFinite(evidence.halfBounceDeadlineMs) ||
+    evidence.halfBounceDeadlineMs <= 0
+  ) {
+    throw new Error("interactive evidence requires a positive measured half-bounce deadline");
+  }
+  if (!Array.isArray(evidence.samples) || evidence.samples.length !== requestedSamples) {
+    throw new Error(`interactive evidence requires exactly ${requestedSamples} samples`);
+  }
+  evidence.samples = evidence.samples.map((sample, index) => {
+    if (
+      !Number.isFinite(sample.firstFunctionalFrameMs) ||
+      sample.firstFunctionalFrameMs < 0 ||
+      !Number.isFinite(sample.inputReadyMs) ||
+      sample.inputReadyMs < 0
+    ) {
+      throw new Error(`interactive evidence sample ${index + 1} has invalid outcome timing`);
+    }
+    const resolveEvidenceArtifact = (candidate: string, label: string): string => {
+      const resolved = resolveQualificationArtifactPath(
+        qualificationRoot,
+        path.resolve(candidate),
+      );
+      if (!fs.statSync(resolved).isFile()) {
+        throw new Error(`interactive evidence ${label} is not a file: ${resolved}`);
+      }
+      return resolved;
+    };
+    return {
+      ...sample,
+      log: resolveEvidenceArtifact(sample.log, "startup log"),
+      launchRecording: resolveEvidenceArtifact(
+        sample.launchRecording,
+        "launch recording",
+      ),
+      nativeTrace: resolveEvidenceArtifact(sample.nativeTrace, "native trace"),
+    };
+  });
+  return evidence;
+}
+
 export interface MacStartupQualificationReportInput {
   build: NativeBuildManifest;
   platform: {

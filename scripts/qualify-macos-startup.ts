@@ -6,11 +6,10 @@ import path from "node:path";
 
 import {
   readVerifiedNativeBuildManifest,
+  buildMacStartupQualificationReport,
   parseAttributedMacStartupLog,
-  qualifyHalfBounce,
+  resolveQualificationArtifactPath,
   stopNativeStartupProcess,
-  summarizeDurations,
-  summarizeMacStartupPhases,
   waitForMacStartupProcess,
   writeQualificationArtifact,
   type AttributedMacStartupMeasurement,
@@ -32,12 +31,6 @@ const halfBounceDeadlineMs = deadlineValue === undefined ? null : Number(deadlin
 if (halfBounceDeadlineMs !== null && (!Number.isFinite(halfBounceDeadlineMs) || halfBounceDeadlineMs <= 0)) {
   throw new Error("MAC_STARTUP_HALF_BOUNCE_DEADLINE_MS must be a positive number");
 }
-const firstFunctionalFrame = process.env.MAC_STARTUP_FIRST_FRAME_OBSERVED === "1"
-  ? "observed" as const
-  : "not-observed" as const;
-const inputOutcome = process.env.MAC_STARTUP_INPUT_VERIFIED === "1"
-  ? "verified" as const
-  : "not-verified" as const;
 if (!Number.isInteger(sampleCount) || sampleCount < 2) {
   throw new Error("MAC_STARTUP_SAMPLES must be an integer of at least 2");
 }
@@ -52,8 +45,15 @@ const build = readVerifiedNativeBuildManifest(
   ),
 );
 const binary = build.binary;
-const outputDir = path.resolve(
+const qualificationRoot = path.resolve(
+  process.env.NATIVE_QUALIFICATION_ROOT ?? "qualification-results",
+);
+const requestedOutputDir = path.resolve(
   process.env.MAC_STARTUP_OUTPUT_DIR ?? "qualification-results/macos-startup",
+);
+const outputDir = resolveQualificationArtifactPath(
+  qualificationRoot,
+  requestedOutputDir,
 );
 fs.mkdirSync(outputDir, { recursive: true });
 const sampleEnvironment: NodeJS.ProcessEnv = {
@@ -67,7 +67,7 @@ if (measureWarm) sampleEnvironment.WARM_MEASURE = "1";
 async function runSample(
   index: number,
 ): Promise<AttributedMacStartupMeasurement & { log: string }> {
-  const logPath = path.join(
+  const logPath = resolveQualificationArtifactPath(
     outputDir,
     `sample-${String(index).padStart(2, "0")}.log`,
   );
@@ -87,8 +87,10 @@ async function runSample(
     });
     return {
       ...parseAttributedMacStartupLog(log, {
-        firstFunctionalFrame,
-        inputOutcome,
+        firstFunctionalFrame: "not-observed",
+        firstFunctionalFrameMs: null,
+        inputOutcome: "not-verified",
+        inputReadyMs: null,
         measureWarm,
       }),
       log: logPath,
@@ -117,8 +119,11 @@ for (let index = 1; index <= sampleCount; index += 1) {
   }
 }
 
-const report = {
-  schemaVersion: 2,
+const artifacts = fs
+  .readdirSync(outputDir)
+  .filter((name) => name.endsWith(".log"))
+  .map((name) => resolveQualificationArtifactPath(outputDir, name));
+const report = buildMacStartupQualificationReport({
   build,
   platform: {
     os: "macos",
@@ -142,30 +147,15 @@ const report = {
   },
   startedAt,
   finishedAt: new Date().toISOString(),
-  coldStartup: summarizeDurations(
-    samples.map(({ coldTotalMs }) => coldTotalMs),
-  ),
-  warmActivation: summarizeDurations(
-    samples.flatMap(({ warmShowMs }) => warmShowMs === null ? [] : [warmShowMs]),
-  ),
-  phaseAttribution: summarizeMacStartupPhases(samples),
-  halfBounce: qualifyHalfBounce(samples, halfBounceDeadlineMs),
   samples,
-  artifacts: fs
-    .readdirSync(outputDir)
-    .filter((name) => name.endsWith(".log"))
-    .map((name) => path.join(outputDir, name)),
-  failureArtifacts:
-    errors.length > 0
-      ? fs
-          .readdirSync(outputDir)
-          .filter((name) => name.endsWith(".log"))
-          .map((name) => path.join(outputDir, name))
-      : [],
+  artifacts,
   errors,
-  passed: errors.length === 0 && samples.length === sampleCount,
-};
+  halfBounceDeadlineMs,
+});
 
-writeQualificationArtifact(path.join(outputDir, "report.json"), report);
+writeQualificationArtifact(
+  resolveQualificationArtifactPath(outputDir, "report.json"),
+  report,
+);
 if (!report.passed)
   throw new Error(errors.join("; ") || "macOS startup qualification failed");

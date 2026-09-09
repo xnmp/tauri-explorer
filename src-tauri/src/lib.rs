@@ -508,7 +508,7 @@ pub fn run(launch_dir: Option<String>) {
                 t_setup - t_start,
             );
             log::info!(
-                "Startup(native-window): app-run-epoch-ms={:.3} window-built={:.1}ms",
+                "Startup(native-window): window=main app-run-epoch-ms={:.3} window-built={:.1}ms",
                 t_start_epoch_ms,
                 (t_window_built - t_start).as_secs_f64() * 1000.0,
             );

@@ -16,7 +16,7 @@ concurrency:
 jobs:
   launch-smoke:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -41,6 +41,7 @@ jobs:
         env:
           # The macOS process probe needs production code, not WebDriver hooks.
           NATIVE_QUALIFICATION_E2E_HOOKS: "0"
+          NATIVE_QUALIFICATION_PROFILE: "release"
         run: bun run build:native:qualification
 
       # Foreground readiness ends after settings, commands, the initial listing,

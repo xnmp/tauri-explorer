@@ -18,7 +18,12 @@ if (status.exitCode !== 0 || status.stdout.toString().trim()) {
 }
 
 const e2eHooks = process.env.NATIVE_QUALIFICATION_E2E_HOOKS !== "0";
-const buildCommand = ["bun", "run", "tauri", "build", "--debug", "--no-bundle"];
+const profile = process.env.NATIVE_QUALIFICATION_PROFILE ?? "debug";
+if (profile !== "debug" && profile !== "release") {
+  throw new Error("NATIVE_QUALIFICATION_PROFILE must be debug or release");
+}
+const buildCommand = ["bun", "run", "tauri", "build", "--no-bundle"];
+if (profile === "debug") buildCommand.push("--debug");
 if (process.platform === "win32") {
   buildCommand.push("--features", "e2e-webview2-attach");
 }
@@ -31,7 +36,7 @@ const child = Bun.spawn(buildCommand, {
   stderr: "inherit",
   env: {
     ...process.env,
-    ...(e2eHooks ? { VITE_E2E_HOOKS: "1" } : {}),
+    VITE_E2E_HOOKS: e2eHooks ? "1" : "0",
     ...(process.platform === "win32" ? { VITE_E2E_NO_WARM_PRIME: "1" } : {}),
   },
 });
@@ -41,13 +46,13 @@ if (exitCode !== 0)
 
 const binaryName =
   process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer";
-const binary = path.resolve("src-tauri", "target", "debug", binaryName);
+const binary = path.resolve("src-tauri", "target", profile, binaryName);
 const stat = fs.statSync(binary);
 const manifest: NativeBuildManifest = {
   schemaVersion: 1,
   sourceCommit,
   profile: [
-    "debug-custom-protocol",
+    `${profile}-custom-protocol`,
     e2eHooks ? "e2e-hooks" : "production-hooks",
     process.platform === "win32" ? "webview2-attach" : "",
   ]

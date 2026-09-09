@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildMacStartupQualificationReport,
   parseAttributedMacStartupLog,
   qualifyHalfBounce,
   summarizeMacStartupPhases,
 } from "../../e2e-tauri/native-qualification";
 
 const attributedLog = [
-  "Startup(native-window): app-run-epoch-ms=1000.0 window-built=100.0ms",
-  "Startup(webview): boot-epoch-ms=1300.0 bundle-exec=50.0ms commands-ready=100.0ms settings-ready=300.0ms list-ready=350.0ms app-ready=400.0ms ui-ready=450.0ms total=450.0ms",
-  "Startup(native-ready): app-run-to-ready=810.0ms receipt-epoch-ms=1800.0",
+  "Startup(native-window): window=main app-run-epoch-ms=1000.0 window-built=100.0ms",
+  "Startup(webview): window=main boot-epoch-ms=1300.0 bundle-exec=50.0ms commands-ready=100.0ms settings-ready=300.0ms list-ready=350.0ms app-ready=400.0ms ui-ready=450.0ms total=450.0ms",
+  "Startup(native-ready): window=main app-run-to-ready=810.0ms receipt-epoch-ms=1800.0",
   "Startup(warm-activate): show=4.0ms",
 ].join("\n");
 
@@ -29,7 +30,20 @@ describe("macOS startup phase attribution", () => {
         unattributedMs: 10,
       },
       firstFunctionalFrame: "not-observed",
+      firstFunctionalFrameMs: null,
       inputOutcome: "not-verified",
+      inputReadyMs: null,
+    });
+  });
+
+  it("correlates the main window when a warm webview reports first", () => {
+    const interleaved =
+      "Startup(webview): window=explorer-warm-measure boot-epoch-ms=1100.0 bundle-exec=1.0ms commands-ready=2.0ms settings-ready=3.0ms list-ready=4.0ms app-ready=5.0ms ui-ready=6.0ms total=6.0ms\n" +
+      attributedLog;
+    expect(parseAttributedMacStartupLog(interleaved).phases).toMatchObject({
+      nativeWindowMs: 100,
+      frameworkNavigationMs: 200,
+      requiredAppWorkMs: 350,
     });
   });
 
@@ -86,16 +100,83 @@ describe("macOS startup phase attribution", () => {
     const observed = {
       ...sample,
       firstFunctionalFrame: "observed" as const,
+      firstFunctionalFrameMs: 700,
       inputOutcome: "verified" as const,
+      inputReadyMs: 810,
     };
     expect(qualifyHalfBounce([observed], 900)).toEqual({
       status: "qualified",
       deadlineMs: 900,
-      reason: "readiness p95 810.0ms met the measured 900.0ms deadline",
+      reason: "visible-and-input-functional p95 810.0ms met the measured 900.0ms deadline",
     });
     expect(qualifyHalfBounce([observed], 800)).toMatchObject({
       status: "missed",
       deadlineMs: 800,
+    });
+  });
+
+  it("builds the final report with exact provenance, conditions, and explicit outcomes", () => {
+    const sample = parseAttributedMacStartupLog(attributedLog);
+    const report = buildMacStartupQualificationReport({
+      build: {
+        schemaVersion: 1,
+        sourceCommit: "abc123",
+        profile: "release-custom-protocol-production-hooks",
+        buildCommand: ["bun", "run", "tauri", "build"],
+        startedAt: "2026-09-09T00:00:00.000Z",
+        completedAt: "2026-09-09T00:01:00.000Z",
+        binary: "/tmp/tauri-explorer",
+        binarySha256: "deadbeef",
+        binaryBytes: 42,
+        binaryModifiedAt: "2026-09-09T00:01:00.000Z",
+      },
+      platform: {
+        os: "macos",
+        release: "25.6",
+        arch: "arm64",
+        hardwareModel: "Mac16,1",
+        cpu: "Apple M4",
+        memoryBytes: 16_000_000_000,
+      },
+      scenario: {
+        id: "macos-foreground-startup",
+        requestedSamples: 1,
+        timeoutMs: 30_000,
+        warmMeasure: false,
+        launchMethod: "direct verified application binary (Launch Services and Dock unmeasured)",
+        cachePolicy: "fresh process; OS caches uncontrolled",
+        focus: "not independently observed",
+        visibility: "compositor presentation not observed",
+        frameCriterion: "two browser frame opportunities; not presented pixels",
+        inputCriterion: "not exercised by the direct-process probe",
+      },
+      startedAt: "2026-09-09T01:00:00.000Z",
+      finishedAt: "2026-09-09T01:01:00.000Z",
+      samples: [{ ...sample, log: "/qualification/sample-01.log" }],
+      artifacts: ["/qualification/sample-01.log"],
+      errors: [],
+      halfBounceDeadlineMs: 900,
+    });
+
+    expect(report).toMatchObject({
+      schemaVersion: 2,
+      build: {
+        sourceCommit: "abc123",
+        profile: "release-custom-protocol-production-hooks",
+        binarySha256: "deadbeef",
+      },
+      platform: {
+        release: "25.6",
+        arch: "arm64",
+        hardwareModel: "Mac16,1",
+      },
+      scenario: {
+        launchMethod: expect.stringContaining("Launch Services and Dock unmeasured"),
+        cachePolicy: "fresh process; OS caches uncontrolled",
+      },
+      samples: [{ firstFunctionalFrame: "not-observed", inputOutcome: "not-verified" }],
+      halfBounce: { status: "unqualified", deadlineMs: 900 },
+      passed: true,
     });
   });
 });

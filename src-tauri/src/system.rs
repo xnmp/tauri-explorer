@@ -306,7 +306,7 @@ pub async fn log_startup_timing(
             .map(|duration| duration.as_secs_f64() * 1000.0)
             .unwrap_or(f64::NAN);
         log::info!(
-            "Startup(native-ready): app-run-to-ready={:.1}ms receipt-epoch-ms={:.3}",
+            "Startup(native-ready): window=main app-run-to-ready={:.1}ms receipt-epoch-ms={:.3}",
             clock.started.elapsed().as_secs_f64() * 1000.0,
             receipt_epoch_ms,
         );

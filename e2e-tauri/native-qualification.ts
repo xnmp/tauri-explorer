@@ -678,7 +678,9 @@ export interface AttributedMacStartupMeasurement
   readinessTotalMs: number;
   phases: MacStartupPhases;
   firstFunctionalFrame: "observed" | "not-observed";
+  firstFunctionalFrameMs: number | null;
   inputOutcome: "verified" | "not-verified";
+  inputReadyMs: number | null;
 }
 
 export interface MacStartupQualificationConditions {
@@ -686,15 +688,66 @@ export interface MacStartupQualificationConditions {
   cachePolicy: string;
   focus: string;
   visibility: string;
-  hardwareModel: string;
-  cpu: string;
-  memoryBytes: number;
 }
 
 export interface HalfBounceQualification {
   status: "qualified" | "unqualified" | "missed";
   deadlineMs: number | null;
   reason: string;
+}
+
+export interface MacStartupQualificationReportInput {
+  build: NativeBuildManifest;
+  platform: {
+    os: "macos";
+    release: string;
+    arch: string;
+    hardwareModel: string;
+    cpu: string;
+    memoryBytes: number;
+  };
+  scenario: MacStartupQualificationConditions & {
+    id: string;
+    requestedSamples: number;
+    timeoutMs: number;
+    warmMeasure: boolean;
+    frameCriterion: string;
+    inputCriterion: string;
+  };
+  startedAt: string;
+  finishedAt: string;
+  samples: readonly (AttributedMacStartupMeasurement & { log: string })[];
+  artifacts: readonly string[];
+  errors: readonly string[];
+  halfBounceDeadlineMs: number | null;
+}
+
+export function buildMacStartupQualificationReport(
+  input: MacStartupQualificationReportInput,
+) {
+  const samples = [...input.samples];
+  const errors = [...input.errors];
+  return {
+    schemaVersion: 2 as const,
+    build: input.build,
+    platform: input.platform,
+    scenario: input.scenario,
+    startedAt: input.startedAt,
+    finishedAt: input.finishedAt,
+    coldStartup: summarizeDurations(samples.map(({ coldTotalMs }) => coldTotalMs)),
+    warmActivation: summarizeDurations(
+      samples.flatMap(({ warmShowMs }) =>
+        warmShowMs === null ? [] : [warmShowMs],
+      ),
+    ),
+    phaseAttribution: summarizeMacStartupPhases(samples),
+    halfBounce: qualifyHalfBounce(samples, input.halfBounceDeadlineMs),
+    samples,
+    artifacts: [...input.artifacts],
+    failureArtifacts: errors.length > 0 ? [...input.artifacts] : [],
+    errors,
+    passed: errors.length === 0 && samples.length === input.scenario.requestedSamples,
+  };
 }
 
 export interface NativeStartupChild {
@@ -743,22 +796,28 @@ export function parseAttributedMacStartupLog(
   log: string,
   outcomes: Pick<
     AttributedMacStartupMeasurement,
-    "firstFunctionalFrame" | "inputOutcome"
+    | "firstFunctionalFrame"
+    | "firstFunctionalFrameMs"
+    | "inputOutcome"
+    | "inputReadyMs"
   > & { measureWarm?: boolean } = {
     firstFunctionalFrame: "not-observed",
+    firstFunctionalFrameMs: null,
     inputOutcome: "not-verified",
+    inputReadyMs: null,
   },
 ): AttributedMacStartupMeasurement {
   const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
   const nativeWindow = log.match(
     new RegExp(
-      `Startup\\(native-window\\):\\s*app-run-epoch-ms=([\\d.]+)\\s+window-built=${duration}`,
+      `Startup\\(native-window\\):\\s*window=main\\s+app-run-epoch-ms=([\\d.]+)\\s+window-built=${duration}`,
     ),
   );
-  const webviewLine = log.match(/Startup\(webview\):[^\n]*/)?.[0] ?? null;
+  const webviewLine =
+    log.match(/Startup\(webview\):\s*window=main\s+[^\n]*/)?.[0] ?? null;
   const ready = log.match(
     new RegExp(
-      `Startup\\(native-ready\\):\\s*app-run-to-ready=${duration}\\s+receipt-epoch-ms=([\\d.]+)`,
+      `Startup\\(native-ready\\):\\s*window=main\\s+app-run-to-ready=${duration}\\s+receipt-epoch-ms=([\\d.]+)`,
     ),
   );
   const warm = log.match(
@@ -840,7 +899,9 @@ export function parseAttributedMacStartupLog(
     warmShowMs,
     phases,
     firstFunctionalFrame: outcomes.firstFunctionalFrame,
+    firstFunctionalFrameMs: outcomes.firstFunctionalFrameMs,
     inputOutcome: outcomes.inputOutcome,
+    inputReadyMs: outcomes.inputReadyMs,
   };
 }
 
@@ -892,7 +953,9 @@ export function qualifyHalfBounce(
     samples.some(
       (sample) =>
         sample.firstFunctionalFrame !== "observed" ||
-        sample.inputOutcome !== "verified",
+        sample.firstFunctionalFrameMs === null ||
+        sample.inputOutcome !== "verified" ||
+        sample.inputReadyMs === null,
     )
   ) {
     return {
@@ -901,17 +964,21 @@ export function qualifyHalfBounce(
       reason: "visible functional-frame and verified-input evidence is incomplete",
     };
   }
-  const p95 = summarizeDurations(samples.map((sample) => sample.readinessTotalMs)).p95Ms!;
+  const p95 = summarizeDurations(
+    samples.map((sample) =>
+      Math.max(sample.firstFunctionalFrameMs!, sample.inputReadyMs!),
+    ),
+  ).p95Ms!;
   return p95 <= deadlineMs
     ? {
         status: "qualified",
         deadlineMs,
-        reason: `readiness p95 ${p95.toFixed(1)}ms met the measured ${deadlineMs.toFixed(1)}ms deadline`,
+        reason: `visible-and-input-functional p95 ${p95.toFixed(1)}ms met the measured ${deadlineMs.toFixed(1)}ms deadline`,
       }
     : {
         status: "missed",
         deadlineMs,
-        reason: `readiness p95 ${p95.toFixed(1)}ms exceeded the measured ${deadlineMs.toFixed(1)}ms deadline`,
+        reason: `visible-and-input-functional p95 ${p95.toFixed(1)}ms exceeded the measured ${deadlineMs.toFixed(1)}ms deadline`,
       };
 }
 

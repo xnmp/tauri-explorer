@@ -308,8 +308,9 @@ export function resolveSoakConfiguration(
       14_400_000,
     ),
     seed:
-      env.SOAK_SEED?.trim() ||
-      `native-soak-${new Date().toISOString().slice(0, 10)}`,
+      env.SOAK_SEED !== undefined && env.SOAK_SEED.length > 0
+        ? env.SOAK_SEED
+        : `native-soak-${new Date().toISOString().slice(0, 10)}`,
     scenarios: SOAK_SCENARIOS,
     expectedDisplayScale: positiveNumber(
       "SOAK_EXPECTED_DISPLAY_SCALE",

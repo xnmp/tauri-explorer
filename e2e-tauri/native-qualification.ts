@@ -335,7 +335,9 @@ export function resolveQualificationArtifactPath(
     relative === ".." ||
     relative.startsWith(`..${path.sep}`)
   ) {
-    throw new Error(`artifact path resolves outside qualification root: ${resolved}`);
+    throw new Error(
+      `artifact path resolves outside qualification root: ${resolved}`,
+    );
   }
   return resolved;
 }

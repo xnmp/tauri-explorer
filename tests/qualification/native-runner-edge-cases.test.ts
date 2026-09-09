@@ -60,8 +60,7 @@ describe("native qualification process boundaries", () => {
     vi.useFakeTimers();
     const child = new FakeStartupChild();
     let log =
-      "Startup: setup=10ms total=20ms\n" +
-      "Startup(warm-activate): show=2ms\n";
+      "Startup: setup=10ms total=20ms\n" + "Startup(warm-activate): show=2ms\n";
     const result = waitForMacStartupProcess(child, () => log, {
       timeoutMs: 1_000,
       survivalMs: 5_000,
@@ -196,9 +195,7 @@ describe("native qualification process boundaries", () => {
             pid: 99,
             parentPid: 1,
             rssBytes: 500,
-            executable: path.resolve(
-              "src-tauri/target/debug/tauri-explorer",
-            ),
+            executable: path.resolve("src-tauri/target/debug/tauri-explorer"),
           },
         ],
         launchedBinary,

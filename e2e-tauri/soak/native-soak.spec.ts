@@ -246,9 +246,9 @@ async function runThemeAccessibilityZoom(): Promise<void> {
   expect(await $(".command-palette-overlay").getAttribute("role")).toBe(
     "dialog",
   );
-  expect(
-    await $(".command-palette-overlay").getAttribute("aria-label"),
-  ).toBe("Command palette");
+  expect(await $(".command-palette-overlay").getAttribute("aria-label")).toBe(
+    "Command palette",
+  );
   expect(await $(".commands-list").getAttribute("role")).toBe("listbox");
   await browser.keys("Enter");
   await browser.waitUntil(
@@ -377,9 +377,7 @@ describe("extended real-native qualification soak", () => {
       execute: async (runErrors) => {
         const sampleResource = (stage: string): void => {
           try {
-            resources.push(
-              sampleNativeRss(Date.now() - started, build.binary),
-            );
+            resources.push(sampleNativeRss(Date.now() - started, build.binary));
           } catch (error) {
             runErrors.push(`${stage} RSS unavailable: ${errorText(error)}`);
           }

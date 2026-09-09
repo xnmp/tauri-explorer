@@ -659,7 +659,7 @@ export async function executeQualificationRun<T>(options: {
 
 export interface MacStartupMeasurement {
   coldTotalMs: number;
-  warmShowMs: number;
+  warmShowMs: number | null;
 }
 
 export interface NativeStartupChild {
@@ -688,7 +688,10 @@ function durationToMilliseconds(value: string, unit: string): number {
   }
 }
 
-export function parseMacStartupLog(log: string): MacStartupMeasurement {
+export function parseMacStartupLog(
+  log: string,
+  options: { measureWarm?: boolean } = {},
+): MacStartupMeasurement {
   const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
   const cold = log.match(
     new RegExp(`Startup\\(native-ready\\):\\s*app-run-to-ready=${duration}`),
@@ -698,18 +701,20 @@ export function parseMacStartupLog(log: string): MacStartupMeasurement {
   );
   if (!cold)
     throw new Error("native-ready marker missing from macOS process log");
-  if (!warm)
+  if (options.measureWarm !== false && !warm)
     throw new Error("warm-activate marker missing from macOS process log");
   return {
     coldTotalMs: durationToMilliseconds(cold[1], cold[2]),
-    warmShowMs: durationToMilliseconds(warm[1], warm[2]),
+    warmShowMs: options.measureWarm !== false && warm
+      ? durationToMilliseconds(warm[1], warm[2])
+      : null,
   };
 }
 
 export function waitForMacStartupProcess(
   child: NativeStartupChild,
   readLog: () => string,
-  options: { timeoutMs: number; survivalMs: number; pollMs?: number },
+  options: { timeoutMs: number; survivalMs: number; pollMs?: number; measureWarm?: boolean },
 ): Promise<MacStartupMeasurement> {
   return new Promise((resolve, reject) => {
     let completed = false;
@@ -757,9 +762,9 @@ export function waitForMacStartupProcess(
     const inspectLog = (): void => {
       if (survivalTimer || completed) return;
       try {
-        succeedAfterSurvival(parseMacStartupLog(readLog()));
+        succeedAfterSurvival(parseMacStartupLog(readLog(), options));
       } catch {
-        // Both native markers are required; keep collecting until the bound.
+        // Keep collecting the scenario's required native markers until the bound.
       }
     };
 

@@ -195,7 +195,11 @@ pub fn run(launch_dir: Option<String>) {
                 Target::new(TargetKind::LogDir { file_name: None }),
                 Target::new(TargetKind::Webview),
             ];
-            if cfg!(debug_assertions) {
+            // Opt-in stream capture lets the qualification runner measure the
+            // shipping release profile using the same native readiness logs.
+            if cfg!(debug_assertions)
+                || std::env::var("TAURI_EXPLORER_LOG_STDOUT").as_deref() == Ok("1")
+            {
                 targets.push(Target::new(TargetKind::Stdout));
             }
             tauri_plugin_log::Builder::new()

@@ -183,6 +183,43 @@ PR merge `3e94213a1f9c7e05e0079368339452c272ccdd34`, profile
 Warm measurement is enabled in this shared-runner debug profile. Release-build
 cold-only startup, first-input latency and half-bounce acceptance remain open.
 
+## Native session ownership and release startup qualification
+
+The published `bdc804ff` passed both Chromium shards, the protected frontend
+aggregate, Rust validation and source maps. WebKit and native run
+[34335460231](https://github.com/xnmp/tauri-explorer/actions/runs/34335460231)
+were still running when this follow-up was prepared; their results must be read
+before integration acceptance.
+
+The prior Linux log established that the directory-watch application's PID
+survived its WebDriver session and contaminated a later single-process test.
+The runner directly owns only tauri-driver on Linux; waiting for that child's
+exit does not account for the application launched beneath WebKitWebDriver.
+Linux smoke now captures a dedicated process group and waits for all members to
+disappear, with bounded graceful/forced termination. Windows keeps its existing
+direct-child ownership. Real subprocess regressions cover an exited group leader,
+a descendant ignoring termination, an untouched sibling and failed fixture
+readiness cleanup. The combined qualification set passed 28 tests; independent
+review and a final five-test subprocess run passed with no fixture survivors.
+The next real Linux native run must verify application inheritance and session
+isolation; this subprocess evidence alone does not close the native gate.
+
+Mac qualification now selects the actual release profile and measures 30 fresh
+foreground launches without the extra warm-measure window, followed by 30
+separate warm-probe launches of the same verified binary. Release log streaming
+is explicitly enabled for the runner. Foreground-only samples retain readiness
+and survival checks and report unmeasured warm durations as null. A regression
+failed before optional warm measurement was implemented; all 23 parser/process
+qualification tests now pass. Independent review accepts the implementation.
+Linux and Windows GNU strict Clippy pass after the log-stream option; the Mac
+runner passes scoped TypeScript checking and the build wrapper/WDIO config
+bundle successfully. The existing suite-wide TypeScript limitations remain #690.
+
+These changes are prepared for publication while the current run finishes.
+Actual Mac release reports, matching binary identities across both scenarios,
+presented-frame/input measurements and the half-bounce target remain outstanding.
+No new product feature or architectural review scope has been added.
+
 ## Release stabilization — preceding checkpoint
 
 The started immutable Move intent is complete: real catalog promotion/reopening

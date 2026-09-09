@@ -18,6 +18,19 @@ if (process.platform !== "darwin") {
 
 const sampleCount = Number(process.env.MAC_STARTUP_SAMPLES ?? "30");
 const timeoutMs = Number(process.env.MAC_STARTUP_TIMEOUT_MS ?? "30000");
+const warmSetting = process.env.MAC_STARTUP_WARM_MEASURE ?? "1";
+if (warmSetting !== "0" && warmSetting !== "1") {
+  throw new Error("MAC_STARTUP_WARM_MEASURE must be 0 or 1");
+}
+const measureWarm = warmSetting === "1";
+// Rust checks for presence, so WARM_MEASURE=0 would still create a probe window.
+const sampleEnvironment: NodeJS.ProcessEnv = {
+  ...process.env,
+  RUST_LOG: "info",
+  TAURI_EXPLORER_LOG_STDOUT: "1",
+};
+delete sampleEnvironment.WARM_MEASURE;
+if (measureWarm) sampleEnvironment.WARM_MEASURE = "1";
 if (!Number.isInteger(sampleCount) || sampleCount < 2) {
   throw new Error("MAC_STARTUP_SAMPLES must be an integer of at least 2");
 }
@@ -46,7 +59,7 @@ async function runSample(
   );
   let log = "";
   const child = spawn(binary, [], {
-    env: { ...process.env, RUST_LOG: "info", WARM_MEASURE: "1" },
+    env: sampleEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", (chunk) => (log += chunk.toString()));
@@ -56,6 +69,7 @@ async function runSample(
     const measurement = await waitForMacStartupProcess(child, () => log, {
       timeoutMs,
       survivalMs: 5_000,
+      measureWarm,
     });
     return { ...measurement, log: logPath };
   } finally {
@@ -87,10 +101,11 @@ const report = {
   build,
   platform: { os: "macos", release: os.release(), arch: os.arch() },
   scenario: {
-    id: "macos-cold-warm-startup",
+    id: measureWarm ? "macos-cold-warm-startup" : "macos-foreground-startup",
     requestedSamples: sampleCount,
     timeoutMs,
-    warmMeasure: true,
+    warmMeasure: measureWarm,
+    cachePolicy: "fresh process per sample; operating-system caches uncontrolled",
     coldMilestone: "native-ready: app-run-to-ready",
   },
   startedAt,
@@ -99,7 +114,7 @@ const report = {
     samples.map(({ coldTotalMs }) => coldTotalMs),
   ),
   warmActivation: summarizeDurations(
-    samples.map(({ warmShowMs }) => warmShowMs),
+    samples.flatMap(({ warmShowMs }) => warmShowMs === null ? [] : [warmShowMs]),
   ),
   samples,
   artifacts: fs

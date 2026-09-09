@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Governs: `e2e-tauri/native-qualification.ts`, `e2e-tauri/wdio.conf.ts`, `e2e-tauri/wdio.soak.conf.ts`, `e2e-tauri/soak/native-soak.spec.ts`, `scripts/run-native-soak.ts`, `scripts/qualify-macos-startup.ts`
+Governs: `e2e-tauri/native-qualification.ts`, `e2e-tauri/native-process-group.ts`, `e2e-tauri/wdio.conf.ts`, `e2e-tauri/wdio.soak.conf.ts`, `e2e-tauri/soak/native-soak.spec.ts`, `scripts/run-native-soak.ts`, `scripts/qualify-macos-startup.ts`
 
 ## Context
 
@@ -31,7 +31,13 @@ bounded interval. A rejected force-kill or a child that remains alive after the
 force timeout is a qualification failure; it propagates into the run's failed
 JSON report and prevents later samples from starting. Process output is retained
 even when cleanup fails. A successful `kill()` call alone never proves cleanup:
-the terminal child event does.
+the terminal child event establishes only that direct child's exit. In Linux
+WebDriver smoke sessions, the application is a descendant of WebKitWebDriver,
+which is itself a child of tauri-driver. The session therefore starts the driver
+in a dedicated process group and retains that group until no members remain.
+Group-wide graceful/forced termination and bounded group-existence checks prevent
+an exited driver from hiding a surviving application. Cleanup never scans and
+kills arbitrary processes merely because their executable matches the test app.
 
 WebdriverIO awaits `afterSession` hooks but does not make an ordinary hook
 rejection determine the command exit status. The worker therefore records any
@@ -52,6 +58,15 @@ used in a filename is converted to a bounded readable prefix plus a SHA-256
 suffix. All resulting report, log, and screenshot directories are resolved
 through a helper that rejects paths at or outside the configured qualification
 root before removal or writing.
+
+Mac timing qualification builds the release profile and records separate
+foreground-only and warm-probe scenarios against the same verified binary.
+Foreground-only samples remove `WARM_MEASURE` entirely, because the native
+launcher checks its presence; an environment value of `0` still creates a probe.
+Unmeasured warm durations are null. Release logs can be streamed through the
+explicit `TAURI_EXPLORER_LOG_STDOUT=1` diagnostic option. Every sample still
+requires foreground readiness and the survival interval. A fresh process does
+not imply cold operating-system caches, a presented frame or successful input.
 
 ## Consequences
 

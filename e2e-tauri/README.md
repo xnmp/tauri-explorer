@@ -306,7 +306,13 @@ report, log, or screenshot directory outside `qualification-results/`.
 
 This runner supports Linux/WebKitGTK and Windows/WebView2. It makes no macOS UI
 claim because WKWebView has no supported tauri-driver backend. The real macOS
-process gate in `.github/workflows/macos-smoke.yml` runs 30 cold plus
-`WARM_MEASURE=1` activation samples, checks post-startup survival, and uploads
-its exact-binary JSON report and logs. Those native logs, not browser tests, are
-the source for macOS p50/p95 timing qualification.
+process gate in `.github/workflows/macos-smoke.yml` builds with
+`NATIVE_QUALIFICATION_PROFILE=release NATIVE_QUALIFICATION_E2E_HOOKS=0` and runs
+30 foreground-only samples (`MAC_STARTUP_WARM_MEASURE=0`) followed by 30 separate
+warm-probe samples (`MAC_STARTUP_WARM_MEASURE=1`). Both scenarios verify the same
+binary hash, check post-startup survival, and upload reports/logs under
+`qualification-results/macos-startup/{foreground,warm-probe}/`. The qualifier
+enables release stdout logs explicitly and removes the native warm-probe variable
+for foreground-only runs. These are fresh processes with uncontrolled OS caches;
+native readiness timing does not establish a presented frame, first input or the
+Dock half-bounce target.

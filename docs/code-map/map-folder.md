@@ -565,10 +565,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ### Native qualification tooling
 
 - `e2e-tauri/native-qualification.ts` — native process lifetime, verified build identity, bounded artifacts and foreground-ready/warm startup log parsing.
+- `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
-- `scripts/build-native-qualification.ts` — clean-worktree native build and exact binary provenance.
-- `scripts/qualify-macos-startup.ts` — real Mac foreground-ready and warm activation samples with process survival and cleanup.
+- `scripts/build-native-qualification.ts` — clean-worktree debug/release native build and exact binary provenance.
+- `scripts/qualify-macos-startup.ts` — separate real Mac foreground-only and warm-probe samples with process survival and cleanup.
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.

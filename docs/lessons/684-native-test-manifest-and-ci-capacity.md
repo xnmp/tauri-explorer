@@ -63,3 +63,24 @@ preceding-focus-target helper for the selection-retention test, assert departure
 immediately, then use real Tab to verify reentry. This does not qualify backward
 traversal in production WebKit, nor identify the native WebKitGTK WebDriver key
 delivery defect as the cause of this different protocol's behavior.
+
+Linux session cleanup must own the application below the driver process, too.
+CI showed an exact application PID from the directory-watch worker still alive
+in a later session, where it broke a renderer-crash test's single-process
+precondition. Linux starts only tauri-driver directly; WebKitWebDriver launches
+the application. Stopping and awaiting only tauri-driver therefore cannot prove
+application cleanup. Start the Linux session in a dedicated process group,
+terminate that group, and bound checks of the group's disappearance even after
+its leader exits. Signal only the captured session group, never every process
+whose executable matches the app. Real subprocess tests must preserve an
+unrelated sibling and clean up even when their readiness check fails. A child
+`exit` event can precede stdout drain; wait for stream completion with a bound
+and synchronously emit fixture proof bytes.
+
+The Mac qualifier previously forced a debug build and an extra warm-measure
+window during startup. Separate release foreground-only samples from warm-probe
+samples, verify the same binary hash in both reports, and remove `WARM_MEASURE`
+from the environment instead of setting it to `0` (native code checks presence).
+Release builds ordinarily omit stdout logging; explicitly enable the existing
+readiness log stream for qualification. This still measures native readiness,
+not presentation or first input, and fresh launches do not flush OS caches.

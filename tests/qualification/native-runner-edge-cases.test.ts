@@ -77,6 +77,38 @@ describe("native qualification process boundaries", () => {
     log = "";
   });
 
+  it("qualifies foreground-only launch without requiring a probe window", async () => {
+    vi.useFakeTimers();
+    const child = new FakeStartupChild();
+    const result = waitForMacStartupProcess(child, () =>
+      "Startup(native-ready): app-run-to-ready=125ms\n", {
+      timeoutMs: 100,
+      survivalMs: 200,
+      measureWarm: false,
+    });
+    const assertion = expect(result).resolves.toEqual({ coldTotalMs: 125, warmShowMs: null });
+    await vi.advanceTimersByTimeAsync(200);
+    await assertion;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  it("still requires foreground readiness and process survival without warm measurement", async () => {
+    expect(() => parseMacStartupLog("Startup: total=12ms\n", { measureWarm: false }))
+      .toThrow("native-ready");
+    vi.useFakeTimers();
+    const child = new FakeStartupChild();
+    const result = waitForMacStartupProcess(child, () =>
+      "Startup(native-ready): app-run-to-ready=125ms\n", {
+      timeoutMs: 100,
+      survivalMs: 200,
+      measureWarm: false,
+    });
+    child.exit(1, null);
+    await expect(result).rejects.toThrow("application exited");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("reports spawn errors and clears timeout polling", async () => {
     vi.useFakeTimers();
     const spawnFailure = new FakeStartupChild();

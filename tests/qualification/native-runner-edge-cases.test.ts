@@ -13,6 +13,7 @@ import {
   resolveQualificationArtifactPath,
   resolveSoakArtifactPaths,
   resolveSoakConfiguration,
+  stopNativeQualificationProcesses,
   stopNativeStartupProcess,
   waitForMacStartupProcess,
   type NativeStartupChild,
@@ -147,6 +148,61 @@ describe("native qualification process boundaries", () => {
     await vi.advanceTimersByTimeAsync(150);
     await failureAssertion;
     expect(rejected.killSignals).toEqual([undefined, "SIGKILL"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reaps every owned native process after graceful or forced exit", async () => {
+    vi.useFakeTimers();
+    const driver = new FakeStartupChild();
+    driver.onKill = (signal) => {
+      if (signal === undefined) driver.exit(null, "SIGTERM");
+      return true;
+    };
+    const application = new FakeStartupChild();
+    application.onKill = (signal) => {
+      if (signal === "SIGKILL") application.exit(null, signal);
+      return true;
+    };
+
+    const stopped = stopNativeQualificationProcesses(
+      [
+        { label: "WebDriver", child: driver },
+        { label: "application", child: application },
+      ],
+      { gracefulTimeoutMs: 100, forceTimeoutMs: 50 },
+    );
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(stopped).resolves.toBeUndefined();
+    expect(driver.killSignals).toEqual([undefined]);
+    expect(application.killSignals).toEqual([undefined, "SIGKILL"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fails native cleanup after attempting to reap every owned process", async () => {
+    vi.useFakeTimers();
+    const stuckDriver = new FakeStartupChild();
+    const application = new FakeStartupChild();
+    application.onKill = (signal) => {
+      if (signal === undefined) application.exit(null, "SIGTERM");
+      return true;
+    };
+
+    const stopped = stopNativeQualificationProcesses(
+      [
+        { label: "WebDriver", child: stuckDriver },
+        { label: "application", child: application },
+      ],
+      { gracefulTimeoutMs: 100, forceTimeoutMs: 50 },
+    );
+    const assertion = expect(stopped).rejects.toThrow(
+      "WebDriver remained alive after SIGKILL",
+    );
+    await vi.advanceTimersByTimeAsync(150);
+
+    await assertion;
+    expect(stuckDriver.killSignals).toEqual([undefined, "SIGKILL"]);
+    expect(application.killSignals).toEqual([undefined]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -290,6 +346,59 @@ describe("native qualification process boundaries", () => {
     const driverLog = fs.readFileSync(logPath, "utf8");
     expect(driverLog).toContain("driver stdout proof");
     expect(driverLog).toContain("driver stderr proof");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("fails a passing report when its qualification child exits nonzero", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-driver-exit-"));
+    const logPath = path.join(dir, "seed-webdriver.log");
+    const reportPath = path.join(dir, "report.json");
+    const scenario = {
+      id: "window-workspace",
+      iteration: 7,
+      durationMs: 42,
+      outcome: "passed",
+      assertion: "visible explorer remained usable",
+      failureArtifacts: [],
+    };
+    const passingReport = {
+      passed: true,
+      runErrors: [],
+      failureArtifacts: [],
+      scenarios: [scenario],
+    };
+    const childScript =
+      `require('node:fs').writeFileSync(${JSON.stringify(reportPath)}, ` +
+      `${JSON.stringify(JSON.stringify(passingReport))});` +
+      "process.stdout.write('scenario report emitted\\n');" +
+      "process.exit(23)";
+
+    const result = await executeLoggedQualificationProcess({
+      command: [process.execPath, "-e", childScript],
+      reportPath,
+      driverLogPath: logPath,
+      mirrorOutput: false,
+      createFallbackReport: () => ({
+        passed: false,
+        runErrors: ["report was not emitted"],
+        failureArtifacts: [],
+        scenarios: [],
+      }),
+    });
+
+    expect(result.exitCode).toBe(23);
+    expect(result.report).toMatchObject({
+      passed: false,
+      runErrors: ["qualification process exited with code 23"],
+      failureArtifacts: [logPath],
+      scenarios: [scenario],
+    });
+    expect(JSON.parse(fs.readFileSync(reportPath, "utf8"))).toEqual(
+      result.report,
+    );
+    expect(fs.readFileSync(logPath, "utf8")).toContain(
+      "scenario report emitted",
+    );
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

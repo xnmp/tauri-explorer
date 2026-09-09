@@ -63,6 +63,66 @@ The manually dispatched Linux/Windows native smoke run on `d4b5d6e0` is
 Its result must be recorded separately from later integration-head checks. The
 PR stays draft; no merge into dev or release is authorized by this publication.
 
+## Published integration qualification — `cb0c1717`
+
+The published head passed both Rust test/strict-Clippy policies (1,154 default
+and 1,152 opt-in library tests, plus nine integration tests each), code maps,
+frontend typecheck/unit/bundle checks and the performance workflow. Those results
+are acceptance evidence for that commit, not a measured end-user speedup.
+
+The Mac qualification workflow accepted 30 native-readiness samples: cold p50
+4,717.5 ms / p95 5,575.3 ms; warm activation p50 655 ms / p95 4,056 ms.
+Its artifact identifies synthetic PR merge commit `52f9ca51d6ad3990b4bedccb355d825f405c2e00`,
+profile `debug-custom-protocol-production-hooks`, and binary SHA-256
+`4e4d2e7ae856a53b9df28e70dcb8f652694b680b15154d2129e44fc117925cbf`.
+This shared-runner debug build also enables warm-window measurement during setup.
+It does **not** establish release cold-only startup, first-input latency, or the
+half-bounce target. [Mac run](https://github.com/xnmp/tauri-explorer/actions/runs/34327210833).
+
+Qualification failures were reproduced in CI:
+
+- Windows compiled the app and library tests, then the test executable exited
+  before discovery with `STATUS_ENTRYPOINT_NOT_FOUND` (0xc0000139). Tauri's
+  resource pipeline embeds the activation manifest in app binaries only.
+  The build now uses MSVC linker manifest embedding, following the
+  [upstream Tauri example](https://github.com/tauri-apps/tauri/blob/dev/examples/api/src-tauri/build.rs),
+  to cover library tests too; GNU retains resource embedding. The existing v6
+  Common Controls and DPI declarations are shared in one manifest. Native MSVC
+  confirmation remains required. [Failing job](https://github.com/xnmp/tauri-explorer/actions/runs/34327210823/job/102387202049).
+- Chromium's 777-test, single-worker suite exceeded the original 20-minute job
+  budget and was cancelled before its failure summary. The long-path test's
+  unrelated whole-panel height comparison failed three times in isolation; its
+  file-column/row/containment assertions passed. Removing only that invalid
+  comparison makes all three long-path tests pass, and all 41 Git graph tests
+  pass in Chromium, including the previously timed-out PR-badge test. CI now
+  divides the unchanged inventory into
+  two single-worker shards and emits immediate line reports. The protected
+  `frontend` check requires both shards and all frontend validations, including
+  when a dependency fails or is cancelled. [Cancelled job](https://github.com/xnmp/tauri-explorer/actions/runs/34327210797/job/102387115696).
+
+- Linux native CI reached only 26 of 36 isolated sessions before its 15-minute
+  step cap, including 24 passing specs and one child-window setup failure before
+  the Git ownership assertion. The hosted WebKitGTK sessions each took about
+  30 seconds to start. The Linux step now allows 30 minutes within a 50-minute
+  build/test job; individual contract timeouts are unchanged. The ownership
+  fixture now explicitly primes and identifies a ready parked window, then
+  requires activation of that exact handle before acquiring the observer. Its
+  destruction/reclamation and surviving-window assertions remain intact. Native
+  confirmation of this fixture change remains pending. [Linux job](https://github.com/xnmp/tauri-explorer/actions/runs/34327210823/job/102387202250).
+
+Local strict Clippy passes for Linux and Windows GNU after the manifest change;
+formatting and 485/485 source-map coverage pass. The Chromium shards contain
+389 and 388 tests, with no omissions or overlap. Independent review accepted
+manifest embedding and the protected aggregate check; MSVC execution and CI
+runtime margin remain unverified. The changed native fixture passes a scoped
+strict TypeScript check. The suite's existing CommonJS/deprecated-resolution
+configuration prevents a clean suite-wide check; that separate debt is filed
+as [#690](https://github.com/xnmp/tauri-explorer/issues/690). Local WebKit cannot
+launch because its cached bundle lacks ICU 74, so browser WebKit proof remains CI-owned.
+
+The integration remains draft pending native/browser results and the explicit
+startup acceptance gap. No architectural scope has been added.
+
 ## Release stabilization — current checkpoint
 
 The started immutable Move intent is complete: real catalog promotion/reopening

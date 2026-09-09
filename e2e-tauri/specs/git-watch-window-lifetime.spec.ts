@@ -31,6 +31,32 @@ function readLogs(directory: string): string {
     .map(name => fs.readFileSync(path.join(directory, name), "utf8")).join("\n");
 }
 
+async function primeParkedWindow(): Promise<{ label: string; handle: string }> {
+  const original = await browser.getWindowHandle();
+  await operation("warm-prime");
+  let parked!: { label: string; handle: string };
+  try {
+    await browser.waitUntil(async () => {
+      for (const handle of await browser.getWindowHandles()) {
+        if (handle === original) continue;
+        await browser.switchToWindow(handle);
+        const candidate = await browser.execute(() => ({
+          label: document.documentElement.dataset.e2eWindowLabel,
+          ready: document.documentElement.dataset.e2eWarmReady,
+        }));
+        if (candidate.label && candidate.ready === "1") {
+          parked = { label: candidate.label, handle };
+          return true;
+        }
+      }
+      return false;
+    }, { timeout: 20_000, timeoutMsg: "warm observer window did not become ready" });
+  } finally {
+    await browser.switchToWindow(original);
+  }
+  return parked;
+}
+
 describe("Git observation native window ownership", () => {
   before(() => {
     execFileSync("git", ["init", "--quiet", repository]);
@@ -52,19 +78,11 @@ describe("Git observation native window ownership", () => {
   it("drops a leaked native observation when its source window is destroyed", async () => {
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
-    const opened = await operation("warm-open", scratch) as { label: string };
-    expect(typeof opened.label).toBe("string");
-    let childHandle = "";
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        await browser.switchToWindow(handle);
-        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === opened.label) {
-          childHandle = handle;
-          return true;
-        }
-      }
-      return false;
-    }, { timeout: 20_000, timeoutMsg: "child window never became usable" });
+    const parked = await primeParkedWindow();
+    expect(await operation("warm-open", scratch)).toEqual({ kind: "warm", label: parked.label });
+    const childHandle = parked.handle;
+    await browser.switchToWindow(childHandle);
+    expect(await browser.execute(() => document.documentElement.dataset.e2eWindowLabel)).toBe(parked.label);
     await $(".file-list").waitForExist();
     const { lease, logDir } = await operation("watch-acquire", repository) as {
       lease: { id: string; repoRoot: string }; logDir: string;

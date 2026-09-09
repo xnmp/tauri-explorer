@@ -26,7 +26,7 @@ jobs:
     # specs finish pushed the job past the cap and it was killed as `cancelled`
     # with no artifacts. Cap the job well above build + suite and let the
     # per-step bound below be the thing that actually fails a stuck run.
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
 
@@ -133,7 +133,9 @@ jobs:
 
       - name: Run smoke suite (Linux, isolated display and window manager)
         if: runner.os == 'Linux'
-        timeout-minutes: 15
+        # 36 isolated native sessions take ~30s each just to start WebKitGTK
+        # on hosted runners. The old 15m cap stopped before the final 10 specs.
+        timeout-minutes: 30
         run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
 
       # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps
@@ -150,11 +152,8 @@ jobs:
           Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
           "TAURI_NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\msedgedriver.exe" >> $env:GITHUB_ENV
 
-      # Bounded well below the 40-minute job cap so a regression leaves time for
-      # the artifact upload below instead of being killed by the cap with
-      # nothing to show. Sized for a real run, not for the fast-fail path: the
-      # Linux leg's whole job is ~10 minutes, so anything near the ~1 minute a
-      # session-start failure takes would kill a working suite.
+      # Keep the WebView2 suite's bound separate from WebKitGTK session costs
+      # and leave time for failure evidence before the overall job cap.
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 15

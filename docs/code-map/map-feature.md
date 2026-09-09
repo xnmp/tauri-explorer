@@ -455,4 +455,6 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 
 ## Native release qualification
 
+- `src-tauri/build.rs`, `src-tauri/windows-app-manifest.xml` — shared app/test Windows activation manifest; MSVC linker embedding prevents test harness loader failures before native contracts run.
+
 - `e2e-tauri/native-qualification.ts` owns bounded process cleanup, binary identity, reports and native-ready/warm log parsing. `scripts/build-native-qualification.ts`, `scripts/qualify-macos-startup.ts` and `scripts/run-native-soak.ts` compose the build, Mac measurement and opt-in soak flows; `e2e-tauri/wdio.soak.conf.ts` selects `e2e-tauri/soak/native-soak.spec.ts`. Process/report contracts live in `tests/qualification/native-runner-edge-cases.test.ts` and `tests/qualification/native-soak.test.ts`. Shared-runner debug timings do not establish release Dock-bounce or first-input latency.

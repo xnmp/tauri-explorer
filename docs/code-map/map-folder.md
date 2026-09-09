@@ -379,6 +379,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `pretext.d.ts` — ambient TS type declarations.
 
+## Native build resources
+
+- `src-tauri/build.rs` — embeds app resources; MSVC linker manifest also covers library test executables.
+- `src-tauri/windows-app-manifest.xml` — shared Common Controls v6 and Per-Monitor V2 DPI declarations.
+
 ## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
 
 - `main.rs` — binary entry (console-window guard).

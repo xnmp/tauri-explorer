@@ -1,35 +1,31 @@
 fn main() {
-    // Re-run (and re-embed the Windows .exe icon) whenever the icon changes.
-    // Without this, an incremental `tauri build` keeps the previously embedded
-    // icon, so a regenerated icon.ico shows up in `tauri dev` but not in the
-    // installed binary.
+    // Keep incremental builds in sync with both native resources.
     println!("cargo:rerun-if-changed=icons/icon.ico");
+    println!("cargo:rerun-if-changed=windows-app-manifest.xml");
 
-    let mut windows = tauri_build::WindowsAttributes::new();
-
-    // Windows manifest for Per-Monitor V2 DPI awareness.
-    // The Common-Controls v6 dependency is required so that comctl32 v6 is loaded;
-    // without it, `TaskDialogIndirect` (used by the `trash` crate) fails to resolve
-    // and the binary exits at startup with a "procedure entry point not found" error.
-    let manifest = r#"
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-  <dependency>
-    <dependentAssembly>
-      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
-    </dependentAssembly>
-  </dependency>
-  <asmv3:application>
-    <asmv3:windowsSettings>
-      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
-      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
-    </asmv3:windowsSettings>
-  </asmv3:application>
-</assembly>
-"#;
-
-    windows = windows.app_manifest(manifest);
+    let windows_msvc = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
+    let windows = if windows_msvc {
+        // Tauri embeds resources only in app binaries. MSVC must instead embed
+        // the manifest through the linker so library test executables also get
+        // Common Controls v6 (required by trash's TaskDialogIndirect import).
+        // Disable the resource manifest to avoid embedding it twice in the app.
+        tauri_build::WindowsAttributes::new_without_app_manifest()
+    } else {
+        tauri_build::WindowsAttributes::new().app_manifest(include_str!("windows-app-manifest.xml"))
+    };
 
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
         .expect("failed to run build script");
+
+    if windows_msvc {
+        // Generic link arguments cover unit tests too; rustc-link-arg-tests
+        // covers separate test targets only. Follow Tauri's API example.
+        let manifest = std::path::PathBuf::from(
+            std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo supplies the package directory"),
+        )
+        .join("windows-app-manifest.xml");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+    }
 }

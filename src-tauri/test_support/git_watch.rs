@@ -430,6 +430,11 @@ fn native_observer_recovers_after_root_moves_and_observes_worktree_lock_files() 
 
 #[test]
 fn native_observer_watches_descendants_of_a_copied_replacement_root() {
+    fn outcome<T>(receiver: &mpsc::Receiver<T>, phase: &str) -> T {
+        receiver
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap_or_else(|error| panic!("{phase}: {error}"))
+    }
     let dir = repo();
     let destination = TempDir::new().unwrap();
     let retired = destination.path().join("retired");
@@ -437,12 +442,15 @@ fn native_observer_watches_descendants_of_a_copied_replacement_root() {
     let (installed_tx, installed) = mpsc::channel();
     let (changed_tx, changed) = mpsc::channel();
     let (proof_tx, proof) = mpsc::channel();
-    let watched_proof = proof_path.clone();
     let owner = Owner::default();
     let service = Service::spawn(
         Box::new(move |target, callback| {
             let proof_tx = proof_tx.clone();
-            let watched_proof = watched_proof.clone();
+            // git2 expands Windows 8.3 parents in the actual watch target.
+            // Match that registration spelling while writing via the caller path.
+            let watched_proof = std::path::Path::new(&target.source)
+                .join(".git")
+                .join("post-recovery-proof");
             let observer = super::native_observer(
                 target,
                 Box::new(move |event| {
@@ -472,21 +480,24 @@ fn native_observer_watches_descendants_of_a_copied_replacement_root() {
     let path = dir.path().to_path_buf();
     let path_string = path.to_string_lossy().into_owned();
     let lease = run(service.acquire(&owner, path_string.clone())).unwrap();
-    receive(&installed);
+    outcome(&installed, "initial registration");
 
     std::fs::rename(&path, &retired).unwrap();
-    assert_eq!(receive(&changed), lease.repo_root);
+    assert_eq!(outcome(&changed, "root loss invalidation"), lease.repo_root);
     copy_tree(&retired, &path);
-    receive(&installed);
-    assert_eq!(receive(&changed), lease.repo_root);
+    outcome(&installed, "replacement registration");
+    assert_eq!(outcome(&changed, "recovery invalidation"), lease.repo_root);
 
     // Recovery must cover the replacement tree, rather than merely publishing
     // the refresh caused by losing the original root.
     let second = run(service.acquire(&owner, path_string)).unwrap();
     while changed.try_recv().is_ok() {}
     std::fs::write(proof_path, "changed").unwrap();
-    receive(&proof);
-    assert_eq!(receive(&changed), lease.repo_root);
+    outcome(&proof, "exact replacement descendant receipt");
+    assert_eq!(
+        outcome(&changed, "replacement descendant invalidation"),
+        lease.repo_root
+    );
 
     run(service.release(&owner, lease.id)).unwrap();
     run(service.release(&owner, second.id)).unwrap();

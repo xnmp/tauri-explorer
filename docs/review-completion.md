@@ -369,6 +369,15 @@ now works in a single-pane session; visibility, real click, PTY scrollback and
 resize outcomes remain required. Native suite TypeScript passes. No product
 terminal behavior or creation timeout changed.
 
+The copied-root Git native test now derives its exact expected proof path from
+the registered target spelling, preserving the original caller spelling for the
+write. Windows TempDir can use an 8.3 parent while git2/notify use its long form;
+raw path equality previously could never acknowledge that exact write. Receives
+now identify the failing lifecycle phase. This fixes test identity, not production
+Git recovery: the GUI missing-event failure remains unresolved. Native registration
+logs do show both successful physical registrations; notify arms its first read
+before acknowledging registration, so an earlier unarmed-read theory is refuted.
+
 ## Bounded corrections after `a5fced4b`
 
 - Restore classification accepts the observed `COPYENGINE_S_DONT_PROCESS_CHILDREN`

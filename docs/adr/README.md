@@ -14,3 +14,4 @@ decision during review.
 | [0006](0006-git-network-cancellation-boundary.md)     | Git network cancellation and mutation boundary        | Accepted |
 | [0007](0007-markdown-frontmatter-preview-boundary.md) | Markdown frontmatter preview boundary                 | Accepted |
 | [0008](0008-qualification-process-lifecycle.md)       | Qualification process lifecycle and artifact boundary | Accepted |
+| [0009](0009-native-qualification-cache-lifecycle.md)  | Native qualification cache lifecycle                  | Accepted |

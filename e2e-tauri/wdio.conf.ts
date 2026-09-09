@@ -142,11 +142,6 @@ export const config: WebdriverIO.Config = {
   framework: "mocha",
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
-  autoCompileOpts: {
-    autoCompile: true,
-    tsNodeOpts: { transpileOnly: true, project: "./e2e-tauri/tsconfig.json" },
-  },
-
   onPrepare: processCleanupHooks.prepare,
 
   beforeSession: async (_config, capabilities) => {

@@ -74,7 +74,7 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
     );
     await newTabCommand.waitForDisplayed({ timeout: 10_000 });
     await newTabCommand.click();
-    await browser.waitUntil(async () => (await $$(".tab")).length === 2, {
+    await browser.waitUntil(async () => (await (await $$(".tab")).length) === 2, {
       timeout: 10_000,
       timeoutMsg: "New Tab command did not create a second tab",
     });

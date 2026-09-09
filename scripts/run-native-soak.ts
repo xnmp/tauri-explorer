@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  addQualificationFailureArtifact,
   buildNativeQualificationReport,
+  executeLoggedQualificationProcess,
   readVerifiedNativeBuildManifest,
   resolveSoakConfiguration,
   writeQualificationArtifact,
@@ -50,7 +50,6 @@ const driverLogPath = path.resolve(
   `${nativePlatform()}-${configuration.seed}-webdriver.log`,
 );
 fs.rmSync(reportPath, { force: true });
-fs.mkdirSync(path.dirname(driverLogPath), { recursive: true });
 let build;
 try {
   build = readVerifiedNativeBuildManifest(manifestPath);
@@ -68,73 +67,34 @@ try {
   throw error;
 }
 
-const driverLog = fs.createWriteStream(driverLogPath, { flags: "w" });
-const child = Bun.spawn(
-  ["bunx", "wdio", "run", "e2e-tauri/wdio.soak.conf.ts"],
-  {
-    stdout: "pipe",
-    stderr: "pipe",
-    env: {
-      ...process.env,
-      NATIVE_BUILD_MANIFEST: manifestPath,
-    },
+const { exitCode, report } = await executeLoggedQualificationProcess({
+  command: ["bunx", "wdio", "run", "e2e-tauri/wdio.soak.conf.ts"],
+  env: {
+    ...process.env,
+    NATIVE_BUILD_MANIFEST: manifestPath,
   },
-);
-
-async function relayOutput(
-  stream: ReadableStream<Uint8Array>,
-  destination: NodeJS.WriteStream,
-): Promise<void> {
-  const reader = stream.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return;
-    destination.write(value);
-    driverLog.write(value);
-  }
-}
-
-const output = Promise.all([
-  relayOutput(child.stdout, process.stdout),
-  relayOutput(child.stderr, process.stderr),
-]);
-const exitCode = await child.exited;
-await output;
-await new Promise<void>((resolve, reject) => {
-  driverLog.once("error", reject);
-  driverLog.end(resolve);
+  reportPath,
+  driverLogPath,
+  createFallbackReport: (code) =>
+    buildNativeQualificationReport({
+      build,
+      platform: {
+        os: nativePlatform(),
+        release: os.release(),
+        arch: os.arch(),
+        webview: "unavailable: WebDriver session did not start",
+        displayScale: null,
+      },
+      configuration,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      resources: [],
+      scenarios: [],
+      runErrors: [
+        `WebDriver exited before the native report was emitted (code ${code})`,
+      ],
+    }),
 });
-
-let report: Record<string, unknown>;
-if (!fs.existsSync(reportPath)) {
-  const message = `WebDriver exited before the native report was emitted (code ${exitCode})`;
-  report = buildNativeQualificationReport({
-    build,
-    platform: {
-      os: nativePlatform(),
-      release: os.release(),
-      arch: os.arch(),
-      webview: "unavailable: WebDriver session did not start",
-      displayScale: null,
-    },
-    configuration,
-    startedAt,
-    finishedAt: new Date().toISOString(),
-    resources: [],
-    scenarios: [],
-    runErrors: [message],
-  });
-} else {
-  report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-}
-
-if (exitCode !== 0 || !report.passed) {
-  report = addQualificationFailureArtifact(report, driverLogPath);
-}
-writeQualificationArtifact(reportPath, report);
 
 if (exitCode !== 0) throw new Error(`native soak WebDriver exited ${exitCode}`);
 if (!report.passed) throw new Error("native soak report did not pass");

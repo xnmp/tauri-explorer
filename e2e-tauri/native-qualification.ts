@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
@@ -473,6 +474,73 @@ export function addQualificationFailureArtifact<
   };
 }
 
+export async function executeLoggedQualificationProcess<
+  T extends { passed?: boolean; failureArtifacts?: readonly string[] },
+>(options: {
+  command: readonly string[];
+  env?: NodeJS.ProcessEnv;
+  reportPath: string;
+  driverLogPath: string;
+  mirrorOutput?: boolean;
+  createFallbackReport: (exitCode: number) => T;
+}): Promise<{ exitCode: number; report: T }> {
+  if (options.command.length === 0)
+    throw new Error("qualification process command must not be empty");
+  fs.mkdirSync(path.dirname(options.driverLogPath), { recursive: true });
+  fs.rmSync(options.reportPath, { force: true });
+  const logFile = fs.openSync(options.driverLogPath, "w");
+  const mirrorOutput = options.mirrorOutput ?? true;
+  let exitCode = 1;
+
+  try {
+    const child = spawn(options.command[0], [...options.command.slice(1)], {
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const relay = (chunk: Buffer, destination: NodeJS.WriteStream): void => {
+      fs.writeSync(logFile, chunk);
+      if (mirrorOutput) destination.write(chunk);
+    };
+    child.stdout.on("data", (chunk: Buffer) => relay(chunk, process.stdout));
+    child.stderr.on("data", (chunk: Buffer) => relay(chunk, process.stderr));
+
+    const result = await new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+    }>((resolve) => {
+      child.once("error", (error) => {
+        const message = `qualification process error: ${error.message}\n`;
+        fs.writeSync(logFile, message);
+        if (mirrorOutput) process.stderr.write(message);
+      });
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    });
+    exitCode = result.code ?? 1;
+    if (result.signal) {
+      const message = `qualification process terminated by ${result.signal}\n`;
+      fs.writeSync(logFile, message);
+      if (mirrorOutput) process.stderr.write(message);
+    }
+  } catch (error) {
+    const message = `qualification process could not start: ${
+      error instanceof Error ? error.message : String(error)
+    }\n`;
+    fs.writeSync(logFile, message);
+    if (mirrorOutput) process.stderr.write(message);
+  } finally {
+    fs.closeSync(logFile);
+  }
+
+  let report = fs.existsSync(options.reportPath)
+    ? (JSON.parse(fs.readFileSync(options.reportPath, "utf8")) as T)
+    : options.createFallbackReport(exitCode);
+  if (exitCode !== 0 || !report.passed) {
+    report = addQualificationFailureArtifact(report, options.driverLogPath);
+  }
+  writeQualificationArtifact(options.reportPath, report);
+  return { exitCode, report };
+}
+
 export async function executeQualificationRun<T>(options: {
   outputPath: string;
   execute: (runErrors: string[]) => Promise<void>;
@@ -587,9 +655,7 @@ export function waitForMacStartupProcess(
     const onError = (error: Error): void => {
       fail(new Error(`application process error: ${error.message}`));
     };
-    const succeedAfterSurvival = (
-      measurement: MacStartupMeasurement,
-    ): void => {
+    const succeedAfterSurvival = (measurement: MacStartupMeasurement): void => {
       clearInterval(pollTimer);
       clearTimeout(timeoutTimer);
       survivalTimer = setTimeout(() => {
@@ -614,11 +680,7 @@ export function waitForMacStartupProcess(
 
     const timeoutTimer = setTimeout(
       () =>
-        fail(
-          new Error(
-            `startup markers missing after ${options.timeoutMs}ms`,
-          ),
-        ),
+        fail(new Error(`startup markers missing after ${options.timeoutMs}ms`)),
       options.timeoutMs,
     );
     const pollTimer = setInterval(inspectLog, options.pollMs ?? 25);

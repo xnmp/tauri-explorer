@@ -15,6 +15,22 @@ const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
   it("keeps a zoomed drag continuous with scrollback and the shell usable after keyboard resize", async () => {
     await browser.setWindowSize(1280, 900);
     await navigateTo(scratch);
+    // Native specs share persisted settings across driver sessions. Establish
+    // this fixture's own baseline through user commands before measuring zoom.
+    await browser.keys(["Control", "0"]);
+    await browser.waitUntil(async () => await browser.execute(() =>
+      parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1,
+    { timeoutMsg: "Reset Zoom did not restore 100%" });
+    if (await $(".preview-pane").isDisplayed()) {
+      await browser.keys(["Control", "Shift", "p"]);
+      const commandInput = $(".command-palette-dialog .search-input");
+      await commandInput.waitForDisplayed();
+      await commandInput.setValue("Toggle Preview Pane");
+      await browser.waitUntil(async () => (await domText(".command-palette-dialog")).includes("Toggle Preview Pane"),
+        { timeoutMsg: "command palette never matched Toggle Preview Pane" });
+      await browser.keys("Enter");
+    }
+    await $(".preview-pane").waitForDisplayed({ reverse: true });
     const entry = await $(`.entry-item[data-path="${fixtureEntry}"]`);
     await entry.waitForDisplayed();
     try {

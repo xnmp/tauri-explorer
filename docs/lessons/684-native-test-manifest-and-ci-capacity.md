@@ -186,3 +186,31 @@ candidate names: filtering only by the expected leaf hides any display-name
 reconstruction mismatch. Diagnostic capture in native tests must be best-effort,
 including normal-path checkpoints; a failed driver call or missing fixture path
 must not replace the original feature failure.
+
+Windows Recycle Bin inventory names can be display names with hidden extensions:
+the native runner returned `exact` for deleted `exact.txt`. Production restores
+from captured deletion receipts, so native restoration fixtures must preserve
+that exact identity rather than reconstructing a filesystem name from inventory
+presentation. Collision assertions still need real sentinel/alternate bytes and
+the full Shell destination, normalized for the runner's short-path aliases.
+
+Read arrays of rapidly replaced native DOM rows in one `browser.execute` task.
+Enumerating WebElement handles and then reading each one's `textContent` can
+keep a wait poll failing on stale handles after the requested data is present.
+The Git recovery run returned the new HEAD within half a second, but this
+observation race exhausted the 20-second assertion deadline. Keep real rendered
+text/actionability checks where visibility is the contract; this correction
+only applies to helpers whose existing contract is raw DOM text.
+
+Native specs share persisted settings across application sessions. A preview
+resize test can leave 150% zoom and a 600px bottom preview that covers a later
+terminal fixture's file row. Establish that fixture's own zoom/preview baseline
+through user commands after navigation readiness; preserve the real click and
+PTY outcomes. Where WebKitGTK reports empty rendered text for a fully exposed
+scrolled span, require its exact text, full Range bounds and unobstructed edge
+hit targets before the real row click instead of accepting raw text alone.
+
+Do not remove a pane fixture while its application session still owns live
+panes. Put it under the existing native runner cleanup root so `afterSession`
+stops the application before `onComplete` removes the files. Missing cleanup
+ownership must fail closed, and process cleanup failures must remain fatal.

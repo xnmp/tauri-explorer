@@ -3,11 +3,19 @@
 import { browser, $, $$ } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
 
-const scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-panes-"));
+const cleanupRoot = process.env.TAURI_NATIVE_CLEANUP_STATE_DIRECTORY;
+if (
+  !cleanupRoot ||
+  !path.isAbsolute(cleanupRoot) ||
+  !fs.existsSync(cleanupRoot) ||
+  !fs.statSync(cleanupRoot).isDirectory()
+) {
+  throw new Error("native cleanup state directory is unavailable or invalid");
+}
+const scratch = fs.mkdtempSync(path.join(cleanupRoot, "pane-lifetime-"));
 const first = path.join(scratch, "first");
 const second = path.join(scratch, "second");
 
@@ -30,8 +38,6 @@ describe("pane resource lifetime", () => {
     execFileSync("git", ["-c", "user.name=Pane Test", "-c", "user.email=pane@example.test",
       "commit", "--quiet", "-m", "initial"], { cwd: second });
   });
-  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
-
   it("both directories still receive external changes after closing and restoring a pane", async () => {
     await navigateTo(first);
     // Native sessions restore the previous window layout across spec runs.

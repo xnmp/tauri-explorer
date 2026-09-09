@@ -14,10 +14,16 @@ export async function domText(selector: string): Promise<string> {
   return ((await el.getProperty("textContent")) as string | null) ?? "";
 }
 
-/** textContent of every match for `selector`, as an array. */
+/** Read the matching text in one renderer task. Retaining WebElement handles
+ * across separate reads races row replacement and can strand polling on stale
+ * elements even after the expected content has already been published. */
 export async function domTexts(selector: string): Promise<string[]> {
-  return await $$(selector).map(
-    async (el) => ((await el.getProperty("textContent")) as string | null) ?? "",
+  return browser.execute(
+    (query: string) => Array.from(
+      document.querySelectorAll(query),
+      element => element.textContent ?? "",
+    ),
+    selector,
   );
 }
 

@@ -33,7 +33,25 @@ describe("native inline panel layout", () => {
     const file = $('.explorer-pane.active .file-list .entry-item[data-path$="panel-proof.txt"]');
     await file.waitForDisplayed();
     try {
-      await expect(file.$(".entry-name")).toHaveText("panel-proof.txt");
+      // WebKitGTK's rendered-text command reports an empty string for this
+      // scrolled inline span despite its nonzero, in-viewport text rectangle.
+      // Assert the actual filename geometry and hit target as well as content.
+      await browser.waitUntil(async () => await browser.execute(() => {
+        const name = document.querySelector('.explorer-pane.active .file-list .entry-item[data-path$="panel-proof.txt"] .entry-name');
+        const container = name?.closest(".pane-container");
+        if (!name || !container || name.textContent !== "panel-proof.txt") return false;
+        const range = document.createRange();
+        range.selectNodeContents(name);
+        const text = range.getBoundingClientRect();
+        const clip = container.getBoundingClientRect();
+        return text.width > 0 && text.height > 0
+          && text.left >= Math.max(0, clip.left)
+          && text.right <= Math.min(innerWidth, clip.right)
+          && text.top >= Math.max(0, clip.top)
+          && text.bottom <= Math.min(innerHeight, clip.bottom)
+          && [text.left + 1, text.right - 1].every(x =>
+            name.contains(document.elementFromPoint(x, text.top + text.height / 2)));
+      }), { timeoutMsg: "native filename is clipped, covered, or missing" });
     } catch (error) {
       try {
         console.error("[panel-layout geometry]", JSON.stringify(await browser.execute(() => {

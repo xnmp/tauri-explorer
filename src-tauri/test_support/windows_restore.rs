@@ -202,7 +202,10 @@ mod native {
         cmp::Ordering,
         ffi::OsStr,
         fs,
-        os::windows::fs::{symlink_dir, symlink_file},
+        os::windows::{
+            ffi::OsStringExt,
+            fs::{symlink_dir, symlink_file},
+        },
         path::Path,
         sync::Arc,
         thread,
@@ -296,6 +299,23 @@ mod native {
         RestoreRequest {
             path: path.to_string_lossy().into_owned(),
             artifact,
+        }
+    }
+
+    fn item_from_delete_receipt(
+        path: &Path,
+        success: crate::files::trash_artifact::TrashSuccess,
+    ) -> trash::TrashItem {
+        let artifact = success.artifact.expect("exact Recycle Bin artifact");
+        assert!(success.warning.is_none(), "exact recycling must not warn");
+        let TrashArtifact::WindowsShell { parsing_name_utf16 } = artifact.as_ref() else {
+            panic!("Windows deletion must return a Shell identity");
+        };
+        trash::TrashItem {
+            id: std::ffi::OsString::from_wide(parsing_name_utf16),
+            name: path.file_name().expect("fixture leaf").to_os_string(),
+            original_parent: path.parent().expect("fixture parent").to_path_buf(),
+            time_deleted: 0,
         }
     }
 
@@ -521,9 +541,12 @@ mod native {
             let directory = tempfile::tempdir().expect("fixture directory");
             let path = directory.path().join("exact.txt");
             fs::write(&path, b"exact restored bytes").expect("write fixture");
-            trash::delete(&path).expect("trash fixture");
+            let item = item_from_delete_receipt(
+                &path,
+                delete_item(&apartment, &path).expect("trash fixture"),
+            );
 
-            restore_item(&apartment, find_item(&path)).expect("restore fixture");
+            restore_item(&apartment, item).expect("restore fixture");
 
             assert_eq!(
                 fs::read(&path).expect("restored file"),
@@ -562,8 +585,10 @@ mod native {
             let directory = tempfile::tempdir().expect("fixture directory");
             let path = directory.path().join("collision.txt");
             fs::write(&path, b"trashed bytes").expect("write fixture");
-            trash::delete(&path).expect("trash fixture");
-            let item = find_item(&path);
+            let item = item_from_delete_receipt(
+                &path,
+                delete_item(&apartment, &path).expect("trash fixture"),
+            );
 
             let result = restore_item_before_perform(&apartment, item, |requested| {
                 fs::write(requested, b"existing sentinel")?;
@@ -582,7 +607,15 @@ mod native {
                 .find(|candidate| candidate != &path)
                 .expect("alternate restored file");
             assert_eq!(fs::read(&alternate).expect("alternate"), b"trashed bytes");
-            assert!(message.contains(&alternate.display().to_string()));
+            let canonical_alternate = fs::canonicalize(&alternate).expect("canonical alternate");
+            let mut expected_shell_path = shell_filesystem_name(&canonical_alternate);
+            assert_eq!(expected_shell_path.pop(), Some(0));
+            let expected_shell_path =
+                String::from_utf16(&expected_shell_path).expect("Shell path is valid UTF-16");
+            assert!(
+                message.contains(&expected_shell_path),
+                "uncertainty must report full Shell destination {expected_shell_path:?}: {message}"
+            );
         })
         .join()
         .expect("restore thread");

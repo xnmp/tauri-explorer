@@ -322,6 +322,56 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Native qualification follow-up — `943f3e8b`
+
+The Windows run verifies the production Shell parent normalization: the
+verbatim/alternate-case restore now passes. All batch, path, deletion, Git-trash,
+directory-observation and native Git contracts pass. Restore passes 26/28; the
+remaining two fixtures fail before restore because `trash::list` reports
+`exact.txt` and `collision.txt` as display names `exact` and `collision`.
+Production restoration uses the deletion receipt and never enumerates that
+inventory. Those fixtures now use the same exact receipt identity, retaining
+real deletion, restored-byte checks, and a collision created after the move is
+queued. The collision diagnostic must still name the full native destination;
+its expected path is canonicalized to account for the runner's 8.3 alias.
+
+The Windows Git recovery failure is a stale WebDriver read: the new commit was
+returned by native history at 22:45:10.463, while separately read row handles
+kept becoming stale until the 20-second poll expired. The immediate failure
+snapshot already contained the expected commit. The shared `domTexts` helper
+now queries and extracts the text array in one renderer task, preserving its
+selector/order/text contract and the original outcome assertions and deadlines.
+Independent Sol review accepted both test corrections; native TypeScript and
+Windows GNU all-target strict Clippy pass. Their native rerun is pending.
+
+Windows GUI acceptance is 32/35 spec files. Pane feature outcomes pass, but
+fixture removal runs while the panes remain live and fails with EBUSY. The
+fixture now lives under the runner's existing cleanup root, which is removed
+after application teardown. Window-transfer navigation also fails after the
+first two transfer cases pass: 19 seconds elapse before native command entry,
+then scanning completes in 2.4 ms. Its cause remains unproven.
+
+Linux native accepts 31/36 spec files. The panel diagnostic places the complete
+filename inside the viewport while WebDriver reports empty text. Its test now
+requires exact content, full text-range containment and unobstructed edge hit
+targets, retaining real click/selection and keyboard-resize outcomes. The terminal
+fixture inherited a visible 600px bottom preview at 150% zoom from an earlier
+spec. It now establishes 100% zoom and a hidden preview through user commands
+before its real click and unchanged PTY/resize assertions. The separate product
+height-allocation edge is deferred to [#699](https://github.com/xnmp/tauri-explorer/issues/699).
+Independent review accepts these test contracts. Native reruns remain required.
+Directory-watch lifetime/recovery lose their WebDriver sessions, and concurrent
+window creation still times out; these failures remain unresolved.
+
+Main CI (including both Chromium/WebKit shards), frontend, Rust, maps, both
+performance jobs and Mac qualification pass. The exact release Mac artifact
+records foreground native-readiness p50 3,195.6 ms / p95 3,953.4 ms and separate
+warm activation p50 414 ms / p95 2,128 ms, with 30 samples per scenario and one
+verified binary hash. These hosted-runner measurements do not attribute the
+difference from earlier runs or establish first presentation/input latency.
+See [exact Mac evidence](reviews/release-macos-startup-943f3e8b.json).
+The PR remains draft and the half-bounce target remains unproven.
+
 ## Failure-timing fix from dev — `e551e542`
 
 Dev's #698 resolves #697 by preserving failure status and timing artifacts through

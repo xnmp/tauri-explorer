@@ -662,6 +662,40 @@ export interface MacStartupMeasurement {
   warmShowMs: number;
 }
 
+/** Observable phase attribution emitted by the macOS startup qualifier. */
+export interface MacStartupPhases {
+  frameworkNavigationMs: number;
+  documentBootMs: number;
+  requiredAppWorkMs: number;
+  frameSchedulingMs: number;
+  readinessIpcMs: number;
+  unattributedMs: number;
+}
+
+export interface AttributedMacStartupMeasurement
+  extends MacStartupMeasurement {
+  readinessTotalMs: number;
+  phases: MacStartupPhases;
+  firstFunctionalFrame: "observed" | "not-observed";
+  inputOutcome: "verified" | "not-verified";
+}
+
+export interface MacStartupQualificationConditions {
+  launchMethod: string;
+  cachePolicy: string;
+  focus: string;
+  visibility: string;
+  hardwareModel: string;
+  cpu: string;
+  memoryBytes: number;
+}
+
+export interface HalfBounceQualification {
+  status: "qualified" | "unqualified" | "missed";
+  deadlineMs: number | null;
+  reason: string;
+}
+
 export interface NativeStartupChild {
   exitCode: number | null;
   signalCode: NodeJS.Signals | null;

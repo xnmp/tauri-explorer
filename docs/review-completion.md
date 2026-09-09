@@ -110,6 +110,12 @@ Qualification failures were reproduced in CI:
   destruction/reclamation and surviving-window assertions remain intact. Native
   confirmation of this fixture change remains pending. [Linux job](https://github.com/xnmp/tauri-explorer/actions/runs/34327210823/job/102387202250).
 
+- The full WebKit browser run also exceeded its 40-minute cap while still
+  executing the 777-test inventory. It now uses the same two-shard single-worker
+  approach with immediate line reports; the protected `webkit` check requires
+  both shards. The original failed assertions still need exact diagnostic output
+  from a completed run. [WebKit job](https://github.com/xnmp/tauri-explorer/actions/runs/34327210797/job/102387115351).
+
 Local strict Clippy passes for Linux and Windows GNU after the manifest change;
 formatting and 485/485 source-map coverage pass. The Chromium shards contain
 389 and 388 tests, with no omissions or overlap. Independent review accepted

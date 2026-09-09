@@ -98,11 +98,15 @@ jobs:
 
   # WebKit ≈ WKWebView — the closest automated proxy for the macOS webview
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
-  webkit:
+  webkit-tests:
     runs-on: ubuntu-latest
-    # The suite legitimately takes ~25m on a slow runner (#455) — a cap that
-    # close to the real duration cancels passing runs on runner-speed noise.
+    # The full 777-test suite exceeded 40m. Keep one worker on each runner
+    # and preserve the existing per-runner bound while partitioning the work.
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
 
@@ -119,15 +123,27 @@ jobs:
       - name: E2E tests (WebKit)
         env:
           WEBKIT: "1"
-        run: npx playwright test --project=webkit
+        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/2 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report-webkit
+          name: playwright-report-webkit-${{ matrix.shard }}
           path: playwright-report/
           if-no-files-found: ignore
+
+  # WebKit is also a protected context: both shards must complete successfully.
+  webkit:
+    if: always()
+    needs: [webkit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all WebKit browser outcomes
+        env:
+          WEBKIT_RESULT: ${{ needs.webkit-tests.result }}
+        run: test "$WEBKIT_RESULT" = success
 
   rust:
     runs-on: ubuntu-latest

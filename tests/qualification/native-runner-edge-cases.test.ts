@@ -209,19 +209,28 @@ describe("native qualification process boundaries", () => {
 
   it("propagates worker cleanup failures through native run completion", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
-    const markerDirectory = path.join(dir, "failures");
-    const hooks = createNativeProcessCleanupHooks(markerDirectory, async () => {
-      throw new Error("WebDriver remained alive after SIGKILL");
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "NATIVE_CLEANUP_TEST_STATE",
+      temporaryRoot: dir,
+      stop: async () => {
+        throw new Error("WebDriver remained alive after SIGKILL");
+      },
     });
 
     hooks.prepare();
+    const markerDirectory = environment.NATIVE_CLEANUP_TEST_STATE;
+    expect(markerDirectory).toBeTruthy();
     await expect(hooks.cleanup()).rejects.toThrow(
       "WebDriver remained alive after SIGKILL",
     );
+    expect(fs.readdirSync(markerDirectory!)).toHaveLength(1);
     expect(() => hooks.complete()).toThrow(
       "native qualification cleanup failed: WebDriver remained alive after SIGKILL",
     );
-    expect(fs.readdirSync(markerDirectory)).toHaveLength(1);
+    expect(fs.existsSync(markerDirectory!)).toBe(false);
+    expect(environment.NATIVE_CLEANUP_TEST_STATE).toBeUndefined();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

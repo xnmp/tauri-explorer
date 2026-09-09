@@ -42,6 +42,7 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
 
     const contracts = stepNamed(steps, "Run native contracts");
     const diagnostics = stepNamed(steps, "Upload native contract diagnostics");
+    const collection = stepNamed(steps, "Collect native qualification diagnostics");
     const build = stepNamed(
       steps,
       "Build Tauri binary (debug, embedded frontend, no bundle)",
@@ -57,6 +58,10 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(workflow).toContain("cargo_registry_cache_key=");
     expect(workflow).toContain("cache_storage_bytes=");
     expect(workflow).toContain("cache_transfer_estimate_bytes=");
+    expect(collection.run).toContain(
+      'for cache_path in src-tauri/target "$CARGO_HOME/registry" "$CARGO_HOME/git"',
+    );
+    expect(collection.run).toContain('if [ -d "$cache_path" ]; then');
   });
 
   it("reuses only compatible Rust build products and saves them after GUI failures", async () => {

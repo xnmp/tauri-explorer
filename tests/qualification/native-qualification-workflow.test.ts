@@ -24,6 +24,7 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(workflow).toContain("target_cache_key=");
     expect(workflow).toContain("cargo_registry_cache_key=");
     expect(workflow).toContain("cache_storage_bytes=");
+    expect(workflow).toContain("cache_transfer_estimate_bytes=");
   });
 
   it("reuses only compatible Rust build products and saves them after GUI failures", async () => {

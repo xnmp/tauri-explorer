@@ -36,11 +36,13 @@
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     focusedPath?: string;
+    fallbackTabStop: boolean;
+    containsIndex?: (index: number) => boolean;
     /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, focusedPath, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, focusedPath, fallbackTabStop, containsIndex = $bindable(), scrollToIndex = $bindable() }: Props = $props();
 
   // Reserved fixed name height: two lines at line-height 1.4 * 13px font.
   const NAME_HEIGHT = 37;
@@ -73,6 +75,7 @@
   });
   const { interactions, pointerDrag } = grid;
   scrollToIndex = grid.scrollToIndex;
+  containsIndex = grid.containsIndex;
 
   // Folder previews only render at large/xlarge tile sizes (smaller tiles
   // keep the plain folder icon, like Windows Explorer).
@@ -150,6 +153,8 @@
     itemHeight={tileRowHeight}
     itemOverflow="visible"
     viewportPadding="8px"
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={grid.rowContainsIndex}
     getKey={(row) => row.startIndex}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
@@ -228,7 +233,8 @@
   }
 
   .tiles-view :global(.tile-item:focus) {
-    outline: none;
+    outline: 2px solid var(--focus-stroke-outer, var(--accent));
+    outline-offset: -2px;
   }
 
   .tiles-view :global(.tile-item:hover) {

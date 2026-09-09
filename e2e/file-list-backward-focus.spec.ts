@@ -108,6 +108,30 @@ for (const viewMode of ALL_VIEW_MODES) {
       expect((await fileListState(page)).tabStops).toEqual([await navigatedFirst.getAttribute("data-path")]);
     });
 
+    test("Tab restores an unmounted roving row after a large-directory scroll", async ({ page }) => {
+      await page.goto(`/?path=${encodeURIComponent("/perf/huge-300")}&viewMode=${viewMode}`);
+      await waitForEntries(page);
+      await addPrecedingFocusTarget(page);
+      const initial = entry(page, 0);
+      const firstPath = await initial.getAttribute("data-path");
+      expect(firstPath).toBeTruthy();
+      const first = page.locator(`.file-list .entry-item[data-path="${firstPath}"]`);
+      await first.click();
+      await expect(first).toBeFocused();
+
+      await page.locator(".file-list .virtual-viewport").evaluate((viewport) => {
+        viewport.scrollTop = viewport.scrollHeight;
+        viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await expect(first, "the roving row must leave the rendered window").toHaveCount(0);
+      await expect(page.locator(".file-list .virtual-viewport[tabindex=\"0\"]")).toHaveCount(1);
+
+      await focusBeforeFileList(page);
+      await page.keyboard.press("Tab");
+      await expect(first).toBeFocused();
+      expect((await fileListState(page)).tabStops).toEqual([await first.getAttribute("data-path")]);
+    });
+
     test("Shift+Tab departs to the preceding sequential focus target", async ({ page, browserName }) => {
       // Playwright 1.58.2 WebKit/WPE reproduces a delivery divergence: the
       // row remains focused after Shift+Tab although the unhandled native

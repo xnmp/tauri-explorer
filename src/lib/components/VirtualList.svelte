@@ -35,6 +35,10 @@
     /** Called when the rendered window nears the end of `items` — incremental
      *  loaders (git graph paging) append more items in response. */
     onnearend?: () => void;
+    /** Optional roving-tab-stop fallback when the focused item is unmounted. */
+    tabindex?: number;
+    /** Reports whether an item index is in the current rendered window. */
+    containsIndex?: (index: number) => boolean;
   }
 
   let {
@@ -49,6 +53,8 @@
     itemOverflow = "hidden",
     viewportPadding,
     onnearend,
+    tabindex,
+    containsIndex = $bindable(),
   }: Props = $props();
 
   let viewportRef = $state<HTMLElement | null>(null);
@@ -129,6 +135,8 @@
     }))
   );
 
+  containsIndex = (index) => index >= startIndex && index < endIndex;
+
   // Near-end notification for incremental loaders. An $effect (not $derived):
   // this is a genuine callback side effect driven by the scroll window.
   const NEAR_END_ROWS = 20;
@@ -150,13 +158,15 @@
   });
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -- tabindex=0 is paired with the grid role for the unmounted roving-row fallback; Svelte cannot infer that dynamic role. -->
 <div
   class="virtual-viewport {className}"
   bind:this={viewportRef}
   bind:clientHeight={viewportHeight}
   onscroll={handleScroll}
   style:padding={viewportPadding}
-  {role}
+  {tabindex}
+  role={tabindex === 0 ? "grid" : role}
 >
   <div class="virtual-spacer-top" style:height="{paddingTop}px" aria-hidden="true"></div>
 

@@ -21,10 +21,14 @@
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     focusedPath?: string;
+    fallbackTabStop: boolean;
+    containsIndex?: (index: number) => boolean;
     scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, onitemclick, onitemdblclick, focusedPath, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, onitemclick, onitemdblclick, focusedPath, fallbackTabStop, containsIndex = $bindable(), scrollToIndex = $bindable() }: Props = $props();
+  let rowContainsIndex = $state<((index: number) => boolean) | undefined>();
+  containsIndex = (index) => rowContainsIndex?.(index + (explorer.isCreatingFolder ? 1 : 0)) ?? false;
 
   // Column resize composable
   const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
@@ -153,6 +157,8 @@
   {/if}
 
   <VirtualList
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={rowContainsIndex}
     items={listItems}
     itemHeight={32}
     getKey={(entry) => entry.path}

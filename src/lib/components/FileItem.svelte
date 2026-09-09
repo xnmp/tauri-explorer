@@ -193,8 +193,9 @@
     background: var(--subtle-fill-tertiary);
   }
 
-  .file-item:focus-visible {
-    outline: none;
+  .file-item:focus {
+    outline: 2px solid var(--focus-stroke-outer, var(--accent));
+    outline-offset: -2px;
   }
 
   /* Selected state - accent-tinted background */

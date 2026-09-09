@@ -30,11 +30,13 @@
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     focusedPath?: string;
+    fallbackTabStop: boolean;
+    containsIndex?: (index: number) => boolean;
     /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, focusedPath, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, focusedPath, fallbackTabStop, containsIndex = $bindable(), scrollToIndex = $bindable() }: Props = $props();
 
   // Fixed row height: a single-line list item (16px icon / one text line +
   // 4px vertical padding + border) plus the 4px inter-row gap. List names are
@@ -57,6 +59,7 @@
   });
   const { interactions, pointerDrag } = grid;
   scrollToIndex = grid.scrollToIndex;
+  containsIndex = grid.containsIndex;
 </script>
 
 <div class="list-view" data-columns={effectiveListColumns}>
@@ -66,6 +69,8 @@
     itemHeight={LIST_ROW_HEIGHT}
     itemOverflow="visible"
     viewportPadding="6px 8px"
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={grid.rowContainsIndex}
     getKey={(row) => row.startIndex}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
@@ -126,7 +131,8 @@
   }
 
   .list-view :global(.list-item:focus) {
-    outline: none;
+    outline: 2px solid var(--focus-stroke-outer, var(--accent));
+    outline-offset: -2px;
   }
 
   .list-view :global(.list-item:hover) {

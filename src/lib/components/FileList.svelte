@@ -36,6 +36,9 @@
   // real DOM focus so multi-selection never makes multiple rows tabbable.
   let focusedPath = $state<string | undefined>();
   let focusedDirectory = $state<string | undefined>();
+  let viewContainsIndex = $state<((index: number) => boolean) | undefined>();
+  const focusedIndex = $derived(explorer.displayEntries.findIndex((entry) => entry.path === focusedPath));
+  const fallbackTabStop = $derived(focusedIndex >= 0 && !(viewContainsIndex?.(focusedIndex) ?? false));
   $effect(() => {
     const entries = explorer.displayEntries;
     const changedDirectory = focusedDirectory !== explorer.currentPath;
@@ -113,8 +116,13 @@
     viewScrollToIndex?.(index);
     tick().then(() => {
       requestAnimationFrame(() => {
-        const el = contentRef?.querySelector<HTMLElement>(`.entry-item[data-path="${CSS.escape(entry.path)}"]`);
-        el?.focus({ preventScroll: true });
+        // VirtualList applies a programmatic scroll through its own
+        // coalesced frame; wait for that render window before restoring row
+        // focus from the viewport fallback.
+        requestAnimationFrame(() => {
+          const el = contentRef?.querySelector<HTMLElement>(`.entry-item[data-path="${CSS.escape(entry.path)}"]`);
+          el?.focus({ preventScroll: true });
+        });
       });
     });
   }
@@ -138,7 +146,12 @@
 
   function handleFocusIn(event: FocusEvent): void {
     const target = event.target as HTMLElement;
-    if (target.matches(".entry-item")) focusedPath = target.dataset.path;
+    if (target.matches(".entry-item")) {
+      focusedPath = target.dataset.path;
+    } else if (target.matches(".virtual-viewport") && focusedPath) {
+      const focused = explorer.displayEntries.find((entry) => entry.path === focusedPath);
+      if (focused) scrollToSelected(focused);
+    }
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
@@ -390,6 +403,8 @@
       <DetailsView
         {explorer}
         {focusedPath}
+        {fallbackTabStop}
+        bind:containsIndex={viewContainsIndex}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
         bind:scrollToIndex={viewScrollToIndex}
@@ -398,6 +413,8 @@
       <ListView
         {explorer}
         {focusedPath}
+        {fallbackTabStop}
+        bind:containsIndex={viewContainsIndex}
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
@@ -407,6 +424,8 @@
       <TilesView
         {explorer}
         {focusedPath}
+        {fallbackTabStop}
+        bind:containsIndex={viewContainsIndex}
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}

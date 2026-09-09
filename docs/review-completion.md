@@ -322,6 +322,19 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Dev cache workflow integration — `f6ddb8da`
+
+The published fixes at `1703ba96` could not start PR checks because dev gained
+#695 while they were being validated. Integration preserves its compiler-keyed
+cache restore/save and diagnostics, our Windows contract/lint/GUI continuation
+gates, and native application log collection. All build-dependent steps use the
+same `build-tauri-binary` identity. The incoming cache ADR is numbered 0022 to
+preserve the existing Git observation ADR 0009; its index and references follow
+that move. All five cache workflow contracts and full source-map coverage pass.
+Application code is unchanged by this merge. The reproduced upstream failure-timing
+artifact gap is deferred as [#697](https://github.com/xnmp/tauri-explorer/issues/697);
+it does not suppress a failed workflow result.
+
 ## Native qualification and pane correction — `9b3fcb82`
 
 [Main CI](https://github.com/xnmp/tauri-explorer/actions/runs/34345401785),

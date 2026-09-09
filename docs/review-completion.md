@@ -322,6 +322,13 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Failure-timing fix from dev — `e551e542`
+
+Dev's #698 resolves #697 by preserving failure status and timing artifacts through
+the actual Bash pipeline. The workflow merges without conflict; documentation
+retains ADR references 0021/0022 alongside the new guidance. Both workflow test
+files pass, including execution under Bash's CI flags. Release gates remain intact.
+
 ## Native follow-up — published `20a1f6a8`
 
 Main CI, including both browser engines, Rust, frontend and map checks, passed;

@@ -137,6 +137,14 @@ describe("native window transfer rejection", () => {
     fs.writeFileSync(path.join(warmDirectory, "warm.txt"), "warm");
     await navigateTo(leftDirectory);
     sourceHandle = await browser.getWindowHandle();
+    // Native sessions share persisted tabs. Start the transfer fixture in a
+    // fresh single-pane tab even if a previous session left a split layout.
+    const previousTabs = await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length);
+    await browser.keys(["Control", "t"]);
+    await browser.waitUntil(async () => await browser.execute((expectedTabs) =>
+      document.querySelectorAll(".tab-area > .tab").length === expectedTabs
+        && document.querySelectorAll(".explorer-pane").length === 1,
+    previousTabs + 1), { timeoutMsg: "fresh transfer source did not have exactly one pane" });
     await browser.keys(["Control", "m"]);
     await browser.waitUntil(async () =>
       await browser.execute(() => document.querySelectorAll(".explorer-pane").length === 2));

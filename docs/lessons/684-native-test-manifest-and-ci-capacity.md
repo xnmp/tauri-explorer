@@ -67,6 +67,20 @@ and refresh-count assertions intact. Debug-only logs record source identity,
 paths, event classification, activation and recovery; Windows smoke enables the
 existing debug log level. No canonicalization or new watcher work is introduced.
 
+Native sessions also share persisted tab layouts. The Windows transfer rejection
+fixture restored eight panes from the preceding timed-out spec, then split to
+nine while waiting for exactly two. Establish a fresh single-pane tab through
+the normal New Tab action before constructing the left/right fixture; retain the
+source identity, contents and watcher assertions for every rejected handoff.
+
+A Mocha timeout does not cancel an async test body. The timed-out large-layout
+test continued navigating and tearing off its tab while the next test navigated
+the same window. The log shows the source navigation at 10:07:32.254 overwritten
+by the prior body's pane-7 navigation at 10:07:32.516. This explains the later
+token/path timeout; it is not a StatusBar bug (the app has one active-explorer
+StatusBar). Keep the navigation contract intact and diagnose the first timeout
+before changing product navigation or transfer behavior.
+
 Collect all independent Windows contract families even after one fails, retain
 a failing final exit status, and run lint and GUI smoke when their build/driver
 prerequisites succeeded. Never turn these checks into `continue-on-error` gates.

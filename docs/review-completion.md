@@ -278,6 +278,37 @@ Both are corrected without weakening their feature assertions. The complete
 `check:e2e:tauri` command and its Vitest regression now pass; formatting/diff and
 485/485 code-map coverage pass. CI must qualify the resulting integration head.
 
+## Release qualification evidence — `a5fced4b`
+
+The [Mac release run](https://github.com/xnmp/tauri-explorer/actions/runs/34340731427)
+passed both scenarios with the same release binary. Its actual PR merge-ref
+checkout is `acc2d9d50230445368e0a4db04ce5f5024ae1be5`, distinct from the PR head.
+The binary is 21,883,664 bytes with SHA-256
+`c8d9adaaf1772deda85d6e11afbdb67e5fb674cc2bd3f3be4809e81dc4ac91cb`.
+
+- Foreground-only: 30 samples, native-ready p50 **1,911.4 ms**, p95 **2,120.9 ms**.
+  Every warm measurement is null, and no foreground log contains a warm marker.
+- Separate warm probe: 30 samples, warm activation p50 **42 ms**, p95 **53 ms**;
+  foreground readiness with this extra probe is p50 2,023 ms / p95 2,227 ms.
+- Independent review verified all raw markers, sample values, nearest-rank
+  percentiles and matching identities. Five-second survival is enforced by the
+  runner and consistent with elapsed sample duration, without a separate liveness
+  artifact. [Recorded evidence](reviews/release-macos-startup-a5fced4b.json).
+
+This closes release-profile, foreground-only and same-binary warm measurement
+gaps. It does **not** meet the half-bounce target or establish presented-frame or
+input latency. Shared-runner OS caches are uncontrolled; earlier debug numbers
+are not a comparable baseline from which to claim a code-induced speedup.
+
+At this head, frontend validation passed 2,417 unit tests (three skipped), 30
+performance tests, typecheck, architecture lint and the bundle budget. Both
+Chromium shards passed: 389 clean passes plus 387 passes and one accepted retry.
+Rust passed 1,155 default-policy and 1,153 opt-in library tests, each with 19
+ignored tests and nine passing integration tests; strict Clippy and code maps
+passed. The separate performance workflow passed. WebKit and native gates remain
+live at this checkpoint; the local rejection-fixture fix `8586faaf` is outside
+these run identities and still needs native execution.
+
 ## Release stabilization — preceding checkpoint
 
 The started immutable Move intent is complete: real catalog promotion/reopening

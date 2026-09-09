@@ -6,13 +6,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  addQualificationFailureArtifact,
   buildNativeQualificationReport,
+  executeLoggedQualificationProcess,
   measureProcessTreeRss,
   parseMacStartupLog,
   stopNativeStartupProcess,
   waitForMacStartupProcess,
-  writeQualificationArtifact,
   type NativeStartupChild,
 } from "../../e2e-tauri/native-qualification";
 
@@ -147,49 +146,64 @@ describe("native qualification process boundaries", () => {
     ).toEqual({ rssBytes: 140, sampledAtMs: 123 });
   });
 
-  it("persists run-specific driver output as a failure artifact", () => {
+  it("captures early child output and persists it in the failed report", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-driver-log-"));
     const logPath = path.join(dir, "seed-webdriver.log");
     const reportPath = path.join(dir, "report.json");
-    fs.writeFileSync(logPath, "WebKitWebDriver failed to start\n");
-    const report = buildNativeQualificationReport({
-      build: {
-        commit: "source",
-        profile: "debug-custom-protocol-e2e-hooks",
-        binary: "/qualified/tauri-explorer",
-        binarySha256: "abc",
-        binaryBytes: 42,
-        binaryModifiedAt: "2026-09-09T00:00:00.000Z",
-      },
-      platform: {
-        os: "linux",
-        release: "test",
-        arch: "x64",
-        webview: "unavailable",
-        displayScale: null,
-      },
-      configuration: {
-        durationMs: 1,
-        maxCycles: 1,
-        seed: "failure-seed",
-        scenarios: [],
-        expectedDisplayScale: 1,
-      },
-      startedAt: "2026-09-09T00:00:00.000Z",
-      finishedAt: "2026-09-09T00:00:01.000Z",
-      resources: [],
-      scenarios: [],
-      runErrors: ["WebDriver exited before a session started"],
+    const result = await executeLoggedQualificationProcess({
+      command: [
+        process.execPath,
+        "-e",
+        "process.stdout.write('driver stdout proof\\n');" +
+          "process.stderr.write('driver stderr proof\\n');" +
+          "process.exit(23)",
+      ],
+      reportPath,
+      driverLogPath: logPath,
+      mirrorOutput: false,
+      createFallbackReport: (exitCode) =>
+        buildNativeQualificationReport({
+          build: {
+            commit: "source",
+            profile: "debug-custom-protocol-e2e-hooks",
+            binary: "/qualified/tauri-explorer",
+            binarySha256: "abc",
+            binaryBytes: 42,
+            binaryModifiedAt: "2026-09-09T00:00:00.000Z",
+          },
+          platform: {
+            os: "linux",
+            release: "test",
+            arch: "x64",
+            webview: "unavailable",
+            displayScale: null,
+          },
+          configuration: {
+            durationMs: 1,
+            maxCycles: 1,
+            seed: "failure-seed",
+            scenarios: [],
+            expectedDisplayScale: 1,
+          },
+          startedAt: "2026-09-09T00:00:00.000Z",
+          finishedAt: "2026-09-09T00:00:01.000Z",
+          resources: [],
+          scenarios: [],
+          runErrors: [
+            `WebDriver exited before a session started (code ${exitCode})`,
+          ],
+        }),
     });
 
-    writeQualificationArtifact(
-      reportPath,
-      addQualificationFailureArtifact(report, logPath),
-    );
-    expect(JSON.parse(fs.readFileSync(reportPath, "utf8"))).toMatchObject({
+    expect(result.exitCode).toBe(23);
+    const persisted = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    expect(persisted).toMatchObject({
       passed: false,
       failureArtifacts: [logPath],
     });
+    const driverLog = fs.readFileSync(logPath, "utf8");
+    expect(driverLog).toContain("driver stdout proof");
+    expect(driverLog).toContain("driver stderr proof");
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

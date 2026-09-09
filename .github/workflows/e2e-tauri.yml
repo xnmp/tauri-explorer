@@ -170,8 +170,16 @@ jobs:
           cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version=1 \
             > native-contract-diagnostics/cargo-metadata.json
           du -sh src-tauri/target > native-contract-diagnostics/target-size.txt || true
-          cache_storage_kib="$(du -sk src-tauri/target ~/.cargo/registry ~/.cargo/git 2>/dev/null \
-            | awk '{ total += $1 } END { print total }')"
+          cache_storage_kib=0
+          # Registry or Git sources may legitimately be absent on a warm run.
+          # Under pipefail, measure only directories that exist so diagnostics
+          # never turn a successful qualification into a failed one.
+          for cache_path in src-tauri/target "$CARGO_HOME/registry" "$CARGO_HOME/git"; do
+            if [ -d "$cache_path" ]; then
+              path_kib="$(du -sk "$cache_path" | awk 'NR == 1 { print $1 }')"
+              cache_storage_kib="$(( cache_storage_kib + path_kib ))"
+            fi
+          done
           cache_storage_bytes="$(( cache_storage_kib * 1024 ))"
           printf 'cache_storage_bytes=%s\ncache_transfer_estimate_bytes=%s\n' \
             "$cache_storage_bytes" "$cache_storage_bytes" \

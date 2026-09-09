@@ -332,7 +332,12 @@ fn raw_byte_limit_is_checked_before_duplicate_paths_are_removed() {
         path_string(&std::env::temp_dir()),
         std::path::MAIN_SEPARATOR
     );
-    let path = format!("{prefix}{}", "x".repeat(1024 - prefix.len()));
+    let mut path = prefix;
+    while 1024 - path.len() > 101 {
+        path.push_str(&"x".repeat(100));
+        path.push(std::path::MAIN_SEPARATOR);
+    }
+    path.push_str(&"x".repeat(1024 - path.len()));
     assert_eq!(path.len(), 1024);
     assert!(BatchPlan::new(vec![path.clone(); 8_192]).is_ok());
     let error = BatchPlan::new(vec![path; 8_193])

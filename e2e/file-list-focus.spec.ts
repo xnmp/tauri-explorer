@@ -243,10 +243,13 @@ for (const viewMode of ALL_VIEW_MODES) {
       await expect(page.locator(".file-list .entry-item.selected")).toHaveCount(2);
       await expect(endpoint).toBeFocused();
 
-      await page.keyboard.press("Shift+Tab");
+      // Isolate selection retention from backward traversal: leave the
+      // composite explicitly, then exercise real forward Tab reentry.
+      await focusBeforeFileList(page);
       const leftComposite = await page.evaluate(() =>
         !(document.activeElement as HTMLElement | null)?.closest(".file-list .entry-item"),
       );
+      expect(leftComposite).toBe(true);
       await page.keyboard.press("Tab");
 
       await expect(endpoint).toBeFocused();

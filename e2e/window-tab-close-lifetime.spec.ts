@@ -126,27 +126,48 @@ test.describe("Window tab close ownership", () => {
     await page.locator('.entry-item[data-path="/home/user/Documents"]').dblclick();
     await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
 
+    // Capture the real outro at its start, before browser-driver round trips
+    // can consume its 120ms lifetime. Svelte dispatches outrostart immediately
+    // before creating the animation; the microtask observes that same task's
+    // completed registration and holds its midpoint for the rapid-undo check.
+    const outro = await page.locator(".tab.active").evaluateHandle((tab) => {
+      const captured: Animation[] = [];
+      tab.addEventListener("outrostart", () => queueMicrotask(() => {
+        for (const animation of tab.getAnimations()) {
+          const duration = Number(animation.effect?.getComputedTiming().duration);
+          if (duration > 0) {
+            animation.pause();
+            animation.currentTime = duration / 2;
+            captured.push(animation);
+          }
+        }
+      }), { once: true });
+      return captured;
+    });
     await page.locator(".tab.active .tab-close").click();
     await expect(page.locator('.entry-item[data-path="/home/user/Documents"]')).toBeVisible();
-    const slowed = await page.locator(".tab-area").evaluate((bar) => {
-      const animations = bar.getAnimations({ subtree: true }).filter((animation) =>
-        animation.playState === "running",
-      );
-      for (const animation of animations) animation.playbackRate = 0.1;
-      return animations.length;
-    });
-    expect(slowed).toBeGreaterThan(0);
+    await expect.poll(() => outro.evaluate((animations) =>
+      animations.filter((animation) => animation.playState === "paused").length,
+    )).toBeGreaterThan(0);
 
     if (testInfo.project.name === "chromium") {
-      await page.waitForTimeout(80);
       await page.screenshot({
         path: "screenshots/refactor/repo-health-cleanup/tab-close-lifetime.png",
       });
     }
 
     await page.keyboard.press("Control+Shift+t");
-    await expect(page.locator(".tab")).toHaveCount(2);
     await expect(page.locator('.entry-item[data-path="/home/user/Documents/project"]')).toBeVisible();
+    // Undo must publish the restored directory before the old visual cleanup.
+    // Now complete only the captured outro and verify it retires the old DOM
+    // without deleting the restored tab incarnation.
+    await outro.evaluate((animations) => {
+      for (const animation of animations) {
+        if (animation.playState === "paused") animation.finish();
+      }
+    });
+    await outro.dispose();
+    await expect(page.locator(".tab")).toHaveCount(2);
     expect(errors).toEqual([]);
   });
 });

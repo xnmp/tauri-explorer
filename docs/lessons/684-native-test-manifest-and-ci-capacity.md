@@ -33,3 +33,33 @@ Keep the acquisition, exact native destruction, backend reclamation log and
 surviving-window navigation assertions; do not alter product deadlines to make
 the fixture pass. Budget the suite separately for all isolated native sessions:
 36 sessions at roughly 30 seconds startup each cannot fit in a 15-minute step.
+
+Windows execution subsequently confirmed that library test discovery and batch
+contracts now load. A byte-budget fixture still failed because its 1,024-byte
+path used an invalid Windows leaf component; use valid, bounded components while
+preserving the raw byte count and duplicate-input boundary. A separate trash
+test indexed artifact metadata before checking the mutation result, hiding the
+real failure behind a missing-key panic. Assert outcome and apartment contracts
+first, then require exact artifacts and restored bytes. Missing metadata alone
+does not prove that deletion succeeded.
+
+Collect all independent Windows contract families even after one fails, retain
+a failing final exit status, and run lint and GUI smoke when their build/driver
+prerequisites succeeded. Never turn these checks into `continue-on-error` gates.
+
+Animation tests must establish their target lifecycle before browser round trips
+consume it. For rapid tab-close Undo, capture Svelte's public `outrostart`, then
+inspect animations in a microtask after that task registers them. Hold the exact
+outro, restore the directory, finish the old animation, and require only the two
+live tabs to remain. Merely slowing currently running animations after awaiting
+the directory can miss the whole 120ms transition. For drag coordinates, use
+Playwright's trial pointer action to wait for stable targets; an immediate
+`getAnimations()` snapshot can precede intro registration.
+
+The Playwright WebKit trace for multi-selection retention showed Shift+Tab left
+the focused row unchanged; the following Tab then correctly left it. Selection
+and the sole row tab stop were intact. Establish departure with the existing
+preceding-focus-target helper for the selection-retention test, assert departure
+immediately, then use real Tab to verify reentry. This does not qualify backward
+traversal in production WebKit, nor identify the native WebKitGTK WebDriver key
+delivery defect as the cause of this different protocol's behavior.

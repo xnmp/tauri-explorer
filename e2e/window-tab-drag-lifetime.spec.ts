@@ -8,11 +8,11 @@ async function openThreeTabs(page: Page): Promise<void> {
   await page.keyboard.press("Control+t");
   await page.keyboard.press("Control+t");
   await expect(page.locator(".tab")).toHaveCount(3);
-  // DOM admission precedes slide-in completion; measure the final hit targets.
-  // Motion behavior itself is covered in window-tab-close-lifetime.spec.ts.
-  await page.locator(".tab").evaluateAll((tabs) => Promise.all(
-    tabs.flatMap((tab) => tab.getAnimations()).map((animation) => animation.finished.catch(() => {})),
-  ));
+  // DOM admission can precede animation registration. Wait for real pointer
+  // targets to be visible and stable before measuring their drag coordinates.
+  for (const tab of await page.locator(".tab").all()) {
+    await tab.click({ trial: true });
+  }
 }
 
 async function tabIds(page: Page): Promise<string[]> {

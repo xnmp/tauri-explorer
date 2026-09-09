@@ -129,7 +129,61 @@ launch because its cached bundle lacks ICU 74, so browser WebKit proof remains C
 The integration remains draft pending native/browser results and the explicit
 startup acceptance gap. No architectural scope has been added.
 
-## Release stabilization — current checkpoint
+## Completed CI run and fixture stabilization — `f1dedbeb`
+
+The full browser/native inventories now finish within their job budgets. The
+[main run](https://github.com/xnmp/tauri-explorer/actions/runs/34331161764)
+passed frontend validation (2,409 unit tests, 30 performance tests, three skipped),
+both Rust policies and strict Clippy, and code maps. Startup payload is 48 chunks /
+219,516 gzip bytes. The separate performance workflow passed. These are validation
+and payload results, not measured startup improvements.
+
+Chromium shard 1 passed 388 tests and failed the repository-badge fixture;
+shard 2 passed with one retry. WebKit reported three multi-selection focus
+failures plus close/drag fixture failures. Trace inspection established stale
+layout coordinates after the badge screenshot's CSS zoom reset, and a no-op
+Shift+Tab in the WebKit selection-retention test. The patch uses device-density
+screenshots without resizing, explicit departure before real Tab reentry,
+capture of the actual close outro before Undo, and stable pointer targets before
+drag measurement. Selection, exact restored-directory/tab lifetime, badge and
+drag ownership assertions remain required. These changes need the next WebKit
+run; local Chromium badge, close/drag and all-view file-focus checks pass
+(32 tests total).
+Independent review accepts the fixture contracts. Multi-selection backward-focus
+qualification is tracked separately in [#692](https://github.com/xnmp/tauri-explorer/issues/692);
+the existing Ctrl+End backward-departure assertions remain unchanged.
+
+The [native run](https://github.com/xnmp/tauri-explorer/actions/runs/34331161762)
+confirmed the Windows manifest fix: library tests now execute. Batch contracts
+passed 24 tests and failed two. One byte-budget fixture used an invalid Windows
+leaf component; it now uses bounded components with the same total byte count.
+The other test indexed trash artifacts before asserting operation success.
+Outcome-first diagnostics now expose the real result while still requiring exact
+restoration. Its cause remains unresolved. Windows CI now collects every contract
+family, lint and GUI results independently when prerequisites succeed, retaining
+failure status. Final Windows GNU strict Clippy and the byte-limit regression
+pass locally; cross-compilation does not qualify Windows runtime behavior.
+
+Linux completed all 36 native specs: **32 passed, four failed** (six individual
+test failures). The changed Git-watch fixture passed both destruction and reload
+reclamation, including exact ready-window activation and survivor navigation.
+Remaining failures are directory child readiness after successful native creation
+and driver handle discovery, a renderer-crash fixture finding the earlier directory
+test's surviving application process alongside its own, a terminal setup click rejected as non-interactable,
+and three window-transfer/close cases with missing child handles or null creation
+results. The terminal test did not reach its resize assertions. These failures
+remain under diagnosis; the full native gate is not accepted. The PR remains draft.
+
+The [Mac run](https://github.com/xnmp/tauri-explorer/actions/runs/34331161775)
+accepted 30 samples with foreground-readiness p50 4,485.5 ms / p95 6,888.5 ms
+and warm activation p50 706 ms / p95 7,170 ms. The artifact identifies synthetic
+PR merge `3e94213a1f9c7e05e0079368339452c272ccdd34`, profile
+`debug-custom-protocol-production-hooks`, and SHA-256
+`a03f5ae980848f12660eed1e41e15f08b8583a6fdd22406fda85345e4e7dc50b`.
+Warm measurement is enabled in this shared-runner debug profile. Release-build
+cold-only startup, first-input latency and half-bounce acceptance remain open.
+
+## Release stabilization — preceding checkpoint
 
 The started immutable Move intent is complete: real catalog promotion/reopening
 preserves its authority without touching user entries, and copy execution/history

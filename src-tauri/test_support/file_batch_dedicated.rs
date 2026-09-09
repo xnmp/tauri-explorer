@@ -423,35 +423,22 @@ fn public_trash_and_restore_batches_preserve_an_mta_caller_and_exact_file_bytes(
             let single_trashed = run(move_multiple_to_trash(vec![single_path.clone()]));
             let after_single_apartment = current_apartment();
             let single_source_absent = !single.exists();
-            let requests = [&first_path, &second_path]
-                .into_iter()
-                .map(|path| RestoreRequest {
-                    path: path.clone(),
-                    artifact: trashed
-                        .as_ref()
-                        .expect("public batch trash call completes")
-                        .artifacts[path]
-                        .clone(),
-                })
-                .chain(std::iter::once_with(|| RestoreRequest {
-                    path: single_path.clone(),
-                    artifact: single_trashed
-                        .as_ref()
-                        .expect("public single-item trash call completes")
-                        .artifacts[&single_path]
-                        .clone(),
-                }))
-                .collect();
-            let restored = run(restore_entries(requests));
-            let after_restore_apartment = current_apartment();
 
             let trashed = trashed.expect("public batch trash call completes");
-            assert_eq!(trashed.succeeded, [first_path.clone(), second_path.clone()]);
+            assert_eq!(
+                trashed.succeeded,
+                [first_path.clone(), second_path.clone()],
+                "{trashed:?}"
+            );
             assert!(trashed.failed.is_empty());
             assert!(trashed.uncertain.is_empty());
             assert!(trashed.unstarted.is_empty());
             let single_trashed = single_trashed.expect("public single-item trash call completes");
-            assert_eq!(single_trashed.succeeded, std::slice::from_ref(&single_path));
+            assert_eq!(
+                single_trashed.succeeded,
+                std::slice::from_ref(&single_path),
+                "{single_trashed:?}"
+            );
             assert!(single_trashed.failed.is_empty());
             assert!(single_trashed.uncertain.is_empty());
             assert!(single_trashed.unstarted.is_empty());
@@ -459,6 +446,38 @@ fn public_trash_and_restore_batches_preserve_an_mta_caller_and_exact_file_bytes(
             assert!(single_source_absent);
             assert_eq!(after_batch_apartment, APTTYPE_MTA);
             assert_eq!(after_single_apartment, APTTYPE_MTA);
+
+            let requests = [&first_path, &second_path]
+                .into_iter()
+                .map(|path| RestoreRequest {
+                    path: path.clone(),
+                    artifact: trashed
+                        .artifacts
+                        .get(path)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "successful batch trash omitted the exact artifact for {path}; warnings: {:?}",
+                                trashed.warnings
+                            )
+                        })
+                        .clone(),
+                })
+                .chain(std::iter::once_with(|| RestoreRequest {
+                    path: single_path.clone(),
+                    artifact: single_trashed
+                        .artifacts
+                        .get(&single_path)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "successful single-item trash omitted the exact artifact for {single_path}; warnings: {:?}",
+                                single_trashed.warnings
+                            )
+                        })
+                        .clone(),
+                }))
+                .collect();
+            let restored = run(restore_entries(requests));
+            let after_restore_apartment = current_apartment();
 
             let restored = restored.expect("public restore batch completes");
             assert_eq!(

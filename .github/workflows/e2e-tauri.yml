@@ -99,6 +99,7 @@ jobs:
       # binary — and therefore to a dev server — in the first place. Release
       # builds never set it, so the hooks tree-shake out of shipped binaries.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
+        id: build
         shell: bash
         env:
           VITE_E2E_HOOKS: "1"
@@ -117,18 +118,23 @@ jobs:
         shell: bash
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
+          contract_status=0
           for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked; do
             # Cargo succeeds with zero matching tests. Fail explicitly when a
             # source/module move leaves one of these acceptance filters stale.
             if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then
               echo "::error::No Rust contracts match $filter"
-              exit 1
+              contract_status=1
+              continue
             fi
-            cargo test --manifest-path src-tauri/Cargo.toml --lib "$filter" -- --test-threads=1
+            # Preserve failure while collecting all independent contract families.
+            cargo test --manifest-path src-tauri/Cargo.toml --lib "$filter" -- --test-threads=1 || contract_status=1
           done
+          exit "$contract_status"
 
+      # Test failures remain fatal, but do not hide independent lint/UI results.
       - name: Windows Rust lint
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build.outcome == 'success' }}
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-webview2-attach -- -D warnings
 
       - name: Run smoke suite (Linux, isolated display and window manager)
@@ -142,7 +148,8 @@ jobs:
       # run on the WebView2 *runtime*, whose version can differ — msedgedriver
       # hard-rejects mismatches. Download the driver matching the runtime.
       - name: Install msedgedriver matching the WebView2 runtime
-        if: runner.os == 'Windows'
+        id: webview_driver
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build.outcome == 'success' }}
         shell: pwsh
         run: |
           $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
@@ -155,7 +162,7 @@ jobs:
       # Keep the WebView2 suite's bound separate from WebKitGTK session costs
       # and leave time for failure evidence before the overall job cap.
       - name: Run smoke suite (Windows)
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build.outcome == 'success' && steps.webview_driver.outcome == 'success' }}
         timeout-minutes: 15
         env:
           VITE_E2E_NO_WARM_PRIME: "1"

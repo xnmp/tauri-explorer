@@ -228,3 +228,10 @@ and retain the pane's display path separately. Normalize recognized WSL server
 aliases before canonicalizing both operands, because repository discovery uses
 `wsl.localhost` even when the user entered legacy `wsl$`. Require real alias-root
 and subdirectory contracts, and guard late scope publication by path generation.
+
+The cold-search watcher race fixture must capture its comparison revision after
+the gated worker establishes recursive coverage. Coverage registration advances
+the cache epoch itself; a revision captured before search launch can mistake that
+transition for receipt of the later file write and release the worker too early.
+Capture after the started barrier, then write, await invalidation and release.
+Retain both stale-publication rejection and the subsequent fresh-walk assertion.

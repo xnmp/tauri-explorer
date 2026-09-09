@@ -322,6 +322,22 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Qualification synchronization follow-up — `5cbdc4f0`
+
+The main Rust CI run exposed a race in the cold-search regression fixture: its
+revision baseline preceded recursive watcher coverage, whose own epoch transition
+could satisfy the subsequent wait for a file change. Capture the baseline after
+the existing worker-start barrier and before the write. Production cache behavior,
+assertions and deadlines are unchanged. The corrected isolated contract and all
+1,162 local Rust library tests pass (19 ignored); independent review accepts the
+ordering. The initial sandboxed full run could not access local HTTP fixtures and
+the thumbnail cache; the authorized run passes without exclusions.
+
+Local Linux native concurrent-window creation passes in 1.7 seconds against
+WebKitGTK 2.52.5 with an isolated Xvfb/Openbox display and fresh app profile. This
+has not yet reproduced the CI failure under WebKitGTK 2.52.6 and does not establish
+cross-platform acceptance. The published native suites remain in progress.
+
 ## Native qualification and release fixes — `6ffc3d14`
 
 The [native run](https://github.com/xnmp/tauri-explorer/actions/runs/34415644908)

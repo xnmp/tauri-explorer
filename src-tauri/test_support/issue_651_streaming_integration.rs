@@ -307,9 +307,12 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     ))
     .expect("watch racing root");
     let gate = install_stream_gate_for_test(racing_root.path());
-    let revision = SEARCH_ENTRY_CACHE.begin_load(racing_root.path());
     let racing_id = start_search(&app_handle, racing_root.path(), "seed");
     gate.started.wait();
+    // The cold walk establishes recursive coverage before reaching this gate,
+    // which itself advances the epoch. Observe only invalidation after that
+    // transition so registration cannot stand in for receipt of our write.
+    let revision = SEARCH_ENTRY_CACHE.begin_load(racing_root.path());
     fs::write(racing_root.path().join("raced.txt"), "raced").expect("raced fixture");
     wait_for_revision_change(racing_root.path(), revision);
     gate.release.wait();

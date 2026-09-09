@@ -50,6 +50,13 @@ export interface SoakConfiguration {
   expectedDisplayScale: number;
 }
 
+export interface SoakArtifactPaths {
+  seedComponent: string;
+  report: string;
+  driverLog: string;
+  failureDirectory: string;
+}
+
 export interface ResourceMeasurement {
   rssBytes: number;
   sampledAtMs: number;
@@ -313,6 +320,53 @@ export function resolveSoakConfiguration(
     resolved.maxCycles = positiveNumber("SOAK_MAX_CYCLES", env.SOAK_MAX_CYCLES);
   }
   return resolved;
+}
+
+export function resolveQualificationArtifactPath(
+  root: string,
+  ...components: readonly string[]
+): string {
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(resolvedRoot, ...components);
+  const relative = path.relative(resolvedRoot, resolved);
+  if (
+    relative === "" ||
+    path.isAbsolute(relative) ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`)
+  ) {
+    throw new Error(`artifact path resolves outside qualification root: ${resolved}`);
+  }
+  return resolved;
+}
+
+export function resolveSoakArtifactPaths(
+  root: string,
+  platform: NativePlatform,
+  seed: string,
+): SoakArtifactPaths {
+  const readable = seed
+    .normalize("NFKD")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const digest = createHash("sha256").update(seed).digest("hex").slice(0, 12);
+  const seedComponent = `${readable || "seed"}-${digest}`;
+  return {
+    seedComponent,
+    report: resolveQualificationArtifactPath(
+      root,
+      `${platform}-${seedComponent}.json`,
+    ),
+    driverLog: resolveQualificationArtifactPath(
+      root,
+      `${platform}-${seedComponent}-webdriver.log`,
+    ),
+    failureDirectory: resolveQualificationArtifactPath(
+      root,
+      `seed-${seedComponent}`,
+    ),
+  };
 }
 
 export function buildNativeQualificationReport(
@@ -716,10 +770,33 @@ export async function stopNativeStartupProcess(
   },
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill();
-  if (await waitForProcessExit(child, options.gracefulTimeoutMs)) return;
-  child.kill("SIGKILL");
-  await waitForProcessExit(child, options.forceTimeoutMs);
+  const gracefulAccepted = child.kill();
+  if (
+    gracefulAccepted &&
+    (await waitForProcessExit(child, options.gracefulTimeoutMs))
+  ) {
+    return;
+  }
+  if (child.exitCode !== null || child.signalCode !== null) return;
+
+  let forceAccepted: boolean;
+  try {
+    forceAccepted = child.kill("SIGKILL");
+  } catch (error) {
+    throw new Error(
+      `native startup process SIGKILL was rejected: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (!forceAccepted) {
+    throw new Error("native startup process SIGKILL was rejected");
+  }
+  if (!(await waitForProcessExit(child, options.forceTimeoutMs))) {
+    throw new Error(
+      `native startup process remained alive after SIGKILL for ${options.forceTimeoutMs}ms`,
+    );
+  }
 }
 
 export function summarizeDurations(values: readonly number[]): {

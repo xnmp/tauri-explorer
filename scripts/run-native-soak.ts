@@ -6,6 +6,7 @@ import {
   buildNativeQualificationReport,
   executeLoggedQualificationProcess,
   readVerifiedNativeBuildManifest,
+  resolveSoakArtifactPaths,
   resolveSoakConfiguration,
   writeQualificationArtifact,
   type NativePlatform,
@@ -41,14 +42,13 @@ try {
   throw error;
 }
 
-const reportPath = path.resolve(
-  "qualification-results",
-  `${nativePlatform()}-${configuration.seed}.json`,
+const artifactPaths = resolveSoakArtifactPaths(
+  path.resolve("qualification-results"),
+  nativePlatform(),
+  configuration.seed,
 );
-const driverLogPath = path.resolve(
-  "qualification-results",
-  `${nativePlatform()}-${configuration.seed}-webdriver.log`,
-);
+const reportPath = artifactPaths.report;
+const driverLogPath = artifactPaths.driverLog;
 fs.rmSync(reportPath, { force: true });
 let build;
 try {

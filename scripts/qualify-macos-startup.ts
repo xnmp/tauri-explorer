@@ -59,8 +59,11 @@ async function runSample(
     });
     return { ...measurement, log: logPath };
   } finally {
-    await stopNativeStartupProcess(child);
-    fs.writeFileSync(logPath, log);
+    try {
+      await stopNativeStartupProcess(child);
+    } finally {
+      fs.writeFileSync(logPath, log);
+    }
   }
 }
 

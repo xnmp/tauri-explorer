@@ -10,6 +10,7 @@ import {
   executeQualificationRun,
   measureProcessTreeRss,
   readVerifiedNativeBuildManifest,
+  resolveSoakArtifactPaths,
   resolveSoakConfiguration,
   type NativeQualificationReport,
   type NativePlatform,
@@ -364,10 +365,12 @@ describe("extended real-native qualification soak", () => {
       webview: "unavailable",
       displayScale: null,
     };
-    const reportPath = path.resolve(
-      "qualification-results",
-      `${nativePlatform()}-${seed}.json`,
+    const artifactPaths = resolveSoakArtifactPaths(
+      path.resolve("qualification-results"),
+      nativePlatform(),
+      seed,
     );
+    const reportPath = artifactPaths.report;
 
     const report = await executeQualificationRun<NativeQualificationReport>({
       outputPath: reportPath,
@@ -432,10 +435,7 @@ describe("extended real-native qualification soak", () => {
                   failureArtifacts,
                 });
               } catch (error) {
-                const artifactDir = path.resolve(
-                  "qualification-results",
-                  `seed-${seed}`,
-                );
+                const artifactDir = artifactPaths.failureDirectory;
                 try {
                   fs.mkdirSync(artifactDir, { recursive: true });
                   const screenshot = path.join(

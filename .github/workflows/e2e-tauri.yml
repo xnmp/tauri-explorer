@@ -170,16 +170,20 @@ jobs:
           cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version=1 \
             > native-contract-diagnostics/cargo-metadata.json
           du -sh src-tauri/target > native-contract-diagnostics/target-size.txt || true
-          du -sk src-tauri/target ~/.cargo/registry ~/.cargo/git 2>/dev/null \
-            | awk '{ total += $1 } END { printf "cache_storage_bytes=%d\n", total * 1024 }' \
+          cache_storage_kib="$(du -sk src-tauri/target ~/.cargo/registry ~/.cargo/git 2>/dev/null \
+            | awk '{ total += $1 } END { print total }')"
+          cache_storage_bytes="$(( cache_storage_kib * 1024 ))"
+          printf 'cache_storage_bytes=%s\ncache_transfer_estimate_bytes=%s\n' \
+            "$cache_storage_bytes" "$cache_storage_bytes" \
             >> native-contract-diagnostics/provenance.txt
           find src-tauri/target -path '*/.fingerprint/*' -type f -name '*.json' -print \
             | sort > native-contract-diagnostics/cargo-fingerprints.txt || true
           cat > native-contract-diagnostics/comparison-guide.txt <<'EOF'
 Compare two artifacts with the same target_cache_key and runner identity.
-Use provenance.txt cache-hit and cache_storage_bytes fields, the two timing
-files, cache-outcome.txt end_to_end_seconds, and Actions cache logs for
-transfer bytes. Retain revision and run attempt with the comparison result.
+Use provenance.txt cache-hit, cache_storage_bytes, and uncompressed
+cache_transfer_estimate_bytes fields, the two timing files, cache-outcome.txt
+end_to_end_seconds, and Actions cache logs for actual transfer bytes. Retain
+revision and run attempt with the comparison result.
 EOF
 
       - name: Upload native contract diagnostics

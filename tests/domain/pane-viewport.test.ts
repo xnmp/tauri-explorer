@@ -63,6 +63,26 @@ describe("pane workspace geometry", () => {
 });
 
 describe("active pane reveal", () => {
+  it("reveals file content after inline panels when the active pane exceeds the viewport", () => {
+    const viewport = { width: 560, height: 500 };
+    const geometry = paneGeometry(split(leaf("a"), leaf("b")), viewport, 6, new Map([["b", 480]]));
+    const pane = geometry.panes.get("b")!;
+    const scroll = revealPane({ left: 126, top: 0 }, viewport, pane, 480);
+    const fileStart = pane.x + 480;
+    expect(fileStart).toBeGreaterThanOrEqual(scroll.left);
+    expect(pane.x + pane.w).toBeLessThanOrEqual(scroll.left + viewport.width);
+    expect(scroll).toEqual({ left: 406, top: 0 });
+  });
+  it("keeps the whole pane visible when its panels fit and preserves vertical reveal", () => {
+    expect(revealPane({ left: 126, top: 0 }, { width: 1000, height: 300 },
+      { x: 246, y: 500, w: 720, h: 200 }, 480))
+      .toEqual({ left: 126, top: 400 });
+  });
+  it("reveals the start of file content when even its minimum cannot fit", () => {
+    expect(revealPane({ left: 0, top: 0 }, { width: 200, height: 100 },
+      { x: 246, y: 130, w: 720, h: 200 }, 480))
+      .toEqual({ left: 726, top: 130 });
+  });
   it("scrolls only enough to show a distant pane in both axes", () => {
     expect(revealPane({ left: 0, top: 0 }, { width: 500, height: 300 }, { x: 800, y: 500, w: 240, h: 200 }))
       .toEqual({ left: 540, top: 400 });

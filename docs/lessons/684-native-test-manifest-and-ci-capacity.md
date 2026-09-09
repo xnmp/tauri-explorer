@@ -153,3 +153,26 @@ from the environment instead of setting it to `0` (native code checks presence).
 Release builds ordinarily omit stdout logging; explicitly enable the existing
 readiness log stream for qualification. This still measures native readiness,
 not presentation or first input, and fresh launches do not flush OS caches.
+
+An existing file row can still be unusable when its entire file area lies beyond
+the native viewport. At an 800px window, leading Miller and SCM widths can exceed
+the remaining workspace width. Revealing the whole oversized pane's leading edge
+then hides its file names. Reuse the mounted inline-width leases to reveal the
+file area, preserving minimum sizes, saved ratios, manual scrolling and resize
+coordination. Browser acceptance must bound the actual filename text rectangle
+inside the workspace/window and select it in all three views; checking only that
+the file-list rectangle intersects its pane missed this failure.
+
+The terminal fixture's exact entry can exist without `.explorer-pane.active`: that
+class renders the active border only in multi-pane layouts. Select the unique
+fixture path directly, then retain visibility, click and real PTY outcome checks.
+
+Windows Shell restore receipts can return a long parent spelling when the queued
+request used its 8.3 alias. Retain the queued parent Shell item on the STA and
+compare the callback parent canonically, then compare the requested and returned
+leaf using native ordinal case folding. The existing absolute-path match remains
+valid too. Do not feed relative leaf names to `WindowsPathKey`, which only accepts
+fully qualified paths: independent review caught that making every match false.
+Collision-renamed leaves and unproven destinations remain uncertain. See
+[IShellItem::Compare](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishellitem-compare)
+and [CompareStringOrdinal](https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-comparestringordinal).

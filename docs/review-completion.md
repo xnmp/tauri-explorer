@@ -322,6 +322,53 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Native qualification and pane correction — `9b3fcb82`
+
+[Main CI](https://github.com/xnmp/tauri-explorer/actions/runs/34345401785),
+[performance](https://github.com/xnmp/tauri-explorer/actions/runs/34345401746) and
+[Mac qualification](https://github.com/xnmp/tauri-explorer/actions/runs/34345401737)
+passed. Main CI includes Chromium/WebKit, frontend checks, complete code maps and
+strict Rust Clippy. Rust accepted 1,160 default and 1,158 opt-in library tests,
+plus nine integration tests for each policy. Mac workflow success does not establish
+presented-frame/input latency or the half-bounce target.
+
+The [native gate](https://github.com/xnmp/tauri-explorer/actions/runs/34345401781)
+remains failing: Linux accepted 33/36 spec files and Windows 33/35. Windows now
+passes listing handoff, refresh coalescing, file-batch Undo and picker/transfer
+rejection outcomes, plus all 16 directory observation contracts. Restore/batch
+contracts still reject short-versus-long parent aliases; two legacy inventory
+cases still find no matching item. Git copied-root recovery remains unqualified.
+Windows pane outcomes pass but fixture teardown reports EBUSY. Linux still fails
+narrow panel visibility, terminal fixture entry lookup and concurrent window
+creation. Native application logs confirm both concurrent creation deadlines
+expired; the underlying construction delay remains unresolved.
+
+The narrow panel failure has a reproduced frontend cause: leading Miller/SCM
+widths can hide the entire file area when automatic reveal aligns an oversized
+pane's leading edge. Reveal now consumes the existing inline width leases and
+prioritizes the file area while preserving saved splits, pane minima, manual
+scrolling and resize ownership. The new pure contract and all three browser
+view-mode regressions fail before the fix. Afterward, 13 domain/state tests and
+24 targeted Chromium outcomes pass; Svelte reports zero errors/warnings. A separate
+Sol reviewer accepted the policy and ownership. Captures
+`release-visible-inline-panels-{details,list,tiles}.png` show selectable filenames
+within the 800px window. Native confirmation remains required. Local WebKit could
+not launch because the installed browser lacks ICU 74; this is not a test pass.
+
+The Windows restore correction retains the queued parent Shell item and accepts
+canonical parent identity plus native ordinal leaf equality as an alternative to
+the existing absolute-path match. Collision-renamed leaves remain uncertain.
+Independent review caught an initial misuse of the absolute-path parser for leaf
+names; the corrected helper has native accented-case/CJK/collision contracts and
+passes Windows GNU all-target strict Clippy. Native Windows execution remains the
+acceptance gate for actual short/long aliases, restored bytes, trees and symlinks.
+
+The terminal fixture failure is also identified: `.explorer-pane.active` renders
+only for the active border in a multi-pane layout. Its exact unique entry selector
+now works in a single-pane session; visibility, real click, PTY scrollback and
+resize outcomes remain required. Native suite TypeScript passes. No product
+terminal behavior or creation timeout changed.
+
 ## Bounded corrections after `a5fced4b`
 
 - Restore classification accepts the observed `COPYENGINE_S_DONT_PROCESS_CHILDREN`

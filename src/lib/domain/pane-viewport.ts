@@ -60,14 +60,21 @@ export function paneGeometry(root: PaneNode, viewport: PaneSize, divider = 6, in
   return { width, height, panes, splits, divider: gap };
 }
 
-/** Nearest-edge reveal in the workspace only. Oversized panes keep their
- * leading edge reachable instead of jumping to an inaccessible bottom corner. */
-export function revealPane(scroll: { left: number; top: number }, viewport: PaneSize, pane: LeafRect) {
+/** Nearest-edge reveal in the workspace only. When inline panels make a pane
+ * wider than the viewport, reveal its main content rather than the accessories.
+ * Content that is itself oversized retains its leading edge. */
+export function revealPane(scroll: { left: number; top: number }, viewport: PaneSize, pane: LeafRect, leadingInlineWidth = 0) {
   function axis(offset: number, extent: number, start: number, size: number) {
     if (start < offset || size > extent) return start;
     return start + size > offset + extent ? start + size - extent : offset;
   }
-  return { left: axis(scroll.left, viewport.width, pane.x, pane.w), top: axis(scroll.top, viewport.height, pane.y, pane.h) };
+  const inset = pane.w > viewport.width
+    ? Math.min(nonnegative(leadingInlineWidth), Math.max(0, pane.w - MIN_PANE_SIZE.width))
+    : 0;
+  return {
+    left: axis(scroll.left, viewport.width, pane.x + inset, pane.w - inset),
+    top: axis(scroll.top, viewport.height, pane.y, pane.h),
+  };
 }
 
 

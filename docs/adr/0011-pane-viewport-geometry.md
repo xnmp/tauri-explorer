@@ -28,8 +28,11 @@ sizes, and island mode supplies its shared 8-pixel gap instead of the usual 6.
 
 `PaneContainer` owns the scrollable workspace. Active-pane changes and completed
 geometry updates reveal that pane through local scroll coordinates; they do not
-call `scrollIntoView` on ancestors or move DOM focus. Oversized panes reveal their
-leading edge. Automatic reveal pauses during a divider drag. The recursive
+call `scrollIntoView` on ancestors or move DOM focus. Oversized panes prioritize
+the file area after their mounted leading inline panels, using the existing width
+leases; an oversized file area reveals its leading edge. Ordinary panes still
+reveal their whole rectangle. Manual scrolling can reach the remaining panels.
+Automatic reveal pauses during a divider drag. The recursive
 renderer remains declarative, preserves deferred-pane placeholders, and does not
 acquire global input listeners for each split node.
 

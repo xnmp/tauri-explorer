@@ -84,9 +84,19 @@ for (const mode of ["details", "list", "tiles"]) {
         const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
         (await load()).windowTabsManager.setActivePane(id);
       }, paneId);
-      await expect(file.locator(".entry-name")).toBeInViewport();
+      await expect.poll(() => file.locator(".entry-name").evaluate(element => {
+        const container = element.closest(".pane-container");
+        if (!container || element.textContent !== "notes.md") return false;
+        const clip = container.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const text = range.getBoundingClientRect();
+        return text.width > 0
+          && text.left >= Math.max(0, clip.left)
+          && text.right <= Math.min(window.innerWidth, clip.right);
+      })).toBe(true);
+      await file.click(); await expect(file).toHaveClass(/selected/);
     }
-    await file.click(); await expect(file).toHaveClass(/selected/);
     await page.screenshot({ path: info.outputPath(`inline-panels-${mode}.png`) });
   });
 }

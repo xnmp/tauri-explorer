@@ -21,6 +21,7 @@ use windows::{
     core::{implement, Error as WindowsError, HRESULT, PCWSTR},
     Win32::{
         Foundation::E_ABORT,
+        Globalization::{CompareStringOrdinal, CSTR_EQUAL},
         System::Com::{
             CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
             COINIT_APARTMENTTHREADED,
@@ -94,6 +95,8 @@ enum SinkMode {
     Move {
         state: Arc<Mutex<SinkState>>,
         requested: PathBuf,
+        requested_parent: IShellItem,
+        requested_name: OsString,
     },
     Delete {
         state: Arc<Mutex<DeleteSinkState>>,
@@ -144,16 +147,37 @@ impl ShellSink {
                 return;
             }
         }
-        let actual_path = created
-            .ok()
-            .map_err(|error| format!("the Shell returned no created item: {error}"))
-            .and_then(shell_item_path);
-        let SinkMode::Move { state, requested } = &self.mode else {
+        let SinkMode::Move {
+            state,
+            requested,
+            requested_parent,
+            requested_name,
+        } = &self.mode
+        else {
             return;
         };
-        let requested_matches_actual = actual_path
-            .as_ref()
-            .is_ok_and(|actual| windows_path_eq(requested, actual));
+        let (actual_path, requested_matches_actual) = match created.ok() {
+            Ok(created) => {
+                let actual_path = shell_item_path(created);
+                let parent_matches = shell_item_parent_matches(created, requested_parent);
+                let path_matches = actual_path
+                    .as_ref()
+                    .is_ok_and(|actual| windows_path_eq(requested, actual));
+                let leaf_matches = actual_path.as_ref().is_ok_and(|actual| {
+                    actual
+                        .file_name()
+                        .is_some_and(|actual_name| windows_leaf_eq(requested_name, actual_name))
+                });
+                (
+                    actual_path,
+                    path_matches || (parent_matches.is_ok_and(|matches| matches) && leaf_matches),
+                )
+            }
+            Err(error) => (
+                Err(format!("the Shell returned no created item: {error}")),
+                false,
+            ),
+        };
         let mut state = state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -434,12 +458,26 @@ fn windows_path_eq(left: &Path, right: &Path) -> bool {
         .is_ok_and(|ordering| ordering.is_eq())
 }
 
+pub(super) fn windows_leaf_eq(left: &OsStr, right: &OsStr) -> bool {
+    let left: Vec<u16> = left.encode_wide().collect();
+    let right: Vec<u16> = right.encode_wide().collect();
+    (unsafe { CompareStringOrdinal(&left, &right, true) }) == CSTR_EQUAL
+}
+
 fn shell_item_path(item: &IShellItem) -> Result<PathBuf, String> {
     let display = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH) }
         .map_err(|error| format!("the Shell did not provide a filesystem path: {error}"))?;
     let path = unsafe { OsString::from_wide(display.as_wide()) };
     unsafe { CoTaskMemFree(Some(display.as_ptr().cast::<c_void>())) };
     Ok(PathBuf::from(path))
+}
+
+fn shell_item_parent_matches(item: &IShellItem, expected: &IShellItem) -> Result<bool, String> {
+    let actual = unsafe { item.GetParent() }
+        .map_err(|error| format!("the created item's parent was unavailable: {error}"))?;
+    unsafe { expected.Compare(&actual, SICHINT_CANONICAL.0 as u32) }
+        .map(|ordering| ordering == 0)
+        .map_err(|error| format!("the created item's parent could not be compared: {error}"))
 }
 
 fn shell_item_parsing_name(item: &IShellItem) -> Result<Vec<u16>, String> {
@@ -537,6 +575,8 @@ fn restore_item_inner(
         mode: SinkMode::Move {
             state: Arc::clone(&state),
             requested: requested.clone(),
+            requested_parent: parent.clone(),
+            requested_name: item.name.clone(),
         },
         source: source.clone(),
     }

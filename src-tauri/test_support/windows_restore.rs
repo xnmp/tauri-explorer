@@ -194,18 +194,35 @@ mod native {
             trash_artifact::{RestoreRequest, TrashArtifact},
             windows_restore::{
                 delete_item, restore_exact, restore_item, restore_item_before_perform,
-                shell_filesystem_name, StaApartment, WindowsPathKey,
+                shell_filesystem_name, windows_leaf_eq, StaApartment, WindowsPathKey,
             },
         },
     };
     use std::{
         cmp::Ordering,
+        ffi::OsStr,
         fs,
         os::windows::fs::{symlink_dir, symlink_file},
         path::Path,
         sync::Arc,
         thread,
     };
+
+    #[test]
+    fn shell_destination_leaf_uses_native_ordinal_identity() {
+        assert!(windows_leaf_eq(
+            OsStr::new("Restored-Élan.txt"),
+            OsStr::new("restored-éLAN.TXT")
+        ));
+        assert!(windows_leaf_eq(
+            OsStr::new("復元-資料.txt"),
+            OsStr::new("復元-資料.txt")
+        ));
+        assert!(!windows_leaf_eq(
+            OsStr::new("restored.txt"),
+            OsStr::new("restored (2).txt")
+        ));
+    }
 
     fn find_item(path: &Path) -> trash::TrashItem {
         // GetTempPath may use 8.3 ancestors while Shell inventory expands them.

@@ -15,7 +15,7 @@ const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
   it("keeps a zoomed drag continuous with scrollback and the shell usable after keyboard resize", async () => {
     await browser.setWindowSize(1280, 900);
     await navigateTo(scratch);
-    const entry = await $(`.explorer-pane.active .entry-item[data-path="${fixtureEntry}"]`);
+    const entry = await $(`.entry-item[data-path="${fixtureEntry}"]`);
     await entry.waitForDisplayed();
     await entry.click();
     for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);

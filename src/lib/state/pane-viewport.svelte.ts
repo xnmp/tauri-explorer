@@ -20,6 +20,7 @@ export function createPaneViewport(getLayout: () => PaneNode | undefined) {
   });
   return {
     get geometry() { return geometry; },
+    inlineWidth(paneId: string) { return widths.get(paneId) ?? 0; },
     reserveInlineWidth(paneId: string): InlineWidthLease {
       const token = Symbol();
       let disposed = false;

@@ -39,7 +39,8 @@
     if (dividers.activeId || resizeActivity.active) return;
     const pane = geometry?.panes.get(windowTabsManager.activePaneId);
     if (!viewport || !pane || width <= 0 || height <= 0) return;
-    const next = revealPane({ left: viewport.scrollLeft, top: viewport.scrollTop }, { width, height }, pane);
+    const next = revealPane({ left: viewport.scrollLeft, top: viewport.scrollTop }, { width, height }, pane,
+      windowTabsManager.paneViewport.inlineWidth(windowTabsManager.activePaneId));
     viewport.scrollLeft = next.left;
     viewport.scrollTop = next.top;
   });

@@ -24,10 +24,11 @@
     onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
+    focused?: boolean;
     explorer: ExplorerInstance;
   }
 
-  let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
+  let { entry, onclick, ondblclick, selected = false, focused = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
 
@@ -86,6 +87,7 @@
 </script>
 
 <button
+  tabindex={focused ? 0 : -1}
   class="file-item entry-item"
   data-path={entry.path}
   class:directory={entry.kind === "directory"}

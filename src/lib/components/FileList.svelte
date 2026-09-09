@@ -32,6 +32,10 @@
 
   let { explorer, scrollToEntry = $bindable() }: Props = $props();
 
+  // File rows form one roving tab-stop composite. This local cursor follows
+  // real DOM focus so multi-selection never makes multiple rows tabbable.
+  let focusedPath = $state<string | undefined>();
+
 
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
@@ -100,7 +104,7 @@
     viewScrollToIndex?.(index);
     tick().then(() => {
       requestAnimationFrame(() => {
-        const el = contentRef?.querySelector<HTMLElement>(".selected");
+        const el = contentRef?.querySelector<HTMLElement>(`.entry-item[data-path="${CSS.escape(entry.path)}"]`);
         el?.focus({ preventScroll: true });
       });
     });
@@ -120,6 +124,12 @@
       ctrlKey: event.ctrlKey || event.metaKey,
       shiftKey: event.shiftKey,
     });
+    focusedPath = entry.path;
+  }
+
+  function handleFocusIn(event: FocusEvent): void {
+    const target = event.target as HTMLElement;
+    if (target.matches(".entry-item")) focusedPath = target.dataset.path;
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
@@ -305,7 +315,7 @@
 />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
+<div class="file-list" onfocusin={handleFocusIn} onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="content"
@@ -370,6 +380,7 @@
     {:else if explorer.viewMode === "details"}
       <DetailsView
         {explorer}
+        {focusedPath}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
         bind:scrollToIndex={viewScrollToIndex}
@@ -377,6 +388,7 @@
     {:else if explorer.viewMode === "list"}
       <ListView
         {explorer}
+        {focusedPath}
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
@@ -385,6 +397,7 @@
     {:else}
       <TilesView
         {explorer}
+        {focusedPath}
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}

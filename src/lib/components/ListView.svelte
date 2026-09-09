@@ -29,11 +29,12 @@
     contentWidth: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
+    focusedPath?: string;
     /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, focusedPath, scrollToIndex = $bindable() }: Props = $props();
 
   // Fixed row height: a single-line list item (16px icon / one text line +
   // 4px vertical padding + border) plus the 4px inter-row gap. List names are
@@ -74,7 +75,7 @@
           {#if isNewFolderSentinel(entry)}
             <InlineNewFolder {explorer} variant="list" />
           {:else}
-          <ItemButton class="list-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          <ItemButton class="list-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick} focused={focusedPath === entry.path}>
             <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
               <FileIcon {entry} size="small" />
             </span>

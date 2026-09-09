@@ -35,11 +35,12 @@
     contentWidth: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
+    focusedPath?: string;
     /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, focusedPath, scrollToIndex = $bindable() }: Props = $props();
 
   // Reserved fixed name height: two lines at line-height 1.4 * 13px font.
   const NAME_HEIGHT = 37;
@@ -159,7 +160,7 @@
             <InlineNewFolder {explorer} variant="tiles" />
           {:else}
           {@const iconColor = getFileIconColor(entry)}
-          <ItemButton class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          <ItemButton class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick} focused={focusedPath === entry.path}>
             <div class="tile-icon" style:color={iconColor} data-drag-icon>
               {#if isImageFile(entry)}
                 <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />

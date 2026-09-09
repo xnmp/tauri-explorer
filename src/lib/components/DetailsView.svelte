@@ -20,10 +20,11 @@
     explorer: ExplorerInstance;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
+    focusedPath?: string;
     scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, onitemclick, onitemdblclick, focusedPath, scrollToIndex = $bindable() }: Props = $props();
 
   // Column resize composable
   const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
@@ -164,6 +165,7 @@
         <FileItem
           {entry}
           {explorer}
+          focused={focusedPath === entry.path}
           onclick={(event) => onitemclick(entry, event)}
           ondblclick={() => onitemdblclick(entry)}
           selected={explorer.isSelected(entry)}

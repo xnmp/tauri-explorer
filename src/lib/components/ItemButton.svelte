@@ -28,6 +28,7 @@
     /** Global index in displayEntries — exposed as data-index so marquee
      *  selection maps a rendered (virtualized) tile/row back to its entry. */
     index?: number;
+    focused?: boolean;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     children: Snippet;
@@ -40,6 +41,7 @@
     pointerDrag,
     class: className = "",
     index,
+    focused = false,
     onitemclick,
     onitemdblclick,
     children,
@@ -59,6 +61,7 @@
 </script>
 
 <button
+  tabindex={focused ? 0 : -1}
   class="{className} entry-item"
   data-path={entry.path}
   data-index={index}

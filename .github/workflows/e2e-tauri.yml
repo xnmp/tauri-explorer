@@ -110,9 +110,11 @@ jobs:
         run: |
           set -o pipefail
           started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          set +e
           CARGO_LOG=cargo::core::compiler::fingerprint=info \
             bun run check:e2e:tauri 2>&1 | tee native-contract-diagnostics/native-contracts.log
           status="${PIPESTATUS[0]}"
+          set -e
           printf 'command=bun run check:e2e:tauri\nstarted_at=%s\nfinished_at=%s\nexit_status=%s\n' \
             "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" \
             > native-contract-diagnostics/native-contracts-timing.txt
@@ -144,10 +146,12 @@ jobs:
         run: |
           set -o pipefail
           started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          set +e
           CARGO_LOG=cargo::core::compiler::fingerprint=info \
             bun run tauri build --debug --no-bundle ${{ runner.os == 'Windows' && '--features e2e-webview2-attach' || '' }} \
             2>&1 | tee native-contract-diagnostics/tauri-build.log
           status="${PIPESTATUS[0]}"
+          set -e
           printf 'command=bun run tauri build --debug --no-bundle\nstarted_at=%s\nfinished_at=%s\nexit_status=%s\n' \
             "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" \
             > native-contract-diagnostics/tauri-build-timing.txt

@@ -34,7 +34,11 @@ and explicit run errors. Failed native runs also retain their seed-specific
 WebDriver output and reference it from `failureArtifacts`; macOS startup logs
 normalize Rust `ns`, `µs`, `ms`, and `s` duration markers before calculating
 percentiles and treat either an exit code or termination signal as a failed
-survival sample.
+survival sample. Cleanup is successful only after the process exits; a rejected
+force-kill or a child still alive after the force timeout fails the sample while
+retaining its log. Raw replay seeds stay in JSON, while hashed safe filename
+components and root-containment checks keep every seed-derived artifact under
+`qualification-results/`.
 
 Browser Playwright remains useful for broader visual combinations but cannot
 qualify native timing, resource, cache, watcher, or race claims. macOS currently

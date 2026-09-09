@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export type NativePlatform = "linux" | "windows" | "macos";
@@ -532,7 +533,11 @@ export function addQualificationFailureArtifact<
 }
 
 export async function executeLoggedQualificationProcess<
-  T extends { passed?: boolean; failureArtifacts?: readonly string[] },
+  T extends {
+    passed?: boolean;
+    failureArtifacts?: readonly string[];
+    runErrors?: readonly string[];
+  },
 >(options: {
   command: readonly string[];
   env?: NodeJS.ProcessEnv;
@@ -540,7 +545,11 @@ export async function executeLoggedQualificationProcess<
   driverLogPath: string;
   mirrorOutput?: boolean;
   createFallbackReport: (exitCode: number) => T;
-}): Promise<{ exitCode: number; report: T }> {
+}): Promise<{
+  exitCode: number;
+  signalCode: NodeJS.Signals | null;
+  report: T;
+}> {
   if (options.command.length === 0)
     throw new Error("qualification process command must not be empty");
   fs.mkdirSync(path.dirname(options.driverLogPath), { recursive: true });
@@ -548,6 +557,8 @@ export async function executeLoggedQualificationProcess<
   const logFile = fs.openSync(options.driverLogPath, "w");
   const mirrorOutput = options.mirrorOutput ?? true;
   let exitCode = 1;
+  let signalCode: NodeJS.Signals | null = null;
+  let processFailure: string | undefined;
 
   try {
     const child = spawn(options.command[0], [...options.command.slice(1)], {
@@ -566,13 +577,20 @@ export async function executeLoggedQualificationProcess<
       signal: NodeJS.Signals | null;
     }>((resolve) => {
       child.once("error", (error) => {
-        const message = `qualification process error: ${error.message}\n`;
-        fs.writeSync(logFile, message);
-        if (mirrorOutput) process.stderr.write(message);
+        const message = `qualification process error: ${error.message}`;
+        processFailure = message;
+        fs.writeSync(logFile, `${message}\n`);
+        if (mirrorOutput) process.stderr.write(`${message}\n`);
       });
       child.once("close", (code, signal) => resolve({ code, signal }));
     });
     exitCode = result.code ?? 1;
+    signalCode = result.signal;
+    if ((result.code ?? 1) !== 0 || result.signal !== null) {
+      processFailure ??=
+        `qualification process exited with code ${result.code ?? "null"} ` +
+        `(signal ${result.signal ?? "none"})`;
+    }
     if (result.signal) {
       const message = `qualification process terminated by ${result.signal}\n`;
       fs.writeSync(logFile, message);
@@ -581,9 +599,10 @@ export async function executeLoggedQualificationProcess<
   } catch (error) {
     const message = `qualification process could not start: ${
       error instanceof Error ? error.message : String(error)
-    }\n`;
-    fs.writeSync(logFile, message);
-    if (mirrorOutput) process.stderr.write(message);
+    }`;
+    processFailure = message;
+    fs.writeSync(logFile, `${message}\n`);
+    if (mirrorOutput) process.stderr.write(`${message}\n`);
   } finally {
     fs.closeSync(logFile);
   }
@@ -591,11 +610,18 @@ export async function executeLoggedQualificationProcess<
   let report = fs.existsSync(options.reportPath)
     ? (JSON.parse(fs.readFileSync(options.reportPath, "utf8")) as T)
     : options.createFallbackReport(exitCode);
+  if (processFailure) {
+    report = {
+      ...report,
+      passed: false,
+      runErrors: [...new Set([...(report.runErrors ?? []), processFailure])],
+    };
+  }
   if (exitCode !== 0 || !report.passed) {
     report = addQualificationFailureArtifact(report, options.driverLogPath);
   }
   writeQualificationArtifact(options.reportPath, report);
-  return { exitCode, report };
+  return { exitCode, signalCode, report };
 }
 
 export async function executeQualificationRun<T>(options: {
@@ -765,15 +791,28 @@ async function waitForProcessExit(
   });
 }
 
-export async function stopNativeStartupProcess(
+export interface NativeQualificationProcess {
+  label: string;
+  child: NativeStartupChild | undefined;
+}
+
+export interface NativeProcessStopOptions {
+  gracefulTimeoutMs: number;
+  forceTimeoutMs: number;
+}
+
+async function stopNativeQualificationProcess(
   child: NativeStartupChild,
-  options: { gracefulTimeoutMs: number; forceTimeoutMs: number } = {
-    gracefulTimeoutMs: 5_000,
-    forceTimeoutMs: 2_000,
-  },
+  label: string,
+  options: NativeProcessStopOptions,
 ): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  const gracefulAccepted = child.kill();
+  let gracefulAccepted = false;
+  try {
+    gracefulAccepted = child.kill();
+  } catch {
+    // A rejected graceful signal still requires a forced cleanup attempt.
+  }
   if (
     gracefulAccepted &&
     (await waitForProcessExit(child, options.gracefulTimeoutMs))
@@ -787,19 +826,152 @@ export async function stopNativeStartupProcess(
     forceAccepted = child.kill("SIGKILL");
   } catch (error) {
     throw new Error(
-      `native startup process SIGKILL was rejected: ${
+      `${label} SIGKILL was rejected: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
   }
   if (!forceAccepted) {
-    throw new Error("native startup process SIGKILL was rejected");
+    throw new Error(`${label} SIGKILL was rejected`);
   }
   if (!(await waitForProcessExit(child, options.forceTimeoutMs))) {
     throw new Error(
-      `native startup process remained alive after SIGKILL for ${options.forceTimeoutMs}ms`,
+      `${label} remained alive after SIGKILL for ${options.forceTimeoutMs}ms`,
     );
   }
+}
+
+export async function stopNativeQualificationProcesses(
+  processes: readonly NativeQualificationProcess[],
+  options: NativeProcessStopOptions = {
+    gracefulTimeoutMs: 5_000,
+    forceTimeoutMs: 2_000,
+  },
+): Promise<void> {
+  const results = await Promise.allSettled(
+    processes
+      .filter(
+        (process): process is { label: string; child: NativeStartupChild } =>
+          process.child !== undefined,
+      )
+      .map(({ label, child }) =>
+        stopNativeQualificationProcess(child, label, options),
+      ),
+  );
+  const failures = results.flatMap((result) =>
+    result.status === "rejected"
+      ? [
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason),
+        ]
+      : [],
+  );
+  if (failures.length > 0) {
+    throw new Error(
+      `native qualification cleanup failed: ${failures.join("; ")}`,
+    );
+  }
+}
+
+export function createNativeProcessCleanupHooks(options: {
+  environment: NodeJS.ProcessEnv;
+  stateEnvironmentKey: string;
+  stop: () => Promise<void>;
+  temporaryRoot?: string;
+}): {
+  prepare: () => void;
+  cleanup: () => Promise<void>;
+  complete: () => void;
+} {
+  const temporaryRoot = path.resolve(options.temporaryRoot ?? os.tmpdir());
+  const directoryPrefix = "tauri-native-cleanup-";
+  let preparedDirectory: string | undefined;
+
+  const assertMarkerDirectory = (candidate: string): string => {
+    const resolved = path.resolve(candidate);
+    const relative = path.relative(temporaryRoot, resolved);
+    if (
+      relative === "" ||
+      path.isAbsolute(relative) ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      !path.basename(resolved).startsWith(directoryPrefix)
+    ) {
+      throw new Error(`invalid native cleanup state directory: ${resolved}`);
+    }
+    return resolved;
+  };
+
+  return {
+    prepare: () => {
+      preparedDirectory = fs.mkdtempSync(
+        path.join(temporaryRoot, directoryPrefix),
+      );
+      options.environment[options.stateEnvironmentKey] = preparedDirectory;
+    },
+    cleanup: async () => {
+      try {
+        await options.stop();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const configuredDirectory =
+          options.environment[options.stateEnvironmentKey];
+        if (!configuredDirectory) {
+          throw new Error(
+            `native cleanup state directory unavailable: ${message}`,
+          );
+        }
+        const markerDirectory = assertMarkerDirectory(configuredDirectory);
+        writeQualificationArtifact(
+          path.join(markerDirectory, `${process.pid}-${randomUUID()}.json`),
+          { message },
+        );
+        throw error;
+      }
+    },
+    complete: () => {
+      delete options.environment[options.stateEnvironmentKey];
+      if (!preparedDirectory) return;
+      const markerDirectory = preparedDirectory;
+      preparedDirectory = undefined;
+      let failures: string[] = [];
+      try {
+        failures = fs
+          .readdirSync(markerDirectory)
+          .filter((entry) => entry.endsWith(".json"))
+          .map((entry) => {
+            const marker = JSON.parse(
+              fs.readFileSync(path.join(markerDirectory, entry), "utf8"),
+            ) as { message?: unknown };
+            return typeof marker.message === "string"
+              ? marker.message
+              : `invalid cleanup marker ${entry}`;
+          });
+      } finally {
+        fs.rmSync(markerDirectory, { recursive: true, force: true });
+      }
+      if (failures.length > 0) {
+        throw new Error(
+          `native qualification cleanup failed: ${failures.join("; ")}`,
+        );
+      }
+    },
+  };
+}
+
+export async function stopNativeStartupProcess(
+  child: NativeStartupChild,
+  options: NativeProcessStopOptions = {
+    gracefulTimeoutMs: 5_000,
+    forceTimeoutMs: 2_000,
+  },
+): Promise<void> {
+  await stopNativeQualificationProcess(
+    child,
+    "native startup process",
+    options,
+  );
 }
 
 export function summarizeDurations(values: readonly number[]): {

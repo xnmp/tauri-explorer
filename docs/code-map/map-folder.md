@@ -556,3 +556,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/worker.rs` — shared blocking job ownership plus explicit-context workers that report whole results before context destruction; work/cleanup unwind separately and late cleanup diagnostics preserve successful receipts. `src-tauri/test_support/file_worker_completion.rs` covers result retention, blocked cleanup, waiter loss and subprocess double panic.
 
 - `src-tauri/src/files/recovery/subscriptions.rs` — bounded exact-renderer recovery channels; monotonic subscription tokens fence reordered registration/release, pending acknowledgements roll back, and native retirement releases listeners. Ordering, capacity, reentrant callback and retirement contracts in `src-tauri/test_support/recovery_subscriptions.rs`.
+
+### Native qualification tooling
+
+- `e2e-tauri/native-qualification.ts` — native process lifetime, verified build identity, bounded artifacts and foreground-ready/warm startup log parsing.
+- `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
+- `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
+- `scripts/build-native-qualification.ts` — clean-worktree native build and exact binary provenance.
+- `scripts/qualify-macos-startup.ts` — real Mac foreground-ready and warm activation samples with process survival and cleanup.
+- `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
+- `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
+- `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.

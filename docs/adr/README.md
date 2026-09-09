@@ -26,3 +26,4 @@ decision during review.
 | [0018](0018-native-file-history.md) | Native file history and committed mutation receipts | Proposed |
 | [0019](0019-exact-trash-recovery.md) | Exact trash receipts and bounded recovery retention | Proposed |
 | [0020](0020-durable-file-recovery.md) | Durable artifact ownership, discovery and reconciliation | Proposed |
+| [0021](0021-qualification-process-lifecycle.md) | Qualification process lifecycle and artifact boundary | Accepted |

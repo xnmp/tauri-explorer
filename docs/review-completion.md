@@ -42,6 +42,27 @@ Deferred expansion is now tracked separately:
 Further nonblocking findings go into issues. This pass does not add new features,
 rewrite unrelated subsystems, or repeat accepted checks without a concrete reason.
 
+## Publication and dev integration — 2026-09-09
+
+The approved 43 commits through `d4b5d6e0` were pushed to draft PR #684. The
+new dev qualification commit `e336d32c` then required four merge resolutions:
+keep both sets of package scripts and native acceptance documentation, preserve
+the new Mac qualification workflow, and assign its ADR the unused number 0021.
+
+A regression test reproduced the runner's outdated startup marker. Qualification
+now requires native foreground readiness and explicitly rejects builder/WebView-only
+markers. All 21 qualification tests pass; typecheck, architecture lint and source
+maps pass. Output-capture fixtures synchronously emit their proof bytes before
+exiting, after a standalone process reproduction showed their buffered output
+was absent. Production child-log capture is unchanged. Independent Sol review
+verified the merge and readiness boundary. Native application code is unchanged
+from the previously tested checkpoint.
+
+The manually dispatched Linux/Windows native smoke run on `d4b5d6e0` is
+[34326582874](https://github.com/xnmp/tauri-explorer/actions/runs/34326582874).
+Its result must be recorded separately from later integration-head checks. The
+PR stays draft; no merge into dev or release is authorized by this publication.
+
 ## Release stabilization — current checkpoint
 
 The started immutable Move intent is complete: real catalog promotion/reopening

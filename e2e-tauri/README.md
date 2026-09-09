@@ -270,3 +270,43 @@ VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer
 
 Keep ordinary native smoke builds without `durable-copy-recovery` so the default
 shipping path is also exercised. `e2e-renderer-recovery` does not imply the feature.
+## Extended native qualification soak
+
+The hours-long qualification suite is deliberately opt-in and is not selected
+by `test:e2e:tauri` or the pull-request smoke workflow. Start from a clean
+worktree and build through the qualification wrapper so the source commit and
+profile are tied to the exact binary hash in `qualification-results/native-build.json`:
+
+```bash
+bun run build:native:qualification
+SOAK_DURATION_MS=14400000 \
+SOAK_MAX_CYCLES=500 \
+SOAK_SEED=release-1.8.1-linux \
+SOAK_EXPECTED_DISPLAY_SCALE=2 \
+bun run test:e2e:tauri:soak
+```
+
+Omit `SOAK_MAX_CYCLES` to run for the full duration. A bounded harness check can
+set `SOAK_MAX_CYCLES=1`; that still launches the real application and exercises
+every scenario once. The deterministic seed rotates scenario/interruption order
+and is written into the report so a failing order can be replayed.
+
+Reports are written under `qualification-results/` and contain the exact commit,
+verified build profile and binary SHA-256/size/mtime, OS/release/architecture,
+WebView user agent, display scale, configuration, RSS baseline/final/peak,
+scenario-duration p50/p95, and every scenario result. A failed assertion takes a
+screenshot named with the seed-derived safe component, cycle, and scenario,
+records it in the JSON report, and fails the command.
+The required expected-display-scale value makes a DPI qualification leg fail
+instead of silently running at the wrong native runner scale.
+
+The report retains `SOAK_SEED` exactly for replay and ordering. Artifact names
+use a bounded readable form plus a hash, and the runner rejects any resolved
+report, log, or screenshot directory outside `qualification-results/`.
+
+This runner supports Linux/WebKitGTK and Windows/WebView2. It makes no macOS UI
+claim because WKWebView has no supported tauri-driver backend. The real macOS
+process gate in `.github/workflows/macos-smoke.yml` runs 30 cold plus
+`WARM_MEASURE=1` activation samples, checks post-startup survival, and uploads
+its exact-binary JSON report and logs. Those native logs, not browser tests, are
+the source for macOS p50/p95 timing qualification.

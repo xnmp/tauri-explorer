@@ -1,7 +1,7 @@
-# macOS launch smoke (#192): the only automated macOS signal we can get
-# without a WKWebView WebDriver. Builds the app with embedded assets and
-# asserts core Explorer readiness, including commands/settings/initial listing.
-# This debug build on a shared runner is a smoke check, not a latency benchmark.
+# macOS launch qualification (#192, #688): the automated real-process signal
+# available without a WKWebView WebDriver. Builds embedded assets and records
+# bounded foreground-readiness and hidden warm-activation p50/p95 from native logs.
+# Shared-runner debug timings do not qualify release Dock-bounce/input latency.
 name: macOS Smoke
 
 on:
@@ -38,56 +38,26 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build frontend
-        run: bun run build
+      - name: Build app and record exact qualification provenance
+        env:
+          # The macOS process probe needs production code, not WebDriver hooks.
+          NATIVE_QUALIFICATION_E2E_HOOKS: "0"
+        run: bun run build:native:qualification
 
-      - name: Build app (embedded assets)
-        # custom-protocol is what makes the binary serve the bundled dist
-        # instead of dialing the dev server on localhost:1420.
-        run: cargo build --features tauri/custom-protocol
-        working-directory: src-tauri
+      # WARM_MEASURE uses the app's real hidden WKWebView activation probe. The
+      # qualifier requires both native cold and warm markers on every sample,
+      # checks that the process survives setup, and records p50/p95 rather than
+      # inferring launch timing from a browser mock or a single process check.
+      - name: Measure real macOS cold and warm startup
+        env:
+          MAC_STARTUP_SAMPLES: "30"
+          MAC_STARTUP_TIMEOUT_MS: "30000"
+        run: bun run test:qualify:macos-startup
 
-      - name: Launch and assert boot
-        run: |
-          RUST_LOG=info ./src-tauri/target/debug/tauri-explorer > app.log 2>&1 &
-          APP_PID=$!
-
-          # Give WKWebView time to initialize on a cold runner.
-          for i in $(seq 1 30); do
-            if ! kill -0 "$APP_PID" 2>/dev/null; then
-              echo "FAIL: app process died during startup"
-              cat app.log
-              exit 1
-            fi
-            if grep -q "Startup(native-ready):" app.log; then
-              echo "OK: core Explorer readiness reached"
-              break
-            fi
-            sleep 1
-          done
-
-          if ! grep -q "Startup(native-ready):" app.log; then
-            echo "FAIL: core Explorer readiness never appeared within 30s"
-            cat app.log
-            exit 1
-          fi
-
-          # Still alive after settling — no post-setup crash.
-          sleep 5
-          if ! kill -0 "$APP_PID" 2>/dev/null; then
-            echo "FAIL: app process died shortly after startup"
-            cat app.log
-            exit 1
-          fi
-
-          kill "$APP_PID"
-          echo "macOS launch smoke passed"
-          cat app.log
-
-      - name: Upload app log on failure
-        if: failure()
+      - name: Upload macOS startup qualification
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: macos-smoke-app-log
-          path: app.log
-          if-no-files-found: ignore
+          name: macos-startup-qualification
+          path: qualification-results/macos-startup/
+          if-no-files-found: error

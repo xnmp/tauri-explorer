@@ -979,3 +979,14 @@ Cargo returns success when a filter matches no tests. Module extraction left the
 Windows `windows_index_tests` CI filter pointing at a removed module. Discover
 actual tests first and reject missing filters before treating a run as evidence.
 Cross-target compilation does not execute Windows path or Shell contracts.
+
+
+## Qualification must follow the foreground-ready milestone
+
+The native qualification runner added on dev (#689) expected the earlier
+`Startup: ... total=` builder marker. Integrating it with the revised startup
+contract failed against the real `Startup(native-ready): app-run-to-ready=` line.
+The parser now requires that foreground marker and rejects builder or WebView-only
+timings even when warm activation succeeded. Cold samples retain the existing JSON
+field but identify the measured milestone in report metadata. Debug shared-runner
+p50/p95 values do not establish release Dock-bounce or first-input latency.

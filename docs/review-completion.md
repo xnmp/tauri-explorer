@@ -155,8 +155,9 @@ the existing Ctrl+End backward-departure assertions remain unchanged.
 
 The [native run](https://github.com/xnmp/tauri-explorer/actions/runs/34331161762)
 confirmed the Windows manifest fix: library tests now execute. Batch contracts
-passed 24 tests and failed two. One byte-budget fixture used an invalid Windows
-leaf component; it now uses bounded components with the same total byte count.
+passed 24 tests and failed two. The byte-budget fixture was changed to bounded
+components, but the proposed long-leaf diagnosis was not established; the later
+Windows run reproduced the failure and exposed a repeated-separator fixture bug.
 The other test indexed trash artifacts before asserting operation success.
 Outcome-first diagnostics now expose the real result while still requiring exact
 restoration. Its cause remains unresolved. Windows CI now collects every contract
@@ -185,11 +186,52 @@ cold-only startup, first-input latency and half-bounce acceptance remain open.
 
 ## Native session ownership and release startup qualification
 
-The published `bdc804ff` passed both Chromium shards, the protected frontend
-aggregate, Rust validation and source maps. WebKit and native run
-[34335460231](https://github.com/xnmp/tauri-explorer/actions/runs/34335460231)
-were still running when this follow-up was prepared; their results must be read
-before integration acceptance.
+The published `bdc804ff` passed the complete
+[main CI run](https://github.com/xnmp/tauri-explorer/actions/runs/34335460254):
+Chromium accepted all 777 tests (one retry), WebKit passed all 745 applicable tests
+(32 skipped, no retries), both protected browser aggregates passed, and frontend
+validation, Rust checks and source maps passed. The separate performance workflow
+also passed. The badge, tab-lifetime and multi-selection fixture corrections now
+have full Chromium/WebKit execution evidence.
+
+Native run [34335460231](https://github.com/xnmp/tauri-explorer/actions/runs/34335460231)
+completed with failures. Linux passed 34 of 36 spec files: terminal resize failed
+at its initial container click, and three window-transfer/close tests failed in
+the other spec. Windows passed 27 of 35 spec files; all five Rust contract
+families executed, with failures in batch, restore and Git trash contracts.
+Rust 1.98 lint also rejected four byte-chunk loops. These gates remain open.
+
+The resulting fixes are deliberately bounded:
+
+- Recycle Bin receipts accept the observed `COPYENGINE_S_DONT_PROCESS_CHILDREN`
+  status only with a nonempty exact item locator. Fourteen classifier tests pass,
+  including a failing-before regression; independent review accepts the change.
+- Shell source names normalize ordinary Windows separators through native path
+  components, retaining raw UTF-16 and existing verbatim DOS handling. Legacy
+  inventory fixtures resolve only the surviving parent before native path-key
+  comparison, accommodating temp-directory aliases without resolving deleted
+  symlink leaves. Independent review accepts both; native MSVC proof is pending.
+- The raw byte-budget fixture uses an explicit root: Windows `temp_dir()` already
+  ends in a separator, so adding one rejected the old input as ambiguous. The
+  exact 8 MiB admission and pre-deduplication rejection assertions remain intact.
+- Four byte-chunk loops use fixed array chunks for Rust 1.98 Clippy. The Windows
+  panel fixture checks the exact filename without assuming slash direction; the
+  Linux terminal fixture clicks a displayed file entry before its shortcuts.
+  All feature-outcome assertions remain intact.
+
+Windows directory recovery schedules extra scans after registration becomes
+unavailable; the raw faulting event is not yet known. Git root replacement also
+fails to recover, while pane teardown, large-window transfer and transfer setup
+retain native failures. Debug-only event/registration/recovery logs are enabled
+for the next Windows smoke run. Watcher policy, timeouts and first-load assertions
+are unchanged; no speculative path-matching fix is accepted.
+
+Local final checks pass: 14 deletion-classifier tests, the raw-byte boundary
+regression, 13 directory-observation tests and 17 Git-watch tests (one manual
+measurement ignored), Linux and Windows GNU all-target strict Clippy, scoped
+TypeScript for both changed native fixtures, formatting, diff checks and source
+maps (485/485). Independent review accepts the Shell boundary and diagnostics'
+unchanged watcher decisions. Windows-only tests are cross-compiled, not executed.
 
 The prior Linux log established that the directory-watch application's PID
 survived its WebDriver session and contaminated a later single-process test.
@@ -215,7 +257,15 @@ Linux and Windows GNU strict Clippy pass after the log-stream option; the Mac
 runner passes scoped TypeScript checking and the build wrapper/WDIO config
 bundle successfully. The existing suite-wide TypeScript limitations remain #690.
 
-These changes are prepared for publication while the current run finishes.
+The completed [Mac run](https://github.com/xnmp/tauri-explorer/actions/runs/34335460301)
+still used the earlier debug profile with warm measurement enabled: 30 samples,
+foreground p50 3,879.5 ms / p95 6,700.2 ms; warm p50 428 ms / p95 5,081 ms.
+Its synthetic merge is `fb938f41cb4697a2547d9ff266be04e8fd550e17`, profile
+`debug-custom-protocol-production-hooks`, and binary SHA-256
+`ee5d47a98d37717914147eae99f5ffe424d65b695a06c30827eff150069aef82`.
+This result does not qualify the new release runner.
+
+These changes require a new native run after publication.
 Actual Mac release reports, matching binary identities across both scenarios,
 presented-frame/input measurements and the half-bounce target remain outstanding.
 No new product feature or architectural review scope has been added.

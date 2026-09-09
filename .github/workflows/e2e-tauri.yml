@@ -166,6 +166,7 @@ jobs:
         timeout-minutes: 15
         env:
           VITE_E2E_NO_WARM_PRIME: "1"
+          RUST_LOG: debug
         run: bun run test:e2e:tauri
 
       - name: Upload WDIO logs

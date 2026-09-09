@@ -293,17 +293,54 @@ impl Worker {
         sender: &mpsc::Sender<Command>,
         target: &Target,
     ) -> Result<(Observer, Arc<AtomicU8>), AppError> {
+        log::debug!(
+            target: "tauri_explorer_lib::native_watch_diagnostics",
+            "git watch create: key={:?}, source={:?}, roots={:?}, metadata={:?}",
+            target.key,
+            target.source,
+            target.roots,
+            target.metadata,
+        );
         let flags = Arc::new(AtomicU8::new(0));
         let event_flags = Arc::clone(&flags);
         let sender = sender.clone();
         let watched = target.clone();
         let callback = Box::new(move |event: notify::Result<notify::Event>| {
             let bits = match &event {
-                Ok(event) if watched.lost_root(event) => DIRTY | BROKEN,
-                Ok(event) if watched.relevant(event) => DIRTY,
-                Ok(_) => return,
+                Ok(event) => {
+                    let lost_root = watched.lost_root(event);
+                    let relevant_if_root_retained = !lost_root && watched.relevant(event);
+                    let bits = if lost_root {
+                        DIRTY | BROKEN
+                    } else if relevant_if_root_retained {
+                        DIRTY
+                    } else {
+                        0
+                    };
+                    log::debug!(
+                        target: "tauri_explorer_lib::native_watch_diagnostics",
+                        "git watch event: key={:?}, kind={:?}, paths={:?}, rescan={}, lost_root={}, relevant_if_root_retained={}, flags={}",
+                        watched.key,
+                        event.kind,
+                        event.paths,
+                        event.need_rescan(),
+                        lost_root,
+                        relevant_if_root_retained,
+                        bits,
+                    );
+                    if bits == 0 {
+                        return;
+                    }
+                    bits
+                }
                 Err(error) => {
                     log::warn!("git watch {}: {error}", watched.key);
+                    log::debug!(
+                        target: "tauri_explorer_lib::native_watch_diagnostics",
+                        "git watch event error: key={:?}, error={error:?}, flags={}",
+                        watched.key,
+                        DIRTY | BROKEN,
+                    );
                     DIRTY | BROKEN
                 }
             };
@@ -315,8 +352,24 @@ impl Worker {
                 let _ = sender.try_send(Command::Wake);
             }
         });
-        let observer = factory(target, callback)?;
-        if flags.load(Ordering::Acquire) & BROKEN != 0 {
+        let observer = match factory(target, callback) {
+            Ok(observer) => observer,
+            Err(error) => {
+                log::debug!(
+                    target: "tauri_explorer_lib::native_watch_diagnostics",
+                    "git watch create failed: key={:?}, error={error}",
+                    target.key,
+                );
+                return Err(error);
+            }
+        };
+        let initial_flags = flags.load(Ordering::Acquire);
+        log::debug!(
+            target: "tauri_explorer_lib::native_watch_diagnostics",
+            "git watch create completed: key={:?}, flags={initial_flags}",
+            target.key,
+        );
+        if initial_flags & BROKEN != 0 {
             return Err(AppError::Other(
                 "Git observation failed during registration".into(),
             ));
@@ -426,7 +479,22 @@ impl Worker {
                 entry.failures = 0;
             }
             if entry.retry_at.is_some_and(|deadline| deadline <= now) {
+                log::debug!(
+                    target: "tauri_explorer_lib::native_watch_diagnostics",
+                    "git watch recovery starting: key={key:?}, source={:?}, roots={:?}, failures={}",
+                    entry.target.source,
+                    entry.target.roots,
+                    entry.failures,
+                );
                 let recovered = Target::resolve(&entry.target.source).and_then(|target| {
+                    log::debug!(
+                        target: "tauri_explorer_lib::native_watch_diagnostics",
+                        "git watch recovery resolved: existing_key={key:?}, resolved_key={:?}, source={:?}, roots={:?}, metadata={:?}",
+                        target.key,
+                        target.source,
+                        target.roots,
+                        target.metadata,
+                    );
                     if target.key != *key {
                         return Err(AppError::Other(
                             "Git watch identity changed during recovery".into(),
@@ -437,6 +505,10 @@ impl Worker {
                 });
                 match recovered {
                     Ok((target, observer, flags)) => {
+                        log::debug!(
+                            target: "tauri_explorer_lib::native_watch_diagnostics",
+                            "git watch recovery completed: key={key:?}",
+                        );
                         entry.target = target;
                         entry.observer = Some(observer);
                         entry.flags = flags;
@@ -453,6 +525,11 @@ impl Worker {
                             .saturating_mul(1 << entry.failures.min(16))
                             .min(self.timing.retry_cap);
                         entry.retry_at = Some(Instant::now() + delay);
+                        log::debug!(
+                            target: "tauri_explorer_lib::native_watch_diagnostics",
+                            "git watch recovery failed: key={key:?}, failures={}, retry={delay:?}, error={error}",
+                            entry.failures,
+                        );
                         log::debug!("Git observation recovery for {key} failed; retrying in {delay:?}: {error}");
                     }
                 }

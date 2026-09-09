@@ -521,8 +521,11 @@ fn parse_names(buffer: &[u8], maximum: usize, names: &mut Vec<OsString>) -> io::
             return Err(invalid_data("Truncated Windows directory name"));
         }
         let wide: Vec<u16> = buffer[header_end..record_end]
-            .chunks_exact(size_of::<u16>())
-            .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .collect();
         if wide.as_slice() != [b'.' as u16] && wide.as_slice() != [b'.' as u16, b'.' as u16] {
             if names.len() == maximum {
@@ -648,7 +651,12 @@ mod tests {
         let mut bytes = vec![0; HEADER_BYTES + size_of_val(name)];
         bytes[..4].copy_from_slice(&next.to_le_bytes());
         bytes[8..12].copy_from_slice(&u32::try_from(size_of_val(name)).unwrap().to_le_bytes());
-        for (destination, unit) in bytes[HEADER_BYTES..].chunks_exact_mut(2).zip(name) {
+        for (destination, unit) in bytes[HEADER_BYTES..]
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(name)
+        {
             destination.copy_from_slice(&unit.to_le_bytes());
         }
         bytes

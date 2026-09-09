@@ -149,7 +149,7 @@ mod native {
             trash_artifact::{RestoreRequest, TrashArtifact},
             windows_restore::{
                 delete_item, restore_exact, restore_item, restore_item_before_perform,
-                StaApartment, WindowsPathKey,
+                shell_filesystem_name, StaApartment, WindowsPathKey,
             },
         },
     };
@@ -163,12 +163,44 @@ mod native {
     };
 
     fn find_item(path: &Path) -> trash::TrashItem {
+        // GetTempPath may use 8.3 ancestors while Shell inventory expands them.
+        // Resolve the surviving parent, keeping the deleted leaf (including a
+        // symlink) untouched, then compare the supported native spellings.
+        let expected = fs::canonicalize(path.parent().expect("fixture parent"))
+            .expect("resolve fixture parent")
+            .join(path.file_name().expect("fixture leaf"));
+        let expected = WindowsPathKey::new(&expected);
         trash::os_limited::list()
             .expect("list Recycle Bin")
             .into_iter()
-            .filter(|item| item.original_path() == path)
+            .filter(|item| {
+                WindowsPathKey::new(&item.original_path())
+                    .compare(&expected)
+                    .is_ok_and(|ordering| ordering == Ordering::Equal)
+            })
             .max_by_key(|item| item.time_deleted)
             .expect("trashed fixture")
+    }
+
+    #[test]
+    fn shell_source_names_use_native_separators_without_lossy_unicode_conversion() {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::PathBuf};
+        let expected: Vec<u16> = "C:\\work\\file.txt\0".encode_utf16().collect();
+        assert_eq!(
+            shell_filesystem_name(Path::new("C:/work/file.txt")),
+            expected
+        );
+        assert_eq!(
+            shell_filesystem_name(Path::new(r"\\?\C:\work\file.txt")),
+            expected
+        );
+
+        let mut units: Vec<u16> = "C:/work/".encode_utf16().collect();
+        units.push(0xd800);
+        let path = PathBuf::from(OsString::from_wide(&units));
+        let mut expected: Vec<u16> = "C:\\work\\".encode_utf16().collect();
+        expected.extend([0xd800, 0]);
+        assert_eq!(shell_filesystem_name(&path), expected);
     }
 
     fn exact_request(

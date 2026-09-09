@@ -5,8 +5,9 @@ import { domText } from "./helpers";
 (process.platform === "linux" ? describe : describe.skip)("native terminal resizing", () => {
   it("keeps a zoomed drag continuous with scrollback and the shell usable after keyboard resize", async () => {
     await browser.setWindowSize(1280, 900);
-    await $(".file-list").waitForExist();
-    await $(".file-list").click();
+    const entry = await $(".explorer-pane.active .entry-item");
+    await entry.waitForDisplayed();
+    await entry.click();
     for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);
     await browser.waitUntil(async () => await browser.execute(() => parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1.5,
       { timeoutMsg: "root zoom did not reach 150%" });

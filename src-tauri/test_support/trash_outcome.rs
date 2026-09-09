@@ -25,6 +25,18 @@ fn exact_s_ok_with_nonempty_locator_is_recycled() {
 }
 
 #[test]
+fn exact_dont_process_children_with_nonempty_locator_is_recycled() {
+    let locator = vec![b':' as u16, b':' as u16, 1];
+    assert_eq!(
+        classify_delete(evidence(DeleteItemCompletion::One {
+            hresult: 0x0027_0008,
+            artifact: DeletedArtifact::ParsingName(locator.clone()),
+        })),
+        DeleteOutcome::Recycled(locator)
+    );
+}
+
+#[test]
 fn null_created_item_is_known_completion_without_a_recoverable_artifact() {
     assert!(matches!(
         classify_delete(evidence(DeleteItemCompletion::One {

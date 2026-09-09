@@ -13,7 +13,7 @@ pub(super) type Callback = Box<dyn Fn(notify::Result<Event>) + Send + 'static>;
 pub(super) type Factory = Box<dyn Fn(Callback) -> notify::Result<Box<dyn Watcher + Send>> + Send>;
 pub(super) type Notify = Arc<dyn Fn(Notice) + Send + Sync>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
     Direct,
     Recursive,
@@ -116,7 +116,13 @@ impl Source {
                 return;
             }
         };
+        log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+            "directory event source={:p} mode={:?} state={} roots={:?} event={:?} rescan={}",
+            self, self.mode, self.state.load(Ordering::Acquire),
+            self.roots.read().unwrap(), event, event.need_rescan());
         if event.need_rescan() || (event.paths.is_empty() && !event.kind.is_access()) {
+            log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                "directory source={:p} classification=fault-rescan-or-empty", self);
             self.fault();
             return;
         }
@@ -139,6 +145,8 @@ impl Source {
                     .any(|root| root == path || root.parent() == Some(path.as_path()))
             })
         {
+            log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                "directory source={:p} classification=fault-root-or-parent", self);
             drop(roots);
             self.fault();
             return;
@@ -163,8 +171,13 @@ impl Source {
         }
         drop(roots);
         if !changed.is_empty() && self.defer_change() {
+            log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                "directory source={:p} classification=deferred changed={changed:?}", self);
             return;
         }
+        log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+            "directory source={:p} classification=deliver-or-ignore state={} changed={changed:?}",
+            self, self.state.load(Ordering::Acquire));
         for path in changed {
             if !self.healthy() {
                 break;
@@ -285,7 +298,11 @@ impl Observation {
             if self.physical.contains(&physical) {
                 continue;
             }
-            if let Err(error) = self.watcher.as_mut().unwrap().watch(&physical, mode) {
+            let result = self.watcher.as_mut().unwrap().watch(&physical, mode);
+            log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                "directory install source={:p} root={path:?} physical={physical:?} mode={mode:?} state={} result={result:?}",
+                Arc::as_ptr(&self.source), self.source.state.load(Ordering::Acquire));
+            if let Err(error) = result {
                 let retry = Retry::after(self.missing.get(path), now);
                 self.missing.insert(path.to_path_buf(), retry);
                 // Recursive installation can fail after installing descendants.
@@ -400,6 +417,9 @@ impl Observation {
         let mut attempted = HashSet::new();
         loop {
             let source = Source::new(self.desired.clone(), self.mode, self.notify.clone());
+            log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                "directory rebuild source={:p} previous={:p} mode={:?} desired={:?} refresh={refresh}",
+                Arc::as_ptr(&source), Arc::as_ptr(&self.source), self.mode, self.desired);
             let callback_source = source.clone();
             let built = (self.factory)(Box::new(move |event| callback_source.event(event)));
             let mut watcher = match built {
@@ -435,7 +455,11 @@ impl Observation {
                     if physical.contains(&path) {
                         continue;
                     }
-                    if let Err(error) = watcher.watch(&path, mode) {
+                    let result = watcher.watch(&path, mode);
+                    log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                        "directory register source={:p} root={root:?} physical={path:?} mode={mode:?} state={} result={result:?}",
+                        Arc::as_ptr(&source), source.state.load(Ordering::Acquire));
+                    if let Err(error) = result {
                         log::warn!(
                             "Directory observation registration failed for {}: {error}",
                             root.display()
@@ -477,6 +501,9 @@ impl Observation {
             // installation request a catch-up refresh after successful activation.
             (self.notify)(Notice::Invalidated(covered.iter().cloned().collect()));
             let Some(dirty) = source.activate() else {
+                log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                    "directory activation failed source={:p} state={}",
+                    Arc::as_ptr(&source), source.state.load(Ordering::Acquire));
                 source.retire();
                 self.defer_rebuild(now);
                 return Err(notify::Error::generic(
@@ -490,6 +517,9 @@ impl Observation {
             self.covered = covered;
             self.missing = missing;
             self.rebuild_retry = None;
+            log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+                "directory restored source={:p} covered={:?} missing={:?} refresh={refresh} dirty={dirty}",
+                Arc::as_ptr(&self.source), self.covered, self.missing.keys());
             (self.notify)(Notice::Restored {
                 roots: self.covered.iter().cloned().collect(),
                 refresh: refresh || dirty,

@@ -407,8 +407,12 @@ fn to_wide(value: &OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
-fn shell_filesystem_name(path: &Path) -> Vec<u16> {
-    let mut name: Vec<u16> = path.as_os_str().encode_wide().collect();
+pub(crate) fn shell_filesystem_name(path: &Path) -> Vec<u16> {
+    // The app accepts ordinary Windows paths with either separator, but the
+    // Shell parsing API requires native spelling. Rebuild components so their
+    // separators are native without altering verbatim component contents.
+    let native: PathBuf = path.components().collect();
+    let mut name: Vec<u16> = native.as_os_str().encode_wide().collect();
     const VERBATIM: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
     let verbatim_dos_drive = name.starts_with(&VERBATIM)
         && name.get(4).is_some_and(|unit| {

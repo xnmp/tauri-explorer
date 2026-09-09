@@ -30,8 +30,9 @@ describe("native inline panel layout", () => {
     await browser.waitUntil(async () => await browser.execute(() =>
       (document.querySelector(".explorer-pane.active .file-list")?.clientWidth ?? 0) >= 238),
     { timeoutMsg: "inline panels consumed native file-list width" });
-    const file = $('.explorer-pane.active .file-list .entry-item[data-path$="/panel-proof.txt"]');
+    const file = $('.explorer-pane.active .file-list .entry-item[data-path$="panel-proof.txt"]');
     await file.waitForDisplayed();
+    await expect(file.$(".entry-name")).toHaveText("panel-proof.txt");
     await file.click(); await expect(file).toHaveElementClass("selected");
     const separator = $('.explorer-pane.active [aria-label="Resize source control panel"]');
     await separator.scrollIntoView();

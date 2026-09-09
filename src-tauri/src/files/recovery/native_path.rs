@@ -80,8 +80,11 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<
             return Err(serde::de::Error::custom("Malformed UTF-16 recovery path"));
         }
         let units: Vec<_> = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .collect();
         PathBuf::from(OsString::from_wide(&units))
     };

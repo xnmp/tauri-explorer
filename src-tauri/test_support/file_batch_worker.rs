@@ -327,19 +327,17 @@ fn raw_count_limit_is_checked_before_duplicate_paths_are_removed() {
 
 #[test]
 fn raw_byte_limit_is_checked_before_duplicate_paths_are_removed() {
-    let prefix = format!(
-        "{}{}",
-        path_string(&std::env::temp_dir()),
-        std::path::MAIN_SEPARATOR
-    );
-    let mut path = prefix;
+    // This is a syntactic budget check, with no filesystem access. Windows'
+    // temp_dir already ends in a separator; appending another rejects the
+    // fixture as ambiguous before reaching the intended byte boundary.
+    let mut path = if cfg!(windows) { "C:\\" } else { "/" }.to_owned();
     while 1024 - path.len() > 101 {
         path.push_str(&"x".repeat(100));
         path.push(std::path::MAIN_SEPARATOR);
     }
     path.push_str(&"x".repeat(1024 - path.len()));
     assert_eq!(path.len(), 1024);
-    assert!(BatchPlan::new(vec![path.clone(); 8_192]).is_ok());
+    BatchPlan::new(vec![path.clone(); 8_192]).expect("the exact raw byte budget is admitted");
     let error = BatchPlan::new(vec![path; 8_193])
         .err()
         .expect("raw bytes over the limit must be rejected");

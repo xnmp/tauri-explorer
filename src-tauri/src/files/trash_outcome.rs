@@ -1,7 +1,8 @@
 //! Pure interpretation of Windows Shell deletion completion evidence.
 //!
 //! The Shell copy engine uses non-negative HRESULTs for skipped or deferred
-//! work. Only an exact `S_OK` callback proves a committed deletion.
+//! work. Only exact statuses whose documented meaning is consistent with the
+//! returned artifact prove a committed deletion.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DeletedArtifact {
@@ -46,6 +47,7 @@ pub(crate) enum DeleteOutcome {
 
 const S_OK: i32 = 0;
 const COPYENGINE_S_USER_IGNORED: i32 = 0x0027_0005;
+const COPYENGINE_S_DONT_PROCESS_CHILDREN: i32 = 0x0027_0008;
 
 fn format_hresult(value: i32) -> String {
     format!("0x{:08X}", value as u32)
@@ -78,7 +80,7 @@ pub(crate) fn classify_delete(evidence: DeleteCompletionEvidence) -> DeleteOutco
     }
     match &evidence.item {
         DeleteItemCompletion::One {
-            hresult: S_OK,
+            hresult: S_OK | COPYENGINE_S_DONT_PROCESS_CHILDREN,
             artifact: DeletedArtifact::ParsingName(name),
         } if !name.is_empty() => DeleteOutcome::Recycled(name.clone()),
         DeleteItemCompletion::One {

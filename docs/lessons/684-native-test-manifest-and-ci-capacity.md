@@ -35,13 +35,37 @@ the fixture pass. Budget the suite separately for all isolated native sessions:
 36 sessions at roughly 30 seconds startup each cannot fit in a 15-minute step.
 
 Windows execution subsequently confirmed that library test discovery and batch
-contracts now load. A byte-budget fixture still failed because its 1,024-byte
-path used an invalid Windows leaf component; use valid, bounded components while
-preserving the raw byte count and duplicate-input boundary. A separate trash
+contracts now load. The initial diagnosis that the byte-budget fixture failed
+because of a long leaf was not established: bounding components did not fix the
+Windows failure. `temp_dir()` already ended in a separator, and appending another
+made the path invalid under the admission grammar. The syntactic fixture now
+uses an explicit absolute root and bounded components, preserving the exact raw
+byte count and duplicate-input boundary independently of the runner environment.
+A separate trash
 test indexed artifact metadata before checking the mutation result, hiding the
 real failure behind a missing-key panic. Assert outcome and apartment contracts
 first, then require exact artifacts and restored bytes. Missing metadata alone
 does not prove that deletion succeeded.
+
+The completed Windows run exposed `COPYENGINE_S_DONT_PROCESS_CHILDREN`
+(`0x00270008`) with an exact Recycle Bin item in `PostDeleteItem`. Admit this
+specific status alongside `S_OK` only with a nonempty item locator; other
+nonnegative HRESULTs are not generic success. The regression fails before the
+classifier fix and passes after it. Native MSVC confirmation remains required.
+
+The Git trash caller also supplied ordinary forward-slash paths to the Windows
+Shell parser, which returned `E_INVALIDARG`. Rebuild native path components at
+the Shell boundary without lossy Unicode conversion; keep caller-visible paths
+and exact inverse-artifact authority unchanged. Legacy inventory tests resolve
+the surviving parent before comparing path keys, preserving deleted symlink
+leaves while accounting for temp-directory aliases. These changes still require
+Windows native execution; cross-compilation is not runtime evidence.
+
+Windows directory and Git watcher failures require raw registration/event
+diagnostics before changing path matching or recovery policy. Keep first-load
+and refresh-count assertions intact. Debug-only logs record source identity,
+paths, event classification, activation and recovery; Windows smoke enables the
+existing debug log level. No canonicalization or new watcher work is introduced.
 
 Collect all independent Windows contract families even after one fails, retain
 a failing final exit status, and run lint and GUI smoke when their build/driver

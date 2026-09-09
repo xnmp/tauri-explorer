@@ -322,6 +322,40 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Native follow-up — published `20a1f6a8`
+
+Main CI, including both browser engines, Rust, frontend and map checks, passed;
+performance and Mac qualification also passed. The native workflow remains
+failing: Windows 33/35 spec files, Linux 32/36.
+[Native run](https://github.com/xnmp/tauri-explorer/actions/runs/34358357597).
+
+Windows now passes all 26 batch contracts, 11 path contracts, 14 deletion
+contracts, two Git-trash contracts, 16 directory observation contracts and both
+native Git observer regressions. Restore accepted 25/28 contracts: the remaining
+failures are verbatim parent parsing and two legacy inventory fixture lookups.
+The parent now passes through the existing Shell filesystem-name normalizer,
+matching the source-path boundary. The existing exact alternate-case/verbatim
+restore test supplies failure-before evidence; native Windows must prove the fix.
+Legacy inventory assertions remain intact; same-parent names and reconstructed
+paths are logged to diagnose their missing items without guessing display-name
+semantics. Windows GNU all-target strict Clippy passes.
+
+The GUI Git recovery failure remains distinct from the now-passing native
+observer regression. Targeted debug logs report requested history paths and
+returned first OIDs; the fixture records mutation timing, native HEAD/inode and
+frontend notification/snapshot state. These distinguish missed native events,
+missing frontend delivery and stale publication without altering refresh policy.
+
+Linux panel text remains empty through WebDriver despite passing browser
+containment tests. The terminal fixture now finds its exact row, but native click
+fails as non-interactable. Failure-only geometry/text-range/scroll and hit-test
+diagnostics preserve the rendered-text and real-click assertions. The additional
+directory-recovery failure is a child-window readiness timeout; concurrent-window
+creation and Windows pane teardown EBUSY also remain open. Diagnostic capture is
+best-effort so it cannot replace the original feature failure. Native TypeScript
+and Linux all-target strict Clippy pass. No timeout or acceptance assertion was
+relaxed.
+
 ## Dev cache workflow integration — `f6ddb8da`
 
 The published fixes at `1703ba96` could not start PR checks because dev gained

@@ -179,11 +179,27 @@ describe("native graph cache lifetime", () => {
     await browser.waitUntil(async () => (await summaries()).includes("before observer replacement"), { timeout: 20_000 });
     const oldRoot = `${repository}-retired`;
     try {
+      try {
+        console.info("[git recovery] before replacement", JSON.stringify({
+          at: Date.now(), repository, head: git("rev-parse", "HEAD").toString().trim(),
+          inode: fs.statSync(repository).ino, probe: await cacheProbe(),
+        }));
+      } catch (diagnosticError) {
+        console.error("[git recovery] checkpoint diagnostics failed", diagnosticError);
+      }
       fs.renameSync(repository, oldRoot);
       // A new inode at the same path cannot inherit the old native watch.
       fs.cpSync(oldRoot, repository, { recursive: true });
       fs.writeFileSync(path.join(repository, "Cargo.lock"), "first replacement change");
       git("add", "."); git("commit", "--quiet", "-m", "observer replacement recovered");
+      try {
+        console.info("[git recovery] replacement committed", JSON.stringify({
+          at: Date.now(), head: git("rev-parse", "HEAD").toString().trim(),
+          inode: fs.statSync(repository).ino, retiredInode: fs.statSync(oldRoot).ino,
+        }));
+      } catch (diagnosticError) {
+        console.error("[git recovery] checkpoint diagnostics failed", diagnosticError);
+      }
       await browser.waitUntil(async () => (await summaries()).includes("observer replacement recovered"), {
         timeout: 20_000, timeoutMsg: "mounted graph did not recover after root replacement",
       });
@@ -195,6 +211,17 @@ describe("native graph cache lifetime", () => {
         timeout: 20_000, timeoutMsg: "recovered graph did not observe the next real Git mutation",
       });
       await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-graph-observation-recovered.png");
+    } catch (error) {
+      try {
+        console.error("[git recovery] failed outcome", JSON.stringify({
+          at: Date.now(), probe: await cacheProbe(), summaries: await summaries(),
+          nativeHistory: git("log", "-3", "--format=%H:%s").toString(),
+          realPath: fs.realpathSync(repository), retiredRealPath: fs.realpathSync(oldRoot),
+        }));
+      } catch (diagnosticError) {
+        console.error("[git recovery] diagnostic collection failed", diagnosticError);
+      }
+      throw error;
     } finally {
       fs.rmSync(oldRoot, { recursive: true, force: true });
     }

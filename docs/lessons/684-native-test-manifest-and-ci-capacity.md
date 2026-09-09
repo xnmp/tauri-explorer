@@ -176,3 +176,13 @@ fully qualified paths: independent review caught that making every match false.
 Collision-renamed leaves and unproven destinations remain uncertain. See
 [IShellItem::Compare](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishellitem-compare)
 and [CompareStringOrdinal](https://learn.microsoft.com/en-us/windows/win32/api/stringapiset/nf-stringapiset-comparestringordinal).
+
+The restore destination parent needs the same Shell parsing-name normalization as
+the source filesystem path. Sending a supported verbatim DOS parent directly to
+`SHCreateItemFromParsingName` fails with `E_INVALIDARG` before the move is queued.
+Preserve the requested path spelling for matching while normalizing only the
+Shell API argument. Legacy inventory diagnostics must include same-parent
+candidate names: filtering only by the expected leaf hides any display-name
+reconstruction mismatch. Diagnostic capture in native tests must be best-effort,
+including normal-path checkpoints; a failed driver call or missing fixture path
+must not replace the original feature failure.

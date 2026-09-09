@@ -32,7 +32,34 @@ describe("native inline panel layout", () => {
     { timeoutMsg: "inline panels consumed native file-list width" });
     const file = $('.explorer-pane.active .file-list .entry-item[data-path$="panel-proof.txt"]');
     await file.waitForDisplayed();
-    await expect(file.$(".entry-name")).toHaveText("panel-proof.txt");
+    try {
+      await expect(file.$(".entry-name")).toHaveText("panel-proof.txt");
+    } catch (error) {
+      try {
+        console.error("[panel-layout geometry]", JSON.stringify(await browser.execute(() => {
+          const viewport = document.querySelector(".pane-container") as HTMLElement | null;
+          const pane = document.querySelector(".explorer-pane.active") as HTMLElement | null;
+          const list = pane?.querySelector(".file-list") as HTMLElement | null;
+          const name = pane?.querySelector('.entry-item[data-path$="panel-proof.txt"] .entry-name') as HTMLElement | null;
+          const rect = (element: { getBoundingClientRect(): DOMRect } | null) => element ? (() => {
+            const value = element.getBoundingClientRect();
+            return { left: value.left, right: value.right, top: value.top, bottom: value.bottom, width: value.width, height: value.height };
+          })() : null;
+          const range = name ? document.createRange() : null;
+          if (range && name) range.selectNodeContents(name);
+          return {
+            viewport: { rect: rect(viewport), clientWidth: viewport?.clientWidth, scrollWidth: viewport?.scrollWidth, scrollLeft: viewport?.scrollLeft },
+            pane: rect(pane), list: rect(list), name: rect(name), text: name?.textContent,
+            textRect: range ? rect(range) : null,
+            style: name ? { display: getComputedStyle(name).display, visibility: getComputedStyle(name).visibility, overflow: getComputedStyle(name).overflow } : null,
+            window: { width: innerWidth, height: innerHeight },
+          };
+        })));
+      } catch (diagnosticError) {
+        console.error("[panel-layout geometry] diagnostic collection failed", diagnosticError);
+      }
+      throw error;
+    }
     await file.click(); await expect(file).toHaveElementClass("selected");
     const separator = $('.explorer-pane.active [aria-label="Resize source control panel"]');
     await separator.scrollIntoView();

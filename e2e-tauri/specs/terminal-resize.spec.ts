@@ -17,7 +17,28 @@ const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
     await navigateTo(scratch);
     const entry = await $(`.entry-item[data-path="${fixtureEntry}"]`);
     await entry.waitForDisplayed();
-    await entry.click();
+    try {
+      await entry.click();
+    } catch (error) {
+      try {
+        console.error("[terminal-resize entry geometry]", JSON.stringify(await browser.execute((target: string) => {
+          const entry = document.querySelector(`.entry-item[data-path="${CSS.escape(target)}"]`) as HTMLElement | null;
+          const rect = entry?.getBoundingClientRect();
+          const center = rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+          const hit = center ? document.elementFromPoint(center.x, center.y) : null;
+          return {
+            connected: entry?.isConnected, selected: entry?.getAttribute("aria-selected"),
+            rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height } : null,
+            style: entry ? { display: getComputedStyle(entry).display, visibility: getComputedStyle(entry).visibility, pointerEvents: getComputedStyle(entry).pointerEvents } : null,
+            hit: hit ? { tag: hit.tagName, className: hit.getAttribute("class"), path: hit.closest(".entry-item")?.getAttribute("data-path") } : null,
+            viewport: { width: innerWidth, height: innerHeight },
+          };
+        }, fixtureEntry)));
+      } catch (diagnosticError) {
+        console.error("[terminal-resize entry geometry] diagnostic collection failed", diagnosticError);
+      }
+      throw error;
+    }
     for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);
     await browser.waitUntil(async () => await browser.execute(() => parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1.5,
       { timeoutMsg: "root zoom did not reach 150%" });

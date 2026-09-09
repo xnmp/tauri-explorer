@@ -545,7 +545,7 @@ fn restore_item_inner(
 ) -> Result<(), AppError> {
     let requested = item.original_path();
     let source_name = to_wide(&item.id);
-    let parent_name = to_wide(item.original_parent.as_os_str());
+    let parent_name = shell_filesystem_name(&item.original_parent);
     let restored_name = to_wide(&item.name);
 
     let operation: IFileOperation = unsafe {

@@ -238,6 +238,16 @@ mod native {
             .filter(|item| item.original_path().file_name() == path.file_name())
             .map(|item| item.original_path())
             .collect();
+        let expected_parent_key = WindowsPathKey::new(&expected_parent);
+        let same_parent: Vec<_> = items
+            .iter()
+            .filter(|item| {
+                WindowsPathKey::new(&item.original_parent)
+                    .compare(&expected_parent_key)
+                    .is_ok_and(|ordering| ordering == Ordering::Equal)
+            })
+            .map(|item| (item.name.clone(), item.original_path()))
+            .collect();
         items
             .into_iter()
             .filter(|item| {
@@ -248,7 +258,7 @@ mod native {
             .max_by_key(|item| item.time_deleted)
             .unwrap_or_else(|| {
                 panic!(
-                    "trashed fixture missing: expected raw {path:?}, canonical parent {expected_parent:?}, same-leaf inventory originals {same_leaf:?}"
+                    "trashed fixture missing: expected raw {path:?}, canonical parent {expected_parent:?}, same-leaf inventory originals {same_leaf:?}, same-parent inventory names/originals {same_parent:?}"
                 )
             })
     }

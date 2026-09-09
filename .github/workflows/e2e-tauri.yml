@@ -51,6 +51,7 @@ jobs:
             > native-contract-diagnostics/provenance.txt
           toolchain_key="$(rustc -Vv | sha256sum | cut -c1-16)"
           printf 'cache-key=%s\n' "$toolchain_key" >> "$GITHUB_OUTPUT"
+          printf 'started-epoch=%s\n' "$(date +%s)" >> "$GITHUB_OUTPUT"
 
       # Registry/git only — NOT the tauri-driver binary. Caching the binary
       # under a Cargo.lock-derived key let a run where `cargo install` failed
@@ -159,6 +160,8 @@ jobs:
         shell: bash
         run: |
           {
+            printf 'cargo_registry_cache_key=%s\n' "${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}"
+            printf 'target_cache_key=%s\n' "${{ runner.os }}-${{ runner.arch }}-target-debug-${{ steps.rust-provenance.outputs.cache-key }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}"
             printf 'cargo_registry_cache_hit=%s\n' '${{ steps.cargo-registry-cache.outputs.cache-hit }}'
             printf 'rust_target_cache_hit=%s\n' '${{ steps.rust-target-cache.outputs.cache-hit }}'
             printf 'contract_outcome=%s\n' '${{ steps.native-contracts.outcome }}'
@@ -167,8 +170,17 @@ jobs:
           cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version=1 \
             > native-contract-diagnostics/cargo-metadata.json
           du -sh src-tauri/target > native-contract-diagnostics/target-size.txt || true
+          du -sk src-tauri/target ~/.cargo/registry ~/.cargo/git 2>/dev/null \
+            | awk '{ total += $1 } END { printf "cache_storage_bytes=%d\n", total * 1024 }' \
+            >> native-contract-diagnostics/provenance.txt
           find src-tauri/target -path '*/.fingerprint/*' -type f -name '*.json' -print \
             | sort > native-contract-diagnostics/cargo-fingerprints.txt || true
+          cat > native-contract-diagnostics/comparison-guide.txt <<'EOF'
+Compare two artifacts with the same target_cache_key and runner identity.
+Use provenance.txt cache-hit and cache_storage_bytes fields, the two timing
+files, cache-outcome.txt end_to_end_seconds, and Actions cache logs for
+transfer bytes. Retain revision and run attempt with the comparison result.
+EOF
 
       - name: Upload native contract diagnostics
         if: always()
@@ -212,11 +224,30 @@ jobs:
       # contracts and embedded binary build have succeeded. Save explicitly so
       # a failed contract/build can never publish an incomplete target cache.
       - name: Save Rust target cache after native outcome
+        id: save-rust-target-cache
         if: ${{ always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success' }}
         uses: actions/cache/save@v6
         with:
           path: src-tauri/target
           key: ${{ runner.os }}-${{ runner.arch }}-target-debug-${{ steps.rust-provenance.outputs.cache-key }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
+
+      - name: Record native cache outcome
+        if: always()
+        shell: bash
+        run: |
+          {
+            printf 'cache_save_outcome=%s\n' '${{ steps.save-rust-target-cache.outcome }}'
+            printf 'end_to_end_seconds=%s\n' "$(( $(date +%s) - ${{ steps.rust-provenance.outputs.started-epoch }} ))"
+            printf 'cache_transfer_cost=see actions/cache restore and save logs\n'
+          } > native-contract-diagnostics/cache-outcome.txt
+
+      - name: Upload native cache outcome
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-cache-outcome-${{ matrix.os }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: native-contract-diagnostics/
+          if-no-files-found: error
 
       - name: Fail if native contracts failed
         if: ${{ always() && steps.native-contracts.outcome == 'failure' }}

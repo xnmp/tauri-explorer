@@ -95,9 +95,11 @@ for (const viewMode of ALL_VIEW_MODES) {
       const state = await fileListState(page);
       expect(state.tabStops).toEqual([await first.getAttribute("data-path")]);
 
-      await page.goto(`/?path=${encodeURIComponent(`${HOME_PATH}/Downloads`)}&viewMode=${viewMode}`);
+      const downloads = page.locator(`.file-list .entry-item[data-path="${HOME_PATH}/Downloads"]`);
+      await downloads.click();
+      await page.keyboard.press("Enter");
+      await expect(page.locator(".status-path")).toHaveAttribute("title", `${HOME_PATH}/Downloads`);
       await waitForEntries(page);
-      await addPrecedingFocusTarget(page);
       const navigatedFirst = entry(page, 0);
       await focusBeforeFileList(page);
       await page.keyboard.press("Tab");

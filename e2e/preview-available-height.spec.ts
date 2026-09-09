@@ -56,6 +56,7 @@ async function selectViewMode(page: Page, viewMode: ViewMode): Promise<void> {
 
 async function expectUsableVerticalLayout(page: Page): Promise<void> {
   const list = page.locator(".file-list").first();
+  const scroller = list.locator(".virtual-viewport");
   const pane = page.locator(".preview-pane");
   const handle = pane.locator(".resize-handle");
   await expect(list).toBeVisible();
@@ -71,6 +72,13 @@ async function expectUsableVerticalLayout(page: Page): Promise<void> {
   expect(listBox!.height).toBeGreaterThan(100);
   expect(handleBox!.y).toBeGreaterThanOrEqual(0);
   expect(handleBox!.y + handleBox!.height).toBeLessThanOrEqual(viewport.height);
+
+  const scrolled = await scroller.evaluate((element) => {
+    const before = element.scrollTop;
+    element.scrollTop = element.scrollHeight;
+    return element.scrollHeight > element.clientHeight && element.scrollTop > before;
+  });
+  expect(scrolled).toBe(true);
 }
 
 test.describe("restored vertical preview allocation", () => {
@@ -100,9 +108,12 @@ test.describe("restored vertical preview allocation", () => {
       return raw ? JSON.parse(raw).previewPaneHeight : null;
     }).then((savedHeight) => expect(savedHeight).toBe(600));
 
-    await page.setViewportSize({ width: 1600, height: 1200 });
-    await page.evaluate(() => document.documentElement.style.zoom = "100%");
-    await expect.poll(async () => (await page.locator(".preview-pane").boundingBox())?.height ?? 0).toBeGreaterThan(590);
+    await page.setViewportSize({ width: 1800, height: 1500 });
+    await expect.poll(async () => (await page.locator(".preview-pane").boundingBox())?.height ?? 0).toBeGreaterThan(890);
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      return raw ? JSON.parse(raw).previewPaneHeight : null;
+    }).then((savedHeight) => expect(savedHeight).toBe(600));
     await page.screenshot({ path: "evidence/ac-5-restored-preferred-height.png" });
   });
 });

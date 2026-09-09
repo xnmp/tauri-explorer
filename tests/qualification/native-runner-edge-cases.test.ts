@@ -389,7 +389,7 @@ describe("native qualification process boundaries", () => {
     expect(result.exitCode).toBe(23);
     expect(result.report).toMatchObject({
       passed: false,
-      runErrors: ["qualification process exited with code 23"],
+      runErrors: ["qualification process exited with code 23 (signal none)"],
       failureArtifacts: [logPath],
       scenarios: [scenario],
     });

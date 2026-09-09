@@ -21,6 +21,9 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(diagnostics).toBeLessThan(gui);
     expect(workflow).toContain("if: always()");
     expect(workflow).toContain("native-contract-diagnostics-${{ matrix.os }}");
+    expect(workflow).toContain("target_cache_key=");
+    expect(workflow).toContain("cargo_registry_cache_key=");
+    expect(workflow).toContain("cache_storage_bytes=");
   });
 
   it("reuses only compatible Rust build products and saves them after GUI failures", async () => {
@@ -31,6 +34,11 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(workflow).toContain("steps.rust-provenance.outputs.cache-key");
     expect(workflow).toContain("steps.native-contracts.outcome == 'success'");
     expect(workflow).toContain("steps.build-tauri-binary.outcome == 'success'");
+    expect(workflow).toContain("cache_save_outcome=");
+    expect(workflow).toContain("end_to_end_seconds=");
+    expect(workflow.indexOf("name: Save Rust target cache after native outcome")).toBeGreaterThan(
+      workflow.indexOf("name: Run smoke suite (Windows)"),
+    );
   });
 
   it("keeps the type, embedded-binary, and real-GUI qualification contracts", async () => {

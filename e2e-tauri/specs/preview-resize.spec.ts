@@ -143,7 +143,7 @@ async function expectContent(): Promise<void> {
     await expectContent();
 
     await $(".preview-header").doubleClick();
-    await browser.waitUntil(async () => await $(".preview-pane").getAttribute("class").then(value => value.includes("fullscreen")),
+    await browser.waitUntil(async () => await $(".preview-pane").getAttribute("class").then(value => value?.includes("fullscreen") ?? false),
       { timeoutMsg: "preview did not enter fullscreen" });
     await $('[aria-label="Resize preview"]').waitForExist({ reverse: true });
     const fullscreen = await paneRect();

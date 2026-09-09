@@ -23,6 +23,7 @@
     "test:e2e:perf": "playwright test e2e/performance.spec.ts",
     "test:e2e:tauri": "wdio run e2e-tauri/wdio.conf.ts",
     "test:e2e:recovery": "bun e2e-tauri/renderer-recovery.ts",
+    "check:e2e:tauri": "tsc --noEmit -p e2e-tauri/tsconfig.json",
     "test:e2e:tauri:soak": "bun run scripts/run-native-soak.ts",
     "test:qualify:macos-startup": "bun run scripts/qualify-macos-startup.ts",
     "build:native:qualification": "bun run scripts/build-native-qualification.ts",

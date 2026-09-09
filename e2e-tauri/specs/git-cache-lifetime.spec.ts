@@ -26,7 +26,7 @@ async function toggleGraph() {
   let command: Awaited<ReturnType<typeof $$>>[number] | undefined;
   await browser.waitUntil(async () => {
     const candidates = await $$(".command-item");
-    if (candidates.length !== 1) return false;
+    if (await candidates.length !== 1) return false;
     const text = ((await candidates[0].getProperty("textContent")) as string | null)?.trim() ?? "";
     if (!text.includes("Git: Toggle Commit Graph")) return false;
     command = candidates[0];

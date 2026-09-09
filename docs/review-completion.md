@@ -270,6 +270,14 @@ Actual Mac release reports, matching binary identities across both scenarios,
 presented-frame/input measurements and the half-bounce target remain outstanding.
 No new product feature or architectural review scope has been added.
 
+Publication of `3b4784df` exposed a new integration conflict with dev's
+`b621a3c2` native TypeScript gate (#691, addressing #690). Both package scripts
+are retained. The full gate found two additional branch-fixture errors: an
+unawaited WebdriverIO collection length and a nullable preview class attribute.
+Both are corrected without weakening their feature assertions. The complete
+`check:e2e:tauri` command and its Vitest regression now pass; formatting/diff and
+485/485 code-map coverage pass. CI must qualify the resulting integration head.
+
 ## Release stabilization — preceding checkpoint
 
 The started immutable Move intent is complete: real catalog promotion/reopening

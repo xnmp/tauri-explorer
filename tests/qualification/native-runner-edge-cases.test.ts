@@ -152,7 +152,7 @@ describe("native qualification process boundaries", () => {
 
   it("keeps hostile replay seeds inside the qualification artifact root", () => {
     const root = path.resolve("qualification-results");
-    const rawSeed = "../../outside/../release seed";
+    const rawSeed = "  ../../outside/../release seed  ";
     const configuration = resolveSoakConfiguration({
       SOAK_SEED: rawSeed,
       SOAK_EXPECTED_DISPLAY_SCALE: "1",
@@ -172,6 +172,34 @@ describe("native qualification process boundaries", () => {
     expect(() =>
       resolveQualificationArtifactPath(root, "../escaped.json"),
     ).toThrow("outside qualification root");
+
+    const serialized = JSON.parse(
+      JSON.stringify(
+        buildNativeQualificationReport({
+          build: {
+            commit: "source",
+            profile: "test",
+            binary: "/qualified/tauri-explorer",
+            binarySha256: "abc",
+            binaryBytes: 42,
+            binaryModifiedAt: "2026-09-09T00:00:00.000Z",
+          },
+          platform: {
+            os: "linux",
+            release: "test",
+            arch: "x64",
+            webview: "test",
+            displayScale: 1,
+          },
+          configuration,
+          startedAt: "2026-09-09T00:00:00.000Z",
+          finishedAt: "2026-09-09T00:00:01.000Z",
+          resources: [],
+          scenarios: [],
+        }),
+      ),
+    );
+    expect(serialized.configuration.seed).toBe(rawSeed);
   });
 
   it("attributes RSS to the verified launched binary and its descendants", () => {

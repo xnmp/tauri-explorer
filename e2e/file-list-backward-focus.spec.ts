@@ -82,6 +82,16 @@ for (const viewMode of ALL_VIEW_MODES) {
       });
     });
 
+    test("Tab enters the initial file-list row", async ({ page }) => {
+      const first = entry(page, 0);
+      await focusBeforeFileList(page);
+      await page.keyboard.press("Tab");
+
+      await expect(first).toBeFocused();
+      const state = await fileListState(page);
+      expect(state.tabStops).toEqual([await first.getAttribute("data-path")]);
+    });
+
     test("Shift+Tab departs to the preceding sequential focus target", async ({ page, browserName }) => {
       // Playwright 1.58.2 WebKit/WPE reproduces a delivery divergence: the
       // row remains focused after Shift+Tab although the unhandled native

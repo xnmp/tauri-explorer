@@ -35,6 +35,15 @@
   // File rows form one roving tab-stop composite. This local cursor follows
   // real DOM focus so multi-selection never makes multiple rows tabbable.
   let focusedPath = $state<string | undefined>();
+  let focusedDirectory = $state<string | undefined>();
+  $effect(() => {
+    const entries = explorer.displayEntries;
+    const changedDirectory = focusedDirectory !== explorer.currentPath;
+    if (changedDirectory || !entries.some((entry) => entry.path === focusedPath)) {
+      focusedDirectory = explorer.currentPath;
+      focusedPath = entries[0]?.path;
+    }
+  });
 
 
   // Drop target state for dropping files into current directory

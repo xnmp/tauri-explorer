@@ -14,6 +14,16 @@ async function openHome(page: Page, viewMode: ViewMode): Promise<void> {
   await expect(page.locator(`.${viewMode}-view`)).toBeVisible();
 }
 
+async function addPrecedingFocusTarget(page: Page): Promise<void> {
+  await page.locator(".file-list").evaluate((list) => {
+    const before = document.createElement("button");
+    before.id = "backward-focus-before";
+    before.textContent = "Before file list";
+    before.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:1;padding:8px 12px";
+    list.before(before);
+  });
+}
+
 async function focusBeforeFileList(page: Page): Promise<void> {
   const target = await page.evaluate(() => {
     const rows = document.querySelector(".file-list .virtual-viewport");
@@ -73,16 +83,10 @@ for (const viewMode of ALL_VIEW_MODES) {
   test.describe(`backward file-list traversal [${viewMode}]`, () => {
     test.beforeEach(async ({ page }) => {
       await openHome(page, viewMode);
-      await page.locator(".file-list").evaluate((list) => {
-        const before = document.createElement("button");
-        before.id = "backward-focus-before";
-        before.textContent = "Before file list";
-        before.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:1;padding:8px 12px";
-        list.before(before);
-      });
+      await addPrecedingFocusTarget(page);
     });
 
-    test("Tab enters the initial file-list row", async ({ page }) => {
+    test("Tab enters the initial and newly navigated file-list row", async ({ page }) => {
       const first = entry(page, 0);
       await focusBeforeFileList(page);
       await page.keyboard.press("Tab");
@@ -90,6 +94,16 @@ for (const viewMode of ALL_VIEW_MODES) {
       await expect(first).toBeFocused();
       const state = await fileListState(page);
       expect(state.tabStops).toEqual([await first.getAttribute("data-path")]);
+
+      await page.goto(`/?path=${encodeURIComponent(`${HOME_PATH}/Downloads`)}&viewMode=${viewMode}`);
+      await waitForEntries(page);
+      await addPrecedingFocusTarget(page);
+      const navigatedFirst = entry(page, 0);
+      await focusBeforeFileList(page);
+      await page.keyboard.press("Tab");
+
+      await expect(navigatedFirst).toBeFocused();
+      expect((await fileListState(page)).tabStops).toEqual([await navigatedFirst.getAttribute("data-path")]);
     });
 
     test("Shift+Tab departs to the preceding sequential focus target", async ({ page, browserName }) => {

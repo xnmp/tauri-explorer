@@ -6,6 +6,12 @@ const cancelGitStatusMock = vi.fn(async (_taskId: number) => {});
 
 vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
+  gitDirectoryScope: async (path: string) => {
+    const result = await gitRepoRootMock(path);
+    return result.ok && result.data ? { ...result, data: {
+      repo_root: result.data, relative_directory: path.slice(result.data.length).replace(/^[/\\]+/, ""),
+    } } : result;
+  },
   gitSummary: (root: string, taskId: number) => gitSummaryMock(root, taskId),
   cancelGitStatus: (taskId: number) => cancelGitStatusMock(taskId),
   gitStage: vi.fn(),

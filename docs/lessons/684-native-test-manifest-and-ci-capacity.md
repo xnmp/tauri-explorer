@@ -214,3 +214,17 @@ Do not remove a pane fixture while its application session still owns live
 panes. Put it under the existing native runner cleanup root so `afterSession`
 stops the application before `onComplete` removes the files. Missing cleanup
 ownership must fail closed, and process cleanup failures must remain fatal.
+
+Window geometry can update before its descendant DOM grows, even inside the
+parent's effect. Assigning the new scroll offset then silently clamps it to the
+old range. Reproduce through the actual panel commands, not only a restored tree
+whose panels mount together. Await Svelte's DOM commit and bind the pending
+reveal to the effect's abort signal; preserve the existing scroll/resize policy.
+
+SCM display paths are not repository identity paths: Windows 8.3 aliases such as
+`RUNNER~1` and Git's `runneradmin` spelling can refer to the same directory.
+Resolve a repository-relative directory scope at the native filesystem boundary
+and retain the pane's display path separately. Normalize recognized WSL server
+aliases before canonicalizing both operands, because repository discovery uses
+`wsl.localhost` even when the user entered legacy `wsl$`. Require real alias-root
+and subdirectory contracts, and guard late scope publication by path generation.

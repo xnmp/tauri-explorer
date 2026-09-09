@@ -101,6 +101,45 @@ for (const mode of ["details", "list", "tiles"]) {
   });
 }
 
+for (const mode of ["Details", "List", "Tiles"]) {
+  test(`opening inline panels through commands keeps ${mode} filenames reachable`, async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("explorer-settings", JSON.stringify({
+        zoomLevel: 100, showGitStatus: true, showScmPanel: false, millerLayers: 0,
+      }));
+    });
+    await page.setViewportSize({ width: 800, height: 600 });
+    await page.goto("/?path=/home/user/Documents");
+    await expect(page.locator('.file-list .entry-item[data-path="/home/user/Documents/notes.md"]')).toBeVisible();
+    async function command(label: string) {
+      await page.keyboard.press("Control+Shift+p");
+      const palette = page.locator(".command-palette-dialog");
+      await palette.locator(".search-input").fill(label);
+      await page.keyboard.press("Enter");
+      await expect(palette).toBeHidden();
+    }
+    await command("Split Pane Right");
+    await command(`${mode} View`);
+    await command("Miller Columns: 1 Layer");
+    await command("Toggle Source Control Panel");
+    const active = page.locator(".explorer-pane.active");
+    await expect(active.locator(".miller-columns")).toBeVisible();
+    await expect(active.locator(".scm-panel")).toBeVisible();
+    const file = active.locator('.file-list .entry-item[data-path="/home/user/Documents/notes.md"]');
+    await expect.poll(() => file.locator(".entry-name").evaluate(element => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const text = range.getBoundingClientRect();
+      const clip = element.closest(".pane-container")!.getBoundingClientRect();
+      return text.width > 0 && text.left >= Math.max(0, clip.left)
+        && text.right <= Math.min(innerWidth, clip.right);
+    })).toBe(true);
+    await file.click();
+    await expect(file).toHaveClass(/selected/);
+    await page.screenshot({ path: `screenshots/refactor/repo-health-cleanup/inline-panel-commands-${mode.toLowerCase()}.png` });
+  });
+}
+
 test("failed pointer capture rolls back the resize lifetime", async ({ page }) => {
   await openPanels(page);
   const handle = page.getByRole("separator", { name: "Resize sidebar", exact: true });

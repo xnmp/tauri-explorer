@@ -1934,6 +1934,11 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
 
+  git_directory_scope: async (args: Record<string, unknown>) => {
+    const root = await mockCommands.git_repo_root(args) as string | null;
+    return root ? { repo_root: root, relative_directory: (args.path as string).slice(root.length).replace(/^\/+/, "") } : null;
+  },
+
   git_add_to_gitignore: (args: Record<string, unknown>) => {
     const entry = ((args.entry as string) || "").replace(/^\.\//, "").replace(/^\//, "");
     if (!mockGitignored.has(entry)) {

@@ -218,7 +218,7 @@ jobs:
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
           contract_status=0
-          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked files::watch_observation:: git_watch::tests::native_observer; do
+          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked git::tests::directory_scope files::watch_observation:: git_watch::tests::native_observer; do
             # Cargo succeeds with zero matching tests. Fail explicitly when a
             # source/module move leaves one of these acceptance filters stale.
             if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then

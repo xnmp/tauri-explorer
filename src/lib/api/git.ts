@@ -96,6 +96,20 @@ export async function gitRepoRoot(path: string): Promise<ApiResult<string | null
   }
 }
 
+export interface GitDirectoryScope {
+  repo_root: string;
+  /** Filesystem-resolved repository-relative directory; empty at the root. */
+  relative_directory: string;
+}
+
+export async function gitDirectoryScope(path: string): Promise<ApiResult<GitDirectoryScope | null>> {
+  try {
+    return { ok: true, data: await invoke<GitDirectoryScope | null>("git_directory_scope", { path }) };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 /** Append a path to the repo's `.gitignore`, creating the file if needed.
  *  Idempotent — duplicate entries are skipped. */
 export async function gitAddToGitignore(

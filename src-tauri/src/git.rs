@@ -10,7 +10,7 @@
 //! by libgit2. Cancellation is wired through the shared `TaskRegistry`.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -66,6 +66,14 @@ pub struct GitStatusSummary {
     /// SCM panel's in-progress banner (abort / continue). Operations we don't
     /// offer a workflow for (bisect, apply-mailbox, …) collapse to `clean`.
     pub op_state: String,
+}
+
+/// Repository identity and the caller's filesystem-resolved location within it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GitDirectoryScope {
+    pub repo_root: String,
+    /// POSIX-separated repository-relative directory; empty at the root.
+    pub relative_directory: String,
 }
 
 impl Default for GitStatusSummary {
@@ -1114,27 +1122,69 @@ pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Resul
 }
 
 /// Resolve the repo root that contains `path`, or `None` if outside any repo.
+fn discover_repo_root(path: &str) -> Option<String> {
+    // WSL UNC: resolve the root with the distro's native git rather than a
+    // libgit2 discovery walk over the 9P mount (#425). Only a delegation
+    // *mechanism* failure falls through to libgit2.
+    #[cfg(windows)]
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(path) {
+        match wsl_repo_root(&distro, &linux_path) {
+            WslRepoRoot::Root(root) => return Some(root),
+            WslRepoRoot::NotRepo => return None,
+            WslRepoRoot::Fallback => {}
+        }
+    }
+    open_repo(Path::new(path))
+        .ok()
+        .and_then(|repo| workdir_key(&repo))
+}
+
+fn directory_scope(path: &str) -> Option<GitDirectoryScope> {
+    let repo_root = discover_repo_root(path)?;
+    let relative_directory = resolved_relative_directory(path, &repo_root)?;
+    Some(GitDirectoryScope {
+        repo_root,
+        relative_directory,
+    })
+}
+
+fn resolved_relative_directory(path: &str, repo_root: &str) -> Option<String> {
+    let resolved_path = std::fs::canonicalize(scope_resolution_path(path)).ok()?;
+    let resolved_root = std::fs::canonicalize(scope_resolution_path(repo_root)).ok()?;
+    let relative = resolved_path.strip_prefix(resolved_root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+fn scope_resolution_path(path: &str) -> PathBuf {
+    // Discovery uses wsl.localhost even when the caller entered legacy wsl$.
+    // Put both operands in that namespace before asking Windows to resolve
+    // filesystem aliases; GetFinalPathName need not rewrite the server name.
+    #[cfg(windows)]
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(path) {
+        return PathBuf::from(wsl_unc_from_linux(&distro, &linux_path));
+    }
+    PathBuf::from(path)
+}
+
 #[tauri::command]
 pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
-    run_blocking(move |_cancel| {
-        // WSL UNC: resolve the root with the distro's native git rather than a
-        // libgit2 discovery walk over the 9P mount (#425). Only a delegation
-        // *mechanism* failure falls through to libgit2.
-        #[cfg(windows)]
-        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&path) {
-            match wsl_repo_root(&distro, &linux_path) {
-                WslRepoRoot::Root(root) => return Ok(Some(root)),
-                WslRepoRoot::NotRepo => return Ok(None),
-                WslRepoRoot::Fallback => {}
-            }
-        }
-        let p = PathBuf::from(&path);
-        match open_repo(&p) {
-            Ok(repo) => Ok(workdir_key(&repo)),
-            Err(_) => Ok(None),
-        }
-    })
-    .await
+    run_blocking(move |_cancel| Ok(discover_repo_root(&path))).await
+}
+
+/// Resolve both stable repository identity and the caller's physical directory
+/// within it. Filesystem resolution prevents aliases from becoming lexical
+/// directory filters in the frontend.
+#[tauri::command]
+pub async fn git_directory_scope(path: String) -> Result<Option<GitDirectoryScope>, AppError> {
+    run_blocking(move |_cancel| Ok(directory_scope(&path))).await
 }
 
 #[tauri::command]
@@ -1788,6 +1838,120 @@ mod tests {
             !root.ends_with('/') && !root.ends_with('\\'),
             "root: {root}"
         );
+    }
+
+    #[test]
+    fn directory_scope_reports_root_and_nested_directory() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+
+        let root = directory_scope(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(
+            root.repo_root,
+            workdir_key(&open_repo(dir.path()).unwrap()).unwrap()
+        );
+        assert_eq!(root.relative_directory, "");
+
+        let nested = directory_scope(dir.path().join("src/nested").to_str().unwrap()).unwrap();
+        assert_eq!(nested.repo_root, root.repo_root);
+        assert_eq!(nested.relative_directory, "src/nested");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_scope_resolves_symlink_aliases_for_root_and_subdirectory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("actual/subdir")).unwrap();
+        let aliases = TempDir::new().unwrap();
+        let alias = aliases.path().join("repo-alias");
+        symlink(dir.path(), &alias).unwrap();
+
+        let root = directory_scope(alias.to_str().unwrap()).unwrap();
+        assert_eq!(root.relative_directory, "");
+        let nested = directory_scope(alias.join("actual/subdir").to_str().unwrap()).unwrap();
+        assert_eq!(nested.repo_root, root.repo_root);
+        assert_eq!(nested.relative_directory, "actual/subdir");
+    }
+
+    #[test]
+    fn directory_scope_refuses_missing_and_out_of_root_paths() {
+        let dir = init_repo();
+        let sibling = TempDir::new().unwrap();
+        assert!(directory_scope(dir.path().join("missing").to_str().unwrap()).is_none());
+        assert!(resolved_relative_directory(
+            sibling.path().to_str().unwrap(),
+            dir.path().to_str().unwrap(),
+        )
+        .is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_scope_normalizes_supported_wsl_namespaces_before_resolution() {
+        let expected = PathBuf::from(r"\\wsl.localhost\Ubuntu\home\me\repo\src");
+        for input in [
+            r"\\wsl$\Ubuntu\home\me\repo\src",
+            r"\\wsl.localhost\Ubuntu\home\me\repo\src",
+            "//wsl$/Ubuntu/home/me/repo/src",
+        ] {
+            assert_eq!(scope_resolution_path(input), expected);
+        }
+        assert_ne!(
+            scope_resolution_path(r"\\wsl$\Debian\home\me\repo\src"),
+            expected
+        );
+        assert_eq!(
+            scope_resolution_path(r"C:\repo\src"),
+            PathBuf::from(r"C:\repo\src")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_scope_resolves_windows_short_name_aliases() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+
+        fn short_path(path: &Path) -> PathBuf {
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            let required = unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), None) };
+            assert_ne!(
+                required,
+                0,
+                "GetShortPathNameW failed for {}",
+                path.display()
+            );
+            let mut short = vec![0; required as usize];
+            let written =
+                unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(short.as_mut_slice())) };
+            assert!(written > 0 && written < required);
+            short.truncate(written as usize);
+            PathBuf::from(String::from_utf16(&short).unwrap())
+        }
+
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("nested")).unwrap();
+        let short_root = short_path(dir.path());
+        let short_nested = short_path(&dir.path().join("nested"));
+        let canonical_root = fs::canonicalize(dir.path()).unwrap();
+        assert_ne!(
+            short_root.to_str().unwrap().to_ascii_lowercase(),
+            canonical_root
+                .to_str()
+                .unwrap()
+                .trim_start_matches(r"\\?\")
+                .to_ascii_lowercase(),
+            "this contract requires an actual short-name alias, not just a prefix/case change"
+        );
+
+        let root = directory_scope(short_root.to_str().unwrap()).unwrap();
+        assert_eq!(root.relative_directory, "");
+        let nested = directory_scope(short_nested.to_str().unwrap()).unwrap();
+        assert_eq!(nested.repo_root, root.repo_root);
+        assert_eq!(nested.relative_directory, "nested");
     }
 
     #[test]

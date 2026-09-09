@@ -5,7 +5,7 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs), #228
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { getAbortSignal, tick, untrack } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { resizeActivity } from "$lib/state/resize-activity.svelte";
@@ -39,10 +39,18 @@
     if (dividers.activeId || resizeActivity.active) return;
     const pane = geometry?.panes.get(windowTabsManager.activePaneId);
     if (!viewport || !pane || width <= 0 || height <= 0) return;
-    const next = revealPane({ left: viewport.scrollLeft, top: viewport.scrollTop }, { width, height }, pane,
-      windowTabsManager.paneViewport.inlineWidth(windowTabsManager.activePaneId));
-    viewport.scrollLeft = next.left;
-    viewport.scrollTop = next.top;
+    const element = viewport;
+    const size = { width, height };
+    const inset = windowTabsManager.paneViewport.inlineWidth(windowTabsManager.activePaneId);
+    const signal = getAbortSignal();
+    // Inline-width leases can update the geometry before the descendant DOM
+    // grows. Wait for that commit or the browser clamps to the old scroll range.
+    void tick().then(() => {
+      if (signal.aborted) return;
+      const next = revealPane({ left: element.scrollLeft, top: element.scrollTop }, size, pane, inset);
+      element.scrollLeft = next.left;
+      element.scrollTop = next.top;
+    });
   });
 </script>
 

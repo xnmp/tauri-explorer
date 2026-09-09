@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
-  watch: vi.fn(), unwatch: vi.fn(), root: vi.fn(), summary: vi.fn(),
+  watch: vi.fn(), unwatch: vi.fn(), root: vi.fn(), scope: vi.fn(), summary: vi.fn(),
   subscribe: vi.fn(), releaseConsumer: vi.fn(),
 }));
 vi.mock("$lib/api/git", () => ({
-  gitRepoRoot: api.root, gitWatchRepo: api.watch, gitUnwatchRepo: api.unwatch,
+  gitDirectoryScope: api.scope, gitRepoRoot: api.root, gitWatchRepo: api.watch, gitUnwatchRepo: api.unwatch,
 }));
 vi.mock("$lib/state/git-summary-cache", () => ({
   fetchGitSummary: api.summary, releaseGitSummaryConsumer: api.releaseConsumer,
@@ -27,6 +27,12 @@ beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
   api.root.mockImplementation(async (path: string) => ({ ok: true, data: path }));
+  api.scope.mockImplementation(async (path: string) => {
+    const result = await api.root(path);
+    return result.ok && result.data ? { ...result, data: {
+      repo_root: result.data, relative_directory: path.slice(result.data.length).replace(/^[/\\]+/, ""),
+    } } : result;
+  });
   api.watch.mockImplementation(async (path: string) => ({ ok: true, data: { id: path, repoRoot: path } }));
   api.unwatch.mockResolvedValue({ ok: true });
   api.summary.mockResolvedValue({ ok: false, error: "cancelled" });
@@ -160,4 +166,39 @@ describe("SCM pane lifetime", () => {
     await disposeScmStore("pane");
     expect(api.unwatch).toHaveBeenCalledOnce();
   });
+});
+
+
+it("uses native directory scope for aliased roots and subdirectories in the same repository", async () => {
+  const root = "C:/Users/runneradmin/project";
+  const alias = "C:/Users/RUNNER~1/project";
+  const untracked = ["root.txt", "src/change.txt", "src-other/sibling.txt"]
+    .map(path => ({ path, old_path: null, status: "Untracked" }));
+  api.root.mockResolvedValue({ ok: true, data: root });
+  api.scope.mockImplementation(async (path: string) => ({ ok: true, data: {
+    repo_root: root, relative_directory: path === alias ? "" : "src",
+  } }));
+  api.summary.mockResolvedValue({ ok: true, data: {
+    is_repo: true, repo_root: root, branch: "main", detached: false,
+    staged: [], changes: [], untracked, merge: [], op_state: "clean",
+  } });
+  const { getScmStore, disposeScmStore } = await import("$lib/state/scm.svelte");
+  const store = getScmStore("aliased-directory");
+  try {
+    await store.setActivePath(alias);
+    expect(store.filteredSummary.untracked.map(entry => entry.path)).toEqual(untracked.map(entry => entry.path));
+    await store.setActivePath(`${alias}/src`);
+    expect(store.filteredSummary.untracked.map(entry => entry.path)).toEqual(["src/change.txt"]);
+    expect(store.activePath).toBe(`${alias}/src`);
+    const oldScope = deferred<{ ok: true; data: { repo_root: string; relative_directory: string } }>();
+    api.scope.mockReturnValueOnce(oldScope.promise);
+    const oldNavigation = store.setActivePath(`${alias}/src-other`);
+    await store.setActivePath(`${alias}/src`);
+    oldScope.resolve({ ok: true, data: { repo_root: root, relative_directory: "src-other" } });
+    await oldNavigation;
+    expect(store.filteredSummary.untracked.map(entry => entry.path)).toEqual(["src/change.txt"]);
+    expect(store.activePath).toBe(`${alias}/src`);
+  } finally {
+    await disposeScmStore("aliased-directory");
+  }
 });

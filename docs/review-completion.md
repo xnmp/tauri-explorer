@@ -322,6 +322,44 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Native qualification and release fixes — `6ffc3d14`
+
+The [native run](https://github.com/xnmp/tauri-explorer/actions/runs/34415644908)
+accepts every Windows Rust contract, including all 28 restore tests. Windows
+GUI accepts 33/35 spec files: Git recovery, window transfer and fixture teardown
+now pass. Linux accepts 35/36, including both directory-watch lifetime/recovery
+specs, panel interaction and terminal resizing. Its remaining failure is
+concurrent window creation. Main CI, both browser engines, Rust, frontend, maps,
+performance checks and Mac qualification pass at that published head.
+
+The two Windows GUI failures exposed production defects corrected in this follow-up:
+
+- SCM filtering compared the displayed `RUNNER~1` path against Git's
+  `runneradmin` root and removed valid rows. `git_directory_scope` now discovers
+  the existing repository identity and resolves the requested directory's
+  repository-relative location in one blocking job/IPC. The store retains the
+  display path and publishes scope only for its current path generation. The
+  existing root-based summary/watch identity and warm path remain unchanged.
+  Both recognized WSL UNC spellings enter the same namespace before filesystem
+  resolution; physical containment still determines the scope.
+- Opening inline panels requested a scroll before the descendant DOM expanded;
+  the browser clamped it to the previous scroll range. `PaneContainer` now waits
+  for Svelte's DOM commit and cancels superseded effect work before revealing the
+  active content. Geometry, saved ratios, user scrolling and resize ownership
+  keep their existing policies.
+
+The actual command sequence fails before the panel fix and passes afterward in
+Details, List and Tiles. All 19 panel and 11 SCM browser outcomes pass, with
+reviewed screenshots. The alias store regression fails before and passes after,
+including same-repository subdirectory changes and a late stale scope reply.
+Validation accepts 53 targeted unit/workflow tests, 47 Git Rust tests (including
+three real filesystem scope contracts), typecheck, architecture lint and complete
+maps. Linux and Windows GNU strict all-target Clippy pass. Independent review
+accepted both fixes after catching the WSL namespace gap. Native Windows short-name and namespace tests are wired into the existing
+qualification step; these new production changes still require native execution.
+The PR remains draft, concurrent Linux window creation remains unresolved, and
+the Mac half-bounce target is still unproven.
+
 ## Native qualification follow-up — `943f3e8b`
 
 The Windows run verifies the production Shell parent normalization: the

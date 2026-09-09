@@ -18,6 +18,12 @@ const gitSummaryMock = vi.fn();
 
 vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
+  gitDirectoryScope: async (path: string) => {
+    const result = await gitRepoRootMock(path);
+    return result.ok && result.data ? { ...result, data: {
+      repo_root: result.data, relative_directory: path.slice(result.data.length).replace(/^[/\\]+/, ""),
+    } } : result;
+  },
   gitSummary: (root: string) => gitSummaryMock(root),
   gitStage: vi.fn(async () => ({ ok: true })),
   gitUnstage: vi.fn(async () => ({ ok: true })),

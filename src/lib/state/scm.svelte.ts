@@ -12,7 +12,7 @@
  * (preview diff, palette commands) resolve `activeScmStore()`.
  */
 
-import { gitCommit, gitApplyPatch, gitDiscard, gitRepoRoot, gitStage, gitUnstage, gitMergeAbort, gitRebaseAbort, gitRebaseContinue, gitCherryPickAbort, gitRevertAbort, type GitFileEntry, type GitStatusSummary, type GitPatchAction } from "$lib/api/git";
+import { gitCommit, gitApplyPatch, gitDiscard, gitRepoRoot, gitDirectoryScope, gitStage, gitUnstage, gitMergeAbort, gitRebaseAbort, gitRebaseContinue, gitCherryPickAbort, gitRevertAbort, type GitFileEntry, type GitStatusSummary, type GitPatchAction } from "$lib/api/git";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
 import {
@@ -20,6 +20,7 @@ import {
   releaseGitSummaryConsumer,
 } from "./git-summary-cache";
 import { filterEntriesToDir } from "$lib/domain/scm-tree";
+import { joinPath } from "$lib/domain/path";
 import { createGitRepoWatch } from "./git-repo-watch";
 
 function emptySummary(): GitStatusSummary {
@@ -98,6 +99,7 @@ function createScmStore() {
   // Summary cancellation belongs to the store instance, never to that ID.
   const consumerId = `scm:${++nextConsumerId}`;
   let activePath = $state<string>("");
+  let relativeDirectory = $state<string | null>(null);
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
   let loading = $state(false);
@@ -183,13 +185,16 @@ function createScmStore() {
     refreshGeneration++;
     releaseGitSummaryConsumer(consumerId);
     activePath = path;
+    relativeDirectory = null;
     // Repo detection is itself an IPC round-trip; without the flag the view
     // renders "not a git repository" during it (#271, #426). Every exit path
     // below ends in refreshSummary (or the competing call's), which clears it.
     detecting = true;
     loading = true;
     const start = performance.now();
-    const detected = await detectRepo(path);
+    const result = path ? await gitDirectoryScope(path) : { ok: true, data: null };
+    const scope = result.ok ? result.data : null;
+    const detected = scope?.repo_root ?? null;
     const elapsedMs = Math.round(performance.now() - start);
     console.info(`[scm] detectRepo for ${path} completed in ${elapsedMs}ms: repoRoot=${detected}`);
     if (generation !== pathGeneration) {
@@ -198,6 +203,7 @@ function createScmStore() {
       return;
     }
     detecting = false;
+    relativeDirectory = scope?.relative_directory ?? null;
     if (detected === repoRoot && (!detected || watchedPath === detected)) {
       if (summaryWasLoading) {
         // The old path's owned request was cancelled above. A same-repository
@@ -247,6 +253,7 @@ function createScmStore() {
     refreshGeneration++;
     releaseGitSummaryConsumer(consumerId);
     activePath = "";
+    relativeDirectory = null;
     repoRoot = null;
     detecting = false;
     loading = false;
@@ -271,7 +278,10 @@ function createScmStore() {
   // nothing on Windows (backslash pane paths vs git2's forward-slash root),
   // blanking the whole panel (#380). Pure logic lives in domain/scm-tree.
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
-    return filterEntriesToDir(entries, repoRoot, activePath);
+    if (!repoRoot || relativeDirectory === null) return [];
+    // The displayed path can be an 8.3 alias, junction, or symlink. Native
+    // discovery supplies its location in the repository's identity namespace.
+    return filterEntriesToDir(entries, repoRoot, joinPath(repoRoot, relativeDirectory));
   }
 
   function initWatcherListener(): Promise<void> {

@@ -257,3 +257,11 @@ Selecting `DISPLAY` alone does not force GTK onto that X server when the parent
 shell also has a Wayland session. Use `GDK_BACKEND=x11` for the isolated native
 fixture. An empty Openbox client list is not proof that the application's native
 window was unmapped unless the process actually uses the monitored X display.
+
+A fixture requesting `fresh-open` must match a newly introduced WebDriver handle,
+not scan every existing renderer. Snapshot handles before the request and then
+require a new handle exposing the returned native label. This both strengthens
+fresh-creation proof and avoids blocking discovery on an unrelated existing page
+whose script channel stalls. Keep the subsequent real listing, watcher receipt,
+replacement and reclamation assertions. A different page created concurrently
+after the snapshot remains a candidate; this is not a general WebKit hang fix.

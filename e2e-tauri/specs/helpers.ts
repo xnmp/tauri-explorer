@@ -1,5 +1,28 @@
 import { browser, $, $$ } from "@wdio/globals";
 
+/** A fresh launch must introduce a new handle and expose its requested label. */
+export async function switchToFreshWindow(
+  label: string,
+  existingHandles: readonly string[],
+): Promise<string> {
+  // Existing pages cannot satisfy fresh-open. Avoid probing their renderers:
+  // a parked/retiring WebKit page can block script execution indefinitely.
+  const existing = new Set(existingHandles);
+  let selected = "";
+  await browser.waitUntil(async () => {
+    for (const handle of await browser.getWindowHandles()) {
+      if (existing.has(handle)) continue;
+      await browser.switchToWindow(handle);
+      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
+        selected = handle;
+        return true;
+      }
+    }
+    return false;
+  }, { timeout: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
+  return selected;
+}
+
 /**
  * Raw DOM textContent of the element(s) matching `selector`, joined.
  *

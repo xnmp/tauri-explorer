@@ -322,6 +322,27 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Native acceptance and fresh-window fixture — `0fe4baba`
+
+Windows native qualification passes all 35 spec files, including all seven revised
+transfer cases, native Rust contracts and strict lint. Linux passes 35/36, including
+all seven transfer cases in 14.2 seconds. Its suite takes 5m18s versus 25m48s in the
+prior run after desktop-session isolation; this measures CI infrastructure, not an
+end-user performance improvement.
+
+The remaining Linux recovery fixture stalls on one WebKit page's label read while
+the fresh child reaches UI readiness in 444 ms. The local isolated recovery suite
+passes 2/2. The shared fixture now snapshots handles before `fresh-open` and probes
+only new handles for the returned label, preserving every real watcher assertion.
+Two behavior regressions fail with the old loop and pass with the handle boundary;
+both affected native suites pass together (4 tests, 20 seconds), and native
+TypeScript plus independent review pass. Concurrently created unrelated handles
+are not excluded by this boundary; no general WebKit workaround is claimed.
+
+Main Rust, frontend, maps and performance gates pass. The Chromium resize-contract
+failures test a newer synthetic merge containing dev's preview-height fix #700;
+the integration base and those existing fixture expectations require alignment.
+
 ## Qualification synchronization follow-up — `5cbdc4f0`
 
 The main Rust CI run exposed a race in the cold-search regression fixture: its

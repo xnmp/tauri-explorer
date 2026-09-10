@@ -4,7 +4,7 @@ import { expect } from "expect-webdriverio";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domText, domTexts, navigateTo } from "./helpers";
+import { domText, domTexts, navigateTo, switchToFreshWindow } from "./helpers";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-directory-recovery-"));
 const watchedDirectory = path.join(scratch, "watched");
@@ -33,21 +33,6 @@ async function operation(op: string, target?: string): Promise<unknown> {
   }, { timeout: 25_000, timeoutMsg: `${op} did not finish` });
   expect(response.error).toBeUndefined();
   return response.result;
-}
-
-async function switchToLabel(label: string): Promise<string> {
-  let selected = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-        selected = handle;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `native window ${label} did not become ready` });
-  return selected;
 }
 
 async function waitForDirectoryWatch(directory: string): Promise<void> {
@@ -138,10 +123,11 @@ linuxDescribe("directory watch root recovery", () => {
     await waitForDirectoryWatch(independentDirectory);
     await waitForCausalMutation(independentDirectory, "independent-before-recovery.txt");
 
+    const existingHandles = await browser.getWindowHandles();
     const opened = await operation("fresh-open", watchedDirectory) as WindowOperationResult;
     expect(opened).not.toBeNull();
     expect(opened?.kind).toBe("fresh");
-    watchedHandle = await switchToLabel(opened!.label);
+    watchedHandle = await switchToFreshWindow(opened!.label, existingHandles);
     await $(".file-list").waitForExist({ timeout: 20_000 });
     await browser.waitUntil(async () =>
       (await $(".status-path").getAttribute("title")) === watchedDirectory,

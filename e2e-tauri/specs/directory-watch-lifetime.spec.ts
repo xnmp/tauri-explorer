@@ -11,7 +11,7 @@ import {
   type InotifyWatch,
   type NativeProcessIdentity,
 } from "../native-resources";
-import { domTexts, navigateTo } from "./helpers";
+import { domTexts, navigateTo, switchToFreshWindow } from "./helpers";
 
 const scratch = fs.mkdtempSync(
   path.join(os.homedir(), ".tauri-explorer-e2e-directory-owner-"),
@@ -42,21 +42,6 @@ async function operation(op: string, target?: string): Promise<unknown> {
   }, { timeout: 25_000, timeoutMsg: `${op} did not finish` });
   expect(response.error).toBeUndefined();
   return response.result;
-}
-
-async function switchToLabel(label: string): Promise<string> {
-  let selected = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      await browser.switchToWindow(handle);
-      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-        selected = handle;
-        return true;
-      }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `native window ${label} did not become ready` });
-  return selected;
 }
 
 async function waitForDirectoryWatch(directory: string): Promise<void> {
@@ -147,10 +132,11 @@ linuxDescribe("pane directory native window ownership", () => {
   it("reclaims each unique child watch while the main window keeps observing", async () => {
     for (const [index, directory] of childDirectories.entries()) {
       await browser.switchToWindow(mainHandle);
+      const existingHandles = await browser.getWindowHandles();
       const opened = await operation("fresh-open", directory) as WindowOperationResult;
       expect(opened).not.toBeNull();
       expect(opened?.kind).toBe("fresh");
-      const childHandle = await switchToLabel(opened!.label);
+      const childHandle = await switchToFreshWindow(opened!.label, existingHandles);
       await $(".file-list").waitForExist({ timeout: 20_000 });
       await browser.waitUntil(async () =>
         (await $(".status-path").getAttribute("title")) === directory,

@@ -5,8 +5,8 @@ outstanding.
 
 Governs: `src-tauri/src/files/recovery/retention.rs`,
 `src-tauri/src/files/recovery/retirement.rs`,
-`src-tauri/src/files/recovery/retirement_plan.rs`,
-`src-tauri/src/files/recovery/storage.rs`,
+`src-tauri/src/files/recovery/replacement_retire.rs`,
+`src-tauri/src/files/recovery/coordinator/retirement.rs`,
 `src-tauri/src/files/recovery/commands.rs`,
 `src/lib/domain/file-recovery.ts`, `src/lib/state/file-recovery.svelte.ts`.
 
@@ -84,7 +84,8 @@ payload, and is otherwise identical in mechanism to automatic retirement.
 a restored record's retained `publication`, whose content is already published
 at a live endpoint, and the residue of a record already journaled `Discarded`.
 It runs only from recovery-session activity or immediately after a new record is
-created, oldest record first, and stops at the first record it cannot verify.
+created, walks the inventory in catalog order, and leaves any record it cannot
+verify exactly as it found it before continuing to the next.
 
 Never removed automatically, under any budget pressure:
 
@@ -112,9 +113,10 @@ other phase, using the existing `DiscardIntent` / `Discarded` phases:
    require the public endpoint to hold the exact recorded live version. Failure
    here changes nothing.
 3. **`DiscardIntent`** — journaled intent. Nothing has been removed yet.
-4. **Remove artifacts** — through retained, identity-checked handles, each entry
-   captured into a private quarantine before unlinking, with directory
-   durability barriers after each removal.
+4. **Remove artifacts** — through the retained, identity-verified root handle:
+   the private namespace is revalidated, each recorded entry is unlinked
+   handle-relatively, the root is synced, and only then is the root directory
+   itself unlinked from its verified parent and that parent synced.
 5. **`Discarded`** — journaled completion.
 6. **Retire the record** — remove the journal row, retire the catalog evidence,
    and retire the owner lock once nothing references it.
@@ -165,8 +167,9 @@ greater than the supported version continues to fail closed rather than migrate.
 ### Operation kinds
 
 Retirement dispatches on `OperationSpec` / `OperationState` through a single
-retirement-plan function that names the artifacts a record retains and the live
-endpoints that must be verified before each may be removed. A kind without a
+`retention` function that names the artifact a record retains and its disposal
+rule, paired with a `retirement_step` observation that verifies the live
+endpoints before anything may be removed. A kind without a
 plan is listed, never retired, and reported as requiring further support. Move
 records (#685) slot in by supplying their plan — parked source and destination
 endpoints — with no change to the state machine, the budget or the UI.

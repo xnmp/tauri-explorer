@@ -98,7 +98,11 @@ async function captureDiagnostics(reason: string): Promise<void> {
   }
 }
 
-describe("native window transfer ownership", () => {
+describe("native window transfer ownership", function () {
+  // Every later case consumes windows established by earlier cases. Mocha's
+  // suite bail prevents a timed-out asynchronous case from racing a dependent
+  // case through WebdriverIO's shared browser session.
+  this.bail(true);
   let mainHandle: string;
   let mainLabel: string;
   let childLabels: string[] = [];
@@ -202,7 +206,8 @@ describe("native window transfer ownership", () => {
     await listingHas("source.txt");
   });
 
-  it("restores every pane and watcher in a large transferred active layout", async () => {
+  it("creates an eight-pane source layout with every directory usable and the final pane focused", async () => {
+    console.info("[window-transfer-phase] large-layout setup started");
     await browser.switchToWindow(mainHandle);
     await browser.keys(["Control", "t"]);
     await navigateTo(largeLayoutDirectories[0]);
@@ -215,6 +220,21 @@ describe("native window transfer ownership", () => {
       await listingHas(`pane-${index}.txt`);
     }
 
+    const panes = await browser.execute(() => [...document.querySelectorAll(".explorer-pane")].map((pane) => ({
+      active: pane.classList.contains("active"),
+      entries: [...pane.querySelectorAll(".entry-name")].map((entry) => entry.textContent),
+    })));
+    expect(panes).toHaveLength(largeLayoutDirectories.length);
+    for (const index of largeLayoutDirectories.keys()) {
+      expect(panes.some((pane) => pane.entries.includes(`pane-${index}.txt`))).toBe(true);
+    }
+    expect(panes.some((pane) => pane.active
+      && pane.entries.includes(`pane-${largeLayoutDirectories.length - 1}.txt`))).toBe(true);
+    console.info("[window-transfer-phase] large-layout setup completed");
+  });
+
+  it("restores every pane and watcher in a large transferred active layout", async () => {
+    console.info("[window-transfer-phase] large-layout transfer started");
     const before = await tabCount();
     const moved = await operation("tear-off") as { moved: boolean; target: string };
     expect(moved.moved).toBe(true);
@@ -248,18 +268,27 @@ describe("native window transfer ownership", () => {
 
     fs.writeFileSync(path.join(largeLayoutDirectories[0], "after-large-transfer.txt"), "watcher");
     await listingHas("after-large-transfer.txt");
+    console.info("[window-transfer-phase] large-layout transfer completed");
   });
 
-  it("titlebar and native close retire only their requested window", async () => {
-    await browser.switchToWindow(mainHandle);
-    await navigateTo(sourceDirectory);
-    const labels = [childLabels[1], largeLayoutLabel];
-    for (const [index, label] of labels.entries()) {
+  const closeCases = [
+    { name: "titlebar close retires only its requested window", kind: "titlebar", index: 0 },
+    { name: "native close retires only its requested window", kind: "native", index: 1 },
+  ] as const;
+
+  for (const closeCase of closeCases) {
+    it(closeCase.name, async () => {
+      console.info(`[window-transfer-phase] ${closeCase.kind} close started`);
+      const label = closeCase.kind === "titlebar" ? childLabels[1] : largeLayoutLabel;
+      const expectedEntry = closeCase.kind === "titlebar" ? "source.txt" : "pane-7.txt";
+
+      await browser.switchToWindow(mainHandle);
+      await navigateTo(sourceDirectory);
       await switchToLabel(label);
-      await listingHas(index === 0 ? "source.txt" : "pane-7.txt");
+      await listingHas(expectedEntry);
       const closingHandle = await browser.getWindowHandle();
       try {
-        if (index === 0) {
+        if (closeCase.kind === "titlebar") {
           await $("button[aria-label='Close']").click();
         } else {
           // The real close API emits a native close request; the app observer
@@ -276,16 +305,20 @@ describe("native window transfer ownership", () => {
         if (!String(error).includes("no such window")) throw error;
       }
       await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(closingHandle), {
-        timeout: 15_000, timeoutMsg: `${index === 0 ? "titlebar" : "native"} close did not retire the window`,
+        timeout: 15_000, timeoutMsg: `${closeCase.kind} close did not retire the window`,
       });
       await browser.switchToWindow(mainHandle);
-      const name = `survived-close-${index}.txt`;
+      const name = `survived-close-${closeCase.index}.txt`;
       fs.writeFileSync(path.join(sourceDirectory, name), "watcher remains live");
       await listingHas(name);
-    }
-    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-window-close.png");
-    await navigateTo(destinationDirectory);
-    await listingHas("destination.txt");
-  });
+
+      await navigateTo(destinationDirectory);
+      await listingHas("destination.txt");
+      if (closeCase.kind === "native") {
+        await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-window-close.png");
+      }
+      console.info(`[window-transfer-phase] ${closeCase.kind} close completed`);
+    });
+  }
 
 });

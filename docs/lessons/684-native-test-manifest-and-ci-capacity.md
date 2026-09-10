@@ -235,3 +235,25 @@ the cache epoch itself; a revision captured before search launch can mistake tha
 transition for receipt of the later file write and release the worker too early.
 Capture after the started barrier, then write, await invalidation and release.
 Retain both stale-publication rejection and the subsequent fresh-walk assertion.
+
+An isolated X server and window manager do not provide an isolated session bus.
+Wrap the native suite in `dbus-run-session` inside `xvfb-run`, with `dbus-daemon`
+an explicit prerequisite, so desktop-service discovery belongs to the test
+session and its bus terminates afterward. This is the [documented D-Bus test
+pattern](https://dbus.freedesktop.org/doc/dbus-run-session.1.html), not proof that
+D-Bus caused a timing failure. A local unavailable-bus versus fresh-bus comparison
+passed equally quickly; CI's repeated 25-second and 5-second initialization
+delays remain unexplained until measured under the corrected session boundary.
+
+Give multi-window fixture construction, transfer and individual close outcomes
+separate test cases, preserving their own assertion deadlines. Eight sequential
+real-directory setup operations plus transfer and a watcher update can exhaust a
+single Mocha budget even when each operation completes within its own bound.
+Dependent cases use suite bail so an unfinished predecessor cannot contaminate
+the next case's shared WebDriver window context. Bail preserves the originating
+failure and runs teardown; it does not cancel an already timed-out promise.
+
+Selecting `DISPLAY` alone does not force GTK onto that X server when the parent
+shell also has a Wayland session. Use `GDK_BACKEND=x11` for the isolated native
+fixture. An empty Openbox client list is not proof that the application's native
+window was unmapped unless the process actually uses the monitored X display.

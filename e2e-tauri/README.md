@@ -38,13 +38,17 @@ X server. Tiling compositors can ignore maximize requests for grouped Xwayland
 clients. Use an isolated display for reproducible maximize/restore acceptance:
 
 ```bash
-# Debian/Ubuntu prerequisites: xvfb openbox x11-utils
-xvfb-run -a --server-args="-screen 0 1280x1024x24" \
-  bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
+# Debian/Ubuntu prerequisites: xvfb openbox x11-utils dbus-daemon
+GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
 ```
 
 The wrapper waits for the owned manager to advertise readiness and retires it
-after the test command exits. Run it under `xvfb-run`, not on your working desktop.
+after the test command exits. `dbus-run-session` supplies an isolated session bus
+and terminates it after the wrapper exits; the suite does not depend on a desktop
+session already being active. See the [D-Bus testing guidance](https://dbus.freedesktop.org/doc/dbus-run-session.1.html).
+`GDK_BACKEND=x11` ensures GTK uses that X display even when the parent shell
+has a Wayland session. Run it under `xvfb-run`, not on your working desktop.
 CI uses the same fixture; unsupported compositor behavior must not weaken native
 state assertions or be inferred merely from a failed assertion.
 
@@ -120,8 +124,8 @@ VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer
 Run it under the existing isolated Xvfb/openbox wrapper:
 
 ```bash
-xvfb-run -a --server-args="-screen 0 1280x1024x24" \
-  bash e2e-tauri/with-window-manager.sh bun run test:e2e:recovery
+GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:recovery
 ```
 
 The runner retains one native GTK WebView and one application PID while it drives
@@ -149,8 +153,8 @@ and application. For example, with the isolated XDG profile already configured:
 ```bash
 history_gate_dir=$(mktemp -d)
 TAURI_E2E_HISTORY_GATE_DIR="$history_gate_dir" \
-  xvfb-run -a --server-args="-screen 0 1280x1024x24" \
-  bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri \
+  GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+  dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri \
   --spec e2e-tauri/specs/file-history-lifetime.spec.ts
 ```
 

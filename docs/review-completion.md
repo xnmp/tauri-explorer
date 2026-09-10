@@ -333,10 +333,43 @@ assertions and deadlines are unchanged. The corrected isolated contract and all
 ordering. The initial sandboxed full run could not access local HTTP fixtures and
 the thumbnail cache; the authorized run passes without exclusions.
 
-Local Linux native concurrent-window creation passes in 1.7 seconds against
-WebKitGTK 2.52.5 with an isolated Xvfb/Openbox display and fresh app profile. This
-has not yet reproduced the CI failure under WebKitGTK 2.52.6 and does not establish
-cross-platform acceptance. The published native suites remain in progress.
+At this published head, Windows native Rust contracts (including actual short-name
+scope resolution) and strict lint pass; GUI accepts 34/35 spec files, confirming
+both the SCM alias and DOM-commit pane-reveal fixes. The remaining transfer fixture
+exhausted its aggregate 60-second budget after successful construction, transfer
+and eight-pane restoration, while awaiting the final watcher outcome. Its still
+running poll then interfered with the subsequent close case; later diagnostics
+show the new file present. Construction, transfer and each close operation now
+have separate test cases with their existing deadlines. Suite bail prevents
+subsequent dependent cases after a failure, but cannot cancel an already timed-out
+promise during teardown. Independent review accepts the retained outcome coverage.
+
+The revised Linux native suite passes **7/7 in 12.8 seconds** against WebKitGTK
+2.52.5 with a fresh profile and explicitly selected X11 backend. Both evidence
+captures complete in under 80 ms. The first local runs inherited Wayland despite
+setting `DISPLAY`, which explains their empty X11 client list, mismatched geometry
+and screenshot hangs; those runs do not establish isolated-display acceptance.
+No native-focus hook or production workaround was added. Reviewed screenshots
+show split adoption and the surviving window's final destination listing.
+
+The Linux CI fixture now sets `GDK_BACKEND=x11` and owns a session bus through
+`dbus-run-session`, with an explicit `dbus-daemon` prerequisite, alongside its
+owned display and window manager. The backend selection fixes the reproduced
+local environment leak. Session-bus isolation remains a standard fixture boundary,
+not an established cause of CI's repeated initialization delays. CI's WebKitGTK
+2.52.6 creation failures still require verification under this fixture.
+All Chromium/WebKit browser shards, frontend checks, maps and performance gates
+pass at the published head. Linux native qualification finishes at 34/36 spec
+files: directory-watch lifetime hits fresh-child readiness failure and concurrent
+window creation times out. These native gates require the next published run;
+local X11 acceptance does not substitute for hosted Ubuntu qualification.
+
+The [exact Mac release report](reviews/release-macos-startup-5cbdc4f0.json)
+records 30 foreground native-readiness samples at p50 2,058.3 ms / p95 2,518.7 ms,
+plus a separate 30-sample warm-activation probe at p50 293 ms / p95 1,904 ms. Both
+scenarios identify the same release binary. OS caches are uncontrolled; differences
+between hosted jobs do not establish an optimization. Presentation/input and the
+half-bounce target remain unqualified.
 
 ## Native qualification and release fixes — `6ffc3d14`
 

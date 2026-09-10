@@ -36,7 +36,13 @@ pub(super) struct MoveExecution {
     pub(super) operation: DurableOperation,
     source_root: Option<Root>,
     target_root: Option<Root>,
+    /// Interruption seam. Each labelled boundary sits after a native effect and
+    /// before the checkpoint that records it — exactly where a crash must be
+    /// survivable. Production callers always pass `None`.
+    hook: Option<Boundary>,
 }
+
+pub(super) type Boundary = Box<dyn Fn(&'static str) -> Result<(), AppError> + Send>;
 
 /// A user endpoint addressed through its retained parent handle. Reopening the
 /// public path instead would let a namespace substitution redirect the effect.
@@ -151,7 +157,14 @@ impl MoveExecution {
 
     /// A dropped or failed preparation leaves catalog authority and any native
     /// artifacts intact. Neither this executor nor its fields delete on Drop.
-    pub(super) fn prepare(mut operation: DurableOperation) -> Result<Self, AppError> {
+    pub(super) fn prepare(operation: DurableOperation) -> Result<Self, AppError> {
+        Self::prepare_with(operation, None)
+    }
+
+    pub(super) fn prepare_with(
+        mut operation: DurableOperation,
+        hook: Option<Boundary>,
+    ) -> Result<Self, AppError> {
         let spec = operation.intent().operation.move_spec()?.clone();
         let plans = Self::plans(&spec);
         if plans.is_empty() {
@@ -161,6 +174,7 @@ impl MoveExecution {
                 operation,
                 source_root: None,
                 target_root: None,
+                hook: None,
             });
         }
         let anchors: Vec<_> = plans
@@ -180,6 +194,11 @@ impl MoveExecution {
                 target_root = Some(root);
             }
         }
+        for label in ["root"] {
+            if let Some(hook) = &hook {
+                hook(label)?;
+            }
+        }
         operation.advance_move(MoveTransition::RootsObserved {
             source: source_root.as_ref().map(Root::identity),
             target: target_root.as_ref().map(Root::identity),
@@ -188,6 +207,7 @@ impl MoveExecution {
             operation,
             source_root,
             target_root,
+            hook,
         };
         execution.operation.advance_move(MoveTransition::BeginManifests)?;
         let result = (|| {
@@ -195,7 +215,7 @@ impl MoveExecution {
                 root.publish_manifest(execution.operation.intent())?;
                 root.verify_namespace()?;
             }
-            Ok::<(), AppError>(())
+            execution.at("manifest")
         })();
         if let Err(error) = result {
             return Err(execution.retain_failure(error));
@@ -237,7 +257,21 @@ impl MoveExecution {
             operation,
             source_root,
             target_root,
+            hook: None,
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_boundary(mut self, hook: Boundary) -> Self {
+        self.hook = Some(hook);
+        self
+    }
+
+    fn at(&self, label: &'static str) -> Result<(), AppError> {
+        match &self.hook {
+            Some(hook) => hook(label),
+            None => Ok(()),
+        }
     }
 
     fn roots(&self) -> impl Iterator<Item = &Root> {
@@ -258,7 +292,10 @@ impl MoveExecution {
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<(), AppError> {
         self.operation.advance_move(MoveTransition::BeginStaging)?;
-        let payload = match self.copy_payload(progress) {
+        let payload = match self
+            .copy_payload(progress)
+            .and_then(|payload| self.at("stage").map(|()| payload))
+        {
             Ok(payload) => payload,
             Err(error) => return Err(self.retain_failure(error)),
         };
@@ -318,7 +355,8 @@ impl MoveExecution {
                 OsStr::new(ORIGINAL),
                 &original,
             )?;
-            self.verify_authority()
+            self.verify_authority()?;
+            self.at("displace")
         })();
         if let Err(error) = result {
             return Err(self.retain_failure(error));
@@ -333,7 +371,10 @@ impl MoveExecution {
     pub(super) fn publish_move(&mut self) -> Result<EntryVersion, AppError> {
         self.operation
             .advance_move(MoveTransition::BeginPublication)?;
-        let published = match self.publish_payload() {
+        let published = match self.publish_payload().and_then(|published| {
+            self.at("publish")?;
+            Ok(published)
+        }) {
             Ok(published) => published,
             Err(error) => return Err(self.retain_failure(error)),
         };
@@ -469,7 +510,8 @@ impl MoveExecution {
                 &spec.source_version,
             )?;
             source.verify()?;
-            self.verify_authority()
+            self.verify_authority()?;
+            self.at("park")
         })();
         if let Err(error) = result {
             return Err(self.retain_failure(error));
@@ -515,7 +557,7 @@ impl MoveExecution {
                     if probe(root.directory(), OsStr::new(PARKED))?.is_some() {
                         return Err(uncertain("Move parked source was not removed"));
                     }
-                    Ok(())
+                    self.at("remove")
                 }
                 Some(_) => Err(uncertain(
                     "Move parked source differs from its recorded identity; it is retained",
@@ -600,7 +642,8 @@ impl MoveExecution {
             }
             source.verify()?;
             target.verify()?;
-            self.verify_authority()
+            self.verify_authority()?;
+            self.at("restore")
         })();
         if let Err(error) = result {
             return Err(self.retain_failure(error));

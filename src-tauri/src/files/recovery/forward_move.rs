@@ -229,6 +229,14 @@ impl PreparedMove {
         self,
         progress: &mut impl CopyProgress,
     ) -> Result<FileMutationReceipt, AppError> {
+        self.execute_with(progress, None)
+    }
+
+    pub(super) fn execute_with(
+        self,
+        progress: &mut impl CopyProgress,
+        hook: Option<super::move_execution::Boundary>,
+    ) -> Result<FileMutationReceipt, AppError> {
         let Self {
             reservation,
             spec,
@@ -253,7 +261,7 @@ impl PreparedMove {
             })?;
         let id = operation.intent().id.clone();
         let result = (|| {
-            let mut execution = MoveExecution::prepare(operation)?;
+            let mut execution = MoveExecution::prepare_with(operation, hook)?;
             if staging {
                 execution.stage_copy(progress)?;
                 // Cancellation is honoured until the destination is touched.

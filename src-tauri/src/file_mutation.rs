@@ -474,7 +474,7 @@ fn move_outcome(
     );
     let inverse = outcome.completion.result.as_ref().ok().and_then(move_inverse);
     let mut affected = outcome.affected;
-    if let Some(receipt) = outcome.completion.result.as_ref().ok() {
+    if let Ok(receipt) = outcome.completion.result.as_ref() {
         if let Some(relocation) = &receipt.relocation {
             affected.extend(relocation.history.refresh_dirs.iter().cloned());
             affected.sort_unstable();

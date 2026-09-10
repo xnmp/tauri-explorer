@@ -82,20 +82,6 @@ impl MovePhase {
         )
     }
 
-    /// The destination holds the moved payload. Nothing may hide the source
-    /// before this is true; nothing may remove the source's parked copy while
-    /// it is the only exact original identity the inverse can restore.
-    pub(super) fn published(self) -> bool {
-        matches!(
-            self,
-            Self::Published
-                | Self::ParkIntent
-                | Self::Parked
-                | Self::RemoveIntent
-                | Self::Removed
-                | Self::RestoreIntent
-        )
-    }
 }
 
 /// Mutable relocation evidence. Parked and displaced entries need no recorded

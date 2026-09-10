@@ -76,7 +76,7 @@ impl Endpoint {
 
     fn verify(&self) -> Result<(), AppError> {
         if of_file(&self.directory.file)? != self.identity
-            || of_file(&Directory::open(&self.path.parent().expect("validated parent"))?.file)?
+            || of_file(&Directory::open(self.path.parent().expect("validated parent"))?.file)?
                 != self.identity
         {
             return Err(invalid("Move endpoint parent namespace changed"));
@@ -157,10 +157,6 @@ impl MoveExecution {
 
     /// A dropped or failed preparation leaves catalog authority and any native
     /// artifacts intact. Neither this executor nor its fields delete on Drop.
-    pub(super) fn prepare(operation: DurableOperation) -> Result<Self, AppError> {
-        Self::prepare_with(operation, None)
-    }
-
     pub(super) fn prepare_with(
         mut operation: DurableOperation,
         hook: Option<Boundary>,
@@ -520,6 +516,10 @@ impl MoveExecution {
     }
 
     /// Discard the parked source. This is the only deletion in this executor,
+    /// and the only phase with no production caller yet: finishing a parked
+    /// move belongs with durable retirement (#687). It is exercised by the
+    /// crash boundary tests so the ordering it enforces stays verified.
+    #[allow(dead_code)]
     /// it is reachable only from a durable `Parked` checkpoint, and it is never
     /// part of the forward move or of restoration.
     pub(super) fn remove_source(&mut self) -> Result<(), AppError> {

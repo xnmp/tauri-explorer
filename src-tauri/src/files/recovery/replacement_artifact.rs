@@ -223,18 +223,10 @@ impl Root {
         self.identity
     }
 
-    /// Retained handles for operation kinds implemented outside this module.
-    /// Both are verified by `verify_namespace` before any effect uses them.
-    pub(super) fn parent(&self) -> &Directory {
-        &self.parent
-    }
-
+    /// Retained handle for operation kinds implemented outside this module.
+    /// It is verified by `verify_namespace` before any effect uses it.
     pub(super) fn directory(&self) -> &Directory {
         &self.directory
-    }
-
-    pub(super) fn path(&self) -> &std::path::Path {
-        &self.path
     }
 
     /// Build only the fixed unpublished payload. The executor must first persist

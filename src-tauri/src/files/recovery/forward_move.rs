@@ -34,16 +34,6 @@ pub(super) struct PreparedMove {
     presentation: PathBuf,
 }
 
-/// Native observation of the endpoints an ordered move inspected before asking
-/// for an overwrite decision. Revalidated under admission before any effect.
-#[cfg(target_os = "linux")]
-pub(crate) struct MoveObservation {
-    pub source: crate::files::entry_version::EntryVersion,
-    pub source_parent: crate::files::object_id::ObjectId,
-    pub target_parent: crate::files::object_id::ObjectId,
-    pub target: Option<crate::files::entry_version::EntryVersion>,
-}
-
 struct PendingMove {
     requests: Vec<Request>,
     source_token: Option<String>,
@@ -203,21 +193,6 @@ impl PreparedMove {
             }),
             Err(error) => Err(retire(vec![reservation], error)),
         }
-    }
-
-    #[cfg(target_os = "linux")]
-    pub(super) fn matches_observation(&self, expected: &MoveObservation) -> bool {
-        self.spec.source_version == expected.source
-            && self.spec.source_parent == expected.source_parent
-            && self.spec.target_parent == expected.target_parent
-            && self.spec.target_original == expected.target
-    }
-
-    pub(super) fn retire(moves: Vec<Self>, error: AppError) -> AppError {
-        retire(
-            moves.into_iter().map(|prepared| prepared.reservation).collect(),
-            error,
-        )
     }
 
     #[cfg(test)]

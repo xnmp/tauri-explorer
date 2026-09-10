@@ -23,7 +23,11 @@ pub(super) enum MoveTransition {
     PublicationCompleted,
     BeginPark,
     ParkCompleted,
+    /// Reachable only from a durable park. No production caller yet: finishing
+    /// a parked move belongs with durable retirement (#687).
+    #[allow(dead_code)]
     BeginSourceRemoval,
+    #[allow(dead_code)]
     SourceRemoved,
     BeginRestoration,
     RestorationCompleted,

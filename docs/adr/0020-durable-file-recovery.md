@@ -5,8 +5,10 @@ Status: Proposed — implementation and crash/platform acceptance outstanding.
 Release policy (2026-09-09): creation of new durable replacement-copy records is
 opt-in through Cargo's `durable-copy-recovery` feature until retirement exists
 (#687). Default builds keep transient admission and staged overwrites. Existing
-recovery discovery, restore and history remain available. Planned Move schema
-validation is implemented, but executable durable moves are deferred to #685.
+recovery discovery, restore and history remain available. Executable durable
+moves are implemented (#685) behind the independent `durable-move-recovery`
+feature, opt-in for the same reason: a parked cross-filesystem source and a
+displaced overwrite target are retained bytes with no quota or GC.
 The frozen release scope in `docs/review-completion.md` supersedes broader
 implementation prerequisites below.
 
@@ -920,13 +922,47 @@ warnings do not revoke a completed move or its opposite; incomplete source remov
 continues to consume the inverse without offering a destructive retry.
 
 These reservations coordinate managed application operations. They do not pin the
-source/parent objects against external replacement. Exact Move observations, a
-native Move intent and source-parking state machine, durable overwrite restoration,
-ordered batch ownership and cross-platform qualification remain required. A copy
-replacement record cannot stand in for that Move intent: it describes an independent
-copied payload and does not encode the source's disappearance and recreation.
-Keep same-filesystem renames as the fast path; cross-filesystem copying/removal
-requires its own durable transitions and cancellable private preparation. The
+source/parent objects against external replacement. A copy replacement record
+cannot stand in for a Move intent: it describes an independent copied payload and
+does not encode the source's disappearance and recreation. The
 [rename contract](https://man7.org/linux/man-pages/man2/rename.2.html) and
 [GIO move contract](https://gnome.pages.gitlab.gnome.org/gtk/gio/method.File.move.html)
 distinguish those execution paths.
+
+### Executable durable moves
+
+`OperationSpec::Move` now has its own state contract and phase machine rather
+than borrowing the replacement's: `MovePhase`/`MoveState` in `recovery/move_model.rs`
+and the pure legal transitions in `recovery/move_transition.rs`. Parking and source
+removal exist only here, and a same-filesystem move without an overwrite reaches
+`Published` from `Planned` with no artifact root at all — one
+`renameat2(RENAME_NOREPLACE)` remains the fast path.
+
+The transition function, not execution discipline, enforces the crash ordering.
+`BeginPark` is reachable only from `Published`; `BeginSourceRemoval` only from a
+durable `Parked`; `BeginRestoration` is unreachable from `Removed`, because the
+exact original no longer exists. An overwritten destination is displaced into
+private storage before publication. Nothing in the forward path deletes a user
+entry, and restoration never removes a published destination before the source is
+verified back at its own name. `recovery/move_execution.rs` addresses every
+endpoint through retained parent handles and classifies each rename from both
+observed versions, as replacement transfer does. Artifact-root ownership is shared:
+`Anchor::open_plan` opens any planned private namespace, so move roots reuse the
+replacement manifest, namespace and durability discipline.
+
+Undo executes the durable record itself, claimed by ID, revision and stable
+position — `Published`, `Parked` or `Removed` for a completed move — never a
+renderer-supplied path, which for a cross-filesystem move could relocate the last
+copy of the data. A move record has no reapplication: `ReplacementOutcome::reapplicable`
+is false, so history produces no opposite whose evidence is gone. Effective
+admission claims treat `Published | Parked | Removed | Restored` as released
+endpoints and retain only the private artifact roots, so either public path can be
+reused after the move.
+
+Acceptance so far is Linux real-filesystem contracts (`test_support/recovery_forward_move.rs`),
+process kills at every effect boundary including cross-filesystem staging, parking
+and source removal (`test_support/recovery_move_execution.rs`), and pure transition
+contracts. Still required: ordered interactive move sessions with partial receipts,
+conflict revalidation and cancellation; native forward history grouping for those
+sessions in place of the renderer's path-based Move inverses; artifact retention
+and retirement (#687); and Windows/macOS adapters and qualification.

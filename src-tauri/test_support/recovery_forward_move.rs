@@ -4,8 +4,8 @@ use super::*;
 use crate::files::recovery::{
     coordinator::{Coordinator, HistoryPosition},
     model::{ReplacementDirection, ReplacementHistory},
-    move_model::Strategy,
     move_execution::MoveExecution,
+    move_model::Strategy,
 };
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -88,8 +88,12 @@ impl Fixture {
     }
 
     fn prepare(&self, name: &str) -> PreparedMove {
-        PreparedMove::prepare(&self.coordinator, &self.from.join(name), &self.to.join(name))
-            .unwrap()
+        PreparedMove::prepare(
+            &self.coordinator,
+            &self.from.join(name),
+            &self.to.join(name),
+        )
+        .unwrap()
     }
 
     fn move_entry(&self, name: &str) -> Result<FileMutationReceipt, AppError> {
@@ -288,13 +292,23 @@ fn a_cross_filesystem_directory_move_copies_its_whole_subtree_before_parking() {
     fs::create_dir(f.from.join("tree/locked")).unwrap();
     fs::write(f.from.join("tree/locked/leaf.txt"), "deep").unwrap();
     // A read-only descendant proves the staged copy restores recorded modes.
-    fs::set_permissions(f.from.join("tree/locked"), fs::Permissions::from_mode(0o500)).unwrap();
+    fs::set_permissions(
+        f.from.join("tree/locked"),
+        fs::Permissions::from_mode(0o500),
+    )
+    .unwrap();
 
     f.move_entry("tree").unwrap();
 
-    assert_eq!(fs::read(f.to.join("tree/locked/leaf.txt")).unwrap(), b"deep");
     assert_eq!(
-        fs::symlink_metadata(f.to.join("tree/locked")).unwrap().mode() & 0o777,
+        fs::read(f.to.join("tree/locked/leaf.txt")).unwrap(),
+        b"deep"
+    );
+    assert_eq!(
+        fs::symlink_metadata(f.to.join("tree/locked"))
+            .unwrap()
+            .mode()
+            & 0o777,
         0o500,
         "a published subtree must regain its recorded modes"
     );
@@ -388,8 +402,7 @@ fn an_interrupted_restoration_can_still_bring_the_parked_source_home() {
     // position, so the interrupted inverse becomes an explicit File Recovery
     // item — and that surface must still be able to bring the source home.
     assert!(f.undo(history).is_err());
-    let inspected =
-        crate::files::recovery::service::inspect(&f.coordinator, &id).unwrap();
+    let inspected = crate::files::recovery::service::inspect(&f.coordinator, &id).unwrap();
     let offer = inspected.items.iter().find(|item| item.id == id).unwrap();
     assert_eq!(offer.status, "ready", "{}", offer.message);
     crate::files::recovery::service::resolve(

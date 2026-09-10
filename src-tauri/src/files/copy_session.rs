@@ -12,7 +12,7 @@ mod model;
 mod worker;
 pub(crate) use control::{lookup, Control, Registration};
 pub(crate) use model::{
-    Choice, Conflict, SessionRequest, Decision, Event, ItemOutcome, Outcome, Request,
+    Choice, Conflict, Decision, Event, ItemOutcome, Outcome, Request, SessionRequest,
 };
 pub(crate) use worker::NativeWork;
 

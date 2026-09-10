@@ -186,11 +186,14 @@ impl DurableOperation {
         &mut self,
         event: super::super::move_transition::MoveTransition,
     ) -> Result<(), AppError> {
-        self.commit(super::super::move_transition::transition(
-            &self.record.intent,
-            &self.record.state,
-            event,
-        )?, || Ok(()))
+        self.commit(
+            super::super::move_transition::transition(
+                &self.record.intent,
+                &self.record.state,
+                event,
+            )?,
+            || Ok(()),
+        )
     }
 
     fn advance_with(

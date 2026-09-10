@@ -50,7 +50,8 @@ impl Request {
                     .any(|part| matches!(part, Component::ParentDir))
             {
                 return Err(AppError::InvalidPath(
-                    "A session requires absolute paths without parent traversal or NUL bytes".into(),
+                    "A session requires absolute paths without parent traversal or NUL bytes"
+                        .into(),
                 ));
             }
         }

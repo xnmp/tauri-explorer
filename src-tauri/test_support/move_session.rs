@@ -148,11 +148,7 @@ fn an_ordered_move_relocates_every_item_and_vacates_each_source() {
         fixture.source("one.txt", b"first"),
         fixture.source("two.txt", b"second"),
     ];
-    let (outcome, _) = drive(
-        request(&sources, &fixture.to),
-        fixture.work(),
-        Vec::new(),
-    );
+    let (outcome, _) = drive(request(&sources, &fixture.to), fixture.work(), Vec::new());
     assert_eq!(statuses(&outcome), vec!["succeeded", "succeeded"]);
     assert!(!outcome.cancelled);
     for (name, bytes) in [("one.txt", &b"first"[..]), ("two.txt", &b"second"[..])] {
@@ -202,7 +198,11 @@ fn cancelling_at_a_conflict_retains_the_completed_prefix_and_leaves_the_rest_in_
         fixture.source("last.txt", b"last"),
     ];
     fs::write(fixture.to.join("clash.txt"), b"existing").unwrap();
-    let (outcome, _) = drive(request(&sources, &fixture.to), fixture.work(), vec![cancel()]);
+    let (outcome, _) = drive(
+        request(&sources, &fixture.to),
+        fixture.work(),
+        vec![cancel()],
+    );
     assert!(outcome.cancelled);
     assert_eq!(
         statuses(&outcome),
@@ -216,7 +216,11 @@ fn cancelling_at_a_conflict_retains_the_completed_prefix_and_leaves_the_rest_in_
     assert_eq!(fs::read(&sources[2]).unwrap(), b"last");
 
     // And that prefix is separately undoable: one committed item, one inverse.
-    let projected = move_session_outcome(outcome, &spellings(&sources), fixture.to.to_string_lossy().into_owned());
+    let projected = move_session_outcome(
+        outcome,
+        &spellings(&sources),
+        fixture.to.to_string_lossy().into_owned(),
+    );
     let ForwardEffect::Changed(Some(inverse)) = projected.effect else {
         panic!("a cancelled session must still offer the prefix inverse");
     };
@@ -284,8 +288,7 @@ fn a_publication_whose_source_removal_failed_is_uncertain_and_offers_no_inverse(
     }
     let other = tempfile::tempdir_in(root).unwrap();
     let fixture = Fixture::new();
-    if fs::metadata(fixture.root.path()).unwrap().dev()
-        == fs::metadata(other.path()).unwrap().dev()
+    if fs::metadata(fixture.root.path()).unwrap().dev() == fs::metadata(other.path()).unwrap().dev()
     {
         eprintln!("SKIPPED incomplete source removal: one shared device");
         return;
@@ -349,7 +352,11 @@ fn a_directory_cannot_be_relocated_into_its_own_subtree() {
     let inside = tree.join("inside");
     fs::create_dir_all(&inside).unwrap();
     fs::write(tree.join("leaf.txt"), b"leaf").unwrap();
-    let (outcome, _) = drive(request(std::slice::from_ref(&tree), &inside), fixture.work(), Vec::new());
+    let (outcome, _) = drive(
+        request(std::slice::from_ref(&tree), &inside),
+        fixture.work(),
+        Vec::new(),
+    );
     assert_eq!(statuses(&outcome), vec!["failed"]);
     assert!(tree.is_dir() && inside.is_dir());
     assert_eq!(fs::read(tree.join("leaf.txt")).unwrap(), b"leaf");
@@ -361,7 +368,11 @@ fn a_relocated_directory_arrives_with_its_whole_subtree() {
     let tree = fixture.from.join("tree");
     fs::create_dir_all(tree.join("nested")).unwrap();
     fs::write(tree.join("nested/deep.txt"), b"deep").unwrap();
-    let (outcome, _) = drive(request(std::slice::from_ref(&tree), &fixture.to), fixture.work(), Vec::new());
+    let (outcome, _) = drive(
+        request(std::slice::from_ref(&tree), &fixture.to),
+        fixture.work(),
+        Vec::new(),
+    );
     assert_eq!(statuses(&outcome), vec!["succeeded"]);
     assert!(!tree.exists());
     assert_eq!(
@@ -410,9 +421,7 @@ fn a_durable_receipt_is_its_own_inverse_and_never_gains_a_path_only_action() {
         &spellings(&sources),
         fixture.to.to_string_lossy().into_owned(),
     );
-    let ForwardEffect::Changed(Some(Action::Replacement { .. })) =
-        projected.effect
-    else {
+    let ForwardEffect::Changed(Some(Action::Replacement { .. })) = projected.effect else {
         panic!("a durable move inverse must be the record, never a path");
     };
 }

@@ -54,8 +54,7 @@ impl Inner {
                     OperationState::Replacement(state) => {
                         // Completed copying leaves the original private; completed
                         // restoration leaves the copied publication private instead.
-                        let artifacts =
-                            artifacts.as_ref().expect("validated completed artifacts");
+                        let artifacts = artifacts.as_ref().expect("validated completed artifacts");
                         let retained = if state.phase == Phase::Published {
                             &artifacts.original
                         } else {

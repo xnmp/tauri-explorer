@@ -203,7 +203,9 @@ impl MoveExecution {
             target_root,
             hook,
         };
-        execution.operation.advance_move(MoveTransition::BeginManifests)?;
+        execution
+            .operation
+            .advance_move(MoveTransition::BeginManifests)?;
         let result = (|| {
             for root in execution.roots() {
                 root.publish_manifest(execution.operation.intent())?;
@@ -729,7 +731,8 @@ fn relocate(
         return Err(invalid("Move endpoints differ from durable evidence"));
     }
     let result = if before == RenamePosition::Unmoved {
-        from.rename_to(from_name, to, to_name).map_err(AppError::from)
+        from.rename_to(from_name, to, to_name)
+            .map_err(AppError::from)
     } else {
         Ok(())
     };
@@ -756,10 +759,17 @@ fn relocate(
 /// Remove one entry through its retained parent handle. Every descendant is
 /// reached relative to an opened directory, so no path component can be
 /// substituted between the decision to remove and the removal itself.
-fn remove_tree(parent: &Directory, name: &OsStr, directory: bool, depth: usize) -> Result<(), AppError> {
+fn remove_tree(
+    parent: &Directory,
+    name: &OsStr,
+    directory: bool,
+    depth: usize,
+) -> Result<(), AppError> {
     const MAX_DEPTH: usize = 256;
     if depth > MAX_DEPTH {
-        return Err(invalid("Move parked source exceeds its removal depth budget"));
+        return Err(invalid(
+            "Move parked source exceeds its removal depth budget",
+        ));
     }
     if directory {
         let child = parent.open_existing(name)?;

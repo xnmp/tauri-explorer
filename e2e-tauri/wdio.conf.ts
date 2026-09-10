@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
@@ -43,6 +43,8 @@ const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
 
 const driverPort = 4444;
 const driverLogPath = path.join(here, "logs", "msedgedriver.log");
+// Each worker appends its own session; the file is uploaded with the WDIO logs.
+const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
 
 let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
@@ -160,10 +162,21 @@ export const config: WebdriverIO.Config = {
 
   beforeSession: async (_config, capabilities) => {
     if (!isWindows) {
+      // WebKitWebDriver inherits tauri-driver's stdio, so its own diagnostics
+      // (including "page crash or hang") land here. Retain them as a run
+      // artifact as well as on the console: a lost session leaves nothing else
+      // to distinguish a renderer death from a driver failure (#703).
       driverProcess = spawn(tauriDriverBin, tauriDriverArgs, {
-        stdio: [null, process.stdout, process.stderr],
+        stdio: ["ignore", "pipe", "pipe"],
         detached: process.platform === "linux",
       });
+      mkdirSync(path.dirname(webkitDriverLogPath), { recursive: true });
+      const driverLog = createWriteStream(webkitDriverLogPath, { flags: "a" });
+      driverProcess.stdout?.pipe(process.stdout, { end: false });
+      driverProcess.stdout?.pipe(driverLog, { end: false });
+      driverProcess.stderr?.pipe(process.stderr, { end: false });
+      driverProcess.stderr?.pipe(driverLog, { end: false });
+      driverProcess.once("exit", () => driverLog.end());
       if (process.platform === "linux") {
         driverProcessGroup = nativeProcessGroup(driverProcess);
       }

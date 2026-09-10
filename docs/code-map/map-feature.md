@@ -354,6 +354,7 @@ backend for E2E/browser).
 
 - `components/Sidebar.svelte`, `components/FilesSidebarView.svelte` — sidebar shell + files tree
 - `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
+- `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
 - `state/drives.svelte.ts` — `drivesStore` (mounted volumes)
 - `domain/drives.ts`; `api/files.ts` (listDrives); `src-tauri/src/files/drives.rs`
@@ -459,4 +460,4 @@ Planned move journal authority: `src-tauri/src/files/recovery/move_model.rs` own
 
 - `src-tauri/build.rs`, `src-tauri/windows-app-manifest.xml` — shared app/test Windows activation manifest; MSVC linker embedding prevents test harness loader failures before native contracts run.
 
-- `e2e-tauri/native-qualification.ts` owns bounded process cleanup, binary identity, reports and native-ready/warm log parsing; `e2e-tauri/native-process-group.ts` retains Linux session descendants after the driver exits. `scripts/build-native-qualification.ts`, `scripts/qualify-macos-startup.ts` and `scripts/run-native-soak.ts` compose debug/release builds, separate Mac foreground-only/warm measurements and opt-in soak; `e2e-tauri/wdio.soak.conf.ts` selects `e2e-tauri/soak/native-soak.spec.ts`. Process/report contracts live in `tests/qualification/`. Native log timings do not establish presented-frame, Dock-bounce or first-input latency.
+- `e2e-tauri/native-qualification.ts` owns bounded process cleanup, binary identity, reports and native-ready/warm log parsing; `e2e-tauri/native-process-group.ts` retains Linux session descendants after the driver exits. `scripts/build-native-qualification.ts`, `scripts/qualify-macos-startup.ts` and `scripts/run-native-soak.ts` compose debug/release builds, separate Mac foreground-only/warm measurements and opt-in soak; `e2e-tauri/wdio.soak.conf.ts` selects `e2e-tauri/soak/native-soak.spec.ts`. Process/report contracts live in `tests/qualification/`. Native log timings do not establish presented-frame, Dock-bounce or first-input latency: a macOS launch is decomposed into correlated phases (process entry, native window, WebView navigation, document boot, required app work, frame scheduling, readiness IPC) with the residual retained as `unattributedMs`, and a half-bounce verdict requires externally observed interactive evidence produced per `docs/testing/interactive-mac-startup-runbook.md` and ingested as untrusted input.

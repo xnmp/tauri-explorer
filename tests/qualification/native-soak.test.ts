@@ -9,7 +9,7 @@ import {
   SOAK_SCENARIOS,
   buildNativeQualificationReport,
   executeQualificationRun,
-  parseMacStartupLog,
+  parseAttributedMacStartupLog,
   readVerifiedNativeBuildManifest,
   resolveNativeApplication,
   resolveSoakConfiguration,
@@ -253,23 +253,23 @@ describe("native product qualification contract", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("parses real macOS cold and warm startup markers", () => {
-    expect(
-      parseMacStartupLog(
-        "Startup(native-ready): app-run-to-ready=83.2ms\n" +
-          "Startup(warm-activate): show=4.4ms\n",
-      ),
-    ).toEqual({ coldTotalMs: 83.2, warmShowMs: 4.4 });
-    expect(() => parseMacStartupLog("Startup(native-ready): app-run-to-ready=83.2ms")).toThrow(
-      "warm-activate",
-    );
+  it("parses the startup markers the binary actually emits", () => {
+    // Verbatim from a captured launch; the fixture must not drift from the
+    // format `system.rs` and `lib.rs` log, or a Mac run fails at sample 1.
+    const log =
+      "Startup(native-window): window=main app-run-epoch-ms=1000.0 process-entry-to-run=20.0ms window-built=100.0ms\n" +
+      "Startup(webview): window=main boot-epoch-ms=1300.0 bundle-exec=50.0ms mount=80.0ms commands-ready=100.0ms settings-ready=300.0ms list-ready=350.0ms app-ready=400.0ms ui-ready=450.0ms total=450.0ms\n" +
+      "Startup(native-ready): window=main app-run-to-ready=810.0ms receipt-epoch-ms=1800.0\n";
+    expect(parseAttributedMacStartupLog(`${log}Startup(warm-activate): show=4.4ms\n`))
+      .toMatchObject({ coldTotalMs: 810, warmShowMs: 4.4 });
+    expect(() => parseAttributedMacStartupLog(log)).toThrow("warm-activate");
   });
 
   it("does not accept builder setup or WebView timing as foreground readiness", () => {
-    expect(() => parseMacStartupLog(
+    expect(() => parseAttributedMacStartupLog(
       "Startup: total=15ms\nStartup(webview): total=25ms\n" +
       "Startup(warm-activate): show=2ms\n",
-    )).toThrow("native-ready");
+    )).toThrow("native-window");
   });
 
   it("keeps the hours-long runner opt-in and out of the bounded smoke config", () => {

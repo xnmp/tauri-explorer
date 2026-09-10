@@ -1,6 +1,95 @@
 import { browser, $, $$ } from "@wdio/globals";
 // Keep command types available to standalone fixture-contract tests too.
 import type {} from "webdriverio";
+import path from "node:path";
+import {
+  collectNativeProcessEvidence,
+  writeFreshWindowDiagnostics,
+  type FreshWindowDiagnostics,
+  type FreshWindowPageSnapshot,
+} from "../fresh-window-diagnostics";
+
+const applicationBinary = path.resolve(
+  "src-tauri",
+  "target",
+  "debug",
+  process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer",
+);
+
+const diagnosticsDirectory =
+  process.env.TAURI_NATIVE_DIAGNOSTICS_DIR
+  ?? path.resolve("e2e-tauri", "logs", "fresh-window");
+
+/**
+ * Evidence for the most recent fresh-window selection (#703).
+ *
+ * The Linux session loss happened between selection and the first element
+ * lookup, so this is captured unconditionally at selection and replayed if the
+ * lookup fails — by then the session can already be invalid.
+ */
+let lastFreshWindow: FreshWindowDiagnostics | null = null;
+
+/**
+ * One atomic renderer sample. WebKitWebDriver may evaluate injected scripts in
+ * an isolated world, so read DOM state only — never application globals.
+ */
+async function captureFreshWindowPage(): Promise<FreshWindowPageSnapshot | { error: string }> {
+  try {
+    return await browser.execute(() => {
+      const data = document.documentElement.dataset;
+      const status = document.querySelector(".status-path");
+      return {
+        capturedAt: Date.now(),
+        label: data.e2eWindowLabel ?? null,
+        hooksReady: data.e2eHooksReady === "true",
+        fileListCount: document.querySelectorAll(".file-list").length,
+        entryCount: document.querySelectorAll(".entry-item").length,
+        statusPath: status ? status.getAttribute("title") : null,
+        url: location.href,
+        readyState: document.readyState,
+        visibility: document.visibilityState,
+      };
+    }) as FreshWindowPageSnapshot;
+  } catch (error) {
+    return { error: String(error) };
+  }
+}
+
+/**
+ * Record why a first lookup in a fresh window failed, using process evidence
+ * only: a lost session cannot answer another WebDriver command. Exported for
+ * contract tests; specs reach it through `waitForFreshWindowElement`.
+ */
+export function recordFreshWindowLookupFailure(
+  selector: string,
+  error: unknown,
+): string | null {
+  const selected = lastFreshWindow;
+  if (!selected) return null;
+  return writeFreshWindowDiagnostics({
+    ...selected,
+    phase: "lookup-failed",
+    lookup: { selector, failedAt: Date.now(), error: String(error) },
+    nativeAfterFailure: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
+  }, diagnosticsDirectory);
+}
+
+/**
+ * Wait for the first element of a freshly opened window, retaining diagnostics
+ * when it never resolves. The existence contract is unchanged; only the
+ * failure path gains evidence.
+ */
+export async function waitForFreshWindowElement(
+  selector: string,
+  timeout: number,
+): Promise<void> {
+  try {
+    await $(selector).waitForExist({ timeout });
+  } catch (error) {
+    recordFreshWindowLookupFailure(selector, error);
+    throw error;
+  }
+}
 
 /** A fresh launch must introduce a new handle and expose its requested label. */
 export async function switchToFreshWindow(
@@ -22,6 +111,19 @@ export async function switchToFreshWindow(
     }
     return false;
   }, { timeout: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
+
+  // Always-on: one renderer round trip plus one /proc scan, recorded before the
+  // first element lookup can lose the session (#703).
+  lastFreshWindow = {
+    issue: 703,
+    phase: "selected",
+    requestedLabel: label,
+    handle: selected,
+    selectedAt: Date.now(),
+    pageAtSelection: await captureFreshWindowPage(),
+    nativeAtSelection: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
+  };
+  writeFreshWindowDiagnostics(lastFreshWindow, diagnosticsDirectory);
   return selected;
 }
 

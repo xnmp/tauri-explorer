@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-function processIds(): number[] {
+export function processIds(): number[] {
   return fs.readdirSync("/proc").filter(name => /^\d+$/.test(name)).map(Number);
 }
 
@@ -18,7 +18,7 @@ export function processExecutable(pid: number): string | null {
   catch { return null; }
 }
 
-function parentPid(pid: number): number | null {
+export function parentPid(pid: number): number | null {
   try {
     const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
     return Number(stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[1]);

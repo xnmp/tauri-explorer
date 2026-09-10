@@ -1078,6 +1078,9 @@
   /* Vertical docks fill the column width; the divider moves to the docked edge. */
   .preview-pane.vertical {
     width: 100%;
+    /* The parent owns the effective vertical allocation so a restored
+       preference can leave a usable file region under root UI zoom. */
+    height: 100% !important;
     flex-shrink: 0;
     border-left: none;
   }

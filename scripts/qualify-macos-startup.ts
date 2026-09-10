@@ -8,7 +8,6 @@ import {
   readVerifiedNativeBuildManifest,
   buildInteractiveMacStartupQualificationReport,
   buildMacStartupQualificationReport,
-  parseAttributedMacStartupLog,
   resolveQualificationArtifactPath,
   stopNativeStartupProcess,
   waitForMacStartupProcess,
@@ -90,21 +89,14 @@ async function runSample(
   child.stderr.on("data", (chunk) => (log += chunk.toString()));
 
   try {
-    await waitForMacStartupProcess(child, () => log, {
+    // The wait already parses the full attributed marker set; re-parsing here
+    // would be a second place for the log format to drift out of agreement.
+    const measurement = await waitForMacStartupProcess(child, () => log, {
       timeoutMs,
       survivalMs: 5_000,
       measureWarm,
     });
-    return {
-      ...parseAttributedMacStartupLog(log, {
-        firstFunctionalFrame: "not-observed",
-        firstFunctionalFrameMs: null,
-        inputOutcome: "not-verified",
-        inputReadyMs: null,
-        measureWarm,
-      }),
-      log: logPath,
-    };
+    return { ...measurement, log: logPath };
   } finally {
     try {
       await stopNativeStartupProcess(child);

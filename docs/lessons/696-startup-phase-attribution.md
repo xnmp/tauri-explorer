@@ -24,6 +24,39 @@ Dock bounce. `qualifyHalfBounce` returns `unqualified` — never a pass — unle
 every sample carries an externally observed functional frame and a verified
 input outcome against a *measured* deadline.
 
+## An independent "is it ready yet" regex will drift, silently
+
+`waitForMacStartupProcess` had its own `parseMacStartupLog` matching
+`Startup(native-ready):\s*app-run-to-ready=`, while the report was built by
+`parseAttributedMacStartupLog`. When the readiness line gained `window=main`,
+the predicate stopped matching the format the binary emits, so every
+direct-process sample would have timed out at 30 s on a real Mac — and both
+`macos-smoke.yml` startup steps use that branch. Nothing failed locally because
+the unit fixtures still encoded the *old* string: the tests agreed with
+themselves rather than with the binary. There is now one parser, the fixtures
+are copied verbatim from a captured launch, and requiring the full attributed
+marker set also closed a race where readiness could be declared before the
+webview line had flushed.
+
+## The residual must be bounded, or it becomes the hiding place
+
+`unattributedMs = launchTotalMs − attributedMs` holds by construction, so on its
+own it proves nothing. A wall-clock step, or a log file holding two runs
+(first-occurrence regexes happily mix them), inflates one of the two
+epoch-correlated phases while the residual quietly goes to −600 000 ms and every
+named phase still reads as plausible. The parser now rejects a residual below
+−5 ms. Likewise a duplicated webview marker moves time out of one phase and into
+the next with a *zero* residual to show for it, so duplicates are rejected too —
+and `app-ready` is latched at the source, because a navigation landing between
+readiness and the second animation frame legitimately re-runs that effect.
+
+## A missed measured deadline is a failed run
+
+`report.passed` used to ignore `halfBounce`, so a run whose measured p95 missed
+the supplied deadline still wrote `passed: true` and exited 0. `missed` now
+becomes a run error. `unqualified` deliberately does not: no deadline, or
+incomplete interactive evidence, claims nothing either way.
+
 ## Duplicate marks are a merge hazard, and the log will tell you
 
 After merging #684, the startup log read

@@ -277,5 +277,7 @@ describe("interactive Mac startup evidence ingestion", () => {
       finishedAt: "2026-09-09T01:01:00.000Z",
     });
     expect(report.halfBounce).toMatchObject({ status: "missed", deadlineMs: 700 });
+    // A missed measured deadline is a failed run, not a green one with a note.
+    expect(report.passed).toBe(false);
   });
 });

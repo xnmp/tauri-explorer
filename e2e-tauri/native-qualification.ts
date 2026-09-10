@@ -925,6 +925,11 @@ export function buildMacStartupQualificationReport(
 ) {
   const samples = [...input.samples];
   const errors = [...input.errors];
+  const halfBounce = qualifyHalfBounce(samples, input.halfBounceDeadlineMs);
+  // An explicitly measured deadline that the evidence misses is a failed run,
+  // not a green one with a footnote. `unqualified` (no deadline, or incomplete
+  // interactive evidence) stays non-fatal: it claims nothing either way.
+  if (halfBounce.status === "missed") errors.push(halfBounce.reason);
   return {
     schemaVersion: 2 as const,
     build: input.build,
@@ -939,7 +944,7 @@ export function buildMacStartupQualificationReport(
       ),
     ),
     phaseAttribution: summarizeMacStartupPhases(samples),
-    halfBounce: qualifyHalfBounce(samples, input.halfBounceDeadlineMs),
+    halfBounce,
     samples,
     artifacts: [...input.artifacts],
     failureArtifacts: errors.length > 0 ? [...input.artifacts] : [],
@@ -973,6 +978,14 @@ function durationToMilliseconds(value: string, unit: string): number {
       throw new Error(`unsupported startup duration unit: ${unit}`);
   }
 }
+
+/**
+ * How far the two wall-clock-correlated boundaries may disagree with the native
+ * monotonic total before the sample is rejected. Ordinary scheduling jitter
+ * between the two clocks is sub-millisecond; anything beyond this is a clock
+ * step or a log that does not describe a single run.
+ */
+const CORRELATION_TOLERANCE_MS = 5;
 
 function requiredNumber(
   match: RegExpMatchArray | null,
@@ -1027,12 +1040,20 @@ export function parseAttributedMacStartupLog(
   const appRunEpochMs = requiredNumber(nativeWindow, 1, "native-window");
   const processEntryMs = durationToMilliseconds(nativeWindow[2], nativeWindow[3]);
   const windowBuiltMs = durationToMilliseconds(nativeWindow[4], nativeWindow[5]);
-  const webviewMarker = (name: string): number =>
-    requiredNumber(
-      webviewLine?.match(new RegExp(`${name}=([\\d.]+)ms`)) ?? null,
+  const webviewMarker = (name: string): number => {
+    const occurrences =
+      webviewLine?.match(new RegExp(`(?<![\\w-])${name}=([\\d.]+)ms`, "g")) ?? [];
+    if (occurrences.length > 1) {
+      // The first occurrence wins, so a duplicate would silently move time out
+      // of one phase and into the next with a zero residual to show for it.
+      throw new Error(`${name} marker is recorded more than once`);
+    }
+    return requiredNumber(
+      webviewLine?.match(new RegExp(`(?<![\\w-])${name}=([\\d.]+)ms`)) ?? null,
       1,
       name,
     );
+  };
   const bootEpochMs = requiredNumber(
     webviewLine?.match(/boot-epoch-ms=([\d.]+)/) ?? null,
     1,
@@ -1056,7 +1077,6 @@ export function parseAttributedMacStartupLog(
     : null;
 
   if (
-    bundleExecMs < 0 ||
     listReadyMs < bundleExecMs ||
     settingsReadyMs < bundleExecMs ||
     commandsReadyMs < bundleExecMs ||
@@ -1098,6 +1118,17 @@ export function parseAttributedMacStartupLog(
   // its own right and is never redistributed across the attributed phases.
   const launchTotalMs = Number((processEntryMs + readinessTotalMs).toFixed(3));
   phases.unattributedMs = Number((launchTotalMs - attributedMs).toFixed(3));
+  // The residual is the whole point of this decomposition, so it must not be a
+  // place for correlation failures to hide. The two epoch-correlated phases are
+  // the only ones a wall-clock step (or a log holding two runs) can inflate;
+  // when that happens the residual goes sharply negative instead of the phases
+  // looking wrong. Reject the sample rather than publish a plausible fiction.
+  if (phases.unattributedMs < -CORRELATION_TOLERANCE_MS) {
+    throw new Error(
+      "correlated startup clocks disagree with the native monotonic total: " +
+        `residual ${phases.unattributedMs.toFixed(3)}ms`,
+    );
+  }
 
   return {
     coldTotalMs: readinessTotalMs,
@@ -1194,28 +1225,25 @@ export function qualifyHalfBounce(
       };
 }
 
-export function parseMacStartupLog(
+/**
+ * The direct-process qualifier's readiness predicate. It deliberately uses the
+ * SAME parser the report is built from: an independent "is it ready yet" regex
+ * drifted from the emitted log format once already (#696) and, because the
+ * runner only re-parsed afterwards, the drift was invisible until a Mac run.
+ * Requiring the full attributed marker set also removes the race where
+ * readiness was declared before the webview line had flushed.
+ */
+function parseDirectProcessStartupLog(
   log: string,
   options: { measureWarm?: boolean } = {},
-): MacStartupMeasurement {
-  const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
-  const cold = log.match(
-    new RegExp(`Startup\\(native-ready\\):\\s*app-run-to-ready=${duration}`),
-  );
-  const warm = log.match(
-    new RegExp(`Startup\\(warm-activate\\):\\s*show=${duration}`),
-  );
-  if (!cold)
-    throw new Error("native-ready marker missing from macOS process log");
-  if (options.measureWarm !== false && !warm)
-    throw new Error("warm-activate marker missing from macOS process log");
-  return {
-    coldTotalMs: durationToMilliseconds(cold[1], cold[2]),
-    warmShowMs:
-      options.measureWarm !== false && warm
-        ? durationToMilliseconds(warm[1], warm[2])
-        : null,
-  };
+): AttributedMacStartupMeasurement {
+  return parseAttributedMacStartupLog(log, {
+    firstFunctionalFrame: "not-observed",
+    firstFunctionalFrameMs: null,
+    inputOutcome: "not-verified",
+    inputReadyMs: null,
+    measureWarm: options.measureWarm,
+  });
 }
 
 export function waitForMacStartupProcess(
@@ -1227,7 +1255,7 @@ export function waitForMacStartupProcess(
     pollMs?: number;
     measureWarm?: boolean;
   },
-): Promise<MacStartupMeasurement> {
+): Promise<AttributedMacStartupMeasurement> {
   return new Promise((resolve, reject) => {
     let completed = false;
     let survivalTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1257,7 +1285,9 @@ export function waitForMacStartupProcess(
     const onError = (error: Error): void => {
       fail(new Error(`application process error: ${error.message}`));
     };
-    const succeedAfterSurvival = (measurement: MacStartupMeasurement): void => {
+    const succeedAfterSurvival = (
+      measurement: AttributedMacStartupMeasurement,
+    ): void => {
       clearInterval(pollTimer);
       clearTimeout(timeoutTimer);
       survivalTimer = setTimeout(() => {
@@ -1274,7 +1304,7 @@ export function waitForMacStartupProcess(
     const inspectLog = (): void => {
       if (survivalTimer || completed) return;
       try {
-        succeedAfterSurvival(parseMacStartupLog(readLog(), options));
+        succeedAfterSurvival(parseDirectProcessStartupLog(readLog(), options));
       } catch {
         // Keep collecting the scenario's required native markers until the bound.
       }

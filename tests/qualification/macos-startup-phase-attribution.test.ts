@@ -98,6 +98,93 @@ describe("macOS startup phase attribution", () => {
     ).toThrow("receipt");
   });
 
+  it("rejects a sample whose correlated clocks cannot describe one run", () => {
+    // A wall-clock step (or a log file holding two runs) inflates one of the two
+    // epoch-correlated phases. Without a bound the residual just goes sharply
+    // negative and the phases read as plausible, so the sample is refused.
+    expect(() =>
+      parseAttributedMacStartupLog(
+        attributedLog
+          .replace("boot-epoch-ms=1300.0", "boot-epoch-ms=601300.0")
+          .replace("receipt-epoch-ms=1800.0", "receipt-epoch-ms=601800.0"),
+      ),
+    ).toThrow("correlated startup clocks disagree");
+    expect(() =>
+      parseAttributedMacStartupLog(
+        attributedLog.replace("receipt-epoch-ms=1800.0", "receipt-epoch-ms=9999999.0"),
+      ),
+    ).toThrow("correlated startup clocks disagree");
+    // Ordinary sub-millisecond disagreement between the clocks is still fine.
+    expect(
+      parseAttributedMacStartupLog(
+        attributedLog.replace("receipt-epoch-ms=1800.0", "receipt-epoch-ms=1799.6"),
+      ).phases.unattributedMs,
+    ).toBeCloseTo(10.4, 3);
+  });
+
+  it("refuses a duplicated webview marker instead of shifting time between phases", () => {
+    // The parser takes the first occurrence, so a duplicate would quietly move
+    // time out of requiredAppWorkMs and into frameSchedulingMs, residual zero.
+    expect(() =>
+      parseAttributedMacStartupLog(
+        attributedLog.replace("app-ready=400.0ms", "app-ready=400.0ms app-ready=430.0ms"),
+      ),
+    ).toThrow("app-ready marker is recorded more than once");
+    expect(() =>
+      parseAttributedMacStartupLog(
+        attributedLog.replace(
+          "settings-ready=300.0ms",
+          "settings-ready=300.0ms settings-ready=300.0ms",
+        ),
+      ),
+    ).toThrow("settings-ready marker is recorded more than once");
+  });
+
+  it("fails the run when a measured half-bounce deadline is missed", () => {
+    const observed = {
+      ...parseAttributedMacStartupLog(attributedLog),
+      firstFunctionalFrame: "observed" as const,
+      firstFunctionalFrameMs: 700,
+      inputOutcome: "verified" as const,
+      inputReadyMs: 810,
+      log: "/qualification/sample-01.log",
+    };
+    const report = (deadline: number | null) =>
+      buildMacStartupQualificationReport({
+        build: verifiedBuild,
+        platform: {
+          os: "macos", release: "25.6", arch: "arm64",
+          hardwareModel: "Mac16,1", cpu: "Apple M4", memoryBytes: 16_000_000_000,
+        },
+        scenario: {
+          id: "macos-interactive-startup", requestedSamples: 1, timeoutMs: 30_000,
+          warmMeasure: false, launchMethod: "launch-services-normal-application-launch",
+          cachePolicy: "cold", focus: "frontmost", visibility: "recorded",
+          frameCriterion: "recorded", inputCriterion: "verified",
+        },
+        startedAt: "2026-09-09T01:00:00.000Z",
+        finishedAt: "2026-09-09T01:01:00.000Z",
+        samples: [observed],
+        artifacts: [observed.log],
+        errors: [],
+        halfBounceDeadlineMs: deadline,
+      });
+
+    const missed = report(700);
+    expect(missed.halfBounce.status).toBe("missed");
+    expect(missed.passed).toBe(false);
+    expect(missed.errors).toEqual([missed.halfBounce.reason]);
+    // The evidence that explains the miss must survive the failed run.
+    expect(missed.failureArtifacts).toEqual([observed.log]);
+
+    expect(report(900).passed).toBe(true);
+    // Claiming nothing is not failing: no deadline stays a passing, silent run.
+    expect(report(null)).toMatchObject({
+      passed: true,
+      halfBounce: { status: "unqualified" },
+    });
+  });
+
   it("summarizes p50 and p95 for every reported phase", () => {
     const first = parseAttributedMacStartupLog(attributedLog);
     const second = parseAttributedMacStartupLog(

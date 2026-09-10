@@ -102,5 +102,12 @@ the first suggestion is auto-selected. Worth its own issue.
   ordering questions on its own (the bogus path in the pane, the address bar
   still in edit mode holding a completed path). Read it before opening the
   trace viewer.
-- Six of the nine originally listed outcomes did not reproduce in ~30 four-worker
-  repeats plus a full-suite run and were left untouched.
+- Six of the nine originally listed outcomes did not reproduce in ~21
+  four-worker repeats each plus two full `ALL_VIEW_MODES=1` suite runs, and were
+  left untouched: `git-command-palette:12`,
+  `git-graph-base-update-merges:13`, `git-graph-branch-line-jump:59`,
+  `git-graph-undo:180`, `git-graph:78`, `tiles-rename-no-shift:12`.
+- `e2e/performance.spec.ts` and `e2e/preview-resize-contract.spec.ts` fail in a
+  contended full-suite run and pass at `--repeat-each=3` in isolation. That is
+  the documented CPU-contention flake mode, not a regression — check in
+  isolation before treating either as one.

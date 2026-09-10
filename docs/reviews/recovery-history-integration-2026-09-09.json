@@ -1,0 +1,230 @@
+{
+  "date": "2026-09-09",
+  "scope": "Production Linux single-overwrite native Undo/Redo and retired-renderer command settlement",
+  "contracts": [
+    "Confirmed overwrite receipts mint native Replacement actions with exact operation ID and effect revision; renderer serialization exposes only the display path",
+    "Renderer admission recursively rejects replacement actions and serde input cannot recreate native recovery tokens",
+    "Undo restores original and Redo reapplies independent retained copy, each opposite carrying the newly confirmed effect revision",
+    "Inspect ownership churn does not stale native content-history tokens; stale admission is unchanged, post-execution interruption consumes an uncertain inverse",
+    "History clear or eviction does not delete durable recovery records or artifacts",
+    "The existing independently owned history supervisor settles detached effects and publishes filesystem changes once; recovery worker owns inventory publication after native owner release",
+    "A destroyed renderer loses its local history while accepted work still completes; surviving renderer receives recovery updates and refreshed listing without inheriting Undo or Redo"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: --test-threads=1",
+      "passed": 435,
+      "failed": 0,
+      "ignored": 11,
+      "exit_code": 0,
+      "log": "/tmp/recovery-history-integration-tests-final.log"
+    },
+    "frontend": {
+      "command": "bunx vitest run tests/state/undo-lifetime.test.ts tests/state/undo-cross-window.test.ts tests/state/undo-helpers.test.ts tests/state/pane-mutation-dialogs.test.ts",
+      "passed": 27,
+      "files": 4,
+      "exit_code": 0,
+      "runner": "effective_claims_adversary_sol"
+    },
+    "native": {
+      "command": "bash /tmp/run-file-recovery-native.sh",
+      "passed": 5,
+      "failed": 0,
+      "exit_code": 0,
+      "log": "/tmp/recovery-history-native-ui-final.log",
+      "profile": "/tmp/explorer-file-recovery-native-1wVxam",
+      "binary_sha256": "e13361fd764b0c782eb19a408ff01b70be2fa9babda3a0394afa4a6318440ed6",
+      "fixtures": {
+        "normal": {
+          "id": "9e624592d2f658ba81c5a9eda58ce98019ffe2c2782377324fbb18a8a0d9491a",
+          "root": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/forward-target/.tauri-explorer-recovery-0cc6c6e5fdaa4c32f03f7d8acc6566da9414fa049bbb25290ffb69f68dddb7bb",
+          "journal": {
+            "generation": 53,
+            "state": {
+              "kind": "replacement",
+              "state": {
+                "effect_revision": 6,
+                "root": {
+                  "platform": "linux",
+                  "device": 44,
+                  "inode": 7835215
+                },
+                "phase": "restored",
+                "published": {
+                  "version": {
+                    "object": {
+                      "platform": "linux",
+                      "device": 44,
+                      "inode": 7835221
+                    },
+                    "size": 24,
+                    "modified_seconds": 1788890758,
+                    "modified_nanos": 591383678,
+                    "directory": false,
+                    "symlink": false,
+                    "mode": 33188,
+                    "uid": 1000,
+                    "gid": 1000
+                  },
+                  "final_mode": null
+                },
+                "error": null
+              }
+            }
+          },
+          "files": {
+            "target": {
+              "path": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/forward-target/live-copy.txt",
+              "bytes": 26,
+              "sha256": "0e3f053c704b0d5769c49b1f8e4fd7087001c319f6df7723fd2b1c0927c1d25e"
+            },
+            "source": {
+              "path": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/forward-source/live-copy.txt",
+              "bytes": 24,
+              "sha256": "a517dc3f703ac1606bc87ab3d98b86d957dc3c6db65e2f100d18a4e88e0b83a3"
+            },
+            "retained_copy": {
+              "path": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/forward-target/.tauri-explorer-recovery-0cc6c6e5fdaa4c32f03f7d8acc6566da9414fa049bbb25290ffb69f68dddb7bb/publication",
+              "bytes": 24,
+              "sha256": "a517dc3f703ac1606bc87ab3d98b86d957dc3c6db65e2f100d18a4e88e0b83a3"
+            }
+          }
+        },
+        "detached": {
+          "id": "d4bfb516e6f1a7b5565806e55b5a44d89337e6e9d9b22a3c89f0cf95d9f6195c",
+          "root": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/detached-target/.tauri-explorer-recovery-fcf19710cd8d6374d0aeea851c9e92bc5db5657c657b0b47a096d02ce32f95e3",
+          "journal": {
+            "generation": 73,
+            "state": {
+              "kind": "replacement",
+              "state": {
+                "effect_revision": 2,
+                "root": {
+                  "platform": "linux",
+                  "device": 44,
+                  "inode": 7835291
+                },
+                "phase": "restored",
+                "published": {
+                  "version": {
+                    "object": {
+                      "platform": "linux",
+                      "device": 44,
+                      "inode": 7835297
+                    },
+                    "size": 22,
+                    "modified_seconds": 1788890764,
+                    "modified_nanos": 959795420,
+                    "directory": false,
+                    "symlink": false,
+                    "mode": 33188,
+                    "uid": 1000,
+                    "gid": 1000
+                  },
+                  "final_mode": null
+                },
+                "error": null
+              }
+            }
+          },
+          "files": {
+            "target": {
+              "path": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/detached-target/detached.txt",
+              "bytes": 24,
+              "sha256": "46c8f90c4a8e1f06a141775ce5f5f1c61d57d3d984541ab2e956c8a8d572b722"
+            },
+            "source": {
+              "path": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/detached-source/detached.txt",
+              "bytes": 22,
+              "sha256": "79ac90022baa404e6a18542131fbdf588b48385abe347254ef7d47b65a67cb0d"
+            },
+            "retained_copy": {
+              "path": "/tmp/explorer-file-recovery-native-1wVxam/fixture/replacement/detached-target/.tauri-explorer-recovery-fcf19710cd8d6374d0aeea851c9e92bc5db5657c657b0b47a096d02ce32f95e3/publication",
+              "bytes": 22,
+              "sha256": "79ac90022baa404e6a18542131fbdf588b48385abe347254ef7d47b65a67cb0d"
+            }
+          }
+        }
+      },
+      "gate_receipts": {
+        "8-undo.released.json": {
+          "status": "released",
+          "token": "4230bfa1-ff3d-4517-b407-9ac574d493f5"
+        },
+        "8-undo.accepted.json": {
+          "direction": "undo",
+          "entryId": 8,
+          "pid": 1389683,
+          "token": "4230bfa1-ff3d-4517-b407-9ac574d493f5"
+        }
+      },
+      "listing_assertion": "surviving .size-cell reaches 24 bytes before screenshot; exact-ID Inspect follows completion"
+    },
+    "typecheck": {
+      "command": "bun run check",
+      "errors": 0,
+      "warnings": 0,
+      "log": "/tmp/recovery-history-typecheck.log"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "existing_library_dead_code_warnings": 8,
+      "log": "/tmp/recovery-history-clippy.log"
+    },
+    "format": "passed",
+    "architecture": "bun run lint:arch clean",
+    "maps": "415/415 indexed source files, no unresolved references",
+    "diff_check": "passed",
+    "native_build": {
+      "command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/recovery-history-native-build.log"
+    }
+  },
+  "independent_review": {
+    "agent": "recovery_native_review_sol",
+    "verdict": "CONFIRMED",
+    "scope": "native-only authority, semantic revision execution/settlement, sole refresh publication, actual native command and destroyed-renderer acceptance",
+    "acceptance_correction": "Initial screenshot preceded listing refresh; strengthened real DOM size wait and post-completion Inspect passed without production changes"
+  },
+  "limitations": [
+    "Native grouped replacements and ordinary-copy/batch admission remain pending",
+    "Inventory-only warnings currently use Execution.error and would stop a future native batch; separate warning and failure before integrating grouped replacements",
+    "Retirement/discard and storage quotas remain unimplemented; history eviction does not reclaim durable storage",
+    "The native suite uses dev-only application probes to enter production copy/Undo/Redo flows; it bypasses clipboard/conflict-dialog and keyboard interaction",
+    "Surviving listing refresh is eventual; observed trace took about 1.7 seconds and establishes no performance bound",
+    "No power-loss, same-label reactivation, Windows/macOS runtime qualification or macOS half-bounce measurement in this step",
+    "Flagged native debug build and E2E frontend assets remain on disk; rebuild ordinary production assets before publication",
+    "No commit, push, merge or deployment performed; prior publication approval-review restriction unchanged"
+  ],
+  "screenshots": {
+    "screenshots/refactor/repo-health-cleanup/native-production-copy-redone.png": "95df31fcce79abdead60f0efdb829bbb5b23e96ef29ab6cfcb1954f56e27cda8",
+    "screenshots/refactor/repo-health-cleanup/native-replacement-detached-undo.png": "c7323c07d78e8b8d83daf832def78a00a19d9981f3324268e9abbc64e404940e"
+  },
+  "source_sha256": {
+    "src-tauri/src/file_history/action.rs": "8e4ea30ae3d3989399a20c97a93e77246bb2daee67209f848df2a9eeeaa495cd",
+    "src-tauri/src/file_history/execution.rs": "f0702d630cb03ed794ead081ebe2c94cd4b94b83e1eb0ca9f285fa749fa703fe",
+    "src-tauri/src/file_history/mod.rs": "9995f0ecbea26a7e317b8358c2f5e9921550c483adc9baa9a5238eaa0bdedb84",
+    "src-tauri/src/file_history/model.rs": "b2d4dcbc989dddb0b1ce816b861bfa41384ed666ded9b76b60842e5b5f006af8",
+    "src-tauri/src/file_history/plan.rs": "2bde8fb457a161d81ac73b1f725fde61a5fec61c8eea461f030863488a617a42",
+    "src-tauri/src/files/recovery/commands.rs": "016ca7916765e31aa1f830216bf53ea1951d033155272cc8c4c07bbb7eb44019",
+    "src-tauri/src/files/recovery/forward_copy.rs": "31b9a6e23fc5fe8affe2a90155451245c69aaf4730abc19d828dee499f47793e",
+    "src-tauri/src/files/recovery/history.rs": "8610dedf197103e71100a848c13083273f7181d981e160c036e3d34a3e563617",
+    "src-tauri/src/files/recovery/mod.rs": "721ea8f9f89ddd51b35a7b066b362c8eb90dc9493ca54477b02ebd81410bcbe1",
+    "src-tauri/src/files/recovery/model.rs": "f65a64a31cb8d4a2c00d87161616ee15ef81e7473faad2a41ec95ef2011f33c0",
+    "src-tauri/src/files/recovery/runtime.rs": "a2ca69596a80836ffa613b377a87db4934b20c9f75b288650f361dd0f5812ffb",
+    "src-tauri/src/file_mutation.rs": "203036fdabebd5cbab4258bb2df87ca71db3dbbbe0031346ad317ba3693048bc",
+    "src-tauri/src/files/mutation.rs": "c8bec5090505bf8420159bc083e0ed6e6061e4d8cbb0f1809ca76e78b9f0be23",
+    "src-tauri/test_support/file_history_action.rs": "d7233dc9079150bec24bde5ef08fa1ba9e35afa97b682f76c2a74e2e89bfc803",
+    "src-tauri/test_support/file_history_replacement.rs": "7b2767b0304ebe44a60efc99bf2de443effeb087380fe874d45d4996df8e8104",
+    "src-tauri/test_support/file_history_uncertainty.rs": "ea656fecf7db81d57c09a10d4c340f92a3763e223ae1129a5ea57d5fc01fc4be",
+    "src/lib/domain/file-history.ts": "800f65cebed94941b8ef253ecd8d3a4a74415a00ad2264668b81e03d0f06ab61",
+    "src/lib/state/undo.svelte.ts": "bf9820a3bfcf81cbf80c7baa2e8892f8c54661bbe2e35dcacb344b3e8c15afdc",
+    "src/lib/state/undo-helpers.ts": "963055e3f571d75d03f2def1a5baea20a2943913edf596ddd827304065f6391f",
+    "tests/state/undo-lifetime.test.ts": "1131a717bafcd38629f3ebbd4bd752bbebcbbc5de180ab0338b33e159975a84b",
+    "tests/state/undo-helpers.test.ts": "51e067cbc4ca79f9b5e490e859b18daaadbea0f135d6b9df1dff2cf8d06b4752",
+    "tests/state/pane-mutation-dialogs.test.ts": "3e56989f9c8ce33b7c3e463ed92be8a0474dacf3ecde954cbef54cd870ffe10c",
+    "e2e-tauri/specs/file-recovery.spec.ts": "9d9a4aa6362984dd83cbd52e70f0d7e37b40659a4e7cc6d12f7b4e4e22f1372e"
+  }
+}

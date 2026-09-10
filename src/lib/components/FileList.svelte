@@ -3,7 +3,9 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, onDestroy } from "svelte";
+  import { setFileListFocusReturn } from "$lib/state/file-list-focus-context";
+  import { createDeferredFocusRequest, type DeferredFocusRequest } from "$lib/state/deferred-focus";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
@@ -32,22 +34,6 @@
 
   let { explorer, scrollToEntry = $bindable() }: Props = $props();
 
-  // File rows form one roving tab-stop composite. This local cursor follows
-  // real DOM focus so multi-selection never makes multiple rows tabbable.
-  let focusedPath = $state<string | undefined>();
-  let focusedDirectory = $state<string | undefined>();
-  let viewContainsIndex = $state<((index: number) => boolean) | undefined>();
-  const focusedIndex = $derived(explorer.displayEntries.findIndex((entry) => entry.path === focusedPath));
-  const fallbackTabStop = $derived(focusedIndex >= 0 && !(viewContainsIndex?.(focusedIndex) ?? false));
-  $effect(() => {
-    const entries = explorer.displayEntries;
-    const changedDirectory = focusedDirectory !== explorer.currentPath;
-    if (changedDirectory || !entries.some((entry) => entry.path === focusedPath)) {
-      focusedDirectory = explorer.currentPath;
-      focusedPath = entries[0]?.path;
-    }
-  });
-
 
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
@@ -66,10 +52,17 @@
   });
 
   // Content container ref
+  let fileListRef = $state<HTMLElement | null>(null);
   let contentRef = $state<HTMLElement | null>(null);
 
   // Scroll-to-entry-index method, bound from whichever view is active
   // (Details/List/Tiles all virtualize and own their scroll container).
+  let viewContainsIndex = $state<((index: number) => boolean) | undefined>();
+  const cursorIndex = $derived(explorer.focusedEntry ? explorer.displayEntries.indexOf(explorer.focusedEntry) : -1);
+  const fallbackTabStop = $derived(cursorIndex >= 0 && !(viewContainsIndex?.(cursorIndex) ?? false));
+  let pendingFocus: DeferredFocusRequest | undefined;
+  onDestroy(() => pendingFocus?.cancel());
+
   let viewScrollToIndex = $state<((index: number) => void) | undefined>();
 
   // Track content width for ListView auto columns
@@ -104,26 +97,55 @@
     },
   );
 
-  /** Scroll the matched entry into view after type-ahead selection. */
+  /** Share one focus request across navigation, type-ahead and inline editing. */
+  function beginFocusRequest(isCurrent: () => boolean = () => true): DeferredFocusRequest {
+    pendingFocus?.cancel();
+    const path = explorer.currentPath;
+    const mode = explorer.viewMode;
+    const previousFocus = document.activeElement;
+    const wasInside = !!previousFocus && !!fileListRef?.contains(previousFocus);
+    const request = createDeferredFocusRequest(window, () =>
+      !!fileListRef?.isConnected && windowTabsManager.getActiveExplorer() === explorer
+      && explorer.currentPath === path && explorer.viewMode === mode
+      && isCurrent()
+      && (document.activeElement === previousFocus
+        || (wasInside && !previousFocus?.isConnected && document.activeElement === document.body)),
+    );
+    pendingFocus = request;
+    return request;
+  }
+
+  setFileListFocusReturn(() => {
+    const editor = document.activeElement;
+    if (!editor?.matches("input, textarea") || !fileListRef?.contains(editor)) return () => {};
+    const request = beginFocusRequest();
+    return (accepted) => {
+      if (!accepted) {
+        request.cancel();
+        if (pendingFocus === request) pendingFocus = undefined;
+        return;
+      }
+      void tick().then(() => {
+        const current = request.consume();
+        if (pendingFocus === request) pendingFocus = undefined;
+        if (current && explorer.focusedEntry) scrollToSelected(explorer.focusedEntry);
+      });
+    };
+  });
+
   function scrollToSelected(entry: FileEntry): void {
     const entries = explorer.displayEntries;
     const index = entries.indexOf(entry);
     if (index < 0) return;
 
-    // All three views virtualize and own their scroll container, so a jump
-    // target (type-ahead can land anywhere) may not be rendered yet. Ask the
-    // view to scroll the row/item into view, then focus it once it mounts.
+    const request = beginFocusRequest(() => explorer.focusedEntry?.path === entry.path);
     viewScrollToIndex?.(index);
-    tick().then(() => {
-      requestAnimationFrame(() => {
-        // VirtualList applies a programmatic scroll through its own
-        // coalesced frame; wait for that render window before restoring row
-        // focus from the viewport fallback.
-        requestAnimationFrame(() => {
-          const el = contentRef?.querySelector<HTMLElement>(`.entry-item[data-path="${CSS.escape(entry.path)}"]`);
-          el?.focus({ preventScroll: true });
-        });
-      });
+    void tick().then(() => {
+      const element = contentRef?.querySelector<HTMLElement>(`.entry-item[data-index="${index}"]`);
+      if (request.consume() && element?.dataset.path === entry.path) {
+        element.focus({ preventScroll: true });
+      }
+      if (pendingFocus === request) pendingFocus = undefined;
     });
   }
 
@@ -136,22 +158,22 @@
   // Shared item callbacks (passed to view components)
   // ===================
 
+  function handleFocusIn(event: FocusEvent): void {
+    const target = event.target as HTMLElement;
+    if (target.matches(".entry-item")) {
+      const index = Number(target.dataset.index);
+      const entry = explorer.displayEntries[index];
+      if (entry?.path === target.dataset.path) explorer.focusEntry(entry);
+    } else if (target.matches('.virtual-viewport[role="grid"]') && explorer.focusedEntry) {
+      scrollToSelected(explorer.focusedEntry);
+    }
+  }
+
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     explorer.selectEntry(entry, {
       ctrlKey: event.ctrlKey || event.metaKey,
       shiftKey: event.shiftKey,
     });
-    focusedPath = entry.path;
-  }
-
-  function handleFocusIn(event: FocusEvent): void {
-    const target = event.target as HTMLElement;
-    if (target.matches(".entry-item")) {
-      focusedPath = target.dataset.path;
-    } else if (target.matches(".virtual-viewport") && focusedPath) {
-      const focused = explorer.displayEntries.find((entry) => entry.path === focusedPath);
-      if (focused) scrollToSelected(focused);
-    }
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
@@ -337,7 +359,7 @@
 />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="file-list" onfocusin={handleFocusIn} onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
+<div class="file-list" bind:this={fileListRef} onfocusin={handleFocusIn} onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="content"
@@ -402,33 +424,30 @@
     {:else if explorer.viewMode === "details"}
       <DetailsView
         {explorer}
-        {focusedPath}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        {fallbackTabStop}
+        bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
     {:else if explorer.viewMode === "list"}
       <ListView
         {explorer}
-        {focusedPath}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        {fallbackTabStop}
+        bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
     {:else}
       <TilesView
         {explorer}
-        {focusedPath}
-        {fallbackTabStop}
-        bind:containsIndex={viewContainsIndex}
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        {fallbackTabStop}
+        bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
       />
     {/if}
@@ -450,6 +469,11 @@
     flex: 1;
     overflow: hidden;
     position: relative;
+  }
+
+  .file-list :global(.entry-item:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   .file-list:focus {

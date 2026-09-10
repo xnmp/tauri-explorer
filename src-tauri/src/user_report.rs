@@ -76,6 +76,7 @@ fn valid_image_magic(media_type: &str, bytes: &[u8]) -> bool {
     }
 }
 
+#[cfg(any(test, all(not(windows), not(target_os = "macos"))))]
 pub(crate) fn report_image_media_type(bytes: &[u8]) -> Option<&'static str> {
     ["image/png", "image/jpeg", "image/gif"]
         .into_iter()

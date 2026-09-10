@@ -1,55 +1,43 @@
-/**
- * Cold-start timing helper (startup-timing.ts).
- *
- * Verifies the report is one-shot (idempotent), marks are ordered and measured
- * from boot t0, and the summary is forwarded exactly once to the backend log
- * command. The invoke is mocked — in real mock/browser mode it rejects and is
- * swallowed, which we also assert can't throw.
- */
+/** Core Explorer readiness reporting: accurate boot origin and one-shot logging. */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const invokeMock = vi.hoisted(() =>
-  vi.fn(async (_cmd: string, _args?: Record<string, unknown>): Promise<unknown> => undefined),
-);
-vi.mock(import("../../src/lib/api/common"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, invoke: invokeMock as unknown as typeof actual.invoke };
-});
-
-// Anchor a deterministic t0 before importing the module (it reads __BOOT_T0__
-// at module init).
-(globalThis as { window?: unknown }).window = (globalThis as { window?: unknown }).window ?? {};
-(window as { __BOOT_T0__?: number }).__BOOT_T0__ = 0;
-
-import { markStartup, reportFirstPaint } from "../../src/lib/state/startup-timing";
+const log = vi.hoisted(() => vi.fn());
+vi.mock("$lib/api/environment", () => ({ logStartupTiming: log }));
 
 beforeEach(() => {
-  invokeMock.mockClear();
+  vi.resetModules();
+  log.mockReset().mockResolvedValue(undefined);
+  vi.stubGlobal("window", { __BOOT_T0__: 0 });
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
-describe("startup-timing", () => {
-  it("forwards a single summary to log_startup_timing on first report", () => {
+describe("startup timing", () => {
+  it("retains a zero boot origin and reports distinct listing and ready milestones", async () => {
+    let now = 10;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const { markStartup, reportStartupReady } = await import("$lib/state/startup-timing");
     markStartup("bundle-exec");
-    markStartup("mount");
-    reportFirstPaint();
+    now = 20;
+    markStartup("list-ready");
+    now = 40;
+    reportStartupReady();
+    expect(log).toHaveBeenCalledWith(
+      "Startup(webview): bundle-exec=10.0ms list-ready=20.0ms ui-ready=40.0ms total=40.0ms",
+    );
 
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-    const [cmd, args] = invokeMock.mock.calls[0];
-    expect(cmd).toBe("log_startup_timing");
-    const summary = (args as { summary: string }).summary;
-    expect(summary).toContain("Startup(webview):");
-    expect(summary).toContain("bundle-exec=");
-    expect(summary).toContain("mount=");
-    expect(summary).toContain("list-visible=");
-    expect(summary).toMatch(/total=[\d.]+ms/);
+    markStartup("too-late");
+    reportStartupReady();
+    expect(log).toHaveBeenCalledOnce();
   });
 
-  it("is idempotent — repeated reports and late marks do not re-send", () => {
-    // (module state persists across tests in-file; first report already fired)
-    reportFirstPaint();
-    markStartup("too-late");
-    reportFirstPaint();
-    expect(invokeMock).not.toHaveBeenCalled();
+  it("contains telemetry failures without blocking readiness reporting", async () => {
+    log.mockRejectedValue(new Error("logging unavailable"));
+    const { reportStartupReady } = await import("$lib/state/startup-timing");
+    expect(() => reportStartupReady()).not.toThrow();
+    await Promise.resolve();
+    expect(log).toHaveBeenCalledOnce();
   });
 });

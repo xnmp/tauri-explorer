@@ -10,6 +10,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import { basename } from "$lib/domain/path";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   osClipboardHasFiles,
@@ -134,13 +135,14 @@ function createClipboardStore() {
       return result;
     },
 
-    /** Update clipboard entries when a file is renamed. */
-    updatePath(oldPath: string, newEntry: FileEntry): void {
+    /** Rekey a committed rename even if a fresh metadata snapshot is missing.
+     * Existing clipboard metadata remains a last-known snapshot of the item. */
+    rekeyPath(oldPath: string, newPath: string, snapshot: FileEntry | null = null): void {
       if (!content) return;
       const idx = content.entries.findIndex((e) => e.path === oldPath);
       if (idx === -1) return;
       const updated = [...content.entries];
-      updated[idx] = newEntry;
+      updated[idx] = snapshot ?? { ...updated[idx], path: newPath, name: basename(newPath) };
       content = { ...content, entries: updated };
       broadcast(content);
     },

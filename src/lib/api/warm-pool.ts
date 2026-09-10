@@ -6,13 +6,13 @@
 import { invoke } from "./common";
 
 /** Reserve a spawn slot. Resolves true when the caller may spawn a window. */
-export async function warmPoolBeginSpawn(): Promise<boolean> {
-  return invoke<boolean>("warm_pool_begin_spawn");
+export async function warmPoolBeginSpawn(label: string): Promise<boolean> {
+  return invoke<boolean>("warm_pool_begin_spawn", { label });
 }
 
 /** Release a spawn reservation taken by warmPoolBeginSpawn. */
-export async function warmPoolCancelSpawn(): Promise<void> {
-  return invoke<void>("warm_pool_cancel_spawn");
+export async function warmPoolCancelSpawn(label: string): Promise<void> {
+  return invoke<void>("warm_pool_cancel_spawn", { label });
 }
 
 /** Claim a ready warm window from the pool. Resolves its label, or null when none. */
@@ -26,11 +26,16 @@ export async function warmPoolDiscard(label: string): Promise<void> {
 }
 
 /** Register a freshly-spawned window as a ready pool member. */
-export async function warmPoolRegister(label: string): Promise<void> {
-  return invoke<void>("warm_pool_register", { label });
+export async function warmPoolRegister(label: string): Promise<boolean> {
+  return invoke<boolean>("warm_pool_register", { label });
 }
 
 /** Tear down the warm-window pool (closes the parked hidden window). */
 export async function warmPoolShutdown(): Promise<void> {
   return invoke<void>("warm_pool_shutdown");
+}
+
+/** Commit a claimed destination after reveal; false means its lease expired. */
+export function warmPoolActivate(label: string): Promise<boolean> {
+  return invoke<boolean>("warm_pool_activate", { label });
 }

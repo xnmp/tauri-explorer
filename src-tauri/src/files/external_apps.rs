@@ -220,10 +220,9 @@ fn open_file_at_line_blocking(path: String, line: u32) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         for editor in KNOWN_EDITORS {
-            if find_editor_in_path(editor.binary) {
-                if spawn_editor(editor, &file_path, line).is_ok() {
-                    return Ok(());
-                }
+            if find_editor_in_path(editor.binary) && spawn_editor(editor, &file_path, line).is_ok()
+            {
+                return Ok(());
             }
         }
     }
@@ -282,11 +281,13 @@ pub async fn open_file_with(path: String, app: String) -> Result<(), AppError> {
 }
 
 /// Image extensions for sibling gathering.
+#[cfg(not(windows))]
 const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "bmp", "webp", "svg", "ico", "tiff", "tif",
 ];
 
 /// MIME type for an image file extension (lowercase, without the dot).
+#[cfg(any(not(windows), test))]
 fn image_mime_for_extension(ext: &str) -> &'static str {
     match ext {
         "jpg" | "jpeg" => "image/jpeg",
@@ -322,7 +323,7 @@ fn open_image_with_siblings_blocking(path: String) -> Result<(), AppError> {
     // (The sibling-list passing below is for Linux viewers like imv.)
     #[cfg(windows)]
     {
-        return opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()));
+        opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()))
     }
 
     #[cfg(not(windows))]
@@ -531,7 +532,7 @@ fn open_in_terminal_blocking(path: String, terminal: Option<String>) -> Result<(
             .current_dir(&dir)
             .spawn()
             .map(reap_in_background)
-            .map_err(|e| AppError::Io(e))?;
+            .map_err(AppError::Io)?;
     }
 
     Ok(())

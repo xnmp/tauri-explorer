@@ -1,0 +1,217 @@
+{
+  "checkpoint": "Complete-listing and selection reconciliation, Linux native acceptance",
+  "baseCommit": "47d80b489e34cd8cd85982fed8672fc40206b8c6",
+  "sourceSha256": {
+    "src/lib/domain/directory-reconciliation.ts": "a072dc8286a6907858cdecd7baa35e252b74555787edbf850b98801ac4056ec3",
+    "src/lib/state/pane-refresh.ts": "55cd4dd5e908c2065d3c17115ee0cfdad31ab0b6139bdfe98fb3f8b93746ffe5",
+    "src/lib/state/explorer.svelte.ts": "fdd8e2e16d36a18023742a1dea3602dcfb96711ce47fc3638df5fac05f7eb871",
+    "tests/domain/directory-reconciliation.test.ts": "ba37000d8ca3494b6158b0d55c08882d29bdaf5c049d3826c59c74f2eb9bb5bd",
+    "tests/state/pane-refresh.test.ts": "e69408d638d27684ec91d1744386c32be6234c9675d331a814eb0d9f50f0e7b6",
+    "tests/state/explorer.test.ts": "c94d6a2d91f930e7e5ef2b0cea821edf740bcc90f7fb668b0c0d05882f277fc3",
+    "e2e-tauri/specs/file-forward-history.spec.ts": "1216e068689779bdb572f7eee06c8c4801b32841066b58a873e88f170731aa13",
+    "scripts/bench-directory-reconciliation.ts": "54a93d5471af14c495bd470be1650c8750da7bdc72b04744427a137b79854a5e"
+  },
+  "normalBuild": {
+    "sha256": "4c3e38187ab58242e479499f449cd409c6c0edcdabe1680afca5ca719bbabb09",
+    "nativeProbePresent": {
+      "TAURI_E2E_HISTORY_GATE_DIR": false,
+      "Native forward admission gate failed": false,
+      "next-forward.accepted.json": false
+    },
+    "frontendProbePresent": {
+      "e2eHistoryReady": false,
+      "e2eFileMutationProbe": false,
+      "e2e-history-operation": false
+    }
+  },
+  "acceptanceBuildSha256": "2356030617a08a4635134e787dd0ba90953452eea1693b51d4c2b83e9308eb3c",
+  "nativeAcceptance": {
+    "runnerExitCode": 0,
+    "passed": 10,
+    "specFiles": 4,
+    "log": "/tmp/refresh-selection-native.log",
+    "cases": [
+      {
+        "case": "native-forward-held-result",
+        "held": {
+          "status": "held",
+          "heldAt": 1788828548033,
+          "targetPath": "/home/chong/.tauri-explorer-forward-history-v2XhKc/held-f417848b.txt",
+          "resultPath": "/home/chong/.tauri-explorer-forward-history-v2XhKc/held-f417848b-renamed.txt",
+          "token": "rename-held-d5ec878e-d130-4669-8eb6-a13a7f857402",
+          "command": "rename_entry"
+        },
+        "admitted": {
+          "revision": 3,
+          "undoId": 1,
+          "redoId": null,
+          "stackSize": 1,
+          "busy": false
+        },
+        "afterRenderer": {
+          "revision": 3,
+          "undoId": 1,
+          "redoId": null,
+          "stackSize": 1,
+          "busy": false
+        },
+        "afterUndo": {
+          "revision": 5,
+          "undoId": null,
+          "redoId": 2,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-same-name",
+        "seeded": {
+          "revision": 10,
+          "undoId": null,
+          "redoId": 4,
+          "stackSize": 0,
+          "busy": false
+        },
+        "afterNoOp": {
+          "revision": 12,
+          "undoId": null,
+          "redoId": 4,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-batch-renderer-destroy",
+        "accepted": {
+          "direction": "forward",
+          "entryId": 7,
+          "pid": 1645609,
+          "token": "51c9f6fd-d20c-413b-8da0-dffdade04c41"
+        },
+        "deleted": [
+          "/home/chong/.tauri-explorer-forward-history-v2XhKc/child-batch-a-bdd1109b.txt",
+          "/home/chong/.tauri-explorer-forward-history-v2XhKc/child-batch-b-bdd1109b.txt"
+        ],
+        "survivorEntries": [
+          "held-f417848b.txt",
+          "same-288dd88e-renamed.txt"
+        ],
+        "survivorHistory": {
+          "revision": 18,
+          "undoId": null,
+          "redoId": null,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-renderer-destroy",
+        "accepted": {
+          "direction": "forward",
+          "entryId": 8,
+          "pid": 1645609,
+          "token": "6b503c29-aa3e-4e7a-ac9f-a77b03f8e619"
+        },
+        "original": "/home/chong/.tauri-explorer-forward-history-v2XhKc/child-6291bd39.txt",
+        "renamed": "/home/chong/.tauri-explorer-forward-history-v2XhKc/child-6291bd39-renamed.txt",
+        "survivorEntries": [
+          "child-6291bd39-renamed.txt",
+          "held-f417848b.txt",
+          "same-288dd88e-renamed.txt"
+        ],
+        "survivorHistory": {
+          "revision": 22,
+          "undoId": null,
+          "redoId": null,
+          "stackSize": 0,
+          "busy": false
+        }
+      }
+    ],
+    "selectedBefore": "1 selected (33 bytes)",
+    "selectedAfter": "selected-info absent; two surviving entries"
+  },
+  "screenshots": [
+    "screenshots/refactor/repo-health-cleanup/native-refresh-selection-before.png",
+    "screenshots/refactor/repo-health-cleanup/native-refresh-selection-after.png"
+  ],
+  "checks": {
+    "failingBefore": {
+      "failed": 6,
+      "passed": 21,
+      "log": "/tmp/refresh-selection-before.log"
+    },
+    "focusedFinal": {
+      "passed": 32,
+      "log": "/tmp/refresh-selection-after-final.log"
+    },
+    "fullFrontendBeforeFinalAllocationOptimizations": {
+      "passed": 2305,
+      "skipped": 3,
+      "performancePassed": 30,
+      "log": "/tmp/refresh-selection-frontend.log"
+    },
+    "browserBeforeFinalAllocationOptimizations": {
+      "passed": 71,
+      "allViewModes": true,
+      "log": "/tmp/refresh-selection-browser.log"
+    },
+    "svelte": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "architecture": "clean",
+    "maps": "406/406"
+  },
+  "startupBundle": {
+    "chunks": 44,
+    "rawBytes": 666782,
+    "gzipBytes": 217696,
+    "gzipDeltaFromBase": 448
+  },
+  "microbenchmark": {
+    "runtime": "1.3.8",
+    "measurement": "Bun microbenchmark, not WebView frame/startup timing",
+    "results": [
+      {
+        "count": 10000,
+        "scenario": "unchanged complete listing, distinct equivalent entry objects, first entry selected",
+        "samples": 40,
+        "oldFingerprintMs": {
+          "p50": 1.5065460000000002,
+          "p95": 3.6160909999999973
+        },
+        "newReconciliationMs": {
+          "p50": 0.06689599999999984,
+          "p95": 0.13571600000000217
+        }
+      },
+      {
+        "count": 100000,
+        "scenario": "unchanged complete listing, distinct equivalent entry objects, first entry selected",
+        "samples": 40,
+        "oldFingerprintMs": {
+          "p50": 18.12265100000002,
+          "p95": 32.26465400000001
+        },
+        "newReconciliationMs": {
+          "p50": 0.8825480000000425,
+          "p95": 1.2844860000000153
+        }
+      }
+    ]
+  },
+  "limits": [
+    "Bun unchanged-listing microbenchmark is not WebView or startup timing. Concurrent mutation merges have additional cost and no general speedup is claimed.",
+    "No exactly-one-trailing-scan claim: domain/state tests verify requests at the existing scheduling boundary.",
+    "Selection snapshots do not distinguish ABA transitions. Newly assigned missing identities survive provisionally until a subsequent authoritative read.",
+    "Native acceptance is Linux window-destruction/selection coverage, not same-window renderer crash, process durability, Windows, macOS, or half-bounce acceptance."
+  ],
+  "independentReview": {
+    "model": "GPT-5.6 Sol",
+    "sourceVerdict": "ACCEPT",
+    "nativeVerdict": "ACCEPT",
+    "performanceVerdict": "CONFIRMED for unchanged-listing microbenchmark only",
+    "scope": "Real survivor selection count 1 to 0, exact disk/listing deletion, 9 compatibility outcomes; no cursor/anchor DOM or exact trailing-scan claim"
+  }
+}

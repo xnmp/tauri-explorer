@@ -6,12 +6,15 @@
 
 use crate::error::AppError;
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use tokio::sync::Mutex as AsyncMutex;
 
 /// Serializes concurrent config writes so they can't interleave.
 static WRITE_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn write_lock() -> &'static AsyncMutex<()> {
     WRITE_LOCK.get_or_init(|| AsyncMutex::new(()))
@@ -63,9 +66,46 @@ fn resolve_config_path(filename: &str) -> Result<PathBuf, AppError> {
     Ok(path)
 }
 
-/// Write `data` to `path` atomically: write a temp file in the same
-/// directory, then rename over the destination.
+/// Follow a config-file symlink chain without requiring the final target to
+/// exist. `canonicalize` cannot resolve a dangling final link, which is a
+/// valid dotfile-manager setup that a first app save should populate.
+fn resolve_write_target(path: &Path) -> std::io::Result<PathBuf> {
+    const MAX_SYMLINKS: usize = 40;
+    let mut target = path.to_path_buf();
+    let mut followed = 0;
+
+    loop {
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                if followed == MAX_SYMLINKS {
+                    return Err(std::io::Error::other(format!(
+                        "Config symlink chain exceeds {MAX_SYMLINKS} links"
+                    )));
+                }
+                let next = fs::read_link(&target)?;
+                followed += 1;
+                target = if next.is_absolute() {
+                    next
+                } else {
+                    target
+                        .parent()
+                        .ok_or_else(|| std::io::Error::other("Symlink has no parent directory"))?
+                        .join(next)
+                };
+            }
+            Ok(_) => return Ok(target),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(target),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Write `data` atomically through any config-file symlink: resolve the final
+/// target once, write a temp file beside it, then rename over that target.
 fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
+    // Resolving once is the operation's linearization point: a concurrent
+    // retarget of the config symlink affects the next write, not this one.
+    let path = resolve_write_target(path)?;
     let parent = path
         .parent()
         .ok_or_else(|| std::io::Error::other("Config path has no parent directory"))?;
@@ -74,21 +114,39 @@ fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
         .ok_or_else(|| std::io::Error::other("Config path has no file name"))?
         .to_string_lossy()
         .into_owned();
-    let tmp = parent.join(format!(".{}.tmp-{}", file_name, std::process::id()));
-    if let Err(e) = fs::write(&tmp, data) {
-        let _ = fs::remove_file(&tmp);
-        return Err(e);
-    }
+    let (tmp, mut file) = loop {
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{}.tmp-{}-{}",
+            file_name,
+            std::process::id(),
+            sequence
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
     // Config files can hold secrets (plugin API keys) — owner-only on Unix.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)) {
+        if let Err(e) = file.set_permissions(fs::Permissions::from_mode(0o600)) {
             let _ = fs::remove_file(&tmp);
             return Err(e);
         }
     }
-    fs::rename(&tmp, path).inspect_err(|_| {
+    if let Err(e) = file.write_all(data.as_bytes()).and_then(|_| file.flush()) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    drop(file);
+    fs::rename(&tmp, &path).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
     })
 }
@@ -239,5 +297,136 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
             .collect();
         assert!(leftovers.is_empty(), "temp files left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_updates_symlink_target_without_replacing_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("managed-settings.json");
+        let link = dir.path().join("settings.json");
+        fs::write(&target, "old").unwrap();
+        symlink(&target, &link).unwrap();
+
+        write_atomic(&link, "new").unwrap();
+
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_follows_relative_symlink_chains() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("managed-settings.json");
+        let middle = dir.path().join("current-settings.json");
+        let link = dir.path().join("settings.json");
+        fs::write(&target, "old").unwrap();
+        symlink("managed-settings.json", &middle).unwrap();
+        symlink("current-settings.json", &link).unwrap();
+
+        write_atomic(&link, "new").unwrap();
+
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::symlink_metadata(&middle)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_creates_dangling_symlink_target_without_replacing_link() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("managed-settings.json");
+        let link = dir.path().join("settings.json");
+        symlink("managed-settings.json", &link).unwrap();
+
+        write_atomic(&link, "new").unwrap();
+
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_keeps_owner_only_permissions_through_symlink() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("managed-settings.json");
+        let link = dir.path().join("settings.json");
+        fs::write(&target, "old").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).unwrap();
+        symlink(&target, &link).unwrap();
+
+        write_atomic(&link, "new").unwrap();
+
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_accepts_exactly_the_supported_symlink_depth() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("target.json");
+        fs::write(&target, "old").unwrap();
+        for index in (0..40).rev() {
+            let destination = if index == 39 {
+                "target.json".to_string()
+            } else {
+                format!("link-{}.json", index + 1)
+            };
+            symlink(destination, dir.path().join(format!("link-{index}.json"))).unwrap();
+        }
+
+        write_atomic(&dir.path().join("link-0.json"), "new").unwrap();
+
+        assert_eq!(fs::read_to_string(target).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_does_not_follow_a_precreated_staging_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let victim = dir.path().join("unrelated.json");
+        fs::write(&victim, "keep").unwrap();
+        let predictable = dir
+            .path()
+            .join(format!(".settings.json.tmp-{}", std::process::id()));
+        symlink(&victim, &predictable).unwrap();
+
+        let result = write_atomic(&path, "new");
+
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(
+            result.is_ok(),
+            "a planted staging symlink must not block a safe write: {result:?}"
+        );
+        assert_eq!(fs::read_to_string(path).unwrap(), "new");
     }
 }

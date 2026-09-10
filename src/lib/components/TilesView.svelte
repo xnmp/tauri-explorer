@@ -25,7 +25,7 @@
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import FolderThumbnail from "./FolderThumbnail.svelte";
   import InlineNewFolder, { isNewFolderSentinel } from "./InlineNewFolder.svelte";
-  import ItemButton from "./ItemButton.svelte";
+  import EntryCell from "./EntryCell.svelte";
   import VirtualList from "./VirtualList.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -35,14 +35,13 @@
     contentWidth: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
-    focusedPath?: string;
-    fallbackTabStop: boolean;
-    containsIndex?: (index: number) => boolean;
     /** Scroll the given displayEntries index into view (bound by FileList). */
     scrollToIndex?: (index: number) => void;
+    containsIndex?: (index: number) => boolean;
+    fallbackTabStop: boolean;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick, focusedPath, fallbackTabStop, containsIndex = $bindable(), scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
 
   // Reserved fixed name height: two lines at line-height 1.4 * 13px font.
   const NAME_HEIGHT = 37;
@@ -149,23 +148,25 @@
 >
   <VirtualList
     class="tiles-scroller file-rows"
+    role="grid" aria-label="Files" aria-multiselectable={true}
+    aria-rowcount={grid.rows.length} aria-colcount={tileColumns}
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={grid.rowContainsIndex}
     items={grid.rows}
     itemHeight={tileRowHeight}
     itemOverflow="visible"
     viewportPadding="8px"
-    tabindex={fallbackTabStop ? 0 : -1}
-    bind:containsIndex={grid.rowContainsIndex}
     getKey={(row) => row.startIndex}
     bind:scrollToIndex={grid.rowScrollToIndex}
   >
-    {#snippet children(row)}
-      <div class="tile-row" style="grid-template-columns: repeat({tileColumns}, minmax(0, 1fr)); gap: var(--tile-gap);">
+    {#snippet children(row, rowIndex)}
+      <div role="row" aria-rowindex={rowIndex + 1} class="tile-row" style="grid-template-columns: repeat({tileColumns}, minmax(0, 1fr)); gap: var(--tile-gap);">
         {#each row.items as entry, col (entry.path)}
           {#if isNewFolderSentinel(entry)}
-            <InlineNewFolder {explorer} variant="tiles" />
+            <div role="gridcell"><InlineNewFolder {explorer} variant="tiles" /></div>
           {:else}
           {@const iconColor = getFileIconColor(entry)}
-          <ItemButton class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick} focused={focusedPath === entry.path}>
+          <EntryCell column={col + 1} class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
             <div class="tile-icon" style:color={iconColor} data-drag-icon>
               {#if isImageFile(entry)}
                 <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
@@ -181,7 +182,7 @@
             </div>
             <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
             <GitStatusBadge entryName={entry.name} />
-          </ItemButton>
+          </EntryCell>
           {/if}
         {/each}
       </div>
@@ -233,8 +234,7 @@
   }
 
   .tiles-view :global(.tile-item:focus) {
-    outline: 2px solid var(--focus-stroke-outer, var(--accent));
-    outline-offset: -2px;
+    outline: none;
   }
 
   .tiles-view :global(.tile-item:hover) {
@@ -279,13 +279,13 @@
   }
 
   .tiles-view :global(.tile-item.drop-target) {
-    background: rgba(0, 120, 212, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .tiles-view :global(.tile-item.drop-target.copy-drop) {
-    background: rgba(16, 185, 129, 0.15);
-    box-shadow: inset 0 0 0 1px #10b981;
+    background: color-mix(in srgb, var(--system-success) 15%, transparent);
+    box-shadow: inset 0 0 0 1px var(--system-success);
   }
 
   .tiles-view :global(.tile-icon) {

@@ -7,26 +7,19 @@
  * both caches so their first panel open paints instantly instead of loading.
  */
 
-import { gitRepoRoot } from "$lib/api/files";
 import { settingsStore } from "./settings.svelte";
 import { warmScmSummaryForRoot } from "./scm.svelte";
-import { windowTabsManager } from "./window-tabs.svelte";
+import { repoRootCache } from "./repo-root-cache.svelte";
 import { warmGraphSnapshot } from "$lib/state/git-graph-cache";
 import { createGitWarmer, type GitWarmer } from "$lib/domain/git-warm";
 import { releaseGitSummaryConsumer } from "./git-summary-cache";
 
 const warmConsumerId = (root: string) => `git-warm:${root}`;
 
-/** Resolve a repo root, reusing the tab bar's cached probe when the git-root
- *  tab-title setting is on (avoids a duplicate gitRepoRoot IPC), else one IPC. */
+/** Resolve through the shared bounded probe cache regardless of title settings. */
 async function resolveRepoRoot(path: string): Promise<string | null> {
-  if (settingsStore.tabTitleGitRoot) {
-    await windowTabsManager.ensureGitRoot(path);
-    const cached = windowTabsManager.getGitRoot(path);
-    if (cached !== undefined) return cached;
-  }
-  const r = await gitRepoRoot(path);
-  return r.ok ? r.data : null;
+  await repoRootCache.ensure(path);
+  return repoRootCache.get(path) ?? null;
 }
 
 export const gitWarmer: GitWarmer = createGitWarmer({

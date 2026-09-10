@@ -3,16 +3,17 @@
  * one Tauri listener shared by all subscribers, watcher + local fan-out.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-let watcherCallback: ((event: { payload: string }) => void) | null = null;
-const listen = vi.fn(async (_name: string, cb: (event: { payload: string }) => void) => {
+type WatcherPayload = string | { repoRoot: string; observedAt: number; paths: string[] };
+let watcherCallback: ((event: { payload: WatcherPayload }) => void) | null = null;
+const listen = vi.fn(async (_name: string, cb: (event: { payload: WatcherPayload }) => void) => {
   watcherCallback = cb;
   return () => {};
 });
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: (name: string, cb: (event: { payload: string }) => void) => listen(name, cb),
+  listen: (name: string, cb: (event: { payload: WatcherPayload }) => void) => listen(name, cb),
 }));
 
 async function freshModule() {
@@ -24,8 +25,23 @@ beforeEach(() => {
   watcherCallback = null;
   listen.mockClear();
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe("git-refresh", () => {
+  it("joins pending listener attachment and retries a rejected acknowledgement", async () => {
+    let reject!: (cause: Error) => void;
+    listen.mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+    const { ensureGitWatcherListener } = await freshModule();
+    const first = ensureGitWatcherListener();
+    const second = ensureGitWatcherListener();
+    expect(listen).toHaveBeenCalledOnce();
+    reject(new Error("event transport unavailable"));
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(false);
+    await expect(ensureGitWatcherListener()).resolves.toBe(true);
+    expect(listen).toHaveBeenCalledTimes(2);
+  });
+
   it("attaches exactly one Tauri listener no matter how many subscribers", async () => {
     const { subscribeGitChanges } = await freshModule();
 
@@ -59,6 +75,20 @@ describe("git-refresh", () => {
     notifyLocalGitChange("/repo");
 
     expect(fn).toHaveBeenCalledWith({ repoRoot: "/repo", source: "local" });
+  });
+
+  it("retains native observation evidence without changing subscriber payloads", async () => {
+    const dataset: Record<string, string> = {};
+    vi.stubGlobal("document", { documentElement: { dataset } });
+    const { subscribeGitChanges } = await freshModule();
+    const subscriber = vi.fn();
+    await subscribeGitChanges(subscriber);
+    watcherCallback!({ payload: { repoRoot: "/repo", observedAt: 123, paths: ["/repo/marker.txt"] } });
+    expect(subscriber).toHaveBeenCalledWith({ repoRoot: "/repo", source: "watcher" });
+    expect(JSON.parse(dataset.e2eGitChanges)).toEqual([{
+      repoRoot: "/repo", source: "watcher", observedAt: 123,
+      paths: ["/repo/marker.txt"], receivedAt: expect.any(Number),
+    }]);
   });
 
   it("unsubscribe stops delivery without affecting other subscribers", async () => {

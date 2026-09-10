@@ -2,6 +2,38 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.9.0 — 2026-09-10
+
+An architecture and reliability update, with new structured previews and safer
+ownership of background work, file operations, and restored windows.
+
+### Added
+
+- **CSV previews render as tables**, with virtualized rows for large files and a text fallback for malformed input (#667).
+- **Markdown frontmatter appears as readable properties** above the preview (#671).
+- **Move files onto bookmarked folders** by dragging them to the sidebar (#676).
+
+### Improved
+
+- **Optional features and inactive restored panes load on demand**, reducing work competing with initial file browsing (#684).
+- **Background work has explicit lifetimes** across tabs, panes, windows, plugins, previews, and terminals. Superseded requests cannot replace current results, and caches and observers have bounded ownership (#684).
+- **File operations retain confirmed outcomes and history** across partial failures, cancellation, and the loss of their originating window (#684).
+
+### Fixed
+
+- **Windows paths and Git views** handle drive roots, UNC paths, and short-name aliases consistently; native deletion and restore report their actual outcomes (#684).
+- **Restored panes and transferred tabs** reveal usable file content and retain their navigation and resource lifetimes (#684).
+- **Vertical previews stay usable under zoom** while continuing to follow live pointer resizing (#700, #701).
+- **Directory changes and replaced watched folders** refresh the correct pane without publishing stale directory contents (#684).
+- **Linux Recycle Bin** falls back when the desktop rejects the trash URI (#662, #673).
+- **Unsent report text survives closing and restarting**, and video previews request appropriately sized frames (#663, #665).
+- **Settings and configuration writes** preserve symlink targets and reject malformed inputs without corrupting live state (#684).
+
+### Release limits
+
+- Startup improvements do not yet establish the macOS half-bounce target.
+- Durable overwrite recovery remains an opt-in build feature. Ordinary overwrite Undo does not restore replaced destination contents; executable durable moves and recovery-artifact retirement remain follow-up work.
+
 ## v1.8.1 — 2026-08-11
 
 Reliability and responsiveness fixes for previews, Quick Open, git integrations, and Windows CI.

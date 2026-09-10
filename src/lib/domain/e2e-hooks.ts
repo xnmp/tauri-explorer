@@ -24,10 +24,10 @@ export const E2E_HOOKS_ENABLED =
 
 /**
  * Windows CI attaches msedgedriver to the main WebView2 through an E2E-only
- * CDP port. Do not create the parked warm WebView during that suite: all
- * WebViews sharing a WebView2 data directory must use identical browser args,
- * while JS-created windows cannot set Tauri's additionalBrowserArgs option.
- * Linux retains the warm-window coverage.
+ * CDP port. Keep initial session attachment free of automatic warm priming.
+ * Explicit new-window operations can still prime/replenish the pool; the
+ * attach feature injects matching browser arguments for all descendants.
+ * Linux retains automatic warm-window priming coverage.
  */
 export const E2E_WARM_WINDOW_PRIMING_DISABLED =
   import.meta.env.VITE_E2E_NO_WARM_PRIME === "1";

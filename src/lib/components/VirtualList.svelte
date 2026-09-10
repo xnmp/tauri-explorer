@@ -21,6 +21,13 @@
     /** ARIA role for the scroll viewport (e.g. "listbox"). Item wrappers
      *  become presentational so snippet content can carry "option" roles. */
     role?: string;
+    tabindex?: number;
+    "aria-label"?: string;
+    "aria-rowcount"?: number;
+    "aria-colcount"?: number;
+    "aria-multiselectable"?: boolean;
+    /** Query the reactive rendered window without retaining row DOM nodes. */
+    containsIndex?: (index: number) => boolean;
     children: Snippet<[T, number]>;
     getKey?: (item: T, index: number) => string | number;
     scrollToIndex?: (index: number) => void;
@@ -35,10 +42,6 @@
     /** Called when the rendered window nears the end of `items` — incremental
      *  loaders (git graph paging) append more items in response. */
     onnearend?: () => void;
-    /** Optional roving-tab-stop fallback when the focused item is unmounted. */
-    tabindex?: number;
-    /** Reports whether an item index is in the current rendered window. */
-    containsIndex?: (index: number) => boolean;
   }
 
   let {
@@ -46,6 +49,12 @@
     itemHeight,
     getItemHeight,
     role,
+    tabindex,
+    "aria-label": ariaLabel,
+    "aria-rowcount": ariaRowCount,
+    "aria-colcount": ariaColCount,
+    "aria-multiselectable": ariaMultiselectable,
+    containsIndex = $bindable(),
     children,
     getKey = (_item: T, index: number) => index,
     scrollToIndex = $bindable(),
@@ -53,8 +62,6 @@
     itemOverflow = "hidden",
     viewportPadding,
     onnearend,
-    tabindex,
-    containsIndex = $bindable(),
   }: Props = $props();
 
   let viewportRef = $state<HTMLElement | null>(null);
@@ -94,6 +101,7 @@
   /** Scroll the viewport so that the item at `index` is visible. */
   scrollToIndex = (index: number) => {
     if (!viewportRef || index < 0 || index >= items.length) return;
+    scrollCoalescer.cancel();
     const targetTop = layout ? layout.offsets[index] : index * itemHeight;
     const targetBottom = targetTop + heightAt(index);
     if (targetTop < viewportRef.scrollTop) {
@@ -101,6 +109,7 @@
     } else if (targetBottom > viewportRef.scrollTop + viewportRef.clientHeight) {
       viewportRef.scrollTop = targetBottom - viewportRef.clientHeight;
     }
+    scrollTop = viewportRef.scrollTop;
   };
 
   // Derived chain — Svelte 5 memoizes these, so downstream only
@@ -127,6 +136,8 @@
     return Math.min(startIndex + visibleCount, items.length);
   });
 
+  containsIndex = (index) => index >= startIndex && index < endIndex;
+
   const visibleItems = $derived(
     items.slice(startIndex, endIndex).map((item, offset) => ({
       item,
@@ -134,8 +145,6 @@
       key: getKey(item, startIndex + offset)
     }))
   );
-
-  containsIndex = (index) => index >= startIndex && index < endIndex;
 
   // Near-end notification for incremental loaders. An $effect (not $derived):
   // this is a genuine callback side effect driven by the scroll window.
@@ -158,15 +167,16 @@
   });
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -- tabindex=0 is paired with the grid role for the unmounted roving-row fallback; Svelte cannot infer that dynamic role. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -- Callers provide the composite role and use the viewport as a focus fallback for an unmounted cursor. -->
 <div
   class="virtual-viewport {className}"
   bind:this={viewportRef}
   bind:clientHeight={viewportHeight}
   onscroll={handleScroll}
   style:padding={viewportPadding}
-  {tabindex}
-  role={tabindex === 0 ? "grid" : role}
+  {role} {tabindex}
+  aria-label={ariaLabel} aria-rowcount={ariaRowCount} aria-colcount={ariaColCount}
+  aria-multiselectable={ariaMultiselectable}
 >
   <div class="virtual-spacer-top" style:height="{paddingTop}px" aria-hidden="true"></div>
 

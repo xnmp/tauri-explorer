@@ -5,6 +5,11 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import {
+  nativeProcessGroup,
+  stopNativeProcessGroup,
+  type NativeProcessGroup,
+} from "./native-process-group";
+import {
   createNativeProcessCleanupHooks,
   resolveNativeApplication,
   stopNativeQualificationProcesses,
@@ -41,6 +46,7 @@ const driverLogPath = path.join(here, "logs", "msedgedriver.log");
 
 let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
+let driverProcessGroup: NativeProcessGroup | undefined;
 
 const waitForPort = async (
   port: number,
@@ -80,11 +86,19 @@ const reservePort = async (): Promise<number> =>
 const stopProcesses = async (): Promise<void> => {
   const ownedDriver = driverProcess;
   const ownedApplication = applicationProcess;
+  const ownedGroup = driverProcessGroup;
   try {
-    await stopNativeQualificationProcesses([
-      { label: "WebDriver", child: ownedDriver },
-      { label: "native application", child: ownedApplication },
-    ]);
+    if (ownedGroup) {
+      // WebKitWebDriver launches the application below tauri-driver. The group
+      // can outlive its leader; a driver exit alone does not complete cleanup.
+      await stopNativeProcessGroup(ownedGroup, "native WebKit session");
+      if (driverProcessGroup === ownedGroup) driverProcessGroup = undefined;
+    } else {
+      await stopNativeQualificationProcesses([
+        { label: "WebDriver", child: ownedDriver },
+        { label: "native application", child: ownedApplication },
+      ]);
+    }
   } finally {
     if (
       ownedDriver &&
@@ -142,18 +156,17 @@ export const config: WebdriverIO.Config = {
   framework: "mocha",
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
-  autoCompileOpts: {
-    autoCompile: true,
-    tsNodeOpts: { transpileOnly: true, project: "./e2e-tauri/tsconfig.json" },
-  },
-
   onPrepare: processCleanupHooks.prepare,
 
   beforeSession: async (_config, capabilities) => {
     if (!isWindows) {
       driverProcess = spawn(tauriDriverBin, tauriDriverArgs, {
         stdio: [null, process.stdout, process.stderr],
+        detached: process.platform === "linux",
       });
+      if (process.platform === "linux") {
+        driverProcessGroup = nativeProcessGroup(driverProcess);
+      }
       return;
     }
 

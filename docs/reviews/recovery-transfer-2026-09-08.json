@@ -1,0 +1,119 @@
+{
+  "date": "2026-09-08",
+  "scope": "Native copy replacement displacement and publication under durable intent; production commands and abandoned-operation resolution remain unwired",
+  "contracts": [
+    "Explicit copyReplacement intent rejects ambiguous unshipped replacement kind and a staged payload sharing source identity",
+    "Pure endpoint classifier recognizes only exact source/missing destination or missing source/exact destination; changed same-object versions conflict",
+    "DisplaceIntent precedes retaining original; PublishIntent precedes publishing private copy; native handle-relative renames never replace occupied targets",
+    "Rename return values are reconciled against actual endpoints; confirmed moved results repeat both directory barriers before completion checkpoint",
+    "Directory publication finalizes recorded permissions through retained handle after revalidating authority and named target; post-barrier checks remain",
+    "Reasserting current transfer intent validates exact native owner, catalog, state and generation without redundant checkpoint writes; completion clears diagnostics",
+    "Native errors or interrupted completion retain original, staged/published payload, catalog and claims; no Drop cleanup"
+  ],
+  "verification": {
+    "focused": {
+      "log": "/tmp/recovery-transfer-focused.log",
+      "exit_code": 0,
+      "passed": 461,
+      "ignored": 9,
+      "scope": "Before adding the two final native regressions and pre-metadata authority fix; full run covers final source"
+    },
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "log": "/tmp/recovery-transfer-full-final.log",
+      "exit_code": 101,
+      "passed": 957,
+      "failed": 2,
+      "ignored": 13,
+      "failures": "Only two existing user_report tests failed binding localhost under sandbox policy",
+      "retry_command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- user_report::tests::relay_daily_cap_stays_distinct_for_the_ui user_report::tests::unreachable_relay_has_a_network_error_kind --test-threads=1",
+      "retry_log": "/tmp/recovery-transfer-localhost-retry.log",
+      "retry_exit_code": 0,
+      "retry_passed": 2,
+      "accepted_across_runs": 959
+    },
+    "causal_regressions": [
+      {
+        "log": "/tmp/recovery-transfer-authority-before.log",
+        "before_failed": 1,
+        "method": "New native after-rename source-authority mutation test failed before adding pre-finalization revalidation: target incorrectly reached 0500 instead of remaining staged 0700",
+        "after": "Full run passes test including source, original and private-root mutations"
+      },
+      {
+        "log": "/tmp/recovery-transfer-source-alias-before.log",
+        "before_failed": 1,
+        "method": "Temporarily removed only model source-identity exclusion; native forged hardlink payload test then failed because displacement was accepted; model restored byte-for-byte",
+        "after": "Native hardlink and pure copy identity tests pass in full run"
+      }
+    ],
+    "native_process_death": {
+      "test": "native_process_death_retains_preparation_evidence_and_fences_its_paths",
+      "boundaries": [
+        "root creation",
+        "manifest publication",
+        "mid-staging",
+        "completed original displacement before checkpoint",
+        "completed copy publication before checkpoint"
+      ],
+      "outcomes": "Exact original retained after displacement/publication; source intact; payload found at expected private/public endpoint; durable intent phase and immutable manifest survive; overlapping paths fenced, unrelated sibling remains admissible",
+      "limits": "No abandoned-operation resolution or power-loss/syscall-interruption proof"
+    },
+    "clippy": {
+      "log": "/tmp/recovery-transfer-clippy-final.log",
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "warnings": "67 library unused-infrastructure warnings; 5 library-test warnings (4 duplicates)"
+    },
+    "windows": {
+      "log": "/tmp/recovery-transfer-windows-final.log",
+      "command": "cargo check --offline --manifest-path /tmp/recovery-private-storage-check/Cargo.toml --target x86_64-pc-windows-gnu --tests",
+      "exit_code": 0,
+      "scope": "Actual shared-source harness; excludes Unix transfer/executor/coordinator, whole app and runtime"
+    },
+    "independent_review": {
+      "agent": "crash_recovery_acceptance_sol",
+      "model": "gpt-5.6-sol",
+      "verdict": "ACCEPT scoped after final source, native runtime and causal evidence review",
+      "findings_fixed": [
+        "Publication retry no longer requires payload to remain private",
+        "Copy payload cannot share source identity",
+        "Recheck authority before post-rename directory metadata effect"
+      ]
+    },
+    "format": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check passes",
+    "maps": "python3 docs/code-map/validate.py --coverage passes 415/415 tracked files; four new untracked source/test files explicitly mapped",
+    "diff": "git diff --check passes",
+    "ui": "No new browser or app-binary build/run for internal native transfer changes"
+  },
+  "research": [
+    "https://man7.org/linux/man-pages/man2/renameat2.2.html",
+    "https://man7.org/linux/man-pages/man2/fsync.2.html"
+  ],
+  "limits": [
+    "Production copy/move commands, restart reconciliation, restore/discard, cleanup, overwrite Undo and retention are still open",
+    "EntryVersion observes metadata rather than hashing contents or atomically snapshotting trees; restored timestamps, nested descendant drift and object-ID reuse remain limits",
+    "Post-rename barrier/metadata errors may leave a recoverable partial effect; automatic restart recovery not yet implemented",
+    "Unix adapter tested on Linux; no macOS runtime, Windows transfer or full cross-platform durability qualification",
+    "Reopening a directory with restrictive finalized permissions may fail; no successful durability claim is synthesized without a usable handle",
+    "No application latency, startup or Mac half-bounce measurement; process death is not power-loss evidence",
+    "Latest changes remain local; prior publication rejection unresolved"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/mod.rs": "aea6a6a79855ec1ddf5dc8485bad4974a32c56d1484d0edbf0447b283c4a8336",
+    "src-tauri/src/files/recovery/model.rs": "b33b4a39b1f339cad4cd556d7d45c4ed971a19890d1d00738b08285864543897",
+    "src-tauri/src/files/recovery/rename_outcome.rs": "f1c6ac22e4c8c631ff00809a2e1d9635fb22f176b1435de57b849b3cda9b3178",
+    "src-tauri/src/files/recovery/replacement_artifact.rs": "8f45cd0a2ccc2547c72e426b70db4a289ff1eca7a343c3285ec2841d9863d6a6",
+    "src-tauri/src/files/recovery/replacement_transfer.rs": "312506255ad7aeaa88320312537e11b1755f992aa57693aaa527a26837b9986c",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "ccabe49ba092013b71537f9bfc4a66e332eaf01b2d8fcd44b03da2dd7c4c9ee5",
+    "src-tauri/src/files/recovery/replacement_transition.rs": "5c5ba2201cca0fb0a3fc8a228d5192dd0932f27f37027b37ae85002b125de5a1",
+    "src-tauri/src/files/recovery/coordinator/promotion.rs": "8ca306e2d9940962790947c8eb469708a7e632c1b79ae2ea79d8bb3a64e48e7a",
+    "src-tauri/src/files/native_directory/unix.rs": "6879b2797f9e360771362b857cd84cc7f7f5f3c8927cf73dc90b1074a65136fc",
+    "src-tauri/test_support/recovery_coordinator.rs": "b48c1812347a1585afca8e976ae3c4cf5b0c46a64c0a10fb2b945e02ee4d50a6",
+    "src-tauri/test_support/recovery_promotion.rs": "2cf2818a4112e0cfb47a984c48bf6f32af207dfb1478b7a8c5e59a0068eace35",
+    "src-tauri/test_support/recovery_rename_outcome.rs": "89f128043e062fe94f53675e82d0bff0a463079dc4ccfddf87b3ac04f89a80a8",
+    "src-tauri/test_support/recovery_replacement_artifact.rs": "3f30653686fde3e44a02ae15224c24e52f4716a28e4c1cbe64545c230a2aa3a4",
+    "src-tauri/test_support/recovery_replacement_transfer.rs": "95b1b0a104710817874ab48e673121a367fdad48b05848a51405fe7d2c73f8bf",
+    "src-tauri/test_support/recovery_replacement_execution.rs": "2eec835b444ab885653ddd90d3462f792fec9fecff85190c66fc1674255135e2",
+    "src-tauri/test_support/recovery_replacement_transition.rs": "f5167146e98a4bc39ae9764d8ed7bd1c05e5297494284c11d3286e85a0adcc87"
+  }
+}

@@ -20,7 +20,7 @@ test("5000-commit graph renders, virtualizes, and stays responsive", async ({ pa
     await openGraphInActivePane(page);
   });
   // eslint-disable-next-line no-console
-  console.log(`[LOAD] 5000-commit initial render: ${renderMs.toFixed(0)}ms`);
+  console.log(`[LOAD] first 300 commits of 5000-commit graph: ${renderMs.toFixed(0)}ms`);
   expect(renderMs).toBeLessThan(INITIAL_RENDER_BUDGET_MS);
 
   const scroller = page.locator(".graph-scroller");

@@ -1,0 +1,314 @@
+{
+  "run": "https://github.com/xnmp/tauri-explorer/actions/runs/34418093634",
+  "prHead": "5cbdc4f02d8ded27d443fdeeca3a91873502c2a7",
+  "checkoutCommit": "ee7b28b8721cac989f92bc8026d303e93e76fa8e",
+  "profile": "release-custom-protocol-production-hooks",
+  "binarySha256": "57c9c1fbe5750775b954a251640af5ba5d21d80d3fa38760a680fce614cb4189",
+  "binaryBytes": 21900224,
+  "platform": {
+    "os": "macos",
+    "release": "25.6.0",
+    "arch": "arm64"
+  },
+  "scenarios": {
+    "foreground": {
+      "scenario": {
+        "id": "macos-foreground-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": false,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-09T23:51:09.489Z",
+      "finishedAt": "2026-09-09T23:54:50.110Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 2058.3,
+        "p95Ms": 2518.7
+      },
+      "warmActivation": {
+        "sampleCount": 0,
+        "p50Ms": null,
+        "p95Ms": null
+      },
+      "passed": true,
+      "errors": []
+    },
+    "warmProbe": {
+      "scenario": {
+        "id": "macos-cold-warm-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": true,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-09T23:54:50.278Z",
+      "finishedAt": "2026-09-09T23:59:06.119Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 2931.6,
+        "p95Ms": 4763.2
+      },
+      "warmActivation": {
+        "sampleCount": 30,
+        "p50Ms": 293,
+        "p95Ms": 1904
+      },
+      "passed": true,
+      "errors": []
+    }
+  },
+  "samples": {
+    "foreground": [
+      {
+        "coldTotalMs": 6208.2,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2340.8,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2219.4,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2172.4,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2022.1,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2000,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2257.1,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2022.5,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 1990.6,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2518.7,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2058.3,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2027.1,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2114,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2017.1,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2029,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2088.9,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2034.1,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2055.4,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2059.5,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2134.4,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2007.4,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2024.3,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2043.5,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2150.2,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2029.5,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2085.2,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2248.5,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2018.5,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2061.1,
+        "warmShowMs": null
+      },
+      {
+        "coldTotalMs": 2229.5,
+        "warmShowMs": null
+      }
+    ],
+    "warmProbe": [
+      {
+        "coldTotalMs": 2845.6,
+        "warmShowMs": 348
+      },
+      {
+        "coldTotalMs": 2969.2,
+        "warmShowMs": 293
+      },
+      {
+        "coldTotalMs": 2931.6,
+        "warmShowMs": 304
+      },
+      {
+        "coldTotalMs": 2773.2,
+        "warmShowMs": 219
+      },
+      {
+        "coldTotalMs": 2978.4,
+        "warmShowMs": 763
+      },
+      {
+        "coldTotalMs": 2806.3,
+        "warmShowMs": 139
+      },
+      {
+        "coldTotalMs": 2783.3,
+        "warmShowMs": 149
+      },
+      {
+        "coldTotalMs": 2886.6,
+        "warmShowMs": 370
+      },
+      {
+        "coldTotalMs": 3252.2,
+        "warmShowMs": 232
+      },
+      {
+        "coldTotalMs": 2904.5,
+        "warmShowMs": 235
+      },
+      {
+        "coldTotalMs": 2712.1,
+        "warmShowMs": 308
+      },
+      {
+        "coldTotalMs": 2978.5,
+        "warmShowMs": 377
+      },
+      {
+        "coldTotalMs": 2764.9,
+        "warmShowMs": 225
+      },
+      {
+        "coldTotalMs": 2812.8,
+        "warmShowMs": 819
+      },
+      {
+        "coldTotalMs": 3060.2,
+        "warmShowMs": 344
+      },
+      {
+        "coldTotalMs": 2843.7,
+        "warmShowMs": 209
+      },
+      {
+        "coldTotalMs": 2857.1,
+        "warmShowMs": 348
+      },
+      {
+        "coldTotalMs": 2682.9,
+        "warmShowMs": 270
+      },
+      {
+        "coldTotalMs": 2738.4,
+        "warmShowMs": 235
+      },
+      {
+        "coldTotalMs": 2896.2,
+        "warmShowMs": 234
+      },
+      {
+        "coldTotalMs": 3047.9,
+        "warmShowMs": 259
+      },
+      {
+        "coldTotalMs": 3799,
+        "warmShowMs": 419
+      },
+      {
+        "coldTotalMs": 2956,
+        "warmShowMs": 211
+      },
+      {
+        "coldTotalMs": 3707.3,
+        "warmShowMs": 426
+      },
+      {
+        "coldTotalMs": 4763.2,
+        "warmShowMs": 430
+      },
+      {
+        "coldTotalMs": 5416.6,
+        "warmShowMs": 3719
+      },
+      {
+        "coldTotalMs": 4489.2,
+        "warmShowMs": 270
+      },
+      {
+        "coldTotalMs": 3496.3,
+        "warmShowMs": 204
+      },
+      {
+        "coldTotalMs": 3826.3,
+        "warmShowMs": 1904
+      },
+      {
+        "coldTotalMs": 3694.9,
+        "warmShowMs": 977
+      }
+    ]
+  },
+  "limitations": [
+    "Native readiness is not first presentation or successful input; half-bounce remains unqualified.",
+    "Fresh process per sample; operating-system caches uncontrolled.",
+    "No performance attribution from differences between hosted-runner jobs."
+  ]
+}

@@ -1,0 +1,178 @@
+{
+  "sourceCommit": "b4d20b97d35d0da40f54cb5eeda64ca4b9897a75",
+  "devBase": "13e26b58d88ca8a631e51af6c5ebb19966f147a9",
+  "scope": "Published release-critical corrections; broader implementation frozen",
+  "local": {
+    "chromiumTargeted": {
+      "passed": 22,
+      "failed": 0
+    },
+    "chromiumAllViews": {
+      "passed": 965,
+      "failed": 9,
+      "duration": "6.8 minutes"
+    },
+    "oneWorkerRerun": {
+      "passed": 8,
+      "failed": 1
+    },
+    "remainingScmSolo": {
+      "passed": 1,
+      "failed": 0
+    },
+    "remainingScmDelayedListing": {
+      "passed": 1,
+      "failed": 0
+    },
+    "frontendTypes": "0 errors, 0 warnings",
+    "nativeTypes": "pass",
+    "architecture": "pass",
+    "sourceMaps": "485/485",
+    "freshWindowUnit": {
+      "passed": 2,
+      "failedBefore": 2
+    },
+    "affectedLinuxNative": {
+      "passed": 4,
+      "durationSeconds": 20
+    },
+    "webkit": "No test body ran: missing Ubuntu libxml2/Flite ABI dependencies"
+  },
+  "issues": {
+    "previewFix": 701,
+    "intermittentBrowserFollowup": 702,
+    "macHalfBounce": 696
+  },
+  "ciRuns": {
+    "main": 34422867749,
+    "native": 34422867761,
+    "mac": 34422867762,
+    "performance": 34422867772
+  },
+  "localLogHashes": {
+    "/tmp/release-final-allviews.log": "7505c14a74113f1fc89e62bc835d015bf88076b3c75a1d5022eb5889e4b563d5",
+    "/tmp/release-final-isolated-ready.log": "455bc5c3fa3ed7e7958883a9dcd8629cce9591545472c048fa0d32f1f7e12d9d",
+    "/tmp/release-preview-final-check.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/release-preview-final-native-types.log": "e589810d8ba6995d7ca62e9e3edf580e46538d7e208a7a3e1479fd0a44e1a32b",
+    "/tmp/release-preview-final-fixture-tests.log": "83e08f0ad8cd3c012e778644623a37ddc1853b13638921af2de7ab2fad9119f9",
+    "/tmp/release-local-directory-pair-x11.log": "69b83140ed79a3b65d4eee2b577804614df73fc76bc55e3eb83db76b9369e1b6",
+    "/tmp/release-local-listing-errors-held-frame.log": "c0dae76ca264b2c9099627c59d969bf5ab1f94c8306ca5d8b0007d2262cab4c9",
+    "/tmp/release-local-listing-errors-final.log": "657e847f22fb899463b1b87c1fd79babf213e8496a983f78c0627e527fd80ae5",
+    "/tmp/release-b4d-linux.log": "ad9ac09abab4f39a815d02ee59da03b970f4d3c0149f4aa489286e1daf83db1e",
+    "/tmp/release-b4d-linux-attempt2.log": "9728c3e629e4537b878f54ea3131e290213ae24eaee5cba742f0b764a601e36e",
+    "/tmp/release-b4d-windows.log": "2765703ee1b1bbcef1f0f4bed3b84fd2b4865dce9da7960b868fba983ea9411f"
+  },
+  "limits": [
+    "Browser mocks do not establish native timing.",
+    "No measured user startup improvement is claimed for CI infrastructure isolation.",
+    "Mac native readiness is not presented-frame/usable-input or half-bounce proof.",
+    "Intermittent browser outcomes require instrumented reproduction before changing product behavior."
+  ],
+  "ciStatus": {
+    "main": {
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "jobs": [
+        {
+          "name": "frontend-checks",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102701874639"
+        },
+        {
+          "name": "code-maps",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102701874857"
+        },
+        {
+          "name": "rust",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102701874879"
+        },
+        {
+          "name": "chromium (2)",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102701874922"
+        },
+        {
+          "name": "chromium (1)",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102701874941"
+        },
+        {
+          "name": "webkit-tests (1)",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102701874952"
+        },
+        {
+          "name": "webkit-tests (2)",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102701875015"
+        },
+        {
+          "name": "frontend",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102704191932"
+        },
+        {
+          "name": "webkit",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867749/job/102707640823"
+        }
+      ]
+    },
+    "native": {
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 2,
+      "jobs": [
+        {
+          "name": "smoke (ubuntu-latest)",
+          "conclusion": "failure",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867761/job/102704591527"
+        },
+        {
+          "name": "smoke (windows-latest)",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867761/job/102704593323"
+        }
+      ]
+    },
+    "mac": {
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "jobs": [
+        {
+          "name": "launch-smoke",
+          "conclusion": "success",
+          "url": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867762/job/102701875090"
+        }
+      ]
+    }
+  },
+  "nativeAttempts": [
+    {
+      "attempt": 1,
+      "linuxPassedSpecs": 35,
+      "linuxFailedSpecs": 1,
+      "failure": "directory-watch-lifetime: WebDriver session loss after exact child selection",
+      "issue": 703
+    },
+    {
+      "attempt": 2,
+      "linuxPassedSpecs": 35,
+      "linuxFailedSpecs": 1,
+      "failure": "directory-listing-errors: one-shot visibility during error entrance",
+      "issue": 704,
+      "priorLifetimeAndRecovery": "pass"
+    }
+  ],
+  "fixtureFollowup": {
+    "issue": 704,
+    "productionChanges": false,
+    "nativePassed": 2,
+    "independentReview": "accepted",
+    "proof": "Held opacity-zero frame reproduces false immediate visibility; eventual visibility succeeds after release."
+  }
+}

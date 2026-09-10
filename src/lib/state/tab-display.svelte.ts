@@ -10,8 +10,7 @@
 
 import type { ExplorerTab, PaneId, WindowTab } from "./types";
 import { settingsStore } from "./settings.svelte";
-import { gitRepoRoot } from "$lib/api/files";
-import { directoryKey } from "$lib/domain/path";
+import { repoRootCache } from "./repo-root-cache.svelte";
 import {
   disambiguateTabTitles,
   extractFolderName,
@@ -38,12 +37,6 @@ export interface TabDisplayDeps {
 }
 
 export function createTabDisplay(deps: TabDisplayDeps) {
-  // Cache of folder → git repo root (string), or null when not in a repo.
-  // Populated lazily by ensureGitRoot (driven from the tab bar) only while
-  // the "git root in tab title" setting is on. Keyed by directoryKey(path).
-  let gitRoots = $state(new Map<string, string | null>());
-  const gitRootPending = new Set<string>();
-
   /** Per-tab display info for SINGLE-pane explorer tabs. Normal-mode tabs are
    *  disambiguated against each other (VS Code style); git-mode tabs carry
    *  repo + cwd, which is already distinct. Reactive on tab paths, the
@@ -58,7 +51,7 @@ export function createTabDisplay(deps: TabDisplayDeps) {
       .filter((t): t is ExplorerTab => t.kind === "explorer" && countLeaves(t.layout) === 1);
     for (const t of singles) {
       const cwd = deps.getTabLivePath(t);
-      const root = useGit ? gitRoots.get(directoryKey(cwd)) : null;
+      const root = useGit ? repoRootCache.get(cwd) : null;
       if (root) gitMode.set(t.id, { repoRoot: root, cwd });
       else normal.push({ id: t.id, path: cwd });
     }
@@ -113,14 +106,7 @@ export function createTabDisplay(deps: TabDisplayDeps) {
    *  from the tab bar so the async work has a component owner. */
   async function ensureGitRoot(path: string): Promise<void> {
     if (!settingsStore.tabTitleGitRoot || !path) return;
-    const key = directoryKey(path);
-    if (gitRoots.has(key) || gitRootPending.has(key)) return;
-    gitRootPending.add(key);
-    const result = await gitRepoRoot(path);
-    gitRootPending.delete(key);
-    const root = result.ok ? result.data : null;
-    // Reassign for reactivity so title derivations recompute.
-    gitRoots = new Map(gitRoots).set(key, root);
+    await repoRootCache.ensure(path);
   }
 
   /** Read the cached git repo root for a folder: the root string, `null` when
@@ -128,7 +114,7 @@ export function createTabDisplay(deps: TabDisplayDeps) {
    *  consumers (git-warm, #287) reuse the tab bar's probe instead of issuing a
    *  duplicate gitRepoRoot IPC. */
   function getGitRoot(path: string): string | null | undefined {
-    return path ? gitRoots.get(directoryKey(path)) : undefined;
+    return path ? repoRootCache.get(path) : undefined;
   }
 
   return { getTabDisplay, getTabTitle, ensureGitRoot, getGitRoot };

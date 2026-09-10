@@ -7,7 +7,7 @@
  * their final form on first paint instead of flashing the raw path while a
  * per-component fetch is in flight (#233).
  */
-import { getHomeDirectory } from "$lib/api/files";
+import { getHomeDirectory } from "$lib/api/environment";
 
 let homeDir = $state<string | null>(null);
 let requested = false;

@@ -11,6 +11,8 @@
  * rename assistant, etc.); it is not shaped around any one feature.
  */
 
+import { modalOwnership } from "$lib/state/modal-ownership.svelte";
+import { createOwnedRegistry } from "$lib/state/owned-registry";
 import type { Component } from "svelte";
 
 export interface DialogDescriptor {
@@ -27,10 +29,13 @@ export interface OpenDialog {
 function createDialogRegistry() {
   // Registered dialogs are looked up on open; a plain Map (no reactivity) is
   // enough since only the *open* set drives rendering.
-  const registered = new Map<string, Component<any>>();
+  const registered = createOwnedRegistry<Component<any>>();
   let openDialogs = $state<OpenDialog[]>([]);
+  const releaseModal = new Map<string, () => void>();
 
   function close(id: string): void {
+    releaseModal.get(id)?.();
+    releaseModal.delete(id);
     // Remove by id, not object reference: Svelte's `$state` array deep-proxies
     // its elements, so a stored element never `===` the raw object pushed here.
     openDialogs = openDialogs.filter((d) => d.id !== id);
@@ -44,10 +49,9 @@ function createDialogRegistry() {
     /** Register a dialog component; returns a disposer that unregisters it and
      *  closes it if currently open. */
     register(desc: DialogDescriptor): () => void {
-      registered.set(desc.id, desc.component);
+      const dispose = registered.register(desc.id, desc.component);
       return () => {
-        registered.delete(desc.id);
-        close(desc.id);
+        if (dispose()) close(desc.id);
       };
     },
 
@@ -56,6 +60,7 @@ function createDialogRegistry() {
     open(id: string, props: Record<string, unknown> = {}): void {
       const component = registered.get(id);
       if (!component) return;
+      if (!releaseModal.has(id)) releaseModal.set(id, modalOwnership.register(() => close(id)));
       openDialogs = [...openDialogs.filter((d) => d.id !== id), { id, component, props }];
     },
 
@@ -69,6 +74,7 @@ function createDialogRegistry() {
     /** Remove all registrations and open dialogs. Test helper. */
     clear(): void {
       registered.clear();
+      for (const id of [...releaseModal.keys()]) close(id);
       openDialogs = [];
     },
   };

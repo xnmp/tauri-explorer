@@ -11,7 +11,8 @@
  */
 
 import { dedupeThemesById, resolveThemeId } from "$lib/domain/theme-list";
-import { listUserThemes, setWindowTheme } from "$lib/api/files";
+import { listUserThemes } from "$lib/api/config";
+import { setWindowTheme } from "$lib/api/system";
 import { EXPLORER_BG_RGBA_KEY, loadPersisted, removePersisted, savePersisted, savePersistedRaw } from "./persisted";
 import { settingsStore } from "./settings.svelte";
 

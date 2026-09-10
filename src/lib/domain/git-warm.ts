@@ -9,8 +9,6 @@
  * the timing/dedup rules can be unit-tested directly.
  */
 
-import { directoryKey } from "./path";
-
 export interface GitWarmDeps {
   /** Resolve the git repo root for a folder, or null when it isn't in a repo. */
   resolveRepoRoot: (path: string) => Promise<string | null>;
@@ -41,35 +39,40 @@ export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
   const clearT = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
-  const pendingPaths = new Map<string, string>();
+  const pendingPaths = new Map<string, { path: string }>();
   // Roots already warmed this session — skips redundant warms on repeat
   // navigation into the same repo.
   const warmedRoots = new Set<string>();
-  // Resolved roots per path (null = known non-repo) — avoids re-probing the
-  // same folder, so a second navigation into it costs no extra IPC.
+  // Resolved roots only for paths with live owners. Long-lived probe reuse is
+  // provided by the bounded shared state cache; this map exists for release.
   const resolvedRoots = new Map<string, string | null>();
   const trackedPaths = new Map<string, number>();
+  const pathOwners = new Map<string, object>();
+  const probes = new Map<string, object>();
 
   function schedule(path: string, ownerId = "default"): () => void {
     if (!path) return () => {};
     // Non-git users (both features off) pay zero extra IPC.
     if (!deps.graphEnabled() && !deps.scmEnabled()) return () => {};
+    if (!trackedPaths.has(path)) pathOwners.set(path, {});
     trackedPaths.set(path, (trackedPaths.get(path) ?? 0) + 1);
-    pendingPaths.set(ownerId, path);
+    const request = { path };
+    pendingPaths.set(ownerId, request);
     const existingTimer = timers.get(ownerId);
     if (existingTimer !== undefined) clearT(existingTimer);
     const timer = setT(() => {
+      if (pendingPaths.get(ownerId) !== request) return;
       timers.delete(ownerId);
       const pendingPath = pendingPaths.get(ownerId);
       pendingPaths.delete(ownerId);
-      if (pendingPath) void run(pendingPath);
+      if (pendingPath) void run(pendingPath.path);
     }, debounceMs);
     timers.set(ownerId, timer);
     let released = false;
     return () => {
       if (released) return;
       released = true;
-      if (pendingPaths.get(ownerId) === path) {
+      if (pendingPaths.get(ownerId) === request) {
         const pendingTimer = timers.get(ownerId);
         if (pendingTimer !== undefined) clearT(pendingTimer);
         timers.delete(ownerId);
@@ -81,40 +84,38 @@ export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
         return;
       }
       trackedPaths.delete(path);
-      const pathKey = directoryKey(path);
-      const root = resolvedRoots.get(path)
-        ?? Array.from(warmedRoots).find((candidate) => {
-          const candidateKey = directoryKey(candidate);
-          return pathKey === candidateKey || pathKey.startsWith(`${candidateKey}/`);
-        });
-      if (!root) return;
-      const rootKey = directoryKey(root);
-      const rootStillTracked = Array.from(trackedPaths).some(
-        ([trackedPath, refs]) => {
-          if (refs <= 0) return false;
-          const resolved = resolvedRoots.get(trackedPath);
-          if (resolved) return directoryKey(resolved) === rootKey;
-          const trackedKey = directoryKey(trackedPath);
-          const insideRoot = trackedKey === rootKey || trackedKey.startsWith(`${rootKey}/`);
-          if (insideRoot) resolvedRoots.set(trackedPath, root);
-          return insideRoot;
-        },
-      );
-      if (!rootStillTracked) {
-        warmedRoots.delete(root);
-        deps.cancelWarm?.(root);
-      }
+      pathOwners.delete(path);
+      probes.delete(path);
+      resolvedRoots.delete(path);
+      releaseUnusedRoots();
     };
   }
 
+  function releaseUnusedRoots(): void {
+    const activeRoots = new Set(resolvedRoots.values());
+    for (const root of warmedRoots) {
+      if (activeRoots.has(root)) continue;
+      warmedRoots.delete(root);
+      deps.cancelWarm?.(root);
+    }
+  }
+
   async function run(path: string): Promise<void> {
-    if (!trackedPaths.has(path)) return;
-    if (!resolvedRoots.has(path)) {
-      try {
-        resolvedRoots.set(path, await deps.resolveRepoRoot(path));
-      } catch {
-        return; // best-effort; a later navigation can retry
-      }
+    const owner = pathOwners.get(path);
+    if (!owner) return;
+    const probe = {};
+    probes.set(path, probe);
+    try {
+      // Probe reuse belongs to the shared cache. A live path can become a
+      // nested repository; this map is release bookkeeping, not a second cache.
+      const root = await deps.resolveRepoRoot(path);
+      if (pathOwners.get(path) !== owner || probes.get(path) !== probe) return;
+      resolvedRoots.set(path, root);
+      releaseUnusedRoots();
+    } catch {
+      return; // best-effort; a later navigation can retry
+    } finally {
+      if (probes.get(path) === probe) probes.delete(path);
     }
     if (!trackedPaths.has(path)) return;
     const root = resolvedRoots.get(path) ?? null;

@@ -1,0 +1,314 @@
+{
+  "run": "https://github.com/xnmp/tauri-explorer/actions/runs/34340731427",
+  "prHead": "a5fced4b847d8c771b31d9600e44c423453d7f64",
+  "checkoutCommit": "acc2d9d50230445368e0a4db04ce5f5024ae1be5",
+  "profile": "release-custom-protocol-production-hooks",
+  "binarySha256": "c8d9adaaf1772deda85d6e11afbdb67e5fb674cc2bd3f3be4809e81dc4ac91cb",
+  "binaryBytes": 21883664,
+  "platform": {
+    "os": "macos",
+    "release": "25.6.0",
+    "arch": "arm64"
+  },
+  "scenarios": {
+    "foreground": {
+      "scenario": {
+        "id": "macos-foreground-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": false,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-09T10:37:31.168Z",
+      "finishedAt": "2026-09-09T10:41:02.804Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 1911.4,
+        "p95Ms": 2120.9
+      },
+      "warmActivation": {
+        "sampleCount": 0,
+        "p50Ms": null,
+        "p95Ms": null
+      },
+      "passed": true,
+      "errors": [],
+      "samples": [
+        {
+          "coldTotalMs": 2981.1,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1992.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2120.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1978.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1906.2,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2056.4,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1997.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1874.5,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1856.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1991.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1911.4,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2008.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1859.5,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1896.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1862.5,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1810.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2062.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2022.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1859.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1880.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1879.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1852.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1908.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2033.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1858.8,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1920.8,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2025.3,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1940.5,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2042.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 1864.1,
+          "warmShowMs": null
+        }
+      ]
+    },
+    "warm-probe": {
+      "scenario": {
+        "id": "macos-cold-warm-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": true,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-09T10:41:02.917Z",
+      "finishedAt": "2026-09-09T10:44:37.732Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 2023,
+        "p95Ms": 2227
+      },
+      "warmActivation": {
+        "sampleCount": 30,
+        "p50Ms": 42,
+        "p95Ms": 53
+      },
+      "passed": true,
+      "errors": [],
+      "samples": [
+        {
+          "coldTotalMs": 1982.2,
+          "warmShowMs": 39
+        },
+        {
+          "coldTotalMs": 2000.8,
+          "warmShowMs": 42
+        },
+        {
+          "coldTotalMs": 1944.3,
+          "warmShowMs": 46
+        },
+        {
+          "coldTotalMs": 1944.4,
+          "warmShowMs": 39
+        },
+        {
+          "coldTotalMs": 2001,
+          "warmShowMs": 39
+        },
+        {
+          "coldTotalMs": 2078.1,
+          "warmShowMs": 42
+        },
+        {
+          "coldTotalMs": 1943,
+          "warmShowMs": 37
+        },
+        {
+          "coldTotalMs": 2011.6,
+          "warmShowMs": 41
+        },
+        {
+          "coldTotalMs": 2018.6,
+          "warmShowMs": 43
+        },
+        {
+          "coldTotalMs": 2021,
+          "warmShowMs": 41
+        },
+        {
+          "coldTotalMs": 2193.8,
+          "warmShowMs": 44
+        },
+        {
+          "coldTotalMs": 2171.2,
+          "warmShowMs": 46
+        },
+        {
+          "coldTotalMs": 2223.2,
+          "warmShowMs": 43
+        },
+        {
+          "coldTotalMs": 2221.8,
+          "warmShowMs": 40
+        },
+        {
+          "coldTotalMs": 2181.2,
+          "warmShowMs": 41
+        },
+        {
+          "coldTotalMs": 2029.2,
+          "warmShowMs": 41
+        },
+        {
+          "coldTotalMs": 2162.5,
+          "warmShowMs": 43
+        },
+        {
+          "coldTotalMs": 2227,
+          "warmShowMs": 44
+        },
+        {
+          "coldTotalMs": 2191.5,
+          "warmShowMs": 45
+        },
+        {
+          "coldTotalMs": 1962.1,
+          "warmShowMs": 42
+        },
+        {
+          "coldTotalMs": 1991.8,
+          "warmShowMs": 46
+        },
+        {
+          "coldTotalMs": 2116.7,
+          "warmShowMs": 39
+        },
+        {
+          "coldTotalMs": 2023,
+          "warmShowMs": 41
+        },
+        {
+          "coldTotalMs": 2155.8,
+          "warmShowMs": 47
+        },
+        {
+          "coldTotalMs": 1933.3,
+          "warmShowMs": 41
+        },
+        {
+          "coldTotalMs": 2132.1,
+          "warmShowMs": 41
+        },
+        {
+          "coldTotalMs": 1977.7,
+          "warmShowMs": 53
+        },
+        {
+          "coldTotalMs": 1934.7,
+          "warmShowMs": 39
+        },
+        {
+          "coldTotalMs": 2176.8,
+          "warmShowMs": 62
+        },
+        {
+          "coldTotalMs": 2344.3,
+          "warmShowMs": 50
+        }
+      ]
+    }
+  },
+  "qualificationLimits": [
+    "Native readiness IPC receipt; not a presented-frame or first-input measurement.",
+    "Fresh process per sample; OS caches uncontrolled.",
+    "Direct binary launch on a shared macOS runner, not measured Dock-bounce behavior.",
+    "Five-second survival enforced by runner; no separate per-process liveness artifact."
+  ],
+  "independentReview": "Confirmed profile, same binary identity, all 60 raw marker values and nearest-rank percentiles; no refuted claim. Survival supported by runner contract and elapsed run duration."
+}

@@ -101,7 +101,7 @@ describe("gitWarmer scheduling", () => {
     expect(warmScm).not.toHaveBeenCalled();
   });
 
-  it("does not re-probe or re-warm a repo on a second navigation into it", async () => {
+  it("reuses the shared root resolver but warms a live repository only once", async () => {
     const { deps, warmGraph, warmScm, resolveRepoRoot } = makeDeps();
     const warmer = createGitWarmer(deps);
 
@@ -110,9 +110,22 @@ describe("gitWarmer scheduling", () => {
     warmer.schedule("/repo/src");
     await tick();
 
-    expect(resolveRepoRoot).toHaveBeenCalledOnce();
+    expect(resolveRepoRoot).toHaveBeenCalledTimes(2);
     expect(warmGraph).toHaveBeenCalledOnce();
     expect(warmScm).toHaveBeenCalledOnce();
+  });
+
+  it("releases per-path resolution when its final owner leaves", async () => {
+    const { deps, resolveRepoRoot } = makeDeps();
+    const warmer = createGitWarmer(deps);
+    const release = warmer.schedule("/repo/src");
+    await tick();
+    release();
+
+    warmer.schedule("/repo/src");
+    await tick();
+
+    expect(resolveRepoRoot).toHaveBeenCalledTimes(2);
   });
 
   it("warms the graph but not SCM once per root when only the graph feature is on", async () => {
@@ -140,4 +153,79 @@ describe("gitWarmer scheduling", () => {
     expect(warmGraph).not.toHaveBeenCalled();
     expect(warmScm).not.toHaveBeenCalled();
   });
+});
+
+describe("gitWarmer pending ownership", () => {
+  it("does not retain a root resolved after its last owner releases", async () => {
+    let complete!: (root: string) => void;
+    const lookup = vi.fn().mockImplementationOnce(() => new Promise<string>((resolve) => { complete = resolve; }))
+      .mockResolvedValue("/new-root");
+    const { deps, warmGraph } = makeDeps({ resolveRepoRoot: lookup });
+    const warmer = createGitWarmer(deps);
+    const release = warmer.schedule("/repo/src");
+    await tick();
+    release();
+    complete("/old-root");
+    await Promise.resolve();
+    warmer.schedule("/repo/src");
+    await tick();
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(warmGraph).toHaveBeenCalledExactlyOnceWith("/new-root");
+  });
+
+  it("a replaced path owner cannot publish into a new owner during lookup", async () => {
+    let complete!: (root: string) => void;
+    const lookup = vi.fn().mockImplementationOnce(() => new Promise<string>((resolve) => { complete = resolve; }))
+      .mockResolvedValue("/new-root");
+    const { deps, warmGraph } = makeDeps({ resolveRepoRoot: lookup });
+    const warmer = createGitWarmer(deps);
+    const release = warmer.schedule("/repo/src");
+    await tick();
+    release();
+    warmer.schedule("/repo/src");
+    complete("/old-root");
+    await tick();
+    expect(warmGraph).toHaveBeenCalledExactlyOnceWith("/new-root");
+  });
+
+  it("an old same-path disposer cannot cancel its owner's replacement timer", async () => {
+    const { deps, warmGraph } = makeDeps();
+    const warmer = createGitWarmer(deps);
+    const release = warmer.schedule("/repo/src", "pane");
+    warmer.schedule("/repo/src", "pane");
+    release();
+    await tick();
+    expect(warmGraph).toHaveBeenCalledExactlyOnceWith("/repo");
+  });
+});
+
+it("does not assign a pending nested repository to an ancestor's warm owner", async () => {
+  let complete!: (root: string) => void;
+  const cancelWarm = vi.fn();
+  const resolveRepoRoot = vi.fn().mockResolvedValueOnce("/repo")
+    .mockImplementationOnce(() => new Promise<string>((resolve) => { complete = resolve; }));
+  const { deps } = makeDeps({ resolveRepoRoot, cancelWarm });
+  const warmer = createGitWarmer(deps);
+  const releaseOuter = warmer.schedule("/repo/a", "outer");
+  await tick();
+  const releaseInner = warmer.schedule("/repo/nested/b", "inner");
+  await tick();
+  releaseOuter();
+  complete("/repo/nested");
+  await Promise.resolve();
+  releaseInner();
+  expect(cancelWarm.mock.calls.map(([root]) => root).sort()).toEqual(["/repo", "/repo/nested"]);
+});
+
+it("only the newest concurrent probe may change a live path's root", async () => {
+  let old!: (root: string) => void; let newer!: (root: string) => void;
+  const lookup = vi.fn().mockImplementationOnce(() => new Promise<string>((resolve) => { old = resolve; }))
+    .mockImplementationOnce(() => new Promise<string>((resolve) => { newer = resolve; }));
+  const { deps, warmGraph } = makeDeps({ resolveRepoRoot: lookup });
+  const warmer = createGitWarmer(deps);
+  warmer.schedule("/repo/src", "first"); await tick();
+  warmer.schedule("/repo/src", "second"); await tick();
+  newer("/new"); await Promise.resolve();
+  old("/old"); await Promise.resolve();
+  expect(warmGraph).toHaveBeenCalledExactlyOnceWith("/new");
 });

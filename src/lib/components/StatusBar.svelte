@@ -6,6 +6,9 @@
   Toggleable with Alt+M U.
 -->
 <script lang="ts">
+  import type { Snippet } from "svelte";
+  let { children }: { children?: Snippet } = $props();
+
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { formatSize } from "$lib/domain/file";
 
@@ -61,6 +64,7 @@
     {/if}
   </div>
   <div class="status-right">
+    {@render children?.()}
     <span class="status-path" title={currentPath}>{currentPath}</span>
   </div>
 </div>

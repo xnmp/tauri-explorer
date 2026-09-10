@@ -1,0 +1,26 @@
+[
+  {
+    "dock": "top",
+    "pointerDown": true,
+    "initialHeight": 240,
+    "renderedHeight": 300,
+    "savedHeight": 0,
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "screenshot": "screenshots/refactor/repo-health-cleanup/preview-live-top.png"
+  },
+  {
+    "dock": "bottom",
+    "pointerDown": true,
+    "initialHeight": 240,
+    "renderedHeight": 300,
+    "savedHeight": 0,
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "screenshot": "screenshots/refactor/repo-health-cleanup/preview-live-bottom.png"
+  }
+]

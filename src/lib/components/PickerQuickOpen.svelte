@@ -6,7 +6,7 @@
   recent files, tabs or window state — the picker window has none of that.
 -->
 <script lang="ts">
-  import { fuzzySearch, type SearchResult } from "$lib/api/files";
+  import { fuzzySearch, type SearchResult } from "$lib/api/search";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
 
@@ -154,12 +154,12 @@
   }
 
   .pqo-result.active {
-    background: var(--accent-color, #0078d4);
-    color: #fff;
+    background: var(--accent);
+    color: var(--text-on-accent);
   }
 
   .pqo-result.active .pqo-path {
-    color: rgba(255, 255, 255, 0.75);
+    color: inherit;
   }
 
   .pqo-name {

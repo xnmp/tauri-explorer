@@ -15,7 +15,7 @@ import {
   savePersisted,
   writeConfigQueued,
 } from "./persisted";
-import { readConfigFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
 import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import type { ThumbnailSize } from "./settings.svelte";
 

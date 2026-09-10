@@ -15,11 +15,11 @@
  *    single fresh scan (no backend stampede).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { GitStatusSummary } from "$lib/api/files";
+import type { GitStatusSummary } from "$lib/api/git";
 
 const gitSummaryMock = vi.fn();
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   gitSummary: (root: string) => gitSummaryMock(root),
 }));
 

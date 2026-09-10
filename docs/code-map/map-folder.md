@@ -19,6 +19,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 
+- `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
+
+- `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
@@ -26,15 +30,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `VirtualList.svelte` — variable-height windowed scroller used by views. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
-- `ItemButton.svelte` — shared entry button wrapper wiring drag-drop + interaction handlers.
+- `EntryCell.svelte` — shared List/Tiles gridcell with roving focus, selection semantics and drag-drop interactions.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
 - `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
-- `PaneContainer.svelte` — hosts active tab content (explorer / scm / git-graph pane).
-- `PaneLayoutView.svelte` — recursive renderer for a tab's split pane-layout tree (#228).
+- `PanelResizeHandle.svelte` — shared focusable Sidebar/SCM/Miller separator with pointer capture wiring and keyboard range semantics.
+- `PaneContainer.svelte` — owns the measured, scrollable active workspace and one divider input lifetime.
+- `PaneLayoutView.svelte` — declarative split-tree renderer using shared constrained geometry and focusable separators (#228).
 - `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
 - `NavigationHistoryMenu.svelte` — full back/forward history dropdown.
 - `BreadcrumbAutocomplete.svelte` — editable address bar with directory autocomplete.
@@ -73,12 +78,54 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 
+- `src/lib/state/file-recovery.svelte.ts` — page-created revision-ordered recovery state, explicit inspection/action capabilities and independently retired subscription lifetimes; no module-global active store.
+- `src/lib/state/file-recovery-session.svelte.ts` — lazy page-owned recovery loading/reconnection and awaitable idempotent retirement; late imports cannot attach to a disposed page. Contracts in `tests/state/file-recovery-session.test.ts`; browser behavior in `e2e/file-recovery.spec.ts`.
+
+- `file-list-focus-context.ts` — typed borrowed focus-return seam from inline editors to the FileList owner.
+
+- `window-keyboard.ts` — owns window input listeners, exact terminal command dispatch, main-list command versus native-button activation, accepted local input and modifier/chord release on blur or teardown.
+- `deferred-focus.ts` — one-shot focus requests cancelled by newer interaction, with a consumer availability check before delayed surface mounting.
+
+- `lazy-dialog.svelte.ts` — per-host pending import ownership, retained constructors and demand-aware failure publication.
+
+- `git-graph-query.svelte.ts` — mounted history/pagination owner; shared reloader, captured query/walk, partial log paint, page-zero cache and invocation-scoped cleanup.
+- `src/lib/state/git-graph-detail.svelte.ts` — Selected commit/comparison files, mutation refresh tokens and inline diff ownership.
+- `git-pr-session.svelte.ts` — mounted GitHub badge, PR detail and CI log requests; immutable snapshots, invocation identities and disposal.
+- `git-graph-branches.svelte.ts` — lazy branch/author metadata owner; known-coverage fallback and query/popover request coordination.
+
+- `window-startup.ts` — window-owned settings/theme/plugin startup; disposal prevents late settings from activating plugins.
+- `window-session.ts` — composes page subscriptions, startup, command readiness and post-readiness warm priming with rollback/teardown.
+- `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; labelled failure-phase diagnostics; tear-offs require adoption ACK before source retirement.
+- `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
+- `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
+
+- `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
+- `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
+- `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
+- `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
+- `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop.
+- `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
+- `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
+- `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+
+- `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
+- `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
+- `git-commit-files-cache.ts` — importable 50-entry LRU for immutable commit file lists; shared across graph remounts and behavior-tested through an injected loader.
+
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
 - `types.ts` — shared explorer state types (ViewMode, pane shapes).
 - `pane-context.ts` — Svelte context for resolving the current pane inside components.
-- `pane-mutations.ts` — per-pane create/rename/delete/symlink/archive mutations.
+- `pane-mutations.ts` — accepted file mutations: durable filesystem effects, per-path delete receipts/undo parents, navigation-owned pane publication and exact dialog-session completion.
 - `pane-refresh.ts` — flicker-free re-list of current dir (streamed chunk accumulation).
-- `pane-watch.ts` — per-pane fs-watch + local-mutation cooldown (pure).
+- `pane-sessions.ts` — manager-owned pane identities and deferred explorer resources; activation opens restored directories on demand, cleanup drains loads and pane stores (ADR 0002).
+- `pane-activation.ts` — cancellable post-paint scheduling of reserved panes; focused panes open immediately and large layouts materialize in bounded batches.
+- `pane-viewport.svelte.ts` — window-owned viewport measurements and derived pane geometry; never persists rendered ratios.
+- `resize-activity.svelte.ts` — window-wide, token-owned resize activity; automatic workspace reveal pauses until all gestures retire.
+- `panel-resize.ts` — fixed/live automatic width preference adapter over the scalar gesture owner.
+- `scalar-resize.ts` — captured scalar drafts, frame identity, durable retirement and external-source supersession.
+- `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
+- `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
+- `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
 - `directory-listing.ts` — streaming/event-based incremental dir load management.
 - `navigation.ts` — pure back/forward history utilities.
 - `selection.ts` — pure selection math (range/toggle/anchor).
@@ -91,20 +138,22 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-palette.ts` — pane-scoped Git Graph branch, commit, and stash targets registered in the window-global command palette; commands are available only for the active graph pane (#520).
 - `git-graph-undo.ts` — bounded session ledger + active-pane request bus for confirmed graph-operation undo (#513); entries are repository-scoped and contain backend-produced expected-state snapshots.
 - `git-graph-file-history.ts` — per-pane SCM-to-graph handoff: buffers a repository-relative file path through a keyed graph remount, delivers directly to an already matching graph, and drops closed-pane requests (#518).
-- `git-graph-cache.ts` — bounded per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; retains the supported 12-tab fan-out. GitGraphView skips its redundant initial reload for a valid cache hit, while external watcher changes evict a repo's snapshots before remount (#433, #505, arch Finding 7).
+- `git-graph-cache.ts` — bounded per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; retains the supported 12-tab fan-out. GitGraphView skips its redundant initial reload for a valid cache hit, while local and external changes revoke pending writers and evict a repo's snapshots before remount (#433, #505, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.
-- `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
+- `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431); Git-change events revoke cached/joinable reads, publication uses current-flight identity, and successful summaries use a bounded 64-entry LRU.
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
-- `file-transfer.ts` — shared move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
+- `src/lib/state/copy-operations.ts` — lazy shared paste/drop copy-session presentation, immediate cancellation, incremental entries and warning settlement.
+- `file-transfer.ts` — legacy single-entry move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
 - `paste-operations.ts` — batch paste (conflict apply-to-all, progress) over file-transfer.
 - `drop-operations.ts` — shared drop-handler logic for drag-drop (over file-transfer).
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window file clipboard (cut/copy paths).
 - `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
-- `undo.svelte.ts` — global undo/redo stack store.
-- `undo-helpers.ts` — pure undo/redo helpers.
+- `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
+- `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
+- `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
 - `user-report-draft.svelte.ts` — debounced localStorage store for Report Issue's text-only unsent draft; attachments stay in the dialog's in-session retry state.
@@ -123,12 +172,15 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
-- `tab-transfer.ts` — cross-window tab drag/tear-off (localStorage handshake).
+- `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
 - `closed-tabs.ts` — closed-tab LIFO stack for Ctrl+Shift+T.
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
-- `warm-window.ts` — pre-warmed hidden window pool logic (fast Ctrl+N).
-- `window-appearance.ts` — shared window creation options (parity across code paths).
+- `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
+- `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
+- `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
+- `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
+- `window-chrome.ts` — owns native maximize-state observation, resize query coalescing, and late listener/read retirement.
 - `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
@@ -150,17 +202,30 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
 - `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards); serialized config-file writer plus `isConfigWritePending`/`lastWrittenConfig`, the echo-suppression facts config autoreload reads (#599).
-- `startup-timing.ts` — cold-start boot milestone instrumentation.
+- `startup-timing.ts` — boot/list/settings/commands/readiness milestones; main-window report also records app-run-to-ready on the Rust monotonic clock.
 - `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
 - `git-warm.ts` — wires the pure git-warm scheduler to the repo-root probe + git-graph/SCM cache warmers.
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
 
+- `src/lib/api/file-recovery.ts` — recovery IPC facade with exact renderer/subscription identities and failed-ack cleanup; list/inspect/restore and renderer-bound subscription commands are registered; page-owned UI activation is deferred until foreground readiness or explicit demand.
+
+- `environment.ts` — home/launch environment and startup telemetry IPC.
+- `drives.ts` — drive enumeration, mount, unmount and eject IPC.
+- `clipboard-image.ts` — clipboard bitmap detection and save IPC.
+- `plugin-jobs.ts` — accepted plugin job result types and image/provider job IPC.
+
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
-- `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
+- `native-resource-session.ts` — one acknowledged renderer generation shared by directory/Git IPC and the ordered history-summary channel; only failed acknowledgement retries.
+- `file-history.ts` — typed native history push/clear/execute IPC and revisioned summary subscription.
+- `src/lib/api/copy-session.ts` — one acknowledged copy request with request-local events, single-use conflict replies, cancellation handshake and native history settlement.
+- `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
+- `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
+- `mock-file-history.ts` — browser-only fixture history for UI tests; native policy lives in Rust.
+- `mock-file-history-execution.ts` — browser-only fixture inverse execution against mock filesystem commands.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
 - `git.ts` — git status decoration + SCM (stage/commit/diff) IPC.
 - `git-log.ts` — git history / commit-graph IPC (#57), including mutation snapshots and authoritative graph undo (#513).
@@ -181,11 +246,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
 
+- `use-lazy-dialog.svelte.ts` — binds one dialog open predicate to its loader and retires it with the host effect.
+
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
 - `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
 - `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
 - `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
-- `use-column-resize.svelte.ts` — Details-view column width drag/persist.
+- `use-column-resize.svelte.ts` — One keyed resize owner with session-local Details widths, visibility projection and ordered retirement.
 - `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
 - `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
 - `use-native-drop-target.svelte.ts` — position-based drop target detection.
@@ -198,11 +265,24 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
-- `use-panel-resize.svelte.ts` — persisted drag-resizable panel width; shared by Sidebar, SCM panel, miller-column handles.
+- `use-pane-dividers.svelte.ts` — single captured divider gesture per workspace; pointer/keyboard adapter with geometry and lifetime validation.
+- `use-inline-panel-width.svelte.ts` — mount-owned contribution of visible inline accessories to the pane viewport.
+- `use-panel-resize.svelte.ts` — localStorage width preference adapter for Sidebar, SCM, Miller and Git columns.
+- `use-resize-owner.svelte.ts` — shared axis-aware pointer capture, geometry, keyboard and activity lifetime.
+- `use-controlled-size.svelte.ts` — external-source size adapter; transient drafts, final commits and value-based source supersession.
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
+- `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot.
+
+- `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
+
+- `window-keys.ts` — pure ordered window-key routing policy for native button activation, terminal, modal, editable and filter contexts.
+- `window-launch-plan.ts` — pure initial-directory/view and restoration policy across main and child windows.
+- `window-input.ts` — launch, warm-window and directory-seed validation; shared parse/producer budgets and canonical explorer seed shape.
+
+- `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
@@ -212,7 +292,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `virtual-path.ts` — virtual (plugin-provided) path parsing.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `bookmark-drop-feedback.ts` — bookmark drop action feedback and effective local/cross-window drag-kind resolution (#675).
-- `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
 - `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
@@ -233,14 +312,21 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
 - `diff.ts` — unified-diff parser (#55).
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
-- `undo-operations.ts` — pure undo/redo execution logic.
+- `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
+- `src/lib/domain/copy-session.ts` — ordered native copy event, conflict-decision and positional result contracts.
+- `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
+- `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
+- `resize-size.ts` — bounded scalar normalization, visual/model delta conversion and axis-aware keyboard sizing.
+- `pane-viewport.ts` — pure descendant minima, canvas placement, active-pane reveal and keyboard divider policy.
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.
 - `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
+- `settings-numbers.ts` — Numeric preference consumer contracts shared by persisted validation and interactive setters.
 - `folder-preview.ts` — folder preview image selection (#146).
+- `preview-size.ts` — pure dock-to-setting resize policy; source-zero defaults and bounded width/height options.
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
@@ -266,7 +352,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/plugins/ — plugin system + built-in plugins.
 
 - `api.ts` — plugin API surface exposed to plugins.
-- `registry.svelte.ts` — built-in plugin registry + lifecycle.
+- `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown.
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
@@ -293,6 +379,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `pretext.d.ts` — ambient TS type declarations.
 
+## Native build resources
+
+- `src-tauri/build.rs` — embeds app resources; MSVC linker manifest also covers library test executables.
+- `src-tauri/windows-app-manifest.xml` — shared Common Controls v6 and Per-Monitor V2 DPI declarations.
+
 ## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
 
 - `main.rs` — binary entry (console-window guard).
@@ -312,13 +403,13 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
-- `system.rs` — system commands: trash, launch context, window theme, log paths.
+- `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, environment/log-tail body assembly, and ureq transport.
 - `process_ext.rs` — suppress console-window flash for spawned children.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
 - `update_check.rs` — update check via GitHub releases (#185).
-- `warm_pool.rs` — pre-warmed hidden window registry.
+- `warm_pool.rs` — native warm registry with label-scoped spawn reservations, bounded claims and committed activation.
 - `gemini.rs` — shared helpers for shelling out to `gemini` CLI.
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).
@@ -328,6 +419,21 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
+- `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
+- `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
+- `file_history/model.rs` — pure per-client/shared history admission, reserved forward/opposite ordering, partial settlement, branch/clear retirement and retained-history bounds.
+- `file_history/forward.rs` — native forward admission and supervised settlement independent of the invoking renderer.
+- `file_mutation.rs` — typed create/rename/new-text/symlink, move, ordered copy and whole-selection deletion commands settle native history and affected parents before returning outcomes.
+- `file_history/action.rs` — action shape/capability admission and affected-parent projection.
+- `src-tauri/src/file_history/plan.rs` — owned directional inverse requests and pre-execution refresh projection; preserves invalid leaves in their partial-execution position and derives move parents from recorded effect paths.
+- `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
+- `file_history/retention.rs` — complete history-entry budget for forward and inverse recovery; preserves unfinished work and a dependency-safe prefix of the opposite execution with explicit warnings.
+- `src-tauri/src/diagnostics.rs` — bounded, ordered completion diagnostics, independent of batch failures; lazy formatting stops at the output limit; bounded panic descriptions are shared by worker and replacement execution.
+- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
+- `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
+- `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
+- `git_watch/service.rs` — dedicated worker owns window-scoped leases, shared observers, cancellation/reclamation, coalesced event flags, debounce/recovery deadlines and invalidation delivery retries.
+- `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
@@ -341,11 +447,129 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ### src-tauri/src/files/ — file operations module.
 
+- `src-tauri/src/files/native_directory.rs` — shared owned directory handle and platform implementation boundary; Unix trash/recovery reuse the same relative-access contract.
+- `src-tauri/src/files/native_directory/unix.rs` — Unix no-follow relative access, exclusive rename, no-follow existence, typed removal and independent bounded enumeration.
+- `src-tauri/src/files/native_directory/windows.rs` — Windows handle-relative no-follow traversal, exclusive creation/rename, typed removal and bounded independent enumeration; namespace durability remains unqualified.
+- `src-tauri/src/files/native_directory/windows_security.rs` — creation-time protected current-user/SYSTEM descriptors and handle-based explicit/inherited child ACL validation.
+- `src-tauri/src/files/recovery/private_storage.rs` — shared retained-handle recovery privacy policy; Unix effective-owner, permission, kind and single-link validation.
+- `src-tauri/src/files/recovery/private_storage/windows.rs` — Windows protected ACL, kind/reparse, hardlink and delete-pending evidence checks through retained handles.
+- `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
+- `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
+
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
+- `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
+- `src-tauri/src/files/copy_session.rs` — async ordered copy orchestration with a supervisor-owned per-item receipt ledger.
+- `src-tauri/src/files/copy_session/model.rs` — bounded ordered copy intent, decisions and positional outcomes.
+- `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
+- `src-tauri/src/files/copy_session/worker.rs` — physical path/version inspection and observed native child execution without UI waits or size prewalks.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
-- `fs_watcher.rs` — filesystem watcher → directory-changed events.
+- `src-tauri/src/files/move_plan.rs` — bounded move intent supplies source/target claims, admitted execution bindings and physical/requested refresh parents.
+- `src-tauri/src/files/move_execution.rs` — forward/inverse move reservation, retained worker context and warning-preserving ownership settlement.
+- `src-tauri/src/files/entry_plan.rs` — pure owned targets/requests for directory/file creation, rename, new text and symlink creation; forward history and the owned worker consume the same plan; Linux admission binds execution paths while retaining stable alias presentation and both refresh parents.
+- `mutation.rs` — committed-path receipt with optional FileEntry metadata and a native-only ordinary-copy PublishedEntry (physical path, parent identity, entry version); metadata cannot revoke a committed mutation.
+- `replacement.rs` — explicit retained ownership of overwritten destinations; no-replace rollback shared by copy/move, retained-original reporting after partial source cleanup.
+- `publication.rs` — owns unpublished copy/write payloads in an exclusive physical staging directory; observed Linux ordinary-copy publication retains the staged version and uses opened-parent no-replace rename. Generic publication remains path-based.
+- `batch/mod.rs` — supervisor-owned ledger for pooled and fresh thread-affine batches; shared read-only setup/execution/cleanup boundary retains partial receipts and actual worker ownership through cancellation.
+- `src-tauri/src/files/batch/receipts.rs` — generic ordered receipt slots owned outside worker unwinding; shared by deletion and replacement execution, preserving family-specific stop, artifact and error policy.
+- `batch/model.rs` — bounded stable batch admission, component-aware overlap rejection, and succeeded/failed/uncertain/unstarted outcome partitions.
+- `trash.rs` — platform trash dispatch and exact receipt restore; Linux context setup and selection execution share one pooled job; ordered per-path outcomes and explicit UNC permanent-removal warnings (ADR 0017).
+- `trash_artifact.rs` — native-only trash identities, restore requests and successful trash/restore receipts; restore can carry a fresh publication identity for its next inverse.
+- `freedesktop_trash.rs` — Linux exact trash receipts, exclusive metadata publication, descriptor-relative no-replace moves, identity verification and restore.
+- `src-tauri/src/files/freedesktop_trash/plan.rs` — read-only source/layout/candidate preparation; explicit directory create/open/repair steps, predeclared shared/personal fallback and mount-aware identity revalidation before exact execution.
+- `src-tauri/src/files/freedesktop_trash/selection.rs` — source-first selection observation, alias dependencies, bounded aligned plans and immutable layout sharing; verified-copy inverses bind physical path, parent and version before effects and revalidate the observed parent when preparing each item.
+- `src-tauri/test_support/freedesktop_trash_selection.rs` — native selection preparation budget/candidate collisions, prefailed ancestor exclusion, late disappearance and shared-layout behavior.
+- `trash_mounts.rs` — lossless Linux mountinfo parsing and mount-ID-aware trash placement, including bind mounts.
+- `windows_restore.rs` — STA-owned Windows Shell delete/restore, exact Recycle Bin locators, source-verified callbacks and collision-preserving flags.
+- `windows_paths.rs` — Windows ordinal path comparison and component-aware alias/ancestor rejection before destructive batch admission; receipt spellings remain unchanged.
+- `trash_outcome.rs` — pure Windows delete callback classification; committed recovery warnings remain distinct from uncertain and unchanged outcomes.
+- `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
+- `restore_parents.rs` — iterative Linux restore-parent creation; bounded supervisor-owned invalidations survive partial creation and panic independently of leaf completion.
+- `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events preserve mutation priority and observation time.
+- `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
+- `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
 - `drives.rs` — enumerate drives/volumes cross-platform.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
+
+## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
+
+- `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
+- `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
+- `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery requests and deliberately unmanaged channels for renderer-retirement acceptance.
+- `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
+- `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
+- `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
+
+## src-tauri/test_support/ — opt-in native recovery acceptance
+
+- `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; bounded ownership/recovery/navigation assertions and native snapshot.
+- `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
+- `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
+- `src-tauri/test_support/file_recovery_native.rs` — feature-only abandoned replacement fixture through the production executor; native registration IDs correlate actual IPC Channel send/drop receipts across renderer lifetimes.
+- `src-tauri/test_support/file_recovery_crash.rs` — native receipt checks before retained-WebView reload after actual renderer death, followed by stale-session rejection and fresh durable-generation delivery.
+
+## src-tauri/src/files/recovery/ — durable recovery under construction
+
+- `src-tauri/src/files/recovery/mod.rs` — journal/model/storage and native preparation module boundary; Linux simple-entry admission and explicit recovery commands/UI are connected, durable forward replacement integration remains pending.
+- `src-tauri/src/files/recovery/journal.rs` — bounded opaque SQLite records, recognized schema, unique global generations, atomic multi-record admission and transactional compare-and-swap writes.
+- `src-tauri/src/files/entry_version.rs` — shared bounded object/content/mode/ownership observations that survive link and rename operations; durable shape validation.
+- `src-tauri/src/files/object_id.rs` — pure native-platform identity codec, full-width Windows IDs and separate volume equality; rejects foreign/untagged authority.
+- `src-tauri/src/files/file_identity.rs` — native object/version capture from supplied handles, Unix metadata and descriptor-relative Linux stat; no-follow leaf semantics.
+- `src-tauri/src/files/file_identity/windows.rs` — FileIdInfo query on the supplied Windows handle, preserving volume serial and all 128 identifier bits without path fallback.
+- `src-tauri/src/files/windows_io.rs` — shared Win32/NT error-code conversion for directory access, recovery identity and locking.
+- `src-tauri/test_support/recovery_object_id.rs` — full-width identity distinction, native/foreign codec contracts and malformed/wire-size bounds.
+- `src-tauri/test_support/recovery_file_identity.rs` — real independent opens/hardlinks, retained-handle identity through path replacement and native leaf/device checks.
+- `src-tauri/src/files/recovery/replacement_transition.rs` — pure root/manifest/stage/displacement/publication and resolution progression; state-only transitions and retry-error contracts in `src-tauri/test_support/recovery_replacement_transition.rs`.
+- `src-tauri/src/files/recovery/replacement_artifact.rs` — retained parent/root handles bound to the complete durable intent; exclusive root creation and exact framed local manifests. Native substitution and evidence-preservation contracts in `src-tauri/test_support/recovery_replacement_artifact.rs`.
+- `src-tauri/src/files/anchored_copy.rs` — descriptor-relative tree copy with streaming enumeration, shared buffer, source version checks and progress/cancellation; native content, link, permission, substitution and interruption contracts in `src-tauri/test_support/anchored_copy.rs`.
+- `src-tauri/src/files/recovery/rename_outcome.rs` — pure exact-version endpoint classification for ambiguous native rename results; missing/exact/conflicting endpoint contracts in `src-tauri/test_support/recovery_rename_outcome.rs`.
+- `src-tauri/src/files/native_directory/permissions.rs` — Linux metadata-only directory pins, exact-descriptor chmod and guarded procfs fallback; macOS retains ordinary read-access requirements. Native substitution and fallback contracts in `src-tauri/test_support/native_directory_permissions.rs`.
+- `src-tauri/src/files/recovery/history.rs` — native Undo/Redo resolves an operation/content-revision token under exact recovery ownership, restores or reapplies retained versions, and returns the newly confirmed opposite revision; native history model/executor contracts in `src-tauri/test_support/file_history_replacement.rs`.
+- `src-tauri/src/files/recovery/replacement_reapplication.rs` — pure retained-copy reapplication policy; exact endpoint combinations reject missing or changed copies before displacement. Contracts in `src-tauri/test_support/recovery_replacement_reapplication.rs`; real repeated execution, semantic history claims and process-death boundaries in `src-tauri/test_support/recovery_reapplication_execution.rs`.
+- `src-tauri/src/files/recovery/replacement_restoration.rs` — pure exact original/private-copy/target observations choose copy parking, original restoration, completion or conflict; exhaustive endpoint and malformed-version contracts in `src-tauri/test_support/recovery_replacement_restoration.rs`.
+- `src-tauri/src/files/recovery/replacement_restore.rs` — retained-handle restoration, restrictive copy-directory preparation and no-replace parking/restoration; native preservation, collision, source-independence and interrupted-effect contracts in `src-tauri/test_support/recovery_replacement_restore.rs`.
+- `src-tauri/src/files/recovery/replacement_transfer.rs` — handle-relative no-replace copy displacement/publication and retained-directory mode finalization, including pinned Linux unreadable-directory retries; native collision, lost-result, source-alias and authority-change regressions in `src-tauri/test_support/recovery_replacement_transfer.rs`.
+- `src-tauri/src/files/recovery/replacement_execution.rs` — owned preparation, private copy staging, original displacement, publication and restoration with durable intent before effects; persisted ordering, retry and process-kill outcomes in `src-tauri/test_support/recovery_replacement_execution.rs`. Reopening verifies the persisted root identity and exact manifest after claiming ownership. The explicit recovery service uses reopening and restoration; forward production replacements, discard and retirement remain pending.
+- `src-tauri/src/files/recovery/commands.rs` — asynchronous list/inspect/restore and subscribe/unsubscribe IPC bound to native operation IDs and renderer sessions; generations are canonical decimal strings, and platform enablement remains Linux-only.
+- `src-tauri/src/files/recovery/coordinator/inventory.rs` — bounded catalog/index association without user-volume probes or action authority; missing-checkpoint and malformed-record contracts in `src-tauri/test_support/recovery_inventory.rs`.
+- `src-tauri/src/files/recovery/service.rs` — current-generation inspection and restoration through exclusive native claims; initial unindexed presentation and native/runtime/large-counter contracts in `src-tauri/test_support/recovery_service.rs`.
+- `src-tauri/src/files/recovery/model.rs` — portable recovery IPC/history contracts and lossless decimal counters; platform-tagged native paths remain available to adapter tests.
+- `src-tauri/src/files/recovery/durable_model.rs` — Unix executor authority, catalog-digest checkpoints, typed operation state and replacement phase/manifest validation.
+- `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation; no executable move phases. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
+- `src-tauri/src/files/recovery/native_path.rs` — bounded lossless native entry paths tagged with the operating system; rejects cross-OS records before decoding authority.
+- `src-tauri/test_support/recovery_native_path.rs` — non-Unicode round trips and malformed/platform/size rejection through the actual durable path codec.
+- `src-tauri/src/files/recovery/file_lock.rs` — owned OS-lock lifetime; fresh opens, contention/error distinction and evidence-preserving release on Unix/Windows.
+- `src-tauri/src/files/recovery/file_lock/windows.rs` — exclusive Windows byte-range ownership beyond the nonce; drains overlapped completion before releasing request storage.
+- `src-tauri/test_support/recovery_file_lock.rs` — real independent-handle contention, bounded readable evidence, unwind and subprocess-termination ownership contracts.
+- `src-tauri/src/files/recovery/locks.rs` — Unix exact-file operation ownership with random nonces and OS locks; uncertain missing/replaced locks never imply abandonment.
+- `src-tauri/src/files/recovery/storage.rs` — bounded immutable checksummed catalog, independent of SQLite, using private descriptor-relative files.
+
+- `src-tauri/src/files/recovery/coordinator/claim.rs` — exact abandoned-lock acquisition with unchanged catalog/checkpoint and fresh CAS generation; native contention, stale input, corrupt evidence and overlap contracts in `src-tauri/test_support/recovery_claim.rs`.
+- `src-tauri/src/files/recovery/coordinator/claims.rs` — shared effective ownership for reservation admission and recovery: verified idle completed operations protect retained artifacts, while active and incomplete operations retain full claims. Native alias, reacquisition and interprocess gate contracts live in `src-tauri/test_support/recovery_effective_claims.rs`; independent corruption and successive-replacement contracts live in `src-tauri/test_support/recovery_effective_claims_adversarial.rs`.
+- `src-tauri/src/files/recovery/forward_copy.rs` — production Linux overwrite preparation binds native source/target/root resources, then owns durable promotion, staging, displacement and publication. The prepared owner retains physical refresh paths across worker failure; `src-tauri/test_support/recovery_forward_copy.rs` tests real copy dispatch, restore, aliases, competing ownership and interrupted staging.
+- `src-tauri/src/files/recovery/forward_copy/batch.rs` — ordered independent replacement execution with typed retained receipts, contained child panic, explicit suffix retirement, aggregate physical refresh and shared bounded diagnostics. Production singleton delegates this executor; real partial-effect/inverse tests are in `src-tauri/test_support/recovery_copy_batch.rs`.
+- `src-tauri/src/files/recovery/forward_copy/plan.rs` — whole-group exact replacement preparation: immutable native bindings and versions, atomic child reservations, common durable-intent/manifest preflight and exhaustive unstarted-owner cleanup. Single-copy production preparation shares this path. `src-tauri/test_support/recovery_copy_plan.rs` covers independent execution/restoration, stale bindings, cancellation and failed retirement.
+- `src-tauri/test_support/recovery_operation_fixture.rs` — shared real-filesystem and coordinator fixture for promotion and abandoned-claim contracts.
+- `src-tauri/src/files/recovery/coordinator/promotion.rs` — catalog-first reservation promotion and compact phase CAS, exact lost-reply retry and distinct durable ownership; interruption, changed authority, bounded manifest and checkpoint-size contracts in `src-tauri/test_support/recovery_promotion.rs`.
+- `src-tauri/src/files/recovery/coordinator.rs` — process-shared admission, exact owner reclamation, validated catalog/index claims and protected storage; bounded catalog-only discovery survives SQLite loss without user-volume probes. Linux simple-entry runtime integrated; other operation roots remain pending.
+- `src-tauri/src/files/recovery/coordinator/admission.rs` — atomic admission of independent child reservations with aggregate bounds, optimistic capture revision and cross-child conflict checks; single reservations share this path. Child promotion/finish, rollback, aliases and process-exit contracts live in `src-tauri/test_support/recovery_batch_admission.rs`.
+- `src-tauri/src/files/recovery/resources.rs` — bounded resource requests, native parent/entry identity capture and logical/physical-ancestor namespace conflicts; shared component encodings and minimal subtree frontiers bound index overhead; selection roles permit distinct hardlinks/shared layout dependencies while excluding source/artifact overlaps.
+- `src-tauri/src/files/recovery/runtime.rs` — application-owned lazy Linux coordinator initialization, admission and recovery requests on blocking workers; production overwrite policy keeps durable copies opt-in and retires default transient reservations; renderer subscriptions publish completed operations even after a requesting IPC future is lost, with initial catalog-only fallback when the index is unavailable. Runtime publication/cancellation contracts in `src-tauri/test_support/recovery_runtime.rs`.
+- `src-tauri/src/files/recovery/context.rs` — explicit worker lease clones; only the logical owner may finish after all workers release ownership.
+- `src-tauri/src/files/worker.rs` — shared blocking job ownership plus explicit-context workers that report whole results before context destruction; work/cleanup unwind separately and late cleanup diagnostics preserve successful receipts. `src-tauri/test_support/file_worker_completion.rs` covers result retention, blocked cleanup, waiter loss and subprocess double panic.
+
+- `src-tauri/src/files/recovery/subscriptions.rs` — bounded exact-renderer recovery channels; monotonic subscription tokens fence reordered registration/release, pending acknowledgements roll back, and native retirement releases listeners. Ordering, capacity, reentrant callback and retirement contracts in `src-tauri/test_support/recovery_subscriptions.rs`.
+
+### Native qualification tooling
+
+- `e2e-tauri/native-qualification.ts` — native process lifetime, verified build identity, bounded artifacts and foreground-ready/warm startup log parsing.
+- `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group.
+- `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
+- `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
+- `scripts/build-native-qualification.ts` — clean-worktree debug/release native build and exact binary provenance.
+- `scripts/qualify-macos-startup.ts` — separate real Mac foreground-only and warm-probe samples with process survival and cleanup.
+- `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
+- `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
+- `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.

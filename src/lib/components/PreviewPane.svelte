@@ -3,12 +3,18 @@
   Issue: tauri-explorer-2c6b, tauri-explorer-xago, tauri-explorer-osjq
 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
+  import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
+  import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl, openFile } from "$lib/api/files";
+  import { readTextFile, fetchDirectory, readImageAsBlobUrl } from "$lib/api/files";
+import { gitDiff } from "$lib/api/git";
+import { listArchiveContents } from "$lib/api/archive";
+import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { isTauri } from "$lib/api/mock-invoke";
+  import { isTauri } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -18,6 +24,9 @@
   import { gitCommitFileDiff, gitCompareCommitFileDiff } from "$lib/api/git-log";
   import { logFrontendDiagnostic } from "$lib/api/frontend-log";
   import { getVideoThumbnailData } from "$lib/api/thumbnails";
+  import VirtualList from "./VirtualList.svelte";
+  import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
+  import { createPreviewLifetime, type PreviewRequest } from "$lib/state/preview-lifetime";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -48,25 +57,18 @@
     return () => observer.disconnect();
   });
 
-  // Resize handle state
-  const DEFAULT_WIDTH = 280;
-  const MIN_WIDTH = 160;
-  const MAX_WIDTH = 600;
-  const DEFAULT_HEIGHT = 240;
-  const MIN_HEIGHT = 120;
-  const MAX_HEIGHT = 600;
-  let resizing = $state(false);
-  let startX = 0;
-  let startY = 0;
-  let startWidth = 0;
-  let startHeight = 0;
-
-  const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
-  const paneHeight = $derived(settingsStore.previewPaneHeight || DEFAULT_HEIGHT);
-  // Dock edge — resolved concrete edge (settingsStore already resolves "auto"
-  // via window size, #467), read directly like other settings this consumes.
+  // This frame is also the fullscreen source, separate from the tile thumbnails.
+  const VIDEO_PREVIEW_SIZE = 1024;
+  const paneId = $props.id();
   const position = $derived(settingsStore.resolvedPreviewPanePosition);
-  const isVertical = $derived(position === "top" || position === "bottom");
+  const isVertical = $derived(position !== "right");
+  // The final write can run after destruction. Read live settings directly;
+  // a derived captured by the destroyed view is not a durable source of truth.
+  const readSizeSpec = () => previewResizeSpec(settingsStore.resolvedPreviewPanePosition);
+  const resize = useControlledSize(() => settingsStore[readSizeSpec().setting], value => {
+    if (readSizeSpec().setting === "previewPaneWidth") settingsStore.setPreviewPaneWidth(value);
+    else settingsStore.setPreviewPaneHeight(value);
+  }, () => readSizeSpec().options);
 
   // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
   // The image fits the screen (object-fit: contain). Zoom with +/- or Ctrl+wheel;
@@ -102,8 +104,17 @@
   }
 
   function toggleFullscreen(): void {
+    resize.cancel();
     fullscreen = !fullscreen;
     resetZoom();
+  }
+
+  function handlePaneDoubleClick(event: MouseEvent): void {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(
+      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, video, audio, iframe',
+    )) return;
+    toggleFullscreen();
   }
 
   /** Step to the previous/next previewable (non-directory) sibling file. */
@@ -245,38 +256,6 @@
     }
   });
 
-  function handleResizeStart(event: MouseEvent): void {
-    event.preventDefault();
-    resizing = true;
-    startX = event.clientX;
-    startY = event.clientY;
-    startWidth = paneWidth;
-    startHeight = paneHeight;
-    document.addEventListener("mousemove", handleResizeMove);
-    document.addEventListener("mouseup", handleResizeEnd);
-  }
-
-  function handleResizeMove(event: MouseEvent): void {
-    if (isVertical) {
-      // Bottom dock: handle on the top edge, dragging up grows the pane.
-      // Top dock: handle on the bottom edge, dragging down grows the pane.
-      const delta = position === "bottom" ? startY - event.clientY : event.clientY - startY;
-      const newHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, startHeight + delta));
-      settingsStore.setPreviewPaneHeight(newHeight);
-    } else {
-      // Right dock: handle on the left edge, dragging left grows the pane.
-      const delta = startX - event.clientX;
-      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
-      settingsStore.setPreviewPaneWidth(newWidth);
-    }
-  }
-
-  function handleResizeEnd(): void {
-    resizing = false;
-    document.removeEventListener("mousemove", handleResizeMove);
-    document.removeEventListener("mouseup", handleResizeEnd);
-  }
-
   /** Currently selected file from the active explorer */
   const selectedFile = $derived.by((): FileEntry | null => {
     const explorer = windowTabsManager.getActiveExplorer();
@@ -297,6 +276,7 @@
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewMarkdownHtml = $state<string | null>(null);
+  let previewCsv = $state<CsvPreview | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
   // Set when a folder/ZIP preview descended through one or more single-child
@@ -322,8 +302,25 @@
   });
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
-  let lastPreviewPath: string | null = null;
+  let previewTruncatedLabel = $state("lines");
   let lastPreviewKey: string | null = null;
+  const previewLifetime = createPreviewLifetime((url) => URL.revokeObjectURL(url));
+
+  function csvRowHeight(row: string[]): number {
+    return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
+  }
+
+  /** One column template shared by the sticky header and every virtual row. */
+  function csvColumnTemplate(csv: CsvPreview): string {
+    return csv.header
+      .map((header, column) => {
+        const longestCell = Math.max(header.length, ...csv.rows.map((row) => row[column]?.length ?? 0));
+        // Pixels keep a track's computed width identical in the bold header
+        // and normal-weight data rows; `ch` varies with font weight.
+        return `${Math.max(128, longestCell * 8 + 20)}px`;
+      })
+      .join(" ");
+  }
 
   // --- Git diff preview state ---
   const activeDiff = $derived(scmStore.activeDiff);
@@ -516,12 +513,14 @@
     const key = previewKey;
     const file = selectedFile;
     if (!file || !path) {
-      lastPreviewPath = null;
+      previewLifetime.invalidate();
+      previewLifetime.clearBlob();
       lastPreviewKey = null;
       previewImageUrl = null;
       previewText = null;
       previewHighlightedHtml = null;
       previewMarkdownHtml = null;
+      previewCsv = null;
       previewPdfUrl = null;
       previewFolderChildrenRaw = [];
       previewCollapsedRoot = null;
@@ -531,7 +530,6 @@
       return;
     }
     if (key === lastPreviewKey) return;
-    lastPreviewPath = path;
     lastPreviewKey = key;
     loadPreview(file);
   });
@@ -544,27 +542,23 @@
     return url;
   }
 
-  /** A request is current only while its exact file revision remains selected.
-   * A watcher can refresh a selected video at the same path while ffmpeg is
-   * extracting its previous frame, so path-only checks are insufficient. */
-  function isCurrentPreview(file: FileEntry): boolean {
-    return lastPreviewKey === `${file.path}|${file.modified}|${file.size}`;
-  }
-
   async function loadPreview(file: FileEntry): Promise<void> {
+    const request = previewLifetime.begin(`${file.path}|${file.modified}|${file.size}`);
     // Release any object-URL from a previous backend-fallback image so the
     // bytes aren't pinned in memory across navigations.
-    if (previewImageUrl?.startsWith("blob:")) URL.revokeObjectURL(previewImageUrl);
+    previewLifetime.clearBlob();
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
+    previewCsv = null;
     previewPdfUrl = null;
     previewFolderChildrenRaw = [];
     previewCollapsedRoot = null;
     previewCollapsedNote = null;
     previewError = null;
     previewTruncatedLines = 0;
+    previewTruncatedLabel = "lines";
     previewLoading = true;
 
     if (file.kind !== "directory") {
@@ -582,7 +576,7 @@
       const chain: string[] = [];
       for (let depth = 0; depth < MAX_DESCENT; depth++) {
         const result = await fetchDirectory(dirPath);
-        if (file.path !== lastPreviewPath) return;
+        if (!previewLifetime.isCurrent(request)) return;
         if (!result.ok) {
           previewError = result.error;
           previewLoading = false;
@@ -610,7 +604,7 @@
     // to a single top-level folder (or chain of them), descend and show its name.
     if (isZipFile(file)) {
       const result = await listArchiveContents(file.path);
-      if (file.path !== lastPreviewPath) return;
+      if (!previewLifetime.isCurrent(request)) return;
       if (result.ok) {
         previewFolderChildrenRaw = result.data.entries;
         if (result.data.rootFolder) {
@@ -632,8 +626,10 @@
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
+          if (!previewLifetime.isCurrent(request)) return;
           previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
         } catch (error) {
+          if (!previewLifetime.isCurrent(request)) return;
           console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
           logFrontendDiagnostic("preview PDF asset URL creation failed", {
             path: file.path,
@@ -656,13 +652,19 @@
       // browser/E2E mode, where the mock serves a data URI.
       const loadViaBackend = async () => {
         const fallback = await readImageAsBlobUrl(file.path);
-        if (file.path !== lastPreviewPath) return; // Stale after fetch
+        if (!previewLifetime.isCurrent(request)) {
+          previewLifetime.adoptBlob(request, fallback.ok ? fallback.data : "");
+          return;
+        }
         if (fallback.ok) {
+          if (!previewLifetime.adoptBlob(request, fallback.data)) return;
           try {
             await decodeImage(fallback.data);
-            if (file.path !== lastPreviewPath) return; // Stale after decode
+            if (!previewLifetime.isCurrent(request)) return;
             previewImageUrl = fallback.data;
           } catch (error) {
+            if (!previewLifetime.isCurrent(request)) return;
+            previewLifetime.releaseBlob(request, fallback.data);
             console.warn("[preview] backend image decode failed", { path: file.path, error });
             logFrontendDiagnostic("preview backend image decode failed", {
               path: file.path,
@@ -683,13 +685,14 @@
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
-          if (file.path !== lastPreviewPath) return; // Stale
+          if (!previewLifetime.isCurrent(request)) return; // Stale
           const url = `${convertFileSrc(file.path)}?v=${bust}`;
           // Decode off-screen — spinner stays visible until ready
           await decodeImage(url);
-          if (file.path !== lastPreviewPath) return; // Stale after decode
+          if (!previewLifetime.isCurrent(request)) return; // Stale after decode
           previewImageUrl = url;
         } catch (assetErr) {
+          if (!previewLifetime.isCurrent(request)) return;
           console.warn("[preview] asset image decode failed; using backend fallback", {
             path: file.path,
             error: assetErr,
@@ -706,22 +709,20 @@
     } else if (isVideoFile(file)) {
       // Reuse the ffmpeg-backed thumbnail seam from TilesView. The pane shows
       // its extracted still frame rather than attempting inline playback.
-      const result = await getVideoThumbnailData(file.path);
-      if (!isCurrentPreview(file)) {
-        if (result.ok && result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
+      const result = await getVideoThumbnailData(file.path, VIDEO_PREVIEW_SIZE);
+      if (!previewLifetime.isCurrent(request)) {
+        if (result.ok) previewLifetime.adoptBlob(request, result.data);
         return;
       }
       if (result.ok) {
+        if (!previewLifetime.adoptBlob(request, result.data)) return;
         try {
           await decodeImage(result.data);
-          if (!isCurrentPreview(file)) {
-            if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
-            return;
-          }
+          if (!previewLifetime.isCurrent(request)) return;
           previewImageUrl = result.data;
         } catch (error) {
-          if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
-          if (!isCurrentPreview(file)) return;
+          if (!previewLifetime.isCurrent(request)) return;
+          previewLifetime.releaseBlob(request, result.data);
           console.warn("[preview] video frame decode failed", { path: file.path, error });
           logFrontendDiagnostic("preview video frame decode failed", {
             path: file.path,
@@ -739,8 +740,16 @@
       }
     } else if (isTextFile(file)) {
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview
-      if (file.path !== lastPreviewPath) return; // Stale
+      if (!previewLifetime.isCurrent(request)) return; // Stale
       if (result.ok) {
+        const csvPreview = /\.csv$/i.test(file.name) ? parseCsvPreview(result.data) : null;
+        if (csvPreview) {
+          previewCsv = csvPreview;
+          if (csvPreview.totalRows > csvPreview.rows.length) {
+            previewTruncatedLines = csvPreview.totalRows;
+            previewTruncatedLabel = "rows";
+          }
+        } else {
         // Limit to first 200 lines to avoid lag on large files
         const MAX_PREVIEW_LINES = 200;
         const lines = result.data.split("\n");
@@ -770,31 +779,45 @@
         } else {
           previewHighlightedHtml = null;
         }
+        }
       } else {
         previewError = result.error;
       }
     }
 
     // A superseded request must not hide the current selection's spinner.
-    if (isCurrentPreview(file)) previewLoading = false;
+    if (previewLifetime.isCurrent(request)) previewLoading = false;
   }
+
+  onDestroy(() => {
+    previewLifetime.dispose();
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+  id={paneId}
   class="preview-pane"
-  class:resizing
+  class:resizing={resize.isResizing}
   class:fullscreen
   class:vertical={isVertical}
   class:dock-bottom={position === "bottom"}
   class:dock-top={position === "top"}
   style={isVertical
-    ? `height: ${paneHeight}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
-    : `width: ${paneWidth}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
-  ondblclick={toggleFullscreen}
+    ? `height: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
+    : `width: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
+  ondblclick={handlePaneDoubleClick}
 >
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="resize-handle" onmousedown={handleResizeStart}></div>
+  {#if !fullscreen}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
+    <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize preview"
+      aria-orientation={isVertical ? "horizontal" : "vertical"} aria-controls={paneId}
+      aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.value}
+      aria-valuetext={`${Math.round(resize.value)} pixels`}
+      onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
+      onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
+      onkeydown={resize.keydown}></div>
+  {/if}
   {#if fullscreen}
     <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen = false; }} title="Exit full screen (Esc)" aria-label="Exit full screen">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -912,9 +935,8 @@
           <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
         </div>
       {:else if previewImageUrl}
-        <!-- Click brings the image front and center (fullscreen); clicking
-             again reverts (#219). stopPropagation so the pane's dblclick
-             toggle can't double-fire on the same gesture. -->
+        <!-- This surface owns click/pan/zoom; the pane's double-click policy
+             leaves it alone. Clicking at fit zoom toggles fullscreen (#219). -->
         <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
         <div
           class="preview-image-container"
@@ -922,7 +944,6 @@
           bind:this={imageContainerEl}
           onwheel={handleFullscreenWheel}
           onclick={handleImageClick}
-          ondblclick={(e) => e.stopPropagation()}
           onpointerdown={handleImagePointerDown}
           onpointermove={handleImagePointerMove}
           onpointerup={handleImagePointerUp}
@@ -960,20 +981,42 @@
             </div>
           {/each}
         </div>
+      {:else if previewCsv !== null}
+        <div class="preview-csv" role="table" aria-label="CSV preview">
+          <div class="preview-csv-table" style={`--csv-column-template: ${csvColumnTemplate(previewCsv)};`}>
+            <div class="preview-csv-row preview-csv-header" role="row">
+              {#each previewCsv.header as cell, index (index)}
+                <div class="preview-csv-cell" role="columnheader">{cell}</div>
+              {/each}
+            </div>
+            <VirtualList items={previewCsv.rows} itemHeight={28} getItemHeight={csvRowHeight} getKey={(_row, index) => index} itemOverflow="visible" class="preview-csv-rows">
+              {#snippet children(row)}
+                <div class="preview-csv-row" role="row">
+                  {#each row as cell, index (index)}
+                    <div class="preview-csv-cell" role="cell">{cell}</div>
+                  {/each}
+                </div>
+              {/snippet}
+            </VirtualList>
+          </div>
+        </div>
+        {#if previewTruncatedLines > 0}
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
+        {/if}
       {:else if previewMarkdownHtml !== null}
         <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html previewMarkdownHtml}</div>
         {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
         {/if}
       {:else if previewHighlightedHtml !== null}
         <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html previewHighlightedHtml}</code></pre>
         {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
         {/if}
       {:else if previewText !== null}
         <pre class="preview-text">{previewText}</pre>
         {#if previewTruncatedLines > 0}
-          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} {previewTruncatedLabel}</div>
         {/if}
       {:else if previewError}
         <div class="preview-empty">
@@ -1021,7 +1064,10 @@
   /* Vertical docks fill the column width; the divider moves to the docked edge. */
   .preview-pane.vertical {
     width: 100%;
-    flex-shrink: 0;
+    /* Honor the live inline height until the parent's available-space cap
+       requires shrinking. The preferred/draft value remains unchanged. */
+    min-height: 0;
+    flex-shrink: 1;
     border-left: none;
   }
 
@@ -1082,7 +1128,12 @@
     width: 4px;
     cursor: col-resize;
     z-index: 10;
-    transition: background var(--transition-normal);
+    touch-action: none;
+  }
+
+  .resize-handle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   /* Bottom dock: handle spans the top edge (row-resize). */
@@ -1302,6 +1353,57 @@
     flex: 1;
   }
 
+  .preview-csv {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    font-size: var(--preview-font-size, 11px);
+    color: var(--text-secondary);
+  }
+
+  .preview-csv-table {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: max-content;
+    min-width: 100%;
+    min-height: 0;
+  }
+
+  .preview-csv-row {
+    display: grid;
+    grid-template-columns: var(--csv-column-template);
+  }
+
+  .preview-csv-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--background-solid);
+    border-bottom: 1px solid var(--divider);
+    font-weight: 600;
+  }
+
+  .preview-csv-cell {
+    min-width: 0;
+    padding: 6px 10px;
+    border-right: 1px solid var(--divider);
+    border-bottom: 1px solid color-mix(in srgb, var(--divider) 65%, transparent);
+    white-space: pre;
+    line-height: 16px;
+  }
+
+  .preview-csv-rows {
+    min-height: 0;
+  }
+
+  .preview-csv-table :global(.preview-csv-rows) {
+    overflow-x: visible;
+  }
+
   .preview-code :global(.hljs) {
     background: transparent;
     padding: 0;
@@ -1352,6 +1454,58 @@
 
   .preview-markdown :global(p) {
     margin: 6px 0;
+  }
+
+  .preview-markdown :global(.md-properties) {
+    margin: 0 0 14px;
+    padding: 8px 10px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--subtle-fill-secondary);
+  }
+
+  .preview-markdown :global(.md-properties dl) {
+    margin: 0;
+  }
+
+  .preview-markdown :global(.md-property) {
+    display: grid;
+    grid-template-columns: minmax(76px, 0.38fr) minmax(0, 1fr);
+    gap: 8px;
+    padding: 3px 0;
+  }
+
+  .preview-markdown :global(.md-property + .md-property) {
+    border-top: 1px solid var(--divider);
+  }
+
+  .preview-markdown :global(.md-property-key) {
+    color: var(--text-tertiary);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .preview-markdown :global(.md-property dd) {
+    min-width: 0;
+    margin: 0;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .preview-markdown :global(.md-property-values) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .preview-markdown :global(.md-property-values li) {
+    margin: 0;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: var(--subtle-fill-tertiary, var(--subtle-fill-secondary));
   }
 
   .preview-markdown :global(a) {

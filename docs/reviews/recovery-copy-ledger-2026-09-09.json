@@ -1,0 +1,218 @@
+{
+  "date": "2026-09-09",
+  "scope": "Retained independent replacement outcomes inside one native execution/runtime boundary; production single replacement delegates group-of-one; shared ordered receipt storage preserves deletion policy",
+  "contracts": [
+    "The replacement pending queue and ordered receipt ledger outlive individual child unwinding; begin precedes child consumption and successful completion immediately fills a preallocated slot",
+    "Later staging panic, pre-promotion panic, cancellation or source-version rejection preserves committed prefix receipts and exact usable inverses",
+    "Unstarted suffix reservations are explicitly retired before publication, including continued cleanup after a retirement failure; cleanup diagnostics are additive",
+    "Failed and uncertain outcomes preserve typed errors, unstarted children remain separate, and pre-promotion panic does not invent durable catalog evidence",
+    "Physical alias refresh paths are captured before child consumption, retained for started items, and deduplicated after ownership release",
+    "Runtime refresh and inventory publication contain panic and retain completed receipts; inventory errors and panics do not trigger replay or discard inverses",
+    "Deletion continues to own artifact budgets, ordinary-failure continuation, uncertainty stopping, refresh effects and terminal projection outside generic receipt storage",
+    "History and copy share ordered deduplicated diagnostics capped at32 messages and16KiB including newline separators and omission marker"
+  ],
+  "verification": {
+    "diagnostic_repro": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib newline_joined_diagnostics_including_omission_fit_the_output_budget",
+      "pre_fix_failed": 1,
+      "exit_code": 101,
+      "log": {
+        "path": "/tmp/copy-ledger-diagnostic-repro.log",
+        "sha256": "89a038d84d82e66cd4e00f14dd6672d5f7c1fa72e6a958a701e54a3df789cb6d"
+      },
+      "failure": "Output exceeded16KiB after newline joining even though the stored messages were bounded; final run includes the passing regression"
+    },
+    "rust": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- diagnostics:: files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: files::batch:: --test-threads=1",
+      "passed": 498,
+      "failed": 0,
+      "ignored": 12,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-ledger-rust.log",
+        "sha256": "ae357428a7c121691dc16f092974021bca719e32d922979dcfeeb38c709c9416"
+      }
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": {
+        "path": "/tmp/copy-ledger-native-build.log",
+        "sha256": "beb0f4b49952fe9fdcfaf92ff9a42960534275ffc014c3480abb26735de84a81"
+      },
+      "command": "bash /tmp/run-file-recovery-native.sh",
+      "passed": 5,
+      "failed": 0,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-ledger-native-ui.log",
+        "sha256": "b258722a1e4440940f06f1f3829184fde9458aedd2eb1db02dc6589e60f17342"
+      },
+      "profile": "/tmp/explorer-file-recovery-native-xHeyRt",
+      "binary_sha256_before": "a1256b8718f0732b7939a0993a116d31e76f437e5fe63e00084b19429f46a160",
+      "binary_sha256_after": "a1256b8718f0732b7939a0993a116d31e76f437e5fe63e00084b19429f46a160",
+      "scope": "Actual production single overwrite/recovery/UndoRedo, renderer reload, destroyed child and detached inverse settlement through group-of-one execution. Multi-child execution and faults have real-filesystem Rust evidence; no grouped IPC/UI claim",
+      "binary_checksum_before": {
+        "path": "/tmp/copy-ledger-native-binary-before.sha256",
+        "sha256": "85a3b4cdc4a1ffa0d69fd264e1717548e1a6cae3be9341da30d145e18451f4f4"
+      },
+      "binary_checksum_after": {
+        "path": "/tmp/copy-ledger-native-binary-after.sha256",
+        "sha256": "85a3b4cdc4a1ffa0d69fd264e1717548e1a6cae3be9341da30d145e18451f4f4"
+      }
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "existing_dead_code_warnings": 8,
+      "log": {
+        "path": "/tmp/copy-ledger-clippy.log",
+        "sha256": "c439fe92a5150be0323d8a00726ad1d202c267e20ddced73d4182ec5015be571"
+      }
+    },
+    "format": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-ledger-format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "maps": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-ledger-maps.log",
+        "sha256": "61ae993def81283d23063853f4b4d5be46175e0af555f469f2ad13498ce0ab4b"
+      },
+      "including_untracked": {
+        "covered": 474,
+        "total": 474,
+        "log": {
+          "path": "/tmp/copy-ledger-maps-untracked.log",
+          "sha256": "1dfaa1d07f6fbab88e08d49bbb75592c69a870894c2ec098c379cc24c9d526ca"
+        }
+      }
+    },
+    "bundle": {
+      "command": "bun run check:bundle",
+      "exit_code": 0,
+      "main_gzip_bytes": 91680,
+      "startup_chunks": 45,
+      "startup_raw_bytes": 671703,
+      "startup_gzip_bytes": 219257,
+      "log": {
+        "path": "/tmp/copy-ledger-bundle.log",
+        "sha256": "89e13356a2fe27b7bd335d8fe9bc574db181edd18836d7e492fb6fa4f15b9a0c"
+      },
+      "scope": "Production frontend restored after opt-in native build. No startup timing or throughput claim"
+    },
+    "diff": {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-ledger-diff.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "independent_review": {
+    "agent": "effective_claims_adversary_sol",
+    "model": "gpt-5.6-sol",
+    "result": "ACCEPTED for internal grouped execution/runtime and shared diagnostic refactor; source/tests and final Rust logs reviewed independently",
+    "confirmed": [
+      "Active ownership before consumption and receipt retention across later child panic",
+      "Explicit suffix cleanup and unchanged typed classifications",
+      "Captured physical refresh after owners unwind",
+      "Retained inverses after inventory error/panic",
+      "Policy-neutral deletion reuse",
+      "Shared bounded Unicode-safe diagnostics and rendered-output separator budget"
+    ],
+    "gaps": [
+      "No injected publish_file_changes panic test; containment is source evidence",
+      "Internal index/terminal assertions rely on admitted plan lengths",
+      "Future grouped-command worker/capture destruction is not covered by this executor",
+      "Grouped warnings are aggregate runtime diagnostics, not a new per-item IPC contract"
+    ],
+    "evidence_audit": "All source/log hashes, counts, native scenario scope, bundle and maps independently checked; checksum-file evidence and explicit diff log added following provenance review"
+  },
+  "limitations": [
+    "Independent replacements only; mixed ordinary copies/moves and ordered overlapping destinations remain unimplemented",
+    "No one-job cancellation registry owner, outer worker/capture-destruction ledger, grouped forward-history settlement or paste/drop batch IPC is introduced",
+    "A pre-promotion active panic can leave an abandoned reservation for later native reclamation; untouched suffix retirement is explicit",
+    "Runtime containment preserves results inside this boundary; future outer worker and command boundaries must preserve the same receipts",
+    "Full artifact retirement/retention, other mutation-family admission, cross-filesystem and Windows/macOS qualification remain open",
+    "No actual Mac half-bounce/startup measurement, full-review completion, commit, push or merge is claimed"
+  ],
+  "source_files": [
+    {
+      "path": "src-tauri/src/diagnostics.rs",
+      "sha256": "f1d5fa8105700cab703464afba6826949d8b724b385b81780c8292b6102e68fe"
+    },
+    {
+      "path": "src-tauri/src/files/batch/receipts.rs",
+      "sha256": "9753e41df6b757cd9bea6788ee7d8cd74f8bfcea4e4d214011447856680d0a1a"
+    },
+    {
+      "path": "src-tauri/src/files/batch/mod.rs",
+      "sha256": "80050f01c7c707652a255231ad56221bd9187b08b5eb8ea7720eea345e1737d4"
+    },
+    {
+      "path": "src-tauri/src/files/batch/model.rs",
+      "sha256": "6d2d5701d7d4619a8b68153ee2c90e954270ac4ef6c12e0eb52e86a2e31bf658"
+    },
+    {
+      "path": "src-tauri/src/files/recovery/forward_copy/batch.rs",
+      "sha256": "597d8c5fd566d162c4ebd98b7fd41b0885fb032406da653e156c5a4d3aa8daeb"
+    },
+    {
+      "path": "src-tauri/src/files/recovery/forward_copy/plan.rs",
+      "sha256": "ea7d71e2fccfae25f117d2dbd699656e31f44e6fca1257dab9e75021223b0c75"
+    },
+    {
+      "path": "src-tauri/src/files/recovery/forward_copy.rs",
+      "sha256": "675d8364114157a64b2c89984e85fdcd226d05bc34b7ffde1516e17bebd2ecad"
+    },
+    {
+      "path": "src-tauri/src/files/recovery/runtime.rs",
+      "sha256": "5150ef09c3891ec629cb209fd8923dbcff096015cb0d84b8320fef73e492cbe6"
+    },
+    {
+      "path": "src-tauri/src/files/mutation.rs",
+      "sha256": "7760ac654d7bdc677d61f16425ea5efa297f7ed84fb3cd700ccdcf3e7922392e"
+    },
+    {
+      "path": "src-tauri/src/file_mutation.rs",
+      "sha256": "e2b31fdf5b3100b3f79f67f916e7567d831a25b87930d689ea56c0c821b18056"
+    },
+    {
+      "path": "src-tauri/src/file_history/mod.rs",
+      "sha256": "9c88be62990868e5b10d50501e8bf498e13ee2cbff026df776a6fbe62bd3a97c"
+    },
+    {
+      "path": "src-tauri/src/file_history/execution.rs",
+      "sha256": "7f6f1c8c763eacd603b01299b6f0a179310ea4d6d8647a389c669d0b74d2adb7"
+    },
+    {
+      "path": "src-tauri/src/file_history/retention.rs",
+      "sha256": "a81cfb619788085ff4a687751c3f3c86bdfb596a179a23e56b002d6306831473"
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "sha256": "8d4bc3296a46ca35450a2cabca84beedd5184b4bdcfdc793f881b75420c1d0ed"
+    },
+    {
+      "path": "src-tauri/test_support/diagnostics.rs",
+      "sha256": "36af4c8f983cbe384d0ad01369314e802b3cf9df1776b21231ac278b60846cd7"
+    },
+    {
+      "path": "src-tauri/test_support/recovery_copy_batch.rs",
+      "sha256": "c68ef6d758af692886c570d4f79e4549dfd2dc5d93a513e2e830e3b49fa902bb"
+    },
+    {
+      "path": "src-tauri/test_support/recovery_runtime.rs",
+      "sha256": "f70ebbb141bfb82d3db4cd2355fa777d61af63518f50c18264ba5cc738b0caca"
+    }
+  ],
+  "moved_sources": {
+    "src-tauri/src/file_history/warnings.rs": "src-tauri/src/diagnostics.rs",
+    "src-tauri/test_support/file_history_warnings.rs": "src-tauri/test_support/diagnostics.rs"
+  }
+}

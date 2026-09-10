@@ -3,18 +3,17 @@
  * Provides realistic fake data when running outside of Tauri webview.
  */
 
-import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
+import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/file-history";
+import { createMockFileHistory } from "./mock-file-history";
+import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
-import { parentDir, basename } from "$lib/domain/path";
+import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
-import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
-
-// Check if we're running in Tauri v2
-// Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
-export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+import { broadcastFileChange } from "$lib/state/file-events";
+import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/git";
+import type { CopyDecision, CopySessionEvent, CopySessionOutcome } from "$lib/domain/copy-session";
 
 // Deterministic, varied timestamps: each created entry gets a distinct
 // modified time (1h apart from a fixed base) so sort-by-modified is testable.
@@ -41,6 +40,12 @@ function file(name: string, path: string, size: number): FileEntry {
 // which consults this map for such folders.
 const mockDirEmpty: Record<string, boolean> = {};
 
+interface MockCopyControl {
+  cancelled: boolean;
+  pending?: { item: number; nonce: string; resolve: (decision: CopyDecision) => void };
+}
+const mockCopyControls = new Map<string, MockCopyControl>();
+
 function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boolean): FileEntry {
   if (is_empty !== undefined) mockDirEmpty[path] = is_empty;
   // is_empty is intentionally absent from the listing contract (#129).
@@ -52,6 +57,53 @@ function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boole
     modified: nextTimestamp(),
     ...(is_git_repo ? { is_git_repo: true } : {}),
   };
+}
+
+const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
+
+interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][] }
+const mockTrash = new Map<string, MockTrashItem[]>();
+
+function removeMockEntry(path: string, toTrash: boolean): void {
+  const parent = parentDir(path);
+  const entries = mockFiles[parent] ?? [];
+  const entry = entries.find((candidate) => candidate.path === path);
+  if (!entry) throw new Error(`Path not found: ${path}`);
+  const listings = Object.entries(mockFiles).filter(([directory]) => directory === path || directory.startsWith(`${path}/`));
+  if (toTrash) {
+    const versions = mockTrash.get(path) ?? [];
+    versions.push({ entry, listings });
+    mockTrash.set(path, versions);
+  }
+  mockFiles[parent] = entries.filter((candidate) => candidate.path !== path);
+  for (const [directory] of listings) delete mockFiles[directory];
+}
+
+function restoreMockEntry(path: string): void {
+  const versions = mockTrash.get(path);
+  const item = versions?.at(-1);
+  if (!item) throw new Error(`No matching trash item: ${path}`);
+  const parent = parentDir(path);
+  const entries = mockFiles[parent];
+  if (!entries) throw new Error(`Parent not found: ${parent}`);
+  if (entries.some((entry) => entry.path === path)) throw new Error(`Path already exists: ${path}`);
+  mockFiles[parent] = [...entries, item.entry];
+  for (const [directory, listing] of item.listings) mockFiles[directory] = listing;
+  versions!.pop();
+  if (!versions!.length) mockTrash.delete(path);
+}
+
+function mockBatch(paths: string[], operation: (path: string) => void): FileBatchOutcome {
+  const result: FileBatchOutcome = { succeeded: [], failed: [] };
+  for (const path of new Set(paths)) {
+    try {
+      operation(path);
+      result.succeeded.push(path);
+    } catch (error) {
+      result.failed.push({ path, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return result;
 }
 
 // Mock file system structure
@@ -76,6 +128,14 @@ const mockFiles: Record<string, FileEntry[]> = {
     dir(".config", "/home/user/.config", false),
     file("readme.txt", "/home/user/readme.txt", 1024),
     file("notes.md", "/home/user/notes.md", 2048),
+  ],
+  // Keep preview fixtures out of the shared home directory. Many browser
+  // tests deliberately search or count that directory's baseline contents.
+  "/home/csv-preview": [
+    file("people.csv", "/home/csv-preview/people.csv", 256),
+    file("broken.csv", "/home/csv-preview/broken.csv", 128),
+    file("many-people.csv", "/home/csv-preview/many-people.csv", 8192),
+    file("wide.csv", "/home/csv-preview/wide.csv", 1024),
   ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
@@ -345,7 +405,22 @@ const mockFiles: Record<string, FileEntry[]> = {
 };
 
 if (typeof window !== "undefined") {
-  (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision = () => {
+  const previewHooks = window as unknown as {
+    __mockVideoRevision?: () => void;
+    __mockPreviewRevision?: (path: string) => void;
+  };
+  previewHooks.__mockPreviewRevision = (path) => {
+    const parent = parentDir(path);
+    const entries = mockFiles[parent];
+    const current = entries?.find((entry) => entry.path === path);
+    if (!entries || !current) return;
+    mockFiles[parent] = entries.map((entry) =>
+      entry === current
+        ? { ...entry, modified: new Date(Date.parse(entry.modified) + 1000).toISOString(), size: entry.size + 1 }
+        : entry,
+    );
+  };
+  previewHooks.__mockVideoRevision = () => {
     const videos = mockFiles["/home/user/Videos"];
     const recording = videos.find((entry) => entry.path.endsWith("recording.mp4"));
     if (!recording) return;
@@ -1200,7 +1275,20 @@ const mockFileContent: Record<string, string> = {
   "/home/user/Documents/project/tsconfig.json": '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
   "/home/user/Documents/project/README.md": '# Project\n\nA sample project.\n',
   "/home/user/readme.txt": "This is a readme file.\n",
+  "/home/csv-preview/people.csv": 'name,note\nAda,"first, second"\nGrace,"said ""hello""\nand left"\n',
+  "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
+  "/home/csv-preview/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
+  "/home/csv-preview/wide.csv": "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
   "/home/user/notes.md": [
+    "---",
+    "title: August notes",
+    "status: published",
+    "tags: [tauri, explorer]",
+    "authors:",
+    "  - Alice",
+    "  - Bob",
+    "---",
+    "",
     "# Notes",
     "",
     "Some notes here, with **bold** and *italic* text.",
@@ -1250,6 +1338,7 @@ if (typeof window !== "undefined") {
   };
 }
 
+const mockFileHistory = createMockFileHistory((command, args) => invokeMockCommand(command, args), broadcastFileChange);
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
@@ -1334,6 +1423,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
   // and claims always miss, so openNewWindow takes the fresh-window path.
   warm_pool_begin_spawn: () => false,
+  warm_pool_activate: () => false,
   warm_pool_cancel_spawn: () => undefined,
   warm_pool_register: () => undefined,
   warm_pool_claim: () => null,
@@ -1416,7 +1506,7 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
     mockFiles[newPath] = [];
-    return entry;
+    return mutationReceipt(entry);
   },
 
   create_empty_file: (args) => {
@@ -1433,7 +1523,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const entry = file(name, newPath, 0);
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
-    return entry;
+    return mutationReceipt(entry);
   },
 
   rename_entry: (args) => {
@@ -1447,39 +1537,18 @@ const mockCommands: Record<string, CommandHandler> = {
       const newPath = `${parentPath}/${newName}`;
       const newEntry: FileEntry = { ...oldEntry, name: newName, path: newPath };
       entries[entryIndex] = newEntry;
-      return newEntry;
+      return mutationReceipt(newEntry);
     }
     throw new Error("Entry not found");
   },
 
-  move_to_trash: (args) => {
-    const path = args.path as string;
-    const parentPath = parentDir(path);
-    const entries = mockFiles[parentPath] || [];
-    const entryIndex = entries.findIndex((e) => e.path === path);
-    if (entryIndex >= 0) {
-      entries.splice(entryIndex, 1);
-    }
-    // Remove the directory's own listing so navigating to it after deletion fails
-    delete mockFiles[path];
-  },
+  move_to_trash: (args) => removeMockEntry(args.path as string, true),
 
-  move_multiple_to_trash: (args) => {
-    const paths = args.paths as string[];
-    for (const path of paths) {
-      const pp = parentDir(path);
-      const entries = mockFiles[pp] || [];
-      const entryIndex = entries.findIndex((e) => e.path === path);
-      if (entryIndex >= 0) {
-        entries.splice(entryIndex, 1);
-      }
-      delete mockFiles[path];
-    }
-  },
+  move_multiple_to_trash: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, true)),
 
-  restore_from_trash: () => {
-    // Mock: no-op in tests (trash restore is OS-level)
-  },
+  delete_entries: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, !args.permanent)),
+
+  restore_from_trash: (args) => mockBatch(args.paths as string[], restoreMockEntry),
 
   copy_entry: (args) => {
     const source = args.source as string;
@@ -1514,7 +1583,10 @@ const mockCommands: Record<string, CommandHandler> = {
     const existingIdx = dest.findIndex((e) => e.name === finalName);
     if (existingIdx >= 0) dest[existingIdx] = newEntry;
     else dest.push(newEntry);
-    return newEntry;
+    return {
+      ...mutationReceipt(newEntry),
+      ...(existingIdx >= 0 ? { replacement: { id: crypto.randomUUID().replaceAll("-", "").repeat(2) } } : {}),
+    };
   },
 
   move_entry: (args) => {
@@ -1533,7 +1605,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const newEntry: FileEntry = { ...entry, path: newPath };
     if (!mockFiles[destDir]) mockFiles[destDir] = [];
     mockFiles[destDir].push(newEntry);
-    return newEntry;
+    return mutationReceipt(newEntry);
   },
 
   write_text_file: (args) => {
@@ -1546,11 +1618,14 @@ const mockCommands: Record<string, CommandHandler> = {
     const entry = file(basename(path), path, content.length);
     if (existingIndex >= 0) entries[existingIndex] = entry;
     else entries.push(entry);
-    return entry;
+    return mutationReceipt(entry);
   },
 
   read_text_file: (args) => {
     const path = args.path as string;
+    const hook = (globalThis as { __mockPreviewReadText?: (path: string) => string | Promise<string> })
+      .__mockPreviewReadText;
+    if (hook) return hook(path);
     if (path in mockWrittenFiles) return mockWrittenFiles[path];
     const content = mockFileContent[path];
     if (content !== undefined) return content;
@@ -1754,7 +1829,10 @@ const mockCommands: Record<string, CommandHandler> = {
     );
   },
 
-  read_image_data_url: () => {
+  read_image_data_url: (args) => {
+    const hook = (globalThis as { __mockPreviewReadImage?: (path: string) => string | Promise<string> })
+      .__mockPreviewReadImage;
+    if (hook) return hook((args.path as string) ?? "");
     // Full-size preview in browser/E2E mode: reuse the realistic thumbnail
     // JPEG so the preview pane (and its fullscreen mode) can be exercised.
     return mockInvoke<string>("get_thumbnail_data");
@@ -1762,10 +1840,10 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_video_thumbnail_data: (args) => {
     const videoThumbnailMock = (globalThis as {
-      __mockVideoThumbnail?: (path: string) => string | Promise<string>;
+      __mockVideoThumbnail?: (path: string, size?: number) => string | Promise<string>;
     }).__mockVideoThumbnail;
     if (videoThumbnailMock) {
-      return videoThumbnailMock((args.path as string) ?? "");
+      return videoThumbnailMock((args.path as string) ?? "", args.size as number | undefined);
     }
     // Same realistic 128px thumbnail as images — stands in for an extracted
     // video frame so the tiles view can be demoed in browser/E2E mode.
@@ -1856,6 +1934,11 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
 
+  git_directory_scope: async (args: Record<string, unknown>) => {
+    const root = await mockCommands.git_repo_root(args) as string | null;
+    return root ? { repo_root: root, relative_directory: (args.path as string).slice(root.length).replace(/^\/+/, "") } : null;
+  },
+
   git_add_to_gitignore: (args: Record<string, unknown>) => {
     const entry = ((args.entry as string) || "").replace(/^\.\//, "").replace(/^\//, "");
     if (!mockGitignored.has(entry)) {
@@ -1873,7 +1956,7 @@ const mockCommands: Record<string, CommandHandler> = {
       removeFrom(mockGit.untracked, path);
       mockGitArchived.add(`.archive/${path}`);
     }
-    if (typeof window !== "undefined") {
+if (typeof window !== "undefined") {
       (window as unknown as { __mockGitArchived?: string[] }).__mockGitArchived = [...mockGitArchived];
     }
     return null;
@@ -2088,7 +2171,24 @@ const mockCommands: Record<string, CommandHandler> = {
     if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
     return [...lines, ""].join("\n");
   },
-  git_watch_repo: () => null,
+  native_resource_session: ({ historyChannel }) => mockFileHistory.register(historyChannel as (summary: HistorySummary) => void),
+  resolve_copy_conflict: ({ requestId, item, nonce, decision }) => {
+    const pending = mockCopyControls.get(requestId as string)?.pending;
+    if (!pending || pending.item !== item || pending.nonce !== nonce) throw new Error("Copy conflict is stale");
+    pending.resolve(decision as CopyDecision);
+    return null;
+  },
+  cancel_copy_session: ({ requestId }) => {
+    const control = mockCopyControls.get(requestId as string);
+    if (!control) throw new Error("Copy session is closed");
+    control.cancelled = true;
+    control.pending?.resolve({ choice: "cancel", applyToAll: false });
+    return null;
+  },
+  file_history_push: ({ action }) => mockFileHistory.push(action as UndoAction),
+  file_history_clear: () => mockFileHistory.clear(),
+  file_history_execute: ({ direction, expectedEntryId }) => mockFileHistory.execute(direction as HistoryDirection, expectedEntryId as number),
+  git_watch_repo: ({ repoPath }) => ({ id: crypto.randomUUID(), repoRoot: repoPath }),
   git_unwatch_repo: () => null,
 
   // In-progress operation abort / continue (#294): clear the mock operation
@@ -2678,7 +2778,7 @@ const mockCommands: Record<string, CommandHandler> = {
     };
     const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
     entries.push(entry);
-    return entry;
+    return mutationReceipt(entry);
   },
 
   // ----- File-picker portal -----
@@ -2766,7 +2866,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   // ----- Filesystem watcher (no-op in mock) -----
 
-  watch_directory: () => {},
+  watch_directory: ({ path }) => ({ id: crypto.randomUUID(), path }),
 
   unwatch_directory: () => {},
 
@@ -2801,7 +2901,10 @@ const mockCommands: Record<string, CommandHandler> = {
 
   open_file_with: () => {},
 
-  open_recycle_bin: () => {},
+  open_recycle_bin: () => {
+    const error = localStorage.getItem("mock-open-recycle-bin-error");
+    if (error) throw new Error(error);
+  },
 
   open_in_terminal: () => {},
   list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
@@ -2897,7 +3000,108 @@ function loadMockConfigSeed(): Record<string, string> {
 /**
  * Mock invoke function for browser-based testing.
  */
+/** Match the native application boundary; inverse execution calls the raw
+ * fixture command below so it cannot recursively record forward history. */
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (cmd === "copy_entries") {
+    const request = args!.request as {
+      requestId: string; sources: string[]; destDir: string;
+    };
+    const { requestId, sources, destDir } = request;
+    const send = args!.events as (event: CopySessionEvent) => void;
+    const control: MockCopyControl = { cancelled: false };
+    mockCopyControls.set(requestId, control);
+    const items: CopySessionOutcome["items"] = [];
+    let applyToAll: CopyDecision | null = null;
+    send({ type: "ready" });
+    try {
+      for (let item = 0; item < sources.length; item += 1) {
+        if (control.cancelled) break;
+        const source = sources[item];
+        const sourceEntry = (mockFiles[parentDir(source)] ?? []).find(({ path }) => path === source);
+        if (!sourceEntry) {
+          items.push({ status: "failed", error: "Source not found" });
+          continue;
+        }
+        const existing = (mockFiles[destDir] ?? []).find(({ name }) => name === basename(source));
+        let decision: CopyDecision | null = null;
+        if (existing && !sameDirectory(parentDir(source), destDir)) {
+          decision = applyToAll;
+        }
+        if (existing && !sameDirectory(parentDir(source), destDir) && !decision) {
+          const nonce = crypto.randomUUID();
+          decision = await new Promise<CopyDecision>((resolve) => {
+            control.pending = { item, nonce, resolve };
+            send({ type: "conflict", item, nonce, conflict: {
+              fileName: basename(source), sourcePath: source, remaining: sources.length - item - 1,
+              sourceSize: sourceEntry.size, sourceModified: sourceEntry.modified,
+              destSize: existing.size, destModified: existing.modified,
+            } });
+          });
+          control.pending = undefined;
+          if (decision.applyToAll) applyToAll = decision;
+        }
+        if (decision?.choice === "cancel") control.cancelled = true;
+        if (control.cancelled) break;
+        if (decision?.choice === "skip") { items.push({ status: "skipped" }); continue; }
+        send({ type: "started", item, total: sources.length });
+        try {
+          const receipt = await invokeMockCommand<FileMutationReceipt>("copy_entry", {
+            source, destDir, overwrite: decision?.choice === "overwrite",
+          });
+          items.push({ status: "succeeded", receipt });
+          send({ type: "completed", item, total: sources.length, entry: receipt.entry });
+        } catch (error) {
+          items.push({ status: "failed", error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      while (items.length < sources.length) items.push({ status: "unstarted" });
+      const outcome: CopySessionOutcome = { items, cancelled: control.cancelled, warnings: [] };
+      const actions: UndoAction[] = items.flatMap((result) => result.status === "succeeded" && !result.receipt.replacement
+        ? [{ type: "copy" as const, copiedPath: result.receipt.path, parentDir: destDir }] : []);
+      const action: UndoAction | null = actions.length === 0 ? null : actions.length === 1 ? actions[0]
+        : { type: "batch", actions, label: `Copy ${actions.length} items` };
+      const history = items.some(({ status }) => status === "succeeded")
+        ? mockFileHistory.push(action).summary
+        : mockFileHistory.summary();
+      return { result: outcome, history } as T;
+    } finally {
+      mockCopyControls.delete(requestId);
+    }
+  }
+  const result = await invokeMockCommand<unknown>(cmd, args);
+  if (cmd === "delete_entries") {
+    const outcome = result as FileBatchOutcome;
+    if (!outcome.succeeded.length) return { result, history: mockFileHistory.summary() } as T;
+    const groups = new Map<string, string[]>();
+    for (const path of outcome.succeeded) {
+      const directory = parentDir(path);
+      const paths = groups.get(directory) ?? [];
+      paths.push(path);
+      groups.set(directory, paths);
+    }
+    const actions: UndoAction[] = [...groups].map(([parentDir, paths]) => ({ type: "delete", paths, parentDir }));
+    const action: UndoAction | null = args!.permanent ? null
+      : actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" };
+    return { result, history: mockFileHistory.push(action).summary } as T;
+  }
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "copy_entry", "move_entry"].includes(cmd)) {
+    const receipt = result as FileMutationReceipt;
+    if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
+      return { result, history: mockFileHistory.summary() } as T;
+    }
+    const action: UndoAction | null = cmd === "rename_entry"
+      ? { type: "rename", path: receipt.path, oldName: basename(args!.path as string), newName: args!.newName as string }
+      : null;
+    const history = mockFileHistory.push(action);
+    return { result, history: history.summary,
+      ...(receipt.replacement ? { warning: "Previous destination retained in File Recovery. Overwrite Undo is not available yet." } : {}),
+    } as T;
+  }
+  return result as T;
+}
+
+async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const testWindow = globalThis as { __mockInvokeCounts?: Record<string, number> };
   if (typeof window !== "undefined") {
     testWindow.__mockInvokeCounts ??= {};

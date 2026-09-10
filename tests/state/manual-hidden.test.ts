@@ -6,7 +6,7 @@ vi.mock("$lib/state/persisted", () => ({
   savePersisted: vi.fn(),
   writeConfigQueued: vi.fn(),
 }));
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/config", () => ({
   readConfigFile: vi.fn().mockResolvedValue({ ok: false }),
 }));
 

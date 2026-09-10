@@ -1,5 +1,6 @@
-import { listDrives, watchDirectory, unwatchDirectory, type Drive } from "$lib/api/files";
+import { listDrives, type Drive } from "$lib/api/drives";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { createDirectoryWatch } from "./directory-watch";
 import { directoryKey } from "$lib/domain/path";
 
 // Polling backstop. The fs-watcher subscription handles most eject/insert
@@ -32,62 +33,77 @@ function detectMountBases(): string[] {
 
 function createDrivesStore() {
   let drives = $state<Drive[]>([]);
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let unlistenFs: UnlistenFn | null = null;
-  const watchedBases = new Set<string>();
+  interface Session {
+    timer: ReturnType<typeof setInterval>;
+    watches: Map<string, ReturnType<typeof createDirectoryWatch>>;
+    unlisten: UnlistenFn | null;
+    ready: Promise<void>;
+  }
+  let active: Session | null = null;
+  let pendingRefresh: { owner: Session | null; task: Promise<void> } | null = null;
+  const stopping = new Set<Promise<void>>();
 
-  async function refresh(): Promise<void> {
-    const result = await listDrives();
-    if (result.ok) {
-      drives = result.data;
-    }
+  function refresh(): Promise<void> {
+    const owner = active;
+    if (pendingRefresh?.owner === owner) return pendingRefresh.task;
+    const task = Promise.resolve().then(listDrives).then((result) => {
+      if (active === owner && result.ok) drives = result.data;
+    }).finally(() => {
+      if (pendingRefresh?.task === task) pendingRefresh = null;
+    });
+    pendingRefresh = { owner, task };
+    return task;
   }
 
-  async function startPolling(): Promise<void> {
-    if (timer) return;
-    // Claim the interval synchronously, before any await, so concurrent
-    // startPolling calls bail immediately instead of leaking intervals.
-    timer = setInterval(refresh, REFRESH_INTERVAL_MS);
-    await refresh();
-
-    // Subscribe to fs events on the mount base directories so eject/insert
-    // refreshes immediately rather than waiting for the next poll tick.
-    for (const base of detectMountBases()) {
-      try {
-        await watchDirectory(base);
-        watchedBases.add(base);
-      } catch {
-        // Base may not exist on this system — non-fatal.
+  function startPolling(): Promise<void> {
+    if (active) return active.ready;
+    const session: Session = {
+      timer: setInterval(() => { void refresh().catch(console.error); }, REFRESH_INTERVAL_MS),
+      watches: new Map(), unlisten: null, ready: Promise.resolve(),
+    };
+    active = session;
+    session.ready = (async () => {
+      await refresh();
+      if (active !== session) return;
+      for (const base of detectMountBases()) {
+        if (active !== session) return;
+        const watch = createDirectoryWatch();
+        session.watches.set(base, watch);
+        try { await watch.update(base); } catch { /* Mount base may not exist. */ }
       }
-    }
-    if (!unlistenFs) {
-      // Outside Tauri the event system is unavailable and listen() rejects;
-      // polling still covers drive changes there.
+      if (active !== session) return;
       try {
-        unlistenFs = await listen<{ path: string }>("directory-changed", (e) => {
-          if (watchedBases.has(e.payload.path)) {
-            refresh();
+        const unlisten = await listen<{ path: string }>("directory-changed", (event) => {
+          if (active === session && session.watches.has(event.payload.path)) {
+            void refresh().catch(console.error);
           }
         });
-      } catch {
-        unlistenFs = null;
-      }
-    }
+        if (active === session) session.unlisten = unlisten;
+        else unlisten();
+      } catch { /* Browser mode relies on polling. */ }
+    })();
+    return session.ready;
   }
 
   async function stopPolling(): Promise<void> {
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
+    const session = active;
+    if (session) {
+      active = null;
+      clearInterval(session.timer);
+      const task = (async () => {
+        try { session.unlisten?.(); } finally {
+          // Start cleanup before waiting for startup: a delayed watch is already
+          // represented by its owner and must drain its acquisition first.
+          await Promise.allSettled([
+            session.ready,
+            ...[...session.watches.values()].map((watch) => watch.destroy()),
+          ]);
+        }
+      })();
+      stopping.add(task);
+      void task.finally(() => stopping.delete(task)).catch(() => {});
     }
-    if (unlistenFs) {
-      unlistenFs();
-      unlistenFs = null;
-    }
-    for (const base of watchedBases) {
-      try { await unwatchDirectory(base); } catch { /* ignore */ }
-    }
-    watchedBases.clear();
+    await Promise.all([...stopping]);
   }
 
   return {

@@ -61,8 +61,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Sidebar bookmark drop
     if (target?.type === "sidebar") {
       const sourcePaths = isInternalDrag ? internalPaths! : paths;
-      for (const p of sourcePaths) {
-        bookmarksStore.addBookmark(p);
+      // Empty Bookmarks space is a pinning surface for Explorer folders only.
+      // Files require a specific bookmark destination, resolved as a folder above.
+      if (dragData?.kind === "directory") {
+        for (const p of sourcePaths) {
+          bookmarksStore.addBookmark(p);
+        }
       }
       dragState.clear();
       return;
@@ -76,8 +80,16 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       broadcastToOtherWindows: isInternalDrag,
     };
 
-    // Drop onto a specific folder or tab
-    if (target?.type === "folder" || target?.type === "tab") {
+    // A bookmark row pins directories but receives files through the normal
+    // transfer operation. Empty Bookmarks space is handled separately above.
+    if (target?.type === "bookmark" && dragData?.kind === "directory") {
+      for (const path of sourcePaths) bookmarksStore.addBookmark(path);
+      dragState.clear();
+      return;
+    }
+
+    // Drop onto a specific folder, bookmark, or tab.
+    if (target?.type === "folder" || target?.type === "bookmark" || target?.type === "tab") {
       // Skip dropping onto self or into one's own descendant; multi-item
       // drops are a single undoable batch (#163).
       const valid = sourcePaths.filter((sourcePath) => !isInsideDir(target.path, sourcePath));

@@ -1,7 +1,8 @@
-//! System-level commands: trash, launch context, window theme, log paths.
+//! System-level commands: native launch context, window theme, log paths.
 //! Extracted from lib.rs so the entry point is pure wiring.
 
 use std::ffi::OsString;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::PathBuf;
 
 use crate::error::AppError;
@@ -10,8 +11,13 @@ use crate::files;
 /// Stores the working directory from which the app was launched.
 pub struct LaunchCwd(pub String);
 
+/// Monotonic clock starting at app run(), before builder and window creation.
+/// Excludes OS process loading and main() argument parsing.
+pub struct StartupClock(pub std::time::Instant);
+
 /// Reap a launcher child asynchronously so opening a native surface does not
 /// accumulate zombies on Unix.
+#[cfg(not(target_os = "linux"))]
 fn reap_in_background(child: std::process::Child) {
     std::thread::spawn(move || {
         let mut child = child;
@@ -34,11 +40,12 @@ fn reap_in_background(child: std::process::Child) {
 /// bin surface. Keeping this separate from spawning makes the platform
 /// contract testable without launching the host desktop during tests.
 #[derive(Debug, PartialEq, Eq)]
-struct RecycleBinLauncher {
-    program: &'static str,
-    arguments: Vec<OsString>,
+pub struct RecycleBinLauncher {
+    pub program: &'static str,
+    pub arguments: Vec<OsString>,
 }
 
+#[cfg(not(target_os = "linux"))]
 fn recycle_bin_launcher() -> RecycleBinLauncher {
     #[cfg(target_os = "windows")]
     {
@@ -58,85 +65,83 @@ fn recycle_bin_launcher() -> RecycleBinLauncher {
                 .into_os_string()],
         }
     }
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        RecycleBinLauncher {
-            program: "gio",
-            arguments: vec![OsString::from("open"), OsString::from("trash:///")],
+#[cfg(target_os = "linux")]
+fn linux_trash_files_directory_from(
+    xdg_data_home: Option<OsString>,
+    home_directory: Option<PathBuf>,
+) -> Result<PathBuf, AppError> {
+    if let Some(xdg_data_home) = xdg_data_home {
+        let xdg_data_home = PathBuf::from(xdg_data_home);
+        if xdg_data_home.is_absolute() && !xdg_data_home.as_os_str().is_empty() {
+            return Ok(xdg_data_home.join("Trash/files"));
         }
     }
+
+    home_directory
+        .filter(|home| home.is_absolute())
+        .map(|home| home.join(".local/share/Trash/files"))
+        .ok_or_else(|| {
+            AppError::Other("Cannot locate the user's Freedesktop Trash directory".to_string())
+        })
 }
 
-/// True for UNC paths (`\\server\share`, `\\wsl.localhost\Distro\...`). Windows
-/// has no Recycle Bin for network/WSL locations: the `trash` crate's shell APIs
-/// fail on them, so these must be removed directly instead of trashed.
-fn is_unc_path(path: &str) -> bool {
-    path.starts_with("\\\\") || path.starts_with("//")
+#[cfg(target_os = "linux")]
+fn linux_trash_files_directory() -> Result<PathBuf, AppError> {
+    linux_trash_files_directory_from(std::env::var_os("XDG_DATA_HOME"), dirs::home_dir())
 }
 
-/// Trash a single path, falling back to a permanent delete on UNC locations
-/// where the Recycle Bin is unavailable.
-pub(crate) fn trash_or_remove(pathbuf: &std::path::Path) -> Result<(), AppError> {
-    if is_unc_path(&pathbuf.to_string_lossy()) {
-        return files::file_ops::remove_entry_at(pathbuf);
+#[cfg(target_os = "linux")]
+fn linux_recycle_bin_launcher() -> Result<RecycleBinLauncher, AppError> {
+    Ok(RecycleBinLauncher {
+        program: "xdg-open",
+        arguments: vec![linux_trash_files_directory()?.into_os_string()],
+    })
+}
+
+/// Open the Freedesktop deleted-files directory directly. A successful URI
+/// dispatcher exit cannot prove that its asynchronous desktop handler accepted
+/// `trash:///`, so Linux never sends that URI to the handler.
+#[cfg(target_os = "linux")]
+fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
+where
+    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
+{
+    open_linux_recycle_bin_with_launcher(&mut launch, linux_recycle_bin_launcher)
+}
+
+#[cfg(target_os = "linux")]
+pub fn open_linux_recycle_bin_with_launcher<F, R>(
+    mut launch: F,
+    launcher: R,
+) -> Result<(), AppError>
+where
+    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
+    R: FnOnce() -> Result<RecycleBinLauncher, AppError>,
+{
+    let launcher = launcher()?;
+    log::info!(
+        "Recycle Bin: launching deleted-files directory via {} {:?}",
+        launcher.program,
+        launcher.arguments
+    );
+
+    match launch(&launcher) {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(AppError::Other(format!(
+            "Failed to open Recycle Bin: {} {:?} exited with {status}",
+            launcher.program, launcher.arguments
+        ))),
+        Err(error) => {
+            log::error!(
+                "Recycle Bin: failed to launch {} {:?}: {error}",
+                launcher.program,
+                launcher.arguments
+            );
+            Err(AppError::Io(error))
+        }
     }
-    trash::delete(pathbuf).map_err(|e| {
-        log::error!("Failed to move to trash: {}", e);
-        AppError::Other(format!("Failed to move to trash: {}", e))
-    })
-}
-
-/// Move a file or directory to the system trash/recycle bin.
-/// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
-/// UNC/WSL paths have no Recycle Bin, so they are removed permanently instead.
-#[tauri::command]
-pub async fn move_to_trash(path: String) -> Result<(), AppError> {
-    files::run_blocking(move || {
-        let pathbuf = PathBuf::from(&path);
-
-        // lstat-based check so broken symlinks can still be trashed.
-        if std::fs::symlink_metadata(&pathbuf).is_err() {
-            return Err(AppError::NotFound(path));
-        }
-
-        trash_or_remove(&pathbuf)
-    })
-    .await
-}
-
-/// Move multiple files/directories to trash. Trashes each item individually
-/// and reports which paths failed instead of failing all-or-nothing.
-#[tauri::command]
-pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
-    files::run_blocking(move || {
-        log::info!("Moving {} items to trash", paths.len());
-
-        let mut failures: Vec<String> = Vec::new();
-        for path in &paths {
-            let pathbuf = PathBuf::from(path);
-            if std::fs::symlink_metadata(&pathbuf).is_err() {
-                failures.push(format!("{} (not found)", path));
-                continue;
-            }
-            if let Err(e) = trash_or_remove(&pathbuf) {
-                log::error!("Failed to move {} to trash: {}", path, e);
-                failures.push(format!("{} ({})", path, e));
-            }
-        }
-
-        if failures.is_empty() {
-            Ok(())
-        } else {
-            Err(AppError::Other(format!(
-                "Failed to move {} of {} items to trash: {}",
-                failures.len(),
-                paths.len(),
-                failures.join(", ")
-            )))
-        }
-    })
-    .await
 }
 
 /// Open the operating system's recycle-bin UI rather than treating the bin as
@@ -145,28 +150,45 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
 #[tauri::command]
 pub async fn open_recycle_bin() -> Result<(), AppError> {
     files::run_blocking(|| {
-        let launcher = recycle_bin_launcher();
-        log::info!(
-            "Recycle Bin: launching native surface via {} {:?}",
-            launcher.program,
-            launcher.arguments
-        );
-        let mut command = std::process::Command::new(launcher.program);
-        command.args(&launcher.arguments);
-        match command.spawn() {
-            Ok(child) => {
-                let child_id = child.id();
-                log::info!("Recycle Bin: native surface launch started as process {child_id}");
-                reap_in_background(child);
-                Ok(())
-            }
-            Err(error) => {
-                log::error!(
-                    "Recycle Bin: failed to launch {} {:?}: {error}",
+        #[cfg(target_os = "linux")]
+        {
+            open_linux_recycle_bin_with(|launcher| {
+                log::info!(
+                    "Recycle Bin: launching native surface via {} {:?}",
                     launcher.program,
                     launcher.arguments
                 );
-                Err(AppError::Io(error))
+                std::process::Command::new(launcher.program)
+                    .args(&launcher.arguments)
+                    .status()
+            })
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let launcher = recycle_bin_launcher();
+            log::info!(
+                "Recycle Bin: launching native surface via {} {:?}",
+                launcher.program,
+                launcher.arguments
+            );
+            let mut command = std::process::Command::new(launcher.program);
+            command.args(&launcher.arguments);
+            match command.spawn() {
+                Ok(child) => {
+                    let child_id = child.id();
+                    log::info!("Recycle Bin: native surface launch started as process {child_id}");
+                    reap_in_background(child);
+                    Ok(())
+                }
+                Err(error) => {
+                    log::error!(
+                        "Recycle Bin: failed to launch {} {:?}: {error}",
+                        launcher.program,
+                        launcher.arguments
+                    );
+                    Err(AppError::Io(error))
+                }
             }
         }
     })
@@ -200,8 +222,22 @@ pub fn is_launcher_artifact_cwd(cwd: &std::path::Path, exe_dir: Option<&std::pat
 /// (boot→first directory visible) halves of cold start can be read together
 /// from the log file — durable in release builds without devtools.
 #[tauri::command]
-pub async fn log_startup_timing(summary: String) {
+pub async fn log_startup_timing(
+    window: tauri::Window,
+    clock: tauri::State<'_, StartupClock>,
+    summary: String,
+) -> Result<(), AppError> {
     log::info!("{}", summary);
+    // Child/warm windows share this process clock; only the initial main
+    // window can interpret it as startup latency. IPC receipt adds a small
+    // scheduling delay but avoids adding unrelated Rust and JS time origins.
+    if window.label() == "main" {
+        log::info!(
+            "Startup(native-ready): app-run-to-ready={:.1}ms",
+            clock.0.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    Ok(())
 }
 
 /// Set the window theme (light/dark) to sync NSAppearance with the app theme.
@@ -243,61 +279,14 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
     Ok(log_dir.to_string_lossy().to_string())
 }
 
-/// Restore files from the system trash by their original paths.
-/// Finds the most recently deleted item matching each path and restores it.
-/// Note: trash::os_limited is only available on Linux/Windows (not macOS).
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-pub async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
-    files::run_blocking(move || {
-        let trash_items = trash::os_limited::list()
-            .map_err(|e| AppError::Other(format!("Failed to list trash: {}", e)))?;
-
-        let mut to_restore = Vec::new();
-        let mut unmatched: Vec<String> = Vec::new();
-
-        for path_str in &paths {
-            let target = PathBuf::from(path_str);
-            // Find the most recently deleted item matching this original path
-            let mut matching: Vec<_> = trash_items
-                .iter()
-                .filter(|item| item.original_path() == target)
-                .collect();
-            matching.sort_by_key(|item| std::cmp::Reverse(item.time_deleted));
-
-            if let Some(item) = matching.into_iter().next() {
-                to_restore.push(item.clone());
-            } else {
-                unmatched.push(path_str.clone());
-            }
-        }
-
-        // Report paths that have no matching trash item instead of silently
-        // skipping them and claiming success.
-        if !unmatched.is_empty() {
-            return Err(AppError::NotFound(format!(
-                "No matching trash items found for: {}",
-                unmatched.join(", ")
-            )));
-        }
-
-        trash::os_limited::restore_all(to_restore)
-            .map_err(|e| AppError::Other(format!("Failed to restore from trash: {}", e)))
-    })
-    .await
-}
-
-#[cfg(target_os = "macos")]
-#[tauri::command]
-pub async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
-    Err(AppError::Other(
-        "Cannot undo delete on macOS — use Finder to restore from Trash".to_string(),
-    ))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{is_launcher_artifact_cwd, recycle_bin_launcher};
+    use super::is_launcher_artifact_cwd;
+    #[cfg(target_os = "linux")]
+    use super::linux_recycle_bin_launcher;
+    #[cfg(not(target_os = "linux"))]
+    use super::recycle_bin_launcher;
+    #[cfg(target_os = "windows")]
     use std::ffi::OsString;
     use std::path::Path;
 
@@ -323,14 +312,12 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn recycle_bin_launcher_uses_the_freedesktop_trash_uri() {
-        let launcher = recycle_bin_launcher();
+    fn recycle_bin_launcher_uses_the_freedesktop_deleted_files_directory() {
+        let launcher = linux_recycle_bin_launcher().unwrap();
 
-        assert_eq!(launcher.program, "gio");
-        assert_eq!(
-            launcher.arguments,
-            vec![OsString::from("open"), OsString::from("trash:///")]
-        );
+        assert_eq!(launcher.program, "xdg-open");
+        assert!(Path::new(&launcher.arguments[0]).is_absolute());
+        assert!(Path::new(&launcher.arguments[0]).ends_with("Trash/files"));
     }
 
     #[cfg(target_os = "windows")]
@@ -360,3 +347,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../test_support/issue_660_recycle_bin.rs"]
+mod issue_660_recycle_bin;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../test_support/issue_660_primary_launcher.rs"]
+mod issue_660_primary_launcher;

@@ -5,6 +5,21 @@
 
 import { invoke, extractError, type ApiResult } from "./common";
 import type { GitFileEntry, GitStatusCode, GitOpState } from "$lib/domain/git";
+import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { directoryKey } from "$lib/domain/path";
+import { getNativeResourceSession } from "./native-resource-session";
+
+function recordWatchAcknowledgement(lease: GitWatchLease, acquired: boolean): void {
+  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
+  const node = document.documentElement;
+  const leases: Record<string, string> = JSON.parse(node.dataset.e2eGitLeases ?? "{}");
+  if (acquired) leases[lease.id] = directoryKey(lease.repoRoot);
+  else delete leases[lease.id];
+  const watches: Record<string, number> = {};
+  for (const key of Object.values(leases)) watches[key] = (watches[key] ?? 0) + 1;
+  node.dataset.e2eGitLeases = JSON.stringify(leases);
+  node.dataset.e2eGitWatches = JSON.stringify(watches);
+}
 
 export type { GitFileEntry, GitStatusCode, GitOpState };
 
@@ -76,6 +91,20 @@ export async function gitRepoRoot(path: string): Promise<ApiResult<string | null
   try {
     const data = await invoke<string | null>("git_repo_root", { path });
     return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export interface GitDirectoryScope {
+  repo_root: string;
+  /** Filesystem-resolved repository-relative directory; empty at the root. */
+  relative_directory: string;
+}
+
+export async function gitDirectoryScope(path: string): Promise<ApiResult<GitDirectoryScope | null>> {
+  try {
+    return { ok: true, data: await invoke<GitDirectoryScope | null>("git_directory_scope", { path }) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -216,18 +245,24 @@ export async function gitCommit(
   }
 }
 
-export async function gitWatchRepo(repoPath: string): Promise<ApiResult<void>> {
+export interface GitWatchLease { id: string; repoRoot: string }
+
+export async function gitWatchRepo(repoPath: string): Promise<ApiResult<GitWatchLease>> {
   try {
-    await invoke<void>("git_watch_repo", { repoPath });
-    return { ok: true, data: undefined };
+    const sessionId = await getNativeResourceSession();
+    const lease = await invoke<GitWatchLease>("git_watch_repo", { repoPath, sessionId });
+    recordWatchAcknowledgement(lease, true);
+    return { ok: true, data: lease };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
 }
 
-export async function gitUnwatchRepo(repoPath: string): Promise<ApiResult<void>> {
+export async function gitUnwatchRepo(lease: GitWatchLease): Promise<ApiResult<void>> {
   try {
-    await invoke<void>("git_unwatch_repo", { repoPath });
+    const sessionId = await getNativeResourceSession();
+    await invoke<void>("git_unwatch_repo", { leaseId: lease.id, sessionId });
+    recordWatchAcknowledgement(lease, false);
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: extractError(err) };

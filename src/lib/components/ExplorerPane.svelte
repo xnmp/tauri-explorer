@@ -4,14 +4,14 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
+  import { resolveFileListMove } from "$lib/domain/file-list-navigation";
   import { tick, untrack } from "svelte";
   import { setPaneIdContext } from "$lib/state/pane-context";
-  import { createExplorerState } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
   import NavigationBar from "./NavigationBar.svelte";
   import FileList from "./FileList.svelte";
-  import GitGraphView from "./GitGraphView.svelte";
   import MillerColumns from "./MillerColumns.svelte";
   import ContextMenu from "./ContextMenu.svelte";
 import ScmPanel from "./ScmPanel.svelte";
@@ -20,29 +20,42 @@ import ScmPanel from "./ScmPanel.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { gitWarmer } from "$lib/state/git-warm";
+  import { gitGraphComponent } from "$lib/state/git-graph-component";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { directoryKey } from "$lib/domain/path";
-  import { gitRepoRoot } from "$lib/api/files";
+  import { gitRepoRoot } from "$lib/api/git";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
 
   interface Props {
     paneId: PaneId;
+    explorer: ExplorerInstance;
   }
 
-  let { paneId }: Props = $props();
+  let { paneId, explorer }: Props = $props();
+  // PaneLayoutView keys this component by the explorer instance. Capture the
+  // resource for the entire mount, including cleanup after the parent removes
+  // its registry entry (when a reactive prop lookup can already be undefined).
+  const paneExplorer = untrack(() => explorer);
 
   // paneId is a static literal per pane instance (see PaneContainer), so
   // capturing it at init is safe. Consumed by GitStatusBadge to resolve the
   // directory its entry is rendered in.
   setPaneIdContext(untrack(() => paneId));
-
-  // Get explorer from window tabs manager
-  const paneExplorer = $derived(windowTabsManager.getExplorer(paneId) ?? createExplorerState());
+  const mountedPaneId = untrack(() => paneId);
+  const reserveInlineWidth = () => windowTabsManager.paneViewport.reserveInlineWidth(mountedPaneId);
 
   // Repo whose commit graph this pane shows instead of the file listing
   // (#272). Toggled per-pane via git.showGraph (Ctrl+Alt+G).
   const paneGitGraph = $derived(windowTabsManager.getPaneGitGraph(paneId));
+
+  function loadGraphComponent() {
+    return gitGraphComponent.load(() => import("./GitGraphView.svelte").then((module) => module.default))
+      .catch((error) => {
+        console.error("Could not load Git history:", error);
+        throw error;
+      });
+  }
 
   // Per-pane SCM panel visibility (#434): explicit per-pane override, else the
   // global `showScmPanel` default.
@@ -57,8 +70,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     if (!isActive) return;
     function onWindowKeydown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (dialogStore.activeDialog) return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.closest?.('[role="separator"]')) return;
+      if (dialogStore.hasModalOpen) return;
       handleKeydown(e);
     }
     window.addEventListener("keydown", onWindowKeydown);
@@ -116,16 +129,19 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     }
   });
 
-  // Focus the selected item after navigation so arrow keys work immediately.
-  // Uses a callback (not reactive) to avoid firing on mount or tab switch.
+  // Navigation completion also runs for restored background panes. Only the
+  // current pane may return focus to its listing, and that ownership must
+  // survive the render before touching the DOM.
   function focusSelectedAfterNav() {
+    if (windowTabsManager.getActiveExplorer() !== paneExplorer) return;
     const active = document.activeElement;
     if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
     tick().then(() => {
-      if (!paneRef) return;
-      const selected = paneRef.querySelector<HTMLElement>(".selected");
+      if (!paneRef?.isConnected || windowTabsManager.getActiveExplorer() !== paneExplorer
+        || document.activeElement !== active) return;
+      const selected = paneExplorer.focusedEntry;
       if (selected) {
-        selected.focus({ preventScroll: false });
+        fileListScrollToEntry?.(selected);
       } else {
         paneRef.focus({ preventScroll: true });
       }
@@ -184,171 +200,38 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     fileListScrollToEntry?.(entry);
   }
 
-  /** Compute how many indices to jump for an arrow key in the current view.
-   *  Returns 0 if the arrow key doesn't apply to this view mode.
-   *
-   *  Layout summary (List and Tiles are both row-major since #128 — items fill
-   *  left→right then top→down — so they navigate identically):
-   *  - details: single column, up/down only
-   *  - list/tiles: left/right = ±1, up/down = ±columns_per_row
-   *
-   *  The view exposes its live column count via a `data-columns` attribute on
-   *  the `.list-view` / `.tiles-view` container (the grid itself is now split
-   *  across per-row elements, so there is no single grid to measure).
-   */
   function gridColumns(viewMode: string): number {
     const gridEl = paneRef?.querySelector<HTMLElement>(`.${viewMode}-view`);
     const cols = gridEl ? parseInt(gridEl.dataset.columns ?? "") : NaN;
     return Number.isFinite(cols) && cols > 0 ? cols : 1;
   }
 
-  function getArrowStep(key: string, viewMode: string, _totalItems: number): number {
-    const isVertical = key === "ArrowUp" || key === "ArrowDown";
-    const isHorizontal = key === "ArrowLeft" || key === "ArrowRight";
-
-    if (viewMode === "details") {
-      return isVertical ? 1 : 0;
-    }
-
-    if (viewMode === "list" || viewMode === "tiles") {
-      // Row-major: horizontal moves one item, vertical moves a whole row.
-      if (isHorizontal) return 1;
-      return gridColumns(viewMode);
-    }
-
-    return isVertical ? 1 : 0;
-  }
-
-  function isYaziNavView(): boolean {
-    if (!settingsStore.yaziNavigation) return false;
-    if (paneExplorer.viewMode === "details") return true;
-    if (paneExplorer.viewMode === "list") {
-      return gridColumns("list") === 1;
-    }
-    return false;
-  }
-
   function handleKeydown(event: KeyboardEvent): void {
-    // Don't process keyboard shortcuts when a dialog is open
-    if (dialogStore.activeDialog) return;
-
-    // While the pane shows the commit graph the file listing isn't rendered at
-    // all, so none of this navigation has a visible target — but it still ran,
-    // silently drifting the pane's file selection and stealing DOM focus onto
-    // whatever `.selected` matched (the graph's own selected commit row). It
-    // also double-handled Ctrl+Up/Down with the graph's branch-line jump
-    // (#530). The graph owns the keyboard while it is on screen.
-    if (paneGitGraph) return;
-
-    // Ignore events from interactive elements (e.g. path input, rename input)
-    const tag = (event.target as HTMLElement)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
-
-    // Arrow key navigation in file list (not in global command system
-    // because it needs current selection context and shift-key handling)
-    const isArrow = event.key === "ArrowUp" || event.key === "ArrowDown"
-      || event.key === "ArrowLeft" || event.key === "ArrowRight";
-    if (isArrow) {
-      event.preventDefault();
-
-      // ArrowLeft goes up one level in details view, or list view with single column (yazi-style)
-      if (event.key === "ArrowLeft" && isYaziNavView()) {
-        paneExplorer.goUp();
-        return;
-      }
-
-      const entries = paneExplorer.displayEntries;
-      if (entries.length === 0) return;
-
-      const selected = paneExplorer.getSelectedEntries()[0];
-      const currentIndex = selected
-        ? entries.findIndex((e) => e.path === selected.path)
-        : -1;
-
-      // If nothing is selected, any arrow key selects the first item
-      if (currentIndex < 0) {
-        selectAndReveal(entries[0], { ctrlKey: false, shiftKey: false });
-        tick().then(() => {
-          const el = paneRef?.querySelector<HTMLElement>(".selected");
-          if (el && el !== document.activeElement) el.focus({ preventScroll: false });
-        });
-        return;
-      }
-
-      // ArrowRight on a folder navigates into it (yazi-style)
-      if (event.key === "ArrowRight" && isYaziNavView()) {
-        if (selected?.kind === "directory") {
-          paneExplorer.navigateTo(selected.path);
-          return;
-        }
-      }
-
-      const step = getArrowStep(event.key, paneExplorer.viewMode, entries.length);
-      if (step === 0) return; // Arrow key not applicable in this view
-
-      const isForward = event.key === "ArrowDown" || event.key === "ArrowRight";
-      let newIndex: number;
-      if (isForward) {
-        newIndex = currentIndex + step;
-        if (newIndex >= entries.length) return; // Already at edge
-      } else {
-        newIndex = currentIndex - step;
-        if (newIndex < 0) return; // Already at edge
-      }
-
-      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
-
-      // Move DOM focus to the newly selected element so focus-visible
-      // tracks selection (avoids stale focus ring on the old item)
-      tick().then(() => {
-        const el = paneRef?.querySelector<HTMLElement>(".selected");
-        if (el && el !== document.activeElement) {
-          el.focus({ preventScroll: false });
-        }
-      });
+    if (event.defaultPrevented || dialogStore.hasModalOpen || paneGitGraph) return;
+    const target = event.target as HTMLElement | null;
+    if (!target || target.isContentEditable || target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    // File navigation belongs to the collection. Ordinary controls, Miller
+    // columns and sidebar widgets retain their own arrow keys. A pane-switch
+    // command changes active-pane state before the old collection loses focus.
+    if (!target.matches('.file-list .entry-item, .file-list .virtual-viewport[role="grid"], .explorer-pane, body')) return;
+    const entries = paneExplorer.displayEntries;
+    const cursor = paneExplorer.focusedEntry;
+    const move = resolveFileListMove(event, {
+      viewMode: paneExplorer.viewMode, columns: gridColumns(paneExplorer.viewMode),
+      count: entries.length, cursorIndex: cursor ? entries.indexOf(cursor) : -1,
+      directory: cursor?.kind === "directory", yazi: settingsStore.yaziNavigation,
+    });
+    if (!move) return;
+    event.preventDefault();
+    if (move.kind === "parent") { void paneExplorer.goUp(); return; }
+    if (move.kind === "open") { void paneExplorer.navigateTo(entries[move.index].path); return; }
+    const entry = entries[move.index];
+    if (move.selection === "preserve") {
+      paneExplorer.focusEntry(entry);
+      fileListScrollToEntry?.(entry);
+    } else {
+      selectAndReveal(entry, { ctrlKey: false, shiftKey: move.selection === "extend" });
     }
-    // Ctrl+Home/Ctrl+End select the list boundaries instead of letting the
-    // browser scroll the pane without changing the file-list selection.
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
-      && (event.key === "Home" || event.key === "End")) {
-      event.preventDefault();
-      const entries = paneExplorer.displayEntries;
-      if (entries.length === 0) return;
-
-      const newIndex = event.key === "Home" ? 0 : entries.length - 1;
-      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: false });
-    }
-    // PageUp/PageDown: jump by PAGE_STEP items (skip if any modifier held — likely a command shortcut)
-    const PAGE_STEP = 8;
-    if ((event.key === "PageUp" || event.key === "PageDown") && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      const entries = paneExplorer.displayEntries;
-      if (entries.length === 0) return;
-
-      const selected = paneExplorer.getSelectedEntries()[0];
-      const currentIndex = selected
-        ? entries.findIndex((e) => e.path === selected.path)
-        : -1;
-
-      let newIndex: number;
-      if (currentIndex < 0) {
-        newIndex = 0;
-      } else if (event.key === "PageDown") {
-        newIndex = Math.min(currentIndex + PAGE_STEP, entries.length - 1);
-      } else {
-        newIndex = Math.max(currentIndex - PAGE_STEP, 0);
-      }
-
-      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
-      tick().then(() => {
-        const el = paneRef?.querySelector<HTMLElement>(".selected");
-        if (el && el !== document.activeElement) {
-          el.focus({ preventScroll: false });
-        }
-      });
-    }
-    // All other shortcuts (Ctrl+C/X/V/Z/A, Delete, F2, F5, F6, Enter, etc.)
-    // are handled by the global keybinding system in command-definitions.ts
   }
 
   // Note: Tab initialization is handled at page level by windowTabsManager
@@ -364,7 +247,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   class:inactive={isInactive}
   aria-label="file browser pane"
   tabindex="0"
-  onfocus={handleFocus}
+  onfocusin={handleFocus}
   onclick={handleFocus}
 >
   {#if paneGitGraph}
@@ -373,16 +256,30 @@ import { nextRemovableRoot } from "$lib/domain/drives";
            available while the graph has the pane (#333). Per-pane visibility
            (#434). -->
       {#if settingsStore.showGitStatus && paneScmVisible}
-        <ScmPanel />
+        <ScmPanel {reserveInlineWidth} />
       {/if}
       <!-- Keyed so switching between graphs of different repos recreates the
            view — no selected-commit/state bleed or in-flight races (#167). -->
       {#key paneGitGraph}
-        <GitGraphView repoPath={paneGitGraph} />
+        {@const CachedGraph = gitGraphComponent.current}
+        {#if CachedGraph}
+          <CachedGraph repoPath={paneGitGraph} />
+        {:else}
+          {#await loadGraphComponent()}
+            <div class="graph-load-status" role="status">Loading history…</div>
+          {:then Graph}
+            <Graph repoPath={paneGitGraph} />
+          {:catch}
+            <div class="graph-load-status" role="alert">
+              <p>Could not load Git history. Restart the app and try again.</p>
+              <button onclick={() => windowTabsManager.setPaneGitGraph(paneId, null)}>Return to files</button>
+            </div>
+          {/await}
+        {/if}
       {/key}
     </div>
   {:else if paneExplorer}
-    <NavigationBar explorer={paneExplorer} />
+    <NavigationBar explorer={paneExplorer} {paneId} />
     <div class="pane-content">
       <!-- Miller columns render inline UNLESS they are hoisted to the left
            island (island mode + no sidebar, active pane only). The hoist
@@ -390,14 +287,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
            keyed off the single `islandMode` derived — not one platform's flag —
            or the columns double-mount inline AND as the island (#434). -->
       {#if paneExplorer.millerLayers > 0 && !millerHoistedToIsland}
-        <MillerColumns explorer={paneExplorer} />
+        <MillerColumns explorer={paneExplorer} {reserveInlineWidth} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);
            per pane (#334, #434) — each pane's panel follows its own explorer
            and its own visibility toggle, so two panes show independent git
            panels and can be opened/closed independently. -->
       {#if settingsStore.showGitStatus && paneScmVisible}
-        <ScmPanel />
+        <ScmPanel {reserveInlineWidth} />
       {/if}
       <FileList explorer={paneExplorer} bind:scrollToEntry={fileListScrollToEntry} />
     </div>
@@ -407,6 +304,34 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 </section>
 
 <style>
+  .graph-load-status {
+    flex: 1;
+    align-self: center;
+    text-align: center;
+    padding: 16px;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .graph-load-status button {
+    font: inherit;
+    color: var(--text-primary);
+    background: var(--control-fill);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  .graph-load-status button:hover {
+    background: var(--control-fill-secondary);
+  }
+
+  .graph-load-status button:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: 2px;
+  }
+
   .explorer-pane {
     display: flex;
     flex-direction: column;

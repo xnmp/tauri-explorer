@@ -62,6 +62,7 @@ pub struct Drive {
 }
 
 impl Drive {
+    #[cfg(not(target_os = "windows"))]
     fn simple(name: String, path: String, kind: DriveKind) -> Self {
         Drive {
             name,
@@ -615,8 +616,11 @@ fn windows_wsl_drives() -> Vec<Drive> {
     let bytes = output.stdout;
     let text: String = if bytes.len() >= 2 && bytes.len() % 2 == 0 {
         let utf16: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .collect();
         String::from_utf16_lossy(&utf16)
     } else {

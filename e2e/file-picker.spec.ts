@@ -19,6 +19,14 @@ async function readResponse(page: Page): Promise<{ token: string; paths: string[
 }
 
 test.describe("File picker mode", () => {
+  test("reports a failed picker import in the portal window", async ({ page }) => {
+    await page.route("**/FilePicker.svelte*", (route) => route.abort());
+    await page.goto("/?picker=open&token=failed&folder=%2Fhome%2Fuser");
+    await expect(page.locator(".toast", { hasText: "Could not load File Picker" })).toBeVisible();
+    await expect(page.locator(".picker")).toHaveCount(0);
+    await expect(page.locator(".tab-area")).toHaveCount(0);
+  });
+
   test("renders columns instead of the full app and picks a file", async ({ page }) => {
     await page.goto("/?picker=open&token=t1&multiple=0&directory=0&folder=%2Fhome%2Fuser");
 
@@ -132,6 +140,47 @@ test.describe("File picker mode", () => {
         hasText: "README.md",
       }),
     ).toBeVisible();
+  });
+
+  test("preserves Windows drive and UNC roots through navigation and selection", async ({ page }) => {
+    const driveFolder = "C:\\Users\\runneradmin\\picker-fixture";
+    await page.goto(
+      `/?picker=open&token=windows-paths&multiple=0&directory=1&folder=${encodeURIComponent(driveFolder)}`,
+    );
+
+    const columns = page.locator(".column");
+    await expect(columns).toHaveCount(4);
+    expect(await columns.evaluateAll((items) =>
+      items.map((item) => (item as HTMLElement).dataset.path),
+    )).toEqual([
+      "C:\\",
+      "C:\\Users",
+      "C:\\Users\\runneradmin",
+      driveFolder,
+    ]);
+    await page.locator(".btn-select").click();
+    expect(await readResponse(page)).toMatchObject({
+      token: "windows-paths",
+      cancelled: false,
+      paths: [driveFolder],
+    });
+
+    await page.evaluate(() => localStorage.removeItem("mock-picker-response"));
+    const uncFolder = "\\\\server\\share\\folder";
+    const address = page.locator(".address-input");
+    await address.fill(uncFolder);
+    await address.press("Enter");
+
+    await expect(columns).toHaveCount(2);
+    expect(await columns.evaluateAll((items) =>
+      items.map((item) => (item as HTMLElement).dataset.path),
+    )).toEqual(["\\\\server\\share", uncFolder]);
+    await page.locator(".btn-select").click();
+    expect(await readResponse(page)).toMatchObject({
+      token: "windows-paths",
+      cancelled: false,
+      paths: [uncFolder],
+    });
   });
 });
 

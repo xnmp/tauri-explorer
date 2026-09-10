@@ -19,7 +19,7 @@ import {
   computeOffsets,
   firstVisibleIndex,
 } from "../../src/lib/domain/virtual-layout";
-import type { ContentSearchResult, ContentMatch } from "../../src/lib/api/files";
+import type { ContentSearchResult, ContentMatch } from "../../src/lib/api/search";
 
 // --- Mock data generators ---
 

@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
+import { emit } from "@tauri-apps/api/event";
 
 const writeFilesMock = vi.fn();
 const readFilesMock = vi.fn();
@@ -38,6 +39,38 @@ async function freshStore() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("committed clipboard renames", () => {
+  it("rekeys cut membership and publishes the new path without fresh metadata", async () => {
+    writeFilesMock.mockResolvedValue({ ok: true });
+    const store = await freshStore();
+    const original = entry("a.txt");
+    const sibling = entry("b.txt");
+    await store.cut([original, sibling]);
+
+    store.rekeyPath(original.path, "/renamed.txt", null);
+
+    expect(store.isCut).toBe(true);
+    expect([...store.pathSet]).toEqual(["/renamed.txt", sibling.path]);
+    expect(store.content?.entries).toEqual([
+      { ...original, path: "/renamed.txt", name: "renamed.txt" }, sibling,
+    ]);
+    expect(emit).toHaveBeenLastCalledWith("app://clipboard-sync", store.content);
+    expect(original.path).toBe("/a.txt");
+    store.destroy();
+  });
+
+  it("retains a fresh snapshot when provided and ignores an unrelated rename", async () => {
+    writeFilesMock.mockResolvedValue({ ok: true });
+    const store = await freshStore();
+    await store.copy([entry("a.txt")]);
+    const renamed = { ...entry("renamed.txt"), size: 12 };
+    store.rekeyPath("/a.txt", renamed.path, renamed);
+    store.rekeyPath("/unrelated.txt", "/elsewhere.txt");
+    expect(store.content?.entries).toEqual([renamed]);
+    store.destroy();
+  });
 });
 
 describe("clipboard OS-bridge failures (#279)", () => {

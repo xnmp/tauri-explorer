@@ -6,6 +6,7 @@
  * executed via command palette, keyboard shortcuts, or menus.
  */
 
+import { createOwnedRegistry } from "./owned-registry";
 import { keybindingsStore } from "./keybindings.svelte";
 import { loadPersisted, savePersisted } from "./persisted";
 import { computeFrecencyScore } from "./frecency.svelte";
@@ -59,7 +60,7 @@ export function getCategoryLabel(category: CommandCategory): string {
 }
 
 /** Internal command registry */
-const commands = new Map<string, Command>();
+const commands = createOwnedRegistry<Command>();
 
 // --- Frecency tracking (persisted) ---
 
@@ -125,13 +126,18 @@ export function getRecentCommands(): Command[] {
 
 /** Register a command */
 export function registerCommand(command: Command): void {
-  commands.set(command.id, command);
+  commands.register(command.id, command, true);
+}
+
+/** Plugin contributions cannot replace an existing command. */
+export function registerCommandContribution(command: Command): () => void {
+  return commands.register(command.id, command);
 }
 
 /** Register multiple commands */
 export function registerCommands(cmds: Command[]): void {
   for (const cmd of cmds) {
-    commands.set(cmd.id, cmd);
+    registerCommand(cmd);
   }
 }
 

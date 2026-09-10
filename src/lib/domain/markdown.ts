@@ -12,6 +12,7 @@
  */
 
 import { Marked, type Tokens } from "marked";
+import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import { highlightLanguage } from "./syntax-highlight";
 
 function escapeHtml(text: string): string {
@@ -68,7 +69,77 @@ const marked = new Marked({
   },
 });
 
+type ScalarFrontmatterProperty = {
+  kind: "scalar";
+  key: string;
+  value: string;
+};
+
+type SequenceFrontmatterProperty = {
+  kind: "sequence";
+  key: string;
+  values: string[];
+};
+
+type FrontmatterProperty = ScalarFrontmatterProperty | SequenceFrontmatterProperty;
+
+function extractFrontmatter(md: string): { properties: FrontmatterProperty[]; body: string } | null {
+  // A frontmatter header belongs only at the very start of the document. This
+  // avoids treating thematic breaks later in Markdown content as metadata.
+  const match = md.match(/^(?:\uFEFF)?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!match) return null;
+
+  try {
+    const document = parseDocument(match[1]);
+    if (document.errors.length > 0 || !isMap(document.contents) || document.contents.items.length === 0) return null;
+
+    const properties: FrontmatterProperty[] = [];
+    for (const item of document.contents.items) {
+      if (!isScalar(item.key) || typeof item.key.value !== "string" || item.value === null) return null;
+
+      if (isScalar(item.value)) {
+        properties.push({ kind: "scalar", key: item.key.value, value: String(item.value.value ?? "") });
+      } else if (isSeq(item.value)) {
+        const values: string[] = [];
+        for (const value of item.value.items) {
+          if (!isScalar(value)) return null;
+          values.push(String(value.value ?? ""));
+        }
+        properties.push({
+          kind: "sequence",
+          key: item.key.value,
+          values,
+        });
+      } else {
+        // Nested YAML values do not have a compact properties-panel
+        // representation. Leave the source to normal Markdown rendering.
+        return null;
+      }
+    }
+
+    return { properties, body: md.slice(match[0].length) };
+  } catch {
+    return null;
+  }
+}
+
+function renderProperties(properties: FrontmatterProperty[]): string {
+  const rows = properties
+    .map((property) => {
+      const value = property.kind === "sequence"
+        ? `<ul class="md-property-values">${property.values.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+        : escapeHtml(property.value);
+      const valueClass = property.kind === "scalar" ? ' class="md-property-value"' : "";
+      return `<div class="md-property"><dt class="md-property-key">${escapeHtml(property.key)}</dt><dd${valueClass}>${value}</dd></div>`;
+    })
+    .join("");
+  return `<section class="md-properties" aria-label="Properties"><dl>${rows}</dl></section>`;
+}
+
 /** Render markdown to HTML safe for {@html} injection. */
 export function renderMarkdown(md: string): string {
-  return marked.parse(md, { async: false });
+  const frontmatter = extractFrontmatter(md);
+  const body = frontmatter?.body ?? md;
+  const renderedBody = marked.parse(body, { async: false });
+  return frontmatter ? `${renderProperties(frontmatter.properties)}${renderedBody}` : renderedBody;
 }

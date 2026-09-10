@@ -14,6 +14,10 @@ on:
       - 'e2e/tiles-scroll-perf.spec.ts'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   perf-check:
     name: Performance Regression Check

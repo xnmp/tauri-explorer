@@ -18,7 +18,8 @@
  */
 
 import type { Plugin, PluginContext } from "../api";
-import { readTextFile, readConfigFile } from "$lib/api/files";
+import { readTextFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
 import { buildContentHint, canSendContentHint, CONTENT_HINT_MAX_CHARS } from "$lib/domain/ai-rename";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { parentDir, directoryKey } from "$lib/domain/path";

@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const getGitStatusMock = vi.fn();
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   getGitStatus: (path: string) => getGitStatusMock(path),
 }));
 vi.mock("@tauri-apps/api/event", () => ({

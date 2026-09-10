@@ -7,6 +7,10 @@ on:
     branches: [dev, main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   # Code maps are only useful while they are accurate: an agent that trusts a map
   # naming a moved file searches worse than one with no map at all. Two guards —
@@ -21,7 +25,7 @@ jobs:
       - name: Validate code maps (references + coverage)
         run: python3 docs/code-map/validate.py --coverage
 
-  frontend:
+  frontend-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -37,30 +41,72 @@ jobs:
       - name: Type check
         run: bun run check
 
+      - name: Architecture boundaries
+        run: bun run lint:arch
+
+      - name: Startup bundle budget
+        run: bun run check:bundle
+
       - name: Unit tests
         run: bun run test
+
+  # Keep one browser worker per runner; split the growing suite across runners
+  # so contention-sensitive tests retain their existing execution conditions.
+  chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
       - name: E2E tests
-        run: npx playwright test
+        run: npx playwright test --shard=${{ matrix.shard }}/2 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report
+          name: playwright-report-chromium-${{ matrix.shard }}
           path: playwright-report/
           if-no-files-found: ignore
 
+  # Preserve the protected-branch check name and require every Chromium shard.
+  frontend:
+    if: always()
+    needs: [frontend-checks, chromium]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require frontend validation and browser outcomes
+        env:
+          CHECKS_RESULT: ${{ needs.frontend-checks.result }}
+          CHROMIUM_RESULT: ${{ needs.chromium.result }}
+        run: test "$CHECKS_RESULT" = success && test "$CHROMIUM_RESULT" = success
+
   # WebKit ≈ WKWebView — the closest automated proxy for the macOS webview
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
-  webkit:
+  webkit-tests:
     runs-on: ubuntu-latest
-    # The suite legitimately takes ~25m on a slow runner (#455) — a cap that
-    # close to the real duration cancels passing runs on runner-speed noise.
+    # The full 777-test suite exceeded 40m. Keep one worker on each runner
+    # and preserve the existing per-runner bound while partitioning the work.
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
 
@@ -77,15 +123,27 @@ jobs:
       - name: E2E tests (WebKit)
         env:
           WEBKIT: "1"
-        run: npx playwright test --project=webkit
+        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/2 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report-webkit
+          name: playwright-report-webkit-${{ matrix.shard }}
           path: playwright-report/
           if-no-files-found: ignore
+
+  # WebKit is also a protected context: both shards must complete successfully.
+  webkit:
+    if: always()
+    needs: [webkit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require all WebKit browser outcomes
+        env:
+          WEBKIT_RESULT: ${{ needs.webkit-tests.result }}
+        run: test "$WEBKIT_RESULT" = success
 
   rust:
     runs-on: ubuntu-latest
@@ -124,3 +182,11 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --features avif
+
+      # Keep the deferred recovery policy verified without enabling it in
+      # release artifacts. Default-policy capacity coverage runs above.
+      - name: Opt-in recovery Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-copy-recovery,e2e-renderer-recovery -- -D warnings
+
+      - name: Opt-in recovery tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-copy-recovery

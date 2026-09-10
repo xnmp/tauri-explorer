@@ -10,7 +10,7 @@
  * - continueRebase calls the rebase-continue backend and refreshes.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { GitStatusSummary, GitOpState } from "$lib/api/files";
+import type { GitStatusSummary, GitOpState } from "$lib/api/git";
 
 const gitRepoRootMock = vi.fn((_path: string) => Promise.resolve({ ok: true, data: "/repo" }));
 const gitSummaryMock = vi.fn(
@@ -27,15 +27,21 @@ const gitRebaseContinueMock = vi.fn((_root: string) => Promise.resolve({ ok: tru
 const gitCherryPickAbortMock = vi.fn((_root: string) => Promise.resolve({ ok: true }));
 const gitRevertAbortMock = vi.fn((_root: string) => Promise.resolve({ ok: true }));
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
+  gitDirectoryScope: async (path: string) => {
+    const result = await gitRepoRootMock(path);
+    return result.ok && result.data ? { ...result, data: {
+      repo_root: result.data, relative_directory: path.slice(result.data.length).replace(/^[/\\]+/, ""),
+    } } : result;
+  },
   gitSummary: (root: string) => gitSummaryMock(root),
   gitStage: vi.fn(async () => ({ ok: true })),
   gitUnstage: vi.fn(async () => ({ ok: true })),
   gitDiscard: vi.fn(async () => ({ ok: true })),
   gitCommit: (root: string, msg: string, opts: unknown) => gitCommitMock(root, msg, opts),
-  gitWatchRepo: vi.fn(async () => {}),
-  gitUnwatchRepo: vi.fn(async () => {}),
+  gitWatchRepo: vi.fn(async (path: string) => ({ ok: true, data: { id: path, repoRoot: path } })),
+  gitUnwatchRepo: vi.fn(async () => ({ ok: true, data: undefined })),
   gitMergeAbort: (root: string) => gitMergeAbortMock(root),
   gitRebaseAbort: (root: string) => gitRebaseAbortMock(root),
   gitRebaseContinue: (root: string) => gitRebaseContinueMock(root),

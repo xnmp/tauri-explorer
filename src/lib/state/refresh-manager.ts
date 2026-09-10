@@ -9,13 +9,14 @@
  *
  * 1. **This module — WHEN a refresh runs.** Global, per-directory: collapses
  *    duplicate requests from all sources into one per debounce window and
- *    rate-limits storms.
+ *    rate-limits storms. Native mutations reconcile after a fixed coalescing
+ *    window, bypassing the watcher interval without overlapping active scans.
  * 2. **`pane-watch.ts` — WHETHER a watcher-triggered refresh may run.**
  *    Per-pane: the local-mutation cooldown suppresses the watcher's echo of
  *    a mutation the pane already applied to its own entries.
  * 3. **`pane-refresh.ts` — HOW a refresh is applied.** Per-pane: fetches
  *    without touching UI state and drops the result when the entry
- *    fingerprint is unchanged (no flash) or the pane navigated away.
+ *    listing is unchanged (no flash) or the pane navigated away.
  *
  * A single file operation can trigger 2-3 refresh cycles through different
  * paths (onRefresh callback, broadcastFileChange, filesystem watcher).
@@ -29,14 +30,20 @@
  * (same callback identity or explicit subscriber key) collapse to one.
  */
 
+import type { DirectoryChangeOrigin } from "./directory-events";
+
 const DEBOUNCE_MS = 150;
 const MIN_INTERVAL_MS = 2000;
 const SLOW_LISTING_MULTIPLIER = 3;
 const MAX_INTERVAL_MS = 8000;
+const MAX_RETAINED_DIRECTORIES = 1024;
 
-type RefreshCallback = (opts: { silent: boolean }) => void | Promise<void>;
+/** false declines this flush without claiming that a listing covered events. */
+type RefreshCallback = (opts: { silent: boolean }) => void | false | Promise<void>;
 
 interface PendingRefresh {
+  /** First mutation fixes the deadline; later churn cannot postpone it. */
+  mutationRequestedAt: number | null;
   timer: ReturnType<typeof setTimeout> | null;
   callbacks: Map<unknown, { cb: RefreshCallback; silent: boolean }>;
   requestedAt: number;
@@ -44,13 +51,52 @@ interface PendingRefresh {
 
 const pendingRefreshes = new Map<string, PendingRefresh>();
 const lastRefreshAt = new Map<string, number>();
-const inFlightRefreshes = new Map<string, number>();
+const inFlightRefreshes = new Map<string, { startedAt: number; subscribers: Set<unknown> }>();
 const listingBaselines = new Map<string, number>();
 const refreshIntervals = new Map<string, number>();
 let refreshGeneration = 0;
 
+/** Retained scheduler state, exposed for lifecycle/performance regression tests. */
+export function refreshManagerRetention(): {
+  pending: number;
+  lastRefresh: number;
+  inFlight: number;
+  baselines: number;
+  intervals: number;
+} {
+  return {
+    pending: pendingRefreshes.size,
+    lastRefresh: lastRefreshAt.size,
+    inFlight: inFlightRefreshes.size,
+    baselines: listingBaselines.size,
+    intervals: refreshIntervals.size,
+  };
+}
+
 function intervalFor(dirPath: string): number {
   return refreshIntervals.get(dirPath) ?? MIN_INTERVAL_MS;
+}
+
+function deleteDirectoryMetadata(dirPath: string): void {
+  lastRefreshAt.delete(dirPath);
+  listingBaselines.delete(dirPath);
+  refreshIntervals.delete(dirPath);
+}
+
+/** Bound inactive history without creating one cleanup timer per directory.
+ * Active work owns its metadata until completion; each completion retries the
+ * bound, so a large concurrent burst contracts as it drains. */
+function pruneDirectoryMetadata(): void {
+  while (lastRefreshAt.size > MAX_RETAINED_DIRECTORIES) {
+    let removed = false;
+    for (const dirPath of lastRefreshAt.keys()) {
+      if (pendingRefreshes.has(dirPath) || inFlightRefreshes.has(dirPath)) continue;
+      deleteDirectoryMetadata(dirPath);
+      removed = true;
+      break;
+    }
+    if (!removed) break;
+  }
 }
 
 function schedule(dirPath: string, pending: PendingRefresh): void {
@@ -58,11 +104,11 @@ function schedule(dirPath: string, pending: PendingRefresh): void {
   const now = Date.now();
   const last = lastRefreshAt.get(dirPath);
   const sinceLastRefresh = last == null ? Infinity : now - last;
-  const sinceLastRequest = now - pending.requestedAt;
+  const sinceLastRequest = now - (pending.mutationRequestedAt ?? pending.requestedAt);
   const delay = Math.max(
     0,
     DEBOUNCE_MS - sinceLastRequest,
-    intervalFor(dirPath) - sinceLastRefresh,
+    pending.mutationRequestedAt != null ? 0 : intervalFor(dirPath) - sinceLastRefresh,
   );
   pending.timer = setTimeout(() => flush(dirPath), delay);
 }
@@ -95,6 +141,7 @@ function finishRefresh(dirPath: string, startedAt: number, generation: number): 
   recordListingDuration(dirPath, Date.now() - startedAt);
   const pending = pendingRefreshes.get(dirPath);
   if (pending) schedule(dirPath, pending);
+  else pruneDirectoryMetadata();
 }
 
 function flush(dirPath: string): void {
@@ -103,12 +150,17 @@ function flush(dirPath: string): void {
   pendingRefreshes.delete(dirPath);
   const startedAt = Date.now();
   const generation = refreshGeneration;
+  // Map insertion order is the LRU order used by metadata pruning.
+  lastRefreshAt.delete(dirPath);
   lastRefreshAt.set(dirPath, startedAt);
-  inFlightRefreshes.set(dirPath, startedAt);
+  const subscribers = new Set<unknown>();
+  inFlightRefreshes.set(dirPath, { startedAt, subscribers });
   const completions: Promise<void>[] = [];
-  for (const { cb, silent } of pending.callbacks.values()) {
+  for (const [key, { cb, silent }] of pending.callbacks) {
     try {
       const result = cb({ silent });
+      if (result === false) continue;
+      subscribers.add(key);
       if (result) completions.push(Promise.resolve(result).catch(() => undefined));
     } catch {
       // A refresh failure is already handled at the pane boundary. Keep the
@@ -132,12 +184,17 @@ export function requestRefresh(
   /** Time the underlying change was observed. A delayed watcher notification
    *  observed before the current listing began is already covered by it. */
   observedAt: number = Date.now(),
+  /** Settled native work needs prompt reconciliation; notify storms stay limited. */
+  origin: DirectoryChangeOrigin = "watcher",
 ): void {
-  const inFlightStartedAt = inFlightRefreshes.get(dirPath);
-  if (inFlightStartedAt != null && observedAt < inFlightStartedAt) return;
+  const inFlight = inFlightRefreshes.get(dirPath);
+  // A scan covers only the panes participating in that fan-out. A newly
+  // committed navigation may still need the same older event replayed.
+  if (inFlight?.subscribers.has(subscriberKey) && observedAt < inFlight.startedAt) return;
 
   const existing = pendingRefreshes.get(dirPath);
   if (existing) {
+    if (origin === "mutation") existing.mutationRequestedAt ??= Date.now();
     existing.callbacks.set(subscriberKey, { cb: explorerRefresh, silent });
     existing.requestedAt = Date.now();
     if (!inFlightRefreshes.has(dirPath)) schedule(dirPath, existing);
@@ -145,6 +202,7 @@ export function requestRefresh(
   }
 
   const pending: PendingRefresh = {
+    mutationRequestedAt: origin === "mutation" ? Date.now() : null,
     callbacks: new Map([[subscriberKey, { cb: explorerRefresh, silent }]]),
     requestedAt: Date.now(),
     timer: null,

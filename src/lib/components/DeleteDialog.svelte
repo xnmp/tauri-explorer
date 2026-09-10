@@ -7,6 +7,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import { isUncPath } from "$lib/domain/path";
+  import { isWindows } from "$lib/domain/platform";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -17,9 +18,10 @@
 
   function handleConfirm() {
     const entries = [...dialogStore.deletingEntries];
-    // UNC/WSL paths can't go to the Recycle Bin — the delete is permanent
-    // regardless of the user's choice, so report it as such.
-    const isPermanent = dialogStore.isPermanentDelete || entries.some((e) => isUncPath(e.path));
+    // Location policy applies per entry in the native adapter. A network
+    // sibling must not turn an ordinary local trash request into removal.
+    const isPermanent = dialogStore.isPermanentDelete;
+    const hasPermanentItems = isPermanent || (isWindows && entries.some((entry) => isUncPath(entry.path)));
     const isMultiple = entries.length > 1;
     // Close the dialog immediately — progress and completion are reported
     // through toast notifications so the UI doesn't appear stuck.
@@ -41,8 +43,8 @@
         toastStore.error(`Delete failed: ${errMsg}`);
       } else {
         const summary = isMultiple
-          ? `${isPermanent ? "Deleted" : "Moved to trash"}: ${entries.length} items`
-          : `${isPermanent ? "Deleted" : "Moved to trash"}: ${entries[0].name}`;
+          ? `${hasPermanentItems ? "Deleted" : "Moved to trash"}: ${entries.length} items`
+          : `${hasPermanentItems ? "Deleted" : "Moved to trash"}: ${entries[0].name}`;
         toastStore.success(summary);
       }
     });
@@ -76,8 +78,9 @@
   {@const isMultiple = entries.length > 1}
   {@const singleEntry = entries[0]}
   {@const hasFolders = entries.some((e) => e.kind === "directory")}
-  {@const forcedByLocation = !dialogStore.isPermanentDelete && entries.some((e) => isUncPath(e.path))}
-  {@const isPermanent = dialogStore.isPermanentDelete || forcedByLocation}
+  {@const forcedByLocation = isWindows && !dialogStore.isPermanentDelete && entries.some((e) => isUncPath(e.path))}
+  {@const mixedLocations = forcedByLocation && entries.some((entry) => !isUncPath(entry.path))}
+  {@const isPermanent = dialogStore.isPermanentDelete || (forcedByLocation && !mixedLocations)}
   <div class="dialog modal-card">
     <div class="dialog-icon">
       <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
@@ -90,15 +93,17 @@
       {#if isMultiple}
         <h2 id="dialog-title">{isPermanent ? "Permanently delete" : "Delete"} {entries.length} items?</h2>
         <p id="dialog-description" class="message">
-          {#if isPermanent}
+          {#if mixedLocations}
+            Local items will be moved to the Recycle Bin. Items on WSL or network locations will be <strong>permanently deleted</strong> and cannot be restored.
+          {:else if isPermanent}
             These {entries.length} items will be <strong>permanently deleted</strong>. This cannot be undone.
           {:else}
             These {entries.length} items will be moved to the Recycle Bin.
           {/if}
           {#if hasFolders}
-            <span class="info">Folders and all their contents will also be {isPermanent ? "deleted" : "moved"}.</span>
+            <span class="info">Folders and all their contents are included.</span>
           {/if}
-          {#if forcedByLocation}
+          {#if forcedByLocation && !mixedLocations}
             <span class="info">Items on WSL or network locations can't be sent to the Recycle Bin.</span>
           {/if}
         </p>
@@ -121,7 +126,7 @@
           {#if singleEntry.kind === "directory"}
             <span class="info">All files and folders inside will also be {isPermanent ? "deleted" : "moved"}.</span>
           {/if}
-          {#if forcedByLocation}
+          {#if forcedByLocation && !mixedLocations}
             <span class="info">Items on WSL or network locations can't be sent to the Recycle Bin.</span>
           {/if}
         </p>

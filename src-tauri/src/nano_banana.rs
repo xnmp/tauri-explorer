@@ -17,6 +17,37 @@ use crate::plugin_job;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
+async fn wait_for_child(
+    child: &mut tokio::process::Child,
+    control: &plugin_job::JobControl,
+) -> Result<std::process::ExitStatus, AppError> {
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), child.wait()).await {
+            Ok(result) => {
+                return result
+                    .map_err(|e| AppError::Other(format!("Failed to wait for gemini CLI: {e}")))
+            }
+            Err(_) => {
+                if control.check().is_err() {
+                    child
+                        .kill()
+                        .await
+                        .map_err(|e| AppError::Other(format!("Failed to kill gemini CLI: {e}")))?;
+                    return Err(AppError::Other("Plugin job cancelled".into()));
+                }
+            }
+        }
+    }
+}
+
+struct GeminiEdit<'a> {
+    source_path: &'a str,
+    prompt: &'a str,
+    final_output_path: &'a Path,
+    api_key: &'a str,
+    model: &'a str,
+}
+
 /// Single-quote a string for embedding in the gemini slash-command string.
 /// A prompt like `x'; rm -rf ~'` must stay a single token when gemini
 /// re-parses the command.
@@ -60,10 +91,12 @@ pub async fn start_nano_banana_job(
         return Err(AppError::NotFound(source_path));
     }
 
-    plugin_job::validate_output_target(&output_dir, &output_filename)?;
+    let final_output_path = plugin_job::validate_output_target(&output_dir, &output_filename)?;
 
     let api_key = crate::gemini::resolve_api_key(&api_key)?;
     let job_id = plugin_job::next_job_id();
+    let control = plugin_job::JobControl::new();
+    let worker_control = control.clone();
 
     tokio::spawn(async move {
         let job = async {
@@ -77,16 +110,18 @@ pub async fn start_nano_banana_job(
             // TempDir removes itself when this future completes (drop).
             run_gemini_edit(
                 work_dir.path(),
-                &source_path,
-                &prompt,
-                &output_dir,
-                &output_filename,
-                &api_key,
-                &model,
+                GeminiEdit {
+                    source_path: &source_path,
+                    prompt: &prompt,
+                    final_output_path: &final_output_path,
+                    api_key: &api_key,
+                    model: &model,
+                },
+                &worker_control,
             )
             .await
         };
-        plugin_job::run_and_emit(&app, "nano-banana", job_id, job).await;
+        plugin_job::run_and_emit(&app, "nano-banana", job_id, control, job).await;
     });
 
     Ok(job_id)
@@ -94,15 +129,17 @@ pub async fn start_nano_banana_job(
 
 async fn run_gemini_edit(
     work_dir: &Path,
-    source_path: &str,
-    prompt: &str,
-    output_dir: &str,
-    output_filename: &str,
-    api_key: &str,
-    model: &str,
+    request: GeminiEdit<'_>,
+    control: &plugin_job::JobControl,
 ) -> Result<String, AppError> {
-    let final_output_path = PathBuf::from(output_dir).join(output_filename);
-
+    let GeminiEdit {
+        source_path,
+        prompt,
+        final_output_path,
+        api_key,
+        model,
+    } = request;
+    control.check()?;
     // Stage the source under a neutral name: the slash-command string is
     // re-parsed by gemini, so the (attacker-influenceable) original filename
     // must never appear in it.
@@ -132,29 +169,36 @@ async fn run_gemini_edit(
 
     // Only the image-edit tool may run unattended — never `--yolo`, which
     // would auto-approve *any* tool call a prompt-injected model makes.
-    let result = tokio::process::Command::new("gemini")
+    let mut command = tokio::process::Command::new("gemini");
+    command
         .arg("--allowed-tools")
         .arg("edit_image")
         .arg(&edit_command)
         .current_dir(work_dir)
         .env("GEMINI_API_KEY", api_key)
         .env("NANOBANANA_MODEL", model)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|e| {
-            AppError::Other(format!(
-                "Failed to start gemini CLI (is it installed?): {}",
-                e
-            ))
-        })?;
+        .kill_on_drop(true);
+    let stdout_path = work_dir.join("gemini.stdout");
+    let stderr_path = work_dir.join("gemini.stderr");
+    let stdout = std::fs::File::create(&stdout_path)
+        .map_err(|e| AppError::Other(format!("Failed to create gemini stdout: {e}")))?;
+    let stderr = std::fs::File::create(&stderr_path)
+        .map_err(|e| AppError::Other(format!("Failed to create gemini stderr: {e}")))?;
+    command.stdout(stdout).stderr(stderr);
+    let mut child = command.spawn().map_err(|e| {
+        AppError::Other(format!(
+            "Failed to start gemini CLI (is it installed?): {}",
+            e
+        ))
+    })?;
+    let status = wait_for_child(&mut child, control).await?;
+    let stdout = std::fs::read_to_string(stdout_path).unwrap_or_default();
+    let stderr = std::fs::read_to_string(stderr_path).unwrap_or_default();
 
-    if !result.status.success() {
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        let stdout = String::from_utf8_lossy(&result.stdout);
+    if !status.success() {
         return Err(AppError::Other(format!(
             "gemini exited with {}: {}{}",
-            result.status,
+            status,
             stderr,
             if stdout.is_empty() {
                 String::new()
@@ -182,9 +226,13 @@ async fn run_gemini_edit(
     // Move the result to the user's requested destination (copy+remove:
     // the work dir usually lives on a different filesystem, where a plain
     // rename fails with EXDEV).
-    std::fs::copy(&produced, &final_output_path)
-        .map_err(|e| AppError::Other(format!("Failed to move output into place: {}", e)))?;
-    let _ = std::fs::remove_file(&produced);
+    control.check()?;
+    let mut staging = plugin_job::StagedOutput::new(final_output_path)?;
+    let mut produced_file = std::fs::File::open(&produced)
+        .map_err(|e| AppError::Other(format!("Failed to open generated output: {e}")))?;
+    std::io::copy(&mut produced_file, staging.file_mut())
+        .map_err(|e| AppError::Other(format!("Failed to stage generated output: {e}")))?;
+    staging.commit(final_output_path, control)?;
 
     Ok(final_output_path.to_string_lossy().to_string())
 }
@@ -300,6 +348,40 @@ mod tests {
         assert_eq!(sanitized_ext(Path::new("noext")), "png");
         assert_eq!(sanitized_ext(Path::new("dots...")), "png");
         assert_eq!(sanitized_ext(Path::new("x.-'-")), "png");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_kills_owned_cli_before_it_can_finish() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("late-marker");
+        let control = plugin_job::JobControl::new();
+        let cancel = control.clone();
+        let child_marker = marker.clone();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+        let result = runtime.block_on(async move {
+            let mut command = tokio::process::Command::new("sh");
+            command
+                .args(["-c", "sleep 1; printf late > \"$MARKER\""])
+                .env("MARKER", &child_marker)
+                .kill_on_drop(true);
+            let mut child = command.spawn().unwrap();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                cancel.cancel();
+            });
+            wait_for_child(&mut child, &control).await
+        });
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            !marker.exists(),
+            "cancelled CLI survived and wrote late output"
+        );
     }
 
     // Output-filename traversal rejection is covered by plugin_job::tests.

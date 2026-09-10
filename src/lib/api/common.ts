@@ -4,13 +4,17 @@
  */
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { isTauri, mockInvoke } from "./mock-invoke";
 import { isVirtualPath, virtualScheme } from "$lib/domain/virtual-path";
 
 // Cached Tauri detection. Only the positive result is latched: an invoke
 // racing ahead of __TAURI_INTERNALS__ injection must not permanently stick
 // the real app on the mock, so we re-detect until Tauri is found.
 let cachedIsTauri = false;
+
+/** Keep runtime detection independent of the browser-only fixture backend. */
+export function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
 
 /**
  * Mock-aware invoke: dispatches to the real Tauri IPC when available,
@@ -21,12 +25,17 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
   if (!cachedIsTauri && isTauri()) {
     cachedIsTauri = true;
   }
-  const invoker = cachedIsTauri ? tauriInvoke<T> : mockInvoke<T>;
-  return args !== undefined ? invoker(cmd, args) : invoker(cmd);
+  // Native windows never load or initialize browser fixtures. Dynamic import
+  // also lets the bundler keep their data out of the cold-start import graph.
+  if (cachedIsTauri) {
+    return args !== undefined ? tauriInvoke<T>(cmd, args) : tauriInvoke<T>(cmd);
+  }
+  const { mockInvoke } = await import("./mock-invoke");
+  return args !== undefined ? mockInvoke<T>(cmd, args) : mockInvoke<T>(cmd);
 }
 
 /** Structured error from Tauri backend */
-export type AppErrorKind = "not_found" | "permission_denied" | "already_exists" | "invalid_path" | "io" | "other";
+export type AppErrorKind = "not_found" | "permission_denied" | "already_exists" | "invalid_path" | "io" | "worker_failed" | "mutation_uncertain" | "other";
 
 export interface AppError {
   kind: AppErrorKind;
@@ -34,7 +43,7 @@ export interface AppError {
 }
 
 const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
-  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "other",
+  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "worker_failed", "mutation_uncertain", "other",
 ]);
 
 /** Extract error message from Tauri command error (structured or string) */
@@ -66,7 +75,7 @@ export function extractErrorKind(err: unknown): AppErrorKind | null {
 }
 
 export type ApiResult<T> =
-  | { ok: true; data: T }
+  | { ok: true; data: T; warning?: string }
   | { ok: false; error: string };
 
 /**

@@ -66,6 +66,7 @@ fn read_mime(mime: &str) -> Result<Option<String>, AppError> {
 }
 
 /// Parse `file://` URIs into filesystem paths.
+#[cfg(any(not(windows), test))]
 fn parse_file_uris(text: &str) -> Vec<String> {
     text.lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -79,6 +80,7 @@ fn parse_file_uris(text: &str) -> Vec<String> {
 /// Minimal percent-decoding for file paths.
 /// Decodes to raw bytes first, then interprets the whole result as UTF-8 so
 /// multi-byte sequences (e.g. %C3%A9 -> é) aren't mangled byte-by-byte.
+#[cfg(any(not(windows), test))]
 fn percent_decode(input: &str) -> String {
     let mut bytes = Vec::with_capacity(input.len());
     let mut iter = input.bytes();
@@ -140,6 +142,7 @@ fn read_clipboard_file_paths() -> Result<Vec<String>, AppError> {
 }
 
 /// Percent-encode a file path for use in `file://` URIs.
+#[cfg(any(not(windows), test))]
 fn percent_encode_path(path: &str) -> String {
     let mut result = String::with_capacity(path.len() * 2);
     for b in path.bytes() {
@@ -158,6 +161,7 @@ fn percent_encode_path(path: &str) -> String {
 }
 
 /// Build file URIs from paths.
+#[cfg(any(not(windows), test))]
 fn paths_to_uris(paths: &[String]) -> Vec<String> {
     paths
         .iter()

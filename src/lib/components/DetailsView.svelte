@@ -10,6 +10,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
+  import { DETAIL_COLUMNS, type ColumnKey } from "$lib/domain/detail-columns";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
   import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
@@ -21,9 +22,18 @@
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     scrollToIndex?: (index: number) => void;
+    containsIndex?: (index: number) => boolean;
+    fallbackTabStop: boolean;
   }
 
-  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
+  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable(), containsIndex = $bindable(), fallbackTabStop }: Props = $props();
+
+  let rowScrollToIndex = $state<((index: number) => void) | undefined>();
+  scrollToIndex = (index) => rowScrollToIndex?.(index + (explorer.isCreatingFolder ? 1 : 0));
+  let rowContainsIndex = $state<((index: number) => boolean) | undefined>();
+  containsIndex = (index) => rowContainsIndex?.(index + (explorer.isCreatingFolder ? 1 : 0)) ?? false;
+
+  const viewId = $props.id();
 
   // Column resize composable
   const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
@@ -47,12 +57,20 @@
   }
 </script>
 
-<svelte:window
-  onmousemove={(e) => columnResize.handleResize(e)}
-  onmouseup={() => columnResize.endResize()}
-/>
+{#snippet resizeHandle(column: ColumnKey)}
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
+  <div class="column-resize-handle" class:active={columnResize.activeColumn === column}
+    role="separator" tabindex="0" aria-orientation="vertical"
+    aria-label={`Resize ${DETAIL_COLUMNS[column].label} column`} aria-controls={viewId}
+    aria-valuemin={DETAIL_COLUMNS[column].min} aria-valuemax={DETAIL_COLUMNS[column].max}
+    aria-valuenow={columnResize.columnWidths[column]} aria-valuetext={`${Math.round(columnResize.columnWidths[column])} pixels`}
+    onpointerdown={event => columnResize.startResize(column, event)}
+    onpointermove={columnResize.move} onpointerup={columnResize.finish}
+    onpointercancel={columnResize.cancelPointer} onlostpointercapture={columnResize.cancelPointer}
+    onkeydown={event => columnResize.keydown(column, event)}></div>
+{/snippet}
 
-<div class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
+<div id={viewId} class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
     <div class="column-header-wrapper">
@@ -72,8 +90,7 @@
           </svg>
         {/if}
       </button>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("name", e)}></div>
+      {@render resizeHandle("name")}
     </div>
     {#if settingsStore.columnVisibility.date}
     <div class="column-header-wrapper">
@@ -93,8 +110,7 @@
           </svg>
         {/if}
       </button>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("date", e)}></div>
+      {@render resizeHandle("date")}
     </div>
     {/if}
     {#if settingsStore.columnVisibility.type}
@@ -102,8 +118,7 @@
       <div class="column-header type-column">
         <span>Type</span>
       </div>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("type", e)}></div>
+      {@render resizeHandle("type")}
     </div>
     {/if}
     {#if settingsStore.columnVisibility.size}
@@ -124,8 +139,7 @@
           </svg>
         {/if}
       </button>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("size", e)}></div>
+      {@render resizeHandle("size")}
     </div>
     {/if}
   </div>
@@ -151,17 +165,22 @@
     </div>
   {/if}
 
-  <VirtualList
+  <VirtualList class="file-rows"
+    role="grid" aria-label="Files" aria-multiselectable={true}
+    aria-rowcount={listItems.length} aria-colcount={1}
+    tabindex={fallbackTabStop ? 0 : -1}
+    bind:containsIndex={rowContainsIndex}
     items={listItems}
     itemHeight={32}
     getKey={(entry) => entry.path}
-    bind:scrollToIndex
+    bind:scrollToIndex={rowScrollToIndex}
   >
-    {#snippet children(entry)}
+    {#snippet children(entry, index)}
+      <div role="row" aria-rowindex={index + 1}>
       {#if isNewFolderSentinel(entry)}
-        <InlineNewFolder {explorer} variant="details" />
+        <div role="gridcell"><InlineNewFolder {explorer} variant="details" /></div>
       {:else}
-        <FileItem
+        <FileItem index={index - (explorer.isCreatingFolder ? 1 : 0)}
           {entry}
           {explorer}
           onclick={(event) => onitemclick(entry, event)}
@@ -169,6 +188,7 @@
           selected={explorer.isSelected(entry)}
         />
       {/if}
+      </div>
     {/snippet}
   </VirtualList>
 </div>
@@ -213,13 +233,19 @@
     width: 8px;
     height: 100%;
     cursor: col-resize;
+    touch-action: none;
     z-index: 10;
   }
 
   .column-resize-handle:hover,
-  .details-view.resizing .column-resize-handle {
+  .column-resize-handle.active {
     background: var(--accent);
     opacity: 0.3;
+  }
+
+  .column-resize-handle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   .details-view.resizing {
@@ -242,7 +268,6 @@
     text-transform: uppercase;
     letter-spacing: var(--letter-spacing-wide);
     cursor: pointer;
-    transition: all var(--transition-fast);
     text-align: left;
     flex: 1;
     min-width: 0;

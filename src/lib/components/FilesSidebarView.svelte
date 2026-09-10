@@ -17,6 +17,9 @@
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { openRecycleBin } from "$lib/api/open";
+  import { openRecycleBinWithFeedback } from "$lib/state/recycle-bin";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
 
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
 
@@ -26,11 +29,16 @@
   };
 
   function handleOpenRecycleBin() {
-    void openRecycleBin();
+    void openRecycleBinWithFeedback(openRecycleBin, toastStore.error);
   }
 
   const homeDir = $derived(homeDirectory.value ?? "/home");
   let isDragOver = $state(false);
+  let isBookmarkDropTarget = $state(false);
+  const bookmarkDropHint = $derived(getBookmarkDropHint(
+    getEffectiveDragKind(dragState.current, dragState.readCrossWindow()),
+    isBookmarkDropTarget,
+  ));
 
   let quickAccessEl: HTMLDivElement | undefined;
   let dragPollInterval: ReturnType<typeof setInterval> | null = null;
@@ -46,6 +54,7 @@
     }
     document.addEventListener("dragstart", onDragStartPoll);
     document.addEventListener("dragend", onDragEnd, { capture: true });
+    document.addEventListener("explorer-bookmark-drop-target", onBookmarkDropTargetChange);
 
     return () => {
       if (quickAccessEl) {
@@ -56,6 +65,7 @@
       }
       document.removeEventListener("dragstart", onDragStartPoll);
       document.removeEventListener("dragend", onDragEnd, { capture: true });
+      document.removeEventListener("explorer-bookmark-drop-target", onBookmarkDropTargetChange);
       stopDragPoll();
       drivesStore.stopPolling();
     };
@@ -63,6 +73,14 @@
 
   let lastDragX = 0;
   let lastDragY = 0;
+
+  function setBookmarkDropTarget(element: Element | null) {
+    isBookmarkDropTarget = !!element?.closest(".bookmark-drop-target");
+  }
+
+  function onBookmarkDropTargetChange(event: Event) {
+    isBookmarkDropTarget = (event as CustomEvent<{ isBookmarkTarget: boolean }>).detail.isBookmarkTarget;
+  }
 
   function onDragStartPoll() {
     stopDragPoll();
@@ -74,6 +92,7 @@
       if (lastDragX === 0 && lastDragY === 0) return;
       const el = document.elementFromPoint(lastDragX, lastDragY);
       isDragOver = quickAccessEl.contains(el);
+      setBookmarkDropTarget(el);
     }, 100);
     document.addEventListener("drag", onDragMove);
   }
@@ -116,6 +135,7 @@
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
       isDragOver = true;
+      setBookmarkDropTarget(event.target as Element | null);
     }
   }
 
@@ -124,6 +144,7 @@
     if (event.clientX < rect.left || event.clientX > rect.right ||
         event.clientY < rect.top || event.clientY > rect.bottom) {
       isDragOver = false;
+      isBookmarkDropTarget = false;
     }
   }
 
@@ -137,6 +158,7 @@
       }
     }
     isDragOver = false;
+    isBookmarkDropTarget = false;
     dragState.clear();
     stopDragPoll();
   }
@@ -155,6 +177,7 @@
       }
     }
     isDragOver = false;
+    isBookmarkDropTarget = false;
     dragState.clear();
     stopDragPoll();
   }
@@ -347,7 +370,7 @@
       </svg>
       <span>Bookmarks</span>
       {#if isDragOver}
-        <span class="drop-hint">Drop to pin</span>
+        <span class="drop-hint">{bookmarkDropHint}</span>
       {/if}
     </button>
 
@@ -355,7 +378,8 @@
       <div class="section-content">
         {#each quickAccessFolders as folder}
           <div
-            class="nav-item folder-item"
+            class="nav-item folder-item bookmark-drop-target"
+            data-path={folder.path}
             onclick={() => navigateTo(folder.path)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(folder.path); }}}
             role="button"
@@ -402,7 +426,8 @@
 
         {#each bookmarksStore.list as bookmark, index}
           <div
-            class="nav-item folder-item user-bookmark"
+            class="nav-item folder-item user-bookmark bookmark-drop-target"
+            data-path={bookmark.path}
             class:dragging={draggedBookmarkIndex === index}
             class:drop-target={dropTargetIndex === index && draggedBookmarkIndex !== index}
             onclick={() => navigateTo(bookmark.path)}
@@ -446,7 +471,7 @@
 
         {#if settingsStore.showRecycleBin}
           <button class="nav-item recycle-bin-item" onclick={handleOpenRecycleBin} aria-label="Open Recycle Bin">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #d97706" aria-hidden="true">
               <path d="M3.5 4.5H12.5L11.7 14H4.3L3.5 4.5ZM6 2H10L10.75 3.5H5.25L6 2ZM2.5 3.5H13.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
               <path d="M6.5 7V11.5M9.5 7V11.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
             </svg>
@@ -757,7 +782,7 @@
   }
 
   .quick-access.drag-over {
-    background: rgba(0, 120, 212, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     border-radius: 6px;
     outline: 2px dashed var(--accent);
     outline-offset: -2px;
@@ -768,7 +793,7 @@
     font-size: 11px;
     font-weight: 500;
     color: var(--accent);
-    background: rgba(0, 120, 212, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     padding: 2px 6px;
     border-radius: 4px;
   }
@@ -794,7 +819,6 @@
     color: var(--text-tertiary);
     cursor: pointer;
     padding: 0;
-    transition: all var(--transition-fast);
   }
 
   .folder-item:hover .remove-bookmark,
@@ -815,6 +839,11 @@
   .user-bookmark.drop-target {
     background: var(--subtle-fill-secondary);
     box-shadow: 0 -2px 0 0 var(--accent);
+  }
+
+  .bookmark-drop-target:global(.drop-target) {
+    background: var(--subtle-fill-secondary);
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
 
   .section-menu-backdrop {

@@ -11,6 +11,7 @@ import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 export type DropTargetResult =
   | { type: "folder"; path: string }
+  | { type: "bookmark"; path: string }
   | { type: "tab"; tabId: string; path: string }
   | { type: "background"; path?: string }
   | { type: "sidebar" }
@@ -18,6 +19,11 @@ export type DropTargetResult =
   | null;
 
 let highlightedElement: HTMLElement | null = null;
+
+function notifyBookmarkDropTarget(isBookmarkTarget: boolean): void {
+  if (typeof document === "undefined" || typeof document.dispatchEvent !== "function" || typeof CustomEvent === "undefined") return;
+  document.dispatchEvent(new CustomEvent("explorer-bookmark-drop-target", { detail: { isBookmarkTarget } }));
+}
 
 // Tauri onDragDropEvent gives physical pixels. elementFromPoint in
 // WebKitGTK expects viewport coordinates (DPR-adjusted, no zoom).
@@ -58,6 +64,13 @@ function resolveFromElement(el: Element | null): DropTargetResult {
   if (crumb) {
     const path = crumb.getAttribute("data-path");
     if (path) return { type: "folder", path };
+  }
+
+  // Preserve bookmark identity: files move into its folder, while folders pin.
+  const bookmark = (el as HTMLElement).closest?.(".bookmark-drop-target[data-path]");
+  if (bookmark) {
+    const path = bookmark.getAttribute("data-path");
+    if (path) return { type: "bookmark", path };
   }
 
   const sidebar = (el as HTMLElement).closest?.(".quick-access");
@@ -118,6 +131,7 @@ function highlightAtCoords(cx: number, cy: number): void {
   if (!el) {
     clearHighlights();
     clearSidebarHighlight();
+    notifyBookmarkDropTarget(false);
     return;
   }
 
@@ -126,18 +140,22 @@ function highlightAtCoords(cx: number, cy: number): void {
   const millerCol = (el as HTMLElement).closest?.(".miller-col[data-path]") as HTMLElement | null;
   const tabEl = (el as HTMLElement).closest?.(".tab[data-tab-id]") as HTMLElement | null;
   const crumbEl = (el as HTMLElement).closest?.(".crumb[data-path]") as HTMLElement | null;
+  const bookmarkEl = (el as HTMLElement).closest?.(".bookmark-drop-target[data-path]") as HTMLElement | null;
   const sidebarEl = (el as HTMLElement).closest?.(".quick-access") as HTMLElement | null;
   const terminalEl = (el as HTMLElement).closest?.(".terminal-panel") as HTMLElement | null;
-  const targetEl = terminalEl || folderEntry || millerEntry || tabEl || crumbEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
+  const targetEl = terminalEl || folderEntry || millerEntry || tabEl || crumbEl || bookmarkEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
   if (sidebarEl) {
-    if (highlightedElement) {
-      highlightedElement.classList.remove("drop-target");
-      highlightedElement = null;
+    if (targetEl !== highlightedElement) {
+      if (highlightedElement) highlightedElement.classList.remove("drop-target");
+      highlightedElement = targetEl;
+      if (highlightedElement) highlightedElement.classList.add("drop-target");
     }
     setSidebarHighlight(sidebarEl);
+    notifyBookmarkDropTarget(bookmarkEl !== null);
   } else {
     clearSidebarHighlight();
+    notifyBookmarkDropTarget(false);
     if (targetEl !== highlightedElement) {
       if (highlightedElement) highlightedElement.classList.remove("drop-target");
       highlightedElement = targetEl;
@@ -168,4 +186,5 @@ export function clearHighlights(): void {
     highlightedElement = null;
   }
   clearSidebarHighlight();
+  notifyBookmarkDropTarget(false);
 }

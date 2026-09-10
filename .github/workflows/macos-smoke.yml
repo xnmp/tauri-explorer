@@ -1,6 +1,7 @@
-# macOS launch smoke (#192): the only automated macOS signal we can get
-# without a WKWebView WebDriver. Builds the app with embedded assets and
-# asserts it boots: the process survives and the startup log line appears.
+# macOS launch qualification (#192, #688): the automated real-process signal
+# available without a WKWebView WebDriver. Builds embedded assets and records
+# bounded release foreground-readiness and hidden warm-activation p50/p95.
+# Native log timing does not qualify presented frames or Dock-bounce/input latency.
 name: macOS Smoke
 
 on:
@@ -9,10 +10,14 @@ on:
   pull_request:
     branches: [main, dev]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   launch-smoke:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -33,56 +38,39 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build frontend
-        run: bun run build
+      - name: Build app and record exact qualification provenance
+        id: build
+        env:
+          # The macOS process probe needs production code, not WebDriver hooks.
+          NATIVE_QUALIFICATION_E2E_HOOKS: "0"
+          NATIVE_QUALIFICATION_PROFILE: "release"
+        run: bun run build:native:qualification
 
-      - name: Build app (embedded assets)
-        # custom-protocol is what makes the binary serve the bundled dist
-        # instead of dialing the dev server on localhost:1420.
-        run: cargo build --features tauri/custom-protocol
-        working-directory: src-tauri
+      - name: Measure release foreground startup without a probe window
+        env:
+          MAC_STARTUP_SAMPLES: "30"
+          MAC_STARTUP_TIMEOUT_MS: "30000"
+          MAC_STARTUP_WARM_MEASURE: "0"
+          MAC_STARTUP_OUTPUT_DIR: qualification-results/macos-startup/foreground
+        run: bun run test:qualify:macos-startup
 
-      - name: Launch and assert boot
-        run: |
-          RUST_LOG=info ./src-tauri/target/debug/tauri-explorer > app.log 2>&1 &
-          APP_PID=$!
+      # WARM_MEASURE uses the app's real hidden WKWebView activation probe. The
+      # qualifier requires both native cold and warm markers on every sample,
+      # checks that the process survives setup, and records p50/p95 rather than
+      # inferring launch timing from a browser mock or a single process check.
+      - name: Measure real macOS cold and warm startup
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          MAC_STARTUP_SAMPLES: "30"
+          MAC_STARTUP_TIMEOUT_MS: "30000"
+          MAC_STARTUP_WARM_MEASURE: "1"
+          MAC_STARTUP_OUTPUT_DIR: qualification-results/macos-startup/warm-probe
+        run: bun run test:qualify:macos-startup
 
-          # Give WKWebView time to initialize on a cold runner.
-          for i in $(seq 1 30); do
-            if ! kill -0 "$APP_PID" 2>/dev/null; then
-              echo "FAIL: app process died during startup"
-              cat app.log
-              exit 1
-            fi
-            if grep -q "Startup:" app.log; then
-              echo "OK: startup log line appeared"
-              break
-            fi
-            sleep 1
-          done
-
-          if ! grep -q "Startup:" app.log; then
-            echo "FAIL: startup log line never appeared within 30s"
-            cat app.log
-            exit 1
-          fi
-
-          # Still alive after settling — no post-setup crash.
-          sleep 5
-          if ! kill -0 "$APP_PID" 2>/dev/null; then
-            echo "FAIL: app process died shortly after startup"
-            cat app.log
-            exit 1
-          fi
-
-          kill "$APP_PID"
-          echo "macOS launch smoke passed"
-          cat app.log
-
-      - name: Upload app log on failure
-        if: failure()
+      - name: Upload macOS startup qualification
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: macos-smoke-app-log
-          path: app.log
-          if-no-files-found: ignore
+          name: macos-startup-qualification
+          path: qualification-results/macos-startup/
+          if-no-files-found: error

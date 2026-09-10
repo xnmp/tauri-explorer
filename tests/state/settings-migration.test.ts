@@ -54,7 +54,7 @@ async function repoTabDisplay(
  *  guaranteed to drain it. Wait for QUIESCENCE — the file content unchanged
  *  across several consecutive turns — rather than for a wall-clock sleep. */
 async function drainWrites(): Promise<string> {
-  const { readConfigFile } = await import("$lib/api/files");
+  const { readConfigFile } = await import("$lib/api/config");
   let last = "";
   let stable = 0;
   for (let turn = 0; turn < 200 && stable < 5; turn++) {
@@ -128,7 +128,7 @@ describe("promoting a localStorage cache into settings.json (#506)", () => {
     const { settingsStore } = await import("$lib/state/settings.svelte");
     await settingsStore.init();
     await drainWrites();
-    const { readConfigFile } = await import("$lib/api/files");
+    const { readConfigFile } = await import("$lib/api/config");
     const result = await readConfigFile("settings.json");
     return result.ok ? (result.data ?? "") : "";
   }
@@ -159,7 +159,7 @@ describe("promoting a localStorage cache into settings.json (#506)", () => {
     await settingsStore.init();
     settingsStore.toggleSidebar();
     await drainWrites();
-    const { readConfigFile } = await import("$lib/api/files");
+    const { readConfigFile } = await import("$lib/api/config");
     const written = await readConfigFile("settings.json");
     const promoted = written.ok ? (written.data ?? "{}") : "{}";
 

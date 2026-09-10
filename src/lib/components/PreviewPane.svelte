@@ -1064,10 +1064,10 @@ import { openFile } from "$lib/api/open";
   /* Vertical docks fill the column width; the divider moves to the docked edge. */
   .preview-pane.vertical {
     width: 100%;
-    /* The parent owns the effective vertical allocation so a restored
-       preference can leave a usable file region under root UI zoom. */
-    height: 100% !important;
-    flex-shrink: 0;
+    /* Honor the live inline height until the parent's available-space cap
+       requires shrinking. The preferred/draft value remains unchanged. */
+    min-height: 0;
+    flex-shrink: 1;
     border-left: none;
   }
 

@@ -322,6 +322,29 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Dev preview integration — #700 / #701
+
+CI incorporated dev commit `13e26b58` while the local base was still `e551e542`.
+That commit is now merged into this branch. The six preview-resize failures were
+an actual interaction regression: the new wrapper rendered the saved preference
+and overrode the child's live drag height. Enlarging the fixture viewport did not
+restore movement. The existing resize assertions remain unchanged.
+
+The #701 correction applies the available-height limit as a wrapper maximum while
+the child retains its live desired height and may shrink to the available space.
+It adds no competing state or settings writes. All 22 targeted Chromium resize and
+constrained-height outcomes pass; independent review accepts the ownership fix.
+The full three-view browser inventory completed with 965 passes and nine failures;
+eight failures pass in a one-worker rerun. The remaining delayed-SCM-diff outcome
+is under focused investigation. Frontend typecheck (zero errors/warnings), native
+TypeScript, architecture lint, 485/485 maps and both fixture unit tests pass.
+Local WebKit cannot launch:
+ICU 74 was resolved, but Ubuntu-ABI libxml2 and Flite dependencies are absent.
+No WebKit test body ran; the next CI run must provide engine acceptance.
+[Live-drag evidence](reviews/preview-live-allocation-701.json) records top and
+bottom previews growing from 240 to 300 px while the pointer remains down and
+the saved preference remains unchanged.
+
 ## Native acceptance and fresh-window fixture — `0fe4baba`
 
 Windows native qualification passes all 35 spec files, including all seven revised
@@ -339,9 +362,10 @@ both affected native suites pass together (4 tests, 20 seconds), and native
 TypeScript plus independent review pass. Concurrently created unrelated handles
 are not excluded by this boundary; no general WebKit workaround is claimed.
 
-Main Rust, frontend, maps and performance gates pass. The Chromium resize-contract
-failures test a newer synthetic merge containing dev's preview-height fix #700;
-the integration base and those existing fixture expectations require alignment.
+Main Rust, frontend, maps and performance gates pass. Both Chromium and WebKit
+report the same six live-resize failures on the synthetic merge containing dev's
+#700. The production correction is documented above; the existing fixture
+expectations are retained unchanged.
 
 ## Qualification synchronization follow-up — `5cbdc4f0`
 

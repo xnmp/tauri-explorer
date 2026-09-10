@@ -1,4 +1,6 @@
 import { browser, $, $$ } from "@wdio/globals";
+// Keep command types available to standalone fixture-contract tests too.
+import type {} from "webdriverio";
 
 /** A fresh launch must introduce a new handle and expose its requested label. */
 export async function switchToFreshWindow(

@@ -242,13 +242,7 @@
       <PaneContainer />
       {#if settingsStore.showPreviewPane}
         {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
-          <div
-            class="preview-island"
-            class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}
-            style={settingsStore.resolvedPreviewPanePosition !== "right"
-              ? `height: min(${settingsStore.previewPaneHeight || 240}px, max(4px, calc(100% - 120px)));`
-              : undefined}
-          >
+          <div class="preview-island" class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}>
             <PreviewPane />
           </div>
         {/await}
@@ -686,6 +680,9 @@
      island height and the pane stretches to full column width. */
   .preview-island.vertical {
     flex-direction: column;
+    /* The child supplies its live draft size; constrain allocation without
+       replacing that size with the last committed preference. */
+    max-height: max(4px, calc(100% - 120px));
     min-height: 0;
     min-width: 0;
   }

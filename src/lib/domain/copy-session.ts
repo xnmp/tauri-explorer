@@ -37,19 +37,34 @@ export interface CopySessionOutcome {
   warnings: string[];
 }
 
-/** Bound presentation independently of the native positional receipt ledger. */
-export function copySessionError(sources: readonly string[], outcome: CopySessionOutcome): string | null {
+/** Bound presentation independently of the native positional receipt ledger.
+ *  A cancelled session reports its unstarted tail as neither failure nor
+ *  warning: the completed prefix is the whole of what the user asked for. */
+function sessionError(
+  sources: readonly string[],
+  outcome: CopySessionOutcome,
+  verb: "Copy" | "Move",
+  cancelled: string,
+): string | null {
   const messages: string[] = [];
   let failed = 0;
   for (const [index, item] of outcome.items.entries()) {
     if (item.status === "succeeded" || item.status === "skipped") continue;
-    if (outcome.cancelled && (item.status === "unstarted" || (item.status === "failed" && item.error === "Copy cancelled"))) continue;
+    if (outcome.cancelled && (item.status === "unstarted" || (item.status === "failed" && item.error === cancelled))) continue;
     failed++;
     if (messages.length >= 20) continue;
-    const detail = item.status === "unstarted" ? "Copy did not start"
-      : item.error || "See the copy diagnostics for this incomplete item";
+    const detail = item.status === "unstarted" ? `${verb} did not start`
+      : item.error || `See the ${verb.toLowerCase()} diagnostics for this incomplete item`;
     messages.push(`${basename(sources[index])}: ${detail}`);
   }
-  if (failed > messages.length) messages.push(`${failed - messages.length} additional items could not be copied`);
-  return failed ? `Copy incomplete: ${messages.join("\n")}` : null;
+  if (failed > messages.length) messages.push(`${failed - messages.length} additional items could not be ${verb === "Copy" ? "copied" : "moved"}`);
+  return failed ? `${verb} incomplete: ${messages.join("\n")}` : null;
+}
+
+export function copySessionError(sources: readonly string[], outcome: CopySessionOutcome): string | null {
+  return sessionError(sources, outcome, "Copy", "Copy cancelled");
+}
+
+export function moveSessionError(sources: readonly string[], outcome: CopySessionOutcome): string | null {
+  return sessionError(sources, outcome, "Move", "Move cancelled");
 }

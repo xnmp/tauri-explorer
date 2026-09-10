@@ -262,6 +262,7 @@ pub fn run(launch_dir: Option<String>) {
             file_mutation::rename_entry,
             file_mutation::copy_entry,
             file_mutation::copy_entries,
+            file_mutation::move_entries,
             file_mutation::resolve_copy_conflict,
             file_mutation::cancel_copy_session,
             files::file_ops::cancel_copy,

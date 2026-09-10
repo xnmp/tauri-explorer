@@ -11,7 +11,7 @@
 use super::{
     coordinator::DurableOperation,
     model::{EntryVersion, ObjectId, StagedPayload},
-    move_model::{MovePhase, MoveSpec, Strategy},
+    move_model::{MoveSpec, Strategy},
     move_transition::{restoration_source, MoveTransition, RestorationSource},
     rename_outcome::{classify, RenamePosition},
     replacement_artifact::{Anchor, Root, RootPlan},

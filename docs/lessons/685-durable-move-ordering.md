@@ -125,6 +125,46 @@ correctly — but `prepare` has already created the visible
 (#687) each retry leaves another pair. Probing support before publishing root
 intent would avoid it.
 
+## The session engine is the copy session, generalised
+
+A move session is not a new orchestration. `copy_session::run` already owned
+ordering, conflict pauses, cancellation, the bounded diagnostic budget and the
+completed-prefix ledger; `Work` was the only copy-specific seam. Moves supply a
+second implementation (`files/move_session.rs`) rather than a parallel engine,
+because the interesting failure mode here is *divergence*: a separately written
+move loop would eventually acquire a weaker cancellation or retention contract
+than the copy loop, and nothing would notice. The module keeps its name for
+diff size; its doc comment says plainly that it is the session engine, not the
+copy effect.
+
+Three things the move effect must do that a copy must not:
+
+- Reject a directory relocated into its own subtree **before** prompting. A
+  copy into a descendant is merely recursive; a move detaches the subtree from
+  the namespace entirely.
+- Treat a paste into the directory the entry already occupies as a success that
+  touches nothing — never a conflict against itself. The test pins the inode.
+- Fail closed on an un-prompted conflict on the durable path. `PreparedMove`
+  decides overwriting from the target it observes, so the session must refuse
+  before calling it; a target that appears after that check is still safe,
+  because the durable overwrite retains the displaced original.
+
+## One session, one inverse, no renderer undo
+
+`move_session_outcome` pairs each committed item with exactly one inverse: the
+durable record when the receipt carries a relocation, an `Action::Move`
+otherwise, and neither for a same-directory no-op. It never emits both — a
+path-only replay of a durable cross-filesystem move can relocate whatever now
+sits at the destination, which is the last copy of the data.
+
+The renderer therefore records nothing. `paste-operations.ts` shrank to a
+dispatch and a clipboard-release decision, and `drop-operations.ts` lost its
+per-item transfer loop entirely, including the `existingNames` conflict set:
+native inspects the real destination per item, which a renderer-side name set
+cannot do once earlier items in the same batch have landed. A cut clipboard is
+released only when every requested item arrived, so a cancelled or partially
+failed session leaves the cut intact.
+
 ## Why it is opt-in
 
 `durable-move-recovery` is a Cargo feature, off by default, for the same

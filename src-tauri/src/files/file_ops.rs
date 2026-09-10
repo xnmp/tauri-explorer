@@ -48,7 +48,7 @@ fn is_same_entry(a: &Path, b: &Path) -> bool {
 }
 
 /// Reject copying/moving a directory into itself or one of its descendants.
-fn reject_dir_into_itself(source: &Path, dest_dir: &Path) -> Result<(), AppError> {
+pub(super) fn reject_dir_into_itself(source: &Path, dest_dir: &Path) -> Result<(), AppError> {
     if !source.is_dir() {
         return Ok(());
     }

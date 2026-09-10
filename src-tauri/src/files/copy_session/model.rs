@@ -8,7 +8,9 @@ use std::{
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CopyRequest {
+/// The wire shape of one ordered session request. Copies and moves are the
+/// same intent to the session engine; only the effect differs.
+pub(crate) struct SessionRequest {
     pub request_id: String,
     pub sources: Vec<String>,
     pub dest_dir: String,

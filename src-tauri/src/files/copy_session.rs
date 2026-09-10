@@ -1,10 +1,19 @@
-//! One ordered copy request owns its pauses, cancellation and confirmed effects.
-//! Filesystem workers never wait for a renderer response.
+//! One ordered native request owns its pauses, cancellation and confirmed
+//! effects. Filesystem workers never wait for a renderer response.
+//!
+//! This is the session engine, not the copy effect: `Work` is the only
+//! operation-specific seam, and `files::move_session` supplies the second
+//! implementation. Ordering, conflict pauses, cancellation, the bounded
+//! diagnostic budget and the completed prefix are shared by construction, so
+//! a move can never acquire a weaker cancellation or retention contract than
+//! a copy by drifting apart from it.
 mod control;
 mod model;
 mod worker;
-pub(crate) use control::{lookup, Registration};
-pub(crate) use model::{Choice, CopyRequest, Decision, Event, ItemOutcome, Outcome, Request};
+pub(crate) use control::{lookup, Control, Registration};
+pub(crate) use model::{
+    Choice, Conflict, SessionRequest, Decision, Event, ItemOutcome, Outcome, Request,
+};
 pub(crate) use worker::NativeWork;
 
 use super::{
@@ -13,8 +22,6 @@ use super::{
     WorkerCompletion,
 };
 use crate::{diagnostics::Warnings, error::AppError};
-use control::Control;
-use model::Conflict;
 use std::{
     collections::BTreeSet,
     future::Future,
@@ -38,7 +45,8 @@ pub(crate) trait Work: Send + 'static {
         destination: String,
         remaining: usize,
     ) -> impl Future<Output = Result<Inspection, AppError>> + Send;
-    fn copy(
+    /// Apply this session's effect to one inspected item.
+    fn apply(
         &self,
         inspection: Inspection,
         overwrite: bool,
@@ -153,7 +161,7 @@ pub(crate) async fn run(
                 }
             });
             let completion = work
-                .copy(inspection, overwrite, inner_control.clone(), progress)
+                .apply(inspection, overwrite, inner_control.clone(), progress)
                 .await;
             let entry = completion
                 .result

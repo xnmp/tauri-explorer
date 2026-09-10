@@ -289,11 +289,11 @@ pub(crate) async fn copy_entry(
 pub(crate) async fn copy_entries(
     window: tauri::Window,
     session_id: String,
-    request: crate::files::copy_session::CopyRequest,
+    request: crate::files::copy_session::SessionRequest,
     events: tauri::ipc::Channel<crate::files::copy_session::Event>,
 ) -> Result<MutationReply<crate::files::copy_session::Outcome>, AppError> {
     use crate::files::copy_session::{self, NativeWork, Registration, Request};
-    let copy_session::CopyRequest {
+    let copy_session::SessionRequest {
         request_id,
         sources,
         dest_dir,
@@ -362,6 +362,120 @@ pub(crate) fn copy_session_outcome(
             1 => actions.pop(),
             _ => Some(Action::Batch {
                 label: format!("Copy {} items", actions.len()),
+                actions,
+            }),
+        };
+        ForwardEffect::Changed(inverse)
+    } else {
+        ForwardEffect::Unchanged
+    };
+    MutationOutcome {
+        result: Ok(result),
+        effect,
+        warning: None,
+        affected,
+    }
+}
+
+/// One native history reservation covers the complete ordered relocation,
+/// including conflict pauses and the successfully completed prefix. A
+/// cancelled session still records the prefix, so Undo remains available for
+/// exactly the items that moved.
+#[tauri::command]
+pub(crate) async fn move_entries(
+    window: tauri::Window,
+    session_id: String,
+    request: crate::files::copy_session::SessionRequest,
+    events: tauri::ipc::Channel<crate::files::copy_session::Event>,
+) -> Result<MutationReply<crate::files::copy_session::Outcome>, AppError> {
+    use crate::files::{
+        copy_session::{self, Registration, Request},
+        move_session::MoveWork,
+    };
+    let copy_session::SessionRequest {
+        request_id,
+        sources,
+        dest_dir,
+        job_id,
+        shared,
+    } = request;
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let request = Request::new(sources.clone(), dest_dir.clone())?;
+    let registration = Registration::new(request_id, owner.clone())?;
+    let work = MoveWork {
+        app: Some(window.app_handle().clone()),
+        job_id,
+        #[cfg(target_os = "linux")]
+        recovery: crate::files::recovery::commands::owner(&window)?,
+    };
+    // A relocation changes two directories per item. The source parents are
+    // only known per item, so the reservation names the destination and the
+    // outcome extends the refreshed set with every committed source parent.
+    let mut directories = vec![dest_dir.clone()];
+    directories.extend(sources.iter().flat_map(|source| parent(source)));
+    directories.sort_unstable();
+    directories.dedup();
+    file_history::run_forward(owner, shared, directories, async move {
+        let result = copy_session::run(request, registration.control.clone(), work, move |event| {
+            events.send(event).is_ok()
+        })
+        .await;
+        let outcome = move_session_outcome(result, &sources, dest_dir);
+        drop(registration);
+        outcome
+    })
+    .await
+}
+
+/// Position is the item identity: `sources[index]` is the requested spelling
+/// of `items[index]`, including repeated paths.
+pub(crate) fn move_session_outcome(
+    result: crate::files::copy_session::Outcome,
+    sources: &[String],
+    destination: String,
+) -> MutationOutcome<crate::files::copy_session::Outcome> {
+    use crate::files::copy_session::ItemOutcome;
+    let mut actions = Vec::new();
+    let mut affected = result.refresh_dirs.clone();
+    if result.changed() {
+        affected.push(destination.clone());
+    }
+    for (index, item) in result.items.iter().enumerate() {
+        let ItemOutcome::Succeeded { receipt } = item else {
+            continue;
+        };
+        affected.extend(parent(&receipt.path));
+        let Some(source) = sources.get(index) else {
+            continue;
+        };
+        affected.extend(parent(source));
+        if source == &receipt.path {
+            // The entry already occupied the destination; nothing to invert.
+            continue;
+        }
+        if let Some(relocation) = &receipt.relocation {
+            // The durable record IS the inverse. Never pair it with a
+            // path-only action: replaying one can destroy the last copy.
+            actions.push(Action::Replacement {
+                path: receipt.path.clone(),
+                recovery: Some(relocation.history.clone()),
+            });
+        } else if receipt.recovery.is_none() {
+            actions.push(Action::Move {
+                source_path: source.clone(),
+                dest_path: receipt.path.clone(),
+                original_dir: parent(source).pop().unwrap_or_default(),
+            });
+        }
+    }
+    affected.sort_unstable();
+    affected.dedup();
+    let effect = if result.changed() {
+        let inverse = match actions.len() {
+            0 => None,
+            1 => actions.pop(),
+            _ => Some(Action::Batch {
+                label: format!("Move {} items", actions.len()),
                 actions,
             }),
         };

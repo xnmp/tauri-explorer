@@ -21,6 +21,7 @@ pub mod fs_watcher;
 pub mod git_status;
 pub(crate) mod move_execution;
 pub(crate) mod move_plan;
+pub(crate) mod move_session;
 pub(crate) mod mutation;
 #[cfg(any(unix, test))]
 mod native_directory;

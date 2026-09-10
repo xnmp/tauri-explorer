@@ -305,33 +305,45 @@ fn a_removed_source_has_no_exact_original_left_to_restore() {
 }
 
 #[test]
-fn restoration_targets_the_parked_source_only_while_it_is_parked() {
+fn the_restoration_origin_survives_an_interrupted_restoration() {
     let (intent, state) = cross_volume();
     let spec = intent.operation.move_spec().unwrap();
+    // A cross-filesystem restoration always reaches the source through private
+    // storage, including when retried from `RestoreIntent`. Deriving it from
+    // the phase would forget the parked source and strand it permanently.
+    assert_eq!(restoration_source(spec), RestorationSource::Parked);
     let published = to_published(&intent, state);
-    assert_eq!(
-        restoration_source(spec, state_of(&published).phase),
-        RestorationSource::Unparked
-    );
-    let parking = advance(&intent, published, MoveTransition::BeginPark);
-    assert_eq!(
-        restoration_source(spec, state_of(&parking).phase),
-        RestorationSource::Parked
-    );
-    let parked = advance(&intent, parking, MoveTransition::ParkCompleted);
-    assert_eq!(
-        restoration_source(spec, state_of(&parked).phase),
-        RestorationSource::Parked
-    );
+    let parked = advance(&intent, published, MoveTransition::BeginPark);
+    let parked = advance(&intent, parked, MoveTransition::ParkCompleted);
+    let restoring = advance(&intent, parked, MoveTransition::BeginRestoration);
+    assert_eq!(state_of(&restoring).phase, MovePhase::RestoreIntent);
+    assert_eq!(restoration_source(spec), RestorationSource::Parked);
+    // The interrupted restoration is reassertable, not terminal.
+    let retried = advance(&intent, restoring, MoveTransition::BeginRestoration);
+    assert_eq!(state_of(&retried).phase, MovePhase::RestoreIntent);
 
     let (rename, state) = same_volume_overwrite();
     let published = to_published(&rename, state);
+    assert_eq!(state_of(&published).phase, MovePhase::Published);
     assert_eq!(
-        restoration_source(
-            rename.operation.move_spec().unwrap(),
-            state_of(&published).phase
-        ),
+        restoration_source(rename.operation.move_spec().unwrap()),
         RestorationSource::Published
+    );
+}
+
+#[test]
+fn source_removal_advances_the_revision_so_a_position_names_one_state() {
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let parked = advance(&intent, state, MoveTransition::ParkCompleted);
+    let completed = state_of(&parked).effect_revision;
+
+    let removing = advance(&intent, parked, MoveTransition::BeginSourceRemoval);
+    let removed = advance(&intent, removing, MoveTransition::SourceRemoved);
+    assert!(
+        state_of(&removed).effect_revision > completed,
+        "a caller holding the completed move's revision must not match a removed record"
     );
 }
 

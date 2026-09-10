@@ -359,9 +359,16 @@ impl Root {
                 "Recovery replacement intent differs from this artifact root owner",
             ));
         }
-        // The digest already binds the whole immutable intent, so only this
-        // root's own placement and non-aliasing remain to be re-established.
-        if self.path.parent() != Some(self.parent_path.as_path())
+        // The digest binds the whole immutable intent, but the plan reached us
+        // through a caller. Re-derive the artifact roots the intent itself
+        // names and require this one to be exactly among them, so a mismatched
+        // path with a coincidentally valid identity is still rejected here.
+        let planned = match &intent.operation {
+            OperationSpec::CopyReplacement(spec) => vec![spec.root.0.clone()],
+            OperationSpec::Move(spec) => spec.roots().map(|root| root.path.0.clone()).collect(),
+        };
+        if !planned.contains(&self.path)
+            || self.path.parent() != Some(self.parent_path.as_path())
             || !self.identity.same_volume(self.parent_identity)
             || self.identity == self.parent_identity
             || self.excluded.contains(&self.identity)
@@ -411,5 +418,4 @@ fn invalid(message: &str) -> AppError {
 #[path = "../../../test_support/recovery_replacement_artifact.rs"]
 mod tests;
 
-#[cfg(test)]
 use super::model::OperationSpec;

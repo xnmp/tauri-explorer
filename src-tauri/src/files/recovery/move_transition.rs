@@ -130,9 +130,14 @@ pub(super) fn transition(
         MoveTransition::BeginSourceRemoval
             if matches!(state.phase, MovePhase::Parked | MovePhase::RemoveIntent) =>
         {
+            next_effect_revision(state.effect_revision)?;
             state.phase = MovePhase::RemoveIntent;
         }
+        // Removal advances the revision so that a history position plus a
+        // revision names exactly one state: a caller holding the completed
+        // move's revision can never claim a record whose source is gone.
         MoveTransition::SourceRemoved if state.phase == MovePhase::RemoveIntent => {
+            state.effect_revision = next_effect_revision(state.effect_revision)?;
             state.phase = MovePhase::Removed;
             state.error = None;
         }
@@ -165,26 +170,23 @@ pub(super) fn transition(
     Ok(next)
 }
 
-/// The exact endpoint a restoration must reach the source through. Cross-
-/// filesystem restoration takes the parked copy home; a rename takes the
-/// published destination back. Neither ever deletes before the source exists.
-pub(super) fn restoration_source(spec: &MoveSpec, phase: MovePhase) -> RestorationSource {
-    match (spec.strategy, phase) {
-        (Strategy::CopyParked, MovePhase::ParkIntent | MovePhase::Parked) => {
-            RestorationSource::Parked
-        }
-        (Strategy::CopyParked, _) => RestorationSource::Unparked,
-        (Strategy::Rename, _) => RestorationSource::Published,
+/// The endpoint a restoration must reach the source through. This depends only
+/// on the immutable strategy, never on the current phase: an interrupted
+/// restoration is retried from `RestoreIntent`, and deriving the origin from
+/// that phase would forget that the source is parked and strand it forever.
+/// The executor decides what work remains by observing the source itself.
+pub(super) fn restoration_source(spec: &MoveSpec) -> RestorationSource {
+    match spec.strategy {
+        Strategy::CopyParked => RestorationSource::Parked,
+        Strategy::Rename => RestorationSource::Published,
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RestorationSource {
-    /// A cross-filesystem source is still at its public name; the publication
-    /// is removable because the source was never hidden.
-    Unparked,
-    /// The source is hidden under private storage and must be renamed home
-    /// before the published destination may be removed.
+    /// A cross-filesystem source may be hidden under private storage. It is
+    /// renamed home when absent, and the published destination is retired only
+    /// after the source is verified present at its own name.
     Parked,
     /// A same-filesystem publication is itself the original object.
     Published,

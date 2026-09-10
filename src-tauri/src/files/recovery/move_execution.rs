@@ -94,10 +94,6 @@ impl MoveExecution {
         Ok(self.operation.intent().operation.move_spec()?)
     }
 
-    fn phase(&self) -> Result<MovePhase, AppError> {
-        Ok(self.operation.state().move_state()?.phase)
-    }
-
     fn source(&self) -> Result<Endpoint, AppError> {
         let spec = self.spec()?;
         Endpoint::open(&spec.source.0, spec.source_parent)
@@ -166,11 +162,13 @@ impl MoveExecution {
         if plans.is_empty() {
             // The same-filesystem non-overwrite fast path owns no private
             // storage: there is nothing to displace and nothing to retain.
+            // It still carries the boundary seam, so its single publication
+            // rename is coverable by the crash tests like any other effect.
             return Ok(Self {
                 operation,
                 source_root: None,
                 target_root: None,
-                hook: None,
+                hook,
             });
         }
         let anchors: Vec<_> = plans
@@ -516,12 +514,11 @@ impl MoveExecution {
     }
 
     /// Discard the parked source. This is the only deletion in this executor,
-    /// and the only phase with no production caller yet: finishing a parked
-    /// move belongs with durable retirement (#687). It is exercised by the
-    /// crash boundary tests so the ordering it enforces stays verified.
-    #[allow(dead_code)]
     /// it is reachable only from a durable `Parked` checkpoint, and it is never
-    /// part of the forward move or of restoration.
+    /// part of the forward move or of restoration. It has no production caller
+    /// yet — finishing a parked move belongs with durable retirement (#687) —
+    /// but the crash boundary tests exercise the ordering it enforces.
+    #[allow(dead_code)]
     pub(super) fn remove_source(&mut self) -> Result<(), AppError> {
         self.operation
             .advance_move(MoveTransition::BeginSourceRemoval)?;
@@ -573,12 +570,14 @@ impl MoveExecution {
     /// The record's own exact inverse. Nothing is deleted before the source
     /// exists again at its original name.
     pub(super) fn restore_move(&mut self) -> Result<(), AppError> {
-        let phase = self.phase()?;
         let spec = self.spec()?.clone();
-        let origin = restoration_source(&spec, phase);
+        let origin = restoration_source(&spec);
         self.operation
             .advance_move(MoveTransition::BeginRestoration)?;
         let result = (|| {
+            // A durable restoration intent exists from here on: an interruption
+            // at this boundary must stay retryable, not strand a parked source.
+            self.at("restore-intent")?;
             self.verify_authority()?;
             let source = self.source()?;
             let target = self.target()?;
@@ -596,6 +595,9 @@ impl MoveExecution {
                 }
                 RestorationSource::Parked => {
                     let root = Self::require(&self.source_root, "source")?;
+                    // A cross-filesystem source may never have been parked
+                    // (a restoration from `Published`), or may already be home
+                    // (a reasserted restoration). Observe, never assume.
                     if source.probe()?.is_none() {
                         relocate(
                             root.directory(),
@@ -605,15 +607,7 @@ impl MoveExecution {
                             &spec.source_version,
                         )?;
                     }
-                    self.retire_publication(&target, &spec)?;
-                }
-                RestorationSource::Unparked => {
-                    if source.probe()?.as_ref() != Some(&spec.source_version) {
-                        return Err(uncertain(
-                            "Move source is not at its original name; nothing is removed",
-                        ));
-                    }
-                    self.retire_publication(&target, &spec)?;
+                    self.park_publication(&target)?;
                 }
             }
             // Only once the source is home may the destination be restored to
@@ -652,9 +646,12 @@ impl MoveExecution {
             .advance_move(MoveTransition::RestorationCompleted)
     }
 
-    /// Remove a cross-filesystem publication only after the exact source is
-    /// verified present, and only when it is exactly what we published.
-    fn retire_publication(&self, target: &Endpoint, spec: &MoveSpec) -> Result<(), AppError> {
+    /// Return a cross-filesystem publication to the private root it came from,
+    /// once the exact source is verified present at its own name. Restoration
+    /// deletes nothing: the copied payload stays recoverable, and a destination
+    /// edited after publication is preserved rather than destroyed.
+    fn park_publication(&self, target: &Endpoint) -> Result<(), AppError> {
+        let spec = self.spec()?.clone();
         let source = self.source()?;
         if source.probe()?.as_ref() != Some(&spec.source_version) {
             return Err(uncertain(
@@ -666,20 +663,32 @@ impl MoveExecution {
             .state()
             .move_state()?
             .staged
-            .as_ref()
-            .ok_or_else(|| invalid("Move restoration lacks its staged payload"))?
-            .published_version()?;
-        match target.probe()? {
-            None => Ok(()),
-            Some(published) if published == staged => {
-                remove_tree(&target.directory, &target.name, published.directory, 0)?;
-                target.directory.sync()?;
-                Ok(())
-            }
-            Some(_) => Err(uncertain(
+            .clone()
+            .ok_or_else(|| invalid("Move restoration lacks its staged payload"))?;
+        let root = Self::require(&self.target_root, "target")?;
+        // Publication may have been interrupted before its final directory
+        // mode was restored, so both recorded permission states are valid here.
+        let observed = match target.probe()? {
+            None => return Ok(()),
+            Some(observed) => observed,
+        };
+        let expected = if observed == staged.version {
+            staged.version.clone()
+        } else {
+            staged.published_version()?
+        };
+        if observed != expected {
+            return Err(uncertain(
                 "Move destination differs from the published payload; it is retained",
-            )),
+            ));
         }
+        relocate(
+            &target.directory,
+            &target.name,
+            root.directory(),
+            OsStr::new(PUBLICATION),
+            &expected,
+        )
     }
 
     fn retain_failure(&mut self, error: AppError) -> AppError {

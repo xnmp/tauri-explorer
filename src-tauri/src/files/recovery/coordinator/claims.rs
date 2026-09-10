@@ -37,7 +37,7 @@ impl Inner {
             let artifacts =
                 checkpoint.and_then(|checkpoint| known_artifacts(&entry.intent, &checkpoint.state));
             let idle_completed = match checkpoint {
-                Some(checkpoint) if completed(&checkpoint.state) => {
+                Some(checkpoint) if completed(&entry.intent, &checkpoint.state) => {
                     match OperationLock::acquire(&self.locks, &entry.intent.lock)? {
                         LockAttempt::Busy => false,
                         LockAttempt::Acquired(owner) => {
@@ -92,19 +92,28 @@ impl Inner {
     }
 }
 
-fn completed(state: &OperationState) -> bool {
+fn completed(intent: &DurableIntent, state: &OperationState) -> bool {
     match state {
         OperationState::Replacement(state) => {
             matches!(state.phase, Phase::Published | Phase::Restored) && state.error.is_none()
         }
-        // Parked and Removed are both terminal forward positions for a move;
-        // Restored is its completed inverse. Every one of them has released
-        // the user endpoints named by the immutable intent.
         OperationState::Move(state) => {
-            matches!(
-                state.phase,
-                MovePhase::Published | MovePhase::Parked | MovePhase::Removed | MovePhase::Restored
-            ) && state.error.is_none()
+            if state.error.is_some() {
+                return false;
+            }
+            // A cross-filesystem move still owns its source at `Published`:
+            // parking has not run yet, so releasing the user endpoints here
+            // would let a concurrent operation mutate the entry we are about
+            // to hide. Only a rename is finished at `Published`.
+            let published_is_terminal = intent
+                .operation
+                .move_spec()
+                .is_ok_and(|spec| spec.strategy == super::super::move_model::Strategy::Rename);
+            match state.phase {
+                MovePhase::Published => published_is_terminal,
+                MovePhase::Parked | MovePhase::Removed | MovePhase::Restored => true,
+                _ => false,
+            }
         }
     }
 }

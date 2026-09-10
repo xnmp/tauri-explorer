@@ -27,7 +27,18 @@ execution discipline:
    would lose the only evidence that the move happened at all.
 3. `BeginRestoration` is **not** reachable from `Removed`. Once the parked
    source is gone there is no exact original to return, so no inverse is
-   offered — rather than offering one that would fabricate a copy.
+   offered — rather than offering one that would fabricate a copy. Source
+   removal advances `effect_revision` for the same reason: otherwise a caller
+   holding the *completed* move's revision could claim a record whose source
+   had since been discarded, because `(revision, position)` would name two
+   different states.
+
+Restoration deletes nothing. Returning a cross-filesystem publication means
+renaming it back into the destination's private root, exactly where it was
+staged — not `remove_tree`. That keeps "never delete during restoration"
+literally true, and it preserves a destination someone edited after the move:
+`EntryVersion` is not a recursive snapshot, so a deletion gated on the top-level
+version would have destroyed edits made deep inside a moved directory.
 
 Because these are checked in a pure function that runs before every journal
 compare-and-swap, a future executor cannot reorder them by accident. The
@@ -50,6 +61,28 @@ at a public endpoint or inside retained private storage.
   The pre-existing `file_ops::cross_device_move` published and then removed the
   live source with no record; that is the hazard ADR 0020 names, and the
   durable path never deletes during the forward move.
+
+## Do not derive the restoration origin from the current phase
+
+The first version of `restoration_source` took `(strategy, phase)` and mapped
+anything that was not `ParkIntent | Parked` to "the source is at its public
+name". An adversarial review refuted the recoverability claim with it: a
+restoration that commits `RestoreIntent` and then fails before the unpark
+rename — a transient EIO on the manifest read is enough — leaves a phase whose
+own origin lookup has forgotten that the source is parked. Every retry then
+reported "Move source is not at its original name" forever, while the source
+sat hidden in private storage.
+
+The origin now depends only on the immutable `Strategy`, and the executor
+decides what work remains by *observing the source*. That is the general rule:
+a phase label records what was intended, never what the filesystem contains.
+`an_interrupted_restoration_can_still_bring_the_parked_source_home` pins it.
+
+Note the consequence for the two surfaces. `try_claim_history` only accepts
+stable positions, so an interrupted Undo cannot be re-consumed by history — it
+becomes an explicit File Recovery item instead, and `service::relocation`
+offers Restore from `RestoreIntent`. That split is deliberate: Undo is for
+completed effects, recovery is for interrupted ones.
 
 ## The inverse is the record, never a path
 
@@ -84,6 +117,13 @@ publishes and then parking fails. That outcome is uncertain, not destructive:
 both copies exist, the record is retained, and its inverse is still exact.
 `a_source_directory_that_cannot_be_relinked_publishes_without_losing_data`
 pins that behaviour so nobody "fixes" it by chmod-ing the user's source.
+
+A related known limitation: on filesystems where `renameat2` rejects
+`RENAME_NOREPLACE` (older FUSE, some network mounts), the move fails closed —
+correctly — but `prepare` has already created the visible
+`.tauri-explorer-recovery-<token>` sibling directories, and with no retirement
+(#687) each retry leaves another pair. Probing support before publishing root
+intent would avoid it.
 
 ## Why it is opt-in
 

@@ -81,7 +81,10 @@ fn subprocess_mover() {
     let coordinator = Coordinator::open(&fs::canonicalize(&fixture).unwrap().join("recovery"))
         .unwrap();
     let ready = fixture.join("mover-ready");
-    let label: &'static str = Box::leak(boundary.clone().into_boxed_str());
+    let label: &'static str = match boundary.as_str() {
+        "publish-fast" => "publish",
+        other => Box::leak(other.to_owned().into_boxed_str()),
+    };
     let stop = move |reached: &'static str| -> Result<(), AppError> {
         if reached != label {
             return Ok(());
@@ -192,7 +195,18 @@ fn reachable(directory: &Path, expected: &[u8]) -> bool {
 
 #[test]
 fn no_crash_boundary_can_leave_both_endpoints_absent() {
-    for boundary in ["root", "manifest", "displace", "publish", "restore"] {
+    // "publish-fast" is the same-filesystem non-overwrite move: one rename,
+    // no private storage. It is the most common shape, so it needs the kill
+    // coverage most, and its executor keeps the boundary seam despite owning
+    // no artifact root.
+    for boundary in [
+        "publish-fast",
+        "root",
+        "manifest",
+        "displace",
+        "publish",
+        "restore",
+    ] {
         let Some((fixture, shared)) = run_to(boundary) else {
             continue;
         };

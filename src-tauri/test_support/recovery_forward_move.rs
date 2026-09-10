@@ -2,9 +2,10 @@
 //! about observable bytes and namespace state, never about internal shapes.
 use super::*;
 use crate::files::recovery::{
-    coordinator::Coordinator,
+    coordinator::{Coordinator, HistoryPosition},
     model::{ReplacementDirection, ReplacementHistory},
     move_model::Strategy,
+    move_execution::MoveExecution,
 };
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -345,4 +346,83 @@ fn the_planned_strategy_follows_the_actual_devices_of_both_parents() {
         fs::write(f.from.join("item.txt"), "payload").unwrap();
         assert_eq!(f.prepare("item.txt").strategy(), Strategy::CopyParked);
     }
+}
+
+/// Regression for the adversarial review's REFUTED (d): a restoration that
+/// fails after committing its intent must remain retryable. Deriving the
+/// restoration origin from the current phase forgot that a cross-filesystem
+/// source was parked, and every later retry then refused forever.
+#[test]
+fn an_interrupted_restoration_can_still_bring_the_parked_source_home() {
+    let Some(f) = Fixture::cross_volume() else {
+        return;
+    };
+    fs::write(f.from.join("item.txt"), "payload").unwrap();
+    let before = fs::symlink_metadata(f.from.join("item.txt")).unwrap().ino();
+    let receipt = f.move_entry("item.txt").unwrap();
+    let history = history_of(&receipt);
+    let id = history.id.clone();
+
+    // Fail after the restoration intent is durable but before any rename.
+    let claimed = f
+        .coordinator
+        .try_claim_history(&history.id, history.revision, HistoryPosition::Published)
+        .unwrap()
+        .unwrap();
+    let interrupted = MoveExecution::reopen(claimed)
+        .unwrap()
+        .with_boundary(Box::new(|label| {
+            if label == "restore-intent" {
+                Err(AppError::Other("injected restoration interruption".into()))
+            } else {
+                Ok(())
+            }
+        }))
+        .restore_move();
+    assert!(interrupted.is_err());
+    // The intent is durable, but no rename ran: the source is still parked.
+    assert!(!f.from.join("item.txt").exists());
+    assert_eq!(fs::read(f.to.join("item.txt")).unwrap(), b"payload");
+
+    // History cannot re-consume a record that is no longer at a stable
+    // position, so the interrupted inverse becomes an explicit File Recovery
+    // item — and that surface must still be able to bring the source home.
+    assert!(f.undo(history).is_err());
+    let inspected =
+        crate::files::recovery::service::inspect(&f.coordinator, &id).unwrap();
+    let offer = inspected.items.iter().find(|item| item.id == id).unwrap();
+    assert_eq!(offer.status, "ready", "{}", offer.message);
+    crate::files::recovery::service::resolve(
+        &f.coordinator,
+        &id,
+        offer.generation,
+        crate::files::recovery::model::RecoveryChoice::Restore,
+    )
+    .unwrap();
+    assert_eq!(fs::read(f.from.join("item.txt")).unwrap(), b"payload");
+    assert_eq!(
+        fs::symlink_metadata(f.from.join("item.txt")).unwrap().ino(),
+        before
+    );
+    assert!(!f.to.join("item.txt").exists());
+}
+
+/// Restoration must not delete: the published copy returns to private storage,
+/// so a destination edited after publication is preserved rather than destroyed.
+#[test]
+fn restoration_retains_the_published_copy_instead_of_deleting_it() {
+    let Some(f) = Fixture::cross_volume() else {
+        return;
+    };
+    fs::write(f.from.join("item.txt"), "payload").unwrap();
+    let receipt = f.move_entry("item.txt").unwrap();
+    f.undo(history_of(&receipt)).unwrap();
+
+    assert!(!f.to.join("item.txt").exists());
+    let root = f.artifacts(&f.to);
+    assert_eq!(root.len(), 1, "the published copy must be retained");
+    assert_eq!(
+        fs::read(f.to.join(&root[0]).join("publication")).unwrap(),
+        b"payload"
+    );
 }

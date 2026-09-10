@@ -149,13 +149,41 @@ Three things the move effect must do that a copy must not:
   before calling it; a target that appears after that check is still safe,
   because the durable overwrite retains the displaced original.
 
+## A committed destination is not a completed move
+
+`file_ops::move_entry_impl` returns `Ok(receipt)` with `recovery: Some(..)` when
+a cross-device publication succeeded but removing the source did not. The
+session engine maps every `Ok` to `Succeeded`, so the first version of the move
+session presented that as "Moved 1 item", cleared the cut clipboard, recorded no
+inverse — and silently discarded the redo stack — while the source directory was
+possibly half-deleted. An adversarial review caught it; it is the exact case the
+old renderer loop went out of its way to surface.
+
+`move_session.rs` now converts such a receipt into
+`AppError::MutationUncertain(recovery.message())`. The engine already treats
+uncertainty as terminal: the item is `Uncertain`, the run stops, `moveSessionError`
+reports it, the clipboard survives, and no inverse is minted. The lesson
+generalises: when an operation's own primitive can report "committed, but not
+finished", a `Result::is_ok()` test is not a success test.
+
 ## One session, one inverse, no renderer undo
 
 `move_session_outcome` pairs each committed item with exactly one inverse: the
 durable record when the receipt carries a relocation, an `Action::Move`
 otherwise, and neither for a same-directory no-op. It never emits both — a
 path-only replay of a durable cross-filesystem move can relocate whatever now
-sits at the destination, which is the last copy of the data.
+sits at the destination, which is the last copy of the data. Keeping the
+path-only inverse for the default build is deliberate: without the journal
+there is no record to name, and dropping it would remove Undo from every move.
+
+The no-op case cannot be decided by comparing strings. A cut from
+`/home/u/real` pasted into a pane showing `/home/u/link` (a symlink to it)
+produces a receipt whose path differs from the requested spelling while naming
+the same inode; a string comparison mints an `Action::Move` that relocates an
+entry onto itself and fails forever. The worker knows — it compared canonical
+paths — so it says so on the receipt (`unchanged`), and a session of only such
+items reports `ForwardEffect::Unchanged` rather than a forward entry that would
+discard the redo stack.
 
 The renderer therefore records nothing. `paste-operations.ts` shrank to a
 dispatch and a clipboard-release decision, and `drop-operations.ts` lost its
@@ -164,6 +192,19 @@ native inspects the real destination per item, which a renderer-side name set
 cannot do once earlier items in the same batch have landed. A cut clipboard is
 released only when every requested item arrived, so a cancelled or partially
 failed session leaves the cut intact.
+
+Two smaller move-only rules fell out of the same review. A repeated path in one
+selection is deduplicated before the session opens: for a copy two identical
+sources are two uniquely named copies, but for a move the repeat is a missing
+source that would report the whole request incomplete. And the renderer's
+presentation is now one `runSession` shared by both operations, because a
+second hand-written loop would drift exactly the way a second Rust engine
+would.
+
+Still renderer-owned, and still on the old per-item path: plugin-driven moves
+(`src/lib/plugins/api.ts`) go through `performFileTransfer`. The refresh set
+also names the requested source spelling, so a cut reached through a symlinked
+parent does not publish a change for the physical directory.
 
 ## Why it is opt-in
 

@@ -227,7 +227,7 @@ pub(crate) async fn run(
     let mut warnings = Warnings::default();
     if let Err(error) = joined {
         warnings.push(format!(
-            "Copy session was interrupted; inspect unfinished items before retrying: {error}"
+            "Native session was interrupted; inspect unfinished items before retrying: {error}"
         ));
     }
     let items = receipts
@@ -237,7 +237,7 @@ pub(crate) async fn run(
             ItemState::Succeeded(Success { receipt, warning }) => {
                 if let Some(warning) = warning {
                     if warning.is_empty() {
-                        warnings.push("Additional per-item copy diagnostics were omitted");
+                        warnings.push("Additional per-item diagnostics were omitted");
                     } else {
                         warnings.push(warning);
                     }
@@ -256,20 +256,20 @@ pub(crate) async fn run(
             ItemState::Failed(Failure::Skipped) => ItemOutcome::Skipped,
             ItemState::Failed(Failure::Failed(error)) => {
                 if error.is_empty() {
-                    warnings.push("Additional per-item copy diagnostics were omitted");
+                    warnings.push("Additional per-item diagnostics were omitted");
                 }
                 ItemOutcome::Failed { error }
             }
             ItemState::Uncertain(Failure::Uncertain(error)) => {
                 if error.is_empty() {
-                    warnings.push("Additional per-item copy diagnostics were omitted");
+                    warnings.push("Additional per-item diagnostics were omitted");
                 }
                 ItemOutcome::Uncertain { error }
             }
             ItemState::Unstarted => ItemOutcome::Unstarted,
             _ => ItemOutcome::Uncertain {
                 error:
-                    "Copy was interrupted during execution; inspect the destination before retrying"
+                    "The session was interrupted during execution; inspect the destination before retrying"
                         .into(),
             },
         })

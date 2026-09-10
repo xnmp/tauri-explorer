@@ -26,7 +26,6 @@ fn block<T>(future: impl Future<Output = T>) -> T {
 
 fn work(root: &Path) -> MoveWork {
     MoveWork {
-        app: None,
         job_id: 4_242,
         recovery: (Runtime::default(), root.join("recovery")),
     }
@@ -241,16 +240,106 @@ fn a_move_into_the_directory_it_already_occupies_succeeds_without_touching_the_e
         before.ino(),
         "a same-directory move must not recreate the entry"
     );
-    // A no-op has no inverse: replaying one would relocate the entry away.
+    // A no-op has no inverse, and no forward effect at all: recording one
+    // would discard the redo stack for an operation that changed nothing.
     let projected = move_session_outcome(
         outcome,
         &spellings(&sources),
         fixture.from.to_string_lossy().into_owned(),
     );
-    assert!(matches!(
-        projected.effect,
-        ForwardEffect::Changed(None)
-    ));
+    assert!(matches!(projected.effect, ForwardEffect::Unchanged));
+    assert!(projected.affected.is_empty());
+}
+
+#[test]
+fn a_destination_alias_naming_the_source_directory_is_still_a_no_op() {
+    // The requested spelling and the destination spelling can name one
+    // directory. Comparing them as strings would mint an inverse that
+    // relocates an entry onto itself and fails forever.
+    let fixture = Fixture::new();
+    let sources = vec![fixture.source("stays.txt", b"unchanged")];
+    let alias = fixture.root.path().join("alias");
+    std::os::unix::fs::symlink(&fixture.from, &alias).unwrap();
+    let (outcome, _) = drive(request(&sources, &alias), fixture.work(), Vec::new());
+    assert_eq!(statuses(&outcome), vec!["succeeded"]);
+    let projected = move_session_outcome(
+        outcome,
+        &spellings(&sources),
+        alias.to_string_lossy().into_owned(),
+    );
+    assert!(matches!(projected.effect, ForwardEffect::Unchanged));
+    assert_eq!(fs::read(&sources[0]).unwrap(), b"unchanged");
+}
+
+/// A cross-filesystem move whose source cannot be unlinked after publication.
+/// The destination exists and the source may still exist: that is uncertain,
+/// not success, and it must not become an inverse.
+#[test]
+fn a_publication_whose_source_removal_failed_is_uncertain_and_offers_no_inverse() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = Path::new("/dev/shm");
+    if !root.is_dir() {
+        eprintln!("SKIPPED incomplete source removal: /dev/shm is unavailable");
+        return;
+    }
+    let other = tempfile::tempdir_in(root).unwrap();
+    let fixture = Fixture::new();
+    if fs::metadata(fixture.root.path()).unwrap().dev()
+        == fs::metadata(other.path()).unwrap().dev()
+    {
+        eprintln!("SKIPPED incomplete source removal: one shared device");
+        return;
+    }
+    let tree = other.path().join("tree");
+    fs::create_dir_all(&tree).unwrap();
+    fs::write(tree.join("leaf.txt"), b"payload").unwrap();
+    // Readable and traversable, but its children cannot be unlinked.
+    fs::set_permissions(&tree, fs::Permissions::from_mode(0o555)).unwrap();
+    let restore = scopeguard(&tree);
+
+    let (outcome, _) = drive(
+        request(std::slice::from_ref(&tree), &fixture.to),
+        fixture.work(),
+        Vec::new(),
+    );
+    // Both policies must refuse to call this a success. Only the ordinary
+    // path can phrase it as an unfinished removal; the durable path retains
+    // the record and says so, but neither may mint an inverse.
+    assert_eq!(statuses(&outcome), vec!["uncertain"]);
+    let ItemOutcome::Uncertain { error } = &outcome.items[0] else {
+        unreachable!()
+    };
+    if cfg!(feature = "durable-move-recovery") {
+        assert!(error.contains("File Recovery"), "{error}");
+    } else {
+        assert!(error.contains("did not finish"), "{error}");
+        assert!(error.contains("Inspect both locations"), "{error}");
+        assert_eq!(
+            fs::read(fixture.to.join("tree/leaf.txt")).unwrap(),
+            b"payload"
+        );
+    }
+    // Whatever the policy, the source that could not be removed is intact.
+    assert_eq!(fs::read(tree.join("leaf.txt")).unwrap(), b"payload");
+    let projected = move_session_outcome(
+        outcome,
+        &[tree.to_string_lossy().into_owned()],
+        fixture.to.to_string_lossy().into_owned(),
+    );
+    assert!(matches!(projected.effect, ForwardEffect::Changed(None)));
+    drop(restore);
+}
+
+/// Restore write permission so the fixture directory can be removed.
+fn scopeguard(path: &Path) -> impl Drop + use<> {
+    struct Restore(PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+        }
+    }
+    Restore(path.to_owned())
 }
 
 #[test]

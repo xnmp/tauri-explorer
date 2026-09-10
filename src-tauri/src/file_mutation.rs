@@ -403,7 +403,6 @@ pub(crate) async fn move_entries(
     let request = Request::new(sources.clone(), dest_dir.clone())?;
     let registration = Registration::new(request_id, owner.clone())?;
     let work = MoveWork {
-        app: Some(window.app_handle().clone()),
         job_id,
         #[cfg(target_os = "linux")]
         recovery: crate::files::recovery::commands::owner(&window)?,
@@ -437,22 +436,26 @@ pub(crate) fn move_session_outcome(
     use crate::files::copy_session::ItemOutcome;
     let mut actions = Vec::new();
     let mut affected = result.refresh_dirs.clone();
-    if result.changed() {
-        affected.push(destination.clone());
-    }
+    // An item that found its entry already at the destination changed nothing.
+    // A session of only such items must not advance history at all, because a
+    // forward entry — even one with no inverse — discards the redo stack.
+    let mut changed = result
+        .items
+        .iter()
+        .any(|item| matches!(item, ItemOutcome::Uncertain { .. }));
     for (index, item) in result.items.iter().enumerate() {
         let ItemOutcome::Succeeded { receipt } = item else {
             continue;
         };
+        if receipt.unchanged {
+            continue;
+        }
+        changed = true;
         affected.extend(parent(&receipt.path));
         let Some(source) = sources.get(index) else {
             continue;
         };
         affected.extend(parent(source));
-        if source == &receipt.path {
-            // The entry already occupied the destination; nothing to invert.
-            continue;
-        }
         if let Some(relocation) = &receipt.relocation {
             // The durable record IS the inverse. Never pair it with a
             // path-only action: replaying one can destroy the last copy.
@@ -460,7 +463,12 @@ pub(crate) fn move_session_outcome(
                 path: receipt.path.clone(),
                 recovery: Some(relocation.history.clone()),
             });
-        } else if receipt.recovery.is_none() {
+        } else {
+            // Without the durable journal there is no record to name, so this
+            // is the pre-existing renderer inverse moved into native history
+            // rather than a new hazard. `move_session.rs` refuses to produce a
+            // receipt whose source removal did not finish, so the only paths
+            // reaching here are complete relocations.
             actions.push(Action::Move {
                 source_path: source.clone(),
                 dest_path: receipt.path.clone(),
@@ -468,9 +476,12 @@ pub(crate) fn move_session_outcome(
             });
         }
     }
+    if changed {
+        affected.push(destination);
+    }
     affected.sort_unstable();
     affected.dedup();
-    let effect = if result.changed() {
+    let effect = if changed {
         let inverse = match actions.len() {
             0 => None,
             1 => actions.pop(),
@@ -487,7 +498,7 @@ pub(crate) fn move_session_outcome(
         result: Ok(result),
         effect,
         warning: None,
-        affected,
+        affected: if changed { affected } else { Vec::new() },
     }
 }
 

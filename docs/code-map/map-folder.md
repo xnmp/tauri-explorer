@@ -144,9 +144,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
-- `src/lib/state/copy-operations.ts` — lazy shared paste/drop copy-session presentation, immediate cancellation, incremental entries and warning settlement.
+- `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
 - `file-transfer.ts` — legacy single-entry move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
-- `src/lib/state/move-operations.ts` — shared paste/drop move-session presentation: both directories refreshed per item, no renderer-owned inverse, completion reported so a cut clipboard survives a partial session.
+- `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
+- `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse.
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
@@ -462,7 +463,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect.
-- `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection and the durable or ordinary relocation.
+- `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.
 - `src-tauri/src/files/copy_session/model.rs` — bounded ordered session intent, decisions and positional outcomes.
 - `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
 - `src-tauri/src/files/copy_session/worker.rs` — the copy effect: physical path/version inspection and observed native child execution without UI waits or size prewalks.

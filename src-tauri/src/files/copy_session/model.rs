@@ -35,7 +35,7 @@ impl Request {
         if sources.is_empty() || sources.len() > 32_768 || bytes.is_none_or(|n| n > 8 * 1024 * 1024)
         {
             return Err(AppError::InvalidPath(
-                "Copy selection exceeds its count or path-size limit".into(),
+                "Selection exceeds its count or path-size limit".into(),
             ));
         }
         for (path, source) in
@@ -50,7 +50,7 @@ impl Request {
                     .any(|part| matches!(part, Component::ParentDir))
             {
                 return Err(AppError::InvalidPath(
-                    "Copy requires absolute paths without parent traversal or NUL bytes".into(),
+                    "A session requires absolute paths without parent traversal or NUL bytes".into(),
                 ));
             }
         }

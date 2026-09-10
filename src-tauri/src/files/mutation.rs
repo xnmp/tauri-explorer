@@ -48,6 +48,12 @@ pub struct FileMutationReceipt {
     pub(crate) warning: Option<String>,
     #[serde(skip)]
     pub(crate) publication: Option<std::sync::Arc<PublishedEntry>>,
+    /// A relocation whose entry was already at the requested destination. It
+    /// changed nothing, so it must produce no inverse and must not advance
+    /// history — path comparison cannot decide this, because the requested
+    /// spelling and the destination spelling can name one directory.
+    #[serde(skip)]
+    pub(crate) unchanged: bool,
 }
 
 /// The original is durably retained. An ordinary Copy inverse would remove the
@@ -124,6 +130,7 @@ impl FileMutationReceipt {
             relocation: None,
             warning: None,
             publication: None,
+            unchanged: false,
         }
     }
 }

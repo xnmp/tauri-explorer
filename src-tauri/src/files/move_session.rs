@@ -21,7 +21,8 @@ use std::{fs, path::Path, sync::Arc};
 
 #[derive(Clone)]
 pub(crate) struct MoveWork {
-    pub app: Option<tauri::AppHandle>,
+    /// Progress travels on the request channel, so this session emits no
+    /// global job events; `job_id` only labels the tracker's cancel reason.
     pub job_id: u64,
     #[cfg(target_os = "linux")]
     pub recovery: (files::recovery::Runtime, PathBuf),
@@ -143,13 +144,12 @@ impl RelocateWork {
         // success that touches nothing. Reporting it as a conflict or an
         // overwrite would let a same-directory paste destroy the entry.
         if source == target {
-            return Ok(present(
-                FileMutationReceipt::committed(&target),
-                &self.inspection,
-            ));
+            let mut receipt = present(FileMutationReceipt::committed(&target), &self.inspection);
+            receipt.unchanged = true;
+            return Ok(receipt);
         }
         let mut tracker = ProgressTracker::new(
-            self.native.app.as_ref(),
+            None,
             "move-progress",
             "Move cancelled",
             self.native.job_id,
@@ -181,12 +181,20 @@ impl RelocateWork {
                 .map(|receipt| present(receipt, &self.inspection));
         }
         let _ = &mut tracker;
-        file_ops::move_entry_impl(
+        let receipt = file_ops::move_entry_impl(
             self.inspection.source.clone(),
             self.inspection.destination.clone(),
             Some(self.overwrite),
-        )
-        .map(|receipt| present(receipt, &self.inspection))
+        )?;
+        // A destination that committed while its source removal did not finish
+        // is not a success: the entry may still exist at both names, and an
+        // inverse derived from it could destroy whichever copy is the real one.
+        // The session records it as uncertain, which stops the run, keeps the
+        // cut clipboard and offers no Undo.
+        if let Some(recovery) = &receipt.recovery {
+            return Err(AppError::MutationUncertain(recovery.message()));
+        }
+        Ok(present(receipt, &self.inspection))
     }
 }
 

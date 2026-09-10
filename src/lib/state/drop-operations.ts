@@ -3,9 +3,9 @@
  *
  * A drop is one ordered native session — copy or move — so conflict pauses,
  * cancellation, the completed prefix and the inverse are all native-owned.
- * `existingNames` is no longer consulted: the session inspects the real
- * destination per item, which a renderer name set cannot do correctly once
- * earlier items in the same batch have landed.
+ Conflict detection belongs to the
+ * session, which inspects the real destination per item — a renderer name
+ * snapshot cannot do that correctly once earlier items in the batch land.
  */
 
 import { dragState } from "./drag.svelte";
@@ -15,8 +15,6 @@ export interface DropOptions {
   onRefresh: () => void;
   /** Broadcast undo/toast to other windows (for cross-window DnD) */
   broadcastToOtherWindows?: boolean;
-  /** Retained for callers; native inspection is the conflict authority. */
-  existingNames?: Set<string>;
 }
 
 /**

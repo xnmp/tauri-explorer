@@ -115,6 +115,26 @@ describe("moveFiles", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
+  it("relocates a repeated path once instead of failing its second attempt", async () => {
+    // Moving one entry twice is not a second effect: the repeat would fail as
+    // a missing source and report the whole request incomplete.
+    const result = await moveFiles(["/src/a.txt", "/src/a.txt"], "/dest", { onRefresh: vi.fn() });
+    expect(moveEntries.mock.calls[0][0]).toEqual(["/src/a.txt"]);
+    expect(result).toEqual({ error: null, complete: true });
+  });
+
+  it("treats an incomplete source removal as a failure that keeps the clipboard", async () => {
+    moveEntries.mockResolvedValue(outcome([
+      { status: "uncertain", error: "Files were copied to /dest/a.txt, but removing /src/a.txt did not finish" },
+    ]));
+    const result = await moveFiles(["/src/a.txt"], "/dest", { onRefresh: vi.fn() });
+    expect(result.complete).toBe(false);
+    expect(result.error).toContain("did not finish");
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("did not finish"));
+    expect(undo.push).not.toHaveBeenCalled();
+    expect(operationsManager.operations[0].status).toBe("error");
+  });
+
   it("does not open a session for an empty selection", async () => {
     const result = await moveFiles([], "/dest", { onRefresh: vi.fn() });
     expect(moveEntries).not.toHaveBeenCalled();

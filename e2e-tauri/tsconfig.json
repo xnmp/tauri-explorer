@@ -8,5 +8,11 @@
     "skipLibCheck": true,
     "types": ["node", "mocha", "@wdio/globals/types", "@wdio/mocha-framework"]
   },
-  "include": ["./**/*.ts"]
+  "include": [
+    "./**/*.ts",
+    // The macOS startup qualifier consumes this module's exported contracts and
+    // runs only on a Mac CI runner, so a type error there costs a whole run.
+    // It uses node built-ins only, so it type-checks with this configuration.
+    "../scripts/qualify-macos-startup.ts"
+  ]
 }

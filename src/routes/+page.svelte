@@ -167,6 +167,7 @@
   let commandsReady = $state(false);
   let settingsReady = $state(false);
   let listingReadyReported = false;
+  let appReadyReported = false;
   $effect(() => {
     if (listingReadyReported) return;
     const explorer = windowTabsManager.getActiveExplorer();
@@ -178,6 +179,16 @@
     if (firstPaintReported || !commandsReady || !settingsReady) return;
     const explorer = windowTabsManager.getActiveExplorer();
     if (!explorer?.currentPath || explorer.state.loading || explorer.state.error) return;
+    // Every readiness precondition is satisfied here; the remaining interval to
+    // `ui-ready` is frame scheduling, which the attribution report keeps as its
+    // own phase instead of folding into app work. A navigation that lands
+    // between here and the second frame re-runs this effect, so the mark is
+    // latched: a repeat would move time out of app work and into frame
+    // scheduling, and the qualification parser rejects duplicated markers.
+    if (!appReadyReported) {
+      appReadyReported = true;
+      markStartup("app-ready");
+    }
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         firstPaintReported = true;

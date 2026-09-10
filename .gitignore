@@ -69,3 +69,6 @@ docs/potential_hooks.md
 rebuild.sh
 screenshots/Screenshot 2026-01-18 140240.jpg
 src-tauri/icons/icns-preview.png
+
+# Native E2E driver output and fresh-window diagnostics (uploaded as CI artifacts)
+e2e-tauri/logs/

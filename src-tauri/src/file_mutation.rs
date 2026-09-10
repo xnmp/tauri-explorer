@@ -289,11 +289,11 @@ pub(crate) async fn copy_entry(
 pub(crate) async fn copy_entries(
     window: tauri::Window,
     session_id: String,
-    request: crate::files::copy_session::CopyRequest,
+    request: crate::files::copy_session::SessionRequest,
     events: tauri::ipc::Channel<crate::files::copy_session::Event>,
 ) -> Result<MutationReply<crate::files::copy_session::Outcome>, AppError> {
     use crate::files::copy_session::{self, NativeWork, Registration, Request};
-    let copy_session::CopyRequest {
+    let copy_session::SessionRequest {
         request_id,
         sources,
         dest_dir,
@@ -377,6 +377,131 @@ pub(crate) fn copy_session_outcome(
     }
 }
 
+/// One native history reservation covers the complete ordered relocation,
+/// including conflict pauses and the successfully completed prefix. A
+/// cancelled session still records the prefix, so Undo remains available for
+/// exactly the items that moved.
+#[tauri::command]
+pub(crate) async fn move_entries(
+    window: tauri::Window,
+    session_id: String,
+    request: crate::files::copy_session::SessionRequest,
+    events: tauri::ipc::Channel<crate::files::copy_session::Event>,
+) -> Result<MutationReply<crate::files::copy_session::Outcome>, AppError> {
+    use crate::files::{
+        copy_session::{self, Registration, Request},
+        move_session::MoveWork,
+    };
+    let copy_session::SessionRequest {
+        request_id,
+        sources,
+        dest_dir,
+        job_id,
+        shared,
+    } = request;
+    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
+    let request = Request::new(sources.clone(), dest_dir.clone())?;
+    let registration = Registration::new(request_id, owner.clone())?;
+    let work = MoveWork {
+        job_id,
+        #[cfg(target_os = "linux")]
+        recovery: crate::files::recovery::commands::owner(&window)?,
+    };
+    // A relocation changes two directories per item. The source parents are
+    // only known per item, so the reservation names the destination and the
+    // outcome extends the refreshed set with every committed source parent.
+    let mut directories = vec![dest_dir.clone()];
+    directories.extend(sources.iter().flat_map(|source| parent(source)));
+    directories.sort_unstable();
+    directories.dedup();
+    file_history::run_forward(owner, shared, directories, async move {
+        let result = copy_session::run(request, registration.control.clone(), work, move |event| {
+            events.send(event).is_ok()
+        })
+        .await;
+        let outcome = move_session_outcome(result, &sources, dest_dir);
+        drop(registration);
+        outcome
+    })
+    .await
+}
+
+/// Position is the item identity: `sources[index]` is the requested spelling
+/// of `items[index]`, including repeated paths.
+pub(crate) fn move_session_outcome(
+    result: crate::files::copy_session::Outcome,
+    sources: &[String],
+    destination: String,
+) -> MutationOutcome<crate::files::copy_session::Outcome> {
+    use crate::files::copy_session::ItemOutcome;
+    let mut actions = Vec::new();
+    let mut affected = result.refresh_dirs.clone();
+    // An item that found its entry already at the destination changed nothing.
+    // A session of only such items must not advance history at all, because a
+    // forward entry — even one with no inverse — discards the redo stack.
+    let mut changed = result
+        .items
+        .iter()
+        .any(|item| matches!(item, ItemOutcome::Uncertain { .. }));
+    for (index, item) in result.items.iter().enumerate() {
+        let ItemOutcome::Succeeded { receipt } = item else {
+            continue;
+        };
+        if receipt.unchanged {
+            continue;
+        }
+        changed = true;
+        affected.extend(parent(&receipt.path));
+        let Some(source) = sources.get(index) else {
+            continue;
+        };
+        affected.extend(parent(source));
+        if let Some(relocation) = &receipt.relocation {
+            // The durable record IS the inverse. Never pair it with a
+            // path-only action: replaying one can destroy the last copy.
+            actions.push(Action::Replacement {
+                path: receipt.path.clone(),
+                recovery: Some(relocation.history.clone()),
+            });
+        } else {
+            // Without the durable journal there is no record to name, so this
+            // is the pre-existing renderer inverse moved into native history
+            // rather than a new hazard. `move_session.rs` refuses to produce a
+            // receipt whose source removal did not finish, so the only paths
+            // reaching here are complete relocations.
+            actions.push(Action::Move {
+                source_path: source.clone(),
+                dest_path: receipt.path.clone(),
+                original_dir: parent(source).pop().unwrap_or_default(),
+            });
+        }
+    }
+    if changed {
+        affected.push(destination);
+    }
+    affected.sort_unstable();
+    affected.dedup();
+    let effect = if changed {
+        let inverse = match actions.len() {
+            0 => None,
+            1 => actions.pop(),
+            _ => Some(Action::Batch {
+                label: format!("Move {} items", actions.len()),
+                actions,
+            }),
+        };
+        ForwardEffect::Changed(inverse)
+    } else {
+        ForwardEffect::Unchanged
+    };
+    MutationOutcome {
+        result: Ok(result),
+        effect,
+        warning: None,
+        affected: if changed { affected } else { Vec::new() },
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn resolve_copy_conflict(
     window: tauri::Window,
@@ -452,6 +577,19 @@ pub(crate) async fn move_entry(
     .await
 }
 
+/// The durable record IS the inverse. Never derive a Move inverse from paths:
+/// replaying one can destroy the last copy of the user's data.
+pub(crate) fn move_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
+    if receipt.recovery.is_some() {
+        return None;
+    }
+    let relocation = receipt.relocation.as_ref()?;
+    Some(Action::Replacement {
+        path: receipt.path.clone(),
+        recovery: Some(relocation.history.clone()),
+    })
+}
+
 fn move_outcome(
     outcome: crate::files::move_execution::Outcome,
 ) -> MutationOutcome<FileMutationReceipt> {
@@ -459,10 +597,23 @@ fn move_outcome(
         &outcome.completion.result,
         Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
     );
+    let inverse = outcome.completion.result.as_ref().ok().and_then(move_inverse);
+    let mut affected = outcome.affected;
+    if let Ok(receipt) = outcome.completion.result.as_ref() {
+        if let Some(relocation) = &receipt.relocation {
+            affected.extend(relocation.history.refresh_dirs.iter().cloned());
+            affected.sort_unstable();
+            affected.dedup();
+        }
+    }
+    let outcome = crate::files::move_execution::Outcome {
+        completion: outcome.completion,
+        affected,
+    };
     MutationOutcome {
         result: outcome.completion.result,
         effect: if changed {
-            ForwardEffect::Changed(None)
+            ForwardEffect::Changed(inverse)
         } else {
             ForwardEffect::Unchanged
         },

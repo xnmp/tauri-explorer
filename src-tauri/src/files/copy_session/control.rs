@@ -113,7 +113,7 @@ impl Control {
 }
 
 fn stale() -> AppError {
-    AppError::Other("Copy session or conflict decision is no longer active".into())
+    AppError::Other("Native session or conflict decision is no longer active".into())
 }
 
 struct Entry {
@@ -134,7 +134,7 @@ impl Registration {
             || id.len() > 128
             || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
         {
-            return Err(AppError::InvalidPath("Invalid copy session ID".into()));
+            return Err(AppError::InvalidPath("Invalid native session ID".into()));
         }
         let mut sessions = sessions().lock().unwrap_or_else(|e| e.into_inner());
         if !renderer.active()
@@ -144,7 +144,7 @@ impl Registration {
                 .any(|entry| entry.id == id && entry.control.renderer.same(&renderer))
         {
             return Err(AppError::Other(
-                "Copy session is already active or native session limit reached".into(),
+                "Native session is already active or the session limit was reached".into(),
             ));
         }
         let control = Arc::new(Control::new(renderer));

@@ -19,6 +19,18 @@ mod transfer;
 #[path = "replacement_restore.rs"]
 mod restore;
 
+/// One planned private artifact namespace. Operation kinds differ in how many
+/// roots they plan and which user objects the root must never alias; the
+/// namespace, manifest and durability discipline below are shared.
+pub(super) struct RootPlan {
+    pub(super) parent_path: PathBuf,
+    pub(super) parent: ObjectId,
+    pub(super) root: PathBuf,
+    pub(super) token: String,
+    /// User objects an artifact root may never turn out to be.
+    pub(super) excluded: Vec<ObjectId>,
+}
+
 /// A verified target parent and the exact absent root name planned by the
 /// durable intent. Opening an anchor never creates or repairs filesystem data.
 pub(super) struct Anchor {
@@ -27,7 +39,7 @@ pub(super) struct Anchor {
     parent_identity: ObjectId,
     root_path: PathBuf,
     root_name: OsString,
-    original: ObjectId,
+    excluded: Vec<ObjectId>,
     intent_digest: [u8; 32],
 }
 
@@ -41,7 +53,7 @@ pub(super) struct Root {
     path: PathBuf,
     name: OsString,
     identity: ObjectId,
-    original: ObjectId,
+    excluded: Vec<ObjectId>,
     intent_digest: [u8; 32],
 }
 
@@ -55,45 +67,62 @@ struct BorrowedManifest<'a> {
 impl Anchor {
     pub(super) fn open(intent: &DurableIntent) -> Result<Self, AppError> {
         intent.validate()?;
-        let intent_digest = digest(intent)?;
         let spec = intent.operation.replacement()?;
-        let parent_path = spec
-            .target
-            .0
+        Self::open_plan(
+            intent,
+            RootPlan {
+                parent_path: spec
+                    .target
+                    .0
+                    .parent()
+                    .ok_or_else(|| invalid("Recovery replacement target has no parent"))?
+                    .to_owned(),
+                parent: spec.parent,
+                root: spec.root.0.clone(),
+                token: spec.artifact_token.clone(),
+                excluded: vec![spec.original.object, spec.source_version.object],
+            },
+        )
+    }
+
+    /// Open the exact planned namespace for any operation kind. The plan is
+    /// derived from the immutable intent whose digest binds this anchor.
+    pub(super) fn open_plan(intent: &DurableIntent, plan: RootPlan) -> Result<Self, AppError> {
+        intent.validate()?;
+        let intent_digest = digest(intent)?;
+        let RootPlan {
+            parent_path,
+            parent: parent_identity,
+            root: root_path,
+            token,
+            excluded,
+        } = plan;
+        let root_parent = root_path
             .parent()
-            .ok_or_else(|| invalid("Recovery replacement target has no parent"))?
-            .to_owned();
-        let root_parent = spec
-            .root
-            .0
-            .parent()
-            .ok_or_else(|| invalid("Recovery replacement root has no parent"))?;
-        let root_name = spec
-            .root
-            .0
+            .ok_or_else(|| invalid("Recovery artifact root has no parent"))?;
+        let root_name = root_path
             .file_name()
-            .ok_or_else(|| invalid("Recovery replacement root has no name"))?
+            .ok_or_else(|| invalid("Recovery artifact root has no name"))?
             .to_owned();
-        let expected_name =
-            OsString::from(format!(".tauri-explorer-recovery-{}", spec.artifact_token));
+        let expected_name = OsString::from(format!(".tauri-explorer-recovery-{token}"));
         if root_parent != parent_path || root_name != expected_name {
             return Err(invalid(
-                "Recovery replacement root is not the exact planned child of its target parent",
+                "Recovery artifact root is not the exact planned child of its owning parent",
             ));
         }
         let parent = Directory::open(&parent_path)?;
-        if of_file(&parent.file)? != spec.parent {
+        if of_file(&parent.file)? != parent_identity {
             return Err(invalid(
-                "Recovery replacement target parent changed before artifact access",
+                "Recovery artifact parent changed before artifact access",
             ));
         }
         Ok(Self {
             parent,
             parent_path,
-            parent_identity: spec.parent,
-            root_path: spec.root.0.clone(),
+            parent_identity,
+            root_path,
             root_name,
-            original: spec.original.object,
+            excluded,
             intent_digest,
         })
     }
@@ -137,10 +166,10 @@ impl Anchor {
         let identity = of_file(&directory.file)?;
         if !identity.same_volume(self.parent_identity)
             || identity == self.parent_identity
-            || identity == self.original
+            || self.excluded.contains(&identity)
         {
             return Err(invalid(
-                "Recovery replacement artifact root aliases user data or another volume",
+                "Recovery artifact root aliases user data or another volume",
             ));
         }
         Ok(Root {
@@ -151,7 +180,7 @@ impl Anchor {
             path: self.root_path,
             name: self.root_name,
             identity,
-            original: self.original,
+            excluded: self.excluded,
             intent_digest: self.intent_digest,
         })
     }
@@ -192,6 +221,12 @@ impl Root {
 
     pub(super) fn identity(&self) -> ObjectId {
         self.identity
+    }
+
+    /// Retained handle for operation kinds implemented outside this module.
+    /// It is verified by `verify_namespace` before any effect uses it.
+    pub(super) fn directory(&self) -> &Directory {
+        &self.directory
     }
 
     /// Build only the fixed unpublished payload. The executor must first persist
@@ -324,20 +359,26 @@ impl Root {
                 "Recovery replacement intent differs from this artifact root owner",
             ));
         }
-        let spec = intent.operation.replacement()?;
-        if spec.root.0 != self.path
-            || spec.root.0.parent() != Some(self.parent_path.as_path())
-            || spec.parent != self.parent_identity
-            || spec.original.object != self.original
-            || !self.identity.same_volume(spec.parent)
-            || self.identity == spec.parent
-            || self.identity == spec.original.object
-            || intent.resources.iter().any(|resource| {
-                resource.path == spec.source && resource.object == Some(self.identity)
-            })
+        // The digest binds the whole immutable intent, but the plan reached us
+        // through a caller. Re-derive the artifact roots the intent itself
+        // names and require this one to be exactly among them, so a mismatched
+        // path with a coincidentally valid identity is still rejected here.
+        let planned = match &intent.operation {
+            OperationSpec::CopyReplacement(spec) => vec![spec.root.0.clone()],
+            OperationSpec::Move(spec) => spec.roots().map(|root| root.path.0.clone()).collect(),
+        };
+        if !planned.contains(&self.path)
+            || self.path.parent() != Some(self.parent_path.as_path())
+            || !self.identity.same_volume(self.parent_identity)
+            || self.identity == self.parent_identity
+            || self.excluded.contains(&self.identity)
+            || intent
+                .resources
+                .iter()
+                .any(|resource| resource.path.0 != self.path && resource.object == Some(self.identity))
         {
             return Err(invalid(
-                "Recovery replacement manifest does not belong to this artifact root",
+                "Recovery manifest does not belong to this artifact root",
             ));
         }
         serde_json::to_vec(&BorrowedManifest {
@@ -377,5 +418,4 @@ fn invalid(message: &str) -> AppError {
 #[path = "../../../test_support/recovery_replacement_artifact.rs"]
 mod tests;
 
-#[cfg(test)]
 use super::model::OperationSpec;

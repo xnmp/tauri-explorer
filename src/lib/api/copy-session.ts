@@ -6,7 +6,7 @@ import { getNativeResourceSession, receiveHistorySummary } from "./native-resour
 
 interface MutationReply<T> { result: T; history: HistorySummary; warning?: string }
 
-export interface CopyEntriesOptions {
+export interface SessionOptions {
   signal: AbortSignal;
   jobId: number;
   shared?: boolean;
@@ -18,10 +18,23 @@ function cancelledOutcome(count: number): ApiResult<CopySessionOutcome> {
   return { ok: true, data: { items: Array.from({ length: count }, () => ({ status: "unstarted" as const })), cancelled: true, warnings: [] } };
 }
 
+export type CopyEntriesOptions = SessionOptions;
+
+/** Copy and move share one native session registry, so both are cancelled and
+ *  resolved through the same two control commands. */
 export async function copyEntries(
   sources: readonly string[],
   destDir: string,
-  options: CopyEntriesOptions,
+  options: SessionOptions,
+): Promise<ApiResult<CopySessionOutcome>> {
+  return runOrderedSession("copy_entries", sources, destDir, options);
+}
+
+export async function runOrderedSession(
+  command: "copy_entries" | "move_entries",
+  sources: readonly string[],
+  destDir: string,
+  options: SessionOptions,
 ): Promise<ApiResult<CopySessionOutcome>> {
   let guard = virtualPathGuard(destDir);
   for (let index = 0; !guard && index < sources.length; index += 1) {
@@ -119,7 +132,7 @@ export async function copyEntries(
   const events = isTauri() ? new Channel<CopySessionEvent>(receive) : receive;
 
   try {
-    const invocation = invoke<MutationReply<CopySessionOutcome>>("copy_entries", {
+    const invocation = invoke<MutationReply<CopySessionOutcome>>(command, {
       sessionId,
       request: {
         requestId, sources: [...sources], destDir, jobId: options.jobId,

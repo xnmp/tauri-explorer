@@ -144,10 +144,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
-- `src/lib/state/copy-operations.ts` — lazy shared paste/drop copy-session presentation, immediate cancellation, incremental entries and warning settlement.
+- `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
 - `file-transfer.ts` — legacy single-entry move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
-- `paste-operations.ts` — batch paste (conflict apply-to-all, progress) over file-transfer.
-- `drop-operations.ts` — shared drop-handler logic for drag-drop (over file-transfer).
+- `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
+- `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse.
+- `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
+- `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
 - `clipboard.svelte.ts` — cross-pane/window file clipboard (cut/copy paths).
 - `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
@@ -219,7 +221,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `native-resource-session.ts` — one acknowledged renderer generation shared by directory/Git IPC and the ordered history-summary channel; only failed acknowledgement retries.
 - `file-history.ts` — typed native history push/clear/execute IPC and revisioned summary subscription.
-- `src/lib/api/copy-session.ts` — one acknowledged copy request with request-local events, single-use conflict replies, cancellation handshake and native history settlement.
+- `src/lib/api/copy-session.ts` — the ordered-session transport: one acknowledged request with request-local events, single-use conflict replies, cancellation handshake and native history settlement; copy and move share its registry.
+- `src/lib/api/move-session.ts` — the ordered move request over that transport.
 - `file-mutations.ts` — acknowledged forward mutation IPC; applies the settled native history summary before returning a receipt or warning.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
@@ -314,7 +317,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `diff.ts` — unified-diff parser (#55).
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `file-batch-outcome.ts` — typed successful/failed path receipt and aggregate error formatting for best-effort file mutations.
-- `src/lib/domain/copy-session.ts` — ordered native copy event, conflict-decision and positional result contracts.
+- `src/lib/domain/copy-session.ts` — ordered native session event, conflict-decision and positional result contracts, plus the copy and move incomplete-session presentations.
 - `file-history.ts` — shared action, summary, receipt and HistoryPort types for the native history authority.
 - `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
 - `detail-columns.ts` — Details column defaults, finite bounds, malformed-width normalization and visible grid projection.
@@ -460,10 +463,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
-- `src-tauri/src/files/copy_session.rs` — async ordered copy orchestration with a supervisor-owned per-item receipt ledger.
-- `src-tauri/src/files/copy_session/model.rs` — bounded ordered copy intent, decisions and positional outcomes.
+- `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect.
+- `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.
+- `src-tauri/src/files/copy_session/model.rs` — bounded ordered session intent, decisions and positional outcomes.
 - `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
-- `src-tauri/src/files/copy_session/worker.rs` — physical path/version inspection and observed native child execution without UI waits or size prewalks.
+- `src-tauri/src/files/copy_session/worker.rs` — the copy effect: physical path/version inspection and observed native child execution without UI waits or size prewalks.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
 - `src-tauri/src/files/move_plan.rs` — bounded move intent supplies source/target claims, admitted execution bindings and physical/requested refresh parents.
 - `src-tauri/src/files/move_execution.rs` — forward/inverse move reservation, retained worker context and warning-preserving ownership settlement.
@@ -539,6 +543,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/model.rs` — portable recovery IPC/history contracts and lossless decimal counters; platform-tagged native paths remain available to adapter tests.
 - `src-tauri/src/files/recovery/durable_model.rs` — Unix executor authority, catalog-digest checkpoints, typed operation state and replacement phase/manifest validation.
 - `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation; no executable move phases. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
+- `src-tauri/src/files/recovery/move_transition.rs` — pure legal-transition function for durable move recovery checkpoints; encodes the crash ordering where publication precedes parking and parking precedes source removal, so no boundary can leave both endpoints absent. State-only transition contracts in `src-tauri/test_support/recovery_move_transition.rs`.
+- `src-tauri/src/files/recovery/move_execution.rs` — concrete durable move executor: creates/reopens private artifact roots, stages a cross-filesystem copy, displaces an overwritten destination, publishes, parks the source, removes a parked source and restores as the record's exact inverse. Real process-kill boundary contracts in `src-tauri/test_support/recovery_move_execution.rs`.
+- `src-tauri/src/files/recovery/forward_move.rs` — production durable-move orchestration: admission, binding a `MoveSpec` from admitted paths, promotion and execution; produces the `FileMutationReceipt` carrying a `MoveRecoveryReceipt`. Real-filesystem contracts in `src-tauri/test_support/recovery_forward_move.rs`.
 - `src-tauri/src/files/recovery/native_path.rs` — bounded lossless native entry paths tagged with the operating system; rejects cross-OS records before decoding authority.
 - `src-tauri/test_support/recovery_native_path.rs` — non-Unicode round trips and malformed/platform/size rejection through the actual durable path codec.
 - `src-tauri/src/files/recovery/file_lock.rs` — owned OS-lock lifetime; fresh opens, contention/error distinction and evidence-preserving release on Unix/Windows.

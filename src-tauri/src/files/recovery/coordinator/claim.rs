@@ -1,6 +1,7 @@
 //! Reacquire an abandoned indexed operation without changing its immutable owner.
 //! A claim advances the checkpoint generation but grants no inferred file effect.
-use super::super::model::Phase;
+use super::super::model::{OperationState, Phase};
+use super::super::move_model::MovePhase;
 use super::*;
 
 enum Expected {
@@ -12,12 +13,25 @@ impl Expected {
     fn accepts(&self, generation: u64, checkpoint: &OperationCheckpoint) -> bool {
         match self {
             Self::Generation(expected) => generation == *expected,
-            Self::StableEffect { revision, phase } => {
-                let Ok(state) = checkpoint.state.replacement() else {
-                    return false;
-                };
-                state.effect_revision == *revision && state.phase == *phase
-            }
+            Self::StableEffect { revision, phase } => match &checkpoint.state {
+                OperationState::Replacement(state) => {
+                    state.effect_revision == *revision && state.phase == *phase
+                }
+                // A completed move rests at `Published` (rename) or `Parked`
+                // (cross filesystem); the exact revision pins which one.
+                OperationState::Move(state) => {
+                    state.error.is_none()
+                        && state.effect_revision == *revision
+                        && match phase {
+                            Phase::Published => matches!(
+                                state.phase,
+                                MovePhase::Published | MovePhase::Parked | MovePhase::Removed
+                            ),
+                            Phase::Restored => state.phase == MovePhase::Restored,
+                            _ => false,
+                        }
+                }
+            },
         }
     }
 }

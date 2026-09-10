@@ -17,7 +17,7 @@ vi.mock("$lib/state/copy-operations", () => ({ copyFiles }));
 vi.mock("$lib/state/move-operations", () => ({ moveFiles }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
 
-import { handleFileDrop, handleFileDropMany } from "$lib/state/drop-operations";
+import { handleFileDropMany } from "$lib/state/drop-operations";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -45,7 +45,7 @@ describe("handleFileDropMany", () => {
 
   it("sends a single-item move through the same session, not a per-item transfer", async () => {
     const options = opts();
-    await handleFileDrop("/src/a.txt", "/dest", false, options);
+    await handleFileDropMany(["/src/a.txt"], "/dest", false, options);
     expect(moveFiles).toHaveBeenCalledWith(["/src/a.txt"], "/dest", {
       onRefresh: options.onRefresh, broadcastToOtherWindows: undefined,
     });
@@ -68,7 +68,7 @@ describe("handleFileDropMany", () => {
 
   it("delegates a single copy through the same native copy session", async () => {
     const options = opts();
-    await handleFileDrop("/src/a.txt", "/dest", true, options);
+    await handleFileDropMany(["/src/a.txt"], "/dest", true, options);
     expect(copyFiles).toHaveBeenCalledWith(["/src/a.txt"], "/dest", {
       onRefresh: options.onRefresh, broadcastToOtherWindows: undefined,
     });

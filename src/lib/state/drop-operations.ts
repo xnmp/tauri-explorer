@@ -54,20 +54,6 @@ export function getDropSourcePaths(dataTransfer: DataTransfer): string[] {
 }
 
 /**
- * Handle dropping a file/folder onto a target directory.
- * Delegates to performFileTransfer for conflict resolution, dispatch,
- * undo tracking, toast notifications, and broadcastFileChange.
- */
-export async function handleFileDrop(
-  sourcePath: string,
-  targetDir: string,
-  isCopy: boolean,
-  options: DropOptions,
-): Promise<void> {
-  await handleFileDropMany([sourcePath], targetDir, isCopy, options);
-}
-
-/**
  * Handle dropping several files/folders onto a target directory as ONE
  * undoable operation (#163): one native session, one history entry, one
  * toast, one refresh and one file-change broadcast.

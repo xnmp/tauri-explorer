@@ -42,6 +42,8 @@ pub struct FileMutationReceipt {
     pub recovery: Option<FileMutationRecovery>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replacement: Option<CopyReplacementReceipt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relocation: Option<MoveRecoveryReceipt>,
     #[serde(skip)]
     pub(crate) warning: Option<String>,
     #[serde(skip)]
@@ -52,6 +54,17 @@ pub struct FileMutationReceipt {
 /// publication without restoring it, so callers must not record that inverse.
 #[derive(Debug, Serialize)]
 pub struct CopyReplacementReceipt {
+    pub id: String,
+    #[serde(skip)]
+    pub(crate) history: super::recovery::ReplacementHistory,
+    #[serde(skip)]
+    pub warning: Option<String>,
+}
+
+/// A durable move record IS its own inverse. Undo re-executes that record by
+/// identity and revision; a path-only Move action can destroy the last copy.
+#[derive(Debug, Serialize)]
+pub struct MoveRecoveryReceipt {
     pub id: String,
     #[serde(skip)]
     pub(crate) history: super::recovery::ReplacementHistory,
@@ -108,6 +121,7 @@ impl FileMutationReceipt {
             entry,
             recovery: None,
             replacement: None,
+            relocation: None,
             warning: None,
             publication: None,
         }

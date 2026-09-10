@@ -19,6 +19,23 @@ pub(super) fn execute(
     let operation = coordinator
         .try_claim_history(&history.id, history.revision, position)?
         .ok_or_else(|| AppError::Other("Replacement is owned by another native worker".into()))?;
+    // A move record IS its own inverse; there is no separate reapply. Reaching
+    // this point required the exact identity, revision and stable position.
+    if operation.intent().operation.move_spec().is_ok() {
+        if !matches!(direction, ReplacementDirection::Restore) {
+            return Err(AppError::Other(
+                "A durable move cannot be reapplied; its record was consumed by Undo".into(),
+            ));
+        }
+        let mut execution = super::move_execution::MoveExecution::reopen(operation)?;
+        execution.restore_move().map_err(|error| AppError::MutationUncertain(format!("Move history could not complete; inspect File Recovery before continuing. {error}")))?;
+        history.revision = execution.operation.state().move_state()?.effect_revision;
+        return Ok(ReplacementOutcome {
+            history,
+            warning: None,
+            reapplicable: false,
+        });
+    }
     let mut execution = ReplacementExecution::reopen(operation)?;
     // Once execution begins, an error may leave a durable intent or file effect.
     // Consume the history inverse and retain explicit recovery authority instead
@@ -32,5 +49,6 @@ pub(super) fn execute(
     Ok(ReplacementOutcome {
         history,
         warning: None,
+        reapplicable: true,
     })
 }

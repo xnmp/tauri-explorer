@@ -452,6 +452,19 @@ pub(crate) async fn move_entry(
     .await
 }
 
+/// The durable record IS the inverse. Never derive a Move inverse from paths:
+/// replaying one can destroy the last copy of the user's data.
+pub(crate) fn move_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
+    if receipt.recovery.is_some() {
+        return None;
+    }
+    let relocation = receipt.relocation.as_ref()?;
+    Some(Action::Replacement {
+        path: receipt.path.clone(),
+        recovery: Some(relocation.history.clone()),
+    })
+}
+
 fn move_outcome(
     outcome: crate::files::move_execution::Outcome,
 ) -> MutationOutcome<FileMutationReceipt> {
@@ -459,10 +472,23 @@ fn move_outcome(
         &outcome.completion.result,
         Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
     );
+    let inverse = outcome.completion.result.as_ref().ok().and_then(move_inverse);
+    let mut affected = outcome.affected;
+    if let Some(receipt) = outcome.completion.result.as_ref().ok() {
+        if let Some(relocation) = &receipt.relocation {
+            affected.extend(relocation.history.refresh_dirs.iter().cloned());
+            affected.sort_unstable();
+            affected.dedup();
+        }
+    }
+    let outcome = crate::files::move_execution::Outcome {
+        completion: outcome.completion,
+        affected,
+    };
     MutationOutcome {
         result: outcome.completion.result,
         effect: if changed {
-            ForwardEffect::Changed(None)
+            ForwardEffect::Changed(inverse)
         } else {
             ForwardEffect::Unchanged
         },

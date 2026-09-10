@@ -34,6 +34,15 @@ pub(super) use batch::{execute_batch, BatchExecution};
 use plan::prepare;
 pub(super) use plan::prepare_batch;
 
+/// Shared unstarted-owner settlement. Move preparation retires its reservations
+/// through exactly the same bounded, diagnostic-preserving policy.
+pub(super) fn finish_unstarted_owners(
+    reservations: Vec<Reservation>,
+    error: AppError,
+) -> AppError {
+    plan::finish_unstarted(reservations, error)
+}
+
 impl PreparedCopy {
     pub(super) fn matches_observation(
         &self,

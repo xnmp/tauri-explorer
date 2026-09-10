@@ -1,0 +1,8 @@
+[2026-09-11][01:17:14][INFO][tauri_explorer_lib::files::fs_watcher] Filesystem watcher initialized
+[2026-09-11][01:17:14][INFO][tauri_explorer_lib::config_watch] Config autoreload watching /tmp/claude-1000/-home-chong-Repos-tauri-explorer/813b2e21-eeed-4924-8829-d0258fb29037/scratchpad/proxy-home/.config/tauri-explorer
+[2026-09-11][01:17:14][INFO][tauri_explorer_lib] Startup: pre-builder=71.445µs builder→setup=32.074482ms setup→window-built=153.370112ms total=185.516039ms
+[2026-09-11][01:17:14][INFO][tauri_explorer_lib] Startup(native-window): window=main app-run-epoch-ms=1789053434499.747 process-entry-to-run=1.4ms window-built=185.5ms
+[2026-09-11][01:17:14][INFO][tauri_explorer_lib::files::dir_listing] navigation start_streaming_directory requested: path="/tmp/claude-1000/-home-chong-Repos-tauri-explorer/813b2e21-eeed-4924-8829-d0258fb29037/scratchpad/proxy-home/target-dir"
+[2026-09-11][01:17:15][INFO][tauri_explorer_lib::files::dir_listing] navigation start_streaming_directory completed: path="/tmp/claude-1000/-home-chong-Repos-tauri-explorer/813b2e21-eeed-4924-8829-d0258fb29037/scratchpad/proxy-home/target-dir", entries=40, streaming=false, elapsed=12.527432ms
+[2026-09-11][01:17:15][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1789053434801.000 bundle-exec=94.0ms mount=128.0ms commands-ready=144.0ms settings-ready=187.0ms list-ready=279.0ms app-ready=279.0ms ui-ready=313.0ms total=313.0ms
+[2026-09-11][01:17:15][INFO][tauri_explorer_lib::system] Startup(native-ready): window=main app-run-to-ready=616.6ms receipt-epoch-ms=1789053435116.389

@@ -8,6 +8,7 @@
 <script lang="ts">
   import Modal from "$lib/components/Modal.svelte";
   import type { PluginToast, PluginMoveResult } from "$lib/plugins/api";
+  import { fileMutationRecoveryMessage } from "$lib/domain/file";
   import { suggestDestination } from "$lib/api/ai-organize";
 
   interface Props {
@@ -75,7 +76,10 @@
     applying = true;
     // The shared transfer flow handles conflicts, undo, toast, and broadcast.
     const result = await moveFile(filePath, destDir);
-    if (result.ok) {
+    if (result.recovery) {
+      applying = false;
+      error = fileMutationRecoveryMessage(result.recovery);
+    } else if (result.ok) {
       onClose();
     } else {
       applying = false;

@@ -7,7 +7,11 @@
 
 use crate::error::AppError;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use tauri::Manager;
 
 const CRASH_PREFIX: &str = "crash-";
@@ -57,17 +61,96 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
         backtrace
     );
 
-    std::fs::create_dir_all(crash_dir)?;
-    let file = crash_dir.join(format!("{}{}{}", CRASH_PREFIX, epoch_secs, CRASH_SUFFIX));
-    std::fs::write(&file, report)?;
-    // Backtraces can carry absolute paths — keep reports owner-readable only,
-    // matching config.rs.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))?;
-    }
+    persist_crash_report(crash_dir, epoch_secs, report.as_bytes())?;
     Ok(())
+}
+
+fn persist_crash_report(
+    crash_dir: &Path,
+    epoch_secs: u64,
+    report: &[u8],
+) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(crash_dir)?;
+    let staged = stage_crash_report(crash_dir, report)?;
+    publish_crash_report(crash_dir, epoch_secs, staged)
+}
+
+fn stage_crash_report(crash_dir: &Path, report: &[u8]) -> std::io::Result<tempfile::NamedTempFile> {
+    let mut staged = tempfile::Builder::new()
+        .prefix(".crash-writing-")
+        .suffix(".tmp")
+        .tempfile_in(crash_dir)?;
+    staged.write_all(report)?;
+    staged.flush()?;
+    Ok(staged)
+}
+
+fn publish_crash_report(
+    crash_dir: &Path,
+    epoch_secs: u64,
+    mut staged: tempfile::NamedTempFile,
+) -> std::io::Result<PathBuf> {
+    for collision in 0..=u32::MAX {
+        let suffix = if collision == 0 {
+            String::new()
+        } else {
+            format!("-{collision}")
+        };
+        let path = crash_dir.join(format!("{CRASH_PREFIX}{epoch_secs}{suffix}{CRASH_SUFFIX}"));
+        let mut claim_path = path.as_os_str().to_owned();
+        claim_path.push(".claim");
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(PathBuf::from(claim_path)) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+
+        // A retained claim makes this identity single-use across both its
+        // unseen and consumed names. Existing legacy reports have no claim,
+        // so account for either state before publishing under the identity.
+        if path.try_exists()? || seen_path(&path).try_exists()? {
+            continue;
+        }
+        match staged.persist_noclobber(&path) {
+            Ok(_) => return Ok(path),
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                staged = error.file;
+            }
+            Err(error) => return Err(error.error),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "crash report name space exhausted",
+    ))
+}
+
+fn is_unseen_report(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(CRASH_PREFIX) && name.ends_with(CRASH_SUFFIX))
+}
+
+fn report_order(path: &Path) -> (u64, u32) {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| {
+            let stem = name
+                .strip_prefix(CRASH_PREFIX)?
+                .strip_suffix(CRASH_SUFFIX)?;
+            let (timestamp, collision) = stem
+                .split_once('-')
+                .map_or((stem, "0"), |(timestamp, collision)| (timestamp, collision));
+            Some((timestamp.parse().ok()?, collision.parse().ok()?))
+        })
+        .unwrap_or((0, 0))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,26 +180,11 @@ pub async fn take_crash_report(app: tauri::AppHandle) -> Result<Option<CrashRepo
         let mut unseen: Vec<PathBuf> = entries
             .flatten()
             .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(CRASH_PREFIX) && n.ends_with(CRASH_SUFFIX))
-            })
+            .filter(|path| is_unseen_report(path))
             .collect();
-        // Timestamps are zero-padded-free unix seconds; same-width lexical
-        // sort is fine for the decades this app will see, but sort by the
-        // parsed number to be exact.
-        unseen.sort_by_key(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .and_then(|n| {
-                    n.strip_prefix(CRASH_PREFIX)?
-                        .strip_suffix(CRASH_SUFFIX)?
-                        .parse::<u64>()
-                        .ok()
-                })
-                .unwrap_or(0)
-        });
+        // Sort legacy names by timestamp and collision-safe names by their
+        // sequence within that second.
+        unseen.sort_by_key(|path| report_order(path));
         let newest = unseen.pop();
         // Everything older is stale — mark seen so it isn't offered later.
         for old in unseen {
@@ -141,9 +209,13 @@ pub async fn take_crash_report(app: tauri::AppHandle) -> Result<Option<CrashRepo
 }
 
 fn mark_seen(path: &Path) -> std::io::Result<()> {
+    std::fs::rename(path, seen_path(path))
+}
+
+fn seen_path(path: &Path) -> PathBuf {
     let mut seen = path.as_os_str().to_owned();
     seen.push(".seen");
-    std::fs::rename(path, PathBuf::from(seen))
+    PathBuf::from(seen)
 }
 
 /// Log an error reported by the webview (window.onerror / unhandledrejection)
@@ -195,18 +267,8 @@ pub async fn record_frontend_crash(
             message,
             backtrace
         );
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| AppError::Other(format!("Failed to create crashes dir: {}", e)))?;
-        let file = dir.join(format!("{}{}{}", CRASH_PREFIX, epoch_secs, CRASH_SUFFIX));
-        std::fs::write(&file, report)
+        persist_crash_report(&dir, epoch_secs, report.as_bytes())
             .map_err(|e| AppError::Other(format!("Failed to write crash report: {}", e)))?;
-        // Stacks can carry absolute paths — keep reports owner-readable only.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| AppError::Other(format!("Failed to set crash perms: {}", e)))?;
-        }
         Ok(())
     })
     .await
@@ -259,5 +321,89 @@ mod tests {
             .find(|c| c.contains("panic: test crash"));
         let contents = ours.expect("no crash report written for the test panic");
         assert!(contents.contains("location:"));
+    }
+
+    #[test]
+    fn reports_written_in_the_same_second_retain_distinct_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+
+        let first = persist_crash_report(&crashes, 1_000, b"first crash").unwrap();
+        let second = persist_crash_report(&crashes, 1_000, b"second crash").unwrap();
+        assert_ne!(
+            first, second,
+            "same-second crashes need distinct report paths"
+        );
+
+        let mut reports = std::fs::read_dir(&crashes)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| is_unseen_report(path))
+            .collect::<Vec<_>>();
+        reports.sort_by_key(|path| report_order(path));
+        let contents = reports
+            .iter()
+            .map(std::fs::read_to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(contents, ["first crash", "second crash"]);
+
+        #[cfg(unix)]
+        for path in [first, second] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn report_is_discoverable_only_after_its_full_contents_are_published() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        std::fs::create_dir_all(&crashes).unwrap();
+
+        let staged = stage_crash_report(&crashes, b"complete crash report").unwrap();
+        assert_eq!(
+            std::fs::read_dir(&crashes)
+                .unwrap()
+                .flatten()
+                .filter(|entry| is_unseen_report(&entry.path()))
+                .count(),
+            0
+        );
+
+        let published = publish_crash_report(&crashes, 2_000, staged).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(published).unwrap(),
+            "complete crash report"
+        );
+    }
+
+    #[test]
+    fn consumed_report_identity_is_not_reused_in_the_same_second() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+
+        let first = persist_crash_report(&crashes, 3_000, b"first consumed crash").unwrap();
+        mark_seen(&first).unwrap();
+        let second = persist_crash_report(&crashes, 3_000, b"second consumed crash").unwrap();
+        assert_ne!(first, second);
+        mark_seen(&second).unwrap();
+
+        let mut consumed = std::fs::read_dir(crashes)
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| {
+                entry
+                    .path()
+                    .to_string_lossy()
+                    .ends_with(".txt.seen")
+                    .then(|| std::fs::read_to_string(entry.path()).unwrap())
+            })
+            .collect::<Vec<_>>();
+        consumed.sort();
+        assert_eq!(consumed, ["first consumed crash", "second consumed crash"]);
     }
 }

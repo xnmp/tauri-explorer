@@ -9,7 +9,7 @@
  * silent no-op copy (#279).
  */
 
-import { invoke } from "./files";
+import { invoke } from "./common";
 
 export type OsClipboardResult<T> = { ok: true; data: T } | { ok: false; error: string };
 

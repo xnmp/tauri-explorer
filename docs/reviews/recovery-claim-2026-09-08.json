@@ -1,0 +1,88 @@
+{
+  "date": "2026-09-08",
+  "scope": "Claim and reopen an abandoned indexed durable operation; finish native displacement/publication after real process death",
+  "contracts": [
+    "Claim carries exact inspected row generation; operation kind, immutable catalog digest and full checkpoint validation precede ownership",
+    "Complete catalog and journal validation rejects damaged or overlapping other authority without reclaiming unrelated reservations",
+    "Exact old native lock identity and nonce retained; live owner returns None without journal mutation; missing/replaced owner evidence errors",
+    "Identical checkpoint bytes CAS to a fresh monotonic generation; exact lock/catalog reverified around commit; failed/lost reply requires rediscovery",
+    "No user-volume IO under admission; claimed executor reopens only persisted root identity and exact local manifest without creating or repairing artifacts",
+    "Native intent transitions still control effects; claim/reopen does not synthesize stages or grant arbitrary filesystem callbacks",
+    "Catalog-only and reservation-only interrupted promotion are rejected without fabricating Planned or deleting evidence"
+  ],
+  "verification": {
+    "focused": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files::recovery:: -- --test-threads=1",
+      "log": "/tmp/recovery-claim-focused.log",
+      "exit_code": 0,
+      "passed": 177,
+      "ignored": 6
+    },
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "log": "/tmp/recovery-claim-full-final.log",
+      "exit_code": 101,
+      "passed": 965,
+      "failed": 2,
+      "ignored": 13,
+      "failures": "Only two existing user_report tests failed to bind localhost under sandbox policy",
+      "retry_command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- user_report::tests::relay_daily_cap_stays_distinct_for_the_ui user_report::tests::unreachable_relay_has_a_network_error_kind --test-threads=1",
+      "retry_log": "/tmp/recovery-claim-localhost-retry.log",
+      "retry_exit_code": 0,
+      "retry_passed": 2,
+      "accepted_across_runs": 967
+    },
+    "native_process_death": {
+      "test": "native_process_death_retains_preparation_evidence_and_fences_its_paths",
+      "new_outcomes": "At DisplaceIntent/PublishIntent, a second coordinator cannot claim while the child holds its native lock; after kill/reap, claiming advances the journal generation, reopening binds the exact root/manifest, native transfer reconciliation completes Published, source/new target/retained original have exact expected bytes, immutable catalog/manifest remain unchanged",
+      "limits": "No automatic production discovery/resolution, no claim of early interrupted root/manifest/staging effects, no power-loss test"
+    },
+    "claim_tests": [
+      "independent live/concurrent/repeated owners",
+      "stale request and lost-commit reply",
+      "missing/corrupt catalog, missing/replaced native owner, bad checkpoint digest and missing checkpoint",
+      "unrelated corrupt journal rows and overlapping valid catalog authority",
+      "unavailable user files do not prevent ownership inspection; unknown root creates nothing",
+      "catalog-before-checkpoint interruption remains a reservation with exact evidence"
+    ],
+    "clippy": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-claim-clippy-final.log",
+      "exit_code": 0,
+      "warnings": "68 unused-infrastructure library warnings; 5 library-test warnings (4 duplicates)"
+    },
+    "windows": {
+      "scope": "No Windows source changed in this claim slice; preceding transfer checkpoint shared-source compile remains applicable only to unchanged shared modules. Unix coordinator/claim/executor are excluded; no Windows runtime or full-app result"
+    },
+    "independent_review": {
+      "agent": "crash_recovery_acceptance_sol",
+      "model": "gpt-5.6-sol",
+      "verdict": "ACCEPT scoped; source and process/runtime contracts reviewed"
+    },
+    "format": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check passes",
+    "maps": "python3 docs/code-map/validate.py --coverage passes 415/415 tracked files with new untracked claim/test/shared-fixture files explicitly mapped",
+    "diff": "git diff --check passes",
+    "ui": "No new browser or app-binary run for internal native ownership changes"
+  },
+  "limits": [
+    "Only recognized indexed checkpoints are claimable; catalog-only/reservation-only/missing-database inspection and reconstruction remain open",
+    "Interrupted RootIntent/ManifestIntent/StageIntent effects are preserved but not resolved by this path",
+    "Restore/discard, retirement, overwrite Undo/retention and production command/IPC/UI integration remain open",
+    "No unrelated reservation cleanup during claiming; dead overlapping reservations remain blocking until normal admission cleanup",
+    "Private SQLite namespace and hostile same-user interference limitations from ADR 0020 remain",
+    "Native runtime evidence is Linux; no power loss, cross-filesystem campaign or Windows/macOS runtime acceptance",
+    "No app latency/startup or Mac half-bounce measurement; changes remain local"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/coordinator.rs": "f36cfa013f8cee9e7d8588f180b8e94308885cd005d05a3d35cceca390ee7447",
+    "src-tauri/src/files/recovery/coordinator/claim.rs": "72665d979617db9781011d4cb6ae3aa5a0012dcbfbffc24b91f9c18de0364881",
+    "src-tauri/src/files/recovery/coordinator/promotion.rs": "75e32cd479a6fdc5b9c98d457859716780b5f692f40bbe2d4b3174f01e29b8ac",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "e762775f531f579f946438456f659e3994ed80e48fa82e2c9a49bd5d3659c0c3",
+    "src-tauri/src/files/recovery/replacement_artifact.rs": "8f45cd0a2ccc2547c72e426b70db4a289ff1eca7a343c3285ec2841d9863d6a6",
+    "src-tauri/src/files/recovery/replacement_transfer.rs": "312506255ad7aeaa88320312537e11b1755f992aa57693aaa527a26837b9986c",
+    "src-tauri/test_support/recovery_claim.rs": "e29b54e20e76bdb008d80cc5ec02fd5439eb02d5d805a360cd7d00aa0b86e15a",
+    "src-tauri/test_support/recovery_operation_fixture.rs": "15759e6a225b6204000710b35c0f9dccd9941cc786ff25ad90252371691a8aa0",
+    "src-tauri/test_support/recovery_promotion.rs": "1fd6206c626d99445f508bf7a4eac93740f7f76bc61ebf3d46ce8a5800ea2837",
+    "src-tauri/test_support/recovery_replacement_execution.rs": "93ecb71753ae6108237feb23b2ea4a6e822f8d4befc59514bd31fa95c27b49f1"
+  }
+}

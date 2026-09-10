@@ -1,18 +1,66 @@
 //! File operations module for Tauri commands.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s, tauri-explorer-9djf.6
 
+#[cfg(unix)]
+mod anchored_copy;
+pub mod batch;
+pub(crate) mod copy_session;
 pub mod dir_listing;
+mod directory_cache;
+mod directory_watches;
 pub mod drives;
+pub(crate) mod entry_plan;
+mod entry_version;
 pub mod external_apps;
+#[cfg(any(unix, test))]
+mod file_identity;
 pub mod file_ops;
+#[cfg(target_os = "linux")]
+mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+pub(crate) mod move_execution;
+pub(crate) mod move_plan;
+pub(crate) mod mutation;
+#[cfg(any(unix, test))]
+mod native_directory;
+mod object_id;
+mod publication;
+pub(crate) mod recovery;
+mod replacement;
+#[cfg(any(target_os = "windows", test))]
+mod restore_outcome;
+#[cfg(target_os = "linux")]
+mod restore_parents;
 pub mod shortcuts;
+pub mod trash;
+pub(crate) mod trash_artifact;
+#[cfg(target_os = "linux")]
+mod trash_mounts;
+#[cfg(any(target_os = "windows", test))]
+mod trash_outcome;
+mod watch_observation;
+#[cfg(all(windows, test))]
+mod windows_io;
+#[cfg(target_os = "windows")]
+mod windows_paths;
+#[cfg(target_os = "windows")]
+mod windows_restore;
+mod worker;
+pub(crate) use worker::{run_blocking_context, Completion as WorkerCompletion};
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
+/// Native path prefixes distinguish remote shares from extended local paths.
+/// On Unix, even a double leading slash has no Windows prefix.
+pub(crate) fn is_network_share(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(path.components().next(), Some(Component::Prefix(prefix))
+        if matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
+}
 
 /// Run a blocking closure on the async runtime's blocking thread pool so
 /// heavy filesystem work doesn't stall the main async executor.
@@ -21,12 +69,7 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
 {
-    match tauri::async_runtime::spawn_blocking(f).await {
-        Ok(result) => result,
-        Err(e) => Err(crate::error::AppError::Other(format!(
-            "Background task failed: {e}"
-        ))),
-    }
+    worker::run_blocking_owned((), f).await
 }
 
 /// File system entry representation.

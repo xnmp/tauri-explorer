@@ -1,0 +1,200 @@
+{
+  "date": "2026-09-08",
+  "platform": "Linux / Wry 0.55.1 / WebKitGTK",
+  "scope": "Directory observation recovery and existing native ownership/refresh integration; not cross-platform or startup acceptance.",
+  "binary_sha256": "954cc39d9d85d98bba06e5f9d9426974bfdd443f05f13fe6ec12c429b1ceabf6",
+  "before": {
+    "base": "c1791a9a",
+    "root_replacement": "Mounted pane never converged to replacement-seed.txt after rename/recreation; failed after 27.6 seconds.",
+    "existing_file_modification": "No causal native watcher receipt after rewriting existing Markdown file to 8192 bytes; failed after 25.6 seconds."
+  },
+  "tests": {
+    "native": {
+      "specs_passed": 6,
+      "tests_passed": 11,
+      "elapsed_seconds": 51
+    },
+    "native_evidence_rerun": {
+      "specs_passed": 1,
+      "tests_passed": 2,
+      "elapsed_seconds": 11
+    },
+    "rust": {
+      "unit_passed": 485,
+      "integration_passed": 9,
+      "ignored": 7,
+      "test_threads": 1,
+      "shell": "/bin/bash",
+      "profile": "isolated XDG roots"
+    },
+    "parallel_rust_run": {
+      "passed": 483,
+      "failed": [
+        "crash_report::tests::panic_hook_writes_report_file",
+        "files::git_status::tests::cancelling_an_active_rev_parse_is_not_reported_as_not_a_repo"
+      ],
+      "isolated_reruns": "both passed; full serial suite passed"
+    },
+    "new_contracts": {
+      "observation": 13,
+      "lease_health_and_deadline": 2
+    },
+    "clippy": "all targets, warnings denied, passed",
+    "native_typescript": "passed",
+    "architecture_lint": "passed",
+    "source_map_coverage": "382/382"
+  },
+  "native_records": [
+    {
+      "case": "directory-watch-native-destroy",
+      "cycle": 1,
+      "application": {
+        "pid": 301140,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "784716"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-oiIxR7/child-1",
+      "acquired": [
+        {
+          "fd": 48,
+          "watchDescriptor": "4",
+          "device": "10306",
+          "inode": "7890dd"
+        }
+      ],
+      "retained": 0
+    },
+    {
+      "case": "directory-watch-native-destroy",
+      "cycle": 2,
+      "application": {
+        "pid": 301140,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "784716"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-oiIxR7/child-2",
+      "acquired": [
+        {
+          "fd": 48,
+          "watchDescriptor": "7",
+          "device": "10306",
+          "inode": "7890df"
+        }
+      ],
+      "retained": 0
+    },
+    {
+      "case": "directory-watch-native-destroy",
+      "cycle": 3,
+      "application": {
+        "pid": 301140,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "784716"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-oiIxR7/child-3",
+      "acquired": [
+        {
+          "fd": 48,
+          "watchDescriptor": "9",
+          "device": "10306",
+          "inode": "7890e1"
+        }
+      ],
+      "retained": 0
+    },
+    {
+      "case": "directory-watch-renderer-reload",
+      "application": {
+        "pid": 301140,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "784716"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-oiIxR7/reload-raw-watch",
+      "oldLease": {
+        "path": "/home/chong/.tauri-explorer-e2e-directory-owner-oiIxR7/reload-raw-watch",
+        "id": "11"
+      },
+      "oldWatches": [
+        {
+          "fd": 48,
+          "watchDescriptor": "a"
+        }
+      ],
+      "newLease": {
+        "path": "/home/chong/.tauri-explorer-e2e-directory-owner-oiIxR7/reload-raw-watch",
+        "id": "15"
+      },
+      "newWatches": [
+        {
+          "fd": 48,
+          "watchDescriptor": "e"
+        }
+      ]
+    },
+    {
+      "case": "directory-watch-renderer-crash",
+      "path": "/tmp/explorer-renderer-crash-M1I6UV/raw-directory",
+      "lease": {
+        "path": "/tmp/explorer-renderer-crash-M1I6UV/raw-directory",
+        "id": "3"
+      },
+      "descriptorBefore": [
+        {
+          "fd": 48,
+          "watchDescriptor": "3"
+        }
+      ],
+      "retained": 0
+    },
+    {
+      "case": "directory-root-replacement",
+      "originalInode": 510359,
+      "replacementInode": 510626,
+      "entries": [
+        "observed-after-replacement.txt",
+        "replacement-after-ghost.txt",
+        "replacement-seed.txt"
+      ],
+      "independentMutation": "independent-after-recovery.txt"
+    },
+    {
+      "case": "directory-existing-file-modification",
+      "writeStartedAt": 1788795380840,
+      "bytes": 8192,
+      "marker": "Updated existing-file content reached the preview."
+    }
+  ],
+  "screenshots": [
+    "screenshots/refactor/repo-health-cleanup/native-directory-replacement.png",
+    "screenshots/refactor/repo-health-cleanup/native-directory-content-update.png"
+  ],
+  "limitations": [
+    "Windows/macOS native recovery and macOS half-bounce startup remain unmeasured.",
+    "Fault-injection contracts cover callback errors, rescan and recursive registration failures; real native UI acceptance covers root replacement and existing-file writes.",
+    "This is not a long-duration or large-tree soak measurement.",
+    "The initial listing-before-native-registration gap remains a separate handoff contract.",
+    "Ordinary directory-cache publication still lacks an in-flight invalidation epoch; identified for a subsequent checkpoint.",
+    "Two unchanged parallel Rust tests failed; isolated and full serial runs passed. Their nondeterminism remains open.",
+    "Frontend source is unchanged; the preceding frontend unit/performance and payload results were not remeasured in this backend checkpoint.",
+    "A callback accepted before retirement may finish a conservative invalidation/refresh; retired sources reject subsequently received callbacks and cannot restore coverage.",
+    "At-most-two successful tree registrations in one recovery is verified for stable injected failures; changing native failures can require additional walks within the bounded candidate count."
+  ],
+  "independent_review": {
+    "model": "Sol",
+    "verdict": "ACCEPT within the stated Linux/backend checkpoint scope; no blocking defect found",
+    "confirmed": [
+      "recursive candidate isolation",
+      "event classification",
+      "fault/activation ordering",
+      "maintenance deadlines",
+      "cache epochs",
+      "native outcomes",
+      "serial Rust and strict Clippy"
+    ],
+    "qualifications": [
+      "accepted callbacks may finish conservative invalidation during retirement",
+      "bounded healthy-tree re-registration assumes stable registration outcomes"
+    ],
+    "unmeasured": "cross-platform behavior, real native error/rescan injection, large-tree/long-session cost, startup latency and initial listing/watch handoff"
+  }
+}

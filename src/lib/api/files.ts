@@ -2,15 +2,16 @@
  * API client for file operations.
  * Issue: tauri-explorer-nv2y - Migrated from Python FastAPI to Rust Tauri commands
  *
- * Concern-focused modules split out of this file live alongside it and are
- * re-exported at the bottom, so existing importers of `$lib/api/files` keep
- * working unchanged (Issue: refactor/audit-tier4-splits (#212)).
+ * Owns filesystem and directory operations. Other API concerns live in their
+ * dedicated sibling modules and are imported directly by feature consumers.
  */
 
-import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
+import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
 import {
   invoke,
+  isTauri,
   extractError,
   virtualPathGuard,
   dataUriToBlobUrl,
@@ -18,6 +19,14 @@ import {
 } from "./common";
 import { providerFor } from "$lib/plugins/fs-providers";
 import { logFrontendDiagnostic } from "./frontend-log";
+import { getNativeResourceSession } from "./native-resource-session";
+import { invokeFileMutation } from "./file-mutations";
+
+// Vite must erase this import before extracting dynamic chunks. An imported
+// constant folds too late and leaves an orphan test chunk in release assets.
+const fileMutationProbe = (import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1")
+  ? import("../../test-support/file-mutation-probe")
+  : null;
 
 interface DirectoryListingE2EProbe {
   targetPath: string;
@@ -25,6 +34,9 @@ interface DirectoryListingE2EProbe {
   calls: number;
   completed: number;
   starts: number[];
+  finishes: number[];
+  writeOperation?: string;
+  abort: AbortController;
 }
 
 let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
@@ -44,6 +56,7 @@ function publishDirectoryListingE2EProbe(): void {
       calls: directoryListingE2EProbe.calls,
       completed: directoryListingE2EProbe.completed,
       starts: directoryListingE2EProbe.starts,
+      finishes: directoryListingE2EProbe.finishes,
     });
   } else {
     delete document.documentElement.dataset.e2eDirectoryListingProbe;
@@ -56,8 +69,10 @@ function publishDirectoryListingE2EProbe(): void {
 // configures deterministic timing around the real backend listing invocation.
 if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
   window.addEventListener("e2e-directory-listing-probe", ((
-    event: CustomEvent<{ targetPath?: string; delays?: number[] }>,
+    event: CustomEvent<{ targetPath?: string; delays?: number[]; writeOperation?: string }>,
   ) => {
+    directoryListingE2EProbe?.abort.abort();
+    delete document.documentElement.dataset.e2eWatcherWriteOperation;
     const targetPath = event.detail?.targetPath;
     directoryListingE2EProbe = targetPath
       ? {
@@ -66,6 +81,9 @@ if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
           calls: 0,
           completed: 0,
           starts: [],
+          finishes: [],
+          writeOperation: event.detail.writeOperation,
+          abort: new AbortController(),
         }
       : null;
     publishDirectoryListingE2EProbe();
@@ -120,20 +138,21 @@ export async function isDirectoryEmpty(
  *
  * @param parentPath - Path to parent directory
  * @param name - Name of new directory
- * @returns Result with created FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function createDirectory(
   parentPath: string,
   name: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(parentPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("create_directory", {
+    const result = await invokeFileMutation<FileMutationReceipt>("create_directory", {
       parentPath,
       name,
     });
-    return { ok: true, data };
+    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("create_directory", parentPath, result.data.path);
+    return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -143,20 +162,19 @@ export async function createDirectory(
  * Create a new empty file (touch) inside a parent directory.
  * @param parentPath - Path to parent directory
  * @param name - Name of new file
- * @returns Result with created FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function createEmptyFile(
   parentPath: string,
   name: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(parentPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("create_empty_file", {
+    return await invokeFileMutation<FileMutationReceipt>("create_empty_file", {
       parentPath,
       name,
     });
-    return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -167,112 +185,65 @@ export async function createEmptyFile(
  *
  * @param path - Full path to file/directory
  * @param newName - New name (just the name, not full path)
- * @returns Result with renamed FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function renameEntry(
   path: string,
   newName: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(path);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("rename_entry", { path, newName });
-    return { ok: true, data };
+    const result = await invokeFileMutation<FileMutationReceipt>("rename_entry", { path, newName });
+    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("rename_entry", path, result.data.path);
+    return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
 }
 
-/**
- * Delete a file or directory by moving it to the system trash/recycle bin.
- *
- * Uses Tauri command for cross-platform trash support:
- * - Windows: Recycle Bin
- * - macOS: Trash
- * - Linux: Freedesktop Trash
- *
- * @param path - Full path to file/directory to delete
- * @returns Result indicating success or error message
- */
-export async function deleteEntry(path: string): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("move_to_trash", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
+/** Native-owned deletion of the complete selection, with per-path outcomes. */
+export async function deleteEntries(paths: string[], permanent = false): Promise<ApiResult<FileBatchOutcome>> {
+  for (const path of paths) {
+    const guard = virtualPathGuard(path);
+    if (guard) return guard;
   }
+  return invokeFileMutation<FileBatchOutcome>("delete_entries", { paths, permanent });
 }
 
-/**
- * Move multiple files/directories to the system trash.
- *
- * @param paths - Array of full paths to delete
- * @returns Result indicating success or error message
- */
-export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<void>> {
-  try {
-    await invoke("move_multiple_to_trash", { paths });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+async function deleteOne(path: string, permanent: boolean): Promise<ApiResult<void>> {
+  const result = await deleteEntries([path], permanent);
+  if (!result.ok) return result;
+  const error = fileBatchError(result.data);
+  return error ? { ok: false, error } : { ok: true, data: undefined, ...(result.warning ? { warning: result.warning } : {}) };
 }
 
-/** Permanently delete a file or directory (bypasses trash). */
-export async function deleteEntryPermanent(path: string): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("delete_entry_permanent", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
+export const deleteEntry = (path: string): Promise<ApiResult<void>> => deleteOne(path, false);
+export const deleteEntryPermanent = (path: string): Promise<ApiResult<void>> => deleteOne(path, true);
+export const deleteMultipleEntries = (paths: string[]): Promise<ApiResult<FileBatchOutcome>> => deleteEntries(paths);
 
-/**
- * Restore files from the system trash by their original paths.
- *
- * @param paths - Array of original paths to restore
- * @returns Result indicating success or error message
- */
-export async function restoreFromTrash(paths: string[]): Promise<ApiResult<void>> {
-  try {
-    await invoke("restore_from_trash", { paths });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
 
 /**
  * Copy a file or directory to a destination.
  *
  * @param source - Full path to source file/directory
  * @param destDir - Destination directory path
- * @returns Result with copied FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function copyEntry(
   source: string,
   destDir: string,
   overwrite = false,
   jobId?: number,
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(source, destDir);
   if (guard) return guard;
-  try {
-    const data = await invoke<FileEntry>("copy_entry", { source, destDir, overwrite, jobId });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+  return invokeFileMutation<FileMutationReceipt>("copy_entry", { source, destDir, overwrite, jobId });
 }
 
 /** Cancel a running copy job. The pending copyEntry call fails with
- *  "Copy cancelled" and any partial copy is removed. Best-effort — the job
- *  may already have finished. */
+ *  "Copy cancelled" before durable work starts. Interrupted replacements retain
+ *  recovery evidence; accepted publication may finish before cancellation. */
 export async function cancelCopy(jobId: number): Promise<void> {
   try {
     await invoke("cancel_copy", { jobId });
@@ -286,21 +257,16 @@ export async function cancelCopy(jobId: number): Promise<void> {
  *
  * @param source - Full path to source file/directory
  * @param destDir - Destination directory path
- * @returns Result with moved FileEntry or error message
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function moveEntry(
   source: string,
   destDir: string,
   overwrite = false
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(source, destDir);
   if (guard) return guard;
-  try {
-    const data = await invoke<FileEntry>("move_entry", { source, destDir, overwrite });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+  return invokeFileMutation<FileMutationReceipt>("move_entry", { source, destDir, overwrite });
 }
 
 /** Resolved target of a Windows `.lnk` shortcut. */
@@ -325,10 +291,9 @@ export async function resolveShortcut(path: string): Promise<ShortcutTarget | nu
 /**
  * Write text content to a new file.
  */
-export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileEntry>> {
+export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileMutationReceipt>> {
   try {
-    const data = await invoke<FileEntry>("write_text_file", { path, content });
-    return { ok: true, data };
+    return await invokeFileMutation<FileMutationReceipt>("write_text_file", { path, content });
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -420,68 +385,6 @@ export async function readImageAsBlobUrl(
 }
 
 /**
- * Get the user's home directory path.
- *
- * @returns Result with home directory path or error message
- */
-export async function getHomeDirectory(): Promise<ApiResult<string>> {
-  try {
-    const path = await invoke<string>("get_home_directory");
-    return { ok: true, data: path };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Get the working directory the app was launched from.
- */
-export async function getLaunchCwd(): Promise<ApiResult<string>> {
-  try {
-    const path = await invoke<string>("get_launch_cwd");
-    return { ok: true, data: path };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/** Directory holding the app's rolling log files (for "open log folder"). */
-export async function getLogDir(): Promise<string> {
-  return invoke<string>("get_log_dir");
-}
-
-/**
- * Report a webview startup-timing summary to the app log (fire-and-forget
- * telemetry). Absent in mock/browser mode, where the promise rejects.
- */
-export async function logStartupTiming(summary: string): Promise<void> {
-  return invoke<void>("log_startup_timing", { summary });
-}
-
-export type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
-
-export type CloudProvider = "googledrive" | "wsl";
-
-export interface Drive {
-  name: string;
-  path: string;
-  kind: DriveKind;
-  /** Secondary/dimmed label (e.g. the drive letter "E:" when name is the volume label). */
-  detail?: string;
-  /** Set for cloud/remote drives — selects the sidebar icon. */
-  provider?: CloudProvider;
-}
-
-export async function listDrives(): Promise<ApiResult<Drive[]>> {
-  try {
-    const drives = await invoke<Drive[]>("list_drives");
-    return { ok: true, data: drives };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
  * Size estimation for file operations progress.
  */
 export interface SizeEstimate {
@@ -533,9 +436,14 @@ export interface DirectoryEntriesEvent {
  * @param path - Absolute path to directory
  * @returns Result with initial DirectoryListing (path may include listing ID for event correlation)
  */
+export interface ObservedDirectoryListing extends DirectoryListing {
+  watch_lease?: DirectoryWatchLease;
+}
+
 export async function startStreamingDirectory(
-  path: string
-): Promise<ApiResult<DirectoryListing>> {
+  path: string,
+  observation?: { discard(lease: DirectoryWatchLease): void },
+): Promise<ApiResult<ObservedDirectoryListing>> {
   const startedAt = Date.now();
   console.debug("[navigation] start_streaming_directory requested", { path });
   // Virtual paths never stream: the provider returns the full listing inline
@@ -577,14 +485,38 @@ export async function startStreamingDirectory(
     publishDirectoryListingE2EProbe();
   }
 
+  let acquired: ObservedDirectoryListing | undefined;
   try {
-    const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
+    const data = observation && isTauri()
+      ? await invoke<ObservedDirectoryListing>("start_observed_directory", {
+          path, sessionId: await getNativeResourceSession(),
+        })
+      : await invoke<ObservedDirectoryListing>("start_streaming_directory", { path });
+    acquired = data;
+    if (data.watch_lease) publishReadyDirectoryWatch(path);
     if (e2eProbe) {
+      // Keep the literal build flag at this import: the bundler discovers
+      // dynamic chunks before folding imported constants, leaving an orphan
+      // test asset in release builds if this uses E2E_HOOKS_ENABLED alone.
+      if ((import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1") &&
+          e2eCallIndex === 0 && e2eProbe.writeOperation) {
+        const { holdListingForWatcherWrites } = await import("../../test-support/watcher-listing-probe");
+        await holdListingForWatcherWrites({
+          path,
+          operation: e2eProbe.writeOperation,
+          signal: e2eProbe.abort.signal,
+          write: async (filePath, content) => {
+            const result = await writeTextFile(filePath, content);
+            if (!result.ok) throw new Error(result.error);
+          },
+        });
+      }
       const delay = e2eProbe.delays[e2eCallIndex] ?? 0;
       if (delay > 0) {
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
       e2eProbe.completed += 1;
+      e2eProbe.finishes.push(Date.now());
       publishDirectoryListingE2EProbe();
     }
     console.debug("[navigation] start_streaming_directory completed", {
@@ -595,6 +527,10 @@ export async function startStreamingDirectory(
     });
     return { ok: true, data };
   } catch (err) {
+    // The optional native probe can fail after acquisition. Keep the same
+    // owner responsible for releasing late leases, including release retries.
+    if (acquired?.watch_lease) observation?.discard(acquired.watch_lease);
+    if (acquired?.listing_id != null) await cancelDirectoryListing(acquired.listing_id);
     const error = extractError(err);
     console.warn("[navigation] start_streaming_directory failed", {
       path,
@@ -631,27 +567,23 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
 // ===================
 
 /**
- * Start watching a directory for external changes.
- * Refcounted — safe to call multiple times for the same path.
+ * Start watching a directory for external changes and return its release lease.
  */
-export async function watchDirectory(path: string): Promise<void> {
-  try {
-    await invoke("watch_directory", { path });
-    publishReadyDirectoryWatch(path);
-  } catch {
-    // Non-critical: watcher failure shouldn't block navigation
-  }
+export interface DirectoryWatchLease { id: string; path: string }
+
+export async function watchDirectory(path: string): Promise<DirectoryWatchLease> {
+  const sessionId = await getNativeResourceSession();
+  const lease = await invoke<DirectoryWatchLease>("watch_directory", { path, sessionId });
+  publishReadyDirectoryWatch(path);
+  return lease;
 }
 
 /**
- * Stop watching a directory. Decrements refcount; OS watch removed at zero.
+ * Release the directory watch identified by an earlier acquisition.
  */
-export async function unwatchDirectory(path: string): Promise<void> {
-  try {
-    await invoke("unwatch_directory", { path });
-  } catch {
-    // Non-critical
-  }
+export async function unwatchDirectory(lease: DirectoryWatchLease): Promise<void> {
+  const sessionId = await getNativeResourceSession();
+  await invoke("unwatch_directory", { leaseId: lease.id, sessionId });
 }
 
 // ===================
@@ -664,228 +596,17 @@ export async function unwatchDirectory(path: string): Promise<void> {
  *
  * @param targetPath - Path that the symlink points to
  * @param linkPath - Path where the symlink will be created
- * @returns Result with the created symlink entry or error
+ * @returns Result with the committed path and optional entry metadata
  */
 export async function createSymlink(
   targetPath: string,
   linkPath: string
-): Promise<ApiResult<FileEntry>> {
+): Promise<ApiResult<FileMutationReceipt>> {
   const guard = virtualPathGuard(targetPath, linkPath);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("create_symlink", { targetPath, linkPath });
-    return { ok: true, data };
+    return await invokeFileMutation<FileMutationReceipt>("create_symlink", { targetPath, linkPath });
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
 }
-
-// ===================
-// Clipboard Image Paste
-// Issue: tauri-ttbb
-// ===================
-
-/**
- * Check if the OS clipboard contains image data.
- */
-export async function clipboardHasImage(): Promise<boolean> {
-  try {
-    return await invoke<boolean>("clipboard_has_image");
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Paste clipboard image to a file in the given directory.
- *
- * @param directory - Directory to save the image in
- * @returns Result with the created file path or error
- */
-export async function clipboardPasteImage(directory: string): Promise<ApiResult<string>> {
-  try {
-    const path = await invoke<string>("clipboard_paste_image", { directory });
-    return { ok: true, data: path };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Wallpaper
-// Issue: tauri-explorer-mj32
-// ===================
-
-/**
- * Set an image file as the desktop wallpaper.
- * Auto-detects DE (Hyprland/hyprpaper, Sway, GNOME, KDE, XFCE, feh).
- *
- * @param path - Full path to image file
- * @returns Result indicating success or error message
- */
-export async function setAsWallpaper(path: string): Promise<ApiResult<void>> {
-  try {
-    await invoke("set_as_wallpaper", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Nano Banana (AI Image Editing)
-// Issue: feat/nano-banana
-// ===================
-
-/**
- * Start a Nano Banana image editing job.
- * Returns job ID immediately; listen for nano-banana-complete/error events.
- */
-export async function startNanoBananaJob(
-  sourcePath: string,
-  prompt: string,
-  outputDir: string,
-  outputFilename: string,
-  apiKey: string,
-  model: string,
-): Promise<ApiResult<number>> {
-  try {
-    const jobId = await invoke<number>("start_nano_banana_job", {
-      sourcePath,
-      prompt,
-      outputDir,
-      outputFilename,
-      apiKey,
-      model,
-    });
-    return { ok: true, data: jobId };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Upscale (fal.ai SeedVR2)
-// Issue: #276
-// ===================
-
-/**
- * Start a SeedVR2 image upscale job.
- * Returns job ID immediately; listen for upscale-complete/error events.
- */
-export async function startUpscaleJob(
-  sourcePath: string,
-  outputDir: string,
-  outputFilename: string,
-  apiKey: string,
-  upscaleFactor: number,
-): Promise<ApiResult<number>> {
-  try {
-    const jobId = await invoke<number>("start_upscale_job", {
-      sourcePath,
-      outputDir,
-      outputFilename,
-      apiKey,
-      upscaleFactor,
-    });
-    return { ok: true, data: jobId };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Concern-focused re-exports (façade)
-// Issue: refactor/audit-tier4-splits (#212)
-// Issue: refactor/finish-api-files-split-into-open-and-system-modules (#282)
-//
-// Split out of this file into cohesive modules; re-exported here (by exact
-// symbol, not `export *`) so existing importers of `$lib/api/files` continue
-// to resolve every symbol they actually use unchanged.
-// ===================
-
-export {
-  invoke,
-  extractError,
-  extractErrorKind,
-  type AppError,
-  type AppErrorKind,
-  type ApiResult,
-} from "./common";
-
-export {
-  openFile,
-  openFileAtLine,
-  openFileWith,
-  openImageWithSiblings,
-  openInTerminal,
-  listInstalledTerminals,
-} from "./open";
-
-export { pickerRespond, setWindowTheme, setFfmpegPath } from "./system";
-
-export {
-  fuzzySearch,
-  type SearchResult,
-  startStreamingSearch,
-  cancelSearch,
-  type SearchResultsEvent,
-  startContentSearch,
-  cancelContentSearch,
-  type ContentMatch,
-  type ContentSearchResult,
-  type ContentSearchEvent,
-} from "./search";
-
-export {
-  getMicroThumbnail,
-  getThumbnailData,
-  getVideoThumbnailData,
-  getFolderPreview,
-} from "./thumbnails";
-
-export {
-  compressToZip,
-  cancelCompress,
-  extractArchive,
-  listArchiveContents,
-  cancelExtract,
-  type ZipProgressEvent,
-} from "./archive";
-
-export {
-  readConfigFile,
-  writeConfigFile,
-  listUserThemes,
-} from "./config";
-
-export {
-  getGitStatus,
-  cancelGetGitStatus,
-  type GitFileStatus,
-  gitInit,
-  gitRepoRoot,
-  gitAddToGitignore,
-  gitArchiveUntracked,
-  gitTrashUntracked,
-  gitSummary,
-  cancelGitStatus,
-  gitStage,
-  gitUnstage,
-  gitApplyPatch,
-  type GitPatchAction,
-  gitDiscard,
-  gitDiff,
-  gitCommit,
-  gitWatchRepo,
-  gitUnwatchRepo,
-  gitMergeAbort,
-  gitRebaseAbort,
-  gitRebaseContinue,
-  gitCherryPickAbort,
-  gitRevertAbort,
-  type GitFileEntry,
-  type GitStatusSummary,
-  type GitStatusCode,
-  type GitOpState,
-} from "./git";

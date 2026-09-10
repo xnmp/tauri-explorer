@@ -24,7 +24,7 @@ import { compactRelativeTime } from "./relative-time";
 
 export interface GraphCommitLike {
   oid: string;
-  parents: string[];
+  parents: readonly string[];
 }
 
 /** A point on the layout grid: `lane` = column, `row` = commit index. */

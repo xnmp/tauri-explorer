@@ -25,36 +25,41 @@ export interface ConflictResult {
 
 function createConflictResolver() {
   let activeConflict = $state<ConflictInfo | null>(null);
-  let pendingResolve: ((result: ConflictResult) => void) | null = null;
-  // Concurrent batches (e.g. two simultaneous drops) each prompt; only one
-  // dialog can show at a time, so later prompts queue until resolution.
-  const queue: Array<{ info: ConflictInfo; resolve: (result: ConflictResult) => void }> = [];
+  interface Prompt { info: ConflictInfo; finish: (result: ConflictResult) => void }
+  let active: Prompt | null = null;
+  const queue: Prompt[] = [];
 
-  /** Show conflict dialog and await user choice. Queues if a dialog is already active. */
-  function prompt(info: ConflictInfo): Promise<ConflictResult> {
+  function showNext(): void {
+    active = queue.shift() ?? null;
+    activeConflict = active ? { ...active.info } : null;
+  }
+
+  /** Each caller owns its queued or visible prompt through its AbortSignal. */
+  function prompt(info: ConflictInfo, signal?: AbortSignal): Promise<ConflictResult> {
+    const cancelled: ConflictResult = { choice: "cancel", applyToAll: false };
+    if (signal?.aborted) return Promise.resolve(cancelled);
     return new Promise<ConflictResult>((resolvePromise) => {
-      if (activeConflict !== null) {
-        queue.push({ info, resolve: resolvePromise });
-        return;
-      }
-      activeConflict = { ...info };
-      pendingResolve = resolvePromise;
+      let pending = true;
+      const request: Prompt = { info, finish(result) {
+        if (!pending) return;
+        pending = false;
+        signal?.removeEventListener("abort", abort);
+        if (active === request) showNext();
+        else {
+          const index = queue.indexOf(request);
+          if (index !== -1) queue.splice(index, 1);
+        }
+        resolvePromise(result);
+      } };
+      const abort = () => request.finish(cancelled);
+      signal?.addEventListener("abort", abort, { once: true });
+      queue.push(request);
+      if (!active) showNext();
     });
   }
 
-  /** Called from the dialog when user makes a choice */
   function resolve(choice: ConflictChoice, applyToAll = false): void {
-    const current = pendingResolve;
-    pendingResolve = null;
-    activeConflict = null;
-    current?.({ choice, applyToAll });
-
-    // Show the next queued conflict, if any.
-    const next = queue.shift();
-    if (next) {
-      activeConflict = { ...next.info };
-      pendingResolve = next.resolve;
-    }
+    active?.finish({ choice, applyToAll });
   }
 
   return {

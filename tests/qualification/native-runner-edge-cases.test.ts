@@ -46,13 +46,13 @@ describe("native qualification process boundaries", () => {
   it("normalizes the duration units emitted by Rust startup markers", () => {
     expect(
       parseMacStartupLog(
-        "Startup: setup=800µs total=1.204s\n" +
+        "Startup(native-ready): app-run-to-ready=1.204s\n" +
           "Startup(warm-activate): show=950µs\n",
       ),
     ).toEqual({ coldTotalMs: 1_204, warmShowMs: 0.95 });
     expect(
       parseMacStartupLog(
-        "Startup: setup=10ms total=750000ns\n" +
+        "Startup(native-ready): app-run-to-ready=750000ns\n" +
           "Startup(warm-activate): show=1.5ms\n",
       ),
     ).toEqual({ coldTotalMs: 0.75, warmShowMs: 1.5 });
@@ -62,7 +62,7 @@ describe("native qualification process boundaries", () => {
     vi.useFakeTimers();
     const child = new FakeStartupChild();
     let log =
-      "Startup: setup=10ms total=20ms\n" + "Startup(warm-activate): show=2ms\n";
+      "Startup(native-ready): app-run-to-ready=20ms\n" + "Startup(warm-activate): show=2ms\n";
     const result = waitForMacStartupProcess(child, () => log, {
       timeoutMs: 1_000,
       survivalMs: 5_000,
@@ -75,6 +75,38 @@ describe("native qualification process boundaries", () => {
     await expect(result).rejects.toThrow("SIGTERM");
     expect(vi.getTimerCount()).toBe(0);
     log = "";
+  });
+
+  it("qualifies foreground-only launch without requiring a probe window", async () => {
+    vi.useFakeTimers();
+    const child = new FakeStartupChild();
+    const result = waitForMacStartupProcess(child, () =>
+      "Startup(native-ready): app-run-to-ready=125ms\n", {
+      timeoutMs: 100,
+      survivalMs: 200,
+      measureWarm: false,
+    });
+    const assertion = expect(result).resolves.toEqual({ coldTotalMs: 125, warmShowMs: null });
+    await vi.advanceTimersByTimeAsync(200);
+    await assertion;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  it("still requires foreground readiness and process survival without warm measurement", async () => {
+    expect(() => parseMacStartupLog("Startup: total=12ms\n", { measureWarm: false }))
+      .toThrow("native-ready");
+    vi.useFakeTimers();
+    const child = new FakeStartupChild();
+    const result = waitForMacStartupProcess(child, () =>
+      "Startup(native-ready): app-run-to-ready=125ms\n", {
+      timeoutMs: 100,
+      survivalMs: 200,
+      measureWarm: false,
+    });
+    child.exit(1, null);
+    await expect(result).rejects.toThrow("application exited");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("reports spawn errors and clears timeout polling", async () => {
@@ -316,6 +348,8 @@ describe("native qualification process boundaries", () => {
     ).toEqual({ rssBytes: 140, sampledAtMs: 123 });
   });
 
+  // Write fixture bytes synchronously before exiting, so these tests verify
+  // parent log capture rather than child stdout buffering at process shutdown.
   it("captures early child output and persists it in the failed report", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-driver-log-"));
     const logPath = path.join(dir, "seed-webdriver.log");
@@ -324,8 +358,8 @@ describe("native qualification process boundaries", () => {
       command: [
         process.execPath,
         "-e",
-        "process.stdout.write('driver stdout proof\\n');" +
-          "process.stderr.write('driver stderr proof\\n');" +
+        "require('node:fs').writeSync(1, 'driver stdout proof\\n');" +
+          "require('node:fs').writeSync(2, 'driver stderr proof\\n');" +
           "process.exit(23)",
       ],
       reportPath,
@@ -398,7 +432,7 @@ describe("native qualification process boundaries", () => {
     const childScript =
       `require('node:fs').writeFileSync(${JSON.stringify(reportPath)}, ` +
       `${JSON.stringify(JSON.stringify(passingReport))});` +
-      "process.stdout.write('scenario report emitted\\n');" +
+      "require('node:fs').writeSync(1, 'scenario report emitted\\n');" +
       "process.exit(23)";
 
     const result = await executeLoggedQualificationProcess({

@@ -1,0 +1,514 @@
+{
+  "date": "2026-09-09",
+  "scope": "Effective Linux durable ownership after publication/restoration; immediate ordinary edits and retained artifact protection",
+  "contracts": [
+    "Only validated error-free Published/Restored checkpoints with exact idle native owners release public paths",
+    "Active, transitional, errored and missing-checkpoint records retain full scoped authority; malformed checkpoints or changed lock evidence fail admission",
+    "Retained root and payload identities protect native hardlinks and relocated-root aliases",
+    "Recovery checks its full claims against peer effective ownership before acquiring effect authority",
+    "All effect acquisition takes the persistent admission gate; actual child process observes gate busy after idle owner probe has closed",
+    "Successive completed replacements restore in reverse order without losing either independent copied payload",
+    "Actual native Explorer restores original then renames it and back; disk bytes and listing outcomes agree while private publication survives"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: --test-threads=1",
+      "passed": 362,
+      "failed": 0,
+      "ignored": 8,
+      "exit_code": 0
+    },
+    "regression_before": {
+      "log": "/tmp/recovery-effective-claims-before.log",
+      "failed": 4,
+      "reason": "Idle completed operations kept public paths reserved indefinitely; current contracts also protect newly known retained identities"
+    },
+    "native_ui": {
+      "command": "bash /tmp/run-file-recovery-native.sh",
+      "passed": 3,
+      "exit_code": 0,
+      "profile": "/tmp/explorer-file-recovery-native-Qe66UT",
+      "fixture": {
+        "id": "25c66deaec346f799a45ba012a09b4ca8690e5feebf06b9f788adf2e695d32ce",
+        "pid": 1232265,
+        "root": "/tmp/explorer-file-recovery-native-Qe66UT/fixture/replacement/.tauri-explorer-recovery-a8b96d569e65c76224eae924cae3cb7f9b633ff022162872abea22301497d052",
+        "source": "/tmp/explorer-file-recovery-native-Qe66UT/fixture/replacement/source.txt",
+        "target": "/tmp/explorer-file-recovery-native-Qe66UT/fixture/replacement/target.txt"
+      },
+      "receipts": [
+        {
+          "channel": 1307164044,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "1",
+          "session": "0",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "1",
+          "revision": "12"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "1",
+          "revision": "13"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "1",
+          "revision": "16"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "1",
+          "revision": "17"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "1"
+        },
+        {
+          "channel": 4062144407,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "2",
+          "session": "1",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "2",
+          "revision": "21"
+        },
+        {
+          "channel": 2996788351,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "3",
+          "session": "1",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "2"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "3",
+          "revision": "21"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "3"
+        },
+        {
+          "channel": 1769481938,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "4",
+          "session": "2",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "4",
+          "revision": "21"
+        },
+        {
+          "channel": 374296205,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "5",
+          "session": "2",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "4"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "5",
+          "revision": "21"
+        },
+        {
+          "event": "unsubscribe",
+          "label": "main",
+          "pid": 1232265,
+          "session": "1",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "5",
+          "revision": "22"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "5"
+        },
+        {
+          "channel": 1149580540,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "6",
+          "session": "3",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "6",
+          "revision": "22"
+        },
+        {
+          "channel": 3170575376,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "7",
+          "session": "3",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "6"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "7",
+          "revision": "22"
+        },
+        {
+          "event": "unsubscribe",
+          "label": "main",
+          "pid": 1232265,
+          "session": "2",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "7",
+          "revision": "23"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "7"
+        },
+        {
+          "channel": 475329521,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "8",
+          "session": "4",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "8",
+          "revision": "23"
+        },
+        {
+          "channel": 3361070590,
+          "event": "received",
+          "label": "main",
+          "pid": 1232265,
+          "registration": "9",
+          "session": "4",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "8"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "9",
+          "revision": "23"
+        },
+        {
+          "channel": 1133606093,
+          "event": "received",
+          "label": "explorer-6653517b-835b-49b5-9861-be2f701da0ee",
+          "pid": 1232265,
+          "registration": "10",
+          "session": "0",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "9",
+          "revision": "23"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "10",
+          "revision": "23"
+        },
+        {
+          "channel": 1598062297,
+          "event": "received",
+          "label": "explorer-6653517b-835b-49b5-9861-be2f701da0ee",
+          "pid": 1232265,
+          "registration": "11",
+          "session": "0",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "10"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "9",
+          "revision": "23"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "11",
+          "revision": "23"
+        },
+        {
+          "event": "dropped",
+          "pid": 1232265,
+          "registration": "11"
+        },
+        {
+          "event": "send",
+          "pid": 1232265,
+          "registration": "9",
+          "revision": "24"
+        }
+      ]
+    },
+    "native_crash": {
+      "command": "bash /tmp/run-recovery-crash-native.sh",
+      "cycles": 2,
+      "exit_code": 0,
+      "evidence": {
+        "status": "passed",
+        "processId": 1233832,
+        "windowLabel": "main",
+        "webviewAddress": "0x556428ece5d0",
+        "cycles": [
+          {
+            "cycle": 1,
+            "terminationReason": "Crashed",
+            "oldSession": "0",
+            "newSession": "2",
+            "oldLeaseId": "1",
+            "newLeaseId": "2",
+            "repoRoot": "/tmp/explorer-renderer-recovery-v0o6a4/case/repository-1",
+            "oldLeaseReclaimed": true,
+            "oldAcquireRejected": true,
+            "staleReleaseIgnored": true,
+            "mutationStartedAt": 1788886371652,
+            "watcherObservedAt": 1788886371652,
+            "watcherReceivedAt": 1788886371652,
+            "marker": "observed-after-crash-1.txt",
+            "entries": [
+              "observed-after-crash-1.txt"
+            ],
+            "fileRecovery": {
+              "oldRegistration": "2",
+              "newRegistration": "4",
+              "oldSession": "0",
+              "newSession": "2",
+              "oldChannelDroppedBeforeReload": true,
+              "staleAcquireRejected": true,
+              "staleReleaseIgnored": true,
+              "operationId": "6f50f2c23c523fa62a60ba046a7df9ea0e311a8b755802b6cf6fdd9d4b1b044c",
+              "beforeRevision": "12",
+              "afterRevision": "13",
+              "beforeGeneration": "12",
+              "afterGeneration": "13"
+            }
+          },
+          {
+            "cycle": 2,
+            "terminationReason": "Crashed",
+            "oldSession": "2",
+            "newSession": "4",
+            "oldLeaseId": "2",
+            "newLeaseId": "3",
+            "repoRoot": "/tmp/explorer-renderer-recovery-v0o6a4/case/repository-2",
+            "oldLeaseReclaimed": true,
+            "oldAcquireRejected": true,
+            "staleReleaseIgnored": true,
+            "mutationStartedAt": 1788886372672,
+            "watcherObservedAt": 1788886372672,
+            "watcherReceivedAt": 1788886372673,
+            "marker": "observed-after-crash-2.txt",
+            "entries": [
+              "observed-after-crash-2.txt"
+            ],
+            "fileRecovery": {
+              "oldRegistration": "4",
+              "newRegistration": "6",
+              "oldSession": "2",
+              "newSession": "4",
+              "oldChannelDroppedBeforeReload": true,
+              "staleAcquireRejected": true,
+              "staleReleaseIgnored": true,
+              "operationId": "6f50f2c23c523fa62a60ba046a7df9ea0e311a8b755802b6cf6fdd9d4b1b044c",
+              "beforeRevision": "13",
+              "afterRevision": "14",
+              "beforeGeneration": "13",
+              "afterGeneration": "14"
+            }
+          }
+        ],
+        "runDirectory": "/tmp/explorer-renderer-recovery-v0o6a4",
+        "screenshot": "screenshots/refactor/repo-health-cleanup/native-recovery-channel-crash.png"
+      }
+    },
+    "typecheck": {
+      "exit_code": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "existing_library_dead_code_warnings": 8
+    },
+    "architecture": {
+      "exit_code": 0
+    },
+    "format": {
+      "exit_code": 0
+    },
+    "diff_whitespace": {
+      "exit_code": 0
+    },
+    "maps": {
+      "exit_code": 0,
+      "source_coverage": "415/415",
+      "unresolved_references": 0
+    },
+    "build": {
+      "command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "binary": "src-tauri/target/debug/tauri-explorer",
+      "sha256": "73965cff3681400bc435021b129b4c6d504bb8bf7787c2360e46bbc5af0ff5d8"
+    }
+  },
+  "independent_review": {
+    "agent": "recovery_native_review_sol",
+    "model": "gpt-5.6-sol",
+    "result": "CONFIRMED for idle release, active/incomplete fencing, physical aliases, full reacquisition, shared gate exclusion and successive restoration; no blocker",
+    "independent_test_author": "effective_claims_adversary_sol",
+    "native_result": "CONFIRMED from actual build/UI/crash logs, final fixture bytes, updated spec and intermediate rename screenshot; ordinary native rename succeeds in both directions after restoration, with no contradictory evidence"
+  },
+  "limitations": [
+    "Linux native acceptance only; Windows/macOS and power-loss durability are unqualified",
+    "No measured latency improvement or macOS half-bounce claim; constant descriptor use follows owner-probe lifetime and does not establish admission throughput",
+    "Native fixture uses actual executor but normal copy commands still lack durable journaling integration",
+    "Overwrite Undo, discard/retirement, retention quotas, early/unindexed reconciliation and remaining mutation families remain implementation work",
+    "Initial IPC/action interruption, cross-filesystem qualification, hours-long soak and broader product/release matrix remain open",
+    "Full review and final integration remain incomplete; changes local; no commit, push or merge attempted"
+  ],
+  "source_sha256": {
+    "e2e-tauri/renderer-recovery.ts": "7fda02ba6fe1d45b7023f90a25975cd7ee0802c9c2e6d4e6b78024dcef82e7ae",
+    "e2e-tauri/specs/file-recovery.spec.ts": "f22a35d2ba9bd520eaea5d21d62ec1fd743657e92dc90d9858fc78f16b93304e",
+    "e2e-tauri/specs/helpers.ts": "2bea84f2c556296f041dc355455911fb2adfdde8ee04ded1f422e13fba70ba7b",
+    "src/test-support/file-recovery-probe.ts": "301698070183f58f15191f4eb7fe327ca0d29cff86c46be835e66b62afcf66dc",
+    "src/test-support/window-session-probe.ts": "a3884c8794153ae8c1e881a5620ddd048a4edece75e799e20f467cc0eabfb46c",
+    "src-tauri/src/file_mutation.rs": "5275f4d60e6d608399936c67dff9db4373844610b476cb82e261594f58ab28b1",
+    "src-tauri/src/files/entry_plan.rs": "6db952c3aaf93e95300ff15bbb9bd68beff8ff7fe6359b3adbd5ec9918d45b00",
+    "src-tauri/src/files/file_ops.rs": "a3c7ee2260ed7397bdc226ed178238b2e157ce90fa0b62e6532e48f3b562e461",
+    "src-tauri/src/files/recovery/commands.rs": "adedb1ba2a3285d694096c5fb50db36a03142db4182e8379918a562c6f203fbc",
+    "src-tauri/src/files/recovery/context.rs": "16a55c6b04d3cb24b79b57f7e00168c4ec8d3c0c23fb25f5d14960c2f3171a0e",
+    "src-tauri/src/files/recovery/coordinator/claim.rs": "f16186d06e518db96e4fcf57fe7c13c0d3a796ef751e28e0974f9205dde764b8",
+    "src-tauri/src/files/recovery/coordinator/claims.rs": "7a5527b3bbcef9985e3972dccdbac630cf3ea04d46ef1491bbbf238f9369a59d",
+    "src-tauri/src/files/recovery/coordinator/inventory.rs": "a120aff814ad33fa0d45982b01f14ce98ce9c11d85ea459bbea9a1fbc307eb30",
+    "src-tauri/src/files/recovery/coordinator/promotion.rs": "6843fd925f6864a1dffc5719c8ce3412fc4c07d6242480c58b5043f5183fb453",
+    "src-tauri/src/files/recovery/coordinator.rs": "fb5a6a89aa44444df67599f931efa58515a167d4d0e7f15e1d12b2729cd410d6",
+    "src-tauri/src/files/recovery/file_lock/windows.rs": "ee48f66b682240173498926040e29cd82701623ee45793d240cad84ff7de46a4",
+    "src-tauri/src/files/recovery/file_lock.rs": "aa5676a600713b6df835379b9165546f84f6c5de9a504666ec98e4a6e46cf74c",
+    "src-tauri/src/files/recovery/journal.rs": "02989b9a066b1508775253c430d47128188fd4b3b4527c10188cbf71cf1e2f6e",
+    "src-tauri/src/files/recovery/locks.rs": "f9e5fc375fbf19dadd2fccfb0605c81426bce6eefb040b2c720394e3730c0b20",
+    "src-tauri/src/files/recovery/mod.rs": "7f83303479e3ff4d6f62bdb0bba945e341f1d34b297307bf9b231e96212a155f",
+    "src-tauri/src/files/recovery/model.rs": "cc9e3e02c2e73a56dbe9cc5638b0026822daada008e0e90410bc8c258b8b1243",
+    "src-tauri/src/files/recovery/native_path.rs": "a628af6838dd198c23fd6b2a169ad4344e3ca6b3c107511610f48549db07e68b",
+    "src-tauri/src/files/recovery/private_storage/windows.rs": "130567c0633f4658914842ae697db8564941561fa8fdac8ac94e40a26f2b19dc",
+    "src-tauri/src/files/recovery/private_storage.rs": "7accc3b77652428f25639be5687c56dab5381f5c037463db4d616d61fc6ccf2e",
+    "src-tauri/src/files/recovery/rename_outcome.rs": "f1c6ac22e4c8c631ff00809a2e1d9635fb22f176b1435de57b849b3cda9b3178",
+    "src-tauri/src/files/recovery/replacement_artifact.rs": "608aa81aba3ed84e5c50786616d856c066019368357da91bc89fd8f85573edd1",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "e8f4f7a46ccc3a303b5fd52cdf38b9526ddda67e31879c54642d0bdf3e23bb5a",
+    "src-tauri/src/files/recovery/replacement_restoration.rs": "a4587b47eaffd13a97fef16f9b5201170261fe2609c1779fab5f384ee7bf3bce",
+    "src-tauri/src/files/recovery/replacement_restore.rs": "c0d65b5f1c17542de4441438c5a98c83c34736ce8c76bab945c840edd0fd93e0",
+    "src-tauri/src/files/recovery/replacement_transfer.rs": "59a6e14f89fe1ea340e6b1c6f769af8a35afe184d935e86559e5b900392a81d2",
+    "src-tauri/src/files/recovery/replacement_transition.rs": "b4010d5944f59d5fe52519b7e125c1410888dbd75a91530a32116313d4cd1bc9",
+    "src-tauri/src/files/recovery/resources.rs": "0cdc4d1eec1d7828e0d2704e625c9fc4be5f08f4c9fd0bf837691cfa54321b12",
+    "src-tauri/src/files/recovery/runtime.rs": "ce6dc292a6bf41964675e86717fd4e3a05995ad96f68ae75e1346b0c851cee23",
+    "src-tauri/src/files/recovery/service.rs": "5a1f6157630fdf8d00798b3a61e46ec068ea7a0c772947e916cf831f44d0cfd8",
+    "src-tauri/src/files/recovery/storage.rs": "6db448cf143d8d4d40885e23673e1014fc10d8f7f2f2090b84756e182e3bf65d",
+    "src-tauri/src/files/recovery/subscriptions.rs": "344dfd2bab75606454bd8a44564cf02904eb357841fad889e239976a8202015f",
+    "src-tauri/test_support/file_recovery_crash.rs": "c3695e2c8de3d9d09e24d5db99904895f37d785496ff06ec833142904b90d40c",
+    "src-tauri/test_support/file_recovery_native.rs": "bd88a8a418c7d0dbbbf577b1f48aa5aa07e46833c458d420d318f05d08c67cd1",
+    "src-tauri/test_support/recovery_effective_claims.rs": "342d9205cdd560343b4c3756c400818022ee9b65f21338f28782828a1a64963f",
+    "src-tauri/test_support/recovery_effective_claims_adversarial.rs": "ccbf3906282a67a38dcaf286249fca4b3c42ea59782772cacf5ba9ed66d9791d",
+    "src-tauri/test_support/recovery_replacement_execution.rs": "416e2fa865ef1e80809458874275393171ca1112f071b37ea50cc408b2d45b8d",
+    "src-tauri/test_support/renderer_recovery.rs": "b28f745a8a3d0c1a6d30774a30e3900c31e56d55b4b48bde15a122ab6e9d1ef2"
+  },
+  "log_sha256": {
+    "/tmp/recovery-effective-acceptance.log": "b9e9decc3b319c5b628d646c67153d4be813c641e97a7365ef129aa2e40734d4",
+    "/tmp/recovery-effective-architecture.log": "1e330b86131f7a41ccf1555229bd888748995d86d259cab06218b0c469ea22ae",
+    "/tmp/recovery-effective-check.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/recovery-effective-claims-after.log": "eadd8e21d9c96f18ffb64e75e16fe346aef8fd4a1ecde2a50c18d0cacbab7659",
+    "/tmp/recovery-effective-claims-before.log": "ab5b328e112edb55171fcc297dde0daac42921e98f8ed668e77566ae9a5e4f97",
+    "/tmp/recovery-effective-clippy.log": "453bc1d966ef143ae6c047fbd605e7fb5f04e64cfdc9bbfe84d8fac538aa2742",
+    "/tmp/recovery-effective-diff.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/recovery-effective-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/recovery-effective-maps.log": "43b69b97bee39f0574ef8aa0950948ae6cbe341e43b582d74219044d0ada74c0",
+    "/tmp/recovery-effective-native-build.log": "b4f56172f518db9a79928d2de3f5600b367d587d8154d728f6407f54e4d1beaa",
+    "/tmp/recovery-effective-native-crash.log": "b0d9d4c195529cd92366c3348e890f30a9e1c866c3a1b7d82a6fc93f8d2e6001",
+    "/tmp/recovery-effective-native-ui.log": "c8f148214dfb612622bbd967eec0473018cf5b1dfc7ea0874c534b6d412069b0",
+    "/tmp/recovery-effective-regression-final.log": "3ffbb4cb55f52f06c94b883a842d0cfbfdcd502ff37575f89c6e2babc18f6334",
+    "/tmp/recovery-effective-regression.log": "cd980ae4bf98bd48253979a1d42a1e7e1caba9b9518edc1f1447ac4c49796d32"
+  },
+  "harness_sha256": {
+    "/tmp/run-file-recovery-native.sh": "a2418b43a417d1ce7de3c06ba91ae17976178aa07fd76afb2976dbf2ac2dd54d",
+    "/tmp/run-recovery-crash-native.sh": "22fe07b5b0fd1a518d602e24407236ffe1279a39d0c758706124066b2397229c"
+  },
+  "screenshot_sha256": {
+    "screenshots/refactor/repo-health-cleanup/native-file-recovery-restored.png": "501ae56384bfc531d73bb893184fd3ebe2cbae4d9731caf68c62e361bdcf1100",
+    "screenshots/refactor/repo-health-cleanup/native-recovery-restored-editable.png": "8aee00497745365d52ba06da034429f9b749cbaed672ea6671e2842481cafc9c",
+    "screenshots/refactor/repo-health-cleanup/native-recovery-channel-crash.png": "4a22c79a9c6a2816d7f020d1cac8f5e4d8da5e4b928c493ea6ba0deea6c4fa15"
+  }
+}

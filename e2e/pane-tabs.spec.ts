@@ -83,6 +83,8 @@ test.describe("Window tabs with panes", () => {
   });
 
   test("Ctrl+Shift+T restores the last closed pane into its split position", async ({ page }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
     await openDualPane(page);
 
     await page.keyboard.press("Control+w");
@@ -95,6 +97,7 @@ test.describe("Window tabs with panes", () => {
     await expect(
       panes(page).nth(1).locator(".entry-item").filter({ hasText: "user" }).first()
     ).toBeVisible();
+    expect(errors).toEqual([]);
   });
 
   test("a multi-pane tab can be renamed and reopened from the command palette", async ({ page }) => {

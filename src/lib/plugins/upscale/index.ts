@@ -6,7 +6,7 @@
  *   - a context-menu item (single raster image selected → open the dialog)
  *   - a command-palette entry ("Upscale: Upscale Image…")
  *   - a modal dialog (scale factor / output filename)
- *   - completion/error event listeners (→ jobs + toast + pane refresh)
+ * Job completion is owned by the window-lifetime plugin-jobs controller.
  *
  * The backend command (`start_upscale_job` in src-tauri/src/upscale.rs)
  * uploads the image to fal's CDN, runs the SeedVR2 queue job, and writes the
@@ -14,7 +14,6 @@
  */
 
 import type { Plugin, PluginContext } from "../api";
-import { basename } from "$lib/domain/path";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import type { FileEntry } from "$lib/domain/file";
 import UpscaleDialog from "./UpscaleDialog.svelte";
@@ -115,19 +114,5 @@ export const upscalePlugin: Plugin = {
       },
     });
 
-    // 5. Completion / error events → jobs, toast, pane refresh.
-    ctx.events.listen<{ jobId: number; outputPath: string }>(
-      "upscale-complete",
-      ({ jobId, outputPath }) => {
-        ctx.jobs.complete(jobId, outputPath);
-        ctx.toast.show(`Upscale complete: ${basename(outputPath)}`, "success");
-        void ctx.workspace.refreshPanes();
-      },
-    );
-
-    ctx.events.listen<{ jobId: number; error: string }>("upscale-error", ({ jobId, error }) => {
-      ctx.jobs.fail(jobId, error);
-      ctx.toast.error(`Upscale failed: ${error.slice(0, 100)}`);
-    });
   },
 };

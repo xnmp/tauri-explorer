@@ -1,0 +1,130 @@
+{
+  "date": "2026-09-09",
+  "scope": "Registered Linux backend recovery list/inspect/restore commands through shared lazy runtime, with lossless renderer counters",
+  "contracts": [
+    "Bounded catalog/index inventory validates all operation/reservation evidence without user-volume probes, lock reclamation or action offers",
+    "Catalog-only records have no invented generation; initial index failure can display catalog attention without rebuilding SQLite",
+    "Initialized runtime errors cannot replace a live indexed view with revision zero",
+    "Inspection freshly claims exact ID/generation and native OS owner before root/manifest and endpoint probes outside admission",
+    "Resolution claims again, rejects stale generations, revalidates endpoints and executes the canonical restoration state machine",
+    "Busy/stale/conflicting evidence preserves user/artifact entries; restoration retains the copied publication and catalog; no discard action is advertised",
+    "Backend list/inspect/resolve are registered Tauri async commands; inspect/resolve acquire renderer session ownership and accept no renderer paths",
+    "Runtime shares lazy coordinator initialization with mutation admission, retains one storage path and runs filesystem work on blocking tasks",
+    "Generation/revision IPC fields use canonical decimal strings; native parsing is bounded positive i64 and frontend ordering is exact through i64::MAX"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: file_mutation:: --test-threads=1",
+      "log": "/tmp/recovery-service-acceptance.log",
+      "exit_code": 0,
+      "passed": 237,
+      "failed": 0,
+      "ignored": 6,
+      "scope": "213 recovery tests plus 24 mutation tests, including native files, current-generation reclaim, restoration, initial/live index loss and production Runtime dispatch; existing subprocess crash cases remain included",
+      "final_source_note": "After passing run, removed a Clippy-reported needless borrow in the counter test; production code unchanged. Final all-target Clippy compiles that exact test source."
+    },
+    "frontend": {
+      "command": "bunx vitest run tests/file-recovery-state.test.ts tests/api/file-recovery.test.ts",
+      "log": "/tmp/recovery-service-frontend-final.log",
+      "exit_code": 0,
+      "files": 2,
+      "passed": 20,
+      "scope": "Snapshot ordering, lifecycle/action contracts, bounded decimal counters and renderer-session IPC arguments; mocked IPC is not native command delivery acceptance"
+    },
+    "typecheck": {
+      "command": "bun run check",
+      "log": "/tmp/recovery-service-check-final.log",
+      "exit_code": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    "clippy": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-service-clippy-final.log",
+      "exit_code": 0,
+      "library_dead_code_warnings": 43,
+      "test_specific_warnings": 0
+    },
+    "architecture": {
+      "command": "bun run lint:arch",
+      "log": "/tmp/recovery-service-architecture.log",
+      "exit_code": 0
+    },
+    "format": {
+      "command": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+      "exit_code": 0
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "exit_code": 0,
+      "coverage": "415/415 tracked source files; new untracked source files explicitly indexed",
+      "unresolvable_references": 0
+    },
+    "diff": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "causal_regression": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib inspection_and_restore_preserve_generations_beyond_javascript_integer_precision -- --test-threads=1",
+      "log": "/tmp/recovery-service-counter-before.log",
+      "exit_code": 101,
+      "failed": 1,
+      "method": "Temporarily removed only two serde decimal-string field annotations. Native fixture uses journal revision/generation 9007199254740993; wire-contract assertion fails Number versus decimal string. Restored model byte-for-byte from /tmp/recovery-service-model-final.rs before accepted suite.",
+      "restored_model_sha256": "cc9e3e02c2e73a56dbe9cc5638b0026822daada008e0e90410bc8c258b8b1243"
+    },
+    "independent_review": {
+      "agent": "recovery_inspection_review_sol",
+      "model": "gpt-5.6-sol",
+      "verdict": "CONFIRMED within scoped limitations",
+      "method": "Read-only adversarial source/tests review plus independent actual log reads, model restoration comparison and scoped diff check",
+      "findings_fixed": [
+        "Numeric generation boundary cannot represent full journal range; replaced numeric IPC with canonical decimal strings",
+        "Removed test-specific needless borrow reported by Clippy"
+      ],
+      "blocking_findings": []
+    }
+  },
+  "limits": [
+    "Subscription/unsubscription commands are not registered; recovery store startup/UI activation is not connected",
+    "No forward production replacement journaling caller is enabled by this checkpoint",
+    "Discard/retirement, overwrite Undo/retention and early/unindexed reconciliation remain implementation work; immutable discovery alone grants no action",
+    "No native-binary IPC/GUI E2E run or browser interaction acceptance performed this slice",
+    "Other-platform list returns empty and inspect/resolve report unsupported; Windows/macOS runtime acceptance remains open",
+    "No power-loss, recursive content-integrity or arbitrary syscall-gap atomicity guarantee; EntryVersion retains its documented limitations",
+    "No startup/half-bounce or application-latency measurement; no additional startup hook activated",
+    "Full Rust suite was not rerun; current native evidence is the targeted 237-test recovery/mutation run",
+    "Changes remain local; no commit/push/merge/publication attempted"
+  ],
+  "references": [
+    "https://www.rfc-editor.org/rfc/rfc8259.html#section-6",
+    "https://protobuf.dev/programming-guides/json/#int64"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/commands.rs": "0d4039f0d844b9bec2e9798c11bcd449d30c92acc928c3311a83df50c45e3948",
+    "src-tauri/src/files/recovery/coordinator.rs": "eaa35313c0a88bc456fc3d0d139a0869ab39c677f86fa39846ba09ca22410c13",
+    "src-tauri/src/files/recovery/coordinator/inventory.rs": "a120aff814ad33fa0d45982b01f14ce98ce9c11d85ea459bbea9a1fbc307eb30",
+    "src-tauri/src/files/recovery/coordinator/promotion.rs": "6843fd925f6864a1dffc5719c8ce3412fc4c07d6242480c58b5043f5183fb453",
+    "src-tauri/src/files/recovery/model.rs": "cc9e3e02c2e73a56dbe9cc5638b0026822daada008e0e90410bc8c258b8b1243",
+    "src-tauri/src/files/recovery/mod.rs": "af1c2d9149d50a5023f7aacea48dfe99079f6391d13d6e33cc198a601fd0d77d",
+    "src-tauri/src/files/recovery/replacement_restore.rs": "c0d65b5f1c17542de4441438c5a98c83c34736ce8c76bab945c840edd0fd93e0",
+    "src-tauri/src/files/recovery/runtime.rs": "d12b3213dee00b7533547217e4d398aac5f3e2484d2d23c212e0aea1e7fefc0e",
+    "src-tauri/src/files/recovery/service.rs": "254b0422bb85e872ae3ff19d1179a2e2dce05907ca7ab3498387d328b754aded",
+    "src-tauri/src/lib.rs": "521bfc14bb0933644e37c30154f4e22c13896c1884d32d98a95ba61d31216d39",
+    "src-tauri/test_support/recovery_inventory.rs": "eeeb1618dd8a28beb11a7e5a9820d76d6b15abd9e11d3fbda7804e4238bd9237",
+    "src-tauri/test_support/recovery_operation_fixture.rs": "ba4676c4f3d95967cdc9217f47b4c0c367bc13d8f2951f45dc5f926812383381",
+    "src-tauri/test_support/recovery_service.rs": "641760d86328af83c74ca6ab1f9d565ab1f156d0d05795a147bdc4ccdaa696dd",
+    "src/lib/api/file-recovery.ts": "4e01aa6a503a5b247997f6a74b7e3bd85c472dfbfd78d905bdd44d12f3cd4e7f",
+    "src/lib/domain/file-recovery.ts": "574cd7f2a951b8ac5e8b9b2635f1319dda2a7faa99731946e9d94b556e94a8a9",
+    "src/lib/state/file-recovery.svelte.ts": "fba4e9f9845a866074fce826c55e0ed06778e42d9603ed21546c0ac25c1b9c97",
+    "tests/api/file-recovery.test.ts": "f93ca1e79191d1ba6f9838f0ea7f13277fe1119411270db24effc5894b8a71e1",
+    "tests/file-recovery-state.test.ts": "5e1c8c4e3490dbd8de8fd50d33a74316732abf3391ebc30aa766074ff2f50057"
+  },
+  "log_sha256": {
+    "/tmp/recovery-service-acceptance.log": "d718245fe536a6727fc7352e2b33e06c4852d29a4d9a814631d5e9bce965e1e0",
+    "/tmp/recovery-service-frontend-final.log": "b276c213d0e61b07ea099c3be1fa509e4bde1115f34ee729bc44c15f8ddde4a4",
+    "/tmp/recovery-service-check-final.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/recovery-service-clippy-final.log": "f6a186c4164e28dff6e4ab018b11c596a26b940d1a004381c8ef5668830dcac1",
+    "/tmp/recovery-service-architecture.log": "1e330b86131f7a41ccf1555229bd888748995d86d259cab06218b0c469ea22ae",
+    "/tmp/recovery-service-counter-before.log": "644a21d683d4396e3e3a35f6643454ebb21a8f240cb89ff3b033357f19e260aa"
+  }
+}

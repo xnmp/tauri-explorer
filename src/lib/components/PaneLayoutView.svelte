@@ -2,86 +2,58 @@
   PaneLayoutView — recursive renderer for a tab's pane layout tree (#228).
   A leaf renders an ExplorerPane; a split renders its two children side by
   side (row) or stacked (column) with a resizable divider between them.
-  Each split node owns its own divider drag; the ratio lives in the tree
-  (windowTabsManager.setSplitRatio).
+  The container owns divider input; this renderer consumes shared measured
+  geometry while saved ratios remain in the window-tab tree.
 -->
 <script lang="ts">
-  import type { PaneNode } from "$lib/domain/pane-layout";
+  import { someLeaf, type PaneNode } from "$lib/domain/pane-layout";
+  import type { PaneGeometry } from "$lib/domain/pane-viewport";
+  import type { PaneDividers } from "$lib/composables/use-pane-dividers.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
   import PaneLayoutView from "./PaneLayoutView.svelte";
 
-  const { node }: { node: PaneNode } = $props();
-
-  // Resize state (only used when node is a split)
-  let isResizing = $state(false);
-  let containerRef = $state<HTMLElement | null>(null);
-  // Container rect is stable for the duration of a drag; cache it so
-  // mousemove never forces a layout read.
-  let containerRect: DOMRect | null = null;
-  let pendingClient: number | null = null;
-  let moveRafId = 0;
-
-  function startResize(event: MouseEvent) {
-    event.preventDefault();
-    isResizing = true;
-    containerRect = containerRef?.getBoundingClientRect() ?? null;
-  }
-
-  function applyPendingResize() {
-    if (pendingClient === null || !containerRect || node.type !== "split") return;
-    const ratio =
-      node.direction === "row"
-        ? (pendingClient - containerRect.left) / containerRect.width
-        : (pendingClient - containerRect.top) / containerRect.height;
-    windowTabsManager.setSplitRatio(node.id, ratio);
-    pendingClient = null;
-  }
-
-  // rAF-coalesced: mousemove can fire far above frame rate on high-poll-rate
-  // mice; applying every event triggers a full pane re-layout each time.
-  function handleResize(event: MouseEvent) {
-    if (!isResizing || node.type !== "split") return;
-    pendingClient = node.direction === "row" ? event.clientX : event.clientY;
-    if (moveRafId) return;
-    moveRafId = requestAnimationFrame(() => {
-      moveRafId = 0;
-      applyPendingResize();
-    });
-  }
-
-  function endResize() {
-    if (!isResizing) return;
-    if (moveRafId) {
-      cancelAnimationFrame(moveRafId);
-      moveRafId = 0;
-    }
-    applyPendingResize();
-    isResizing = false;
-    containerRect = null;
-  }
+  const { node, geometry, dividers }: { node: PaneNode; geometry?: PaneGeometry; dividers: PaneDividers } = $props();
+  const materialized = $derived(someLeaf(node, windowTabsManager.isPaneReady));
+  const split = $derived(geometry?.splits.get(node.id));
 </script>
 
-<svelte:window onmousemove={handleResize} onmouseup={endResize} />
-
-{#if node.type === "leaf"}
-  <ExplorerPane paneId={node.id} />
+{#if !materialized}
+  <div class="pane-restoring" aria-busy="true">Restoring panes…</div>
+{:else if node.type === "leaf"}
+  {@const explorer = windowTabsManager.getExplorer(node.id)}
+  {#if explorer}
+    {#key explorer}
+      <ExplorerPane paneId={node.id} {explorer} />
+    {/key}
+  {:else}
+    <div role="alert">Unable to load this pane.</div>
+  {/if}
 {:else}
   <div
     class="pane-split {node.direction}"
-    class:resizing={isResizing}
-    bind:this={containerRef}
-    style="--split-ratio: {node.ratio}"
+    class:resizing={dividers.activeId === node.id}
+    style="--split-ratio: {split?.ratio ?? node.ratio}"
   >
-    <div class="split-child first">
-      <PaneLayoutView node={node.first} />
+    <div class="split-child first" id={`pane-region-${node.id}`}>
+      <PaneLayoutView node={node.first} {geometry} {dividers} />
     </div>
 
-    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is a focusable range control with arrow/Home/End input. -->
     <div
       class="pane-divider"
-      onmousedown={startResize}
+      onpointerdown={(event) => { if (node.type === "split") dividers.start(event, node); }}
+      onpointermove={dividers.move}
+      onpointerup={dividers.finish}
+      onpointercancel={dividers.cancelPointer}
+      onlostpointercapture={dividers.cancelPointer}
+      onkeydown={(event) => { if (node.type === "split") dividers.key(event, node); }}
       role="separator"
+      tabindex="0"
+      aria-controls={`pane-region-${node.id}`}
+      aria-valuemin={(split?.min ?? 0.1) * 100}
+      aria-valuemax={(split?.max ?? 0.9) * 100}
+      aria-valuenow={(split?.ratio ?? node.ratio) * 100}
       aria-orientation={node.direction === "row" ? "vertical" : "horizontal"}
       aria-label="Resize panes"
     >
@@ -89,12 +61,24 @@
     </div>
 
     <div class="split-child second">
-      <PaneLayoutView node={node.second} />
+      <PaneLayoutView node={node.second} {geometry} {dividers} />
     </div>
   </div>
 {/if}
 
 <style>
+  .pane-restoring {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+
   .pane-split {
     display: flex;
     flex: 1;
@@ -132,15 +116,8 @@
     flex: calc(1 - var(--split-ratio, 0.5));
   }
 
-  .pane-split.row > .split-child {
-    min-width: 120px;
-  }
-
-  .pane-split.column > .split-child {
-    min-height: 80px;
-  }
-
   .pane-divider {
+    touch-action: none;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -152,14 +129,14 @@
   }
 
   .pane-split.row > .pane-divider {
-    width: 6px;
+    width: var(--pane-divider-size, 6px);
     border-left: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     border-right: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     cursor: col-resize;
   }
 
   .pane-split.column > .pane-divider {
-    height: 6px;
+    height: var(--pane-divider-size, 6px);
     border-top: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     border-bottom: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     cursor: row-resize;
@@ -168,13 +145,16 @@
   /* Island mode: panes are separate islands (see ExplorerPane), so the
      divider is a clear gap matching the inter-island gap, not a drawn line. */
   :global([data-vibrancy]) .pane-split.row > .pane-divider {
-    width: 8px;
     border-color: transparent;
   }
 
   :global([data-vibrancy]) .pane-split.column > .pane-divider {
-    height: 8px;
     border-color: transparent;
+  }
+
+  .pane-divider:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
   }
 
   .pane-divider:hover {

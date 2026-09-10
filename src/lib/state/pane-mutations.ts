@@ -2,49 +2,34 @@
  * Per-pane file mutations: create / rename / delete / symlink / archive.
  * Extracted from explorer.svelte.ts.
  *
- * Mutations update `coreState` in place (it is a $state proxy, so
- * reactivity is preserved) and mark the local-mutation cooldown so the
- * filesystem watcher's follow-up event doesn't re-fetch what we already
- * applied.
+ * Filesystem success publishes durable effects independently of the initiating
+ * pane. View updates borrow that pane's navigation/lifetime, and dialog closes
+ * borrow the exact editor opening that admitted the operation.
  */
 
-import {
-  createDirectory,
-  createEmptyFile,
-  renameEntry as apiRenameEntry,
-  deleteEntry,
-  deleteMultipleEntries,
-  deleteEntryPermanent,
-  extractArchive as apiExtractArchive,
-  compressToZip as apiCompressToZip,
-  cancelCompress as apiCancelCompress,
-  cancelExtract as apiCancelExtract,
-  createSymlink as apiCreateSymlink,
-  type ApiResult,
-  type ZipProgressEvent,
-} from "$lib/api/files";
+import { createDirectory, createEmptyFile, renameEntry as apiRenameEntry, deleteEntries, createSymlink as apiCreateSymlink } from "$lib/api/files";
+import { extractArchive as apiExtractArchive, compressToZip as apiCompressToZip, cancelCompress as apiCancelCompress, cancelExtract as apiCancelExtract, type ZipProgressEvent } from "$lib/api/archive";
+import { type ApiResult } from "$lib/api/common";
 import { operationsManager } from "./operations.svelte";
-import type { FileEntry } from "$lib/domain/file";
+import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
+import { affectedBatchPaths, fileBatchError } from "$lib/domain/file-batch-outcome";
 import type { ExplorerCoreState } from "./types";
 import { broadcastFileChange } from "./file-events";
 import { clipboardStore } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
-import { undoStore } from "./undo.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { toastStore } from "./toast.svelte";
 import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
-import { basename, joinPath, isInsideDir, isUncPath, parentDir } from "$lib/domain/path";
+import { basename, joinPath, isInsideDir, parentDir } from "$lib/domain/path";
 
 export interface PaneMutationContext {
   coreState: ExplorerCoreState;
   /** Replace the selection via the store's in-place SvelteSet mutation —
    *  never reassign `coreState.selectedPaths` (kills granular reactivity). */
   setSelection: (next: Iterable<string>) => void;
-  displayEntries: () => FileEntry[];
-  markLocalMutation: () => void;
-  /** Parent of the current directory, or null at the root. */
-  getParentPath: () => string | null;
-  navigateTo: (path: string) => Promise<void>;
+  capture: () => { path: string; current: () => boolean; selectionCurrent: () => boolean };
+  alive: () => boolean;
+  navigateTo: (path: string) => Promise<unknown>;
   refreshSilent: () => void;
 }
 
@@ -53,68 +38,78 @@ export function createPaneMutations(ctx: PaneMutationContext) {
 
   /** Leave the current directory if it was (inside) one of `deletedPaths`. */
   async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
-    const current = coreState.currentPath;
-    const shouldNavigateAway = [...deletedPaths].some(
-      (dp) => isInsideDir(current, dp)
-    );
-    if (shouldNavigateAway) {
-      const parentPath = ctx.getParentPath();
-      if (parentPath) await ctx.navigateTo(parentPath);
+    if (!ctx.alive()) return;
+    let destination = coreState.currentPath;
+    while ([...deletedPaths].some((path) => isInsideDir(destination, path))) {
+      const parent = parentDir(destination);
+      if (parent === destination || !parent) return;
+      destination = parent;
     }
+    if (destination !== coreState.currentPath) await ctx.navigateTo(destination);
   }
 
-  async function createFolder(name: string): Promise<string | null> {
-    if (!coreState.currentPath) return "No current directory";
+  async function createEntry(
+    name: string,
+    create: (path: string, name: string) => Promise<ApiResult<FileMutationReceipt>>,
+  ): Promise<string | null> {
+    const origin = ctx.capture();
+    if (!origin.current()) return "Pane is closed";
+    if (!origin.path) return "No current directory";
+    const result = await create(origin.path, name);
+    if (!result.ok) return result.error;
+    if (result.warning) toastStore.error(result.warning);
 
-    ctx.markLocalMutation();
-    const result = await createDirectory(coreState.currentPath, name);
-
-    if (result.ok) {
-      coreState.entries = [...coreState.entries, result.data];
-      ctx.setSelection([result.data.path]);
-      const idx = ctx.displayEntries().findIndex((e) => e.path === result.data.path);
-      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
-      ctx.markLocalMutation();
-      broadcastFileChange([coreState.currentPath]);
-      return null;
+    const { path, entry } = result.data;
+    if (origin.current()) {
+      if (entry) {
+        // The watcher may have observed the new entry before the IPC reply.
+        coreState.entries = [...coreState.entries.filter((candidate) => candidate.path !== path), entry];
+      } else {
+        ctx.refreshSilent();
+      }
+      if (origin.selectionCurrent()) {
+        ctx.setSelection([path]);
+        coreState.selectionAnchorPath = path;
+        coreState.cursorPath = path;
+      }
     }
-    return result.error;
+    broadcastFileChange([parentDir(path)]);
+    return null;
   }
 
-  async function createFile(name: string): Promise<string | null> {
-    if (!coreState.currentPath) return "No current directory";
-
-    ctx.markLocalMutation();
-    const result = await createEmptyFile(coreState.currentPath, name);
-
-    if (result.ok) {
-      coreState.entries = [...coreState.entries, result.data];
-      ctx.setSelection([result.data.path]);
-      const idx = ctx.displayEntries().findIndex((e) => e.path === result.data.path);
-      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
-      ctx.markLocalMutation();
-      broadcastFileChange([coreState.currentPath]);
-      return null;
-    }
-    return result.error;
-  }
+  const createFolder = (name: string) => createEntry(name, createDirectory);
+  const createFile = (name: string) => createEntry(name, createEmptyFile);
 
   async function rename(newName: string): Promise<string | null> {
+    const origin = ctx.capture();
+    if (!origin.current()) return "Pane is closed";
+    const session = dialogStore.fileOperationSession;
     const renamingEntry = dialogStore.renamingEntry;
     if (!renamingEntry) return "No entry selected for rename";
 
-    const oldName = renamingEntry.name;
     const oldPath = renamingEntry.path;
-    ctx.markLocalMutation();
     const result = await apiRenameEntry(oldPath, newName);
 
     if (result.ok) {
-      undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
-      renameThumbnailCache(oldPath, result.data.path);
-      coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
-      clipboardStore.updatePath(oldPath, result.data);
-      ctx.markLocalMutation();
-      dialogStore.cancelRename();
+      const { path, entry } = result.data;
+      if (result.warning) toastStore.error(result.warning);
+      renameThumbnailCache(oldPath, path);
+      if (origin.current()) {
+        if (entry) {
+          coreState.entries = coreState.entries.map((candidate) => candidate.path === oldPath ? entry : candidate);
+        }
+        // Preserve identity through a rename without restoring selection or focus
+        // that the user changed while the filesystem operation was pending.
+        if (coreState.selectedPaths.has(oldPath)) {
+          ctx.setSelection([...coreState.selectedPaths].map((selectedPath) => selectedPath === oldPath ? path : selectedPath));
+        }
+        if (coreState.selectionAnchorPath === oldPath) coreState.selectionAnchorPath = path;
+        if (coreState.cursorPath === oldPath) coreState.cursorPath = path;
+        if (!entry) ctx.refreshSilent();
+      }
+      clipboardStore.rekeyPath(oldPath, path, entry);
+      dialogStore.cancelRename(session);
+      broadcastFileChange([...new Set([parentDir(oldPath), parentDir(path)])]);
       frecencyStore.pruneNonExistent();
       return null;
     }
@@ -125,60 +120,56 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     entriesArg?: readonly FileEntry[],
     isPermanentArg?: boolean,
   ): Promise<string | null> {
+    const origin = ctx.capture();
+    if (!origin.current()) return "Pane is closed";
+    // Direct actions (including Miller columns) do not own the global dialog.
+    const session = entriesArg === undefined ? dialogStore.fileOperationSession : null;
     const entries = entriesArg ?? dialogStore.deletingEntries;
     if (entries.length === 0) return "No entries selected for delete";
     const requestedPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
-    const paths = entries.map((e) => e.path);
-    // UNC/WSL locations have no Recycle Bin — such deletes are always permanent
-    // (the backend removes them directly). Treat them as permanent here too, so
-    // we don't record a "restore from trash" undo that could never succeed.
-    const isPermanent = requestedPermanent || paths.some(isUncPath);
+    const paths = [...new Set(entries.map((e) => e.path))];
+    const batch = await deleteEntries(paths, requestedPermanent);
+    if (!batch.ok) return batch.error;
+    if (batch.warning) toastStore.error(batch.warning);
+    const removed = batch.data.succeeded;
+    const error = fileBatchError(batch.data);
+    const affected = affectedBatchPaths(batch.data);
+    if (affected.length) broadcastFileChange([...new Set(affected.map(parentDir))]);
 
-    let result: { ok: boolean; error?: string };
-
-    ctx.markLocalMutation();
-    if (isPermanent) {
-      const errors: string[] = [];
-      for (const path of paths) {
-        const r = await deleteEntryPermanent(path);
-        if (!r.ok) errors.push(r.error);
+    if (removed.length > 0) {
+      const deletedPaths = new Set(removed);
+      if (origin.current()) {
+        coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
+        ctx.setSelection(
+          [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
+        );
       }
-      result = errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true };
-    } else {
-      result = entries.length === 1
-        ? await deleteEntry(paths[0])
-        : await deleteMultipleEntries(paths);
-    }
-
-    if (result.ok) {
-      if (!isPermanent) {
-        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
-      }
-      const deletedPaths = new Set(paths);
-      coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
-      ctx.setSelection(
-        [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
-      );
-      ctx.markLocalMutation();
-      dialogStore.cancelDelete();
+      if (!error) dialogStore.cancelDelete(session);
       await navigateAwayIfNeeded(deletedPaths);
-      broadcastFileChange([...new Set(paths.map(parentDir))]);
       frecencyStore.pruneNonExistent();
-      return null;
     }
-    return result.error ?? "Unknown error";
+    return error;
   }
 
   async function createSymlinkForEntry(path: string): Promise<void> {
+    const origin = ctx.capture();
+    if (!origin.current() || !origin.path) return;
     const name = basename(path);
     const linkName = `${name} - Link`;
-    const linkPath = joinPath(coreState.currentPath, linkName);
+    const linkPath = joinPath(origin.path, linkName);
     const result = await apiCreateSymlink(path, linkPath);
     if (result.ok) {
-      coreState.entries = [...coreState.entries, result.data];
-      ctx.markLocalMutation();
-      broadcastFileChange([coreState.currentPath]);
+      const { path: createdPath, entry } = result.data;
+      if (result.warning) toastStore.error(result.warning);
+      if (origin.current()) {
+        if (entry) {
+          coreState.entries = [...coreState.entries.filter((candidate) => candidate.path !== createdPath), entry];
+        } else {
+          ctx.refreshSilent();
+        }
+      }
+      broadcastFileChange([parentDir(createdPath)]);
     } else {
       toastStore.show(`Symlink failed: ${result.error}`, "error");
     }
@@ -188,7 +179,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
    * Run a long archive operation (compress/extract) with the shared progress
    * dialog: listen for byte-progress events before invoking (so fast jobs
    * can't emit first), relay a dialog Cancel to the backend, and settle the
-   * operation. Returns true on success so the caller can refresh.
+   * operation. Returns the actual output path on success.
    */
   async function runArchiveJob(opts: {
     type: "compress" | "extract";
@@ -198,7 +189,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     failPrefix: string;
     invoke: (jobId: number) => Promise<ApiResult<string>>;
     cancel: (jobId: number) => Promise<void>;
-  }): Promise<boolean> {
+  }): Promise<string | null> {
     // Client-generated job id keys progress events and backend cancellation.
     const jobId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     const op = operationsManager.startOperation(opts.type, opts.label);
@@ -222,12 +213,18 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       // Not running in Tauri — the mock completes instantly.
     }
 
-    const result = await opts.invoke(jobId);
-    unlisten?.();
+    let result: ApiResult<string>;
+    try {
+      result = await opts.invoke(jobId);
+    } catch (error) {
+      result = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      unlisten?.();
+    }
 
     if (result.ok) {
       operationsManager.completeOperation(op.id);
-      return true;
+      return result.data;
     }
     if (operationsManager.isOperationCancelled(op.id) || /cancelled/i.test(result.error)) {
       // User-initiated cancel: the backend removed the partial output.
@@ -237,11 +234,13 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       operationsManager.failOperation(op.id, result.error);
       toastStore.show(`${opts.failPrefix}: ${result.error}`, "error");
     }
-    return false;
+    return null;
   }
 
   async function extractArchive(path: string, here: boolean): Promise<void> {
-    const ok = await runArchiveJob({
+    const origin = ctx.capture();
+    if (!origin.current()) return;
+    const output = await runArchiveJob({
       type: "extract",
       label: path,
       event: "unzip-progress",
@@ -250,15 +249,16 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       invoke: (jobId) => apiExtractArchive(path, here, jobId),
       cancel: apiCancelExtract,
     });
-    if (ok) {
-      ctx.markLocalMutation();
-      ctx.refreshSilent();
-      broadcastFileChange([coreState.currentPath]);
+    if (output !== null) {
+      if (origin.current()) ctx.refreshSilent();
+      broadcastFileChange([...new Set([parentDir(path), output])]);
     }
   }
 
   async function compressToZip(paths: string[]): Promise<void> {
-    const ok = await runArchiveJob({
+    const origin = ctx.capture();
+    if (!origin.current()) return;
+    const output = await runArchiveJob({
       type: "compress",
       label: paths[0] ?? "",
       event: "zip-progress",
@@ -267,10 +267,9 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       invoke: (jobId) => apiCompressToZip(paths, jobId),
       cancel: apiCancelCompress,
     });
-    if (ok) {
-      ctx.markLocalMutation();
-      ctx.refreshSilent();
-      broadcastFileChange([coreState.currentPath]);
+    if (output !== null) {
+      if (origin.current()) ctx.refreshSilent();
+      broadcastFileChange([parentDir(output)]);
     }
   }
 

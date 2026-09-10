@@ -8,8 +8,10 @@
   (double-click) — renaming also saves the layout as a workspace.
 -->
 <script lang="ts">
-  import { tick } from "svelte";
-  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { tick, onDestroy } from "svelte";
+  import { slide } from "svelte/transition";
+  import { MediaQuery } from "svelte/reactivity";
+  import { windowTabsManager, type TabTransfer } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getDropSourcePaths } from "$lib/state/drop-operations";
   import { handleFileDropMany } from "$lib/state/drop-operations";
@@ -49,22 +51,7 @@
     ),
   );
 
-  // Track tab IDs that existed on first render to skip entrance animation.
-  // Initialized lazily on the first render pass so it sees the window's
-  // then-current tabs without touching reactive state at setup time.
-  let knownTabIds: Set<string> | null = null;
-
-  // Track tabs being closed (for exit animation)
-  let closingTabId = $state<string | null>(null);
-
-  function isNewTab(tabId: string): boolean {
-    if (!knownTabIds) {
-      knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
-    }
-    if (knownTabIds.has(tabId)) return false;
-    knownTabIds.add(tabId);
-    return true;
-  }
+  const reducedMotion = new MediaQuery("(prefers-reduced-motion: reduce)");
 
   function handleTabClick(tabId: string): void {
     windowTabsManager.setActiveTab(tabId);
@@ -72,22 +59,13 @@
 
   function handleTabClose(event: MouseEvent, tabId: string): void {
     event.stopPropagation();
-    closingTabId = tabId;
-    // Wait for close animation to finish, then actually remove
-    setTimeout(() => {
-      windowTabsManager.closeTab(tabId);
-      closingTabId = null;
-    }, 200);
+    windowTabsManager.closeTab(tabId);
   }
 
   function handleTabMiddleClick(event: MouseEvent, tabId: string): void {
     if (event.button === 1) {
       event.preventDefault();
-      closingTabId = tabId;
-      setTimeout(() => {
-        windowTabsManager.closeTab(tabId);
-        closingTabId = null;
-      }, 200);
+      windowTabsManager.closeTab(tabId);
     }
   }
 
@@ -154,6 +132,8 @@
 
   let tabPtr: {
     tabId: string;
+    dragId: string | null;
+    transfer: TabTransfer | null;
     startX: number;
     startY: number;
     active: boolean;
@@ -174,8 +154,11 @@
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest(".tab-close")) return; // close btn owns its clicks
     if (renamingTabId === tabId) return; // rename input owns the pointer
+    cancelTabDrag();
     tabPtr = {
       tabId,
+      dragId: null,
+      transfer: null,
       startX: event.clientX,
       startY: event.clientY,
       active: false,
@@ -217,16 +200,17 @@
     if (!tabPtr) return;
     if (!tabPtr.active) {
       if (Math.hypot(event.clientX - tabPtr.startX, event.clientY - tabPtr.startY) < 5) return;
+      const transfer = windowTabsManager.beginTabTransfer(tabPtr.tabId);
+      if (!transfer) { cancelTabDrag(); return; }
+      tabPtr.transfer = transfer;
+      tabPtr.dragId = tabDragState.start({
+        sourceWindow: windowTabsManager.windowLabel,
+        tabId: tabPtr.tabId,
+        snapshot: transfer.snapshot,
+      });
+      if (!tabPtr.dragId) { cancelTabDrag(); return; }
       tabPtr.active = true;
       draggingTabId = tabPtr.tabId;
-      const snapshot = windowTabsManager.exportTab(tabPtr.tabId);
-      if (snapshot) {
-        tabDragState.start({
-          sourceWindow: windowTabsManager.windowLabel,
-          tabId: tabPtr.tabId,
-          snapshot,
-        });
-      }
       tabPtr.ghost = makeTabGhost(tabPtr.tabId);
     }
 
@@ -245,7 +229,7 @@
       !tabAreaAtPoint(event.clientX, event.clientY) &&
       Math.abs(event.clientY - tabPtr.startY) > DETACH_THRESHOLD_PX
     ) {
-      void detachIntoWindow(event);
+      void detachIntoWindow(event).catch(() => {});
       return;
     }
 
@@ -266,14 +250,16 @@
     ptr.ghost = null;
 
     const pending = tabDragState.read();
-    if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) {
+    if (!pending || pending.id !== ptr.dragId || pending.sourceWindow !== windowTabsManager.windowLabel) {
       ptr.detaching = false;
+      ptr.transfer?.cancel();
+      if (tabPtr === ptr) cancelTabDrag();
       return;
     }
 
     // Dragging the only tab = move the whole window, natively.
     if (windowTabsManager.totalTabCount === 1) {
-      tabDragState.clear();
+      ptr.detaching = false;
       cancelTabDrag();
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -284,40 +270,47 @@
       return;
     }
 
-    const dpr = window.devicePixelRatio || 1;
-    const win = await openNewWindow(pending.snapshot.path, undefined, pending.snapshot, {
-      x: event.screenX * dpr,
-      y: event.screenY * dpr,
-    });
-    windowTabsManager.removeTransferredTab(pending.tabId);
-    tabDragState.clear();
-    if (!tabPtr) {
-      // Released while the window was being created — it stays at the cursor.
-      return;
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const win = await openNewWindow(pending.snapshot.path, undefined, pending.snapshot, {
+        x: event.screenX * dpr,
+        y: event.screenY * dpr,
+      });
+      if (!win || win.kind !== "fresh") return;
+      ptr.transfer?.complete();
+      tabDragState.clear(ptr.dragId);
+      // A released or replaced pointer cannot acquire this child for following.
+      if (tabPtr === ptr) ptr.detachedWin = win.window;
+    } finally {
+      ptr.transfer?.cancel();
+      ptr.detaching = false;
+      if (tabPtr === ptr && !ptr.detachedWin) cancelTabDrag();
     }
-    tabPtr.detachedWin = win;
-    tabPtr.detaching = false;
   }
 
   /** rAF-throttled reposition of the detached window under the cursor. */
   function followDetachedWindow(event: MouseEvent): void {
     if (!tabPtr?.detachedWin) return;
     if (tabPtr.followRaf) return;
+    const ptr = tabPtr;
+    const child = ptr.detachedWin;
     const { screenX, screenY } = event;
-    tabPtr.followRaf = requestAnimationFrame(() => {
-      if (!tabPtr?.detachedWin) return;
-      tabPtr.followRaf = 0;
+    ptr.followRaf = requestAnimationFrame(() => {
+      ptr.followRaf = 0;
+      if (tabPtr !== ptr || ptr.detachedWin !== child) return;
       const dpr = window.devicePixelRatio || 1;
-      void import("@tauri-apps/api/dpi").then(({ PhysicalPosition }) =>
-        tabPtr?.detachedWin
-          ?.setPosition(new PhysicalPosition(Math.round(screenX * dpr - 120), Math.round(screenY * dpr - 16)))
-          .catch(() => {}),
-      );
+      void import("@tauri-apps/api/dpi").then(({ PhysicalPosition }) => {
+        if (tabPtr !== ptr || ptr.detachedWin !== child) return;
+        return child?.setPosition(new PhysicalPosition(Math.round(screenX * dpr - 120), Math.round(screenY * dpr - 16)));
+      }).catch(() => {});
     });
   }
 
   /** Tear down an in-flight drag without any drop action. */
   function cancelTabDrag(): void {
+    // An accepted native operation retains its lease until its own settlement.
+    if (tabPtr && !tabPtr.detaching) tabPtr.transfer?.cancel();
+    tabDragState.clear(tabPtr?.dragId);
     if (tabPtr?.followRaf) cancelAnimationFrame(tabPtr.followRaf);
     tabPtr?.ghost?.remove();
     tabPtr = null;
@@ -336,6 +329,9 @@
     dropTargetTabId = null;
     draggingTabId = null;
 
+    const pending = tabDragState.read();
+    tabDragState.clear(ptr.dragId);
+
     if (!ptr.active) return; // a plain click — the tab's onclick switches tabs
 
     // Already detached into a live window (#176): the tab moved when the
@@ -345,46 +341,50 @@
       return;
     }
 
-    suppressNextClick = true;
-    const pending = tabDragState.read();
-    tabDragState.clear();
-    if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) return;
+    try {
+      suppressNextClick = true;
+      if (!pending || pending.id !== ptr.dragId || pending.sourceWindow !== windowTabsManager.windowLabel) return;
 
-    // 1) Released over the tab strip in THIS window → reorder.
-    if (tabAreaAtPoint(event.clientX, event.clientY)) {
-      const overId = tabAtPoint(event.clientX, event.clientY);
-      if (overId && overId !== ptr.tabId) {
-        const from = tabs.findIndex((t) => t.id === ptr.tabId);
-        const to = tabs.findIndex((t) => t.id === overId);
-        if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(from, to);
+      // 1) Released over the tab strip in THIS window → reorder.
+      if (tabAreaAtPoint(event.clientX, event.clientY)) {
+        const overId = tabAtPoint(event.clientX, event.clientY);
+        if (overId && overId !== ptr.tabId) {
+          const from = tabs.findIndex((t) => t.id === ptr.tabId);
+          const to = tabs.findIndex((t) => t.id === overId);
+          if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(from, to);
+        }
+        return;
       }
-      return;
-    }
 
-    // 2) Resolve the release position (physical px) against every open window.
-    const dpr = window.devicePixelRatio || 1;
-    const targetLabel = await windowAtScreenPos(event.screenX * dpr, event.screenY * dpr);
-    if (targetLabel && targetLabel !== windowTabsManager.windowLabel) {
-      // Into another window → adopt there, then close our tab (and our window if
-      // this was its last tab — removeTransferredTab handles that).
-      await sendTabToWindow(targetLabel, pending.snapshot);
-      windowTabsManager.removeTransferredTab(pending.tabId);
-    } else if (targetLabel === null) {
-      // Onto the desktop → tear off a new window AT the cursor.
-      const { snapshot } = pending;
-      await openNewWindow(snapshot.path, undefined, snapshot, {
-        x: event.screenX * dpr,
-        y: event.screenY * dpr,
-      });
-      windowTabsManager.removeTransferredTab(pending.tabId);
+      // 2) Resolve the release position (physical px) against every open window.
+      const dpr = window.devicePixelRatio || 1;
+      const targetLabel = await windowAtScreenPos(event.screenX * dpr, event.screenY * dpr);
+      if (targetLabel && targetLabel !== windowTabsManager.windowLabel) {
+        // Into another window → adopt there, then close our tab (and our window if
+        // this was its last tab).
+        if (await sendTabToWindow(targetLabel, pending.snapshot)) {
+          ptr.transfer?.complete();
+        }
+      } else if (targetLabel === null) {
+        // Onto the desktop → tear off a new window AT the cursor.
+        const { snapshot } = pending;
+        const moved = await openNewWindow(snapshot.path, undefined, snapshot, {
+          x: event.screenX * dpr,
+          y: event.screenY * dpr,
+        });
+        if (moved) ptr.transfer?.complete();
+      }
+      // Released over our own window (but not the tab strip) → no-op.
+    } catch {
+      // A disappearing native window leaves the source intact.
+    } finally {
+      ptr.transfer?.cancel();
     }
-    // Released over our own window (but not the tab strip) → no-op.
   }
 
   function onTabDragKey(event: KeyboardEvent): void {
     if (event.key === "Escape" && tabPtr) {
       // If already detached the window simply stops following (it exists now).
-      tabDragState.clear();
       cancelTabDrag();
     }
   }
@@ -394,6 +394,8 @@
     window.removeEventListener("mouseup", onTabMouseUp, true);
     window.removeEventListener("keydown", onTabDragKey, true);
   }
+
+  onDestroy(cancelTabDrag);
 
   // ── File drops ONTO a tab (move the dragged files into that tab's directory) ──
   function isFileDrag(dataTransfer: DataTransfer | null): boolean {
@@ -462,8 +464,8 @@
         class:drag-over={dropTargetTabId === tab.id}
         class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={draggingTabId === tab.id}
-        class:tab-entering={isNewTab(tab.id)}
-        class:tab-closing={closingTabId === tab.id}
+        in:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 180 }}
+        out:slide={{ axis: "x", duration: reducedMotion.current ? 0 : 120 }}
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
@@ -598,30 +600,6 @@
     display: none;
   }
 
-  @keyframes tabSlideIn {
-    from {
-      max-width: 0;
-      opacity: 0;
-      padding-left: 0;
-      padding-right: 0;
-    }
-    to {
-      max-width: 220px;
-      opacity: 1;
-      padding-left: 12px;
-      padding-right: 5px;
-    }
-  }
-
-  @keyframes tabSlideOut {
-    to {
-      max-width: 0;
-      opacity: 0;
-      padding-left: 0;
-      padding-right: 0;
-    }
-  }
-
   .tab {
     display: flex;
     align-items: center;
@@ -645,15 +623,6 @@
     opacity: 1;
     transform-origin: bottom center;
     overflow: hidden;
-  }
-
-  .tab.tab-entering {
-    animation: tabSlideIn 250ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
-  }
-
-  .tab.tab-closing {
-    animation: tabSlideOut 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
-    pointer-events: none;
   }
 
   /* Subtle gradient overlay for depth */
@@ -982,7 +951,7 @@
     border-radius: 6px;
     color: var(--text-tertiary);
     cursor: pointer;
-    transition: all var(--transition-normal);
+    transition: transform var(--transition-normal);
     flex-shrink: 0;
   }
 

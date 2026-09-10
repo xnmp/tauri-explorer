@@ -3,11 +3,10 @@
  * filesystem.
  * Issue: refactor/finish-api-files-split-into-open-and-system-modules (#282)
  *
- * Split out of files.ts; re-exported there so existing importers of
- * `$lib/api/files` keep working unchanged.
+ * Feature consumers import this module directly.
  */
 
-import { invoke } from "./common";
+import { invoke, extractError, type ApiResult } from "./common";
 
 /** File-picker portal window → backend: deliver the user's choice.
  *  `paths` are absolute filesystem paths; `cancelled` aborts the request. */
@@ -40,5 +39,14 @@ export async function setFfmpegPath(path: string): Promise<void> {
     await invoke("set_ffmpeg_path", { path });
   } catch {
     // Not in Tauri runtime or command unavailable — ignore.
+  }
+}
+
+export async function setAsWallpaper(path: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("set_as_wallpaper", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
   }
 }

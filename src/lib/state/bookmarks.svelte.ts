@@ -17,7 +17,7 @@ import {
 } from "./persisted";
 import { basename } from "$lib/domain/path";
 import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
-import { readConfigFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
 
 export interface Bookmark {
   name: string;

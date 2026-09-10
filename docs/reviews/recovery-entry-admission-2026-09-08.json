@@ -1,0 +1,123 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "Linux simple-entry production admission implemented and scoped native acceptance passes; full review incomplete",
+  "scope": [
+    "Application-managed Runtime creates no filesystem or SQLite state until first admission, then initializes/reserves on blocking workers",
+    "Five Linux command roots: create_directory, create_empty_file, rename_entry, write_text_file, create_symlink",
+    "One reservation covers the owned EntryPlan and actual blocking Job; successful receipts/history survive cleanup failure via MutationReply.warning",
+    "Execution binds primary captured paths, preserves literal symlink target text, and uses captured target existence probes",
+    "Additional Read/Entry claims protect traversed parent aliases, including aliases hidden in relative/absolute symlink targets; alias walk and claim budgets are bounded",
+    "Native history owns the resolved rename path; stable presentation aliases retain pane selection paths; both requested/resolved parents refresh",
+    "Concurrent independent cold initialization opens a competing published admission gate without recreating missing evidence"
+  ],
+  "verification": {
+    "alias_red": {
+      "log": "/tmp/recovery-entry-admission-alias-red.log",
+      "exit_code": 101,
+      "failed": 1,
+      "reason": "Managed alias replacement redirected an admitted write to the replacement target before execution binding."
+    },
+    "cold_red": {
+      "log": "/tmp/recovery-entry-admission-independent-cold.log",
+      "exit_code": 101,
+      "failed": 1,
+      "reason": "Independent cold initialization rejected a valid gate published between failed open and nonempty directory observation."
+    },
+    "focused_final": {
+      "log": "/tmp/recovery-entry-alias-dependencies-fixed.log",
+      "passed": 9,
+      "failed": 0,
+      "note": "Final extra path-size/depth bound subsequently compiled and tested in full suite."
+    },
+    "full_rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "passed": 829,
+      "failed": 0,
+      "ignored": 11,
+      "log": "/tmp/recovery-entry-alias-full-rust.log",
+      "environment": "Approved local test-server access; clean temporary shell/cache, HOME unchanged. Serial because existing shell tests mutate process-global environment."
+    },
+    "environment_diagnosis": {
+      "initial_full": "/tmp/recovery-entry-admission-full-rust.log: 822 passed, 3 failed (2 localhost bind EPERM; thumbnail default-cache prewarm assertion), 11 ignored",
+      "relay_isolated": "/tmp/recovery-entry-admission-relay-tests.log: 17 passed with localhost permissions",
+      "thumbnail": "Independent Sol reproduced same failure in isolation, then passed identical binary with XDG_CACHE_HOME=/tmp/recovery-thumbnail-isolated-cache; both micro/full JPEG files produced. No feature code changed.",
+      "second_full": "/tmp/recovery-entry-admission-full-rust-final.log: 822 passed, 3 terminal failures from user zsh/p10k startup, 11 ignored",
+      "terminal": "Independent Sol ran terminal::tests --test-threads=1 with empty /tmp/recovery-terminal-zdotdir and /tmp cache: 29 passed, retaining real zsh/PTy and OSC7 behavior. No shell feature code changed."
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery --offline",
+      "exit_code": 0,
+      "log": "/tmp/recovery-entry-alias-clippy.log",
+      "warnings": "11 unused-infrastructure library warnings; five test warnings, four duplicate."
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 VITE_E2E_NO_WARM_PRIME=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": "/tmp/recovery-entry-alias-native-build.log",
+      "binary_sha256": "aefbef45fbef26d951e870015d622616c4eb7a4eae49f48c64741ae5d60ec38d",
+      "command": "TAURI_E2E_HISTORY_GATE_DIR=/tmp/recovery-entry-native-gates bash /tmp/run-native-review.sh --spec e2e-tauri/specs/file-ops.spec.ts --spec e2e-tauri/specs/file-forward-history.spec.ts --spec e2e-tauri/specs/local-mutation-lifetime.spec.ts",
+      "runner_script": "#!/usr/bin/env bash\nset -euo pipefail\nreview_profile=$(mktemp -d /home/chong/.tauri-explorer-native-review-XXXXXX)\nexport XDG_CONFIG_HOME=\"$review_profile/config\" XDG_DATA_HOME=\"$review_profile/data\" XDG_CACHE_HOME=\"$review_profile/cache\" XDG_STATE_HOME=\"$review_profile/state\" XDG_RUNTIME_DIR=\"$review_profile/runtime\"\nmkdir -m 700 \"$XDG_RUNTIME_DIR\"\nexport SHELL=/bin/bash GDK_BACKEND=x11 TAURI_NATIVE_DRIVER=/nix/store/nddysxxabm1hsqh54q0k60gd1615cd3a-webkitgtk-2.52.5+abi=4.1/bin/WebKitWebDriver\nexport PATH=/nix/store/k5794m5mrvmj474qvpiz4dxmnc4n0lc0-openbox-3.6.1/bin:/nix/store/axnlhv5i5ywd71arg10i6ry5f3ca2j9k-xprop-1.2.8/bin:$PATH\n/nix/store/rsd1hf3m25blgwnh7l287yr91mr9g363-xvfb-run-1+g87f6705/bin/xvfb-run -a --server-args='-screen 0 1280x1024x24' bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri \"$@\"\n",
+      "log": "/tmp/recovery-entry-alias-native.log",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "spec_files": 3,
+      "cases": [
+        "Real create/rename/trash filesystem and listing outcomes (3)",
+        "Held rename result, same-name Redo preservation, child deletion/rename completion after renderer destruction (4)",
+        "Create completion stays with origin directory during navigation (1)"
+      ],
+      "first_attempt": "/tmp/recovery-entry-admission-native.log: four actual outcomes passed; gated history four skipped because fixture was unset. Superseded by final run.",
+      "screenshot": "screenshots/refactor/repo-health-cleanup/native-forward-history.png",
+      "screenshot_review": "Opened and visually inspected; details view shows the renamed child and retained history test files. This depicts native completion, not hidden alias ownership."
+    },
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT for revised Linux simple-entry admission",
+      "found_and_fixed": [
+        "Admission/execution alias redirection",
+        "Unclaimed literal target/presentation aliases, including nested alias targets",
+        "Independent cold initializer gate race reproduced after reviewer requested the precise independent-instance test"
+      ],
+      "limits": [
+        "Review is scoped to five Linux entry commands, not full operation families/platform recovery",
+        "External writers and namespace changes after settlement remain interference; receipts are snapshots",
+        "If operation and settlement both error, only the operation error is returned; cleanup failure is logged and future admission remains fenced"
+      ]
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "coverage": "415/415 tracked source files",
+      "unresolvable": 0
+    },
+    "formatting": "Final changed-file rustfmt, source-map coverage and git diff --check pass; final formatting-only changes follow executable verification."
+  },
+  "normal_build": {
+    "command": "bun run tauri build --debug --no-bundle",
+    "exit_code": 0,
+    "log": "/tmp/recovery-entry-normal-build.log",
+    "binary_sha256": "1e84e7022ec9da20d5aebeefe3d732bb5a4e44802311922a7fdd7f45074d1241",
+    "note": "Restores a normal custom-protocol debug binary without E2E build flags. No normal-binary runtime probe inspection claimed."
+  },
+  "limitations": [
+    "Deletion, copy/move/paste/drop/grouped operations, Undo/Redo, archives, plugin publication and Git mutation families still require one outer logical reservation and owned worker propagation",
+    "Windows/macOS production admission remains unwired; native namespace/case/short-name/durability qualification remains required",
+    "Durable replacement, promotion, claimed reconciliation, recovery IPC/UI, overwrite Undo and retention remain incomplete",
+    "No macOS half-bounce measurement, startup speedup claim, full product/platform acceptance, commit, push or merge this checkpoint"
+  ],
+  "source_sha256": {
+    "src-tauri/src/lib.rs": "79e95ef5617517bc5c84f468a75320ffbe6a220b0abf8e32c385b665db999903",
+    "src-tauri/src/files/mod.rs": "e0d3f000d87f7bf8d66304b0359bcdbdd109f6405053e8ed55424b702534f5fa",
+    "src-tauri/src/files/recovery/mod.rs": "8aa6437f4401f3650bcb0662347232eb928def0ce87cb68f36350b5384d4193c",
+    "src-tauri/src/files/recovery/runtime.rs": "b4eb21c351b3e490eecc69ff0e43b1cec3fcce722d8194fb37ae6eec96b36611",
+    "src-tauri/src/files/recovery/coordinator.rs": "e1e22180a38f01ff5d7142b0de56ca79f861cab446a26c17762c2d8314111506",
+    "src-tauri/src/files/recovery/context.rs": "19d69c34a12bd1da312a7571e504739b7a831dcce27e9114b46b86d80e34f722",
+    "src-tauri/src/files/recovery/resources.rs": "c32104207b3dba991b9e21bb82485dc9b033a5e14843cb722586e131db4abc3e",
+    "src-tauri/src/files/entry_plan.rs": "6db952c3aaf93e95300ff15bbb9bd68beff8ff7fe6359b3adbd5ec9918d45b00",
+    "src-tauri/src/files/file_ops.rs": "a3c7ee2260ed7397bdc226ed178238b2e157ce90fa0b62e6532e48f3b562e461",
+    "src-tauri/src/file_mutation.rs": "5275f4d60e6d608399936c67dff9db4373844610b476cb82e261594f58ab28b1",
+    "src-tauri/src/file_history/forward.rs": "fb6c42acdc800a93ce0ef9b6c67d86ecbcdc205e87567939bb4eea5e91c1b842",
+    "src-tauri/test_support/file_mutation.rs": "524bc6c8d66df1b6fe1bcaec248180c21f954a04d93e57db0b11cffab4c9c92c"
+  }
+}

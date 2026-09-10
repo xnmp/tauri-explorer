@@ -48,4 +48,29 @@ describe("operationsManager cancelled ids", () => {
     expect(operationsManager.isOperationCancelled(a.id)).toBe(false);
     expect(operationsManager.isOperationCancelled(b.id)).toBe(false);
   });
+
+  it("notifies cancellation listeners immediately without requiring progress", () => {
+    const op = operationsManager.startOperation("copy", "/src/paused.txt", "/dest");
+    const listener = vi.fn();
+    operationsManager.subscribeCancellation(op.id, listener);
+    operationsManager.cancelOperation(op.id);
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it("invokes a late subscriber immediately for an already-cancelled id", () => {
+    const op = operationsManager.startOperation("copy", "/src/paused.txt", "/dest");
+    operationsManager.cancelOperation(op.id);
+    const listener = vi.fn();
+    operationsManager.subscribeCancellation(op.id, listener);
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it("does not notify an unsubscribed cancellation listener", () => {
+    const op = operationsManager.startOperation("copy", "/src/paused.txt", "/dest");
+    const listener = vi.fn();
+    const unsubscribe = operationsManager.subscribeCancellation(op.id, listener);
+    unsubscribe();
+    operationsManager.cancelOperation(op.id);
+    expect(listener).not.toHaveBeenCalled();
+  });
 });

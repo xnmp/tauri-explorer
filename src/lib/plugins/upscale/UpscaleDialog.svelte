@@ -8,7 +8,8 @@
   import Modal from "$lib/components/Modal.svelte";
   import "../plugin-dialog.css";
   import type { PluginJobs, PluginToast } from "$lib/plugins/api";
-  import { startUpscaleJob, checkPathsExist } from "$lib/api/files";
+  import { startUpscaleJob } from "$lib/api/plugin-jobs";
+import { checkPathsExist } from "$lib/api/files";
   import { parentDir, basename } from "$lib/domain/path";
   import { findAvailableFilename } from "$lib/domain/available-filename";
 
@@ -53,16 +54,12 @@
     if (!outputFilename.trim() || submitting || !hasApiKey) return;
 
     submitting = true;
-    const result = await startUpscaleJob(
-      sourcePath,
-      outputDir,
-      outputFilename.trim(),
-      apiKey,
-      factor,
+    const result = await jobs.accept(
+      { kind: "upscale", label: fileName, detail: `Upscale ${factor}×` },
+      () => startUpscaleJob(sourcePath, outputDir, outputFilename.trim(), apiKey, factor),
     );
 
     if (result.ok) {
-      jobs.add(result.data, fileName, `Upscale ${factor}×`);
       toast.show(`Upscale started: ${fileName}`, "info");
       onClose();
     } else {

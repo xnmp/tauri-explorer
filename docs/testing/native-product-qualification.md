@@ -44,7 +44,7 @@ Browser Playwright remains useful for broader visual combinations but cannot
 qualify native timing, resource, cache, watcher, or race claims. macOS currently
 has no supported WebDriver route, so interaction cells stay explicit rather
 than being silently reported as passed. The macOS workflow's 30 real-process
-samples measure the instrumented setup and warm-show phases; they do not claim
+samples measure app-run-to-foreground-readiness and warm-show phases; they do not claim
 Dock bounce or first-input latency unless a separate real-machine capture
 records that seam.
 

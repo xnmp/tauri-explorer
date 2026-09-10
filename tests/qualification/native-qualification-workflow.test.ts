@@ -7,7 +7,7 @@ const workflowPath = new URL(
   import.meta.url,
 );
 const cacheAdrPath = new URL(
-  "../../docs/adr/0009-native-qualification-cache-lifecycle.md",
+  "../../docs/adr/0022-native-qualification-cache-lifecycle.md",
   import.meta.url,
 );
 
@@ -47,7 +47,7 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
       steps,
       "Build Tauri binary (debug, embedded frontend, no bundle)",
     );
-    const gui = stepNamed(steps, "Run smoke suite (Linux, under Xvfb)");
+    const gui = stepNamed(steps, "Run smoke suite (Linux, isolated display and window manager)");
 
     expect(contracts["continue-on-error"]).toBe(true);
     expect(diagnostics.if).toBe("always()");

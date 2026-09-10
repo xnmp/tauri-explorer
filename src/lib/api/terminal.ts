@@ -6,7 +6,7 @@
  * `terminal-exit-{id}` (exit code or null).
  */
 
-import { invoke } from "./files";
+import { invoke } from "./common";
 import type { ShellKind } from "$lib/domain/terminal-shell";
 
 /** Reserve a terminal id so listeners can register BEFORE the PTY spawns. */

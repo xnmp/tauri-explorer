@@ -67,21 +67,30 @@ fn detect_wallpaper_backend() -> WallpaperBackend {
 }
 
 enum WallpaperBackend {
+    #[cfg(not(windows))]
     MacOs,
+    #[cfg(not(windows))]
     Hyprpaper,
+    #[cfg(not(windows))]
     Swaybg,
+    #[cfg(not(windows))]
     Gnome,
+    #[cfg(not(windows))]
     Kde,
+    #[cfg(not(windows))]
     Xfce,
+    #[cfg(not(windows))]
     Feh,
     #[cfg(windows)]
     Windows,
+    #[cfg(not(windows))]
     Unknown,
 }
 
 /// Set wallpaper on macOS using osascript (AppleScript).
 /// The path is passed as an argv item (never interpolated into the script)
 /// so quotes/backslashes in filenames can't break or inject the script.
+#[cfg(not(windows))]
 fn set_macos(path: &str) -> Result<(), AppError> {
     let output = Command::new("osascript")
         .args([
@@ -108,6 +117,7 @@ fn set_macos(path: &str) -> Result<(), AppError> {
 /// user's config or restart hyprpaper. Falls back to rewriting
 /// hyprpaper.conf + restarting hyprpaper only if IPC fails (e.g. hyprpaper
 /// not running, or the Tauri process lacks the Hyprland socket env).
+#[cfg(not(windows))]
 fn set_hyprpaper(path: &str) -> Result<(), AppError> {
     let abs_path = std::fs::canonicalize(path)
         .map_err(|e| AppError::Other(format!("Failed to resolve path: {}", e)))?
@@ -141,6 +151,7 @@ fn set_hyprpaper(path: &str) -> Result<(), AppError> {
 
 /// Run a `hyprctl hyprpaper` subcommand and verify it succeeded.
 /// hyprctl can exit 0 while printing an error, so also require "ok" in stdout.
+#[cfg(not(windows))]
 fn hyprctl_hyprpaper(args: &[&str]) -> Result<(), AppError> {
     let output = Command::new("hyprctl")
         .arg("hyprpaper")
@@ -161,6 +172,7 @@ fn hyprctl_hyprpaper(args: &[&str]) -> Result<(), AppError> {
 }
 
 /// Set the wallpaper on all monitors via hyprpaper IPC.
+#[cfg(not(windows))]
 fn set_hyprpaper_via_ipc(abs_path: &str) -> Result<(), AppError> {
     hyprctl_hyprpaper(&["preload", abs_path])?;
 
@@ -172,6 +184,7 @@ fn set_hyprpaper_via_ipc(abs_path: &str) -> Result<(), AppError> {
 }
 
 /// Get list of active monitor names from Hyprland.
+#[cfg(not(windows))]
 fn get_hyprland_monitors() -> Result<Vec<String>, AppError> {
     let output = Command::new("hyprctl")
         .args(["monitors", "-j"])
@@ -204,6 +217,7 @@ fn get_hyprland_monitors() -> Result<Vec<String>, AppError> {
 /// Update ~/.config/hypr/hyprpaper.conf with the new wallpaper.
 /// Backs up any existing config to hyprpaper.conf.bak before overwriting,
 /// since the rewrite discards comments and custom multi-monitor setups.
+#[cfg(not(windows))]
 fn update_hyprpaper_conf(image_path: &str, monitors: &[String]) -> Result<(), AppError> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| AppError::Other("Could not determine config directory".into()))?
@@ -236,6 +250,7 @@ fn update_hyprpaper_conf(image_path: &str, monitors: &[String]) -> Result<(), Ap
 }
 
 /// Set wallpaper using swaybg (kill existing, spawn new).
+#[cfg(not(windows))]
 fn set_swaybg(path: &str) -> Result<(), AppError> {
     let _ = Command::new("pkill").arg("swaybg").output();
     Command::new("swaybg")
@@ -246,6 +261,7 @@ fn set_swaybg(path: &str) -> Result<(), AppError> {
 }
 
 /// Set wallpaper using gsettings (GNOME).
+#[cfg(not(windows))]
 fn set_gnome(path: &str) -> Result<(), AppError> {
     let uri = format!("file://{}", path);
     for key in &["picture-uri", "picture-uri-dark"] {
@@ -265,6 +281,7 @@ fn set_gnome(path: &str) -> Result<(), AppError> {
 }
 
 /// Set wallpaper using plasma-apply-wallpaperimage (KDE).
+#[cfg(not(windows))]
 fn set_kde(path: &str) -> Result<(), AppError> {
     let output = Command::new("plasma-apply-wallpaperimage")
         .arg(path)
@@ -281,6 +298,7 @@ fn set_kde(path: &str) -> Result<(), AppError> {
 }
 
 /// Set wallpaper using xfconf-query (XFCE).
+#[cfg(not(windows))]
 fn set_xfce(path: &str) -> Result<(), AppError> {
     // Discover monitor property paths
     let output = Command::new("xfconf-query")
@@ -323,6 +341,7 @@ fn set_xfce(path: &str) -> Result<(), AppError> {
 }
 
 /// Set wallpaper using feh (generic X11 WMs).
+#[cfg(not(windows))]
 fn set_feh(path: &str) -> Result<(), AppError> {
     let output = Command::new("feh")
         .args(["--bg-fill", path])
@@ -407,15 +426,23 @@ fn set_as_wallpaper_sync(path: String) -> Result<(), AppError> {
     let backend = detect_wallpaper_backend();
     log::info!("Setting wallpaper via {:?} backend", backend_name(&backend));
     match backend {
+        #[cfg(not(windows))]
         WallpaperBackend::MacOs => set_macos(&abs_path),
+        #[cfg(not(windows))]
         WallpaperBackend::Hyprpaper => set_hyprpaper(&abs_path),
+        #[cfg(not(windows))]
         WallpaperBackend::Swaybg => set_swaybg(&abs_path),
+        #[cfg(not(windows))]
         WallpaperBackend::Gnome => set_gnome(&abs_path),
+        #[cfg(not(windows))]
         WallpaperBackend::Kde => set_kde(&abs_path),
+        #[cfg(not(windows))]
         WallpaperBackend::Xfce => set_xfce(&abs_path),
+        #[cfg(not(windows))]
         WallpaperBackend::Feh => set_feh(&abs_path),
         #[cfg(windows)]
         WallpaperBackend::Windows => set_windows(&abs_path),
+        #[cfg(not(windows))]
         WallpaperBackend::Unknown => Err(AppError::Other(
             "Could not detect desktop environment. Supported: macOS, Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),
         )),
@@ -424,15 +451,23 @@ fn set_as_wallpaper_sync(path: String) -> Result<(), AppError> {
 
 fn backend_name(b: &WallpaperBackend) -> &'static str {
     match b {
+        #[cfg(not(windows))]
         WallpaperBackend::MacOs => "macos",
+        #[cfg(not(windows))]
         WallpaperBackend::Hyprpaper => "hyprpaper",
+        #[cfg(not(windows))]
         WallpaperBackend::Swaybg => "swaybg",
+        #[cfg(not(windows))]
         WallpaperBackend::Gnome => "gnome",
+        #[cfg(not(windows))]
         WallpaperBackend::Kde => "kde",
+        #[cfg(not(windows))]
         WallpaperBackend::Xfce => "xfce",
+        #[cfg(not(windows))]
         WallpaperBackend::Feh => "feh",
         #[cfg(windows)]
         WallpaperBackend::Windows => "windows",
+        #[cfg(not(windows))]
         WallpaperBackend::Unknown => "unknown",
     }
 }

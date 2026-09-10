@@ -4,10 +4,8 @@
  * reference to it.
  */
 
-import {
-  setAsWallpaper as apiSetAsWallpaper,
-  openInTerminal as apiOpenInTerminal,
-} from "$lib/api/files";
+import { setAsWallpaper as apiSetAsWallpaper } from "$lib/api/system";
+import { openInTerminal as apiOpenInTerminal } from "$lib/api/open";
 import { toastStore } from "../toast.svelte";
 import { settingsStore } from "../settings.svelte";
 

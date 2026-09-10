@@ -9,8 +9,7 @@
  */
 
 import { Channel } from "@tauri-apps/api/core";
-import { invoke } from "./files";
-import { isTauri } from "./mock-invoke";
+import { invoke, isTauri } from "./common";
 import type { GitUndoAction } from "$lib/domain/git-graph-undo";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
 

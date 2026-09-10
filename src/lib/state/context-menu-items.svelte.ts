@@ -7,6 +7,7 @@
  * entries.
  */
 
+import { createOwnedRegistry } from "./owned-registry";
 import type { FileEntry } from "$lib/domain/file";
 
 export type ContextMenuItemGroup = "ai";
@@ -25,6 +26,7 @@ export interface ContextMenuItem {
 
 function createContextMenuItemsRegistry() {
   let items = $state<ContextMenuItem[]>([]);
+  const registrations = createOwnedRegistry<ContextMenuItem>();
 
   return {
     get items() {
@@ -32,12 +34,10 @@ function createContextMenuItemsRegistry() {
     },
     /** Register an item; returns a disposer that removes it. */
     register(item: ContextMenuItem): () => void {
-      items = [...items, item];
-      // Remove by id, not object reference: Svelte's `$state` array deep-proxies
-      // its elements, so the stored element is a proxy that never `===` the raw
-      // `item` captured here.
+      const dispose = registrations.register(item.id, item);
+      items = registrations.values();
       return () => {
-        items = items.filter((i) => i.id !== item.id);
+        if (dispose()) items = registrations.values();
       };
     },
     /** Items whose `when` predicate passes for the given selection. */
@@ -52,6 +52,7 @@ function createContextMenuItemsRegistry() {
     },
     /** Remove all items. Test helper. */
     clear(): void {
+      registrations.clear();
       items = [];
     },
   };

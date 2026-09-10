@@ -3,12 +3,14 @@
  * ("name - Copy.ext") instead of prompting a conflict or no-op.
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries, pressShortcut } from "./helpers";
+import { VIEW_MODES, switchViewMode, waitForEntries, pressShortcut } from "./helpers";
 
-test.describe("Same-folder paste makes a copy", () => {
+for (const viewMode of VIEW_MODES) {
+test.describe(`Same-folder paste makes a copy [${viewMode}]`, () => {
   test("copy + paste in the same directory yields a ' - Copy' file", async ({ page }) => {
     await page.goto("/?path=/home/user");
     await waitForEntries(page);
+    if (viewMode !== "details") await switchViewMode(page, viewMode);
 
     // Select a file and copy it
     const file = page.locator(".entry-item", { hasText: "readme.txt" }).first();
@@ -33,3 +35,5 @@ test.describe("Same-folder paste makes a copy", () => {
     await expect(page.locator(".conflict-dialog")).toHaveCount(0);
   });
 });
+
+}

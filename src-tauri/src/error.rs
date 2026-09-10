@@ -25,6 +25,15 @@ pub enum AppError {
     #[error("IO error: {0}")]
     Io(std::io::Error),
 
+    /// The worker exited without reporting whether its operation committed.
+    /// Mutation callers must reconcile potential effects rather than infer
+    /// that an ordinary filesystem error left the destination unchanged.
+    #[error("Background task failed: {0}")]
+    WorkerFailed(String),
+
+    #[error("File operation may have changed files: {0}")]
+    MutationUncertain(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -54,6 +63,8 @@ impl Serialize for AppError {
             AppError::AlreadyExists(_) => "already_exists",
             AppError::InvalidPath(_) => "invalid_path",
             AppError::Io(_) => "io",
+            AppError::WorkerFailed(_) => "worker_failed",
+            AppError::MutationUncertain(_) => "mutation_uncertain",
             AppError::Other(_) => "other",
         };
         map.serialize_entry("kind", kind)?;

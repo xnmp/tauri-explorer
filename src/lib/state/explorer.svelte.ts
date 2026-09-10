@@ -7,7 +7,7 @@
  * - Types (types.ts)
  * - Selection logic (selection.ts)
  * - Navigation/history (navigation.ts)
- * - Filesystem watch + mutation cooldown (pane-watch.ts)
+ * - Filesystem observation ownership (pane-watch.ts)
  * - Refresh lifecycle (pane-refresh.ts)
  * - File mutations: create/rename/delete/symlink/archive (pane-mutations.ts)
  * - Clipboard (clipboard.svelte.ts) - shared between panes
@@ -16,11 +16,14 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { resolveFileCursor } from "$lib/domain/file-list-navigation";
+import { clampNumericSetting } from "$lib/domain/settings-numbers";
 import { SvelteSet } from "svelte/reactivity";
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardHasImage, clipboardPasteImage, fetchDirectory } from "$lib/api/files";
+import { clipboardHasImage, clipboardPasteImage } from "$lib/api/clipboard-image";
+import { fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
@@ -38,16 +41,10 @@ import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
 import { createPaneRefresh } from "./pane-refresh";
 import { createPaneMutations } from "./pane-mutations";
-import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
+import { undoActionLabel } from "./undo-helpers";
 import { broadcastFileChange } from "./file-events";
 
-interface ExplorerSeed {
-  currentPath: string;
-  entries: FileEntry[];
-  sortBy: SortField;
-  sortAscending: boolean;
-  viewMode: ViewMode;
-}
+import type { ExplorerSeed } from "$lib/domain/window-input";
 
 function createExplorerState(seed?: ExplorerSeed) {
   // Core per-pane state using $state rune
@@ -71,7 +68,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     // .has(path) then subscribes per-key, so a selection change re-renders
     // only the rows whose membership actually changed, not every visible row.
     selectedPaths: new SvelteSet<string>(),
-    selectionAnchorIndex: null,
+    selectionAnchorPath: null,
+    cursorPath: null,
   });
 
   /** Replace the selection contents, mutating the reactive Set in place.
@@ -88,8 +86,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   // Inline new-entry creation state (folder or file share the same inline row)
-  let isCreatingFolder = $state(false);
-  let newEntryKind = $state<"folder" | "file">("folder");
+  let creationSession = $state.raw<{ kind: "folder" | "file" } | null>(null);
 
   // True when the current path lives on a removable drive that has been
   // ejected/unplugged. Set by ExplorerPane, which watches the drives store.
@@ -106,9 +103,8 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
 
-  // Filesystem watcher + local-mutation cooldown
-  const watch = createPaneWatch();
-  const markLocalMutation = watch.markLocalMutation;
+  // Filesystem observation ownership
+  const watch = createPaneWatch({ refresh: (options) => refresh(options) });
 
   // Read-only state accessor for components that need the raw state bag.
   // Exposes the $state proxy itself (typed read-only) — a spread copy here
@@ -152,6 +148,27 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Per-pane navigation generation counter. Guards against rapid A→B
   // navigation applying whichever result happens to land last.
   let navGeneration = 0;
+  let destroyed = false;
+
+  function captureSelection() {
+    const selected = [...coreState.selectedPaths];
+    const cursor = coreState.cursorPath;
+    const anchor = coreState.selectionAnchorPath;
+    return () => cursor === coreState.cursorPath && anchor === coreState.selectionAnchorPath &&
+      selected.length === coreState.selectedPaths.size && selected.every((path) => coreState.selectedPaths.has(path));
+  }
+
+  // Accepted filesystem work outlives its pane. Only publication into that
+  // pane borrows the navigation generation and lifetime.
+  function captureMutation() {
+    const generation = navGeneration;
+    const path = coreState.currentPath;
+    return {
+      path,
+      selectionCurrent: captureSelection(),
+      current: () => !destroyed && generation === navGeneration && path === coreState.currentPath,
+    };
+  }
 
   async function navigateInternal(rawPath: string): Promise<"ok" | "error" | "stale"> {
     // Normalize separators to the platform-native style up front. The backend
@@ -160,93 +177,105 @@ function createExplorerState(seed?: ExplorerSeed) {
     // `currentPath`) consistent — never mixed `C:\Users\x/Pictures`. Gated to
     // `/` on non-Windows, where a backslash is a legal filename character.
     const path = toNativeSeparators(rawPath, isWindows ? "\\" : "/");
+    if (destroyed) return "stale";
+    creationSession = null;
     const gen = ++navGeneration;
+    const observation = watch.begin(path);
+    try {
+      // If we already have entries for this path (e.g. seeded from another tab),
+      // don't show loading state — the existing entries stay visible while we refresh.
+      const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
+      if (!isSeeded) {
+        coreState.loading = true;
+      }
+      coreState.error = null;
+      filterQuery = "";
+      showFilter = false;
 
-    // If we already have entries for this path (e.g. seeded from another tab),
-    // don't show loading state — the existing entries stay visible while we refresh.
-    const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
-    if (!isSeeded) {
-      coreState.loading = true;
-    }
-    coreState.error = null;
-    filterQuery = "";
-    showFilter = false;
+      // Accumulate streamed continuation batches off the reactive graph. Writing
+      // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
+      // each write copies the growing array AND re-runs the `displayEntries`
+      // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
+      // dir). Instead we push into a private buffer and commit a snapshot on a
+      // throttle (preserving progressive fill-in) plus once at done. See
+      // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
+      // `result.entries` assignment below, which always runs before the first
+      // streaming callback (the continuation between them is synchronous).
+      const FLUSH_INTERVAL_MS = 100;
+      let streamBuffer: FileEntry[] | null = null;
+      let pendingFlush: ReturnType<typeof setTimeout> | null = null;
 
-    // Accumulate streamed continuation batches off the reactive graph. Writing
-    // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
-    // each write copies the growing array AND re-runs the `displayEntries`
-    // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
-    // dir). Instead we push into a private buffer and commit a snapshot on a
-    // throttle (preserving progressive fill-in) plus once at done. See
-    // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
-    // `result.entries` assignment below, which always runs before the first
-    // streaming callback (the continuation between them is synchronous).
-    const FLUSH_INTERVAL_MS = 100;
-    let streamBuffer: FileEntry[] | null = null;
-    let pendingFlush: ReturnType<typeof setTimeout> | null = null;
+      const commitBuffer = () => {
+        pendingFlush = null;
+        if (gen !== navGeneration || streamBuffer === null) return;
+        coreState.entries = streamBuffer.slice();
+      };
 
-    const commitBuffer = () => {
-      pendingFlush = null;
-      if (gen !== navGeneration || streamBuffer === null) return;
-      coreState.entries = streamBuffer.slice();
-    };
-
-    const result = await dirListing.load(path, {
-      onEntries: (entries) => {
-        if (gen !== navGeneration) return;
-        if (streamBuffer === null) streamBuffer = coreState.entries.slice();
-        for (const e of entries) streamBuffer.push(e);
-        if (pendingFlush === null) {
-          pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
-        }
-      },
-      onDone: () => {
-        if (gen !== navGeneration) return;
-        if (pendingFlush !== null) {
-          clearTimeout(pendingFlush);
+      const result = await dirListing.load(path, {
+        onEntries: (entries) => {
+          if (gen !== navGeneration) return;
+          if (streamBuffer === null) streamBuffer = coreState.entries.slice();
+          for (const e of entries) streamBuffer.push(e);
+          if (pendingFlush === null) {
+            pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
+          }
+        },
+        onCancelled: () => {
+          if (pendingFlush !== null) clearTimeout(pendingFlush);
           pendingFlush = null;
+          streamBuffer = null;
+        },
+        onDone: () => {
+          if (gen !== navGeneration) return;
+          if (pendingFlush !== null) {
+            clearTimeout(pendingFlush);
+            pendingFlush = null;
+          }
+          if (streamBuffer !== null) {
+            coreState.entries = streamBuffer.slice();
+          }
+          coreState.loading = false;
+        },
+      }, observation);
+
+      // A newer navigation started while this one was in flight — discard.
+      if (gen !== navGeneration) return "stale";
+
+      if (result.ok) {
+        coreState.currentPath = result.path;
+        coreState.entries = result.entries;
+        observation.commit();
+
+        const savedSort = getSortPref(result.path);
+        if (savedSort) {
+          coreState.sortBy = savedSort.sortBy;
+          coreState.sortAscending = savedSort.sortAscending;
         }
-        if (streamBuffer !== null) {
-          coreState.entries = streamBuffer.slice();
+
+        // Auto-select first item when navigating to a new directory
+        // Issue: tauri-explorer-130a
+        if (displayEntries.length > 0) {
+          setSelection([displayEntries[0].path]);
+          coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
+          coreState.cursorPath = coreState.selectionAnchorPath;
+        } else {
+          setSelection([]);
+          coreState.selectionAnchorPath = null;
         }
-        coreState.loading = false;
-      },
-    });
 
-    // A newer navigation started while this one was in flight — discard.
-    if (gen !== navGeneration) return "stale";
+        onNavigateCallback?.();
 
-    if (result.ok) {
-      coreState.currentPath = result.path;
-      coreState.entries = result.entries;
-      watch.update(result.path);
-
-      const savedSort = getSortPref(result.path);
-      if (savedSort) {
-        coreState.sortBy = savedSort.sortBy;
-        coreState.sortAscending = savedSort.sortAscending;
-      }
-
-      // Auto-select first item when navigating to a new directory
-      // Issue: tauri-explorer-130a
-      if (displayEntries.length > 0) {
-        setSelection([displayEntries[0].path]);
-        coreState.selectionAnchorIndex = 0;
+        if (!result.streaming) {
+          coreState.loading = false;
+        }
+        return "ok";
       } else {
-        setSelection([]);
-        coreState.selectionAnchorIndex = null;
-      }
-
-      onNavigateCallback?.();
-
-      if (!result.streaming) {
+        coreState.error = result.error;
         coreState.loading = false;
+        return "error";
       }
-      return "ok";
-    } else {
-      coreState.error = result.error;
-      coreState.loading = false;
-      return "error";
+    } finally {
+      observation.close();
     }
   }
 
@@ -265,7 +294,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   /**
-   * Navigate to a directory.
+   * Navigate to a directory. Returns false on failed or superseded navigation.
    *
    * `autoEnterSingleSubdir` (default true) controls whether the "auto-enter
    * single subfolder" setting applies to this navigation. Breadcrumb/ancestor
@@ -305,6 +334,7 @@ function createExplorerState(seed?: ExplorerSeed) {
         toastStore.show(`Entered ${basename(resolved)} (skipped ${levels})`, "info");
       }
     }
+    return success;
   }
 
   /** Visible-entry filter matching `displayEntries` (hidden + manually-hidden
@@ -409,25 +439,19 @@ function createExplorerState(seed?: ExplorerSeed) {
   const refresh = createPaneRefresh({
     coreState,
     dirListing,
-    inMutationCooldown: watch.inMutationCooldown,
-    updateWatch: watch.update,
+    allowRefresh: watch.allowRefresh,
+    setSelection,
+    requestReconcile: (path) => watch.changed({ path }),
     navigateToParent,
   });
 
   const mutations = createPaneMutations({
     coreState,
     setSelection,
-    displayEntries: () => displayEntries,
-    markLocalMutation,
-    getParentPath: () => navigation.getParentPath(breadcrumbs),
+    capture: captureMutation,
+    alive: () => !destroyed,
     navigateTo,
-    refreshSilent: () => {
-      // force: this is an explicit post-mutation refresh (zip create /
-      // extract), which must run even though markLocalMutation just started
-      // the cooldown — without force the cooldown would swallow it and the
-      // result wouldn't appear until a manual refresh.
-      void refresh({ silent: true, force: true });
-    },
+    refreshSilent: () => { void refresh({ silent: true }); },
   });
 
   // ===================
@@ -464,16 +488,19 @@ function createExplorerState(seed?: ExplorerSeed) {
       displayEntries,
       entry,
       coreState.selectedPaths,
-      coreState.selectionAnchorIndex,
+      coreState.selectionAnchorPath,
       options
     );
     setSelection(result.selectedPaths);
-    coreState.selectionAnchorIndex = result.anchorIndex;
+    coreState.selectionAnchorPath = result.anchorPath;
+    coreState.cursorPath = entry.path;
   }
+
+  const focusedEntry = $derived(resolveFileCursor(displayEntries, coreState.cursorPath, coreState.selectedPaths));
 
   function clearSelection() {
     setSelection([]);
-    coreState.selectionAnchorIndex = null;
+    coreState.selectionAnchorPath = null;
   }
 
   function isSelected(entry: FileEntry): boolean {
@@ -503,7 +530,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   function selectAll() {
     setSelection(displayEntries.map((e) => e.path));
-    coreState.selectionAnchorIndex = 0;
+    coreState.selectionAnchorPath = displayEntries[0]?.path ?? null;
   }
 
   // ===================
@@ -515,9 +542,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (arr.length === 0) return;
 
     if (!settingsStore.confirmDelete) {
-      // Delete immediately — confirmDelete handles the undo push, entry
-      // removal, navigating away from deleted dirs and frecency pruning.
-      await mutations.confirmDelete(arr, false);
+      const error = await mutations.confirmDelete(arr, false);
+      if (error) toastStore.error(`Delete failed: ${error}`);
       return;
     }
 
@@ -540,9 +566,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
       setSelection([entry.path]);
-      coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
+      coreState.selectionAnchorPath = entry.path;
+      coreState.cursorPath = entry.path;
     }
-    contextMenuExternalEntry = entry && coreState.selectionAnchorIndex === -1 ? entry : null;
+    contextMenuExternalEntry = entry && !displayEntries.some((item) => item.path === entry.path) ? entry : null;
     contextMenuStore.open(x, y, contextMenuOwner);
   }
 
@@ -551,32 +578,32 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function createFolder(name: string): Promise<string | null> {
+    const session = creationSession;
     const error = await mutations.createFolder(name);
-    if (!error) isCreatingFolder = false;
+    if (!error && creationSession === session) creationSession = null;
     return error;
   }
 
   async function createFile(name: string): Promise<string | null> {
+    const session = creationSession;
     const error = await mutations.createFile(name);
-    if (!error) isCreatingFolder = false;
+    if (!error && creationSession === session) creationSession = null;
     return error;
   }
 
   /** Start inline folder creation (shows editable placeholder in file list) */
   function startInlineNewFolder(): void {
-    newEntryKind = "folder";
-    isCreatingFolder = true;
+    if (!destroyed) creationSession = { kind: "folder" };
   }
 
   /** Start inline file creation (touch — shows editable placeholder in file list) */
   function startInlineNewFile(): void {
-    newEntryKind = "file";
-    isCreatingFolder = true;
+    if (!destroyed) creationSession = { kind: "file" };
   }
 
   /** Cancel inline new-entry creation */
   function cancelInlineNewFolder(): void {
-    isCreatingFolder = false;
+    creationSession = null;
   }
 
   // ===================
@@ -598,34 +625,36 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Paste result for UI feedback
   let pasteResult = $state<PasteResult | null>(null);
 
-  function makePasteContext() {
-    let pastedPaths: Set<string> | null = null;
+  function makePasteContext(origin: ReturnType<typeof captureMutation>) {
+    let selectionCurrent = captureSelection();
+    const pastedPaths = new Set<string>();
     return {
-      destPath: coreState.currentPath,
+      destPath: origin.path,
       existingEntries: coreState.entries,
       onEntriesAdded: (entries: FileEntry[]) => {
-        const newPaths = new Set(entries.map((e) => e.path));
-        coreState.entries = [...coreState.entries.filter((e) => !newPaths.has(e.path)), ...entries];
-        markLocalMutation();
-        // Remember pasted paths so onRefresh can re-select after navigation
-        if (entries.length > 0) {
-          pastedPaths = new Set(entries.map((e) => e.path));
+        if (!origin.current()) return;
+        const newPaths = new Set(entries.map((entry) => entry.path));
+        coreState.entries = [...coreState.entries.filter((entry) => !newPaths.has(entry.path)), ...entries];
+        for (const path of newPaths) pastedPaths.add(path);
+        if (entries.length > 0 && selectionCurrent()) {
           setSelection(pastedPaths);
+          const first = pastedPaths.values().next().value!;
+          coreState.cursorPath = first;
+          coreState.selectionAnchorPath = first;
+          selectionCurrent = captureSelection();
         }
       },
       onRefresh: async () => {
-        await navigateInternal(coreState.currentPath);
-        // Re-select pasted entries after refresh resets selection
-        if (pastedPaths) {
-          setSelection(pastedPaths);
-          pastedPaths = null;
-        }
+        if (origin.current()) await refresh({ silent: true });
       },
     };
   }
 
   async function paste(): Promise<string | null> {
-    if (!coreState.currentPath) return "No current directory";
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
+    if (!origin.path) return "No current directory";
+    const context = makePasteContext(origin);
 
     // The OS clipboard is the single source of truth for what was most
     // recently copied. We keep an internal clipboard too (it carries cut
@@ -647,36 +676,33 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (useInternal) {
       const { entries, operation } = internal!;
       const isCut = operation === "cut";
-      markLocalMutation();
       const error = await pasteEntries(
         entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
-        makePasteContext(),
-        () => { if (isCut) clipboardStore.clear(); },
+        context,
+        () => { if (isCut && clipboardStore.content === internal) clipboardStore.clear(); },
       );
-      pasteResult = { error, timestamp: Date.now() };
+      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }
 
     // OS clipboard (files copied from external apps like Explorer/Finder)
     if (osContent && osContent.paths.length > 0) {
-      markLocalMutation();
       const error = await pasteEntries(
         osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
         false,
-        makePasteContext(),
+        context,
       );
-      pasteResult = { error, timestamp: Date.now() };
+      if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }
 
     // Fall back to clipboard image
     if (await clipboardHasImage()) {
-      markLocalMutation();
-      const result = await clipboardPasteImage(coreState.currentPath);
+      const result = await clipboardPasteImage(origin.path);
       if (result.ok) {
-        markLocalMutation();
-        await navigateInternal(coreState.currentPath);
+        broadcastFileChange([origin.path]);
+        if (origin.current()) await refresh({ silent: true });
         return null;
       }
       return result.error;
@@ -695,32 +721,26 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Undo Actions
   // ===================
 
-  async function undo(): Promise<string | null> {
-    markLocalMutation();
-    const result = await undoStore.undo();
-    if ("error" in result) {
-      toastStore.error(result.error);
-      return result.error;
+  async function applyHistory(direction: "undo" | "redo"): Promise<string | null> {
+    const origin = captureMutation();
+    if (!origin.current()) return "Pane is closed";
+    const result = await undoStore[direction]();
+    const warnings = result.warnings?.join("\n");
+    if (result.action) {
+      // Native history publishes confirmed effects even if this pane closes.
+      if (!result.error) {
+        const completion = `${direction === "undo" ? "Undo" : "Redo"}: ${undoActionLabel(result.action)}`;
+        toastStore.show(warnings ? `${completion}\n${warnings}` : completion, "info");
+      }
+      if (origin.current()) await refresh({ silent: true });
     }
-
-    toastStore.show(`Undo: ${undoActionLabel(result.action)}`, "info");
-    markLocalMutation();
-    await navigateInternal(coreState.currentPath);
-    broadcastFileChange(getAffectedDirs(result.action));
-    return null;
+    if (warnings && result.error) toastStore.show(warnings, "info");
+    if (result.error) toastStore.error(result.error);
+    return result.error ?? null;
   }
 
-  async function redo(): Promise<string | null> {
-    markLocalMutation();
-    const result = await undoStore.redo();
-    if ("error" in result) return result.error;
-
-    toastStore.show(`Redo: ${undoActionLabel(result.action)}`, "info");
-    markLocalMutation();
-    await navigateInternal(coreState.currentPath);
-    broadcastFileChange(getAffectedDirs(result.action));
-    return null;
-  }
+  const undo = () => applyHistory("undo");
+  const redo = () => applyHistory("redo");
 
   // ===================
   // Public API
@@ -789,7 +809,8 @@ function createExplorerState(seed?: ExplorerSeed) {
       return millerLayersOverride ?? settingsStore.millerLayers;
     },
     setMillerLayers(n: number) {
-      millerLayersOverride = Math.max(0, Math.min(3, n));
+      const clamped = clampNumericSetting("millerLayers", n);
+      if (clamped !== undefined) millerLayersOverride = clamped;
     },
     toggleMillerColumns() {
       const on = (millerLayersOverride ?? settingsStore.millerLayers) > 0;
@@ -810,14 +831,17 @@ function createExplorerState(seed?: ExplorerSeed) {
       const first = displayEntries[0];
       if (first) {
         setSelection([first.path]);
-        coreState.selectionAnchorIndex = 0;
+        coreState.selectionAnchorPath = first.path;
+        coreState.cursorPath = first.path;
       } else {
         setSelection([]);
-        coreState.selectionAnchorIndex = null;
+        coreState.selectionAnchorPath = null;
       }
     },
     clearFilter() { filterQuery = ""; },
-    // Selection
+    // Selection and independent keyboard cursor
+    get focusedEntry() { return focusedEntry; },
+    focusEntry(entry: FileEntry) { coreState.cursorPath = entry.path; },
     selectEntry,
     clearSelection,
     isSelected,
@@ -842,10 +866,10 @@ function createExplorerState(seed?: ExplorerSeed) {
     },
     // Inline new-entry creation
     get isCreatingFolder() {
-      return isCreatingFolder;
+      return creationSession !== null;
     },
     get newEntryKind() {
-      return newEntryKind;
+      return creationSession?.kind ?? "folder";
     },
     startInlineNewFolder,
     startInlineNewFile,
@@ -872,12 +896,17 @@ function createExplorerState(seed?: ExplorerSeed) {
     set onNavigate(cb: (() => void) | null) {
       onNavigateCallback = cb;
     },
+    directoryChanged: watch.changed,
     // Cleanup
     destroy: async (): Promise<void> => {
-      watch.destroy();
       // Tear down the streaming listener and any in-flight listing,
       // otherwise each closed tab leaks a Tauri event listener.
-      await dirListing.cleanup();
+      destroyed = true;
+      creationSession = null;
+      navGeneration += 1;
+      const results = await Promise.allSettled([watch.destroy(), dirListing.cleanup()]);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
     },
   };
 }

@@ -10,16 +10,16 @@
  * the backend and frontend halves of cold start can be read together.
  *
  * Marks are relative to t0 in milliseconds. The reported value is a one-shot:
- * `reportFirstPaint` is idempotent (only the first call wins) so repeated
+ * `reportStartupReady` is idempotent (only the first call wins) so repeated
  * navigations or HMR can't skew it.
  */
 
-import { logStartupTiming } from "$lib/api/files";
+import { logStartupTiming } from "$lib/api/environment";
 
 type Mark = { name: string; t: number };
 
 const t0: number =
-  (typeof window !== "undefined" && (window as { __BOOT_T0__?: number }).__BOOT_T0__) ||
+  (typeof window !== "undefined" ? (window as { __BOOT_T0__?: number }).__BOOT_T0__ : undefined) ??
   (typeof performance !== "undefined" ? performance.now() : 0);
 
 const marks: Mark[] = [];
@@ -33,15 +33,16 @@ export function markStartup(name: string): void {
 }
 
 /**
- * Report cold start as complete (first directory listing visible). Idempotent.
+ * Report core Explorer readiness after settings, commands and the initial
+ * listing settle and the DOM has had a paint opportunity. Idempotent.
  * Sends a compact summary to the Rust log and the dev console.
  */
-export function reportFirstPaint(): void {
+export function reportStartupReady(): void {
   if (reported) return;
   // Record the final milestone BEFORE latching `reported` — markStartup()
   // early-returns once reported is true, so setting the guard first would drop
   // this mark.
-  markStartup("list-visible");
+  markStartup("ui-ready");
   reported = true;
 
   const total = marks.length ? marks[marks.length - 1].t : 0;
@@ -52,7 +53,7 @@ export function reportFirstPaint(): void {
     console.info(`[perf] ${line}`);
   }
 
-  // Fire-and-forget; never let timing telemetry affect the app. The command is
-  // absent in mock/browser mode (invoke rejects) — swallow that quietly.
+  // Fire-and-forget; never let timing telemetry affect the app. Browser mode
+  // supplies a no-op; native mode also records elapsed time on the Rust clock.
   void logStartupTiming(line).catch(() => {});
 }

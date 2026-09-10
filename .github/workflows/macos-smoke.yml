@@ -1,6 +1,7 @@
 # macOS launch qualification (#192, #688): the automated real-process signal
 # available without a WKWebView WebDriver. Builds embedded assets and records
-# bounded cold-start and hidden warm-activation p50/p95 from native log probes.
+# bounded release foreground-readiness and hidden warm-activation p50/p95.
+# Native log timing does not qualify presented frames or Dock-bounce/input latency.
 name: macOS Smoke
 
 on:
@@ -16,7 +17,7 @@ concurrency:
 jobs:
   launch-smoke:
     runs-on: macos-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -38,19 +39,32 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build app and record exact qualification provenance
+        id: build
         env:
           # The macOS process probe needs production code, not WebDriver hooks.
           NATIVE_QUALIFICATION_E2E_HOOKS: "0"
+          NATIVE_QUALIFICATION_PROFILE: "release"
         run: bun run build:native:qualification
+
+      - name: Measure release foreground startup without a probe window
+        env:
+          MAC_STARTUP_SAMPLES: "30"
+          MAC_STARTUP_TIMEOUT_MS: "30000"
+          MAC_STARTUP_WARM_MEASURE: "0"
+          MAC_STARTUP_OUTPUT_DIR: qualification-results/macos-startup/foreground
+        run: bun run test:qualify:macos-startup
 
       # WARM_MEASURE uses the app's real hidden WKWebView activation probe. The
       # qualifier requires both native cold and warm markers on every sample,
       # checks that the process survives setup, and records p50/p95 rather than
       # inferring launch timing from a browser mock or a single process check.
       - name: Measure real macOS cold and warm startup
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           MAC_STARTUP_SAMPLES: "30"
           MAC_STARTUP_TIMEOUT_MS: "30000"
+          MAC_STARTUP_WARM_MEASURE: "1"
+          MAC_STARTUP_OUTPUT_DIR: qualification-results/macos-startup/warm-probe
         run: bun run test:qualify:macos-startup
 
       - name: Upload macOS startup qualification

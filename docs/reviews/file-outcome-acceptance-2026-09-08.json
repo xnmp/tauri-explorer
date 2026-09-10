@@ -1,0 +1,128 @@
+{
+  "date": "2026-09-08",
+  "baseline": "a4f085f8",
+  "scope": "Per-path trash/restore outcomes, partial undo progress and renderer-local inverse ownership",
+  "status": "Verified Linux/browser checkpoint; comprehensive review remains incomplete",
+  "implementation": [
+    "Move trash commands into files/trash.rs; best-effort per-path successes/errors with duplicate input suppression",
+    "Index requested restore paths once; Linux atomic no-replace restore separates payload commit from metadata cleanup",
+    "Publish and record undo only for confirmed successes; preserve local trash behavior in mixed UNC selections",
+    "Domain undo execution returns completed and remaining subsets in original command order",
+    "Renderer-local reservation serializes inverses, settles exact entry, preserves partial retries across pushes, and honors explicit clear",
+    "Partial inverse publication survives sibling failure while retaining original pane/selection ownership",
+    "Rename teardown uses an ownership getter that remains safe after component destruction"
+  ],
+  "before": [
+    {
+      "log": "/tmp/undo-lifetime-before.log",
+      "result": "4 failures / 1 preservation pass: duplicate inverse, intervening push, clear, repeated completed work"
+    },
+    {
+      "log": "/tmp/bulk-trash-pane-before.log",
+      "result": "Partial bulk receipt ignored; 1 failure / 9 passes"
+    },
+    {
+      "log": "/tmp/file-batch-rust-before.log",
+      "result": "3 actual partial-outcome failures; newest selection already behaved correctly but failed new receipt-shape assertion"
+    },
+    {
+      "log": "/tmp/file-batch-cleanup-before.log",
+      "result": "4 passes / 1 failure: restored bytes present but cleanup error reported succeeded=[]"
+    },
+    {
+      "log": "/tmp/mixed-trash-dialog-before.log",
+      "result": "Local entry in ordinary mixed selection permanently deleted; undo did not restore it"
+    },
+    {
+      "log": "/tmp/undo-lifetime-before-redo-push.log",
+      "result": "2 failures / 9 passes: admitted partial and zero-progress redo lose remaining work after push"
+    },
+    {
+      "log": "/tmp/inline-derived-diagnostic-result.md",
+      "result": "Captured stack attributes derived_inert to rename blur completion reading retired component derivation"
+    }
+  ],
+  "verification": {
+    "frontend": {
+      "files": 250,
+      "passed": 2267,
+      "skipped": 3,
+      "performancePassed": 30,
+      "log": "/tmp/file-outcome-frontend-final.log"
+    },
+    "undoHistory": {
+      "passed": 11,
+      "log": "/tmp/undo-lifetime-final.log"
+    },
+    "browser": {
+      "focused": 12,
+      "integration": 72,
+      "logs": [
+        "/tmp/file-outcome-browser-final.log",
+        "/tmp/file-outcome-browser-integration.log"
+      ],
+      "scope": "Chromium; inline rename and general file operations cover all views; some standalone delete/clipboard/Miller cases use default view"
+    },
+    "rust": {
+      "libraryPassed": 517,
+      "integrationPassed": 9,
+      "ignored": 7,
+      "log": "/tmp/file-outcome-rust-full.log",
+      "isolatedTrashCases": 7,
+      "focusedLog": "/tmp/file-batch-rust-adapter.log",
+      "clippyLog": "/tmp/file-outcome-clippy.log"
+    },
+    "native": {
+      "platform": "Linux / WebKitGTK",
+      "specs": 3,
+      "outcomes": 5,
+      "seconds": 6,
+      "log": "/tmp/file-outcome-native-final.log",
+      "buildLog": "/tmp/file-outcome-native-build.log",
+      "binarySha256": "f11cd650de0be6c78aab9fd54dafa291b2213b932b9e36040a757cf81117a91a",
+      "partialBatch": "Capture actual A/B entries; external unlink B; native A-trash success with B error; Undo/Redo/Undo preserves A bytes and UI, B remains absent",
+      "regressions": "Real create held across navigation with causal external watcher write; create/rename/trash filesystem and listing outcomes",
+      "firstAttempt": {
+        "log": "/tmp/file-outcome-native.log",
+        "result": "2 specs passed / 1 fixture failure: WebDriver treated returned application error field as protocol failure; runner-side JSON parsing fixed the fixture without changing binary"
+      }
+    },
+    "static": {
+      "svelteErrors": 0,
+      "svelteWarnings": 0,
+      "log": "/tmp/file-outcome-check-final.log",
+      "architectureLog": "/tmp/file-outcome-architecture.log",
+      "nativeTypesLog": "/tmp/file-outcome-native-types.log",
+      "mapsCovered": 389,
+      "mapsTotal": 389,
+      "mapsLog": "/tmp/file-outcome-maps.log"
+    },
+    "startup": {
+      "chunks": 44,
+      "rawBytes": 665022,
+      "gzipBytes": 216714,
+      "mainGzipBytes": 90488,
+      "gzipDelta": 631,
+      "log": "/tmp/file-outcome-bundle-final.log",
+      "latencyClaim": false
+    },
+    "releaseProbeAbsence": {
+      "matches": 0,
+      "log": "/tmp/file-outcome-release-probes.json",
+      "qualification": "Normal release assets inspected before opt-in E2E build replaced build/"
+    },
+    "screenshot": "screenshots/refactor/repo-health-cleanup/mixed-delete-confirmation.png",
+    "independentReview": "Sol ACCEPT: independent Rust adapter and native evidence review, separate frontend/history adversarial review; two redo/push counterexamples fixed and verified. Native verifier did not author its fixture."
+  },
+  "limits": [
+    "Inverse admission is renderer-local; broadcast history does not serialize the same inverse across windows",
+    "Windows shell restore completion still depends on trash crate and needs Windows-native evidence",
+    "macOS trash restore remains unsupported; inherited UNC-copy redo cannot recover a permanently removed copy",
+    "Linux cleanup failure can leave metadata-only entries visible in external trash tools; unsupported atomic no-replace operations fail closed",
+    "Deletion timestamp ties retain first inventory match; no operation-specific trash identity is recorded",
+    "Native evidence is Linux/default-view; concurrency and partial history interleavings are domain/store tests",
+    "No startup latency, restore latency or Mac half-bounce improvement is claimed",
+    "Broader platform/product/soak and final release acceptance remain open",
+    "Local-only checkpoint; public publication remains blocked by prior automatic approval review"
+  ]
+}

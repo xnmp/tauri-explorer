@@ -1,0 +1,147 @@
+{
+  "date": "2026-09-09",
+  "scope": "Exact preparation of independent Linux replacement children; production single replacement uses the same group preparation and pre-promotion cancellation boundary",
+  "contracts": [
+    "Every exact source/target/private-root request is selected before one atomic group admission; every child is bound before any executable child is returned",
+    "Preparation uses captured physical paths and records source/original versions and parent identity, sharing complete OperationRecord validation and manifest-size preflight with promotion",
+    "A binding/cancellation/validation error explicitly attempts retirement of every admitted child, preserving primary errors and bounded cleanup detail; preparation creates no durable catalog or user-file effects",
+    "Cancellation already observed at executor entry retires the child before promotion without durable recovery work",
+    "Two independent children execute exact destinations and restore independent originals; a completed sibling retains a usable native inverse when a later child is cancelled or its source changes",
+    "Alias retargeting after preparation never redirects execution; changed target identity before binding is rejected without touching either object"
+  ],
+  "verification": {
+    "repro": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib cancellation_of_a_prepared_copy_does_not_create_durable_recovery_work -- --nocapture",
+      "pre_fix_failed": 1,
+      "exit_code": 101,
+      "log": {
+        "path": "/tmp/copy-plan-repro.log",
+        "sha256": "7e0da4eea45e7dfd3bd65bdcd861ef54c1b9e4168ec7234c231029d776a536af"
+      },
+      "failure": "Queued cancellation returned MutationUncertain after promotion rather than clean cancellation; final Rust log includes the passing regression"
+    },
+    "rust": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: files::batch:: --test-threads=1",
+      "passed": 488,
+      "failed": 0,
+      "ignored": 12,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-plan-rust.log",
+        "sha256": "ad4d443baf168b2b899eb96f287554555ca71f0accf2734dfa763ab6ce6b2124"
+      }
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": {
+        "path": "/tmp/copy-plan-native-build.log",
+        "sha256": "60090036aee4b34a6b8ac8067a55e5f75c7ab00b721948dd52d330ae86706088"
+      },
+      "command": "bash /tmp/run-file-recovery-native.sh",
+      "passed": 5,
+      "failed": 0,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-plan-native-ui.log",
+        "sha256": "85b22244ddde6310479db1246e982d9a5d10aa5ce9e8f168fdac039e623c1cf2"
+      },
+      "profile": "/tmp/explorer-file-recovery-native-7PCYhg",
+      "binary_sha256_before": "32047b54be1b6ee890338fce4e3a648c6acfb27a0af6e72439b391f4fb3ad9d3",
+      "binary_sha256_after": "32047b54be1b6ee890338fce4e3a648c6acfb27a0af6e72439b391f4fb3ad9d3",
+      "scope": "Production single replacement, Undo/Redo, recovery, reload and detached-window settlement through the new singleton adapter; multi-child preparation/execution has Rust real-filesystem evidence, not grouped IPC/UI evidence"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "existing_dead_code_warnings": 8,
+      "log": {
+        "path": "/tmp/copy-plan-clippy.log",
+        "sha256": "219ce0533ec7c9954043764c6707c955317bb2825c8be543e102d85a5a265f4a"
+      }
+    },
+    "format": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-plan-format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "maps": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-plan-maps.log",
+        "sha256": "3cef058d5ec8319985d5e728ff5cd5669e51522b4785161672459a97de858dc5"
+      },
+      "including_untracked": {
+        "covered": 472,
+        "total": 472,
+        "log": {
+          "path": "/tmp/copy-plan-maps-untracked.log",
+          "sha256": "ab5356bdd52cf7d24d99fca7a207a0132d3f59ac09b9fd245c40d14540e017b9"
+        }
+      }
+    },
+    "bundle": {
+      "command": "bun run check:bundle",
+      "exit_code": 0,
+      "main_gzip_bytes": 91680,
+      "startup_chunks": 45,
+      "startup_raw_bytes": 671703,
+      "startup_gzip_bytes": 219255,
+      "log": {
+        "path": "/tmp/copy-plan-bundle.log",
+        "sha256": "1fd31bbfa32da4499e61e6cbde244a72c57d96d1c47aef935d6815ff381a7950"
+      },
+      "scope": "Restores production frontend after opt-in native acceptance build; no startup-time improvement claimed"
+    }
+  },
+  "independent_review": {
+    "agent": "effective_claims_adversary_sol",
+    "model": "gpt-5.6-sol",
+    "result": "ACCEPTED for bounded preparation and singleton production scope; source/tests and final Rust log reviewed independently",
+    "confirmed": [
+      "Whole group admitted before executable children escape",
+      "Explicit cleanup attempts across failed sibling retirement",
+      "Exact paths/versions survive alias and source changes",
+      "Pre-promotion cancellation and independent inverse receipt",
+      "Shared durable-record/manifest validation"
+    ],
+    "qualifications": [
+      "Native versions are captured sequentially after admission, not an atomic filesystem snapshot",
+      "Internal admission failure can leave unindexed owner locks for later reclamation",
+      "Dropping or panicking with prepared children still relies on abandoned-owner reclamation",
+      "Pre-catalog promotion failure is conservatively uncertain",
+      "No mixed transfer or grouped IPC/history acceptance"
+    ]
+  },
+  "limitations": [
+    "Independent replacements only: mixed ordinary copies, ordered overlapping targets, same-name policy, native batch IPC and paste/drop migration remain open",
+    "No partial-result ledger that survives later worker panic, no one-job cancellation/progress lifecycle, and no grouped forward history are introduced",
+    "Same-object version changes after preparation are checked during execution; external writers, timestamp restoration, nested edits and inode reuse retain existing observation limits",
+    "Preparation retirement failures are reported; damaged storage may require later reconciliation",
+    "Cancellation can race the pre-promotion check and then require durable recovery; publication must finish after displacement",
+    "No Windows/macOS qualification, artifact retirement, whole-review completion, publication, or measured half-bounce startup claim"
+  ],
+  "source_files": [
+    {
+      "path": "src-tauri/src/files/recovery/forward_copy.rs",
+      "sha256": "f5bb726af0182214a1556983fdcdd5e9a0388a6cb4bc4061838669e5d19eea4d"
+    },
+    {
+      "path": "src-tauri/src/files/recovery/forward_copy/plan.rs",
+      "sha256": "87f617b3e43bf9641e6212b7727dd41b4511131b3f9fec263d25c17e3ba285f6"
+    },
+    {
+      "path": "src-tauri/src/files/recovery/coordinator/promotion.rs",
+      "sha256": "40b9cdbda9c65ba4b2250b20d6e9ecd79803c6948bc60f9a8344822882ba559b"
+    },
+    {
+      "path": "src-tauri/test_support/recovery_forward_copy.rs",
+      "sha256": "00fc0f91ffc16c2e03acc6b0b556fc9be879659310058926204591de04823d16"
+    },
+    {
+      "path": "src-tauri/test_support/recovery_copy_plan.rs",
+      "sha256": "996fa5a99f01f582a23152887bd7433cf86b759e7aa45695a372f996323de081"
+    }
+  ]
+}

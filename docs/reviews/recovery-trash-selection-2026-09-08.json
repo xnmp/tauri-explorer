@@ -1,0 +1,139 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "Whole-selection Linux trash planning implemented and independently accepted; entire review remains active",
+  "production_seams": [
+    "trash::run_batch -> pooled run_with_setup_owned -> Context::prepare_selection -> PreparedSelection::execute_next",
+    "Ledger passes its existing Arc<Vec<String>> to setup; selection consumes aligned item plans while sharing original request order/spelling",
+    "observe_sources captures all primary sources and nested parent-alias dependencies before destination planning; coherent native object/full version required, missing leaves remain aligned failures",
+    "source-first indexing preserves ancestor/duplicate/dependency conflicts even when a later candidate/layout plan fails",
+    "Prepared layout plans are immutable Arc values interned by full equality; both fallback layouts and exact payload/final-info/staged-info names are declared before effects",
+    "SelectionIndex reuses Claims path/physical namespace/subtree logic with Source,Exclusive,Shared,Container roles; distinct non-directory hardlinks are allowed only within the source set",
+    "Shared/Container resource observations deduplicate by complete value; sources/exclusive destinations retain conflict rejection, with role-compatible scopes enforced",
+    "32MiB conservative plan budget includes shared input and source observation charges; separate encoded-index32MiB and32768 unique-claim bounds retained"
+  ],
+  "verification": {
+    "alias_source_red": {
+      "log": "/tmp/recovery-trash-selection-red.log",
+      "exit_code": 101,
+      "failed": 2,
+      "passed": 1,
+      "reason": "Aliased duplicate and aliased selected ancestor could reach per-item effects before conflict surfaced"
+    },
+    "nested_alias_red": {
+      "log": "/tmp/recovery-trash-selection-alias-red.log",
+      "exit_code": 101,
+      "failed": 1,
+      "reason": "Selection could delete a nested parent alias needed by another selected source"
+    },
+    "prefailed_ancestor_red": {
+      "log": "/tmp/recovery-trash-selection-prefailed-red.log",
+      "exit_code": 101,
+      "failed": 1,
+      "reason": "Destination candidate failure erased an existing ancestor from the first implementation\u2019s overlap index"
+    },
+    "rust_full": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "log": "/tmp/recovery-trash-selection-full.log",
+      "exit_code": 0,
+      "passed": 865,
+      "ignored": 11,
+      "environment": "Approved localhost access for existing user_report test listeners; clean shell/cache settings"
+    },
+    "focused_final": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files::freedesktop_trash -- --test-threads=1",
+      "log": "/tmp/recovery-trash-selection-focused-final.log",
+      "exit_code": 0,
+      "passed": 45,
+      "note": "After behavior-equivalent iterator flattening/import cleanup; final native binary also uses those edits"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-trash-selection-clippy.log",
+      "exit_code": 0,
+      "warnings": "11 existing unused-infrastructure library warnings, 5 test warnings including4 duplicates; prior unused version_from_metadata now has production source-observation callers"
+    },
+    "windows_compile": {
+      "logs": [
+        "/tmp/recovery-trash-selection-windows.log",
+        "/tmp/recovery-trash-selection-windows-core.log"
+      ],
+      "exit_codes": [
+        0,
+        0
+      ],
+      "command": "cargo check --offline --target x86_64-pc-windows-gnu --tests against /tmp/windows-restore-check and /tmp/recovery-private-storage-check manifests",
+      "scope": "Actual source/test cross-check harnesses with unrelated application shims; not full Windows app build or runtime"
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 VITE_E2E_NO_WARM_PRIME=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": "/tmp/recovery-trash-selection-native-build.log",
+      "binary_sha256": "731c35fff6850694289e9db4c8d62018391fecd4e892f23f0cca834b03cc3526",
+      "command": "TAURI_E2E_HISTORY_GATE_DIR=/tmp/recovery-trash-selection-native-gates bash /tmp/run-native-review.sh --spec e2e-tauri/specs/file-ops.spec.ts --spec e2e-tauri/specs/file-forward-history.spec.ts --spec e2e-tauri/specs/local-mutation-lifetime.spec.ts",
+      "log": "/tmp/recovery-trash-selection-native.log",
+      "exit_code": 0,
+      "passed": 8,
+      "skipped": 0,
+      "specs": 3,
+      "environment": "Created history gate directory first; approved localhost/display access; isolated XDG profile on home filesystem, HOME unchanged",
+      "screenshot": "screenshots/refactor/repo-health-cleanup/native-forward-history.png",
+      "screenshot_review": "Opened and viewed: native completed child/history rename in details view. Does not depict internal alias overlap rejection; those outcomes are covered by actual filesystem Rust regressions."
+    },
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT, scoped after initial REJECT and reproduced source-first correction",
+      "confirmed": [
+        "source/alias observation before destination planning",
+        "failed destination plans cannot erase source authority",
+        "both fallback layouts/all artifacts checked before effects",
+        "hardlink namespace semantics and exact shared dedup",
+        "one shared request vector and aligned execution",
+        "separate bounded plan/index data"
+      ],
+      "remaining": [
+        "no recovery reservation/durable authority connected",
+        "Linux casefold/provider namespace qualification",
+        "expanded claim limit is not an item count guarantee"
+      ]
+    },
+    "maps": {
+      "log": "/tmp/recovery-trash-selection-maps.log",
+      "result": "415/415 tracked sources,0 unresolved refs; new selection and source-included tests explicitly mapped"
+    },
+    "format": "cargo fmt --check and git diff --check"
+  },
+  "limits": [
+    "No inter-operation reservation or durable artifact promotion/reconciliation yet",
+    "Linux casefold/provider aliases may resemble distinct hardlinks; universal namespace identity remains open",
+    "Each ordinary successful item consumes at least four unique claims; aliases/layouts/fallbacks add more and the encoded byte cap may bind first",
+    "32MiB is a conservative prepared-plan budget, not a whole-process or exact allocator peak-memory claim; temporary capture/planning and index/ledger/artifact state are separately bounded",
+    "Preparation retains no descriptor per source; arbitrary external namespace changes and inode reuse remain outside last-observation guarantees",
+    "No deletion latency or startup performance improvement measured",
+    "Remaining mutation roots, durable overwrite Undo/cancel/retention, crash/crossFS/platform/product acceptance and actual Mac half-bounce remain open",
+    "Changes remain local; no publication or merge"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/batch/mod.rs": "72b5d6509d9b15c9ad5cd5a77e1fc13945307b9715bbc0e8ffaff1a5bd55f3f7",
+    "src-tauri/src/files/trash.rs": "55767e07978f26d69216db0953fc095397793d419c7241f4ec19cb7681d94421",
+    "src-tauri/src/files/freedesktop_trash.rs": "c7e77c73ac2f15b2ddef6995387c534af58841c336cc492f39cd0f0846b40db0",
+    "src-tauri/src/files/freedesktop_trash/plan.rs": "61db8eaed6e80e5f96b8dd1ec91b812aae65df51aa957a93a1443b8f6563937d",
+    "src-tauri/src/files/freedesktop_trash/selection.rs": "05b0a94bb47416866fd815678aad921ec9ac93d3ad42dcfb3cafaf910cca5685",
+    "src-tauri/src/files/recovery/mod.rs": "5408aa18ba29b815ccf510146a2132ea923def400718bf22c42694da6b481903",
+    "src-tauri/src/files/recovery/resources.rs": "0cdc4d1eec1d7828e0d2704e625c9fc4be5f08f4c9fd0bf837691cfa54321b12",
+    "src-tauri/src/files/recovery/model.rs": "77bb2b7c9f437fb88af8cf6067cf9a8ebb8dad7b6064c7bbebe37de0809b9320",
+    "src-tauri/test_support/freedesktop_trash_selection.rs": "c971ce6db3a0e652d9e26bc8a5c1439bf0d9732c2aa4f34e88d4e34ee3867e38",
+    "src-tauri/test_support/freedesktop_trash_plan.rs": "5dc1a15fe7f30a4ba4000a8af54999fb9349027fdd37d32a2b089e0dee6f3717",
+    "src-tauri/test_support/file_batch_outcomes.rs": "80144511484de1b6fcd3492648a554f14e8bb9ceb7905441f35ea0b2be0a2a11",
+    "src-tauri/test_support/file_batch_worker.rs": "a0803baf937e7413f80e452f8899c65639053d35cfc729f0e5005fe148641821",
+    "src-tauri/test_support/recovery_context.rs": "e1e9faeba05ce83523cecd9bfd5a758de74d46ef7f047245337a5d121eeb8972",
+    "src-tauri/test_support/recovery_resources.rs": "e45bac32591f9d59af6c1dd16a471a8328fcba15905f66ec4cc94830229aa3d8"
+  },
+  "normal_build": {
+    "command": "bun run tauri build --debug --no-bundle",
+    "log": "/tmp/recovery-trash-selection-normal-build.log",
+    "exit_code": 0,
+    "binary_sha256": "4157a8cca1a87c2ed1d3bf60a05ef91dabd400777b6dcfc14f3a54242fdf3781",
+    "note": "Normal debug custom-protocol binary restored without E2E flags; no runtime probe-absence check claimed"
+  }
+}

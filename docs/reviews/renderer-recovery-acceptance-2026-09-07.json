@@ -1,0 +1,48 @@
+{
+  "status": "passed",
+  "processId": 55829,
+  "windowLabel": "main",
+  "webviewAddress": "0x55b0ee989d30",
+  "cycles": [
+    {
+      "cycle": 1,
+      "terminationReason": "Crashed",
+      "oldSession": "0",
+      "newSession": "2",
+      "oldLeaseId": "1",
+      "newLeaseId": "2",
+      "repoRoot": "/tmp/explorer-renderer-recovery-q8EYLW/case/repository-1",
+      "oldLeaseReclaimed": true,
+      "oldAcquireRejected": true,
+      "staleReleaseIgnored": true,
+      "mutationStartedAt": 1788788674584,
+      "watcherObservedAt": 1788788674584,
+      "watcherReceivedAt": 1788788674585,
+      "marker": "observed-after-crash-1.txt",
+      "entries": [
+        "observed-after-crash-1.txt"
+      ]
+    },
+    {
+      "cycle": 2,
+      "terminationReason": "Crashed",
+      "oldSession": "2",
+      "newSession": "4",
+      "oldLeaseId": "2",
+      "newLeaseId": "3",
+      "repoRoot": "/tmp/explorer-renderer-recovery-q8EYLW/case/repository-2",
+      "oldLeaseReclaimed": true,
+      "oldAcquireRejected": true,
+      "staleReleaseIgnored": true,
+      "mutationStartedAt": 1788788675311,
+      "watcherObservedAt": 1788788675311,
+      "watcherReceivedAt": 1788788675312,
+      "marker": "observed-after-crash-2.txt",
+      "entries": [
+        "observed-after-crash-2.txt"
+      ]
+    }
+  ],
+  "platform": "Linux WebKitGTK 2.52.5, debug custom-protocol binary, Xvfb/Openbox",
+  "scope": "Two externally signalled renderer crashes and controlled reloads of one retained native GTK WebView; not automatic production recovery or launch-time evidence."
+}

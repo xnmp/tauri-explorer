@@ -26,7 +26,7 @@ jobs:
     # specs finish pushed the job past the cap and it was killed as `cancelled`
     # with no artifacts. Cap the job well above build + suite and let the
     # per-step bound below be the thing that actually fails a stuck run.
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
 
@@ -35,6 +35,8 @@ jobs:
           bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       # A target directory is reusable only with the same compiler identity.
       # Keep the raw identity in the diagnostic artifact and use its digest in
@@ -83,7 +85,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb nasm
+            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils dbus-daemon nasm
 
       # Linux uses tauri-driver as its WebDriver proxy. Windows attaches
       # msedgedriver directly to the WebView2 CDP endpoint below.
@@ -141,7 +143,8 @@ jobs:
           VITE_E2E_HOOKS: "1"
           # The attach feature passes the CDP flag through WebView2's API.
           # Environment overrides are ignored because hosted runners are
-          # elevated. Warm priming is disabled to keep one WebView2 context.
+          # elevated. Automatic warm priming is disabled during initial attach;
+          # explicit child windows inherit the same environment arguments.
           VITE_E2E_NO_WARM_PRIME: ${{ runner.os == 'Windows' && '1' || '' }}
         run: |
           set -o pipefail
@@ -206,15 +209,48 @@ jobs:
           path: native-contract-diagnostics/
           if-no-files-found: error
 
-      - name: Run smoke suite (Linux, under Xvfb)
+      # Linux mocks and Rust cfg checks cannot prove Shell completion or
+      # destination preservation. Exercise the actual Windows adapter, including
+      # a collision introduced after MoveItem queues the restore.
+      - name: Windows native restore and watcher contracts
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
+          contract_status=0
+          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked git::tests::directory_scope files::watch_observation:: git_watch::tests::native_observer; do
+            # Cargo succeeds with zero matching tests. Fail explicitly when a
+            # source/module move leaves one of these acceptance filters stale.
+            if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then
+              echo "::error::No Rust contracts match $filter"
+              contract_status=1
+              continue
+            fi
+            # Preserve failure while collecting all independent contract families.
+            cargo test --manifest-path src-tauri/Cargo.toml --lib "$filter" -- --test-threads=1 || contract_status=1
+          done
+          exit "$contract_status"
+
+      # Test failures remain fatal, but do not hide independent lint/UI results.
+      - name: Windows Rust lint
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-webview2-attach -- -D warnings
+
+      - name: Run smoke suite (Linux, isolated display and window manager)
         if: runner.os == 'Linux'
-        run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bun run test:e2e:tauri
+        # 36 isolated native sessions take ~30s each just to start WebKitGTK
+        # on hosted runners. The old 15m cap stopped before the final 10 specs.
+        timeout-minutes: 30
+        # Own the session bus as well as the display and WM; do not inherit
+        # hosted-runner desktop services or rely on D-Bus autolaunch.
+        run: GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
 
       # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps
       # run on the WebView2 *runtime*, whose version can differ — msedgedriver
       # hard-rejects mismatches. Download the driver matching the runtime.
       - name: Install msedgedriver matching the WebView2 runtime
-        if: runner.os == 'Windows'
+        id: webview_driver
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
         shell: pwsh
         run: |
           $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
@@ -224,17 +260,37 @@ jobs:
           Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
           "TAURI_NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\msedgedriver.exe" >> $env:GITHUB_ENV
 
-      # Bounded well below the 40-minute job cap so a regression leaves time for
-      # the artifact upload below instead of being killed by the cap with
-      # nothing to show. Sized for a real run, not for the fast-fail path: the
-      # Linux leg's whole job is ~10 minutes, so anything near the ~1 minute a
-      # session-start failure takes would kill a working suite.
+      # Keep the WebView2 suite's bound separate from WebKitGTK session costs
+      # and leave time for failure evidence before the overall job cap.
       - name: Run smoke suite (Windows)
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' && steps.webview_driver.outcome == 'success' }}
         timeout-minutes: 15
         env:
           VITE_E2E_NO_WARM_PRIME: "1"
+          RUST_LOG: debug
         run: bun run test:e2e:tauri
+
+      # Tauri writes frontend/native failures outside the checkout. In particular,
+      # WebKitWebDriver need not forward the app's stdout to tauri-driver.
+      - name: Collect native application logs
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          const data = process.platform === 'win32'
+            ? process.env.LOCALAPPDATA
+            : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+          if (!data) throw new Error('Native application data directory is unavailable');
+          const source = path.join(data, 'io.github.xnmp.tauri-explorer', 'logs');
+          if (fs.existsSync(source)) {
+            fs.cpSync(source, 'e2e-tauri/logs/application', { recursive: true });
+          } else {
+            console.log(`No native application logs at ${source}`);
+          }
+          JS
 
       # Build outputs are safe to reuse after a GUI failure once both the
       # contracts and embedded binary build have succeeded. Save explicitly so

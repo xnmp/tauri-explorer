@@ -1,64 +1,10 @@
-/**
- * VERIFICATION of #431 Claim 4 — commit-file LRU cache. Added by
- * verify/431-perf (adversarial).
- *
- * The cache lives in `GitGraphView.svelte`'s module script and is not
- * exported, so it cannot be imported directly. This test does two things:
- *  1. Pins the source: reads GitGraphView.svelte and asserts the cache uses a
- *     repo+FULL-oid key and a bound of 50 (so the replica below is faithful).
- *  2. Exercises a byte-faithful replica of `cachedCommitFiles` to prove:
- *       - a cache hit performs ZERO backend calls,
- *       - the cache is bounded at 50 (LRU eviction of the oldest),
- *       - keying on repo path + FULL oid defeats the staleness attacks:
- *         an amend (different full oid, same short prefix) and a different
- *         repo (same oid) both MISS rather than serving wrong data.
- */
+/** Behavioral verification of the production commit-file LRU (#431, #680). */
 import { describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-type ApiCommitFile = { path: string; status: string };
-
-/** Byte-faithful replica of GitGraphView.svelte's cachedCommitFiles (#431).
- *  `fetchFn` stands in for `gitCommitFilesApi`; we spy on its call count. */
-function makeCache(fetchFn: (repo: string, oid: string) => Promise<ApiCommitFile[]>) {
-  const commitFilesCache = new Map<string, ApiCommitFile[]>();
-  const COMMIT_FILES_MAX = 50;
-  return async function cachedCommitFiles(repoPath: string, oid: string): Promise<ApiCommitFile[]> {
-    const key = `${repoPath}\0${oid}`;
-    const hit = commitFilesCache.get(key);
-    if (hit) {
-      commitFilesCache.delete(key);
-      commitFilesCache.set(key, hit);
-      return hit;
-    }
-    const files = await fetchFn(repoPath, oid);
-    commitFilesCache.set(key, files);
-    if (commitFilesCache.size > COMMIT_FILES_MAX) {
-      const oldest = commitFilesCache.keys().next().value;
-      if (oldest !== undefined) commitFilesCache.delete(oldest);
-    }
-    return files;
-  };
-}
+import { createCommitFilesCache as makeCache } from "$lib/state/git-commit-files-cache";
 
 const full = (n: number) => `${n.toString(16).padStart(40, "0")}`;
 
 describe("#431 Claim 4: commit-file LRU cache", () => {
-  it("source uses a repo+full-oid key and a 50-entry bound", () => {
-    const src = readFileSync(
-      fileURLToPath(new URL("../../src/lib/components/GitGraphView.svelte", import.meta.url)),
-      "utf8",
-    );
-    // Full-oid key: `${repoPath}\0${oid}` (NOT a short/abbreviated oid). The
-    // source spells the NUL as the \0 escape sequence — a literal NUL byte
-    // would make git/grep treat the whole .svelte file as binary (#451) —
-    // so the pin matches the two source characters backslash-zero.
-    expect(src).toContain("const key = `${repoPath}\\0${oid}`;");
-    expect(src).toMatch(/COMMIT_FILES_MAX\s*=\s*50/);
-    expect(src).toContain("commitFilesCache.size > COMMIT_FILES_MAX");
-  });
-
   it("a cache hit performs ZERO backend calls", async () => {
     const fetchFn = vi.fn(async (_r: string, oid: string) => [{ path: `${oid}.ts`, status: "M" }]);
     const cached = makeCache(fetchFn);

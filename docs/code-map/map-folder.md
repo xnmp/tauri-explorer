@@ -574,3 +574,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
+- `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual and half-bounce verdicts.
+- `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
+- `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.

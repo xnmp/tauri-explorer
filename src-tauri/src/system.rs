@@ -8,12 +8,17 @@ use std::path::PathBuf;
 use crate::error::AppError;
 use crate::files;
 
+/// Monotonic clock starting at app run(), before builder and window creation.
+/// Excludes OS process loading and main() argument parsing. `epoch_ms` pins the
+/// same instant on the wall clock so the native readiness endpoint can be
+/// correlated with webview time origins without assuming a shared clock.
+pub struct StartupClock {
+    pub started: std::time::Instant,
+    pub epoch_ms: f64,
+}
+
 /// Stores the working directory from which the app was launched.
 pub struct LaunchCwd(pub String);
-
-/// Monotonic clock starting at app run(), before builder and window creation.
-/// Excludes OS process loading and main() argument parsing.
-pub struct StartupClock(pub std::time::Instant);
 
 /// Reap a launcher child asynchronously so opening a native surface does not
 /// accumulate zombies on Unix.
@@ -230,11 +235,17 @@ pub async fn log_startup_timing(
     log::info!("{}", summary);
     // Child/warm windows share this process clock; only the initial main
     // window can interpret it as startup latency. IPC receipt adds a small
-    // scheduling delay but avoids adding unrelated Rust and JS time origins.
+    // scheduling delay, so the receipt epoch is logged alongside it and the
+    // gap stays attributable instead of being folded into app work.
     if window.label() == "main" {
+        let receipt_epoch_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs_f64() * 1000.0)
+            .unwrap_or(f64::NAN);
         log::info!(
-            "Startup(native-ready): app-run-to-ready={:.1}ms",
-            clock.0.elapsed().as_secs_f64() * 1000.0
+            "Startup(native-ready): window=main app-run-to-ready={:.1}ms receipt-epoch-ms={:.3}",
+            clock.started.elapsed().as_secs_f64() * 1000.0,
+            receipt_epoch_ms,
         );
     }
     Ok(())

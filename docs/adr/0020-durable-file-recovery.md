@@ -943,26 +943,42 @@ The transition function, not execution discipline, enforces the crash ordering.
 durable `Parked`; `BeginRestoration` is unreachable from `Removed`, because the
 exact original no longer exists. An overwritten destination is displaced into
 private storage before publication. Nothing in the forward path deletes a user
-entry, and restoration never removes a published destination before the source is
-verified back at its own name. `recovery/move_execution.rs` addresses every
+entry, and restoration removes nothing at all: returning a cross-filesystem
+publication renames it back into the destination's private root, so a destination
+edited after the move survives its own inverse. `recovery/move_execution.rs` addresses every
 endpoint through retained parent handles and classifies each rename from both
 observed versions, as replacement transfer does. Artifact-root ownership is shared:
 `Anchor::open_plan` opens any planned private namespace, so move roots reuse the
 replacement manifest, namespace and durability discipline.
 
 Undo executes the durable record itself, claimed by ID, revision and stable
-position — `Published`, `Parked` or `Removed` for a completed move — never a
-renderer-supplied path, which for a cross-filesystem move could relocate the last
-copy of the data. A move record has no reapplication: `ReplacementOutcome::reapplicable`
+position — `Parked`, `Removed` or `Restored`, plus `Published` only for a rename,
+whose single effect already vacated the source — never a renderer-supplied path,
+which for a cross-filesystem move could relocate the last copy of the data. A move record has no reapplication: `ReplacementOutcome::reapplicable`
 is false, so history produces no opposite whose evidence is gone. Effective
-admission claims treat `Published | Parked | Removed | Restored` as released
-endpoints and retain only the private artifact roots, so either public path can be
-reused after the move.
+admission claims treat those same completed phases as released endpoints and
+retain only the private artifact roots, so either public path can be reused after
+the move. A cross-filesystem move at `Published` is deliberately *not* complete:
+its source is still live at its own name and must stay claimed until parking.
+Source removal advances the effect revision, so one `(revision, position)` pair
+can never name both a move whose source is parked and one whose source is gone.
 
 Acceptance so far is Linux real-filesystem contracts (`test_support/recovery_forward_move.rs`),
 process kills at every effect boundary including cross-filesystem staging, parking
-and source removal (`test_support/recovery_move_execution.rs`), and pure transition
-contracts. Still required: ordered interactive move sessions with partial receipts,
-conflict revalidation and cancellation; native forward history grouping for those
-sessions in place of the renderer's path-based Move inverses; artifact retention
-and retirement (#687); and Windows/macOS adapters and qualification.
+and source removal (`test_support/recovery_move_execution.rs`), pure transition
+contracts, and the ordered move
+session described next (`test_support/move_session.rs`).
+
+Interactive relocation is now an ordered native session. `files/move_session.rs`
+is a second `Work` implementation for the existing copy-session engine, so
+ordering, conflict pauses, cancellation, the bounded diagnostic budget and the
+completed-prefix receipt ledger are shared by construction rather than
+reimplemented. `file_mutation::move_entries` settles one native history entry per
+session with exactly one inverse per committed item — the durable record when
+there is one, an `Action::Move` otherwise, never both — which retires the
+renderer's per-item path-based Move inverses for cut/paste and drag-drop.
+
+Still required: artifact retention and retirement (#687); Windows/macOS adapters
+and qualification; and a `RENAME_NOREPLACE` support probe before publishing root
+intent, so a filesystem that rejects it does not leave a private artifact pair
+behind on each refused attempt.

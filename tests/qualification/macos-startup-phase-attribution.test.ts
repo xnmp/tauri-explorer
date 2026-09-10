@@ -12,19 +12,31 @@ import {
 } from "../../e2e-tauri/native-qualification";
 
 const attributedLog = [
-  "Startup(native-window): window=main app-run-epoch-ms=1000.0 window-built=100.0ms",
+  "Startup(native-window): window=main app-run-epoch-ms=1000.0 process-entry-to-run=20.0ms window-built=100.0ms",
   "Startup(webview): window=main boot-epoch-ms=1300.0 bundle-exec=50.0ms commands-ready=100.0ms settings-ready=300.0ms list-ready=350.0ms app-ready=400.0ms ui-ready=450.0ms total=450.0ms",
   "Startup(native-ready): window=main app-run-to-ready=810.0ms receipt-epoch-ms=1800.0",
   "Startup(warm-activate): show=4.0ms",
 ].join("\n");
+
+/** The verified build summary `readVerifiedNativeBuildManifest` hands the runner. */
+const verifiedBuild = {
+  commit: "abc123",
+  profile: "release-custom-protocol-production-hooks",
+  binary: "/tmp/tauri-explorer",
+  binarySha256: "deadbeef",
+  binaryBytes: 42,
+  binaryModifiedAt: "2026-09-09T00:01:00.000Z",
+};
 
 describe("macOS startup phase attribution", () => {
   it("reports measured phases and retains the unexplained remainder", () => {
     expect(parseAttributedMacStartupLog(attributedLog)).toEqual({
       coldTotalMs: 810,
       readinessTotalMs: 810,
+      launchTotalMs: 830,
       warmShowMs: 4,
       phases: {
+        processEntryMs: 20,
         nativeWindowMs: 100,
         frameworkNavigationMs: 200,
         documentBootMs: 50,
@@ -38,6 +50,23 @@ describe("macOS startup phase attribution", () => {
       inputOutcome: "not-verified",
       inputReadyMs: null,
     });
+  });
+
+  it("keeps the pre-run phase measured and out of the unattributed residual", () => {
+    const slowEntry = parseAttributedMacStartupLog(
+      attributedLog.replace("process-entry-to-run=20.0ms", "process-entry-to-run=220.0ms"),
+    );
+    // Only the process-entry phase and the whole-launch total move; the
+    // residual stays exactly what the correlated clocks cannot explain.
+    expect(slowEntry.phases.processEntryMs).toBe(220);
+    expect(slowEntry.launchTotalMs).toBe(1030);
+    expect(slowEntry.readinessTotalMs).toBe(810);
+    expect(slowEntry.phases.unattributedMs).toBe(10);
+    expect(() =>
+      parseAttributedMacStartupLog(
+        attributedLog.replace(" process-entry-to-run=20.0ms", ""),
+      ),
+    ).toThrow("native-window marker missing");
   });
 
   it("correlates the main window when a warm webview reports first", () => {
@@ -79,6 +108,8 @@ describe("macOS startup phase attribution", () => {
 
     expect(summarizeMacStartupPhases([first, second])).toMatchObject({
       readinessTotalMs: { p50: 810, p95: 910 },
+      launchTotalMs: { p50: 830, p95: 930 },
+      processEntryMs: { p50: 20, p95: 20 },
       nativeWindowMs: { p50: 100, p95: 100 },
       frameworkNavigationMs: { p50: 200, p95: 200 },
       documentBootMs: { p50: 50, p95: 50 },
@@ -122,18 +153,7 @@ describe("macOS startup phase attribution", () => {
   it("builds the final report with exact provenance, conditions, and explicit outcomes", () => {
     const sample = parseAttributedMacStartupLog(attributedLog);
     const report = buildMacStartupQualificationReport({
-      build: {
-        schemaVersion: 1,
-        sourceCommit: "abc123",
-        profile: "release-custom-protocol-production-hooks",
-        buildCommand: ["bun", "run", "tauri", "build"],
-        startedAt: "2026-09-09T00:00:00.000Z",
-        completedAt: "2026-09-09T00:01:00.000Z",
-        binary: "/tmp/tauri-explorer",
-        binarySha256: "deadbeef",
-        binaryBytes: 42,
-        binaryModifiedAt: "2026-09-09T00:01:00.000Z",
-      },
+      build: verifiedBuild,
       platform: {
         os: "macos",
         release: "25.6",
@@ -165,7 +185,7 @@ describe("macOS startup phase attribution", () => {
     expect(report).toMatchObject({
       schemaVersion: 2,
       build: {
-        sourceCommit: "abc123",
+        commit: "abc123",
         profile: "release-custom-protocol-production-hooks",
         binarySha256: "deadbeef",
       },
@@ -193,18 +213,7 @@ describe("macOS startup phase attribution", () => {
     fs.writeFileSync(log, attributedLog);
     fs.writeFileSync(recording, "dock and functional frame recording");
     fs.writeFileSync(trace, "native trace and successful input receipt");
-    const build = {
-      schemaVersion: 1 as const,
-      sourceCommit: "abc123",
-      profile: "release-custom-protocol-production-hooks",
-      buildCommand: ["bun", "run", "tauri", "build"],
-      startedAt: "2026-09-09T00:00:00.000Z",
-      completedAt: "2026-09-09T00:01:00.000Z",
-      binary: "/tmp/tauri-explorer",
-      binarySha256: "deadbeef",
-      binaryBytes: 42,
-      binaryModifiedAt: "2026-09-09T00:01:00.000Z",
-    };
+    const build = verifiedBuild;
     fs.writeFileSync(
       evidencePath,
       JSON.stringify({

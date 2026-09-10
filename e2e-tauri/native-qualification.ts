@@ -664,6 +664,7 @@ export interface MacStartupMeasurement {
 
 /** Observable phase attribution emitted by the macOS startup qualifier. */
 export interface MacStartupPhases {
+  processEntryMs: number;
   nativeWindowMs: number;
   frameworkNavigationMs: number;
   documentBootMs: number;
@@ -676,6 +677,8 @@ export interface MacStartupPhases {
 export interface AttributedMacStartupMeasurement
   extends MacStartupMeasurement {
   readinessTotalMs: number;
+  /** process-entry through readiness IPC receipt: the whole in-process window. */
+  launchTotalMs: number;
   phases: MacStartupPhases;
   firstFunctionalFrame: "observed" | "not-observed";
   firstFunctionalFrameMs: number | null;
@@ -696,6 +699,9 @@ export interface HalfBounceQualification {
   reason: string;
 }
 
+/** The subset of a native build manifest verified against the binary on disk. */
+export type VerifiedNativeBuild = NativeQualificationReport["build"];
+
 export interface InteractiveMacStartupEvidence {
   buildSha256: string;
   hardwareModel: string;
@@ -713,21 +719,62 @@ export interface InteractiveMacStartupEvidence {
   }>;
 }
 
+/**
+ * Resolve an evidence-supplied path inside the retained qualification root.
+ * Symlinks are followed first, so a link inside the root cannot smuggle in a
+ * reference to a recording or trace that the run does not retain.
+ */
+function resolveEvidencePath(
+  realRoot: string,
+  candidate: unknown,
+  label: string,
+): string {
+  if (typeof candidate !== "string" || candidate.trim() === "") {
+    throw new Error(`interactive evidence requires a ${label} path`);
+  }
+  let real: string;
+  try {
+    real = fs.realpathSync(candidate);
+  } catch {
+    throw new Error(`interactive evidence ${label} does not exist: ${candidate}`);
+  }
+  return resolveQualificationArtifactPath(realRoot, real);
+}
+
+function requiredCondition(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`interactive evidence requires a non-empty ${field}`);
+  }
+  return value;
+}
+
+function requiredOutcomeMs(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`interactive evidence ${label} must be a non-negative number`);
+  }
+  return value;
+}
+
 /** Load externally captured, same-run interactive evidence without trusting paths or provenance. */
 export function loadInteractiveMacStartupEvidence(
   evidencePath: string,
   qualificationRoot: string,
-  build: NativeBuildManifest,
+  build: VerifiedNativeBuild,
   hardwareModel: string,
   requestedSamples: number,
 ): InteractiveMacStartupEvidence {
-  const safeEvidencePath = resolveQualificationArtifactPath(
-    qualificationRoot,
-    path.resolve(evidencePath),
-  );
-  const evidence = JSON.parse(
-    fs.readFileSync(safeEvidencePath, "utf8"),
-  ) as InteractiveMacStartupEvidence;
+  const realRoot = fs.realpathSync(qualificationRoot);
+  const safeEvidencePath = resolveEvidencePath(realRoot, evidencePath, "evidence file");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(safeEvidencePath, "utf8"));
+  } catch {
+    throw new Error(`interactive evidence is not valid JSON: ${safeEvidencePath}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("interactive evidence must be a JSON object");
+  }
+  const evidence = parsed as Partial<InteractiveMacStartupEvidence>;
   if (evidence.buildSha256 !== build.binarySha256) {
     throw new Error("interactive evidence build SHA-256 does not match the verified binary");
   }
@@ -737,49 +784,118 @@ export function loadInteractiveMacStartupEvidence(
   if (evidence.launchMethod !== "launch-services-normal-application-launch") {
     throw new Error("interactive evidence must use the normal Launch Services application path");
   }
+  const cachePolicy = requiredCondition(evidence.cachePolicy, "cachePolicy");
+  const focus = requiredCondition(evidence.focus, "focus");
+  const visibility = requiredCondition(evidence.visibility, "visibility");
+  const halfBounceDeadlineMs = evidence.halfBounceDeadlineMs;
   if (
-    !Number.isFinite(evidence.halfBounceDeadlineMs) ||
-    evidence.halfBounceDeadlineMs <= 0
+    typeof halfBounceDeadlineMs !== "number" ||
+    !Number.isFinite(halfBounceDeadlineMs) ||
+    halfBounceDeadlineMs <= 0
   ) {
     throw new Error("interactive evidence requires a positive measured half-bounce deadline");
   }
-  if (!Array.isArray(evidence.samples) || evidence.samples.length !== requestedSamples) {
+  if (
+    !Array.isArray(evidence.samples) ||
+    evidence.samples.length !== requestedSamples
+  ) {
     throw new Error(`interactive evidence requires exactly ${requestedSamples} samples`);
   }
-  evidence.samples = evidence.samples.map((sample, index) => {
-    if (
-      !Number.isFinite(sample.firstFunctionalFrameMs) ||
-      sample.firstFunctionalFrameMs < 0 ||
-      !Number.isFinite(sample.inputReadyMs) ||
-      sample.inputReadyMs < 0
-    ) {
-      throw new Error(`interactive evidence sample ${index + 1} has invalid outcome timing`);
+  const samples = evidence.samples.map((sample, index) => {
+    if (typeof sample !== "object" || sample === null) {
+      throw new Error(`interactive evidence sample ${index + 1} is not an object`);
     }
-    const resolveEvidenceArtifact = (candidate: string, label: string): string => {
-      const resolved = resolveQualificationArtifactPath(
-        qualificationRoot,
-        path.resolve(candidate),
-      );
+    const position = `sample ${index + 1}`;
+    const resolveArtifact = (candidate: unknown, label: string): string => {
+      const resolved = resolveEvidencePath(realRoot, candidate, `${position} ${label}`);
       if (!fs.statSync(resolved).isFile()) {
-        throw new Error(`interactive evidence ${label} is not a file: ${resolved}`);
+        throw new Error(`interactive evidence ${position} ${label} is not a file: ${resolved}`);
       }
       return resolved;
     };
     return {
-      ...sample,
-      log: resolveEvidenceArtifact(sample.log, "startup log"),
-      launchRecording: resolveEvidenceArtifact(
-        sample.launchRecording,
-        "launch recording",
+      firstFunctionalFrameMs: requiredOutcomeMs(
+        sample.firstFunctionalFrameMs,
+        `${position} firstFunctionalFrameMs`,
       ),
-      nativeTrace: resolveEvidenceArtifact(sample.nativeTrace, "native trace"),
+      inputReadyMs: requiredOutcomeMs(sample.inputReadyMs, `${position} inputReadyMs`),
+      log: resolveArtifact(sample.log, "startup log"),
+      launchRecording: resolveArtifact(sample.launchRecording, "launch recording"),
+      nativeTrace: resolveArtifact(sample.nativeTrace, "native trace"),
     };
   });
-  return evidence;
+  return {
+    buildSha256: build.binarySha256,
+    hardwareModel,
+    launchMethod: "launch-services-normal-application-launch",
+    cachePolicy,
+    focus,
+    visibility,
+    halfBounceDeadlineMs,
+    samples,
+  };
+}
+
+export function buildInteractiveMacStartupQualificationReport(input: {
+  evidencePath: string;
+  qualificationRoot: string;
+  build: VerifiedNativeBuild;
+  platform: MacStartupQualificationReportInput["platform"];
+  requestedSamples: number;
+  timeoutMs: number;
+  startedAt: string;
+  finishedAt: string;
+}) {
+  const evidence = loadInteractiveMacStartupEvidence(
+    input.evidencePath,
+    input.qualificationRoot,
+    input.build,
+    input.platform.hardwareModel,
+    input.requestedSamples,
+  );
+  const samples = evidence.samples.map((sample) => ({
+    ...parseAttributedMacStartupLog(fs.readFileSync(sample.log, "utf8"), {
+      firstFunctionalFrame: "observed",
+      firstFunctionalFrameMs: sample.firstFunctionalFrameMs,
+      inputOutcome: "verified",
+      inputReadyMs: sample.inputReadyMs,
+      measureWarm: false,
+    }),
+    log: sample.log,
+  }));
+  const artifacts = evidence.samples.flatMap((sample) => [
+    sample.log,
+    sample.launchRecording,
+    sample.nativeTrace,
+  ]);
+  return buildMacStartupQualificationReport({
+    build: input.build,
+    platform: input.platform,
+    scenario: {
+      id: "macos-interactive-startup",
+      requestedSamples: input.requestedSamples,
+      timeoutMs: input.timeoutMs,
+      warmMeasure: false,
+      launchMethod: evidence.launchMethod,
+      cachePolicy: evidence.cachePolicy,
+      focus: evidence.focus,
+      visibility: evidence.visibility,
+      frameCriterion:
+        "externally timed first presented functional frame with per-sample launch recording",
+      inputCriterion:
+        "externally timed successful real-input outcome with per-sample native trace",
+    },
+    startedAt: input.startedAt,
+    finishedAt: input.finishedAt,
+    samples,
+    artifacts,
+    errors: [],
+    halfBounceDeadlineMs: evidence.halfBounceDeadlineMs,
+  });
 }
 
 export interface MacStartupQualificationReportInput {
-  build: NativeBuildManifest;
+  build: VerifiedNativeBuild;
   platform: {
     os: "macos";
     release: string;
@@ -892,7 +1008,8 @@ export function parseAttributedMacStartupLog(
   const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
   const nativeWindow = log.match(
     new RegExp(
-      `Startup\\(native-window\\):\\s*window=main\\s+app-run-epoch-ms=([\\d.]+)\\s+window-built=${duration}`,
+      `Startup\\(native-window\\):\\s*window=main\\s+app-run-epoch-ms=([\\d.]+)` +
+        `\\s+process-entry-to-run=${duration}\\s+window-built=${duration}`,
     ),
   );
   const webviewLine =
@@ -906,9 +1023,10 @@ export function parseAttributedMacStartupLog(
     new RegExp(`Startup\\(warm-activate\\):\\s*show=${duration}`),
   );
 
-  const appRunEpochMs = requiredNumber(nativeWindow, 1, "native-window");
   if (!nativeWindow) throw new Error("native-window marker missing from macOS process log");
-  const windowBuiltMs = durationToMilliseconds(nativeWindow[2], nativeWindow[3]);
+  const appRunEpochMs = requiredNumber(nativeWindow, 1, "native-window");
+  const processEntryMs = durationToMilliseconds(nativeWindow[2], nativeWindow[3]);
+  const windowBuiltMs = durationToMilliseconds(nativeWindow[4], nativeWindow[5]);
   const webviewMarker = (name: string): number =>
     requiredNumber(
       webviewLine?.match(new RegExp(`${name}=([\\d.]+)ms`)) ?? null,
@@ -958,6 +1076,7 @@ export function parseAttributedMacStartupLog(
   }
 
   const phases: MacStartupPhases = {
+    processEntryMs,
     nativeWindowMs: windowBuiltMs,
     frameworkNavigationMs: bootEpochMs - windowBuiltEpochMs,
     documentBootMs: bundleExecMs,
@@ -967,17 +1086,23 @@ export function parseAttributedMacStartupLog(
     unattributedMs: 0,
   };
   const attributedMs =
+    phases.processEntryMs +
     phases.frameworkNavigationMs +
     phases.nativeWindowMs +
     phases.documentBootMs +
     phases.requiredAppWorkMs +
     phases.frameSchedulingMs +
     phases.readinessIpcMs;
-  phases.unattributedMs = Number((readinessTotalMs - attributedMs).toFixed(3));
+  // The residual is measured against the full in-process window, so the
+  // pre-`run` phase never inflates or deflates it. It stays a reported phase in
+  // its own right and is never redistributed across the attributed phases.
+  const launchTotalMs = Number((processEntryMs + readinessTotalMs).toFixed(3));
+  phases.unattributedMs = Number((launchTotalMs - attributedMs).toFixed(3));
 
   return {
     coldTotalMs: readinessTotalMs,
     readinessTotalMs,
+    launchTotalMs,
     warmShowMs,
     phases,
     firstFunctionalFrame: outcomes.firstFunctionalFrame,
@@ -1004,11 +1129,16 @@ function compactSummary(values: readonly number[]): CompactDurationSummary {
 
 export function summarizeMacStartupPhases(
   samples: readonly AttributedMacStartupMeasurement[],
-): Record<keyof MacStartupPhases | "readinessTotalMs", CompactDurationSummary> {
+): Record<
+  keyof MacStartupPhases | "readinessTotalMs" | "launchTotalMs",
+  CompactDurationSummary
+> {
   const phase = (key: keyof MacStartupPhases): number[] =>
     samples.map((sample) => sample.phases[key]);
   return {
     readinessTotalMs: compactSummary(samples.map((sample) => sample.readinessTotalMs)),
+    launchTotalMs: compactSummary(samples.map((sample) => sample.launchTotalMs)),
+    processEntryMs: compactSummary(phase("processEntryMs")),
     nativeWindowMs: compactSummary(phase("nativeWindowMs")),
     frameworkNavigationMs: compactSummary(phase("frameworkNavigationMs")),
     documentBootMs: compactSummary(phase("documentBootMs")),

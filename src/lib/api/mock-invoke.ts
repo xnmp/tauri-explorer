@@ -1339,6 +1339,86 @@ if (typeof window !== "undefined") {
 }
 
 const mockFileHistory = createMockFileHistory((command, args) => invokeMockCommand(command, args), broadcastFileChange);
+
+// --- File Recovery fixture (ADR 0023 retention/retirement) -----------------
+// The browser build exercises the same commands as the native backend so the
+// storage budget, discard control and retained-evidence failure state are
+// reachable without Tauri.
+interface MockRecoveryRecord {
+  id: string;
+  generation: bigint;
+  originalPath: string;
+  retainedPath: string | null;
+  retainedBytes: string | null;
+  status: "pending" | "busy" | "ready" | "attention" | "retained";
+  message: string;
+  actions: ("restore" | "discard")[];
+  autoEligible: boolean;
+  /** Simulates a cleanup that cannot remove its artifacts (EACCES, missing volume). */
+  cleanupFails: boolean;
+}
+
+const mockRecoveryBudgetBytes = 2 * 1024 * 1024 * 1024;
+let mockRecoveryRevision = 4n;
+let mockRecoveryRecords: MockRecoveryRecord[] = [
+  {
+    id: "a".repeat(64),
+    generation: 11n,
+    originalPath: "/home/user/Documents/quarterly-report.md",
+    retainedPath: "/home/user/Documents/.tauri-explorer-recovery-6f2a",
+    retainedBytes: "742391808",
+    status: "retained",
+    message: "Inspect these retained recovery files to restore or discard them",
+    actions: [],
+    autoEligible: false,
+    cleanupFails: false,
+  },
+  {
+    id: "b".repeat(64),
+    generation: 7n,
+    originalPath: "/run/media/user/Archive/photos/2024-summer",
+    retainedPath: "/run/media/user/Archive/photos/.tauri-explorer-recovery-c81d",
+    retainedBytes: null,
+    status: "retained",
+    message: "Inspect these retained recovery files to restore or discard them",
+    actions: [],
+    autoEligible: false,
+    cleanupFails: true,
+  },
+];
+let mockRecoveryError: string | null = null;
+let mockRecoveryReceive: ((snapshot: unknown) => void) | null = null;
+
+function mockRecoverySnapshot(): unknown {
+  const used = mockRecoveryRecords.reduce((total, record) => total + Number(record.retainedBytes ?? 0), 0);
+  const unmeasured = mockRecoveryRecords.filter((record) => record.retainedBytes === null).length;
+  return {
+    revision: mockRecoveryRevision.toString(),
+    items: mockRecoveryRecords.map(({ autoEligible: _auto, cleanupFails: _fails, generation, ...item }) => ({
+      ...item,
+      generation: generation.toString(),
+      actions: [...item.actions],
+    })),
+    storage: {
+      usedBytes: used.toString(),
+      budgetBytes: mockRecoveryBudgetBytes.toString(),
+      records: mockRecoveryRecords.length,
+      recordBudget: 256,
+      unmeasured,
+      unavailable: mockRecoveryRecords.filter((record) => record.cleanupFails).length,
+      discardable: mockRecoveryRecords.filter((record) => record.status === "retained" || record.status === "ready").length,
+      atCapacity: used >= mockRecoveryBudgetBytes,
+    },
+    error: mockRecoveryError,
+  };
+}
+
+function mockRecoveryPublish(): unknown {
+  const snapshot = mockRecoverySnapshot();
+  mockRecoveryReceive?.(snapshot);
+  return snapshot;
+}
+
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
@@ -2170,6 +2250,53 @@ if (typeof window !== "undefined") {
     if (visible(1)) lines.push("@@ -1,3 +1,3 @@", " import { useState } from \"react\";", "-export function App() { return null; }", "+export function App() { return <div>first hunk</div>; }");
     if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
     return [...lines, ""].join("\n");
+  },
+  file_recovery_subscribe: ({ updates }) => {
+    mockRecoveryReceive = updates as (snapshot: unknown) => void;
+    return mockRecoverySnapshot();
+  },
+  file_recovery_unsubscribe: () => {
+    mockRecoveryReceive = null;
+    return null;
+  },
+  file_recovery_list: () => mockRecoverySnapshot(),
+  file_recovery_retire_eligible: () => {
+    const before = mockRecoveryRecords.length;
+    mockRecoveryRecords = mockRecoveryRecords.filter((record) => !record.autoEligible);
+    if (mockRecoveryRecords.length !== before) mockRecoveryRevision += 1n;
+    mockRecoveryError = null;
+    return mockRecoveryPublish();
+  },
+  file_recovery_inspect: ({ id }) => {
+    const record = mockRecoveryRecords.find((candidate) => candidate.id === id);
+    if (!record) throw new Error("Recovery operation is no longer available");
+    record.generation += 1n;
+    mockRecoveryRevision += 1n;
+    record.status = "retained";
+    record.message = "Retained recovery files can be discarded";
+    record.actions = ["discard"];
+    record.retainedBytes ??= "1073741824";
+    mockRecoveryError = null;
+    return mockRecoveryPublish();
+  },
+  file_recovery_resolve: ({ id, generation, choice }) => {
+    const record = mockRecoveryRecords.find((candidate) => candidate.id === id);
+    if (!record || record.generation.toString() !== generation) {
+      throw new Error("Recovery operation changed; inspect it again before acting");
+    }
+    record.generation += 1n;
+    mockRecoveryRevision += 1n;
+    if (choice === "discard" && record.cleanupFails) {
+      // Retained-evidence failure: nothing is removed and the record stays.
+      record.status = "attention";
+      record.actions = [];
+      record.message = "Retained recovery files could not be removed; every file is preserved";
+      mockRecoveryError = `Could not remove ${record.retainedPath}: the location is unavailable`;
+      return mockRecoveryPublish();
+    }
+    mockRecoveryRecords = mockRecoveryRecords.filter((candidate) => candidate.id !== id);
+    mockRecoveryError = null;
+    return mockRecoveryPublish();
   },
   native_resource_session: ({ historyChannel }) => mockFileHistory.register(historyChannel as (summary: HistorySummary) => void),
   resolve_copy_conflict: ({ requestId, item, nonce, decision }) => {

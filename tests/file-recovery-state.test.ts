@@ -5,7 +5,7 @@ import type {
   FileRecoverySnapshot,
 } from "$lib/domain/file-recovery";
 import { createFileRecoveryState } from "$lib/state/file-recovery.svelte";
-import { compareRecoveryCounters, isRecoveryCounter } from "$lib/domain/file-recovery";
+import { compareRecoveryCounters, emptyRecoveryStorage, isRecoveryCounter } from "$lib/domain/file-recovery";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -20,6 +20,7 @@ function item(id = "recovery-a", generation: number | string = 1): FileRecoveryI
     generation: String(generation),
     originalPath: `/original/${id}.txt`,
     retainedPath: null,
+    retainedBytes: null,
     status: "attention",
     message: "The original move needs review.",
     actions: ["restore", "discard"],
@@ -27,7 +28,7 @@ function item(id = "recovery-a", generation: number | string = 1): FileRecoveryI
 }
 
 function snapshot(revision: number | string, items = [item()]): FileRecoverySnapshot {
-  return { revision: String(revision), items, error: null };
+  return { revision: String(revision), items, storage: emptyRecoveryStorage(), error: null };
 }
 
 function port(overrides: Partial<FileRecoveryPort> = {}): FileRecoveryPort {
@@ -39,6 +40,7 @@ function port(overrides: Partial<FileRecoveryPort> = {}): FileRecoveryPort {
     list: vi.fn(async () => snapshot(1)),
     inspect: vi.fn(async (id) => snapshot(2, [{ ...item(id), retainedPath: `/retained/${id}.txt` }])),
     resolve: vi.fn(async () => snapshot(2, [])),
+    retireEligible: vi.fn(async () => snapshot(2, [])),
     ...overrides,
   };
 }
@@ -482,4 +484,46 @@ it("keeps inspected presentation through same-generation inventory but invalidat
   expect(state.items[0].status).toBe("pending");
   expect(state.inspection).toBeNull();
   await state.dispose();
+});
+
+it("exposes native retention accounting and rejects a snapshot with malformed storage", async () => {
+  let receive!: (value: FileRecoverySnapshot) => void;
+  const state = createFileRecoveryState(port({ subscribe: async (next) => {
+    receive = next;
+    next({ ...snapshot(1, []), storage: { ...emptyRecoveryStorage(), usedBytes: "10", budgetBytes: "1024", records: 1, recordBudget: 8, discardable: 1 } });
+    return async () => {};
+  }}));
+  await state.start();
+  expect(state.storage.usedBytes).toBe("10");
+  expect(state.storage.recordBudget).toBe(8);
+  expect(state.error).toBeNull();
+
+  // A storage block that is not lossless accounting must not be adopted.
+  receive({ ...snapshot(2, []), storage: { ...emptyRecoveryStorage(), usedBytes: 10 } as never });
+  expect(state.storage.usedBytes).toBe("10");
+  expect(state.storage.records).toBe(1);
+  expect(state.error).toBe("Recovery status update was invalid");
+  await state.dispose();
+});
+
+it("applies a retention enforcement pass and reports its failure without losing the inventory", async () => {
+  const retireEligible = vi.fn(async () => ({ ...snapshot(5, []), storage: { ...emptyRecoveryStorage(), records: 0, recordBudget: 8 } }));
+  const state = createFileRecoveryState(port({ retireEligible }));
+  await state.start();
+  expect(state.items).toHaveLength(1);
+  await state.retireEligible();
+  expect(retireEligible).toHaveBeenCalledOnce();
+  expect(state.items).toEqual([]);
+  expect(state.storage.recordBudget).toBe(8);
+  expect(state.loading).toBe(false);
+
+  const failing = createFileRecoveryState(port({
+    retireEligible: vi.fn(async () => { throw new Error("the location is unavailable"); }),
+  }));
+  await failing.start();
+  await failing.retireEligible();
+  expect(failing.error).toBe("the location is unavailable");
+  expect(failing.items).toHaveLength(1);
+  expect(failing.loading).toBe(false);
+  await Promise.all([state.dispose(), failing.dispose()]);
 });

@@ -2,6 +2,7 @@
 //! Publication is bounded private-storage IO; no user-file effects run here.
 use super::*;
 use crate::files::recovery::model::OperationSpec;
+use crate::files::recovery::retention::{self, Budget, Usage};
 use sha2::{Digest, Sha256};
 
 pub(in crate::files::recovery) struct PromotionFailure {
@@ -61,6 +62,12 @@ impl Reservation {
         manifest_limit: usize,
     ) -> Result<DurableOperation, Box<PromotionFailure>> {
         let record = self.planned(operation);
+        // Read the configured budget before taking the gate; enforcement then
+        // happens inside the same transaction that publishes the catalog, so
+        // concurrent record creation cannot race past it (ADR 0023).
+        let budget = crate::config::read_settings_value()
+            .as_ref()
+            .map_or_else(Budget::default, Budget::from_settings);
         let promoted = self.coordinator.admitted(|inner| {
             record.validate()?;
             self.owner.verify(&inner.locks)?;
@@ -104,6 +111,12 @@ impl Reservation {
                     "Recovery catalog disagrees with the planned operation",
                 ));
             }
+            // Budgets reject new work; they never evict unresolved recovery.
+            if retained_usage(&intents, &rows)?.at_capacity(&budget) {
+                return Err(invalid(
+                    "File Recovery is holding its full retained-file budget; discard retained files in File Recovery before overwriting more",
+                ));
+            }
             let catalog_payload = encode_intent(&record.intent, manifest_limit)?;
             let checkpoint = OperationCheckpoint {
                 intent_digest: Sha256::digest(&catalog_payload).into(),
@@ -144,6 +157,28 @@ impl Reservation {
             })),
         }
     }
+}
+
+/// Retention accounting from durable evidence only. Every input is already
+/// decoded under this transaction, so no filesystem work happens under the
+/// gate and no unrelated process can insert a record between check and commit.
+fn retained_usage(
+    intents: &HashMap<String, CatalogIntent>,
+    rows: &[super::super::journal::Record],
+) -> Result<Usage, AppError> {
+    let mut usage = Usage::default();
+    for row in rows.iter().filter(|row| row.kind == RecordKind::Operation) {
+        let Some(entry) = intents.get(&row.id) else {
+            continue;
+        };
+        let checkpoint = decode_checkpoint(row, intents)?;
+        usage.add(
+            retention::retention(&entry.intent.operation, &checkpoint.state),
+            retention::measured_bytes(&checkpoint.state),
+            true,
+        );
+    }
+    Ok(usage)
 }
 
 fn encode_intent(intent: &DurableIntent, manifest_limit: usize) -> Result<Vec<u8>, AppError> {

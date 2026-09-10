@@ -17,9 +17,10 @@ pub(super) enum ReplacementTransition {
     RestorationCompleted,
     BeginReapplication,
     ReapplicationCompleted,
-    #[cfg(test)]
+    /// Lazily record the measured size of the currently retained artifact.
+    /// Accounting only; it grants no cleanup authority (ADR 0023).
+    RetentionMeasured(u64),
     BeginDiscard,
-    #[cfg(test)]
     DiscardCompleted,
     ReportError(String),
 }
@@ -73,10 +74,14 @@ pub(super) fn transition(
         {
             next_effect_revision(state.effect_revision)?;
             state.phase = Phase::PublishIntent;
+            // The retained artifact is about to change identity; a previous
+            // measurement describes a different payload (ADR 0023).
+            state.retained_bytes = None;
         }
         ReplacementTransition::PublicationCompleted if state.phase == Phase::PublishIntent => {
             state.effect_revision = next_effect_revision(state.effect_revision)?;
             state.phase = Phase::Published;
+            state.retained_bytes = None;
             state.error = None;
         }
         ReplacementTransition::BeginRestoration
@@ -92,10 +97,14 @@ pub(super) fn transition(
         {
             next_effect_revision(state.effect_revision)?;
             state.phase = Phase::RestoreIntent;
+            // The retained artifact is about to change identity; a previous
+            // measurement describes a different payload (ADR 0023).
+            state.retained_bytes = None;
         }
         ReplacementTransition::RestorationCompleted if state.phase == Phase::RestoreIntent => {
             state.effect_revision = next_effect_revision(state.effect_revision)?;
             state.phase = Phase::Restored;
+            state.retained_bytes = None;
             state.error = None;
         }
         ReplacementTransition::BeginReapplication
@@ -103,19 +112,44 @@ pub(super) fn transition(
         {
             next_effect_revision(state.effect_revision)?;
             state.phase = Phase::ReapplyIntent;
+            // The retained artifact is about to change identity; a previous
+            // measurement describes a different payload (ADR 0023).
+            state.retained_bytes = None;
         }
         ReplacementTransition::ReapplicationCompleted if state.phase == Phase::ReapplyIntent => {
             state.effect_revision = next_effect_revision(state.effect_revision)?;
             state.phase = Phase::Published;
+            state.retained_bytes = None;
             state.error = None;
         }
-        #[cfg(test)]
-        ReplacementTransition::BeginDiscard if state.phase == Phase::Published => {
+        // Accounting for the settled artifact. Measuring never clears a
+        // recorded error and never advances the phase.
+        ReplacementTransition::RetentionMeasured(bytes)
+            if matches!(state.phase, Phase::Published | Phase::Restored) =>
+        {
+            state.retained_bytes = Some(bytes);
+        }
+        // Reasserting discard intent lets an interrupted retirement resume
+        // from its recorded checkpoint without inventing a completed effect.
+        ReplacementTransition::BeginDiscard
+            if matches!(
+                state.phase,
+                Phase::Published | Phase::Restored | Phase::DiscardIntent
+            ) =>
+        {
             state.phase = Phase::DiscardIntent;
         }
-        #[cfg(test)]
         ReplacementTransition::DiscardCompleted if state.phase == Phase::DiscardIntent => {
             state.phase = Phase::Discarded;
+            state.retained_bytes = None;
+            state.error = None;
+        }
+        // A completed retirement has nothing left to remove. Both retirement
+        // events are no-ops there, so a resumption whose only remaining work
+        // is the record commit does not have to special-case its phase.
+        ReplacementTransition::BeginDiscard | ReplacementTransition::DiscardCompleted
+            if state.phase == Phase::Discarded =>
+        {
             state.error = None;
         }
         ReplacementTransition::ReportError(error) => state.error = Some(error),

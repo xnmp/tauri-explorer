@@ -115,7 +115,11 @@ fn inspected_restore_claims_fresh_authority_and_preserves_both_payloads() {
     let inspected = inspect(&coordinator, &before.items[0].id).unwrap();
     let item = &inspected.items[0];
     assert!(item.generation > before.items[0].generation);
-    assert_eq!(item.actions, vec![RecoveryChoice::Restore]);
+    // A live published copy makes the retained original explicitly discardable.
+    assert_eq!(
+        item.actions,
+        vec![RecoveryChoice::Restore, RecoveryChoice::Discard]
+    );
     assert_eq!(item.status, "ready");
     assert_eq!(
         bytes(directory.path()),
@@ -169,9 +173,11 @@ fn inspected_restore_claims_fresh_authority_and_preserves_both_payloads() {
             .len(),
         1
     );
+    // A completed restoration retains the copied payload, which the user can
+    // now explicitly discard (ADR 0023).
     let reinspection = inspect(&coordinator, &item.id).unwrap();
-    assert!(reinspection.items[0].actions.is_empty());
-    assert_eq!(reinspection.items[0].status, "attention");
+    assert_eq!(reinspection.items[0].actions, vec![RecoveryChoice::Discard]);
+    assert_eq!(reinspection.items[0].status, "retained");
 }
 
 #[test]
@@ -185,14 +191,25 @@ fn target_change_after_inspection_cannot_be_restored_or_discarded() {
         b"changed by another program",
     )
     .unwrap();
-    assert!(resolve(
+    // Discard is refused because the published entry no longer holds the copy
+    // that makes the retained original disposable. Nothing is removed.
+    let refused = resolve(
         &coordinator,
         &id,
         inspected.items[0].generation,
-        RecoveryChoice::Discard
+        RecoveryChoice::Discard,
     )
-    .is_err());
-    assert_eq!(list(&coordinator).unwrap().revision, inspected.revision);
+    .unwrap();
+    assert!(refused.error.is_some(), "{refused:?}");
+    assert_eq!(
+        fs::read(directory.path().join(".tauri-explorer-recovery-artifacts/original")).unwrap(),
+        b"original content"
+    );
+    assert_eq!(
+        fs::read(directory.path().join("target")).unwrap(),
+        b"changed by another program"
+    );
+    assert_eq!(refused.items.len(), 1);
     let result = resolve(
         &coordinator,
         &id,
@@ -311,7 +328,10 @@ fn runtime_dispatches_native_recovery_and_rejects_storage_retargeting() {
         let initial = runtime.list(path.clone()).await.unwrap();
         assert_eq!(initial.items[0].id, id);
         let inspected = runtime.inspect(path.clone(), id.clone()).await.unwrap();
-        assert_eq!(inspected.items[0].actions, vec![RecoveryChoice::Restore]);
+        assert_eq!(
+            inspected.items[0].actions,
+            vec![RecoveryChoice::Restore, RecoveryChoice::Discard]
+        );
         let restored = runtime
             .resolve(
                 path.clone(),
@@ -436,7 +456,7 @@ fn runtime_publishes_inspection_and_restoration_to_other_renderers_and_stops_aft
             .await
             .unwrap();
         let latest = observed.lock().unwrap().last().unwrap().clone();
-        assert_eq!(latest["items"][0]["status"], "attention");
+        assert_eq!(latest["items"][0]["status"], "retained");
         assert_eq!(
             fs::read(directory.path().join("target")).unwrap(),
             b"original content"

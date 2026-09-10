@@ -32,6 +32,23 @@ pub(crate) fn config_dir() -> Result<PathBuf, AppError> {
     Ok(dir)
 }
 
+/// Read `settings.json` as opaque JSON, without creating or repairing
+/// anything. An absent, oversized or malformed file means "no configured
+/// values"; callers must fall back to their own defaults rather than treating
+/// a broken settings file as a request to disable a bound (ADR 0023).
+pub(crate) fn read_settings_value() -> Option<serde_json::Value> {
+    const SETTINGS_FILE: &str = "settings.json";
+    const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
+    let path = dirs::config_dir()?
+        .join("tauri-explorer")
+        .join(SETTINGS_FILE);
+    let bytes = fs::read(path).ok()?;
+    if bytes.len() > MAX_SETTINGS_BYTES {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
 /// Validate that a config filename is a plain file name (no path separators,
 /// no parent-dir components, not absolute) so it cannot escape the config dir.
 fn validate_filename(filename: &str) -> Result<(), AppError> {

@@ -155,6 +155,12 @@ pub(crate) struct ReplacementState {
     /// Legacy checkpoints have no history token and begin at revision zero.
     #[serde(default)]
     pub effect_revision: u64,
+    /// Measured size of the currently retained private artifact, in bytes.
+    /// Legacy checkpoints and every confirmed content transition are
+    /// unmeasured: the retained artifact changes identity, so a previous
+    /// measurement is evidence about a different payload (ADR 0023).
+    #[serde(default)]
+    pub retained_bytes: Option<u64>,
     pub root: Option<ObjectId>,
     pub phase: Phase,
     /// Captured when staging completes, before displacement. Identity alone
@@ -209,6 +215,7 @@ impl OperationRecord {
         let state = match &intent.operation {
             OperationSpec::CopyReplacement(_) => OperationState::Replacement(ReplacementState {
                 effect_revision: 0,
+                retained_bytes: None,
                 root: None,
                 phase: Phase::Planned,
                 published: None,
@@ -408,9 +415,16 @@ impl ReplacementState {
                 | Phase::DiscardIntent
                 | Phase::Discarded
         );
+        // Only a settled retention phase holds a measurable private artifact.
+        // `Discarded` has removed it, so a retained size there is contradictory.
+        let measurable = matches!(
+            self.phase,
+            Phase::Published | Phase::Restored | Phase::DiscardIntent
+        );
         if self.root.is_some() != root_required
             || publication_required && self.published.is_none()
             || !publication_required && self.published.is_some()
+            || self.retained_bytes.is_some() && !measurable
             || self
                 .error
                 .as_ref()

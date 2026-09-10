@@ -177,12 +177,10 @@ impl Catalog {
 
     /// Caller must first durably finish artifact cleanup and hold admission.
     /// Exact evidence is required; an ID alone never authorizes retirement.
-    #[cfg(test)]
     pub(super) fn retire(&self, expected: &Evidence) -> io::Result<()> {
         self.retire_with(expected, || {})
     }
 
-    #[cfg(test)]
     fn retire_with(&self, expected: &Evidence, before_capture: impl FnOnce()) -> io::Result<()> {
         if self.read(&expected.id, MAX_RECORD_BYTES)? != *expected {
             return Err(invalid(
@@ -216,7 +214,6 @@ impl Catalog {
         Self::read_file_in(&self.directory, id, OsStr::new(&name), remaining)
     }
 
-    #[cfg(test)]
     fn read_in(
         directory: &Directory,
         id: &str,

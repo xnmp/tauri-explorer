@@ -243,6 +243,7 @@ pub fn run(launch_dir: Option<String>) {
             // Trash operations
             file_mutation::delete_entries,
             files::recovery::commands::file_recovery_list,
+            files::recovery::commands::file_recovery_retire_eligible,
             files::recovery::commands::file_recovery_subscribe,
             files::recovery::commands::file_recovery_unsubscribe,
             files::recovery::commands::file_recovery_inspect,

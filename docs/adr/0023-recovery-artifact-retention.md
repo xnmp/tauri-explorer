@@ -48,25 +48,30 @@ Two bounds, both enforced natively:
 
 | Bound | Default | Setting |
 | --- | --- | --- |
-| Retained artifact bytes | 2 GiB | `recovery.retainedBytesBudget` |
-| Retained records | 256 | `recovery.retainedRecordBudget` |
+| Retained artifact bytes | 2 GiB | `recoveryRetainedBytesBudget` |
+| Retained records | 256 | `recoveryRetainedRecordBudget` |
 
 The record budget stays at or below the catalog's 1,024-record cap so retention
-policy fails before catalog exhaustion and can explain itself. Budgets are read
-through the existing native settings read; an absent, malformed or out-of-range
-value falls back to the default rather than disabling the bound.
+policy fails before catalog exhaustion and can explain itself. Both are read natively from the
+existing `settings.json`; an absent, malformed or out-of-range value falls back
+to the default rather than disabling the bound.
 
 Per ADR 0020, **budgets reject new work; they never evict unresolved recovery.**
 When retention is at or over budget, promotion of a new durable record fails with
-a message naming File Recovery, and the copy falls back to the transient staged
-overwrite. Capacity is checked inside the same admission-gated SQLite transaction
-that publishes the catalog, so concurrent record creation cannot race past it.
+a message naming File Recovery. Both bounds are checked from decoded durable
+evidence inside the same admission-gated SQLite transaction that publishes the
+catalog, so concurrent record creation cannot race past either one. A record
+created but not yet measured contributes zero bytes until the next enforcement
+pass measures it; the record bound is what caps that window.
 
-Usage is derived from durable evidence plus a bounded walk of the *private*
-artifact root — application-created storage, not a user-volume scan. Results are
-memoised per `(operation id, journal generation, effect revision)`, so repeated
-listing is free and an artifact that cannot be walked is reported as unknown
-rather than as zero.
+Usage is derived from durable evidence. A settled record's retained size is
+measured once, by a bounded walk of the *private* artifact root —
+application-created storage, not a user-volume scan — and journaled as
+`retained_bytes` on its checkpoint. Every confirmed content transition clears
+that measurement, because the retained artifact changes identity. An artifact
+that cannot be walked stays unmeasured and is reported as unknown, never as
+zero. Listing therefore reads accounting without claiming ownership, probing a
+user volume or advancing a generation.
 
 ### Discard is explicit; retirement is automatic and narrow
 
@@ -113,6 +118,14 @@ other phase, using the existing `DiscardIntent` / `Discarded` phases:
 5. **`Discarded`** — journaled completion.
 6. **Retire the record** — remove the journal row, retire the catalog evidence,
    and retire the owner lock once nothing references it.
+
+The journal row is removed before the catalog record, because a journal row
+without catalog evidence fences every managed mutation, while a catalog record
+without a journal row stays discoverable. A crash between those two commits
+therefore leaves catalog-only residue, which the enforcement pass retires once
+it has verified — outside the admission gate — that the artifact root is absent.
+That same rule reclaims a record whose index was lost before it created any
+artifact, and it is the only path that retires evidence without a checkpoint.
 
 Every step is idempotent and resumable. A resumed retirement re-derives its next
 effect from observed endpoints, never from the phase label alone: an artifact

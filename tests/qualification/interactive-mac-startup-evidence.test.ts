@@ -1,6 +1,6 @@
 /**
  * Interactive Mac startup evidence is produced by a person following
- * docs/qualification/interactive-mac-startup-runbook.md, so ingestion treats
+ * docs/testing/interactive-mac-startup-runbook.md, so ingestion treats
  * every field as untrusted: provenance must match the verified binary and the
  * Mac that ran it, conditions must be stated, and every referenced artifact
  * must be a real file retained inside the qualification root.

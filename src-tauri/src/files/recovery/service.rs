@@ -180,14 +180,23 @@ fn operate(
     if let Request::Discard(_) = request {
         return discard(coordinator, operation, &entry.intent, claimed_generation);
     }
+    // A journaled retirement is presented as retention even though restoration
+    // remains a legal transition out of it: retention reporting carries the
+    // exact reason a refused retirement preserved its evidence, which the
+    // restoration path would flatten into a generic message.
+    let retiring = operation
+        .state()
+        .replacement()
+        .is_ok_and(|state| matches!(state.phase, Phase::DiscardIntent | Phase::Discarded));
     // A phase with no supported restoration needs no user-volume probes, but
     // its retained artifacts may still be explicitly discardable.
-    if transition(
-        operation.intent(),
-        operation.state(),
-        ReplacementTransition::BeginRestoration,
-    )
-    .is_err()
+    if retiring
+        || transition(
+            operation.intent(),
+            operation.state(),
+            ReplacementTransition::BeginRestoration,
+        )
+        .is_err()
     {
         return retention_only(coordinator, operation, &entry.intent, claimed_generation);
     }

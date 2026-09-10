@@ -184,6 +184,22 @@ fn budget_accepts_in_range_settings() {
 }
 
 #[test]
+fn every_durable_record_consumes_the_record_bound_even_when_unresolved() {
+    // The record bound exists so retention refuses new work before the catalog
+    // exhausts itself; an unresolved record retains artifacts and must count.
+    let budget = Budget {
+        bytes: u64::MAX,
+        records: 2,
+    };
+    let mut usage = Usage::default();
+    usage.add(Retention::Unresolved, None, true);
+    assert!(!usage.at_capacity(&budget));
+    usage.add(Retention::Unresolved, None, true);
+    assert!(usage.at_capacity(&budget));
+    assert_eq!(usage.discardable, 0);
+}
+
+#[test]
 fn usage_counts_records_and_separates_unmeasured_from_unavailable() {
     let settled = Retention::Settled {
         retained: Retained::Original,
@@ -199,8 +215,8 @@ fn usage_counts_records_and_separates_unmeasured_from_unavailable() {
     assert_eq!(
         usage,
         Usage {
-            records: 4,
-            bytes: 107,
+            records: 6,
+            bytes: 116,
             unmeasured: 1,
             unavailable: 2,
             discardable: 2,

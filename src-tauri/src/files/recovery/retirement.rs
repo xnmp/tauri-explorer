@@ -122,6 +122,15 @@ impl Retirement {
             return Err(self.retain_failure(error));
         }
         if let Some(root) = self.root.take() {
+            // Journaling the intent took the admission gate, so the live
+            // endpoint could have changed since it was classified. Re-observe
+            // it against the retained artifact immediately before unlinking;
+            // an artifact already gone is a completed step, a changed endpoint
+            // preserves everything.
+            if let Err(error) = self.reconfirm(&root) {
+                self.root = Some(root);
+                return Err(self.retain_failure(error));
+            }
             if let Err(error) = root.retire_artifacts() {
                 return Err(self.retain_failure(error));
             }
@@ -138,6 +147,35 @@ impl Retirement {
             return Err(self.retain_failure(error));
         }
         self.operation.retire_record()
+    }
+
+    /// The last observation before anything is removed. A settled record must
+    /// still show its live endpoint independently holding the payload; a
+    /// journaled retirement being resumed must show that its artifacts are
+    /// already partly gone, or that removal is still safe.
+    fn reconfirm(&self, root: &Root) -> Result<(), AppError> {
+        let Some(staged) = staged_payload(self.operation.state()) else {
+            return Ok(());
+        };
+        let intent = self.operation.intent();
+        let candidates = match self.retention.settled() {
+            Some((retained, _)) => vec![retained],
+            None => vec![Retained::Original, Retained::Publication],
+        };
+        for retained in candidates {
+            match root.retirement_step(intent, staged, retained)? {
+                RetirementStep::Remove | RetirementStep::Removed => return Ok(()),
+                RetirementStep::Conflict => {}
+            }
+        }
+        // A resumed retirement that has already destroyed its retained artifact
+        // has nothing left to protect; only an untouched one may be refused.
+        if self.retention.settled().is_none() && !root.retained_intact(intent, staged)? {
+            return Ok(());
+        }
+        Err(AppError::Other(
+            "The published entry no longer matches the recorded operation; all retained files are preserved".into(),
+        ))
     }
 
     /// A cleanup failure is reportable inventory, never a completed retirement.
@@ -239,7 +277,8 @@ fn classify(
 pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError> {
     let mut usage = Usage::default();
     let entries = coordinator.inventory()?.entries;
-    // Oldest record first: retirement reclaims the longest-held redundancy.
+    // Catalog order. Record ids are random, so this is not an age order and
+    // nothing here may depend on one; every record is examined independently.
     for entry in entries {
         let Some(generation) = entry.generation else {
             // Catalog-only residue is retirable exactly when its artifact root
@@ -264,12 +303,30 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
             usage.add(position, bytes, true);
             continue;
         }
-        // A measured, settled record needs no ownership until the user acts or
-        // the budget forces automatic reclamation.
-        let settled = position.settled().is_some();
-        if settled && bytes.is_some() {
-            usage.add(position, bytes, true);
-            continue;
+        // A settled record is claimed only when ownership can actually
+        // accomplish something: journal a first measurement, or reclaim a
+        // redundant artifact. Claiming advances the generation, which
+        // invalidates the generation the user is looking at, so a record with
+        // nothing to do must never be claimed by an enforcement pass.
+        if position.settled().is_some() {
+            if bytes.is_some() {
+                usage.add(position, bytes, true);
+                continue;
+            }
+            match artifact_present(&entry.intent, &state) {
+                // Nothing to measure and nothing to remove.
+                Ok(false) => {
+                    usage.add(position, None, true);
+                    continue;
+                }
+                // The volume or artifact parent could not be observed.
+                Err(error) => {
+                    log::debug!("Recovery retention could not observe {}: {error}", entry.intent.id);
+                    usage.add(position, None, false);
+                    continue;
+                }
+                Ok(true) => {}
+            }
         }
         match settle(coordinator, &entry.intent.id, generation) {
             // A reclaimed record holds nothing and is no longer in the catalog.
@@ -321,6 +378,19 @@ fn settle(coordinator: &Arc<Coordinator>, id: &str, generation: u64) -> Result<S
             Ok(Settled::Counted(retirement.retention, bytes, true))
         }
     }
+}
+
+/// Read-only observation outside admission and without ownership: is the
+/// recorded artifact root still there? Used to decide whether claiming a
+/// settled record could accomplish anything at all.
+fn artifact_present(
+    intent: &super::model::DurableIntent,
+    state: &OperationState,
+) -> Result<bool, AppError> {
+    let Some(identity) = root_identity(state) else {
+        return Ok(false);
+    };
+    Ok(Anchor::open(intent)?.open_optional(identity)?.is_some())
 }
 
 /// Read-only observation outside admission: does the recorded artifact root

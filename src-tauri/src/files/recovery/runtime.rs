@@ -297,9 +297,12 @@ impl Runtime {
                 return Ok(super::service::unindexed(intents, error));
             }
         };
-        // Explicit recovery-session activity: enforce retention here, never
-        // from application startup (ADR 0020's startup boundary).
-        super::service::enforce(&coordinator)
+        // Evidence only. Listing is on the automatic session-bootstrap path
+        // (`subscribe` calls it), so it must not claim ownership, probe user
+        // volumes or remove anything — ADR 0020's startup boundary. Retention
+        // enforcement runs from `retire_eligible` and after a record is
+        // created, both of which are deliberate activity.
+        super::service::list(&coordinator)
     }
 
     pub(crate) async fn list(

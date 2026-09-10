@@ -685,6 +685,7 @@ fn promotion_reserves_manifest_encoding_space_before_publishing_any_evidence() {
             || panic!("must not publish"),
             || panic!("must not commit"),
             1,
+            crate::files::recovery::retention::Budget::default(),
         )
         .err()
         .unwrap();

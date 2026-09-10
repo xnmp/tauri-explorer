@@ -106,9 +106,17 @@ impl Root {
     /// Is the recorded source still exactly as captured? A parked copy is only
     /// redundant while an independent live original of its content survives.
     /// Any doubt — including an unreadable parent — answers no.
+    ///
+    /// A directory source is always doubt: `EntryVersion` is explicitly not a
+    /// recursive snapshot, so an unchanged directory version cannot show that
+    /// the tree beneath it still holds the payload the parked copy retains.
+    /// Directory payloads therefore need an explicit user decision.
     pub(in crate::files::recovery) fn source_intact(&self, intent: &DurableIntent) -> bool {
         let observed = || -> Result<bool, AppError> {
             let spec = intent.operation.replacement()?;
+            if spec.source_version.directory {
+                return Ok(false);
+            }
             let parent = Directory::open(
                 spec.source
                     .0

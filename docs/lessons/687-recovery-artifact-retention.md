@@ -96,3 +96,35 @@ retained-evidence state. Extending the item status union meant extending
 `mergeRecoveryPresentation`'s keep rule too: it previously retained an inspected
 presentation only while `status === "pending"`, which discarded the new
 `"retained"` presentation on the next snapshot.
+
+## What the adversarial review caught
+
+Five claims were put to an independent reviewer with only the diff and the ADRs.
+Three survived; two did not, and both failures were the same mistake — assuming
+a cheap-looking call site was a deliberate one.
+
+**The enforcement pass was on the automatic startup path.** `Runtime::inventory`
+is the body of `list`, which is the body of `subscribe`, which the page calls
+from `markBackgroundReady` two frames after first paint, for every window, with
+no user action. Swapping `service::list` for `service::enforce` there meant every
+window bootstrap claimed records (a SQLite write and a generation bump each),
+opened directories on the user's volume, walked artifact roots and *deleted*
+eligible artifacts. Listing is now evidence-only again; enforcement runs from the
+explicit Reclaim control and after a record is created. When a function is on a
+path reached by a UI lifecycle hook, trace the hook, not the function name.
+
+**`EntryVersion` is not a recursive snapshot, and it says so.** Automatic
+retirement of a parked directory copy asked "is the recorded source intact?" and
+got `true` after a file *inside* the source tree was rewritten — the directory's
+own size and mtime do not move. The only copy of the tree as it was would have
+been deleted. Directory payloads now always require an explicit user decision.
+The type's own doc comment carries this warning; read it before using a version
+as proof about a subtree.
+
+Three smaller repairs came out of the same pass: a settled record with nothing to
+measure and nothing to remove was claimed on every pass, churning its generation
+and intermittently invalidating the generation the user was acting on; the live
+endpoint was classified before the intent write and never re-observed after it,
+leaving a TOCTOU window across the admission gate; and unresolved records did not
+consume the record bound, so the catalog could still exhaust itself with the
+"catalog is full" message this work existed to eliminate.

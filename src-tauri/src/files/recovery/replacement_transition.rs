@@ -84,6 +84,10 @@ pub(super) fn transition(
             state.retained_bytes = None;
             state.error = None;
         }
+        // `DiscardIntent` is restorable so an interrupted retirement whose live
+        // endpoint changed is never a dead end: refusing to finish the removal
+        // must still leave the user a non-destructive way to resolve the record
+        // (ADR 0023). Nothing has been removed while the artifact is intact.
         ReplacementTransition::BeginRestoration
             if matches!(
                 state.phase,
@@ -93,6 +97,7 @@ pub(super) fn transition(
                     | Phase::Published
                     | Phase::RestoreIntent
                     | Phase::ReapplyIntent
+                    | Phase::DiscardIntent
             ) =>
         {
             next_effect_revision(state.effect_revision)?;

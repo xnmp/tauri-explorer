@@ -469,8 +469,8 @@ fn an_unavailable_artifact_parent_reports_unavailability_without_removing_anythi
     assert!(usage.records >= 1);
 }
 
-#[test]
-fn a_directory_replacement_is_measured_and_retired_as_a_whole_tree() {
+/// Drive a real directory-tree replacement through to `Published`.
+fn published_directories() -> Fixture {
     let (directory, coordinator, reservation, spec) = fixture_with_directories();
     let base = fs::canonicalize(directory.path()).unwrap();
     let operation = reservation
@@ -483,12 +483,17 @@ fn a_directory_replacement_is_measured_and_retired_as_a_whole_tree() {
     execution.publish_copy().unwrap();
     let id = execution.operation.intent().id.clone();
     drop(execution);
-    let fixture = Fixture {
+    Fixture {
         _directory: directory,
         base,
         coordinator,
         id,
-    };
+    }
+}
+
+#[test]
+fn a_directory_replacement_is_measured_and_retired_as_a_whole_tree() {
+    let fixture = published_directories();
     let root = fixture.root();
     assert!(root.join("original/nested/deep.txt").is_file());
 
@@ -674,4 +679,220 @@ fn subprocess_retirement() {
             }
         });
     panic!("retirement returned before its kill boundary: {result:?}");
+}
+
+#[test]
+fn a_parked_directory_copy_is_never_reclaimed_automatically_on_an_unchanged_top_level_version() {
+    // `EntryVersion` is not a recursive snapshot: rewriting a file inside the
+    // restored source changes neither the source directory's size nor its
+    // mtime. The parked copy is the only remaining record of the tree as it
+    // was copied, so no automatic pass may treat it as provably redundant.
+    let fixture = published_directories();
+    let mut execution = ReplacementExecution::reopen(fixture.claim()).unwrap();
+    execution.restore_copy().unwrap();
+    drop(execution);
+    let root = fixture.root();
+    assert!(
+        root.join("publication/nested/deep.txt").is_file(),
+        "the restoration parks the copy privately"
+    );
+    let before = fs::metadata(fixture.source()).unwrap();
+    fs::write(fixture.source().join("nested/deep.txt"), b"deep bytes").unwrap();
+    let after = fs::metadata(fixture.source()).unwrap();
+    assert_eq!(
+        (before.len(), before.modified().unwrap()),
+        (after.len(), after.modified().unwrap()),
+        "the nested write is invisible in the source directory's own version"
+    );
+
+    enforce(&fixture.coordinator).unwrap();
+
+    assert_eq!(
+        fs::read(root.join("publication/nested/deep.txt")).unwrap(),
+        b"deep bytes",
+        "the parked directory copy survives every automatic pass"
+    );
+    assert!(fixture.indexed());
+    // It is still explicitly discardable: only the automatic path is refused.
+    assert!(matches!(
+        fixture.retirement().eligibility(),
+        Eligibility::Discardable
+    ));
+}
+
+#[test]
+fn an_interrupted_retirement_whose_endpoint_changed_is_preserved_and_still_resolvable() {
+    // A journaled retirement re-verifies its live endpoint immediately before
+    // unlinking, because journaling the intent released and retook the
+    // admission gate. A changed endpoint refuses the removal, preserves every
+    // file, and — crucially — does not pin the record: once the endpoint is
+    // resolvable again the same committed decision completes.
+    let fixture = published();
+    let mut operation = fixture.claim();
+    operation
+        .advance(crate::files::recovery::replacement_transition::ReplacementTransition::BeginDiscard)
+        .unwrap();
+    drop(operation);
+    assert_eq!(fixture.phase(), Some(Phase::DiscardIntent));
+    let root = fixture.root();
+    // A foreign writer replaces the published entry after the intent commit.
+    fs::write(fixture.target(), b"a foreign editor rewrote this").unwrap();
+
+    let error = fixture.retirement().retire().unwrap_err();
+    assert!(format!("{error}").contains("no longer matches"), "{error}");
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    assert!(fixture.indexed());
+    // The refusal is a classification, not an effect: it journals nothing,
+    // and the reason reaches the user through the recovery service instead.
+
+    // Repeated automatic passes must neither remove anything nor lose it.
+    for _ in 0..3 {
+        enforce(&fixture.coordinator).unwrap();
+    }
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    assert!(fixture.indexed());
+    // Restoration remains a legal transition out of an interrupted retirement,
+    // so the record is never stranded by the phase machine itself.
+    let claimed = fixture.claim();
+    assert!(crate::files::recovery::replacement_transition::transition(
+        claimed.intent(),
+        claimed.state(),
+        crate::files::recovery::replacement_transition::ReplacementTransition::BeginRestoration,
+    )
+    .is_ok());
+    drop(claimed);
+
+    // It is reported to the user with the reason, not silently pinned.
+    let snapshot =
+        crate::files::recovery::service::inspect(&fixture.coordinator, &fixture.id).unwrap();
+    let item = snapshot
+        .items
+        .iter()
+        .find(|item| item.id == fixture.id)
+        .expect("the record stays in the inventory");
+    assert_eq!(item.status, "attention");
+    assert!(item.message.contains("no longer matches"), "{}", item.message);
+}
+
+#[test]
+fn an_enforcement_pass_never_claims_a_settled_record_it_cannot_act_on() {
+    // Claiming advances the generation, which invalidates the generation the
+    // user is looking at. A settled record whose artifacts are already gone has
+    // nothing to measure and nothing to remove, so no pass may touch it.
+    let fixture = published();
+    fs::remove_dir_all(fixture.root()).unwrap();
+    let before = fixture.current_generation();
+
+    for _ in 0..3 {
+        enforce(&fixture.coordinator).unwrap();
+    }
+
+    assert_eq!(
+        fixture.current_generation(),
+        before,
+        "repeated passes must not churn the record's generation"
+    );
+    assert!(fixture.indexed());
+}
+
+#[test]
+fn listing_never_retires_claims_or_probes_on_the_session_bootstrap_path() {
+    // `service::list` is what `subscribe` calls automatically after first
+    // paint. It must remain evidence-only (ADR 0020's startup boundary).
+    let fixture = restored();
+    let before = fixture.current_generation();
+    let root = fixture.root();
+
+    let snapshot = crate::files::recovery::service::list(&fixture.coordinator).unwrap();
+
+    assert!(
+        root.join("publication").exists(),
+        "a listing removes nothing, even from a record automatic retirement would reclaim"
+    );
+    assert_eq!(fixture.current_generation(), before);
+    assert!(snapshot.storage.records >= 1);
+}
+
+#[test]
+fn a_full_record_budget_refuses_a_new_durable_record_through_promotion() {
+    // Exercises the refusal branch itself, inside the admission-gated
+    // transaction: promotion must reject new durable work rather than evict
+    // retained recovery, and the refusal must change nothing.
+    let fixture = published();
+    let source = fixture.base.join("source-two");
+    let target = fixture.base.join("target-two");
+    fs::write(&source, NEW_BYTES).unwrap();
+    fs::write(&target, ORIGINAL_BYTES).unwrap();
+    let reservation = fixture
+        .coordinator
+        .reserve(vec![
+            Request {
+                path: source.clone(),
+                access: Access::Read,
+                scope: Scope::Subtree,
+            },
+            Request {
+                path: target.clone(),
+                access: Access::Write,
+                scope: Scope::Subtree,
+            },
+            Request {
+                path: fixture.base.join(".tauri-explorer-recovery-artifacts-two"),
+                access: Access::Write,
+                scope: Scope::Subtree,
+            },
+        ])
+        .unwrap();
+    let spec = OperationSpec::CopyReplacement(
+        crate::files::recovery::model::ReplacementSpec {
+            artifact_token: "artifacts-two".into(),
+            source_version: crate::files::file_identity::version_from_metadata(
+                &fs::symlink_metadata(&source).unwrap(),
+            )
+            .unwrap(),
+            source: crate::files::recovery::model::NativePath(source),
+            target: crate::files::recovery::model::NativePath(target.clone()),
+            root: crate::files::recovery::model::NativePath(
+                fixture.base.join(".tauri-explorer-recovery-artifacts-two"),
+            ),
+            parent: crate::files::file_identity::of_file(
+                &crate::files::native_directory::Directory::open(&fixture.base)
+                    .unwrap()
+                    .file,
+            )
+            .unwrap(),
+            original: crate::files::file_identity::version_from_metadata(
+                &fs::symlink_metadata(&target).unwrap(),
+            )
+            .unwrap(),
+        },
+    );
+
+    let failure = reservation
+        .promote_within(
+            spec,
+            Budget {
+                bytes: u64::MAX,
+                records: 1,
+            },
+        )
+        .err()
+        .expect("a full retention budget refuses a new durable record");
+
+    assert!(
+        failure.error.to_string().contains("File Recovery"),
+        "the refusal names where the user can free space: {}",
+        failure.error
+    );
+    // Nothing was evicted and nothing new was published.
+    assert_eq!(
+        fs::read(fixture.root().join("original")).unwrap(),
+        ORIGINAL_BYTES
+    );
+    assert!(fixture.indexed());
+    assert_eq!(fs::read(&target).unwrap(), ORIGINAL_BYTES);
+    assert!(!fixture
+        .base
+        .join(".tauri-explorer-recovery-artifacts-two")
+        .exists());
 }

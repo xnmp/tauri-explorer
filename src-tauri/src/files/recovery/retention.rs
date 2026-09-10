@@ -174,18 +174,18 @@ pub(super) struct Usage {
     pub unmeasured: usize,
     /// Records whose volume or artifact root could not be observed.
     pub unavailable: usize,
-    /// Records the user could discard right now.
+    /// Settled records whose retained artifact may be offered for discard.
+    /// The native discard still re-verifies the live endpoint before removing
+    /// anything, so this is an upper bound, not a promise.
     pub discardable: usize,
 }
 
 impl Usage {
     pub(super) fn add(&mut self, retention: Retention, bytes: Option<u64>, available: bool) {
-        if !retention.retirable() {
-            if !available {
-                self.unavailable += 1;
-            }
-            return;
-        }
+        // Every durable record occupies the record bound, retirable or not: an
+        // unresolved record retains artifacts too, and the bound exists so
+        // retention policy refuses new work before the catalog exhausts itself
+        // with an unexplained "catalog is full".
         self.records += 1;
         if !available {
             self.unavailable += 1;

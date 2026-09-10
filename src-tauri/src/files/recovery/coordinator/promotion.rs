@@ -40,17 +40,41 @@ impl Reservation {
         self.promote_with(operation, || Ok(()), || Ok(()))
     }
 
+    /// Promote under an explicit retention budget. The budget is a parameter so
+    /// the refusal branch itself is testable without the user's settings file.
+    #[cfg(test)]
+    pub(in crate::files::recovery) fn promote_within(
+        self,
+        operation: OperationSpec,
+        budget: Budget,
+    ) -> Result<DurableOperation, Box<PromotionFailure>> {
+        self.promote_bounded(
+            operation,
+            || Ok(()),
+            || Ok(()),
+            super::super::journal::MAX_RECORD_BYTES,
+            budget,
+        )
+    }
+
     fn promote_with(
         self,
         operation: OperationSpec,
         after_catalog: impl FnOnce() -> Result<(), AppError>,
         after_commit: impl FnOnce() -> Result<(), AppError>,
     ) -> Result<DurableOperation, Box<PromotionFailure>> {
+        // Read the configured budget before taking the gate; enforcement then
+        // happens inside the same transaction that publishes the catalog, so
+        // concurrent record creation cannot race past it (ADR 0023).
+        let budget = crate::config::read_settings_value()
+            .as_ref()
+            .map_or_else(Budget::default, Budget::from_settings);
         self.promote_bounded(
             operation,
             after_catalog,
             after_commit,
             super::super::journal::MAX_RECORD_BYTES,
+            budget,
         )
     }
 
@@ -60,14 +84,9 @@ impl Reservation {
         after_catalog: impl FnOnce() -> Result<(), AppError>,
         after_commit: impl FnOnce() -> Result<(), AppError>,
         manifest_limit: usize,
+        budget: Budget,
     ) -> Result<DurableOperation, Box<PromotionFailure>> {
         let record = self.planned(operation);
-        // Read the configured budget before taking the gate; enforcement then
-        // happens inside the same transaction that publishes the catalog, so
-        // concurrent record creation cannot race past it (ADR 0023).
-        let budget = crate::config::read_settings_value()
-            .as_ref()
-            .map_or_else(Budget::default, Budget::from_settings);
         let promoted = self.coordinator.admitted(|inner| {
             record.validate()?;
             self.owner.verify(&inner.locks)?;

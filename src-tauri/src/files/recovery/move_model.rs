@@ -81,7 +81,6 @@ impl MovePhase {
                 | Self::Restored
         )
     }
-
 }
 
 /// Mutable relocation evidence. Parked and displaced entries need no recorded
@@ -210,9 +209,9 @@ impl MoveSpec {
                 .target_original
                 .as_ref()
                 .is_some_and(|original| original.object == root)
-            || resources.iter().any(|resource| {
-                resource.object == Some(root) && resource.path.0 != plan.path.0
-            })
+            || resources
+                .iter()
+                .any(|resource| resource.object == Some(root) && resource.path.0 != plan.path.0)
         {
             return Err(invalid(
                 "Move artifact root aliases a user object or lies on another device",

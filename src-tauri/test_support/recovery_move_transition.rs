@@ -160,11 +160,7 @@ fn start(spec: MoveSpec, resources: Vec<Resource>) -> (DurableIntent, OperationS
     (record.intent, record.state)
 }
 
-fn advance(
-    intent: &DurableIntent,
-    state: OperationState,
-    event: MoveTransition,
-) -> OperationState {
+fn advance(intent: &DurableIntent, state: OperationState, event: MoveTransition) -> OperationState {
     transition(intent, &state, event).unwrap()
 }
 
@@ -392,7 +388,11 @@ fn reasserting_a_transfer_intent_is_idempotent_but_completion_is_not() {
     assert!(transition(&intent, &displaced, MoveTransition::DisplacementCompleted).is_err());
 
     let publishing = advance(&intent, displaced, MoveTransition::BeginPublication);
-    let repeated = advance(&intent, publishing.clone(), MoveTransition::BeginPublication);
+    let repeated = advance(
+        &intent,
+        publishing.clone(),
+        MoveTransition::BeginPublication,
+    );
     assert_eq!(state_of(&repeated), state_of(&publishing));
     assert_eq!(state_of(&repeated).effect_revision, 0);
 }

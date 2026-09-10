@@ -241,9 +241,7 @@ impl OperationRecord {
                 published: None,
                 error: None,
             }),
-            OperationSpec::Move(_) => {
-                OperationState::Move(super::move_model::MoveState::default())
-            }
+            OperationSpec::Move(_) => OperationState::Move(super::move_model::MoveState::default()),
         };
         Self { intent, state }
     }

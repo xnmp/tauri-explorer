@@ -28,7 +28,11 @@ pub(super) fn execute(
             ));
         }
         let mut execution = super::move_execution::MoveExecution::reopen(operation)?;
-        execution.restore_move().map_err(|error| AppError::MutationUncertain(format!("Move history could not complete; inspect File Recovery before continuing. {error}")))?;
+        execution.restore_move().map_err(|error| {
+            AppError::MutationUncertain(format!(
+                "Move history could not complete; inspect File Recovery before continuing. {error}"
+            ))
+        })?;
         history.revision = execution.operation.state().move_state()?.effect_revision;
         return Ok(ReplacementOutcome {
             history,

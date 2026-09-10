@@ -372,10 +372,9 @@ impl Root {
             || !self.identity.same_volume(self.parent_identity)
             || self.identity == self.parent_identity
             || self.excluded.contains(&self.identity)
-            || intent
-                .resources
-                .iter()
-                .any(|resource| resource.path.0 != self.path && resource.object == Some(self.identity))
+            || intent.resources.iter().any(|resource| {
+                resource.path.0 != self.path && resource.object == Some(self.identity)
+            })
         {
             return Err(invalid(
                 "Recovery manifest does not belong to this artifact root",

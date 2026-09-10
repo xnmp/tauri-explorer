@@ -134,18 +134,19 @@ impl PendingMove {
                 "Move destination or filesystem changed before admission; retry the request".into(),
             ));
         }
-        let mut plan = |token: &Option<String>, parent: &Path| -> Result<Option<ArtifactPlan>, AppError> {
-            let Some(token) = token else { return Ok(None) };
-            let expected = artifact(parent, token);
-            let admitted = paths.next().ok_or_else(invalid)?;
-            if admitted != expected {
-                return Err(invalid());
-            }
-            Ok(Some(ArtifactPlan {
-                path: NativePath(admitted),
-                token: token.clone(),
-            }))
-        };
+        let mut plan =
+            |token: &Option<String>, parent: &Path| -> Result<Option<ArtifactPlan>, AppError> {
+                let Some(token) = token else { return Ok(None) };
+                let expected = artifact(parent, token);
+                let admitted = paths.next().ok_or_else(invalid)?;
+                if admitted != expected {
+                    return Err(invalid());
+                }
+                Ok(Some(ArtifactPlan {
+                    path: NativePath(admitted),
+                    token: token.clone(),
+                }))
+            };
         let source_root = plan(&self.source_token, &parent_of(&source, "source")?)?;
         let target_root = plan(&self.target_token, &parent_of(&target, "destination")?)?;
         if paths.next().is_some() {

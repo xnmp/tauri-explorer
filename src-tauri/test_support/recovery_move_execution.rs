@@ -78,8 +78,8 @@ fn subprocess_mover() {
     if overwriting(&boundary) {
         fs::write(to.join("item.txt"), DISPLACED).unwrap();
     }
-    let coordinator = Coordinator::open(&fs::canonicalize(&fixture).unwrap().join("recovery"))
-        .unwrap();
+    let coordinator =
+        Coordinator::open(&fs::canonicalize(&fixture).unwrap().join("recovery")).unwrap();
     let ready = fixture.join("mover-ready");
     let label: &'static str = match boundary.as_str() {
         "publish-fast" => "publish",

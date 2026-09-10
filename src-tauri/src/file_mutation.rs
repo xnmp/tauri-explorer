@@ -597,7 +597,12 @@ fn move_outcome(
         &outcome.completion.result,
         Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
     );
-    let inverse = outcome.completion.result.as_ref().ok().and_then(move_inverse);
+    let inverse = outcome
+        .completion
+        .result
+        .as_ref()
+        .ok()
+        .and_then(move_inverse);
     let mut affected = outcome.affected;
     if let Ok(receipt) = outcome.completion.result.as_ref() {
         if let Some(relocation) = &receipt.relocation {

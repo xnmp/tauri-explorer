@@ -214,8 +214,8 @@
     session = startWindowSession({
       picker: pickerInfo !== null,
       homePath: launchHomePath,
-      settingsReady: () => { markStartup("settings-ready"); settingsReady = true; },
-      commandsReady: () => { markStartup("commands-ready"); commandsReady = true; },
+      settingsReady: () => { settingsReady = true; },
+      commandsReady: () => { commandsReady = true; },
     });
     return () => { session?.dispose(); session = undefined; };
   });

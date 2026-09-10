@@ -353,6 +353,7 @@ backend for E2E/browser).
 
 - `components/Sidebar.svelte`, `components/FilesSidebarView.svelte` — sidebar shell + files tree
 - `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
+- `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
 - `state/drives.svelte.ts` — `drivesStore` (mounted volumes)
 - `domain/drives.ts`; `api/files.ts` (listDrives); `src-tauri/src/files/drives.rs`

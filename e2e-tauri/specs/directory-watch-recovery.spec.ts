@@ -4,7 +4,7 @@ import { expect } from "expect-webdriverio";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domText, domTexts, navigateTo, switchToFreshWindow } from "./helpers";
+import { domText, domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-directory-recovery-"));
 const watchedDirectory = path.join(scratch, "watched");
@@ -128,7 +128,7 @@ linuxDescribe("directory watch root recovery", () => {
     expect(opened).not.toBeNull();
     expect(opened?.kind).toBe("fresh");
     watchedHandle = await switchToFreshWindow(opened!.label, existingHandles);
-    await $(".file-list").waitForExist({ timeout: 20_000 });
+    await waitForFreshWindowElement(".file-list", 20_000);
     await browser.waitUntil(async () =>
       (await $(".status-path").getAttribute("title")) === watchedDirectory,
     { timeout: 20_000, timeoutMsg: `child did not navigate to ${watchedDirectory}` });

@@ -80,6 +80,24 @@ See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to
 `docs/lessons/457-windows-tauri-smoke-hang.md` records why the Windows harness
 must use the programmatic CDP attach path.
 
+## Fresh-window failure evidence
+
+`switchToFreshWindow` records one atomic renderer sample (label, hook readiness,
+`.file-list` count, status path, URL, ready/visibility state) plus a `/proc` scan
+of the application, its WebKit auxiliary processes and the drivers, every time a
+fresh child window is selected. `waitForFreshWindowElement` replays that record
+with a second `/proc` scan if the first element lookup fails — by then the
+WebDriver session may already be invalid, so the failure path observes processes
+only. Records land in `e2e-tauri/logs/fresh-window/` (override with
+`TAURI_NATIVE_DIAGNOSTICS_DIR`), and `tauri-driver`'s output — which
+`WebKitWebDriver` inherits — is teed to `e2e-tauri/logs/tauri-driver.log`. CI
+uploads both with the WDIO logs.
+
+A `WebKitWebProcess` present at selection and gone after the failure is renderer
+death; both scans intact points at the driver instead. See
+`docs/lessons/703-native-webdriver-session-loss.md`.
+
+
 ## Adding specs
 
 Specs live in `specs/`. Keep this suite **small** — it's slow (full Tauri build per run) and has more platform-specific flake than the browser Playwright suite. Only add tests here that genuinely need the real binary (native shortcuts, WebView-specific rendering, IPC contract). Prefer Playwright for everything else.

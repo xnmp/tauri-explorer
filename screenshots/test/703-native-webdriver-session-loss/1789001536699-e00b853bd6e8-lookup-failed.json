@@ -1,0 +1,73 @@
+{
+  "issue": 703,
+  "phase": "lookup-failed",
+  "requestedLabel": "explorer-07c90c35-8e67-46e9-ba79-50a8042f76d8",
+  "handle": "page-0FFBABDD-ECDC-407B-8134-6B9E8A781021",
+  "selectedAt": 1789001536699,
+  "pageAtSelection": {
+    "capturedAt": 1789001536699,
+    "label": "explorer-07c90c35-8e67-46e9-ba79-50a8042f76d8",
+    "hooksReady": true,
+    "fileListCount": 1,
+    "entryCount": 1,
+    "statusPath": "/home/runner/.tauri-explorer-e2e-directory-owner-eRTsvW/child-1",
+    "url": "tauri://localhost/",
+    "readyState": "complete",
+    "visibility": "visible"
+  },
+  "nativeAtSelection": {
+    "sampledAt": 1789051822451,
+    "application": [],
+    "webkit": [
+      {
+        "pid": 579483,
+        "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+        "startTime": "20561343",
+        "parentPid": 579289
+      },
+      {
+        "pid": 579503,
+        "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "20561346",
+        "parentPid": 579289
+      },
+      {
+        "pid": 579997,
+        "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "20561563",
+        "parentPid": 579289
+      }
+    ],
+    "driver": []
+  },
+  "lookup": {
+    "selector": ".file-list",
+    "failedAt": 1789001557143,
+    "error": "WebDriverError: session deleted because of page crash or hang. when running \"element\" with method \"POST\""
+  },
+  "nativeAfterFailure": {
+    "sampledAt": 1789051822463,
+    "application": [],
+    "webkit": [
+      {
+        "pid": 579483,
+        "executable": "/usr/lib/webkit2gtk-4.1/WebKitNetworkProcess",
+        "startTime": "20561343",
+        "parentPid": 579289
+      },
+      {
+        "pid": 579503,
+        "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "20561346",
+        "parentPid": 579289
+      },
+      {
+        "pid": 579997,
+        "executable": "/usr/lib/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "20561563",
+        "parentPid": 579289
+      }
+    ],
+    "driver": []
+  }
+}

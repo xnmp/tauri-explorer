@@ -76,7 +76,7 @@ linuxDescribe("directory listing errors against the real backend", () => {
     const missing = path.join(scratch, "missing-target");
     await navigateAndWaitForAcknowledgement(missing);
 
-    expect(await $(".file-list .error-state").isDisplayed()).toBe(true);
+    await $(".file-list .error-state").waitForDisplayed();
     expect(await domText(".file-list .error-message")).toContain(missing);
     expect(await $(".status-path").getAttribute("title")).toBe(scratch);
   });
@@ -101,15 +101,12 @@ linuxDescribe("directory listing errors against the real backend", () => {
       // Failed navigation intentionally may retain the previous status path,
       // so completion is correlated by the application acknowledgement only.
       await navigateAndWaitForAcknowledgement(restrictedDirectory);
-      const errorVisible = await $(".file-list .error-state").isDisplayed();
-      if (errorVisible) {
-        fs.mkdirSync("screenshots/refactor/repo-health-cleanup", { recursive: true });
-        await browser.saveScreenshot(
-          "screenshots/refactor/repo-health-cleanup/native-directory-permission-error.png",
-        );
-      }
-
-      expect(errorVisible).toBe(true);
+      const errorState = $(".file-list .error-state");
+      await errorState.waitForDisplayed();
+      fs.mkdirSync("screenshots/refactor/repo-health-cleanup", { recursive: true });
+      await browser.saveScreenshot(
+        "screenshots/refactor/repo-health-cleanup/native-directory-permission-error.png",
+      );
       expect(await domText(".file-list .error-title")).toBe("Unable to access folder");
       expect((await domText(".file-list .error-message")).toLowerCase())
         .toContain("permission denied");

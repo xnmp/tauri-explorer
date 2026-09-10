@@ -322,6 +322,43 @@ requested destination with `0x00270008`, and two legacy inventory fixtures canno
 find their deleted item. Linux watcher recovery, renderer reclamation and transfer
 rejection pass; Linux concurrent-window creation remains unresolved.
 
+## Published release-critical qualification — `b4d20b97`
+
+The preview allocation fix and fresh-window handle boundary are published in
+[PR #684](https://github.com/xnmp/tauri-explorer/pull/684). Both Chromium shards,
+frontend validation, Rust/Clippy, source maps, performance and Windows native
+qualification pass on this head. Windows accepts all 35 native spec files.
+Both WebKit shards also pass, including the unchanged preview contracts.
+
+The required full three-view local inventory completed: 965 passed, nine failed.
+Eight failures pass in a one-worker rerun; the remaining delayed SCM diff case
+passes alone and with a delayed directory stream. Their unproven timing causes
+are deferred to [#702](https://github.com/xnmp/tauri-explorer/issues/702), with
+original outcomes preserved and no weakened assertions or speculative fixes.
+
+Linux native CI accepts 35/36 in each of two unchanged attempts. Attempt 1 loses
+a WebDriver session during the first child element lookup after correct native
+label selection and recorded UI readiness. Both affected directory-watch suites
+pass in attempt 2; [#703](https://github.com/xnmp/tauri-explorer/issues/703) retains
+the original failure. Attempt 2 instead catches the permission-error fixture
+sampling visibility on an error entrance frame. Its element exists and has
+`display: flex`, but visibility is false. The #704 fixture correction awaits the
+visible outcome while retaining exact errors and real permission-recovery
+assertions. A deterministic held-frame probe observes opacity zero and a false
+one-shot visibility result, then succeeds after release with the eventual check.
+The final uninstrumented native spec passes 2/2; independent review accepts both
+case corrections. Native TypeScript and diff checks pass. This is not evidence
+of one clean aggregate Linux run; the published fixture follow-up needs CI.
+
+The successful Mac release report records 30 foreground native-readiness samples
+at p50 2,638 ms / p95 3,900 ms and a separate 30-sample warm activation probe at
+p50 369 ms / p95 1,802 ms. The [exact report](reviews/release-macos-startup-b4d20b97.json)
+retains source/binary identity, raw samples and cache limitations. These hosted
+measurements do not establish first presented frame, usable input, a before/after
+improvement or the half-bounce target; [#696](https://github.com/xnmp/tauri-explorer/issues/696)
+remains the explicit startup acceptance gap. No merge or release acceptance is
+implied. Architectural expansion remains frozen.
+
 ## Dev preview integration — #700 / #701
 
 CI incorporated dev commit `13e26b58` while the local base was still `e551e542`.
@@ -336,7 +373,7 @@ It adds no competing state or settings writes. All 22 targeted Chromium resize a
 constrained-height outcomes pass; independent review accepts the ownership fix.
 The full three-view browser inventory completed with 965 passes and nine failures;
 eight failures pass in a one-worker rerun. The remaining delayed-SCM-diff outcome
-is under focused investigation. Frontend typecheck (zero errors/warnings), native
+passes alone and with a delayed listing; follow-up is in #702. Frontend typecheck (zero errors/warnings), native
 TypeScript, architecture lint, 485/485 maps and both fixture unit tests pass.
 Local WebKit cannot launch:
 ICU 74 was resolved, but Ubuntu-ABI libxml2 and Flite dependencies are absent.

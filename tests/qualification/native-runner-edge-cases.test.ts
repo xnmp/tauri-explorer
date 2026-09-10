@@ -10,7 +10,7 @@ import {
   createNativeProcessCleanupHooks,
   executeLoggedQualificationProcess,
   measureProcessTreeRss,
-  parseMacStartupLog,
+  parseAttributedMacStartupLog,
   resolveQualificationArtifactPath,
   resolveSoakArtifactPaths,
   resolveSoakConfiguration,
@@ -19,6 +19,20 @@ import {
   waitForMacStartupProcess,
   type NativeStartupChild,
 } from "../../e2e-tauri/native-qualification";
+
+/**
+ * Exactly the lines the binary emits (see the captured Linux proxy sample).
+ * The readiness predicate and the report share one parser deliberately: an
+ * independent "is it ready" regex drifted from this format once (#696).
+ */
+const NATIVE_WINDOW =
+  "Startup(native-window): window=main app-run-epoch-ms=1000.0 process-entry-to-run=20.0ms window-built=100.0ms";
+const WEBVIEW =
+  "Startup(webview): window=main boot-epoch-ms=1300.0 bundle-exec=50.0ms mount=80.0ms commands-ready=100.0ms settings-ready=300.0ms list-ready=350.0ms app-ready=400.0ms ui-ready=450.0ms total=450.0ms";
+const NATIVE_READY =
+  "Startup(native-ready): window=main app-run-to-ready=810.0ms receipt-epoch-ms=1800.0";
+const READY_LOG = `${NATIVE_WINDOW}\n${WEBVIEW}\n${NATIVE_READY}\n`;
+const WARM = "Startup(warm-activate): show=4.0ms";
 
 class FakeStartupChild extends EventEmitter implements NativeStartupChild {
   exitCode: number | null = null;
@@ -44,25 +58,22 @@ afterEach(() => {
 
 describe("native qualification process boundaries", () => {
   it("normalizes the duration units emitted by Rust startup markers", () => {
+    const scaled = READY_LOG.replace("app-run-to-ready=810.0ms", "app-run-to-ready=0.81s")
+      .replace("process-entry-to-run=20.0ms", "process-entry-to-run=20000us")
+      .replace("window-built=100.0ms", "window-built=100000000ns");
     expect(
-      parseMacStartupLog(
-        "Startup(native-ready): app-run-to-ready=1.204s\n" +
-          "Startup(warm-activate): show=950µs\n",
-      ),
-    ).toEqual({ coldTotalMs: 1_204, warmShowMs: 0.95 });
-    expect(
-      parseMacStartupLog(
-        "Startup(native-ready): app-run-to-ready=750000ns\n" +
-          "Startup(warm-activate): show=1.5ms\n",
-      ),
-    ).toEqual({ coldTotalMs: 0.75, warmShowMs: 1.5 });
+      parseAttributedMacStartupLog(`${scaled}Startup(warm-activate): show=950µs\n`),
+    ).toMatchObject({
+      coldTotalMs: 810,
+      warmShowMs: 0.95,
+      phases: { processEntryMs: 20, nativeWindowMs: 100 },
+    });
   });
 
   it("rejects signal termination during the full startup survival window", async () => {
     vi.useFakeTimers();
     const child = new FakeStartupChild();
-    let log =
-      "Startup(native-ready): app-run-to-ready=20ms\n" + "Startup(warm-activate): show=2ms\n";
+    let log = `${READY_LOG}${WARM}\n`;
     const result = waitForMacStartupProcess(child, () => log, {
       timeoutMs: 1_000,
       survivalMs: 5_000,
@@ -80,13 +91,18 @@ describe("native qualification process boundaries", () => {
   it("qualifies foreground-only launch without requiring a probe window", async () => {
     vi.useFakeTimers();
     const child = new FakeStartupChild();
-    const result = waitForMacStartupProcess(child, () =>
-      "Startup(native-ready): app-run-to-ready=125ms\n", {
+    const result = waitForMacStartupProcess(child, () => READY_LOG, {
       timeoutMs: 100,
       survivalMs: 200,
       measureWarm: false,
     });
-    const assertion = expect(result).resolves.toEqual({ coldTotalMs: 125, warmShowMs: null });
+    const assertion = expect(result).resolves.toMatchObject({
+      coldTotalMs: 810,
+      warmShowMs: null,
+      // The readiness predicate is the attributed parser, so a resolved wait
+      // already carries the phases the report publishes.
+      phases: { requiredAppWorkMs: 350, unattributedMs: 10 },
+    });
     await vi.advanceTimersByTimeAsync(200);
     await assertion;
     expect(vi.getTimerCount()).toBe(0);
@@ -94,8 +110,15 @@ describe("native qualification process boundaries", () => {
   });
 
   it("still requires foreground readiness and process survival without warm measurement", async () => {
-    expect(() => parseMacStartupLog("Startup: total=12ms\n", { measureWarm: false }))
-      .toThrow("native-ready");
+    expect(() =>
+      parseAttributedMacStartupLog("Startup: total=12ms\n", {
+        firstFunctionalFrame: "not-observed",
+        firstFunctionalFrameMs: null,
+        inputOutcome: "not-verified",
+        inputReadyMs: null,
+        measureWarm: false,
+      }),
+    ).toThrow("native-window");
     vi.useFakeTimers();
     const child = new FakeStartupChild();
     const result = waitForMacStartupProcess(child, () =>

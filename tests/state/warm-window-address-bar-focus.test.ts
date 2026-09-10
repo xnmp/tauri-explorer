@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
-  listener: undefined as ((event: { payload: { path: string } }) => Promise<void>) | undefined,
+  listener: undefined as ((event: { payload: { path: string; handoff: { sourceWindow: string; requestId: string } } }) => Promise<boolean>) | undefined,
   dispatchEvent: vi.fn(),
-  navigateTo: vi.fn<() => Promise<void>>(),
+  navigateTo: vi.fn<() => Promise<boolean>>(),
 }));
 
 (globalThis as { window?: unknown }).window = {
@@ -36,6 +36,7 @@ vi.mock("@tauri-apps/api/dpi", () => ({
 }));
 vi.mock("../../src/lib/state/window-tabs.svelte", () => ({
   windowTabsManager: {
+    acceptsTransfers: true,
     getActiveExplorer: () => ({
       currentPath: "/parked",
       navigateTo: harness.navigateTo,
@@ -49,8 +50,8 @@ vi.mock("../../src/lib/state/settings.svelte", () => ({
 vi.mock("../../src/lib/state/theme.svelte", () => ({
   themeStore: { syncFromSettings: vi.fn() },
 }));
-vi.mock("../../src/lib/api/common", () => ({ invoke: vi.fn(async () => {}) }));
-vi.mock("../../src/lib/api/files", () => ({ logStartupTiming: vi.fn(async () => {}) }));
+vi.mock("../../src/lib/api/common", () => ({ invoke: vi.fn(async () => true) }));
+vi.mock("../../src/lib/api/environment", () => ({ logStartupTiming: vi.fn(async () => {}) }));
 
 import { runWarmWindow, type WarmActivatePayload } from "../../src/lib/state/warm-window";
 
@@ -63,16 +64,16 @@ describe("warm-window address-bar focus", () => {
 
   it("waits for delayed navigation before requesting address-bar focus", async () => {
     let finishNavigation!: () => void;
-    harness.navigateTo.mockImplementation(() => new Promise<void>((resolve) => {
-      finishNavigation = resolve;
+    harness.navigateTo.mockImplementation(() => new Promise<boolean>((resolve) => {
+      finishNavigation = () => resolve(true);
     }));
 
-    await runWarmWindow(false);
+    await runWarmWindow(false).ready;
     const activation = harness.listener!({
-      payload: { path: "/requested" } satisfies WarmActivatePayload,
+      payload: { path: "/requested", handoff: { sourceWindow: "main", requestId: "focus" } },
     });
 
-    await vi.waitFor(() => expect(harness.navigateTo).toHaveBeenCalledWith("/requested"));
+    await vi.waitFor(() => expect(harness.navigateTo).toHaveBeenCalledWith("/requested", { autoEnterSingleSubdir: false }));
     expect(harness.dispatchEvent).not.toHaveBeenCalled();
 
     finishNavigation();

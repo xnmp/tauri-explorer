@@ -1,0 +1,78 @@
+{
+  "date": "2026-09-08",
+  "base_commit": "7d2bc83e",
+  "issue": 680,
+  "status": "uncommitted production entry-plan checkpoint; comprehensive review incomplete",
+  "scope": [
+    "Pure owned plans for create-directory, create-empty-file, rename, write-new-text and create-symlink",
+    "Forward history, refresh and owned blocking dispatch derive from the same request",
+    "Windows recovery adapter research; no adapter implementation"
+  ],
+  "verification": {
+    "full_library": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1",
+      "passed": 789,
+      "failed": 3,
+      "ignored": 9,
+      "log": "/tmp/entry-plan-lib.log",
+      "failures": [
+        "thumbnails::tests::test_micro_thumbnail_generation: local cache unavailable in sandbox",
+        "user_report::tests::relay_daily_cap_stays_distinct_for_the_ui: local socket permission denied",
+        "user_report::tests::unreachable_relay_has_a_network_error_kind: local socket permission denied"
+      ]
+    },
+    "permitted_reruns": [
+      {
+        "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib thumbnails::tests::test_micro_thumbnail_generation -- --exact --test-threads=1",
+        "passed": 1,
+        "failed": 0,
+        "log": "/tmp/entry-plan-thumbnail-permitted.log"
+      },
+      {
+        "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib user_report::tests:: -- --test-threads=1",
+        "passed": 17,
+        "failed": 0,
+        "log": "/tmp/entry-plan-report-permitted.log"
+      }
+    ],
+    "final_focused": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib file_mutation::tests:: -- --test-threads=1",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/entry-plan-final-focused.log"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/entry-plan-clippy-final.log",
+      "note": "121 lib and five lib-test unused recovery infrastructure warnings (four duplicate). A new test-only clone lint from the first run was removed. Not a warning-clean integration claim."
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_coverage": "415/415",
+      "unresolvable": 0,
+      "log": "/tmp/entry-plan-maps.log",
+      "note": "New untracked entry_plan.rs explicitly mapped; tracked-only total."
+    },
+    "formatting": "Changed Rust files pass rustfmt --check and git diff --check.",
+    "independent_review": "GPT-5.6 Sol ACCEPT: request coherence, collisions, receipts, worker lifetime, history effects and platform syscall choice. Read-only source/log review; reviewer did not run builds/tests."
+  },
+  "limitations": [
+    "Production execute_entry still passes the unit worker owner; no recovery reservation is acquired.",
+    "EntryPlan contains lexical paths, not physical identities or a complete recovery resource set. Staging/private artifact roots and source/ancestor claims still require integration.",
+    "Malformed create/rename planning now precedes renderer-owner lookup and forward history admission; stale-session error precedence and transient busy notifications may differ.",
+    "Inverse rename currently rebuilds the same deterministic EntryPlan through its filesystem wrapper; future admission must preserve request/claim coherence across those layers.",
+    "Native platform syscall behavior is retained, but this turn has Linux Rust evidence only, not Windows/macOS runtime acceptance.",
+    "Windows adapter brief is researched design; full-width identity, ACL, locking and namespace-durability support remain implementation work.",
+    "No frontend production changes, native application UI capture, startup measurement or measured speedup this turn."
+  ],
+  "publication": "No commit, push or merge in this checkpoint.",
+  "source_sha256": {
+    "src-tauri/src/files/entry_plan.rs": "e0824fb21ec95bd5b64d1bb90eb290adf670c4213c23239753ce4274819ba86b",
+    "src-tauri/src/files/file_ops.rs": "8ef9a5533d33cef44f11b586363632ce315dbd2641f890ffac60289d7c56c80c",
+    "src-tauri/src/files/mod.rs": "6b91573739779c994c5d422c08cb95c464d2762dc9e2df69d5e611b180c04568",
+    "src-tauri/src/file_mutation.rs": "531349747d2e5984f4368717a83c87788b346eecef2c296c164b13cf8b7c5cd0",
+    "src-tauri/test_support/file_mutation.rs": "7af7d10d30da4b492b96943b702176d72185a22d0ff48100e43c224067519744"
+  }
+}

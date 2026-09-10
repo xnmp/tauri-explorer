@@ -97,14 +97,17 @@ export async function createTabAndOpenGraph(page: Page, repoPath: string): Promi
     .first()
     .waitFor({ timeout: 15_000 });
 
-  const before = await page.locator(".tab").count();
+  const previousIds = new Set(await page.locator(".tab").evaluateAll(tabs =>
+    tabs.map(tab => (tab as HTMLElement).dataset.tabId).filter(Boolean)));
   return measureMs(async () => {
     await page.keyboard.press("Control+t");
-    // If the strip was hidden, the DOM count jumps 0->2 the first time;
-    // otherwise each Ctrl+T adds one. Wait for strictly more than before.
-    await expect
-      .poll(() => page.locator(".tab").count())
-      .toBeGreaterThan(Math.max(before, 1));
+    // Closing tabs remain in the DOM during their keyed outro, so DOM count is
+    // not an ownership signal. Require the newly active stable tab identity.
+    await expect.poll(async () => {
+      const ids = await page.locator(".tab.active").evaluateAll(tabs =>
+        tabs.map(tab => (tab as HTMLElement).dataset.tabId));
+      return ids.find(id => id && !previousIds.has(id)) ?? null;
+    }).not.toBeNull();
     await navigateInto(page, repoPath);
     await openGraphInActivePane(page);
   });

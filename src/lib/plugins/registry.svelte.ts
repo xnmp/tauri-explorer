@@ -18,6 +18,7 @@ import { aiRenamePlugin } from "./ai-rename";
 import { aiOrganizePlugin } from "./ai-organize";
 import { themeFromImagePlugin } from "./theme-from-image";
 import { upscalePlugin } from "./upscale";
+import { pluginJobsController } from "$lib/state/plugin-jobs";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
 const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin, upscalePlugin];
@@ -29,12 +30,23 @@ export interface PluginInfo {
   enabled: boolean;
 }
 
-function createPluginRegistry(plugins: Plugin[] = BUILT_IN_PLUGINS) {
+function createPluginRegistry(
+  plugins: Plugin[] = BUILT_IN_PLUGINS,
+  jobLifecycle: Pick<typeof pluginJobsController, "dispose"> = pluginJobsController,
+) {
   const active = new Map<string, { plugin: Plugin; dispose: () => void }>();
   // In-flight activations, so a disable arriving mid-activate can't be lost
   // (deactivate would find nothing in `active` and no-op, leaving a
   // "disabled" plugin fully registered once the await resolves).
-  const activating = new Map<string, Promise<void>>();
+  type Activation = {
+    dispose: () => void;
+    promise: Promise<void>;
+    cancelled: boolean;
+    deactivated: boolean;
+  };
+  const activating = new Map<string, Activation>();
+  let closed = false;
+  let disposal: Promise<void> | null = null;
 
   function isEnabled(plugin: Plugin): boolean {
     const map = settingsStore.pluginsEnabled ?? {};
@@ -42,59 +54,123 @@ function createPluginRegistry(plugins: Plugin[] = BUILT_IN_PLUGINS) {
   }
 
   function activate(plugin: Plugin): Promise<void> {
+    if (closed) return Promise.resolve();
     if (active.has(plugin.id)) return Promise.resolve();
     const inFlight = activating.get(plugin.id);
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      return inFlight.cancelled
+        ? inFlight.promise.then(() => (isEnabled(plugin) ? activate(plugin) : undefined))
+        : inFlight.promise;
+    }
+
+    const { ctx, dispose } = createPluginContext(plugin.id);
+    // Plugin code can synchronously request shutdown or retry. Publish the
+    // actual completion before invoking it so those operations join this run.
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const completion = new Promise<void>((onResolve, onReject) => {
+      resolve = onResolve;
+      reject = onReject;
+    });
+    const activation: Activation = {
+      dispose,
+      promise: completion,
+      cancelled: false,
+      deactivated: false,
+    };
+    activating.set(plugin.id, activation);
+    const deactivateActivation = () => {
+      // A retry requested by cleanup must wait for this retired run to finish.
+      activation.cancelled = true;
+      dispose();
+      if (!activation.deactivated) {
+        activation.deactivated = true;
+        try {
+          plugin.deactivate?.();
+        } catch (err) {
+          console.error(`[plugins] deactivate hook for "${plugin.id}" threw:`, err);
+        }
+      }
+    };
 
     const run = (async () => {
-      const { ctx, dispose } = createPluginContext(plugin.id);
       try {
         await plugin.activate(ctx);
-        if (!isEnabled(plugin)) {
-          // Disabled while activating — tear down what just registered.
-          try {
-            plugin.deactivate?.();
-          } catch (err) {
-            console.error(`[plugins] deactivate hook for "${plugin.id}" threw:`, err);
-          }
-          dispose();
+        if (activation.cancelled || !isEnabled(plugin)) {
+          deactivateActivation();
           return;
         }
         active.set(plugin.id, { plugin, dispose });
       } catch (err) {
-        dispose();
+        // Activation may have acquired plugin-private resources before it
+        // failed. Give its hook one chance to release them as well as the
+        // context-owned contributions.
+        deactivateActivation();
         console.error(`[plugins] failed to activate "${plugin.id}":`, err);
       } finally {
-        activating.delete(plugin.id);
+        if (activating.get(plugin.id) === activation) activating.delete(plugin.id);
       }
     })();
-    activating.set(plugin.id, run);
-    return run;
+    void run.then(resolve, reject);
+    return completion;
   }
 
   function deactivate(id: string): void {
+    const inFlight = activating.get(id);
+    if (inFlight) {
+      inFlight.cancelled = true;
+      // Context contributions disappear immediately. The plugin hook runs
+      // after activate settles, so resources acquired after its final await
+      // are covered too; a re-enable waits for that cleanup before retrying.
+      inFlight.dispose();
+      return;
+    }
     const entry = active.get(id);
     if (!entry) return; // not active (an in-flight activate re-checks isEnabled)
+    // Retire before invoking external code. A deactivate hook may synchronously
+    // re-enable this plugin; its new context must see no old registration or
+    // provider-scheme collision, and this cleanup must not erase its replacement.
+    active.delete(id);
+    entry.dispose();
     try {
       entry.plugin.deactivate?.();
     } catch (err) {
       console.error(`[plugins] deactivate hook for "${id}" threw:`, err);
     }
-    entry.dispose();
-    active.delete(id);
   }
 
   return {
     /** Activate all currently-enabled built-in plugins. Call once at startup. */
     async initPlugins(): Promise<void> {
+      if (closed) return;
+      // Job event ownership starts lazily inside jobs.accept, before its
+      // backend invocation. Unused optional jobs do no startup IPC work.
       for (const plugin of plugins) {
+        if (closed) return;
         if (isEnabled(plugin)) await activate(plugin);
       }
+    },
+
+    dispose(): Promise<void> {
+      if (disposal) return disposal;
+      closed = true;
+      const inFlight = [...activating.values()];
+      // Publish the shared drain before hooks can re-enter dispose(). Promise
+      // continuations run after the synchronous context retirement below.
+      disposal = Promise.allSettled(inFlight.map((activation) => activation.promise))
+        .then(() => jobLifecycle.dispose());
+      for (const activation of inFlight) {
+        activation.cancelled = true;
+        activation.dispose();
+      }
+      for (const id of [...active.keys()]) deactivate(id);
+      return disposal;
     },
 
     /** Persist the new enabled state and activate/deactivate immediately. */
     async setEnabled(id: string, enabled: boolean): Promise<void> {
       settingsStore.setPluginEnabled(id, enabled);
+      if (closed) return;
       const plugin = plugins.find((p) => p.id === id);
       if (!plugin) return;
       if (enabled) await activate(plugin);

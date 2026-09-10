@@ -8,6 +8,7 @@
  * previous window.dispatchEvent custom event pattern.
  */
 
+import { modalOwnership } from "./modal-ownership.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 export type DialogType = "rename" | "delete" | null;
@@ -30,6 +31,7 @@ function createDialogStore() {
   let targetEntry = $state<FileEntry | null>(null);
   let targetEntries = $state<FileEntry[]>([]);
   let permanentDelete = $state(false);
+  let fileOperationSession = $state.raw<object | null>(null);
 
   // Overlay dialogs (independent, can coexist with file ops but not each other)
   let quickOpenOpen = $state(false);
@@ -44,12 +46,15 @@ function createDialogStore() {
   let shortcutsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
   let userReportOpen = $state(false);
+  let fileRecoveryOpen = $state(false);
 
-  function closeIfActive(dialogType: DialogType): void {
-    if (activeDialog === dialogType) {
+  function closeIfActive(dialogType: DialogType, session = fileOperationSession): void {
+    if (activeDialog === dialogType && session === fileOperationSession) {
       activeDialog = null;
+      fileOperationSession = null;
       targetEntry = null;
       targetEntries = [];
+      permanentDelete = false;
     }
   }
 
@@ -57,6 +62,10 @@ function createDialogStore() {
     // File operation dialog accessors
     get activeDialog() {
       return activeDialog;
+    },
+    /** Identity of this opening, including reopening the same entry. */
+    get fileOperationSession() {
+      return fileOperationSession;
     },
     get targetEntry() {
       return targetEntry;
@@ -121,31 +130,34 @@ function createDialogStore() {
       return userReportOpen;
     },
 
+    get isFileRecoveryOpen() { return fileRecoveryOpen; },
+
     // File operation actions
     startRename(entry: FileEntry): void {
+      fileOperationSession = {};
       activeDialog = "rename";
       targetEntry = entry;
     },
 
-    cancelRename(): void {
-      closeIfActive("rename");
+    cancelRename(session = fileOperationSession): void {
+      closeIfActive("rename", session);
     },
 
     startDelete(entries: FileEntry[], isPermanent = false): void {
+      fileOperationSession = {};
       activeDialog = "delete";
       targetEntries = entries;
       targetEntry = entries.length === 1 ? entries[0] : null;
       permanentDelete = isPermanent;
     },
 
-    cancelDelete(): void {
-      closeIfActive("delete");
-      permanentDelete = false;
+    cancelDelete(session = fileOperationSession): void {
+      closeIfActive("delete", session);
     },
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen;
+      return modalOwnership.hasOpen || shortcutsOpen || activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen || fileRecoveryOpen;
     },
 
     // Overlay dialog actions
@@ -240,8 +252,19 @@ function createDialogStore() {
       userReportOpen = false;
     },
 
+    openFileRecovery(): void {
+      commandPaletteOpen = false;
+      fileRecoveryOpen = true;
+    },
+
+    closeFileRecovery(): void { fileRecoveryOpen = false; },
+
     closeAll(): void {
+      modalOwnership.closeAll();
+      shortcutsOpen = false;
       activeDialog = null;
+      fileOperationSession = null;
+      permanentDelete = false;
       targetEntry = null;
       targetEntries = [];
       quickOpenOpen = false;
@@ -255,6 +278,7 @@ function createDialogStore() {
       themePickerOpen = false;
       pickerConfig = null;
       userReportOpen = false;
+      fileRecoveryOpen = false;
     },
   };
 }

@@ -1,10 +1,8 @@
 /**
  * E2E: address bar path entry (#296).
  *
- * NOTE: There is no Ctrl+L shortcut in this codebase — the main nav bar's
- * address editing is entered by clicking the breadcrumbs container
- * (`.breadcrumbs-container` → `startPathEdit`), which swaps the crumbs for a
- * `.path-input`. These tests drive that real trigger and assert the pane
+ * Address editing is entered by clicking the breadcrumbs container or Ctrl+L;
+ * both swap the crumbs for a `.path-input`. These tests drive the real trigger and assert the pane
  * actually navigates (breadcrumb + listing change), that Escape cancels
  * without navigating, and the designed behaviour for a non-existent path.
  */
@@ -23,6 +21,40 @@ async function openAddressBar(page: Page) {
 }
 
 test.describe("Address bar path entry", () => {
+  test("Ctrl+L focuses only the active pane in a split", async ({ page }) => {
+    await page.goto("/?path=/home/user");
+    await waitForEntries(page);
+    await page.keyboard.press("Control+\\");
+    await expect(page.locator(".explorer-pane")).toHaveCount(2);
+
+    const left = page.locator(".explorer-pane").first();
+    const right = page.locator(".explorer-pane").nth(1);
+    await expect(right).toHaveClass(/active/);
+    await page.keyboard.press("Control+l");
+
+    await expect(left.locator(".path-input")).toHaveCount(0);
+    await expect(right.locator(".path-input")).toBeFocused();
+  });
+
+  test("Ctrl+L stays unavailable when the address bar is hidden", async ({ page }) => {
+    await page.goto("/?path=/home/user");
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      const settings = raw ? JSON.parse(raw) : {};
+      localStorage.setItem("explorer-settings", JSON.stringify({ ...settings, showAddressBar: false }));
+    });
+    await page.reload();
+    await waitForEntries(page);
+
+    await page.keyboard.press("Control+l");
+    await expect(page.locator(".path-input")).toHaveCount(0);
+
+    await page.keyboard.press("Control+Shift+p");
+    const palette = page.locator(".command-palette-dialog");
+    await palette.locator(".search-input").fill("Focus Address Bar");
+    await expect(palette.locator(".command-item", { hasText: "Focus Address Bar" })).toHaveCount(0);
+  });
+
   test("typing a path and pressing Enter navigates the pane there", async ({ page }) => {
     await page.goto("/?path=/home/user");
     await waitForEntries(page);

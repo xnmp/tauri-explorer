@@ -7,7 +7,7 @@
  * GitHub issue themselves.
  */
 
-import { invoke } from "./files";
+import { invoke } from "./common";
 import { dedupeFrontendCrash } from "$lib/domain/crash-report";
 
 export interface CrashReport {

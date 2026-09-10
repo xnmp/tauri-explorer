@@ -26,7 +26,7 @@ jobs:
     # specs finish pushed the job past the cap and it was killed as `cancelled`
     # with no artifacts. Cap the job well above build + suite and let the
     # per-step bound below be the thing that actually fails a stuck run.
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
 
@@ -35,12 +35,32 @@ jobs:
           bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # A target directory is reusable only with the same compiler identity.
+      # Keep the raw identity in the diagnostic artifact and use its digest in
+      # the key so stable-channel updates cannot restore incompatible outputs.
+      - name: Record Rust cache identity
+        id: rust-provenance
+        shell: bash
+        run: |
+          mkdir -p native-contract-diagnostics
+          rustc -Vv | tee native-contract-diagnostics/rustc-version.txt
+          cargo -V | tee native-contract-diagnostics/cargo-version.txt
+          printf 'revision=%s\nrunner_os=%s\nrunner_arch=%s\n' \
+            "$GITHUB_SHA" "$RUNNER_OS" "$RUNNER_ARCH" \
+            > native-contract-diagnostics/provenance.txt
+          toolchain_key="$(rustc -Vv | sha256sum | cut -c1-16)"
+          printf 'cache-key=%s\n' "$toolchain_key" >> "$GITHUB_OUTPUT"
+          printf 'started-epoch=%s\n' "$(date +%s)" >> "$GITHUB_OUTPUT"
 
       # Registry/git only — NOT the tauri-driver binary. Caching the binary
       # under a Cargo.lock-derived key let a run where `cargo install` failed
       # save a binary-less cache, which later runs then restored (ENOENT at
       # spawn). tauri-driver is now installed unconditionally below.
       - name: Cache cargo registry
+        id: cargo-registry-cache
         uses: actions/cache@v6
         with:
           path: |
@@ -49,12 +69,12 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-registry-
 
-      - name: Cache Rust target
-        uses: actions/cache@v6
+      - name: Restore Rust target cache
+        id: rust-target-cache
+        uses: actions/cache/restore@v6
         with:
           path: src-tauri/target
-          key: ${{ runner.os }}-target-debug-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-target-debug-
+          key: ${{ runner.os }}-${{ runner.arch }}-target-debug-${{ steps.rust-provenance.outputs.cache-key }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
 
       # nasm: required by turbojpeg-sys (x86 SIMD) since the thumbnail cache
       # moved to turbojpeg. Without it the cargo build fails in cmake.
@@ -65,7 +85,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb nasm
+            libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb openbox x11-utils dbus-daemon nasm
 
       # Linux uses tauri-driver as its WebDriver proxy. Windows attaches
       # msedgedriver directly to the WebView2 CDP endpoint below.
@@ -82,9 +102,25 @@ jobs:
         shell: bash
         run: bun install --frozen-lockfile
 
-      - name: Typecheck native suite
+      # This is a qualification contract, but a failure must not hide the
+      # independent binary/GUI result or its diagnostics. The final gate below
+      # restores its fatal status after those independent checks complete.
+      - name: Run native contracts
+        id: native-contracts
+        continue-on-error: true
         shell: bash
-        run: bun run check:e2e:tauri
+        run: |
+          set -o pipefail
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          set +e
+          CARGO_LOG=cargo::core::compiler::fingerprint=info \
+            bun run check:e2e:tauri 2>&1 | tee native-contract-diagnostics/native-contracts.log
+          status="${PIPESTATUS[0]}"
+          set -e
+          printf 'command=bun run check:e2e:tauri\nstarted_at=%s\nfinished_at=%s\nexit_status=%s\n' \
+            "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" \
+            > native-contract-diagnostics/native-contracts-timing.txt
+          exit "$status"
 
       # Build through the Tauri CLI, not `cargo build`. A bare cargo debug
       # build omits the `tauri/custom-protocol` feature, so the binary serves
@@ -101,24 +137,120 @@ jobs:
       # binary — and therefore to a dev server — in the first place. Release
       # builds never set it, so the hooks tree-shake out of shipped binaries.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
+        id: build-tauri-binary
         shell: bash
         env:
           VITE_E2E_HOOKS: "1"
           # The attach feature passes the CDP flag through WebView2's API.
           # Environment overrides are ignored because hosted runners are
-          # elevated. Warm priming is disabled to keep one WebView2 context.
+          # elevated. Automatic warm priming is disabled during initial attach;
+          # explicit child windows inherit the same environment arguments.
           VITE_E2E_NO_WARM_PRIME: ${{ runner.os == 'Windows' && '1' || '' }}
-        run: bun run tauri build --debug --no-bundle ${{ runner.os == 'Windows' && '--features e2e-webview2-attach' || '' }}
+        run: |
+          set -o pipefail
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          set +e
+          CARGO_LOG=cargo::core::compiler::fingerprint=info \
+            bun run tauri build --debug --no-bundle ${{ runner.os == 'Windows' && '--features e2e-webview2-attach' || '' }} \
+            2>&1 | tee native-contract-diagnostics/tauri-build.log
+          status="${PIPESTATUS[0]}"
+          set -e
+          printf 'command=bun run tauri build --debug --no-bundle\nstarted_at=%s\nfinished_at=%s\nexit_status=%s\n' \
+            "$started_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" \
+            > native-contract-diagnostics/tauri-build-timing.txt
+          exit "$status"
 
-      - name: Run smoke suite (Linux, under Xvfb)
+      # Upload this before the GUI suite so contract/build failures can be
+      # diagnosed while the independent native outcome is still running.
+      - name: Collect native qualification diagnostics
+        if: always()
+        shell: bash
+        run: |
+          {
+            printf 'cargo_registry_cache_key=%s\n' "${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}"
+            printf 'target_cache_key=%s\n' "${{ runner.os }}-${{ runner.arch }}-target-debug-${{ steps.rust-provenance.outputs.cache-key }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}"
+            printf 'cargo_registry_cache_hit=%s\n' '${{ steps.cargo-registry-cache.outputs.cache-hit }}'
+            printf 'rust_target_cache_hit=%s\n' '${{ steps.rust-target-cache.outputs.cache-hit }}'
+            printf 'contract_outcome=%s\n' '${{ steps.native-contracts.outcome }}'
+            printf 'build_outcome=%s\n' '${{ steps.build-tauri-binary.outcome }}'
+          } >> native-contract-diagnostics/provenance.txt
+          cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version=1 \
+            > native-contract-diagnostics/cargo-metadata.json
+          du -sh src-tauri/target > native-contract-diagnostics/target-size.txt || true
+          cache_storage_kib=0
+          # Registry or Git sources may legitimately be absent on a warm run.
+          # Under pipefail, measure only directories that exist so diagnostics
+          # never turn a successful qualification into a failed one.
+          for cache_path in src-tauri/target "$CARGO_HOME/registry" "$CARGO_HOME/git"; do
+            if [ -d "$cache_path" ]; then
+              path_kib="$(du -sk "$cache_path" | awk 'NR == 1 { print $1 }')"
+              cache_storage_kib="$(( cache_storage_kib + path_kib ))"
+            fi
+          done
+          cache_storage_bytes="$(( cache_storage_kib * 1024 ))"
+          printf 'cache_storage_bytes=%s\ncache_transfer_estimate_bytes=%s\n' \
+            "$cache_storage_bytes" "$cache_storage_bytes" \
+            >> native-contract-diagnostics/provenance.txt
+          find src-tauri/target -path '*/.fingerprint/*' -type f -name '*.json' -print \
+            | sort > native-contract-diagnostics/cargo-fingerprints.txt || true
+          cat > native-contract-diagnostics/comparison-guide.txt <<'EOF'
+          Compare two artifacts with the same target_cache_key and runner identity.
+          Use provenance.txt cache-hit, cache_storage_bytes, and uncompressed
+          cache_transfer_estimate_bytes fields, the two timing files, cache-outcome.txt
+          end_to_end_seconds, and Actions cache logs for actual transfer bytes. Retain
+          revision and run attempt with the comparison result.
+          EOF
+
+      - name: Upload native contract diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-contract-diagnostics-${{ matrix.os }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: native-contract-diagnostics/
+          if-no-files-found: error
+
+      # Linux mocks and Rust cfg checks cannot prove Shell completion or
+      # destination preservation. Exercise the actual Windows adapter, including
+      # a collision introduced after MoveItem queues the restore.
+      - name: Windows native restore and watcher contracts
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- --list > "$RUNNER_TEMP/windows-rust-contracts.list"
+          contract_status=0
+          for filter in files::batch:: files::windows_paths:: files::restore_outcome files::trash_outcome git::tests::trash_untracked git::tests::directory_scope files::watch_observation:: git_watch::tests::native_observer; do
+            # Cargo succeeds with zero matching tests. Fail explicitly when a
+            # source/module move leaves one of these acceptance filters stale.
+            if ! awk -v filter="$filter" 'index($0, filter) && /: test$/ { found = 1 } END { exit !found }' "$RUNNER_TEMP/windows-rust-contracts.list"; then
+              echo "::error::No Rust contracts match $filter"
+              contract_status=1
+              continue
+            fi
+            # Preserve failure while collecting all independent contract families.
+            cargo test --manifest-path src-tauri/Cargo.toml --lib "$filter" -- --test-threads=1 || contract_status=1
+          done
+          exit "$contract_status"
+
+      # Test failures remain fatal, but do not hide independent lint/UI results.
+      - name: Windows Rust lint
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-webview2-attach -- -D warnings
+
+      - name: Run smoke suite (Linux, isolated display and window manager)
         if: runner.os == 'Linux'
-        run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bun run test:e2e:tauri
+        # 36 isolated native sessions take ~30s each just to start WebKitGTK
+        # on hosted runners. The old 15m cap stopped before the final 10 specs.
+        timeout-minutes: 30
+        # Own the session bus as well as the display and WM; do not inherit
+        # hosted-runner desktop services or rely on D-Bus autolaunch.
+        run: GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
 
       # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps
       # run on the WebView2 *runtime*, whose version can differ — msedgedriver
       # hard-rejects mismatches. Download the driver matching the runtime.
       - name: Install msedgedriver matching the WebView2 runtime
-        if: runner.os == 'Windows'
+        id: webview_driver
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
         shell: pwsh
         run: |
           $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
@@ -128,17 +260,71 @@ jobs:
           Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
           "TAURI_NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\msedgedriver.exe" >> $env:GITHUB_ENV
 
-      # Bounded well below the 40-minute job cap so a regression leaves time for
-      # the artifact upload below instead of being killed by the cap with
-      # nothing to show. Sized for a real run, not for the fast-fail path: the
-      # Linux leg's whole job is ~10 minutes, so anything near the ~1 minute a
-      # session-start failure takes would kill a working suite.
+      # Keep the WebView2 suite's bound separate from WebKitGTK session costs
+      # and leave time for failure evidence before the overall job cap.
       - name: Run smoke suite (Windows)
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' && steps.webview_driver.outcome == 'success' }}
         timeout-minutes: 15
         env:
           VITE_E2E_NO_WARM_PRIME: "1"
+          RUST_LOG: debug
         run: bun run test:e2e:tauri
+
+      # Tauri writes frontend/native failures outside the checkout. In particular,
+      # WebKitWebDriver need not forward the app's stdout to tauri-driver.
+      - name: Collect native application logs
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import path from 'node:path';
+          const data = process.platform === 'win32'
+            ? process.env.LOCALAPPDATA
+            : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+          if (!data) throw new Error('Native application data directory is unavailable');
+          const source = path.join(data, 'io.github.xnmp.tauri-explorer', 'logs');
+          if (fs.existsSync(source)) {
+            fs.cpSync(source, 'e2e-tauri/logs/application', { recursive: true });
+          } else {
+            console.log(`No native application logs at ${source}`);
+          }
+          JS
+
+      # Build outputs are safe to reuse after a GUI failure once both the
+      # contracts and embedded binary build have succeeded. Save explicitly so
+      # a failed contract/build can never publish an incomplete target cache.
+      - name: Save Rust target cache after native outcome
+        id: save-rust-target-cache
+        if: ${{ always() && steps.native-contracts.outcome == 'success' && steps.build-tauri-binary.outcome == 'success' }}
+        uses: actions/cache/save@v6
+        with:
+          path: src-tauri/target
+          key: ${{ runner.os }}-${{ runner.arch }}-target-debug-${{ steps.rust-provenance.outputs.cache-key }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
+
+      - name: Record native cache outcome
+        if: always()
+        shell: bash
+        run: |
+          {
+            printf 'cache_save_outcome=%s\n' '${{ steps.save-rust-target-cache.outcome }}'
+            printf 'end_to_end_seconds=%s\n' "$(( $(date +%s) - ${{ steps.rust-provenance.outputs.started-epoch }} ))"
+            printf 'cache_transfer_cost=see actions/cache restore and save logs\n'
+          } > native-contract-diagnostics/cache-outcome.txt
+
+      - name: Upload native cache outcome
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-cache-outcome-${{ matrix.os }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: native-contract-diagnostics/
+          if-no-files-found: error
+
+      - name: Fail if native contracts failed
+        if: ${{ always() && steps.native-contracts.outcome == 'failure' }}
+        shell: bash
+        run: exit 1
 
       - name: Upload WDIO logs
         if: always()

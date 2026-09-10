@@ -6,6 +6,7 @@
  */
 
 import { tick } from "svelte";
+import { getFileListFocusReturn } from "$lib/state/file-list-focus-context";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -19,18 +20,24 @@ export interface InlineRenameState {
 }
 
 export function useInlineRename(getExplorer: () => ExplorerInstance) {
+  const captureFocusReturn = getFileListFocusReturn();
   let renameInputRef = $state<HTMLInputElement | HTMLTextAreaElement | null>(null);
   let editedName = $state("");
   let renameError = $state<string | null>(null);
-  let submittingRename = $state(false);
+  let submission = $state.raw<object | null>(null);
+  // Blur can run while this component is being destroyed; read raw session
+  // state directly instead of evaluating a derived owned by the dead effect.
+  const isSubmitting = () => submission !== null && submission === dialogStore.fileOperationSession;
 
   function focusAndSelect(entry: FileEntry) {
+    const session = dialogStore.fileOperationSession;
     editedName = entry.name;
     renameError = null;
     // Ask the (optional) AI provider for a Tab-autocomplete suggestion.
     // Best-effort and non-blocking; no-op when no provider is registered.
     renameSuggestionStore.fetch(entry);
     tick().then(() => {
+      if (dialogStore.fileOperationSession !== session) return;
       renameInputRef?.focus();
       if (entry.kind === "file") {
         const lastDot = entry.name.lastIndexOf(".");
@@ -45,23 +52,34 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     });
   }
 
-  async function confirmRename(currentName: string) {
-    if (submittingRename) return;
+  async function confirmRename(currentName: string): Promise<boolean> {
+    if (isSubmitting()) return false;
     const trimmed = editedName.trim();
     if (!trimmed) {
       renameError = "Name cannot be empty";
-      return;
+      return false;
     }
     if (trimmed === currentName) {
       dialogStore.cancelRename();
-      return;
+      return true;
     }
-    submittingRename = true;
+    const session = dialogStore.fileOperationSession;
+    if (!session) return false;
+    submission = session;
     renameError = null;
-    const result = await getExplorer().rename(trimmed);
-    submittingRename = false;
-    if (result) renameError = result;
-    else renameSuggestionStore.clear();
+    try {
+      const result = await getExplorer().rename(trimmed);
+      if (result && dialogStore.fileOperationSession === session) renameError = result;
+      else if (!result && dialogStore.fileOperationSession === null) renameSuggestionStore.clear();
+      return !result && (dialogStore.fileOperationSession === null || dialogStore.fileOperationSession === session);
+    } catch (error) {
+      if (dialogStore.fileOperationSession === session) {
+        renameError = error instanceof Error ? error.message : String(error);
+      }
+      return false;
+    } finally {
+      if (submission === session) submission = null;
+    }
   }
 
   function cancelRename() {
@@ -101,11 +119,14 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     if (event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
-      confirmRename(currentName);
+      const complete = captureFocusReturn?.();
+      void confirmRename(currentName).then((accepted) => complete?.(accepted), () => complete?.(false));
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      const complete = captureFocusReturn?.();
       cancelRename();
+      complete?.(true);
     } else if ((event.ctrlKey || event.metaKey) && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
       const input = renameInputRef;
@@ -143,7 +164,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     get editedName() { return editedName; },
     set editedName(v) { editedName = v; },
     get renameError() { return renameError; },
-    get submittingRename() { return submittingRename; },
+    get submittingRename() { return isSubmitting(); },
     focusAndSelect,
     confirmRename,
     cancelRename,

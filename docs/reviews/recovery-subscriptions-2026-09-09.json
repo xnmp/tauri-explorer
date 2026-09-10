@@ -1,0 +1,139 @@
+{
+  "date": "2026-09-09",
+  "scope": "Linux recovery subscription commands, exact renderer lifetime, owned-worker publication and frontend delivery/presentation fencing; UI activation still pending",
+  "contracts": [
+    "One latest subscription per exact acknowledged renderer Owner; at most 128 renderer records, each with one high-water token and retirement task",
+    "Positive canonical signed-64 decimal client tokens are allocated once per invocation in the JS realm and persist across module re-evaluation; duplicate registration tokens are forbidden",
+    "Registration precedes initial inventory; uncommitted registration rolls back on cancellation/failure; stale release and late failed acknowledgement do not remove a replacement",
+    "Owner::retired registers a Notify waiter before its second atomic retired-state check; retirement wakes all waiters including registration races",
+    "Registry callbacks and destructors run outside registry locks; task captures weak registry; copied in-flight callbacks and late replies are fenced by frontend current-token and active checks",
+    "Tauri production Channels retain Webview/AppManager/managed Runtime; owner retirement removes the channel and breaks this transitive retention, with unit reference-cycle coverage",
+    "List/inspect/resolve use the shared owned blocking worker and publish successful snapshots even after the requesting async future is cancelled",
+    "Failed post-coordinator operations best-effort publish fresh inventory while retaining the original error; unreadable inventory is not fabricated",
+    "List, inspect, resolve and subscribe require an acknowledged current native renderer session; obsolete unsubscribe is harmless",
+    "Same-ID/same-generation pending inventory retains prior ready/attention presentation; changed generations invalidate it, and native resolution still claims/revalidates authority"
+  ],
+  "verification": {
+    "native": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: --test-threads=1",
+      "log": "/tmp/recovery-subscriptions-acceptance.log",
+      "exit_code": 0,
+      "passed": 352,
+      "failed": 0,
+      "ignored": 7,
+      "scope": "Recovery, mutations, history, Git watches and renderer ownership; includes real-file recovery service plus channel protocol, Notify races, capacity, cancelled discovery/awaiters, failure publication and cyclic callback retention"
+    },
+    "runtime": {
+      "log": "/tmp/recovery-subscriptions-runtime-final.log",
+      "passed": 4,
+      "note": "Overlaps the final 352-test acceptance; not additional tests"
+    },
+    "frontend": {
+      "command": "bunx vitest run tests/api/file-recovery.test.ts tests/file-recovery-state.test.ts",
+      "log": "/tmp/recovery-subscriptions-frontend.log",
+      "exit_code": 0,
+      "passed": 23,
+      "scope": "Mocked IPC arguments/order, failed acknowledgements, HMR-persistent tokens, copied delivery fencing and state presentation/generation contracts; not native-binary IPC"
+    },
+    "red_before": {
+      "log": "/tmp/recovery-subscriptions-frontend-before.log",
+      "failed": 1,
+      "passed": 22,
+      "scope": "Actual state apply replaced inspected presentation with pending inventory. Added behavioral test failed before applying mergeRecoveryPresentation and passes afterward."
+    },
+    "check": {
+      "command": "bun run check",
+      "log": "/tmp/recovery-subscriptions-check.log",
+      "exit_code": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    "clippy": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-subscriptions-clippy-final.log",
+      "exit_code": 0,
+      "library_warnings": 43,
+      "new_test_warnings": 0
+    },
+    "architecture": {
+      "command": "bun run lint:arch",
+      "log": "/tmp/recovery-subscriptions-architecture.log",
+      "exit_code": 0
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "log": "/tmp/recovery-subscriptions-maps.log",
+      "exit_code": 0,
+      "covered_sources": 415,
+      "total_sources": 415
+    },
+    "format_and_diff": {
+      "commands": [
+        "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
+        "git diff --check"
+      ],
+      "exit_codes": [
+        0,
+        0
+      ]
+    },
+    "independent_review": {
+      "agent": "recovery_subscription_review_sol",
+      "model": "gpt-5.6-sol",
+      "mode": "read-only code and actual log review; no independent build",
+      "result": "No blocking protocol defect found",
+      "confirmed": [
+        "registry ordering/cancellation and error publication",
+        "unit retirement breaks cyclic callback retention",
+        "production Tauri Channel retains Webview/AppManager/managed Runtime"
+      ],
+      "plausible": [
+        "Actual native page/window/process callbacks trigger owner retirement despite retained Webview handles; requires binary acceptance"
+      ],
+      "refuted": [
+        "Earlier reviewer claim that subscriptions retain no Webview and create no runtime cycle"
+      ],
+      "source_basis": "Pinned local tauri-2.11.2/src/ipc/channel.rs and webview/mod.rs; project renderer_owner event/termination wiring"
+    }
+  },
+  "limitations": [
+    "Recovery store start, notice/dialog mounting and post-core-ready loading are not yet connected",
+    "No native-binary IPC/GUI or native teardown acceptance for this feature; Channel::new tests and a modeled reference cycle do not exercise CommandArg-created Webviews",
+    "Graceful dropping of external app handles alone is not a cleanup fallback; retirement/unsubscribe/send-failure is required to break channel retention",
+    "No cross-process recovery observation or polling; explicit discovery and same-process recovery operations publish changes",
+    "No original-error broadcast when a failed operation cannot produce any authoritative fresh inventory",
+    "Forward production replacement journaling, discard/retirement, overwrite Undo/retention and remaining mutation families still require integration",
+    "Windows/macOS qualification, power-loss/soak, UI/theme/accessibility matrix and measured half-bounce startup remain open",
+    "Changes are local; no commit/push/merge or publication retry attempted"
+  ],
+  "source_sha256": {
+    "src-tauri/src/renderer_owner.rs": "55b0f044bc36b7aa8c911ea1d07c6f2aa1e5a912db52befee0536681fa6275af",
+    "src-tauri/src/renderer_owner/scope.rs": "3d2ea0ee6ed2a173517470dea7e8ab9a0c0adcbbc72da12553658eae253b0be2",
+    "src-tauri/src/renderer_owner/termination.rs": "8c30d76b612dbc2b1f8b3b0dac704a389b6af1c4c49ca93fcbf95600af5ee893",
+    "src-tauri/src/files/recovery/subscriptions.rs": "344dfd2bab75606454bd8a44564cf02904eb357841fad889e239976a8202015f",
+    "src-tauri/src/files/recovery/runtime.rs": "d5a325fa6ab350a17112fb60eb141ad20a5bc94b4de971ae4d03a13381359c10",
+    "src-tauri/src/files/recovery/commands.rs": "0cd359f94955aa5088880ce6a8b38801e93830a7ce018c90f5000cd131c48488",
+    "src-tauri/src/files/recovery/mod.rs": "ee9067ee606a579c72e8758801e571b5f06a2d91bd9ecdc5af6045990af24e2d",
+    "src-tauri/src/files/recovery/model.rs": "cc9e3e02c2e73a56dbe9cc5638b0026822daada008e0e90410bc8c258b8b1243",
+    "src-tauri/src/lib.rs": "ce1b6b65e6713b3198e1d20f60a93b8014f7ad8ac29c0678fffb1c567bcc7345",
+    "src-tauri/test_support/renderer_owner.rs": "78cc4fa64be89b6f42e2e800c5175b6a9dcabb11ec92c6087648f3d648be8c2a",
+    "src-tauri/test_support/recovery_subscriptions.rs": "89ba04fbcfcfc22e394cb20cb5f9d3236f2613c386c8a5a307749f1b04d4b832",
+    "src-tauri/test_support/recovery_runtime.rs": "8f96e78045cb44ee2863efb9f97867d48ab4403c935774f6f0e18f8be2a22118",
+    "src-tauri/test_support/recovery_service.rs": "10b809d06c5912055587499ac970fada92e9c134cc3fc856f2af110608b387b5",
+    "src/lib/api/file-recovery.ts": "15776240d01f7d66daf985ec9311fc38734465d93df6fa390d2e5db3b4e1e89d",
+    "src/lib/domain/file-recovery.ts": "3c3aa202c9e9dc6fcaed5d8df54674a7475cc6f6610e46bf9d88f8e9ca042faf",
+    "src/lib/state/file-recovery.svelte.ts": "8ec9edea866515d3acff5f0aac905b90ed0b247801bc394cb285d6f54c9301d5",
+    "tests/api/file-recovery.test.ts": "262da409f0319a6bb309e8ccc3a82b1384f0ab13fa05c5be9622c0386971d35e",
+    "tests/file-recovery-state.test.ts": "a519670665491c69276da9aacdedd4b77423e1b81ebb980207c6458b59d5af5c"
+  },
+  "log_sha256": {
+    "/tmp/recovery-subscriptions-acceptance.log": "2e6dfe236354f954d7990e90d12272ad2e4cf55823daf08d40fcca6ca82b144e",
+    "/tmp/recovery-subscriptions-runtime-final.log": "2412c48ae21dc6d23de478288f7d64ec45a0c611b7fae4fcb5d6fa83f53a6580",
+    "/tmp/recovery-subscriptions-frontend-before.log": "bba13f4d27a9ca7d6ae5acfd9c764c8252ed35c09ccfc37aa57021ad06a52b6d",
+    "/tmp/recovery-subscriptions-frontend.log": "afa92a42e2b2fc45af367a194bf1d58c361985009fdd3893e0a91410f1b566d0",
+    "/tmp/recovery-subscriptions-check.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/recovery-subscriptions-clippy-final.log": "1d41468fa5908df5b2d2031e8f70af188dda91a2064cb0d964a83af77af60fab",
+    "/tmp/recovery-subscriptions-architecture.log": "1e330b86131f7a41ccf1555229bd888748995d86d259cab06218b0c469ea22ae",
+    "/tmp/recovery-subscriptions-maps.log": "8bef6035e6d0bef9c5ad6161cd553148d472dd88e81e7396acbe656a1134550c"
+  }
+}

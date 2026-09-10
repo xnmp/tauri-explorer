@@ -15,7 +15,8 @@
   import { getPaneIdContext } from "$lib/state/pane-context";
 
   const scmStore = getScmStore(getPaneIdContext() ?? "default");
-  import { gitDiff, openFile } from "$lib/api/files";
+  import { gitDiff } from "$lib/api/git";
+import { openFile } from "$lib/api/open";
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import { toastStore } from "$lib/state/toast.svelte";
   import VirtualList from "$lib/components/VirtualList.svelte";

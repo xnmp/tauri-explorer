@@ -63,22 +63,23 @@
   }
 
   // Focus and select the rename input when rename mode starts.
-  // Keyed on the rename session (the renaming entry's path), NOT on `entry`
+  // Keyed on the dialog opening, rather than the listing entry
   // identity: silent refreshes mid-rename replace the entry object, and
   // re-running focusAndSelect would wipe the user's typed name.
-  let focusedRenamePath: string | null = null;
+  let focusedRenameSession: object | null = null;
 
   $effect(() => {
     const renamingPath = dialogStore.renamingEntry?.path ?? null;
+    const session = dialogStore.fileOperationSession;
     const input = rename.renameInputRef;
     untrack(() => {
       if (!renamingPath) {
-        focusedRenamePath = null;
+        focusedRenameSession = null;
         return;
       }
       if (renamingPath !== entry.path || !input) return;
-      if (focusedRenamePath === renamingPath) return;
-      focusedRenamePath = renamingPath;
+      if (focusedRenameSession === session) return;
+      focusedRenameSession = session;
       rename.focusAndSelect(entry);
       tick().then(autoSizeRename);
     });
@@ -190,7 +191,8 @@
         onblur={() => rename.handleRenameBlur(entry.name)}
         onclick={(e) => e.stopPropagation()}
         ondblclick={(e) => e.stopPropagation()}
-        disabled={rename.submittingRename}
+        readonly={rename.submittingRename}
+        aria-busy={rename.submittingRename}
         rows="1"
         autofocus
       ></textarea>
@@ -225,7 +227,8 @@
         onblur={() => rename.handleRenameBlur(entry.name)}
         onclick={(e) => e.stopPropagation()}
         ondblclick={(e) => e.stopPropagation()}
-        disabled={rename.submittingRename}
+        readonly={rename.submittingRename}
+        aria-busy={rename.submittingRename}
         autofocus
       />
       {#if showSuggestion}
@@ -277,7 +280,7 @@
     background: var(--control-fill-secondary);
   }
 
-  .rename-input:disabled {
+  .rename-input[aria-busy="true"] {
     opacity: 0.6;
   }
 

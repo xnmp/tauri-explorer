@@ -14,7 +14,7 @@ test.describe("git backend (mock-invoke contract)", () => {
 
   test("git_status on a mocked repo path returns the summary shape", async ({ page }) => {
     const summary = await page.evaluate(async () => {
-      const api = await import("/src/lib/api/files.ts");
+      const api = await import("/src/lib/api/git.ts");
       const result = await api.gitSummary("/home/user/Documents/project");
       return result;
     });
@@ -35,7 +35,7 @@ test.describe("git backend (mock-invoke contract)", () => {
 
   test("git_status on a non-repo path reports is_repo=false", async ({ page }) => {
     const summary = await page.evaluate(async () => {
-      const api = await import("/src/lib/api/files.ts");
+      const api = await import("/src/lib/api/git.ts");
       return api.gitSummary("/home/user");
     });
 
@@ -51,7 +51,7 @@ test.describe("git backend (mock-invoke contract)", () => {
     // The frontend should surface an error if the backend complains;
     // mock returns ok, but the ScmPanel UI (#54) will guard before calling.
     const result = await page.evaluate(async () => {
-      const api = await import("/src/lib/api/files.ts");
+      const api = await import("/src/lib/api/git.ts");
       return api.gitCommit("/home/user/Documents/project", "first commit");
     });
     expect(result.ok).toBe(true);
@@ -63,7 +63,7 @@ test.describe("git backend (mock-invoke contract)", () => {
 
   test("git_repo_root returns the repo root for a path inside a repo", async ({ page }) => {
     const r = await page.evaluate(async () => {
-      const api = await import("/src/lib/api/files.ts");
+      const api = await import("/src/lib/api/git.ts");
       return api.gitRepoRoot("/home/user/Documents/project/src");
     });
     expect(r.ok).toBe(true);

@@ -7,14 +7,19 @@
  */
 
 import { moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
-import type { ApiResult } from "$lib/api/files";
+import type { ApiResult } from "$lib/api/common";
 import { conflictResolver } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { toastStore } from "./toast.svelte";
 import { broadcastFileChange } from "./file-events";
 import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import { frecencyStore } from "./frecency.svelte";
-import type { FileEntry } from "$lib/domain/file";
+import {
+  fileMutationRecoveryMessage,
+  type FileEntry,
+  type FileMutationReceipt,
+  type FileMutationRecovery,
+} from "$lib/domain/file";
 
 export interface FileTransferOptions {
   onRefresh: () => void;
@@ -35,12 +40,20 @@ export interface FileTransferOptions {
   jobId?: number;
 }
 
-export interface FileTransferResult {
-  ok: boolean;
-  error?: string;
-  /** The resulting FileEntry from the backend, available on success. */
-  entry?: FileEntry;
-}
+export type FileTransferResult =
+  | {
+      ok: true;
+      /** Committed destination path, independent of presentation metadata. */
+      path: string;
+      /** Optional presentation snapshot captured after the mutation. */
+      entry: FileEntry | null;
+      /** Destination committed, but source cleanup is incomplete. */
+      recovery?: FileMutationRecovery;
+      replacement?: { readonly id: string };
+      warning?: string;
+    }
+  | { ok: false; reason: "skipped" | "cancelled" }
+  | { ok: false; reason: "failed"; error: string };
 
 /**
  * Transfer a single file: detect conflicts, resolve them, execute move/copy,
@@ -79,7 +92,7 @@ export async function performFileTransfer(
   // bogus self-conflict (overwriting a file with itself is a data-loss path;
   // the backend also rejects source == target).
   if (isSameParent && !isCopy) {
-    return { ok: false, error: "skipped" };
+    return { ok: false, reason: "skipped" };
   }
   // COPY into the same parent never overwrites: force overwrite off so the
   // backend generates a "name - Copy" style name, exactly like paste does.
@@ -120,15 +133,14 @@ export async function performFileTransfer(
         destSize: destEntry?.size,
         destModified: destEntry?.modified,
       });
-      if (choice === "skip" || choice === "cancel") {
-        return { ok: false, error: "skipped" };
-      }
+      if (choice === "skip") return { ok: false, reason: "skipped" };
+      if (choice === "cancel") return { ok: false, reason: "cancelled" };
       if (choice === "overwrite") overwrite = true;
     }
   }
 
   // --- Execute move or copy ---
-  const result: ApiResult<FileEntry> = isCopy
+  const result: ApiResult<FileMutationReceipt> = isCopy
     ? await copyEntry(sourcePath, targetDir, overwrite, jobId)
     : await moveEntry(sourcePath, targetDir, overwrite);
 
@@ -138,13 +150,21 @@ export async function performFileTransfer(
     if (!suppressToast) {
       toastStore.error(result.error);
     }
-    return { ok: false, error: result.error };
+    return { ok: false, reason: "failed", error: result.error };
   }
 
   // --- Post-transfer side effects ---
   const targetName = basename(targetDir);
 
-  if (!suppressUndo) {
+  const recovery = result.data.recovery;
+  const replacement = result.data.replacement;
+  const warning = result.warning;
+  if (recovery) {
+    // A committed mutation still supersedes the redo branch even when a batch
+    // caller owns history publication. Incomplete source cleanup has no safe
+    // inverse.
+    await undoStore.invalidateRedo(broadcastToOtherWindows);
+  } else if (!replacement && !suppressUndo) {
     const action = isCopy
       ? {
           type: "copy" as const,
@@ -158,13 +178,24 @@ export async function performFileTransfer(
           originalDir: sourceDir,
         };
     if (broadcastToOtherWindows) {
-      undoStore.pushAndBroadcast(action);
+      await undoStore.pushAndBroadcast(action);
     } else {
-      undoStore.push(action);
+      await undoStore.push(action);
     }
   }
 
-  if (!suppressToast) {
+  if (!suppressToast && recovery) {
+    const message = fileMutationRecoveryMessage(recovery);
+    toastStore.error(message);
+    if (broadcastToOtherWindows) {
+      toastStore.broadcast(message, "error");
+    }
+  } else if (!suppressToast && warning) {
+    toastStore.error(warning);
+    if (broadcastToOtherWindows) {
+      toastStore.broadcast(warning, "error");
+    }
+  } else if (!suppressToast) {
     const verb = isCopy ? "Copied" : "Moved";
     const message = `${verb} ${fileName} to ${targetName}`;
     toastStore.show(message, "info");
@@ -182,5 +213,12 @@ export async function performFileTransfer(
     frecencyStore.pruneNonExistent();
   }
 
-  return { ok: true, entry: result.data };
+  return {
+    ok: true,
+    path: result.data.path,
+    entry: result.data.entry,
+    ...(recovery ? { recovery } : {}),
+    ...(replacement ? { replacement } : {}),
+    ...(warning ? { warning } : {}),
+  };
 }

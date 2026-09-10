@@ -8,7 +8,7 @@
  */
 
 import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
-import { readConfigFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
 import { toForwardSlashes } from "$lib/domain/path";
 
 const STORAGE_KEY = "explorer-manual-hidden";

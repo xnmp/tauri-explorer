@@ -1069,12 +1069,14 @@ export function parseMacStartupLog(
   options: { measureWarm?: boolean } = {},
 ): MacStartupMeasurement {
   const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
-  const cold = log.match(new RegExp(`Startup:.*?total=${duration}`));
+  const cold = log.match(
+    new RegExp(`Startup\\(native-ready\\):\\s*app-run-to-ready=${duration}`),
+  );
   const warm = log.match(
     new RegExp(`Startup\\(warm-activate\\):\\s*show=${duration}`),
   );
   if (!cold)
-    throw new Error("cold Startup marker missing from macOS process log");
+    throw new Error("native-ready marker missing from macOS process log");
   if (options.measureWarm !== false && !warm)
     throw new Error("warm-activate marker missing from macOS process log");
   return {
@@ -1144,7 +1146,7 @@ export function waitForMacStartupProcess(
       try {
         succeedAfterSurvival(parseMacStartupLog(readLog(), options));
       } catch {
-        // Both native markers are required; keep collecting until the bound.
+        // Keep collecting the scenario's required native markers until the bound.
       }
     };
 

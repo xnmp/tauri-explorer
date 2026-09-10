@@ -9,11 +9,7 @@
   4. Full thumbnail cross-fades in over 150ms
 -->
 <script lang="ts" module>
-  import {
-    getMicroThumbnail,
-    getThumbnailData,
-    getVideoThumbnailData,
-  } from "$lib/api/files";
+  import { getMicroThumbnail, getThumbnailData, getVideoThumbnailData } from "$lib/api/thumbnails";
 
   // Dual concurrency pools: micro is fast (small payload), full is heavier.
   // The pools are the cancellation seam (#136): queued work re-checks

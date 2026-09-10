@@ -1,8 +1,9 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { formatWindowTitle } from "$lib/domain/tab-title";
+import { isWindowPath, normalizeLaunchData } from "$lib/domain/window-input";
 
 interface LaunchContext {
-  __LAUNCH_DATA__?: { home: string };
+  __LAUNCH_DATA__?: unknown;
   location: { search: string };
 }
 
@@ -15,11 +16,9 @@ export function resolveLaunchHomePath(
   context: LaunchContext | undefined =
     typeof window === "undefined" ? undefined : window,
 ): string | undefined {
-  return (
-    context?.__LAUNCH_DATA__?.home ??
-    (context ? new URLSearchParams(context.location.search).get("home") : null) ??
-    undefined
-  );
+  const injected = normalizeLaunchData(context?.__LAUNCH_DATA__).home;
+  const query = context ? new URLSearchParams(context.location.search).get("home") : null;
+  return injected ?? (isWindowPath(query) ? query : undefined);
 }
 
 /** Set the observable native-window title. Best-effort outside Tauri. */

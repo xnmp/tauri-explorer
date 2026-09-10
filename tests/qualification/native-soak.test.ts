@@ -256,13 +256,20 @@ describe("native product qualification contract", () => {
   it("parses real macOS cold and warm startup markers", () => {
     expect(
       parseMacStartupLog(
-        "Startup: pre-builder=4.0ms builder→setup=79.2ms total=83.2ms\n" +
+        "Startup(native-ready): app-run-to-ready=83.2ms\n" +
           "Startup(warm-activate): show=4.4ms\n",
       ),
     ).toEqual({ coldTotalMs: 83.2, warmShowMs: 4.4 });
-    expect(() => parseMacStartupLog("Startup: total=83.2ms")).toThrow(
+    expect(() => parseMacStartupLog("Startup(native-ready): app-run-to-ready=83.2ms")).toThrow(
       "warm-activate",
     );
+  });
+
+  it("does not accept builder setup or WebView timing as foreground readiness", () => {
+    expect(() => parseMacStartupLog(
+      "Startup: total=15ms\nStartup(webview): total=25ms\n" +
+      "Startup(warm-activate): show=2ms\n",
+    )).toThrow("native-ready");
   });
 
   it("keeps the hours-long runner opt-in and out of the bounded smoke config", () => {

@@ -21,13 +21,14 @@
 
   interface Props {
     entry: FileEntry;
+    index: number;
     onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
     explorer: ExplorerInstance;
   }
 
-  let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
 
@@ -85,9 +86,15 @@
   }
 </script>
 
-<button
+<!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
+<div
+  role="gridcell"
+  tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
+  aria-selected={explorer.isSelected(entry)}
   class="file-item entry-item"
   data-path={entry.path}
+  data-index={index}
+  aria-colindex={1}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
   class:empty-folder={isEmptyFolder}
@@ -160,7 +167,7 @@
     {/if}
   </div>
   {/if}
-</button>
+</div>
 
 <style>
   .file-item {

@@ -26,18 +26,24 @@ vi.mock("$lib/state/conflict-resolver.svelte", () => ({
 }));
 
 const undoPushMock = vi.fn();
+const undoBroadcastMock = vi.fn();
+const invalidateRedoMock = vi.fn();
 vi.mock("$lib/state/undo.svelte", () => ({
   undoStore: {
     push: (...args: unknown[]) => undoPushMock(...args),
+    pushAndBroadcast: (...args: unknown[]) => undoBroadcastMock(...args),
+    invalidateRedo: (...args: unknown[]) => invalidateRedoMock(...args),
   },
 }));
 
 const toastShowMock = vi.fn();
 const toastErrorMock = vi.fn();
+const toastBroadcastMock = vi.fn();
 vi.mock("$lib/state/toast.svelte", () => ({
   toastStore: {
     show: (...args: unknown[]) => toastShowMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
+    broadcast: (...args: unknown[]) => toastBroadcastMock(...args),
   },
 }));
 
@@ -64,8 +70,8 @@ const noop = () => {};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  moveEntryMock.mockResolvedValue({ ok: true, data: resultEntry });
-  copyEntryMock.mockResolvedValue({ ok: true, data: resultEntry });
+  moveEntryMock.mockResolvedValue({ ok: true, data: { path: resultEntry.path, entry: resultEntry } });
+  copyEntryMock.mockResolvedValue({ ok: true, data: { path: resultEntry.path, entry: resultEntry } });
   fetchDirectoryMock.mockResolvedValue({ ok: true, data: { entries: [] } });
 });
 
@@ -79,6 +85,8 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("Expected a successful transfer");
+    expect(result.path).toBe(resultEntry.path);
     expect(result.entry).toEqual(resultEntry);
     expect(moveEntryMock).toHaveBeenCalledWith("/src/file.txt", "/dest", false);
     expect(copyEntryMock).not.toHaveBeenCalled();
@@ -104,6 +112,9 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a failed transfer");
+    expect(result.reason).toBe("failed");
+    if (result.reason !== "failed") throw new Error("Expected a failed transfer");
     expect(result.error).toBe("permission denied");
   });
 
@@ -160,7 +171,8 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("skipped");
+    if (result.ok) throw new Error("Expected a skipped transfer");
+    expect(result.reason).toBe("skipped");
     expect(moveEntryMock).not.toHaveBeenCalled();
   });
 
@@ -176,7 +188,8 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("skipped");
+    if (result.ok) throw new Error("Expected a cancelled transfer");
+    expect(result.reason).toBe("cancelled");
     expect(moveEntryMock).not.toHaveBeenCalled();
   });
 
@@ -261,6 +274,86 @@ describe("performFileTransfer", () => {
     });
   });
 
+  it("returns a durable replacement warning without publishing ordinary copy Undo", async () => {
+    const warning = "Previous destination retained in File Recovery. Overwrite Undo is not available yet.";
+    copyEntryMock.mockResolvedValue({
+      ok: true,
+      data: { path: "/dest/file.txt", entry: resultEntry, replacement: { id: "replacement-1" } },
+      warning,
+    });
+
+    const result = await performFileTransfer("/src/file.txt", "/dest", true, {
+      onRefresh: noop,
+      overwrite: true,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      path: "/dest/file.txt",
+      entry: resultEntry,
+      replacement: { id: "replacement-1" },
+      warning,
+    });
+    expect(undoPushMock).not.toHaveBeenCalled();
+    expect(invalidateRedoMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledWith(warning);
+    expect(toastShowMock).not.toHaveBeenCalled();
+  });
+
+  it("records and publishes a committed move when entry metadata is unavailable", async () => {
+    moveEntryMock.mockResolvedValue({
+      ok: true,
+      data: { path: "/dest/file.txt", entry: null },
+    });
+    const refreshMock = vi.fn();
+
+    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+      onRefresh: refreshMock,
+    });
+
+    expect(result).toEqual({ ok: true, path: "/dest/file.txt", entry: null });
+    expect(undoPushMock).toHaveBeenCalledWith({
+      type: "move",
+      sourcePath: "/src/file.txt",
+      destPath: "/dest/file.txt",
+      originalDir: "/src",
+    });
+    expect(refreshMock).toHaveBeenCalledOnce();
+    expect(broadcastMock).toHaveBeenCalledWith(["/src", "/dest"]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("publishes an incomplete committed move without fabricating an inverse", async () => {
+    const recovery = {
+      sourcePath: "/src/file.txt",
+      destinationPath: "/dest/file.txt",
+      error: "source cleanup denied",
+    };
+    moveEntryMock.mockResolvedValue({
+      ok: true,
+      data: { path: "/dest/file.txt", entry: null, recovery },
+    });
+    const refreshMock = vi.fn();
+
+    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+      onRefresh: refreshMock,
+      suppressUndo: true,
+      broadcastToOtherWindows: true,
+    });
+
+    expect(result).toEqual({ ok: true, path: "/dest/file.txt", entry: null, recovery });
+    expect(undoPushMock).not.toHaveBeenCalled();
+    expect(undoBroadcastMock).not.toHaveBeenCalled();
+    expect(invalidateRedoMock).toHaveBeenCalledWith(true);
+    expect(refreshMock).toHaveBeenCalledOnce();
+    expect(broadcastMock).toHaveBeenCalledWith(["/src", "/dest"]);
+    expect(toastShowMock).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledWith(expect.stringMatching(
+      /copied to \/dest\/file\.txt.*removing \/src\/file\.txt did not finish.*source cleanup denied/i,
+    ));
+    expect(toastBroadcastMock).toHaveBeenCalledWith(expect.any(String), "error");
+  });
+
   // --- Same-parent guard ---
 
   it("treats a move into the source's own parent as a no-op skip", async () => {
@@ -269,7 +362,8 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("skipped");
+    if (result.ok) throw new Error("Expected a skipped transfer");
+    expect(result.reason).toBe("skipped");
     expect(moveEntryMock).not.toHaveBeenCalled();
     expect(conflictPromptMock).not.toHaveBeenCalled();
   });

@@ -23,7 +23,16 @@ function getPersistedBgColor(): Color | undefined {
 export function explorerWindowAppearance(title: string) {
   const windowEffects = windowsBackdropEffects();
   const winBackdrop = windowEffects !== undefined;
+  // The public JS options omit this field, but Tauri's creation command
+  // deserializes WindowConfig.additionalBrowserArgs. The Windows-only Cargo
+  // attach feature injects the exact main-window string into every page.
+  // Preserve it for all descendants sharing that WebView2 data directory.
+  const browserArgs = (import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1") &&
+    typeof window !== "undefined"
+    ? (window as Window & { __E2E_WEBVIEW_BROWSER_ARGS__?: string }).__E2E_WEBVIEW_BROWSER_ARGS__
+    : undefined;
   return {
+    ...(isWindows && typeof browserArgs === "string" ? { additionalBrowserArgs: browserArgs } : {}),
     title,
     backgroundColor: winBackdrop ? undefined : getPersistedBgColor(),
     decorations: isMac,

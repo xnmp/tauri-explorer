@@ -1,0 +1,118 @@
+{
+  "date": "2026-09-08",
+  "scope": "Compact operation checkpoints and native replacement root/manifest preparation; no production user-byte replacement integration",
+  "contracts": [
+    "Immutable catalog authority and mutable digest-bound journal checkpoints; phase updates clone only state",
+    "Pure intent/completion transition policy validates phase evidence and clears resolved errors on completion",
+    "Exact native owner and catalog verification, held state/generation CAS, and exact lost-commit reply adoption without another write",
+    "Local manifest encoded-size preflight before catalog publication",
+    "Retained artifact root binds the complete validated intent digest, including owner, resources and target path",
+    "Durable RootIntent precedes exclusive anchored root creation; root/parent sync precedes Rooted",
+    "Durable ManifestIntent precedes exact framed manifest publication; file/root sync and namespace revalidation precede Prepared",
+    "Failures, dropped owners and native process death retain catalog/root/manifest evidence; read-only manifest checks never recreate missing evidence"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "log": "/tmp/recovery-checkpoint-full-final.log",
+      "exit_code": 101,
+      "passed": 916,
+      "failed": 2,
+      "ignored": 13,
+      "failures": "The two user_report localhost tests failed to bind loopback sockets with PermissionDenied before assertions; exact tests passed in the targeted authorized retry",
+      "retry_command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- user_report::tests::relay_daily_cap_stays_distinct_for_the_ui user_report::tests::unreachable_relay_has_a_network_error_kind --test-threads=1",
+      "retry_log": "/tmp/recovery-checkpoint-localhost-retry.log",
+      "retry_exit_code": 0,
+      "retry_passed": 2,
+      "accepted_across_runs": 918,
+      "note": "Subsequent source-only visibility narrowing of DurableOperation::advance is covered by final all-target Clippy; no runtime logic changed after the full run"
+    },
+    "focused": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files::recovery -- --test-threads=1",
+      "log": "/tmp/recovery-checkpoint-final-focused.log",
+      "exit_code": 0,
+      "passed": 141,
+      "failed": 0,
+      "ignored": 6
+    },
+    "binding_regression": {
+      "before_log": "/tmp/recovery-artifact-binding-before.log",
+      "mutation": "Removed only manifest_payload full-intent digest comparison; restored source byte-for-byte in finally",
+      "before_exit_code": 101,
+      "before_passed": 9,
+      "before_failed": 3,
+      "failures": [
+        "same_spec_with_a_different_valid_owner_cannot_use_the_root",
+        "changed_valid_claims_cannot_use_an_existing_manifest",
+        "a_valid_target_alias_cannot_rebind_an_existing_root"
+      ],
+      "after": "All three pass in focused141 and full916 runs"
+    },
+    "payload_budget": {
+      "test": "large_immutable_intents_produce_small_phase_checkpoints",
+      "claims": 1027,
+      "catalog_payload_bytes": "> 65536",
+      "initial_checkpoint_bytes": "< 512",
+      "next_phase_checkpoint_bytes": "< 512",
+      "interpretation": "Encoded payload size only; no latency or actual SQLite disk-write measurement"
+    },
+    "native_process_death": {
+      "test": "native_process_death_retains_preparation_evidence_and_fences_its_paths",
+      "boundaries": [
+        "after anchored private-root creation and durability, before RootObserved",
+        "after framed manifest publication and durability, before Prepared"
+      ],
+      "outcomes": "Parent kills and reaps child, reopens SQLite/catalog, observes expected intent phase and exact native root/manifest, rejects overlapping source/target/root admission, permits unrelated sibling, preserves source/target bytes",
+      "helper": "subprocess_preparer is ignored in default enumeration and explicitly launched by the passing parent"
+    },
+    "clippy": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-checkpoint-clippy-final.log",
+      "exit_code": 0,
+      "warnings": "37 library unused-infrastructure warnings; 5 library-test warnings (4 duplicates). New private-interface warning fixed by narrowing phase API visibility"
+    },
+    "windows": {
+      "command": "cargo check --offline --manifest-path /tmp/recovery-private-storage-check/Cargo.toml --target x86_64-pc-windows-gnu --tests",
+      "log": "/tmp/recovery-checkpoint-windows-final.log",
+      "exit_code": 0,
+      "scope": "Harness imports actual shared model/journal/catalog/native identity/lock/private-storage source and eligible tests. Excludes Unix coordinator/artifact/executor; not full app or Windows runtime acceptance"
+    },
+    "independent_review": {
+      "agent": "crash_recovery_acceptance_sol",
+      "model": "gpt-5.6-sol",
+      "verdict": "ACCEPT scoped",
+      "method": "Independent source/contract falsification, causal binding regression and native kill evidence review; root owns builds"
+    },
+    "format": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check passes",
+    "maps": "python3 docs/code-map/validate.py --coverage passes415/415 tracked files, zero unresolvable references; new untracked modules/tests explicitly mapped",
+    "diff": "git diff --check passes",
+    "native_ui": "No browser/native UI or app binary build for this internal preparation slice"
+  },
+  "limits": [
+    "No user-byte staging, displacement, publication, rollback or disposal integration; no production replacement/trash durable execution, reconciliation IPC/UI, overwrite Undo or retention",
+    "Process-kill tests stop after completed effects, not inside syscalls or durability barriers; no power-loss/hardware durability claim",
+    "Phase snapshots do not authenticate arbitrary out-of-band private database history rewrites; native live evidence remains required for every recovered action",
+    "Compact journal writes still scan bounded journal records and validate/copy in-memory catalog evidence; storage bounds are not total process-memory caps",
+    "Windows directory durability and write-capable existing-file sync remain unresolved; macOS/Linux nonstandard filesystem acceptance outstanding",
+    "No measured application/startup/deletion latency gain; actual macOS half-bounce target remains unmeasured",
+    "Changes remain local; earlier publication rejection remains unresolved"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/mod.rs": "5811e0a2778ac5ed2a451d7cf2b6812db872ed52d006c7da17cacd3bdf6f9a39",
+    "src-tauri/src/files/recovery/model.rs": "226b59e24305304f92ef1f4624a211b563fce2d2a63af9552a01a4f17b709814",
+    "src-tauri/src/files/recovery/coordinator.rs": "2bbd9b22c5703cd3989b43e98a01b9f81c66ffac445cafbd874ac5bfc76bf335",
+    "src-tauri/src/files/recovery/coordinator/promotion.rs": "8ca306e2d9940962790947c8eb469708a7e632c1b79ae2ea79d8bb3a64e48e7a",
+    "src-tauri/src/files/recovery/journal.rs": "02989b9a066b1508775253c430d47128188fd4b3b4527c10188cbf71cf1e2f6e",
+    "src-tauri/src/files/recovery/storage.rs": "6db448cf143d8d4d40885e23673e1014fc10d8f7f2f2090b84756e182e3bf65d",
+    "src-tauri/src/files/recovery/locks.rs": "f9e5fc375fbf19dadd2fccfb0605c81426bce6eefb040b2c720394e3730c0b20",
+    "src-tauri/src/files/recovery/replacement_transition.rs": "cbea18b49b808d2a8d4153be6da9758f14974be3fb3b740107e983b40cbda24a",
+    "src-tauri/src/files/recovery/replacement_artifact.rs": "610ec2b60cc203cac0f60a5e0c4be4853de999ae2a83d79aa34c37c1e4132c6a",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "cd651b23b068c882d8dba4f926f27a89b528d04dd0d691079472b1924478c9d6",
+    "src-tauri/test_support/recovery_coordinator.rs": "3d855ec9d0519f1e9d5739b5b470d43f1351cbc50a10fbf16e200862184731d5",
+    "src-tauri/test_support/recovery_promotion.rs": "19ff4ef237b25b82847b4925b41b3e75b204f6fdb31e60b02052502c82dd2b26",
+    "src-tauri/test_support/recovery_storage.rs": "a1fa6a6a293453e96f59bc8eba532cd483b47972bcd8024c3a03eb2d08d5368f",
+    "src-tauri/test_support/recovery_replacement_transition.rs": "d86ce83ab23de2d42564d3818114b02566ab5f450f9639d71257b5fb5e27da0f",
+    "src-tauri/test_support/recovery_replacement_artifact.rs": "5133cfa91480c99bb51aa90b59d88fc00a1f5c770d6028fbef704085df4a1ac0",
+    "src-tauri/test_support/recovery_replacement_execution.rs": "cc8a57d615ed251c004d4997494d3f5461095e3c0cf8e320ff9330746cdef45c"
+  }
+}

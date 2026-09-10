@@ -1,0 +1,182 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "status": "scoped native acceptance passed; independently accepted",
+  "scope": "Native forward ownership for create directory, create empty file, rename, write new text, and symlink; causal history ordering and typed worker uncertainty; crash-report publication",
+  "baseCommit": "1f525db9",
+  "nativeBinarySha256": "e3c25807b28d5d34cdef284f602298fd114d661dcdeaf0af40ec049824b619fd",
+  "sourceSha256": {
+    "src-tauri/src/file_mutation.rs": "36da964d20d9c1bba9f3b67d1c9d20f2ca93afe349870540e2fba33ec3a402dd",
+    "src-tauri/src/file_history/mod.rs": "3e959f41074162c7ac163f63a05a2829fbb2ca1a1fc31945f2f7b96b1c8608c6",
+    "src-tauri/src/file_history/model.rs": "85e240d97faeef1d411fa8e7e4b0a5506ece061e324378f71ad2bda40abdb292",
+    "src-tauri/src/file_history/forward.rs": "32e2a2033247feacf0d4c5d41679139c38f267559bbae246e58d41a769a3cc87",
+    "src-tauri/src/file_history/execution.rs": "83d00c57f0f8a9452b1088aedb116f642a05bd9a0f9c723c3872dbe00a8f4d8f",
+    "src-tauri/src/error.rs": "a43531a8072eb00cf18d8131e78e4b4b0129117b5ad13104f627790cdacbdcd9",
+    "src-tauri/src/crash_report.rs": "f4d45d26c92f13b092a8b4ca553a88a7494d0eb6602542599f0f67f26ce764f0",
+    "src-tauri/src/files/mod.rs": "8232d5a0ee50f75a9f6af8b303777f26fd954f84e7887fb3a06fae4ea8e5860b",
+    "src-tauri/src/files/file_ops.rs": "cb7a2d53a9c2291b479d812d54d324c3ebe1e8cf3eed7212e75b4dd1506d3474",
+    "src-tauri/src/lib.rs": "5c3cf32d5c604225219e98d8c9b15a8a0622938d8ec33a4b14dd86895f72cbf9",
+    "src-tauri/test_support/file_history_gate.rs": "306304b55fcfd3f1379167e798aa967b31820f95e2fbfbe1bbc1d26f1f6cb21a",
+    "src/lib/api/file-mutations.ts": "7d6a88c5d02ecdd1a6030e15424dedb8ee55c7a3d65f717e8dc0e9c7cf9cd380",
+    "src/lib/api/files.ts": "c53a790cb5ccbf5e85d8c552baeb81baee5aea5a3119c2c5fc7842e5f88dbff7",
+    "src/lib/state/pane-mutations.ts": "b8b7283bbfe53d10c203509134db7d8423adcd9c3ff393a99c7aeb4563324a94",
+    "e2e-tauri/specs/file-forward-history.spec.ts": "8d0b295b397583232902a0b5199b244a5c24e0ac9a9ac08d9778e3e219bb036f"
+  },
+  "normalBuildProbeExclusion": {
+    "sha256": "87e4f44790df8e51e82b85c6c6ac6a2f224426814deed0d2e790439dd8deb137",
+    "nativeProbePresent": {
+      "TAURI_E2E_HISTORY_GATE_DIR": false,
+      "Native forward admission gate failed": false,
+      "next-forward.accepted.json": false
+    },
+    "frontendProbePresent": {
+      "e2eHistoryReady": false,
+      "e2eFileMutationProbe": false,
+      "e2e-history-operation": false
+    }
+  },
+  "validation": {
+    "rustLibraryPassed": 599,
+    "rustIntegrationPassed": 9,
+    "rustIgnored": 7,
+    "focusedHistoryPassed": 47,
+    "focusedForwardClassificationPassed": 5,
+    "focusedCrashReportPassed": 5,
+    "frontendPassed": 2286,
+    "frontendSkipped": 3,
+    "performanceCasesPassed": 30,
+    "chromiumAllViewsPassed": 74,
+    "nativeSpecsPassed": 4,
+    "nativeOutcomesPassed": 9,
+    "svelteErrors": 0,
+    "svelteWarnings": 0,
+    "architectureLint": "pass",
+    "clippyAllTargetsRecoveryFeature": "pass",
+    "sourceMapCoverage": "403/403"
+  },
+  "startup": {
+    "rawBytes": 665578,
+    "gzipBytes": 217281,
+    "staticChunks": 44,
+    "previousGzipBytes": 217234,
+    "gzipDeltaBytes": 47,
+    "budgets": "pass",
+    "latencyImprovementClaimed": false
+  },
+  "nativeCases": [
+    {
+      "case": "native-forward-held-result",
+      "held": {
+        "status": "held",
+        "heldAt": 1788823230371,
+        "targetPath": "/home/chong/.tauri-explorer-forward-history-74ZccG/held-c32aeb8e.txt",
+        "resultPath": "/home/chong/.tauri-explorer-forward-history-74ZccG/held-c32aeb8e-renamed.txt",
+        "token": "rename-held-df1aae46-4369-4c30-a9d9-6ad31d3d2374",
+        "command": "rename_entry"
+      },
+      "admitted": {
+        "revision": 3,
+        "undoId": 1,
+        "redoId": null,
+        "stackSize": 1,
+        "busy": false
+      },
+      "afterRenderer": {
+        "revision": 3,
+        "undoId": 1,
+        "redoId": null,
+        "stackSize": 1,
+        "busy": false
+      },
+      "afterUndo": {
+        "revision": 5,
+        "undoId": null,
+        "redoId": 2,
+        "stackSize": 0,
+        "busy": false
+      }
+    },
+    {
+      "case": "native-forward-same-name",
+      "seeded": {
+        "revision": 10,
+        "undoId": null,
+        "redoId": 4,
+        "stackSize": 0,
+        "busy": false
+      },
+      "afterNoOp": {
+        "revision": 12,
+        "undoId": null,
+        "redoId": 4,
+        "stackSize": 0,
+        "busy": false
+      }
+    },
+    {
+      "case": "native-forward-renderer-destroy",
+      "accepted": {
+        "direction": "forward",
+        "entryId": 7,
+        "pid": 1464671,
+        "token": "b7db68c1-f7ef-48cd-9635-1718af7975a5"
+      },
+      "original": "/home/chong/.tauri-explorer-forward-history-74ZccG/child-0a309338.txt",
+      "renamed": "/home/chong/.tauri-explorer-forward-history-74ZccG/child-0a309338-renamed.txt",
+      "survivorEntries": [
+        "child-0a309338-renamed.txt",
+        "held-c32aeb8e.txt",
+        "same-23b98830-renamed.txt"
+      ],
+      "survivorHistory": {
+        "revision": 18,
+        "undoId": null,
+        "redoId": null,
+        "stackSize": 0,
+        "busy": false
+      }
+    }
+  ],
+  "screenshot": "screenshots/refactor/repo-health-cleanup/native-forward-history.png",
+  "logs": {
+    "native": "/tmp/native-forward-acceptance.log",
+    "nativeBuild": "/tmp/native-forward-e2e-build.log",
+    "normalBuild": "/tmp/native-forward-normal-build.log",
+    "rust": "/tmp/native-forward-rust-final.log",
+    "frontend": "/tmp/native-forward-frontend-final.log",
+    "chromium": "/tmp/native-forward-browser.log",
+    "clippy": "/tmp/native-forward-clippy-final.log",
+    "bundle": "/tmp/native-forward-bundle.log"
+  },
+  "failingBeforeEvidence": [
+    "/tmp/file-history-order-before.log",
+    "/tmp/file-history-slot-cap-before.log",
+    "/tmp/native-forward-classification-before.log",
+    "/tmp/native-forward-overlap-before.log",
+    "/tmp/native-inverse-uncertainty-before.log",
+    "/tmp/crash-report-collision-before.log"
+  ],
+  "limits": [
+    "Only five forward commands migrated; delete/copy/move/paste/drop/grouped rename still need native logical-batch ownership.",
+    "Native lifetime case destroys an entire child window; it does not verify same-window renderer reload/crash or native-process recovery.",
+    "Local child history retires with its owner; survivor local Undo persistence is not claimed.",
+    "No durable transaction journal, artifact identity validation, complete overwrite Undo, or indeterminate network-filesystem reconciliation is established.",
+    "Worker-failure injection uses real Rust filesystem workers and history/projection seams; native IPC watcher delivery for injected panics is not covered.",
+    "Crash publication tests do not inject process termination or power loss; claims and reports retain disk space until removed.",
+    "Windows/macOS acceptance, broader release matrix and actual macOS half-bounce measurements remain open."
+  ],
+  "independentReview": {
+    "model": "GPT-5.6 Sol",
+    "verdict": "ACCEPT",
+    "confirmed": [
+      "typed forward and inverse worker uncertainty",
+      "causal ordering and partial Redo continuation",
+      "complete crash-report publication and consumed identity retention",
+      "native held-result single Undo",
+      "native same-name Redo preservation",
+      "accepted child rename after native-window destruction",
+      "binary hash and normal-build probe exclusion"
+    ],
+    "fullReviewComplete": false
+  }
+}

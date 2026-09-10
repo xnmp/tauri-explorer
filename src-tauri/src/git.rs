@@ -10,19 +10,15 @@
 //! by libgit2. Cancellation is wired through the shared `TaskRegistry`.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use git2::{
     DiffFormat, DiffLineType, DiffOptions, ObjectType, Repository, Signature, Status, StatusOptions,
 };
-use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use std::time::Instant;
 
 use crate::error::AppError;
 use crate::git_common::{open_repo, to_app_err, workdir_key};
@@ -70,6 +66,14 @@ pub struct GitStatusSummary {
     /// SCM panel's in-progress banner (abort / continue). Operations we don't
     /// offer a workflow for (bisect, apply-mailbox, …) collapse to `clean`.
     pub op_state: String,
+}
+
+/// Repository identity and the caller's filesystem-resolved location within it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GitDirectoryScope {
+    pub repo_root: String,
+    /// POSIX-separated repository-relative directory; empty at the root.
+    pub relative_directory: String,
 }
 
 impl Default for GitStatusSummary {
@@ -928,7 +932,7 @@ where
     F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
 {
     let (id, cancelled) = match task_id {
-        Some(id) => (id, GIT_TASKS.start_with_id(id)),
+        Some(id) => (id, GIT_TASKS.start_with_id(id)?),
         None => GIT_TASKS.start(),
     };
     let handle = tokio::task::spawn_blocking(move || f(cancelled));
@@ -1092,50 +1096,95 @@ pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Res
 /// Move selected untracked files to the operating system trash/recycle bin.
 #[tauri::command]
 pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
-    run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
-        let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
-        let mut failures = Vec::new();
-        for relative in relative_paths {
-            let path = workdir.join(relative);
-            if let Err(error) = crate::system::trash_or_remove(&path) {
-                failures.push(format!("{} ({error})", path.display()));
-            }
+    // Keep both preflight and the platform-worker handoff owned by native work.
+    // Closing the invoking renderer must not drop the continuation between them.
+    tauri::async_runtime::spawn(async move {
+        let absolute_paths = run_blocking(move |_cancel| {
+            let repo = open_repo(Path::new(&repo_path))?;
+            let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+            Ok(relative_paths
+                .into_iter()
+                .map(|relative| workdir.join(relative).to_string_lossy().into_owned())
+                .collect())
+        })
+        .await?;
+        // Trash owns the platform worker: Windows Shell operations cannot inherit
+        // whichever COM apartment an unrelated pooled Git task left behind.
+        let outcome = crate::files::trash::move_multiple_to_trash(absolute_paths).await?;
+        match outcome.error() {
+            None => Ok(()),
+            Some(error) if !outcome.uncertain.is_empty() => Err(AppError::MutationUncertain(error)),
+            Some(error) => Err(AppError::Other(error)),
         }
-        if !failures.is_empty() {
-            return Err(AppError::Other(format!(
-                "failed to move {} selected item(s) to trash: {}",
-                failures.len(),
-                failures.join(", ")
-            )));
-        }
-        Ok(())
     })
     .await
+    .map_err(|error| AppError::WorkerFailed(error.to_string()))?
 }
 
 /// Resolve the repo root that contains `path`, or `None` if outside any repo.
+fn discover_repo_root(path: &str) -> Option<String> {
+    // WSL UNC: resolve the root with the distro's native git rather than a
+    // libgit2 discovery walk over the 9P mount (#425). Only a delegation
+    // *mechanism* failure falls through to libgit2.
+    #[cfg(windows)]
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(path) {
+        match wsl_repo_root(&distro, &linux_path) {
+            WslRepoRoot::Root(root) => return Some(root),
+            WslRepoRoot::NotRepo => return None,
+            WslRepoRoot::Fallback => {}
+        }
+    }
+    open_repo(Path::new(path))
+        .ok()
+        .and_then(|repo| workdir_key(&repo))
+}
+
+fn directory_scope(path: &str) -> Option<GitDirectoryScope> {
+    let repo_root = discover_repo_root(path)?;
+    let relative_directory = resolved_relative_directory(path, &repo_root)?;
+    Some(GitDirectoryScope {
+        repo_root,
+        relative_directory,
+    })
+}
+
+fn resolved_relative_directory(path: &str, repo_root: &str) -> Option<String> {
+    let resolved_path = std::fs::canonicalize(scope_resolution_path(path)).ok()?;
+    let resolved_root = std::fs::canonicalize(scope_resolution_path(repo_root)).ok()?;
+    let relative = resolved_path.strip_prefix(resolved_root).ok()?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+fn scope_resolution_path(path: &str) -> PathBuf {
+    // Discovery uses wsl.localhost even when the caller entered legacy wsl$.
+    // Put both operands in that namespace before asking Windows to resolve
+    // filesystem aliases; GetFinalPathName need not rewrite the server name.
+    #[cfg(windows)]
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(path) {
+        return PathBuf::from(wsl_unc_from_linux(&distro, &linux_path));
+    }
+    PathBuf::from(path)
+}
+
 #[tauri::command]
 pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
-    run_blocking(move |_cancel| {
-        // WSL UNC: resolve the root with the distro's native git rather than a
-        // libgit2 discovery walk over the 9P mount (#425). Only a delegation
-        // *mechanism* failure falls through to libgit2.
-        #[cfg(windows)]
-        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&path) {
-            match wsl_repo_root(&distro, &linux_path) {
-                WslRepoRoot::Root(root) => return Ok(Some(root)),
-                WslRepoRoot::NotRepo => return Ok(None),
-                WslRepoRoot::Fallback => {}
-            }
-        }
-        let p = PathBuf::from(&path);
-        match open_repo(&p) {
-            Ok(repo) => Ok(workdir_key(&repo)),
-            Err(_) => Ok(None),
-        }
-    })
-    .await
+    run_blocking(move |_cancel| Ok(discover_repo_root(&path))).await
+}
+
+/// Resolve both stable repository identity and the caller's physical directory
+/// within it. Filesystem resolution prevents aliases from becoming lexical
+/// directory filters in the frontend.
+#[tauri::command]
+pub async fn git_directory_scope(path: String) -> Result<Option<GitDirectoryScope>, AppError> {
+    run_blocking(move |_cancel| Ok(directory_scope(&path))).await
 }
 
 #[tauri::command]
@@ -1575,172 +1624,6 @@ pub async fn git_commit(
     .await
 }
 
-// ----- File watcher ----- //
-
-struct WatcherEntry {
-    _watcher: Box<dyn Watcher + Send>,
-    /// Refcount (#334): multiple panes (or windows) can watch the same repo;
-    /// the OS watcher is dropped only when the last consumer unwatches.
-    count: usize,
-}
-
-static WATCHERS: OnceLock<Mutex<std::collections::HashMap<String, WatcherEntry>>> = OnceLock::new();
-
-fn watchers_map() -> &'static Mutex<std::collections::HashMap<String, WatcherEntry>> {
-    WATCHERS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-}
-
-/// Start watching a repo for index/worktree changes. Emits `git-status-changed`
-/// with the repo root path. Idempotent per-repo.
-#[tauri::command]
-pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), AppError> {
-    let (repo_root, git_dir) = match open_repo(Path::new(&repo_path)) {
-        Ok(r) => {
-            let root = r
-                .workdir()
-                .map(|p| p.to_path_buf())
-                .ok_or_else(|| AppError::Other("git: bare repo cannot be watched".into()))?;
-            (root, r.path().to_path_buf())
-        }
-        Err(_) => return Ok(()), // silently no-op when not a repo
-    };
-    let key = watch_key_for(&repo_path);
-
-    let mut map = watchers_map()
-        .lock()
-        .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
-    if let Some(entry) = map.get_mut(&key) {
-        entry.count += 1;
-        return Ok(());
-    }
-
-    let app_for_watcher = app.clone();
-    let key_for_event = key.clone();
-    let last_emit: Arc<Mutex<Instant>> =
-        Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
-    let trailing_pending = Arc::new(AtomicBool::new(false));
-    let handler = move |res: notify::Result<notify::Event>| {
-        if let Ok(event) = res {
-            // Ignore ephemeral lock files; coalesce emits to at most once per 200ms.
-            let relevant = event.paths.iter().any(|p| {
-                let s = p.to_string_lossy();
-                !s.ends_with(".lock") && !s.ends_with("~")
-            });
-            if !relevant {
-                return;
-            }
-            let mut last = last_emit.lock().unwrap_or_else(|poisoned| {
-                log::error!("git watcher last_emit lock poisoned, recovering");
-                poisoned.into_inner()
-            });
-            if last.elapsed() < Duration::from_millis(200) {
-                drop(last);
-                // Within the quiet window: schedule a single trailing emit so
-                // the last change in a burst is not dropped.
-                if !trailing_pending.swap(true, Ordering::SeqCst) {
-                    let app = app_for_watcher.clone();
-                    let key = key_for_event.clone();
-                    let last_emit = Arc::clone(&last_emit);
-                    let trailing_pending = Arc::clone(&trailing_pending);
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(200));
-                        let mut last = last_emit.lock().unwrap_or_else(|poisoned| {
-                            log::error!("git watcher last_emit lock poisoned, recovering");
-                            poisoned.into_inner()
-                        });
-                        *last = Instant::now();
-                        drop(last);
-                        trailing_pending.store(false, Ordering::SeqCst);
-                        log::debug!("gitstat: emitting trailing git-status-changed for {key}");
-                        let _ = app.emit("git-status-changed", &key);
-                    });
-                }
-                return;
-            }
-            *last = Instant::now();
-            drop(last);
-            log::debug!("gitstat: emitting git-status-changed for {key_for_event}");
-            let _ = app_for_watcher.emit("git-status-changed", &key_for_event);
-        }
-    };
-    // WSL/network shares (\\wsl$\…, \\wsl.localhost\…) don't deliver native
-    // change notifications to Windows — ReadDirectoryChangesW is effectively
-    // a no-op over 9P — so a natively-watched repo there never fires and the
-    // SCM panel looks frozen until reopened (#387). Poll those instead.
-    let is_unc = key.starts_with("\\\\") || key.starts_with("//");
-    let mut watcher: Box<dyn Watcher + Send> = if is_unc {
-        // Each PollWatcher tick re-stats the entire watched tree; over the 9P
-        // mount that is the same expensive walk the badge/status paths now
-        // delegate away from, so a tight 3s interval reintroduces exactly the
-        // 9P load we're trying to shed (#426). A UNC repo only changes from
-        // inside WSL (the user isn't editing over the mount at high frequency),
-        // so a 15s interval keeps the panel reasonably live at ~1/5th the cost.
-        let poll_interval = Duration::from_secs(15);
-        log::info!(
-            "gitstat: UNC root {key}: native fs events unavailable, using {}s PollWatcher",
-            poll_interval.as_secs()
-        );
-        Box::new(
-            notify::PollWatcher::new(
-                handler,
-                notify::Config::default().with_poll_interval(poll_interval),
-            )
-            .map_err(|e| AppError::Other(format!("git watch: {e}")))?,
-        )
-    } else {
-        Box::new(
-            notify::recommended_watcher(handler)
-                .map_err(|e| AppError::Other(format!("git watch: {e}")))?,
-        )
-    };
-
-    watcher
-        .watch(&repo_root, RecursiveMode::Recursive)
-        .map_err(|e| AppError::Other(format!("git watch: {e}")))?;
-    // The recursive worktree watch above already covers `.git` when it lives
-    // inside the work tree; watching it again would double every event. Only
-    // watch the git dir separately when it lives elsewhere (linked worktrees).
-    if !git_dir.starts_with(&repo_root) {
-        let _ = watcher.watch(&git_dir, RecursiveMode::Recursive);
-    }
-    map.insert(
-        key,
-        WatcherEntry {
-            _watcher: watcher,
-            count: 1,
-        },
-    );
-    Ok(())
-}
-
-/// The watcher-map key for a repo path: the normalized workdir (via
-/// `workdir_key`) or the path itself when it isn't a repo. Watch AND unwatch
-/// must derive keys identically — unwatch previously kept git2's trailing
-/// slash while watch stripped it, so refcounts never decremented and
-/// watchers leaked (#387).
-fn watch_key_for(repo_path: &str) -> String {
-    match open_repo(Path::new(repo_path)) {
-        Ok(r) => workdir_key(&r).unwrap_or_else(|| repo_path.to_string()),
-        Err(_) => repo_path.to_string(),
-    }
-}
-
-#[tauri::command]
-pub async fn git_unwatch_repo(repo_path: String) -> Result<(), AppError> {
-    let key = watch_key_for(&repo_path);
-    let mut map = watchers_map()
-        .lock()
-        .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
-    if let Some(entry) = map.get_mut(&key) {
-        if entry.count > 1 {
-            entry.count -= 1;
-        } else {
-            map.remove(&key);
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1937,31 +1820,6 @@ mod tests {
     }
 
     #[test]
-    fn watch_and_unwatch_derive_identical_keys() {
-        // Unwatch used git2's raw (trailing-slash) workdir while watch
-        // stripped it — refcounts never decremented, watchers leaked (#387).
-        let dir = init_repo();
-        let plain = dir.path().to_str().unwrap().to_string();
-        let slashed = format!("{plain}/");
-        let sub = dir.path().join("sub");
-        std::fs::create_dir(&sub).unwrap();
-        let from_subdir = sub.to_str().unwrap().to_string();
-
-        let key = watch_key_for(&plain);
-        assert!(!key.ends_with('/') && !key.ends_with('\\'), "key: {key}");
-        assert_eq!(watch_key_for(&slashed), key);
-        assert_eq!(
-            watch_key_for(&from_subdir),
-            key,
-            "subdir resolves to the same repo key"
-        );
-        // Non-repo path: passes through unchanged.
-        let other = TempDir::new().unwrap();
-        let p = other.path().to_str().unwrap().to_string();
-        assert_eq!(watch_key_for(&p), p);
-    }
-
-    #[test]
     fn repo_root_is_reported_without_trailing_separator() {
         // git2's workdir() keeps a trailing slash; the emitted root must not,
         // or the same repo gets two identities in path-keyed caches (#369).
@@ -1980,6 +1838,120 @@ mod tests {
             !root.ends_with('/') && !root.ends_with('\\'),
             "root: {root}"
         );
+    }
+
+    #[test]
+    fn directory_scope_reports_root_and_nested_directory() {
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+
+        let root = directory_scope(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(
+            root.repo_root,
+            workdir_key(&open_repo(dir.path()).unwrap()).unwrap()
+        );
+        assert_eq!(root.relative_directory, "");
+
+        let nested = directory_scope(dir.path().join("src/nested").to_str().unwrap()).unwrap();
+        assert_eq!(nested.repo_root, root.repo_root);
+        assert_eq!(nested.relative_directory, "src/nested");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_scope_resolves_symlink_aliases_for_root_and_subdirectory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("actual/subdir")).unwrap();
+        let aliases = TempDir::new().unwrap();
+        let alias = aliases.path().join("repo-alias");
+        symlink(dir.path(), &alias).unwrap();
+
+        let root = directory_scope(alias.to_str().unwrap()).unwrap();
+        assert_eq!(root.relative_directory, "");
+        let nested = directory_scope(alias.join("actual/subdir").to_str().unwrap()).unwrap();
+        assert_eq!(nested.repo_root, root.repo_root);
+        assert_eq!(nested.relative_directory, "actual/subdir");
+    }
+
+    #[test]
+    fn directory_scope_refuses_missing_and_out_of_root_paths() {
+        let dir = init_repo();
+        let sibling = TempDir::new().unwrap();
+        assert!(directory_scope(dir.path().join("missing").to_str().unwrap()).is_none());
+        assert!(resolved_relative_directory(
+            sibling.path().to_str().unwrap(),
+            dir.path().to_str().unwrap(),
+        )
+        .is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_scope_normalizes_supported_wsl_namespaces_before_resolution() {
+        let expected = PathBuf::from(r"\\wsl.localhost\Ubuntu\home\me\repo\src");
+        for input in [
+            r"\\wsl$\Ubuntu\home\me\repo\src",
+            r"\\wsl.localhost\Ubuntu\home\me\repo\src",
+            "//wsl$/Ubuntu/home/me/repo/src",
+        ] {
+            assert_eq!(scope_resolution_path(input), expected);
+        }
+        assert_ne!(
+            scope_resolution_path(r"\\wsl$\Debian\home\me\repo\src"),
+            expected
+        );
+        assert_eq!(
+            scope_resolution_path(r"C:\repo\src"),
+            PathBuf::from(r"C:\repo\src")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_scope_resolves_windows_short_name_aliases() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+
+        fn short_path(path: &Path) -> PathBuf {
+            let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            let required = unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), None) };
+            assert_ne!(
+                required,
+                0,
+                "GetShortPathNameW failed for {}",
+                path.display()
+            );
+            let mut short = vec![0; required as usize];
+            let written =
+                unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(short.as_mut_slice())) };
+            assert!(written > 0 && written < required);
+            short.truncate(written as usize);
+            PathBuf::from(String::from_utf16(&short).unwrap())
+        }
+
+        let dir = init_repo();
+        fs::create_dir_all(dir.path().join("nested")).unwrap();
+        let short_root = short_path(dir.path());
+        let short_nested = short_path(&dir.path().join("nested"));
+        let canonical_root = fs::canonicalize(dir.path()).unwrap();
+        assert_ne!(
+            short_root.to_str().unwrap().to_ascii_lowercase(),
+            canonical_root
+                .to_str()
+                .unwrap()
+                .trim_start_matches(r"\\?\")
+                .to_ascii_lowercase(),
+            "this contract requires an actual short-name alias, not just a prefix/case change"
+        );
+
+        let root = directory_scope(short_root.to_str().unwrap()).unwrap();
+        assert_eq!(root.relative_directory, "");
+        let nested = directory_scope(short_nested.to_str().unwrap()).unwrap();
+        assert_eq!(nested.repo_root, root.repo_root);
+        assert_eq!(nested.relative_directory, "nested");
     }
 
     #[test]

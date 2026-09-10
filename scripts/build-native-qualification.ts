@@ -36,6 +36,7 @@ const child = Bun.spawn(buildCommand, {
   stderr: "inherit",
   env: {
     ...process.env,
+    // Explicitly override inherited hooks so provenance matches the build.
     VITE_E2E_HOOKS: e2eHooks ? "1" : "0",
     ...(process.platform === "win32" ? { VITE_E2E_NO_WARM_PRIME: "1" } : {}),
   },

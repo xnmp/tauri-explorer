@@ -1,0 +1,170 @@
+{
+  "date": "2026-09-09",
+  "scope": "Page-owned deferred recovery UI, discoverability, focus and lifecycle contracts; native-binary acceptance remains pending",
+  "contracts": [
+    "Each non-picker page owns a lazy recovery session and newly created recovery state; no module-global active store remains",
+    "Importing the session controller does not import the recovery store/API; foreground readiness or explicit user demand starts it",
+    "Initial directory error enables recovery after a paint opportunity without reporting successful startup",
+    "Parked/measure warm windows wait for successful committed activation acknowledgement; observer failure cannot reject an already successful handoff",
+    "Concurrent demand shares acquisition; retired sessions cannot start late imports; repeated dispose returns the same pending cleanup promise",
+    "Manual refresh reconnects the subscription, including after failed initial discovery; errors do not falsely display an empty-success message",
+    "Notice remains lightweight and visible with optional status bar hidden; File Recovery command provides keyboard access",
+    "Dialog uses canonical lazy-dialog loading/failure rollback and Modal ownership; actions park focus before disabling/removing controls, then conditionally restore the same-row Inspect control",
+    "Delayed actions cannot move focus into a closed/reopened modal incarnation",
+    "No native operation effect or renderer/channel teardown claim is inferred from browser API-port fixtures"
+  ],
+  "verification": {
+    "unit": {
+      "command": "bunx vitest run tests/state/file-recovery-session.test.ts tests/state/window-session.test.ts tests/state/warm-activation.test.ts tests/file-recovery-state.test.ts tests/api/file-recovery.test.ts",
+      "log": "/tmp/recovery-ui-unit-final.log",
+      "exit_code": 0,
+      "passed": 56,
+      "failed": 0
+    },
+    "red_before": {
+      "browser_log": "/tmp/recovery-ui-e2e-before.log",
+      "browser_failed": 2,
+      "browser_scope": "Restore removed the focused control and focus fell outside the modal; hidden status bar removed the only proactive notice",
+      "unit_log": "/tmp/recovery-ui-dispose-before.log",
+      "unit_failed": 1,
+      "unit_passed": 4,
+      "unit_scope": "Second dispose completed before the first pending registration teardown; fixed by sharing stopping promise"
+    },
+    "chromium": {
+      "command": "ALL_VIEW_MODES=1 PW_WORKERS=2 bunx playwright test e2e/file-recovery.spec.ts e2e/lazy-dialog-failure.spec.ts e2e/lazy-dialog-lifetime.spec.ts --reporter=line",
+      "log": "/tmp/recovery-ui-chromium-final.log",
+      "exit_code": 0,
+      "passed": 18,
+      "failed": 0,
+      "scope": "Recovery API-port fixture UI across all3 views and widths320/768/1024/1440, exact focus, held action close/reopen, retry, unavailable initial directory, usable real browser navigation while recovery import is held, shared lazy-dialog failures/lifetime"
+    },
+    "webkit": {
+      "command": "ALL_VIEW_MODES=1 WEBKIT=1 PW_WORKERS=1 PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true LD_PRELOAD=<staged compatible shared-library files> bunx playwright test e2e/file-recovery.spec.ts --project=webkit --output=/tmp/recovery-ui-webkit-results --reporter=line",
+      "preload_source": "/home/chong/.cache/pw-webkit-sysdeps/usr/lib/x86_64-linux-gnu/*.so.* (regular non-symlink files, sorted and colon-joined)",
+      "log": "/tmp/recovery-ui-webkit-acceptance.log",
+      "exit_code": 0,
+      "passed": 13,
+      "failed": 0,
+      "scope": "Same recovery UI contracts in Playwright WPE WebKit on Linux; not native WKWebView/macOS acceptance",
+      "initial_environment_failure": "Default wrapper lacked ICU74/libxml2.so.2/flite libraries before browser launch; Luna found compatible packages already staged locally. No installation or system changes."
+    },
+    "check": {
+      "command": "bun run check",
+      "log": "/tmp/recovery-ui-check-acceptance.log",
+      "exit_code": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    "bundle": {
+      "command": "bun run check:bundle",
+      "log": "/tmp/recovery-ui-bundle-final.log",
+      "exit_code": 0,
+      "main_raw_bytes": 308611,
+      "main_gzip_bytes": 91636,
+      "startup_chunks": 45,
+      "startup_raw_bytes": 670989,
+      "startup_gzip_bytes": 218995,
+      "startup_raw_cap": 866617,
+      "startup_gzip_cap": 277378
+    },
+    "lazy_graph": {
+      "log": "/tmp/recovery-ui-lazy-graph.log",
+      "exit_code": 0,
+      "scope": "Uses scripts/startup-bundle.mjs collectStartupFiles against production Vite manifest; confirms recovery store and dialog are outside every static entry closure and no static chunk contains subscription IPC implementation"
+    },
+    "architecture": {
+      "command": "bun run lint:arch",
+      "log": "/tmp/recovery-ui-architecture.log",
+      "exit_code": 0
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "log": "/tmp/recovery-ui-maps.log",
+      "exit_code": 0,
+      "coverage": "415/415"
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "independent_review": {
+      "agent": "recovery_ui_review_sol",
+      "model": "gpt-5.6-sol",
+      "mode": "Read-only source, actual logs and screenshots; no independent build",
+      "verdict": "No new defect after focus, notice and repeated-disposal fixes",
+      "confirmed": [
+        "lazy/page-owned lifetime and warm gating",
+        "exact focus restoration and closed/reopened modal guard",
+        "awaitable repeated disposal",
+        "Chromium outcome and responsive screenshot evidence"
+      ],
+      "limits": [
+        "Native binary lifecycle remains pending",
+        "WebKit acceptance was subsequently run by root with dependencies located by Luna"
+      ]
+    },
+    "environment_diagnosis": {
+      "agent": "webkit_environment_luna",
+      "model": "gpt-5.6-luna",
+      "result": "Found preexisting compatible shared libraries and verified loader resolution; no installs or edits"
+    },
+    "prior_native_source": {
+      "evidence": "docs/reviews/recovery-subscriptions-2026-09-09.json",
+      "unchanged_sha256_count": 13,
+      "note": "All prior recorded native source/test hashes remain unchanged. No Rust modifications or fresh native test run in this UI checkpoint."
+    },
+    "incidental_run_failures": [
+      "One browser case detached during concurrent production-build-triggered Vite reload; final checks ran with builds finished",
+      "One new held-import test initially used nonexistent data-name/breadcrumb-current selectors; corrected to actual entry data-path and asserted visible destination file outcome"
+    ]
+  },
+  "limitations": [
+    "Browser recovery fixtures replace the API port; real native IPC command serialization/delivery, mutation effects and Channel/Webview teardown still require binary qualification",
+    "WebKit is a Linux engine proxy, not native macOS UI/startup proof",
+    "Bundle budgets and deferred-import navigation prove loading separation, not measured launch latency or OS-presented pixels; half-bounce remains unmeasured",
+    "Forward production replacement journaling, discard/retirement, overwrite Undo/retention and remaining mutation families are incomplete",
+    "Full Windows/macOS, theme/accessibility/platform matrix, crash/power-loss/hours-long soaks, final full-suite integration and publication remain open",
+    "Changes remain local; no commit/push/merge or publication retry attempted"
+  ],
+  "source_sha256": {
+    "src/lib/state/file-recovery-session.svelte.ts": "aba22e0c5d5cfd581fa8e86437daabec3e2aed2dc7a21c2191fd8764fc8a4aab",
+    "src/lib/state/file-recovery.svelte.ts": "a59674d6fb453f298ebe6be7014b706ead572be978d5625d612806da7880a8f7",
+    "src/lib/state/window-session.ts": "e09ac8a0a082b00cca40fa47ec6f66ef696f7c8233225c1f32a8a0102e07b3c0",
+    "src/lib/state/warm-activation.ts": "e033ca7193127dc08838970cdfc0300254cf6c3b4ea8dd0b7409fea2ceee88db",
+    "src/lib/state/warm-window.ts": "0e3fa7e60a312cdf31fa2cae5975e1ac845856d89fe26001c70e0aace9377656",
+    "src/lib/state/dialogs.svelte.ts": "9fcf363104049bbe9c716ebec8d622ef48600c88b0b62b1a0fe4a73fa485e1de",
+    "src/lib/state/commands/general-commands.ts": "1ca57425f013691fbd2d610626b99c30b6d82cced917875bd39fe61fc5459f12",
+    "src/routes/+page.svelte": "b31c670b0e23ca3979b878868c5c60a24fd3bc0d7bb85a24bc4c7e6e3b6d87fd",
+    "src/lib/components/FileRecoveryDialog.svelte": "0eebf0817f0a591bbb91ea822fa93d81cb217f84ef9d8a950f47d6a597173c36",
+    "src/lib/components/FileRecoveryNotice.svelte": "827c4be0ca5e3290a915febfc20ac6d948d41fb6b8605b7b657ddf7090cc0ca5",
+    "src/lib/components/StatusBar.svelte": "a41d43254d01d516db0b2aaa5ee39f5a57d71ce699e73bd972b4b6fe6ecba5e6",
+    "src/lib/components/WindowDialogs.svelte": "585a8b3aa9e8cbaa33e3e7d5a06d4fea7aa63116f8389a9f4a00bc8125f2c8af",
+    "tests/state/file-recovery-session.test.ts": "8e689cb8b5336855a47ff1772e50dce15c1bb5069ed560beba20d217cae682eb",
+    "tests/state/window-session.test.ts": "168e83f259fe35723126d81aa7ef925bf3bdee59af16dec37174e883e5a7a48f",
+    "tests/state/warm-activation.test.ts": "82dc90c962007d4743b83f627839e9e3cf97c524e424e70d9dedf3a3f4f23510",
+    "tests/file-recovery-state.test.ts": "a519670665491c69276da9aacdedd4b77423e1b81ebb980207c6458b59d5af5c",
+    "tests/api/file-recovery.test.ts": "262da409f0319a6bb309e8ccc3a82b1384f0ab13fa05c5be9622c0386971d35e",
+    "e2e/file-recovery.spec.ts": "db229d7ac3d57dea0bb76d580700347c4b7ac03dfe6527c0c4887883343a4403"
+  },
+  "log_sha256": {
+    "/tmp/recovery-ui-unit-final.log": "b3475c5a25c68526ee36dbe64734e9f04826a90e39b9578f42f6c388addd7d38",
+    "/tmp/recovery-ui-dispose-before.log": "0f2b58c2f8968c6a79e63c7fe3442048cc2f2562e7389fc75a0d4b7c0bec6346",
+    "/tmp/recovery-ui-e2e-before.log": "f58832296f528c0eb663ecf8c81456f37e8ad103339654f4121dfa036785afa2",
+    "/tmp/recovery-ui-chromium-final.log": "bac2341ee5795f19b7efc75a31c9555a6b9ff650a3990fa2f22e314abd23783f",
+    "/tmp/recovery-ui-webkit-acceptance.log": "2d23069ccfc688b55076037a36f434c58abcd4d9f0556739b3d7515f011f24b5",
+    "/tmp/recovery-ui-check-acceptance.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/recovery-ui-bundle-final.log": "e98e6ea5af1343d85bcf03a6a8d897290891a51eacc4f5ecd8ffb823ad1c9882",
+    "/tmp/recovery-ui-lazy-graph.log": "f25f07bfcf30663eed943fd450d1c85ab4f17183be2cc7b1bc0fa165bb3cf100",
+    "/tmp/recovery-ui-architecture.log": "1e330b86131f7a41ccf1555229bd888748995d86d259cab06218b0c469ea22ae",
+    "/tmp/recovery-ui-maps.log": "36de078d6165f4248f6682ecde51da4bf7d8cf476fb1b3e38af104cfe9f2c572"
+  },
+  "screenshot_sha256": {
+    "screenshots/refactor/repo-health-cleanup/recovery-restored-chromium.png": "37d5125b7e4bee23fe263714f491e7bbee716dc151f5323a636222887d3277b3",
+    "screenshots/refactor/repo-health-cleanup/recovery-restored-320-chromium.png": "b5bcfff0bd719cb0e018cd5ee913a8ab0f8c76c00c1c68a95845772515ed10a1",
+    "screenshots/refactor/repo-health-cleanup/recovery-restored-webkit.png": "1256c72fbb151d9a8a2127e7b4161c9c9d110638f6ebecc192a2e9dd34dff83b",
+    "screenshots/refactor/repo-health-cleanup/recovery-restored-320-webkit.png": "4bb9446719c8d4962655b941d0f8c3cfc0fe68e64cc9bcd90264f4b0e0fac8f6"
+  },
+  "build_manifest_sha256": {
+    ".svelte-kit/output/client/.vite/manifest.json": "9f3df0043b4bd9e9aa8d38ff2eed7f6885e215ccd18bd5a8d9da3f9b3e138dfe"
+  }
+}

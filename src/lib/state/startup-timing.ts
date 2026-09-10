@@ -10,21 +10,22 @@
  * the backend and frontend halves of cold start can be read together.
  *
  * Marks are relative to t0 in milliseconds. The reported value is a one-shot:
- * `reportFirstPaint` is idempotent (only the first call wins) so repeated
+ * `reportStartupReady` is idempotent (only the first call wins) so repeated
  * navigations or HMR can't skew it.
  */
 
-import { logStartupTiming } from "$lib/api/files";
+import { logStartupTiming } from "$lib/api/environment";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Mark = { name: string; t: number };
 
 const t0: number =
-  (typeof window !== "undefined" && (window as { __BOOT_T0__?: number }).__BOOT_T0__) ||
+  (typeof window !== "undefined" ? (window as { __BOOT_T0__?: number }).__BOOT_T0__ : undefined) ??
   (typeof performance !== "undefined" ? performance.now() : 0);
 const bootEpochMs: number =
-  (typeof window !== "undefined" &&
-    (window as { __BOOT_EPOCH_MS__?: number }).__BOOT_EPOCH_MS__) ||
+  (typeof window !== "undefined"
+    ? (window as { __BOOT_EPOCH_MS__?: number }).__BOOT_EPOCH_MS__
+    : undefined) ??
   (typeof performance !== "undefined" ? performance.timeOrigin + t0 : Date.now());
 
 const marks: Mark[] = [];
@@ -42,7 +43,8 @@ export function markStartup(name: string): void {
 }
 
 /**
- * Report cold start as complete (first directory listing visible). Idempotent.
+ * Report core Explorer readiness after settings, commands and the initial
+ * listing settle and the DOM has had a paint opportunity. Idempotent.
  * Sends a compact summary to the Rust log and the dev console.
  */
 export function reportStartupReady(): void {
@@ -61,7 +63,7 @@ export function reportStartupReady(): void {
     console.info(`[perf] ${line}`);
   }
 
-  // Fire-and-forget; never let timing telemetry affect the app. The command is
-  // absent in mock/browser mode (invoke rejects) — swallow that quietly.
+  // Fire-and-forget; never let timing telemetry affect the app. Browser mode
+  // supplies a no-op; native mode also records elapsed time on the Rust clock.
   void logStartupTiming(line).catch(() => {});
 }

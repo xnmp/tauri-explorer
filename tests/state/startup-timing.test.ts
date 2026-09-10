@@ -1,56 +1,56 @@
-/**
- * Cold-start timing helper (startup-timing.ts).
- *
- * Verifies the report is one-shot (idempotent), marks are ordered and measured
- * from boot t0, and the summary is forwarded exactly once to the backend log
- * command. The invoke is mocked — in real mock/browser mode it rejects and is
- * swallowed, which we also assert can't throw.
- */
+/** Core Explorer readiness reporting: accurate boot origin and one-shot logging. */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const invokeMock = vi.hoisted(() =>
-  vi.fn(async (_cmd: string, _args?: Record<string, unknown>): Promise<unknown> => undefined),
-);
-vi.mock(import("../../src/lib/api/common"), async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, invoke: invokeMock as unknown as typeof actual.invoke };
-});
-
-// Anchor a deterministic t0 before importing the module (it reads __BOOT_T0__
-// at module init).
-(globalThis as { window?: unknown }).window = (globalThis as { window?: unknown }).window ?? {};
-(window as { __BOOT_T0__?: number }).__BOOT_T0__ = 0;
-
-import { markStartup, reportStartupReady } from "../../src/lib/state/startup-timing";
+const log = vi.hoisted(() => vi.fn());
+vi.mock("$lib/api/environment", () => ({ logStartupTiming: log }));
 
 beforeEach(() => {
-  invokeMock.mockClear();
+  vi.resetModules();
+  log.mockReset().mockResolvedValue(undefined);
+  vi.stubGlobal("window", { __BOOT_T0__: 0, __BOOT_EPOCH_MS__: 1_700_000_000_000 });
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
-describe("startup-timing", () => {
-  it("forwards a single summary to log_startup_timing on first report", () => {
+describe("startup timing", () => {
+  it("retains a zero boot origin and reports distinct listing and ready milestones", async () => {
+    let now = 10;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const { markStartup, reportStartupReady } = await import("$lib/state/startup-timing");
     markStartup("bundle-exec");
-    markStartup("mount");
+    now = 20;
+    markStartup("list-ready");
+    now = 40;
     reportStartupReady();
+    expect(log).toHaveBeenCalledWith(
+      "Startup(webview): window=browser boot-epoch-ms=1700000000000.000 " +
+        "bundle-exec=10.0ms list-ready=20.0ms ui-ready=40.0ms total=40.0ms",
+    );
 
-    expect(invokeMock).toHaveBeenCalledTimes(1);
-    const [cmd, args] = invokeMock.mock.calls[0];
-    expect(cmd).toBe("log_startup_timing");
-    const summary = (args as { summary: string }).summary;
-    expect(summary).toContain("Startup(webview):");
-    expect(summary).toContain("bundle-exec=");
-    expect(summary).toContain("mount=");
-    expect(summary).toContain("boot-epoch-ms=");
-    expect(summary).toContain("ui-ready=");
-    expect(summary).toMatch(/total=[\d.]+ms/);
-  });
-
-  it("is idempotent — repeated reports and late marks do not re-send", () => {
-    // (module state persists across tests in-file; first report already fired)
-    reportStartupReady();
     markStartup("too-late");
     reportStartupReady();
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to the performance time origin when app.html seeded no boot epoch", async () => {
+    vi.stubGlobal("window", { __BOOT_T0__: 0 });
+    vi.spyOn(performance, "now").mockImplementation(() => 5);
+    const { reportStartupReady } = await import("$lib/state/startup-timing");
+    reportStartupReady();
+    const summary = log.mock.calls[0][0] as string;
+    // The epoch anchor must still be a real wall-clock millisecond value so the
+    // native qualification report can correlate it with the Rust process clock.
+    const epoch = Number(/boot-epoch-ms=([\d.]+)/.exec(summary)?.[1]);
+    expect(epoch).toBeCloseTo(performance.timeOrigin, 0);
+  });
+
+  it("contains telemetry failures without blocking readiness reporting", async () => {
+    log.mockRejectedValue(new Error("logging unavailable"));
+    const { reportStartupReady } = await import("$lib/state/startup-timing");
+    expect(() => reportStartupReady()).not.toThrow();
+    await Promise.resolve();
+    expect(log).toHaveBeenCalledOnce();
   });
 });

@@ -1,0 +1,258 @@
+{
+  "label": "release-baseline",
+  "samples": 10,
+  "summary": {
+    "readinessTotalMs": {
+      "sampleCount": 10,
+      "p50": 658.8,
+      "p95": 743.9
+    },
+    "launchTotalMs": {
+      "sampleCount": 10,
+      "p50": 660.3,
+      "p95": 745.5
+    },
+    "processEntryMs": {
+      "sampleCount": 10,
+      "p50": 1.6,
+      "p95": 2.1
+    },
+    "nativeWindowMs": {
+      "sampleCount": 10,
+      "p50": 186.7,
+      "p95": 210.6
+    },
+    "frameworkNavigationMs": {
+      "sampleCount": 10,
+      "p50": 119.963134765625,
+      "p95": 139.68994140625
+    },
+    "documentBootMs": {
+      "sampleCount": 10,
+      "p50": 104,
+      "p95": 111
+    },
+    "requiredAppWorkMs": {
+      "sampleCount": 10,
+      "p50": 209,
+      "p95": 278
+    },
+    "frameSchedulingMs": {
+      "sampleCount": 10,
+      "p50": 37,
+      "p95": 47
+    },
+    "readinessIpcMs": {
+      "sampleCount": 10,
+      "p50": 2.259033203125,
+      "p95": 2.635009765625
+    },
+    "unattributedMs": {
+      "sampleCount": 10,
+      "p50": -0.017,
+      "p95": 0.023
+    }
+  },
+  "measurements": [
+    {
+      "coldTotalMs": 616.6,
+      "readinessTotalMs": 616.6,
+      "launchTotalMs": 618,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.4,
+        "nativeWindowMs": 185.5,
+        "frameworkNavigationMs": 115.7529296875,
+        "documentBootMs": 94,
+        "requiredAppWorkMs": 185,
+        "frameSchedulingMs": 34,
+        "readinessIpcMs": 2.388916015625,
+        "unattributedMs": -0.042
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 657.8,
+      "readinessTotalMs": 657.8,
+      "launchTotalMs": 659.6,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.8,
+        "nativeWindowMs": 174.9,
+        "frameworkNavigationMs": 123.123046875,
+        "documentBootMs": 110,
+        "requiredAppWorkMs": 209,
+        "frameSchedulingMs": 39,
+        "readinessIpcMs": 1.821044921875,
+        "unattributedMs": -0.044
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 632.1,
+      "readinessTotalMs": 632.1,
+      "launchTotalMs": 633.9,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.8,
+        "nativeWindowMs": 175.1,
+        "frameworkNavigationMs": 107.364013671875,
+        "documentBootMs": 98,
+        "requiredAppWorkMs": 212,
+        "frameSchedulingMs": 37,
+        "readinessIpcMs": 2.635009765625,
+        "unattributedMs": 0.001
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 658.8,
+      "readinessTotalMs": 658.8,
+      "launchTotalMs": 660.3,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.5,
+        "nativeWindowMs": 207.4,
+        "frameworkNavigationMs": 111.1201171875,
+        "documentBootMs": 97,
+        "requiredAppWorkMs": 205,
+        "frameSchedulingMs": 36,
+        "readinessIpcMs": 2.259033203125,
+        "unattributedMs": 0.021
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 650.2,
+      "readinessTotalMs": 650.2,
+      "launchTotalMs": 651.4,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.2,
+        "nativeWindowMs": 183.9,
+        "frameworkNavigationMs": 123.653076171875,
+        "documentBootMs": 105,
+        "requiredAppWorkMs": 199,
+        "frameSchedulingMs": 37,
+        "readinessIpcMs": 1.679931640625,
+        "unattributedMs": -0.033
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 733.4,
+      "readinessTotalMs": 733.4,
+      "launchTotalMs": 735.3,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.9,
+        "nativeWindowMs": 195.2,
+        "frameworkNavigationMs": 139.68994140625,
+        "documentBootMs": 109,
+        "requiredAppWorkMs": 244,
+        "frameSchedulingMs": 43,
+        "readinessIpcMs": 2.487060546875,
+        "unattributedMs": 0.023
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 681,
+      "readinessTotalMs": 681,
+      "launchTotalMs": 682.7,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.7,
+        "nativeWindowMs": 190.6,
+        "frameworkNavigationMs": 119.126953125,
+        "documentBootMs": 109,
+        "requiredAppWorkMs": 222,
+        "frameSchedulingMs": 38,
+        "readinessIpcMs": 2.304931640625,
+        "unattributedMs": -0.032
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 674.2,
+      "readinessTotalMs": 674.2,
+      "launchTotalMs": 675.4,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.2,
+        "nativeWindowMs": 191.3,
+        "frameworkNavigationMs": 120.178955078125,
+        "documentBootMs": 104,
+        "requiredAppWorkMs": 216,
+        "frameSchedulingMs": 41,
+        "readinessIpcMs": 1.72900390625,
+        "unattributedMs": -0.008
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 663.9,
+      "readinessTotalMs": 663.9,
+      "launchTotalMs": 666,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 2.1,
+        "nativeWindowMs": 210.6,
+        "frameworkNavigationMs": 124.868896484375,
+        "documentBootMs": 97,
+        "requiredAppWorkMs": 196,
+        "frameSchedulingMs": 33,
+        "readinessIpcMs": 2.447998046875,
+        "unattributedMs": -0.017
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    },
+    {
+      "coldTotalMs": 743.9,
+      "readinessTotalMs": 743.9,
+      "launchTotalMs": 745.5,
+      "warmShowMs": null,
+      "phases": {
+        "processEntryMs": 1.6,
+        "nativeWindowMs": 186.7,
+        "frameworkNavigationMs": 119.963134765625,
+        "documentBootMs": 111,
+        "requiredAppWorkMs": 278,
+        "frameSchedulingMs": 47,
+        "readinessIpcMs": 1.238037109375,
+        "unattributedMs": -0.001
+      },
+      "firstFunctionalFrame": "not-observed",
+      "firstFunctionalFrameMs": null,
+      "inputOutcome": "not-verified",
+      "inputReadyMs": null
+    }
+  ]
+}

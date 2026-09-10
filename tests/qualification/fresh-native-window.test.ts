@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const driver = vi.hoisted(() => ({
   getWindowHandles: vi.fn(),
@@ -7,6 +8,14 @@ const driver = vi.hoisted(() => ({
   waitUntil: vi.fn(),
 }));
 vi.mock("@wdio/globals", () => ({ browser: driver, $: vi.fn(), $$: vi.fn() }));
+
+// Keep #703 fresh-window diagnostics out of the checkout during unit runs.
+const diagnostics = vi.hoisted(() => {
+  // Hoisted before any import, so build the path without node:fs/os helpers.
+  const directory = `${process.env.TMPDIR ?? "/tmp"}/fresh-native-window-${process.pid}`;
+  process.env.TAURI_NATIVE_DIAGNOSTICS_DIR = directory;
+  return directory;
+});
 
 import { switchToFreshWindow } from "../../e2e-tauri/specs/helpers";
 
@@ -43,3 +52,5 @@ describe("fresh native window selection", () => {
       .rejects.toThrow("window did not become ready");
   });
 });
+
+afterAll(() => fs.rmSync(diagnostics, { recursive: true, force: true }));

@@ -11,7 +11,7 @@ import {
   type InotifyWatch,
   type NativeProcessIdentity,
 } from "../native-resources";
-import { domTexts, navigateTo, switchToFreshWindow } from "./helpers";
+import { domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
 
 const scratch = fs.mkdtempSync(
   path.join(os.homedir(), ".tauri-explorer-e2e-directory-owner-"),
@@ -137,7 +137,7 @@ linuxDescribe("pane directory native window ownership", () => {
       expect(opened).not.toBeNull();
       expect(opened?.kind).toBe("fresh");
       const childHandle = await switchToFreshWindow(opened!.label, existingHandles);
-      await $(".file-list").waitForExist({ timeout: 20_000 });
+      await waitForFreshWindowElement(".file-list", 20_000);
       await browser.waitUntil(async () =>
         (await $(".status-path").getAttribute("title")) === directory,
       { timeout: 20_000, timeoutMsg: `child did not navigate to ${directory}` });

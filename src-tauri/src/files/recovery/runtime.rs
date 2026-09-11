@@ -101,6 +101,49 @@ impl Runtime {
         }
     }
 
+    /// Production move policy. Durable records park cross-filesystem sources
+    /// and retain displaced originals indefinitely until retirement exists
+    /// (#687), so creating them is opt-in. Discovery, restoration and history
+    /// for existing records stay available in either build.
+    pub(crate) fn move_entry(
+        &self,
+        path: PathBuf,
+        source: &std::path::Path,
+        target: &std::path::Path,
+        progress: &mut impl crate::files::anchored_copy::CopyProgress,
+    ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
+        // Both policies compile against the same recovery contracts. This
+        // constant removes the opt-in branch from ordinary optimized builds.
+        if !cfg!(feature = "durable-move-recovery") {
+            return Err(AppError::Other(
+                "Durable move recovery is not enabled in this build".into(),
+            ));
+        }
+        let coordinator = self.coordinator(path)?;
+        let prepared = super::forward_move::PreparedMove::prepare(&coordinator, source, target)?;
+        let result = prepared.execute(progress);
+        let refresh: Vec<String> = result
+            .as_ref()
+            .ok()
+            .and_then(|receipt| receipt.relocation.as_ref())
+            .map(|relocation| relocation.history.refresh_dirs.clone())
+            .unwrap_or_default();
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::files::fs_watcher::publish_file_changes(&refresh);
+        }))
+        .is_err()
+        {
+            log::warn!("Move completed, but directory refresh publication was interrupted");
+        }
+        // Publication belongs to the owned worker, so losing the requesting IPC
+        // future cannot hide an operation that actually completed.
+        match super::service::list(&coordinator) {
+            Ok(snapshot) => self.subscriptions.publish(&snapshot),
+            Err(error) => log::warn!("Could not refresh move recovery inventory: {error}"),
+        }
+        result
+    }
+
     pub(crate) async fn execute_history(
         &self,
         path: PathBuf,
@@ -138,7 +181,7 @@ impl Runtime {
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        self.replace_copy_with(path, source, target, progress, super::service::list)
+        self.replace_copy_with(path, source, target, progress, super::service::enforce)
     }
 
     pub(crate) fn replace_copy_observed(
@@ -154,7 +197,7 @@ impl Runtime {
             &[(source, target)],
             Some(expected),
             progress,
-            super::service::list,
+            super::service::enforce,
         )
         .map(super::forward_copy::BatchExecution::into_single)?
     }
@@ -165,7 +208,7 @@ impl Runtime {
         source: &std::path::Path,
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
-        inventory: impl FnOnce(&Coordinator) -> Result<super::model::RecoverySnapshot, AppError>,
+        inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
         self.replace_copies_with(path, &[(source, target)], progress, inventory)
             .map(super::forward_copy::BatchExecution::into_single)?
@@ -176,7 +219,7 @@ impl Runtime {
         path: PathBuf,
         copies: &[(&std::path::Path, &std::path::Path)],
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
-        inventory: impl FnOnce(&Coordinator) -> Result<super::model::RecoverySnapshot, AppError>,
+        inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<super::forward_copy::BatchExecution, AppError> {
         self.replace_copies_observed(path, copies, None, progress, inventory)
     }
@@ -187,7 +230,7 @@ impl Runtime {
         copies: &[(&std::path::Path, &std::path::Path)],
         expected: Option<&crate::files::mutation::CopyObservation>,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
-        inventory: impl FnOnce(&Coordinator) -> Result<super::model::RecoverySnapshot, AppError>,
+        inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<super::forward_copy::BatchExecution, AppError> {
         let coordinator = self.coordinator(path)?;
         let prepared = super::forward_copy::prepare_batch(&coordinator, copies, progress)?;
@@ -297,6 +340,11 @@ impl Runtime {
                 return Ok(super::service::unindexed(intents, error));
             }
         };
+        // Evidence only. Listing is on the automatic session-bootstrap path
+        // (`subscribe` calls it), so it must not claim ownership, probe user
+        // volumes or remove anything — ADR 0020's startup boundary. Retention
+        // enforcement runs from `retire_eligible` and after a record is
+        // created, both of which are deliberate activity.
         super::service::list(&coordinator)
     }
 
@@ -341,6 +389,14 @@ impl Runtime {
             result
         })
         .await
+    }
+
+    /// Explicit retention enforcement from recovery-session activity.
+    pub(crate) async fn retire_eligible(
+        &self,
+        path: PathBuf,
+    ) -> Result<super::model::RecoverySnapshot, AppError> {
+        self.operate(path, super::service::enforce).await
     }
 
     pub(crate) async fn inspect(

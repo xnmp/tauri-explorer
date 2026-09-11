@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.9.0"
+version = "1.9.1"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -76,6 +76,11 @@ ureq = { version = "3.3.0", default-features = false, features = ["rustls", "jso
 # Durable replacement copies retain originals indefinitely until retirement is
 # implemented (#687). Keep new durable records out of ordinary release builds.
 durable-copy-recovery = []
+
+# Durable moves park a cross-filesystem source and retain a displaced overwrite
+# target until retirement exists (#687), so they hold user bytes indefinitely.
+# Independent of durable-copy-recovery: either policy may ship first.
+durable-move-recovery = []
 
 # Enables the programmatic WebView2 debug port used by the Windows binary-E2E
 # harness. This must stay opt-in: release builds must not expose a CDP port.

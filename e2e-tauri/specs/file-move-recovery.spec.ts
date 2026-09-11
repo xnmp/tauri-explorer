@@ -23,6 +23,7 @@ const operationResults: FileOperationResult[] = [];
 async function dispatchOperation(detail: {
   op: "cut" | "paste" | "undo" | "redo";
   path?: string;
+  paths?: string[];
   token: string;
 }): Promise<FileOperationResult> {
   await browser.execute((operation) => {
@@ -187,6 +188,55 @@ linuxDescribe(
           operationResults,
         }));
         throw error;
+      }
+    });
+
+    it("moves a multi-item selection in one session and undoes the whole prefix", async function () {
+      this.timeout(90_000);
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-ordered-move-"));
+      const origin = path.join(root, "origin");
+      const destination = path.join(root, "destination");
+      const files = {
+        "first.txt": "first ordered payload",
+        "second.txt": "second ordered payload",
+        "third.txt": "third ordered payload",
+      } as const;
+      fs.mkdirSync(origin, { recursive: true });
+      fs.mkdirSync(destination);
+      for (const [name, value] of Object.entries(files)) {
+        fs.writeFileSync(path.join(origin, name), value);
+      }
+      try {
+        await navigateTo(origin);
+        for (const name of Object.keys(files)) await waitForListed(name, true);
+
+        const cut = await dispatchOperation({
+          op: "cut",
+          paths: Object.keys(files).map((name) => path.join(origin, name)),
+          token: crypto.randomUUID(),
+        });
+        expect(cut.error).toBeNull();
+
+        await navigateTo(destination);
+        expect((await dispatchOperation({ op: "paste", token: crypto.randomUUID() })).error).toBeNull();
+
+        // Every item arrived and every source name was vacated: a move, not a copy.
+        assertTree(destination, files);
+        expect(fs.readdirSync(origin)).toEqual([]);
+        for (const name of Object.keys(files)) await waitForListed(name, true);
+
+        await browser.saveScreenshot(
+          path.join(process.cwd(), "screenshots/feat/685-durable-move-recovery/ordered-move-session.png"),
+        );
+
+        // The whole session is one native history entry, so a single Undo
+        // returns the complete prefix rather than one item at a time.
+        expect((await dispatchOperation({ op: "undo", token: crypto.randomUUID() })).error).toBeNull();
+        assertTree(origin, files);
+        expect(fs.readdirSync(destination)).toEqual([]);
+        for (const name of Object.keys(files)) await waitForListed(name, false);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
       }
     });
 

@@ -13,6 +13,7 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { basename, directoryKey } from "$lib/domain/path";
+  import { buildQuickAccessFolders } from "$lib/domain/quick-access";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
@@ -32,7 +33,11 @@
     void openRecycleBinWithFeedback(openRecycleBin, toastStore.error);
   }
 
-  const homeDir = $derived(homeDirectory.value ?? "/home");
+  // Null until the one-time `get_home_directory` query resolves. Never
+  // substitute a placeholder root here: the Quick Access rows below are
+  // navigation targets, and a fabricated `/home/Documents` strands the pane on
+  // "Path not found" for anyone who clicks during that window (#702).
+  const homeDir = $derived(homeDirectory.value);
   let isDragOver = $state(false);
   let isBookmarkDropTarget = $state(false);
   const bookmarkDropHint = $derived(getBookmarkDropHint(
@@ -182,13 +187,7 @@
     stopDragPoll();
   }
 
-  const allSystemFolders = $derived([
-    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, color: "#0078d4" },
-    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, color: "#2b579a" },
-    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, color: "#008272" },
-    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, color: "#a855f7" },
-    { name: "Music", icon: "music", path: `${homeDir}/Music`, color: "#f472b6" },
-  ]);
+  const allSystemFolders = $derived(buildQuickAccessFolders(homeDir));
 
   let hiddenSystemFolders = $state<Set<string>>(
     new Set(loadPersisted<string[]>("explorer-hidden-system-folders", []))
@@ -267,7 +266,9 @@
     // regardless of trailing-slash or case differences (Windows) between how it
     // was bookmarked and how it was recorded in frecency.
     const bookmarkedPaths = new Set(bookmarksStore.list.map((b) => directoryKey(b.path)));
-    const systemPaths = new Set(quickAccessFolders.map((f) => directoryKey(f.path)));
+    const systemPaths = new Set(
+      quickAccessFolders.flatMap((f) => (f.path === null ? [] : [directoryKey(f.path)])),
+    );
     const scoreMap = frecencyStore.getScoreMap();
     const mounted = drivesStore.mountedRoots;
 
@@ -380,9 +381,10 @@
           <div
             class="nav-item folder-item bookmark-drop-target"
             data-path={folder.path}
-            onclick={() => navigateTo(folder.path)}
-            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(folder.path); }}}
+            onclick={() => { if (folder.path) navigateTo(folder.path); }}
+            onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && folder.path) { e.preventDefault(); navigateTo(folder.path); }}}
             role="button"
+            aria-disabled={folder.path === null}
             tabindex="0"
           >
             {#if folder.icon === "download"}

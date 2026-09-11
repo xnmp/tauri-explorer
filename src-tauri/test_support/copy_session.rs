@@ -581,7 +581,7 @@ impl Work for PanicAfterFirst {
         self.native.inspect(source, destination, remaining).await
     }
 
-    async fn copy(
+    async fn apply(
         &self,
         inspection: Inspection,
         overwrite: bool,
@@ -592,7 +592,7 @@ impl Work for PanicAfterFirst {
             panic!("injected session panic");
         }
         self.native
-            .copy(inspection, overwrite, control, progress)
+            .apply(inspection, overwrite, control, progress)
             .await
     }
 }
@@ -645,7 +645,7 @@ impl Work for InspectionFailures {
         )))
     }
 
-    async fn copy(
+    async fn apply(
         &self,
         _inspection: Inspection,
         _overwrite: bool,

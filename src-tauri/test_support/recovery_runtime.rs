@@ -125,6 +125,7 @@ fn losing_the_ipc_waiter_does_not_cancel_publication_of_completed_owned_work() {
                         .recv_timeout(std::time::Duration::from_secs(5))
                         .unwrap();
                     Ok(RecoverySnapshot {
+                        storage: Default::default(),
                         revision: 42,
                         items: vec![],
                         error: None,
@@ -183,6 +184,7 @@ fn failed_delivery_does_not_fail_the_native_operation_or_acknowledge_a_dead_chan
         let result = runtime
             .operate(path, |_| {
                 Ok(RecoverySnapshot {
+                    storage: Default::default(),
                     revision: 17,
                     items: vec![],
                     error: None,

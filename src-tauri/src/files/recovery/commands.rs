@@ -45,6 +45,32 @@ pub(crate) async fn file_recovery_list(
         Ok(RecoverySnapshot {
             revision: 0,
             items: vec![],
+            storage: Default::default(),
+            error: None,
+        })
+    }
+}
+
+/// Run one bounded retention enforcement pass and return fresh usage. This is
+/// explicit recovery-session activity; nothing schedules it at startup.
+#[tauri::command]
+pub(crate) async fn file_recovery_retire_eligible(
+    window: tauri::Window,
+    session_id: String,
+) -> Result<RecoverySnapshot, AppError> {
+    let _renderer = crate::renderer_owner::acquire_owner(&window, &session_id)?;
+    #[cfg(target_os = "linux")]
+    {
+        let (runtime, path) = owner(&window)?;
+        runtime.retire_eligible(path).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = window;
+        Ok(RecoverySnapshot {
+            revision: 0,
+            items: vec![],
+            storage: Default::default(),
             error: None,
         })
     }
@@ -131,6 +157,7 @@ pub(crate) async fn file_recovery_subscribe(
         Ok(RecoverySnapshot {
             revision: 0,
             items: vec![],
+            storage: Default::default(),
             error: None,
         })
     }

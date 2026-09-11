@@ -1,6 +1,7 @@
 //! Effective durable ownership used by ordinary admission and recovery claims.
 use super::*;
 use crate::files::recovery::model::{NativePath, OperationState, Phase, ReplacementState};
+use crate::files::recovery::move_model::MovePhase;
 
 pub(super) struct OperationClaims {
     pub(super) index: ConflictIndex,
@@ -36,7 +37,7 @@ impl Inner {
             let artifacts =
                 checkpoint.and_then(|checkpoint| known_artifacts(&entry.intent, &checkpoint.state));
             let idle_completed = match checkpoint {
-                Some(checkpoint) if completed(&checkpoint.state) => {
+                Some(checkpoint) if completed(&entry.intent, &checkpoint.state) => {
                     match OperationLock::acquire(&self.locks, &entry.intent.lock)? {
                         LockAttempt::Busy => false,
                         LockAttempt::Acquired(owner) => {
@@ -49,20 +50,32 @@ impl Inner {
                 _ => false,
             };
             if idle_completed {
-                let state = checkpoint.unwrap().state.replacement()?;
-                // Completed copying leaves the original private; completed
-                // restoration leaves the copied publication private instead.
-                let artifacts = artifacts.as_ref().expect("validated completed artifacts");
-                let retained = if state.phase == Phase::Published {
-                    &artifacts.original
-                } else {
-                    artifacts
-                        .publication
-                        .as_ref()
-                        .expect("validated restored publication")
-                };
-                claims.index.insert(&artifacts.root);
-                claims.index.insert(retained);
+                match &checkpoint.expect("validated completed checkpoint").state {
+                    OperationState::Replacement(state) => {
+                        // Completed copying leaves the original private; completed
+                        // restoration leaves the copied publication private instead.
+                        let artifacts = artifacts.as_ref().expect("validated completed artifacts");
+                        let retained = if state.phase == Phase::Published {
+                            &artifacts.original
+                        } else {
+                            artifacts
+                                .publication
+                                .as_ref()
+                                .expect("validated restored publication")
+                        };
+                        claims.index.insert(&artifacts.root);
+                        claims.index.insert(retained);
+                    }
+                    // A completed move released its user endpoints: the source
+                    // name is free again and the destination belongs to the
+                    // user. Only its private artifact roots remain claimed, so
+                    // a later operation may reuse either public path.
+                    OperationState::Move(_) => {
+                        for root in move_roots(&entry.intent) {
+                            claims.index.insert(root);
+                        }
+                    }
+                }
             } else {
                 for resource in entry
                     .intent
@@ -78,11 +91,44 @@ impl Inner {
     }
 }
 
-fn completed(state: &OperationState) -> bool {
-    let Ok(state) = state.replacement() else {
-        return false;
-    };
-    matches!(state.phase, Phase::Published | Phase::Restored) && state.error.is_none()
+fn completed(intent: &DurableIntent, state: &OperationState) -> bool {
+    match state {
+        OperationState::Replacement(state) => {
+            matches!(state.phase, Phase::Published | Phase::Restored) && state.error.is_none()
+        }
+        OperationState::Move(state) => {
+            if state.error.is_some() {
+                return false;
+            }
+            // A cross-filesystem move still owns its source at `Published`:
+            // parking has not run yet, so releasing the user endpoints here
+            // would let a concurrent operation mutate the entry we are about
+            // to hide. Only a rename is finished at `Published`.
+            let published_is_terminal = intent
+                .operation
+                .move_spec()
+                .is_ok_and(|spec| spec.strategy == super::super::move_model::Strategy::Rename);
+            match state.phase {
+                MovePhase::Published => published_is_terminal,
+                MovePhase::Parked | MovePhase::Removed | MovePhase::Restored => true,
+                _ => false,
+            }
+        }
+    }
+}
+
+/// The private artifact roots a completed move still retains. Their subtree
+/// scope already covers the parked source, displaced original and publication.
+fn move_roots(intent: &DurableIntent) -> impl Iterator<Item = &Resource> {
+    let planned: Vec<_> = intent
+        .operation
+        .move_spec()
+        .map(|spec| spec.roots().map(|root| root.path.0.clone()).collect())
+        .unwrap_or_default();
+    intent
+        .resources
+        .iter()
+        .filter(move |resource| planned.contains(&resource.path.0))
 }
 
 /// Validated checkpoints add identities unavailable to the immutable plan,

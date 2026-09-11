@@ -15,15 +15,25 @@
  */
 
 import { logStartupTiming } from "$lib/api/environment";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Mark = { name: string; t: number };
 
 const t0: number =
   (typeof window !== "undefined" ? (window as { __BOOT_T0__?: number }).__BOOT_T0__ : undefined) ??
   (typeof performance !== "undefined" ? performance.now() : 0);
+const bootEpochMs: number =
+  (typeof window !== "undefined"
+    ? (window as { __BOOT_EPOCH_MS__?: number }).__BOOT_EPOCH_MS__
+    : undefined) ??
+  (typeof performance !== "undefined" ? performance.timeOrigin + t0 : Date.now());
 
 const marks: Mark[] = [];
 let reported = false;
+const windowLabel =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+    ? getCurrentWindow().label
+    : "browser";
 
 /** Record a named milestone, measured from boot t0 (ms). */
 export function markStartup(name: string): void {
@@ -47,7 +57,7 @@ export function reportStartupReady(): void {
 
   const total = marks.length ? marks[marks.length - 1].t : 0;
   const summary = marks.map((m) => `${m.name}=${m.t.toFixed(1)}ms`).join(" ");
-  const line = `Startup(webview): ${summary} total=${total.toFixed(1)}ms`;
+  const line = `Startup(webview): window=${windowLabel} boot-epoch-ms=${bootEpochMs.toFixed(3)} ${summary} total=${total.toFixed(1)}ms`;
 
   if (import.meta.env.DEV) {
     console.info(`[perf] ${line}`);

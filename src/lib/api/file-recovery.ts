@@ -18,20 +18,17 @@ function nextSubscription(): string {
   return token;
 }
 
-const empty = (): FileRecoverySnapshot => ({ revision: "0", items: [], error: null });
-
 export const fileRecoveryPort: FileRecoveryPort = {
   async subscribe(receive) {
-    if (!isTauri()) {
-      receive(empty());
-      return async () => {};
-    }
     const subscriptionId = nextSubscription();
     const sessionId = await getNativeResourceSession();
     let active = true;
-    const updates = new Channel<FileRecoverySnapshot>((snapshot) => {
+    const deliver = (snapshot: FileRecoverySnapshot) => {
       if (active && subscriptions.current === subscriptionId) receive(snapshot);
-    });
+    };
+    // The browser fixture backend has no Channel implementation; it invokes the
+    // callback directly, exactly as the native resource session does.
+    const updates = isTauri() ? new Channel<FileRecoverySnapshot>(deliver) : deliver;
     const release = async () => {
       active = false;
       if (subscriptions.current === subscriptionId) subscriptions.current = null;
@@ -49,9 +46,12 @@ export const fileRecoveryPort: FileRecoveryPort = {
     }
   },
   async list() {
-    if (!isTauri()) return empty();
     const sessionId = await getNativeResourceSession();
     return invoke<FileRecoverySnapshot>("file_recovery_list", { sessionId });
+  },
+  async retireEligible() {
+    const sessionId = await getNativeResourceSession();
+    return invoke<FileRecoverySnapshot>("file_recovery_retire_eligible", { sessionId });
   },
   async inspect(id) {
     const sessionId = await getNativeResourceSession();

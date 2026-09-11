@@ -1,16 +1,17 @@
 import { fileRecoveryPort } from "$lib/api/file-recovery";
 import { extractError } from "$lib/api/common";
-import { compareRecoveryCounters, isRecoveryCounter, mergeRecoveryPresentation } from "$lib/domain/file-recovery";
+import { compareRecoveryCounters, emptyRecoveryStorage, isRecoveryCounter, mergeRecoveryPresentation } from "$lib/domain/file-recovery";
 import type {
   FileRecoveryChoice,
   FileRecoveryItem,
   FileRecoveryPort,
   FileRecoverySnapshot,
+  FileRecoveryStorage,
 } from "$lib/domain/file-recovery";
 
-const EMPTY_SNAPSHOT: FileRecoverySnapshot = { revision: "0", items: [], error: null };
+const EMPTY_SNAPSHOT: FileRecoverySnapshot = { revision: "0", items: [], storage: emptyRecoveryStorage(), error: null };
 const INVALID_UPDATE = "Recovery status update was invalid";
-const STATUSES = new Set(["pending", "busy", "ready", "attention"]);
+const STATUSES = new Set(["pending", "busy", "ready", "attention", "retained"]);
 const CHOICES = new Set<FileRecoveryChoice>(["restore", "discard"]);
 
 function validItem(value: unknown): value is FileRecoveryItem {
@@ -20,6 +21,11 @@ function validItem(value: unknown): value is FileRecoveryItem {
     && isRecoveryCounter(item.generation)
     && typeof item.originalPath === "string"
     && (item.retainedPath === null || typeof item.retainedPath === "string")
+    // Retention accounting is additive: a port that does not report a retained
+    // size is describing an unknown size, not sending a malformed item. A
+    // present value of the wrong shape is still rejected.
+    && (item.retainedBytes === undefined || item.retainedBytes === null
+      || isRecoveryCounter(item.retainedBytes))
     && typeof item.status === "string" && STATUSES.has(item.status)
     && typeof item.message === "string"
     && Array.isArray(item.actions)
@@ -27,21 +33,42 @@ function validItem(value: unknown): value is FileRecoveryItem {
     && item.actions.every((choice) => CHOICES.has(choice));
 }
 
+function validCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function validStorage(value: unknown): value is FileRecoveryStorage {
+  if (!value || typeof value !== "object") return false;
+  const storage = value as Partial<FileRecoveryStorage>;
+  return isRecoveryCounter(storage.usedBytes) && isRecoveryCounter(storage.budgetBytes)
+    && validCount(storage.records) && validCount(storage.recordBudget)
+    && validCount(storage.unmeasured) && validCount(storage.unavailable)
+    && validCount(storage.discardable)
+    && typeof storage.atCapacity === "boolean";
+}
+
 function validSnapshot(value: unknown): value is FileRecoverySnapshot {
   if (!value || typeof value !== "object") return false;
   const snapshot = value as Partial<FileRecoverySnapshot>;
-  return isRecoveryCounter(snapshot.revision)
+  // Likewise for the storage block: absent means "no accounting reported".
+  return (snapshot.storage === undefined || validStorage(snapshot.storage))
+    && isRecoveryCounter(snapshot.revision)
     && Array.isArray(snapshot.items) && snapshot.items.every(validItem)
     && new Set(snapshot.items.map((item) => item.id)).size === snapshot.items.length
     && (snapshot.error === null || typeof snapshot.error === "string");
 }
 
 function cloneItem(item: FileRecoveryItem): FileRecoveryItem {
-  return { ...item, actions: [...item.actions] };
+  return { ...item, retainedBytes: item.retainedBytes ?? null, actions: [...item.actions] };
 }
 
 function cloneSnapshot(snapshot: FileRecoverySnapshot): FileRecoverySnapshot {
-  return { revision: snapshot.revision, items: snapshot.items.map(cloneItem), error: snapshot.error };
+  return {
+    revision: snapshot.revision,
+    items: snapshot.items.map(cloneItem),
+    storage: { ...(snapshot.storage ?? emptyRecoveryStorage()) },
+    error: snapshot.error,
+  };
 }
 
 export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPort) {
@@ -79,7 +106,8 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
       return false;
     }
     if (compareRecoveryCounters(value.revision, snapshot.revision) < 0) return false;
-    snapshot = mergeRecoveryPresentation(snapshot, value);
+    // Normalize the optional accounting once, so nothing downstream has to.
+    snapshot = mergeRecoveryPresentation(snapshot, cloneSnapshot(value));
     if (inspectionId && !inspectingId) {
       const item = snapshot.items.find(({ id }) => id === inspectionId);
       if (!item || item.generation !== inspectionGeneration) clearInspection();
@@ -256,6 +284,28 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     }
   }
 
+  /** Explicit retention enforcement. Shares the resolve request fence so it
+   *  cannot interleave with an in-flight per-item action. */
+  async function retireEligible(): Promise<void> {
+    if (!running || busyId) return;
+    const token = owner;
+    const operation = ++resolveRequest;
+    loading = true;
+    try {
+      if (!port.retireEligible) {
+        throw new Error("This recovery source cannot reclaim retained files");
+      }
+      const next = await port.retireEligible();
+      if (current(token) && operation === resolveRequest) apply(next, token);
+    } catch (error) {
+      if (current(token) && operation === resolveRequest) {
+        snapshot = { ...snapshot, error: extractError(error) };
+      }
+    } finally {
+      if (current(token) && operation === resolveRequest) loading = false;
+    }
+  }
+
   async function resolve(item: FileRecoveryItem, choice: FileRecoveryChoice): Promise<void> {
     if (!running || busyId) return;
     const latest = snapshot.items.find(({ id }) => id === item.id);
@@ -281,6 +331,7 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
   return {
     get snapshot() { return snapshot; },
     get items() { return snapshot.items; },
+    get storage() { return snapshot.storage; },
     get error() { return snapshot.error; },
     get loading() { return loading; },
     get busyId() { return busyId; },
@@ -294,6 +345,7 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     refresh,
     inspect,
     resolve,
+    retireEligible,
   };
 }
 

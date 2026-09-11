@@ -2,14 +2,18 @@
 //! Issue: tauri-explorer-0xr, tauri-explorer-kez
 
 use crate::error::AppError;
+use crate::file_history::{self, ForwardEffect, MutationOutcome, MutationReply};
+use crate::files::archive_plan::{ArchivePlan, CompressRequest, ExtractRequest, Request};
 use crate::files::{FileEntry, FileKind};
+use crate::renderer_owner::{self, Owner};
 use crate::task_registry::TaskRegistry;
 use chrono::{DateTime, Local};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use zip::write::FileOptions;
 
 /// Cancellable compression jobs, keyed by client-generated job id so the
@@ -45,14 +49,24 @@ use crate::progress::ProgressTracker as ZipTracker;
 /// `job_id` (client-generated) keys `zip-progress` events and cancellation
 /// via `cancel_compress`. The blocking work runs off the async runtime.
 #[tauri::command]
-pub async fn compress_to_zip(
-    app: tauri::AppHandle,
+pub(crate) async fn compress_to_zip(
+    window: tauri::Window,
+    session_id: String,
     paths: Vec<String>,
     job_id: Option<u64>,
-) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || compress_to_zip_sync(Some(&app), paths, job_id))
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+) -> Result<MutationReply<String>, AppError> {
+    // Validation is pure and precedes admission: an invalid selection must not
+    // acquire native ownership or reserve a history position.
+    let request = CompressRequest::new(paths)?;
+    let directories = vec![request.parent().to_string_lossy().into_owned()];
+    run_archive(
+        &window,
+        session_id,
+        directories,
+        job_id,
+        Job::Compress(request),
+    )
+    .await
 }
 
 /// Cancel a running compression job. The job fails with "Compression
@@ -62,62 +76,286 @@ pub async fn cancel_compress(job_id: u64) {
     COMPRESS_TASKS.cancel(job_id);
 }
 
-fn compress_to_zip_sync(
-    app: Option<&tauri::AppHandle>,
-    paths: Vec<String>,
+/// Which registry owns a job's cancellation, and which progress event it emits.
+enum Job {
+    Compress(CompressRequest),
+    Extract { request: ExtractRequest, here: bool },
+}
+
+impl Job {
+    /// Choose the operation's single public output. This probes the filesystem
+    /// for a free name, so it runs on a blocking worker before admission; the
+    /// resulting plan is pure and is what admission actually claims.
+    fn select(self) -> ArchivePlan {
+        match self {
+            Job::Compress(request) => {
+                let output = find_unique_path(request.parent(), request.base_name(), "zip");
+                request.plan(output)
+            }
+            Job::Extract {
+                request,
+                here: true,
+            } => request.here(),
+            Job::Extract {
+                request,
+                here: false,
+            } => {
+                let output = find_unique_path(request.parent(), request.folder_name(), "");
+                request.into_folder(output)
+            }
+        }
+    }
+}
+
+/// One admission path for both archive families.
+///
+/// Ownership is bounded by construction: the renderer owner is acquired before
+/// any effect, its retirement cancels the running job, and the recovery
+/// reservation is retired after the blocking worker joins on every exit —
+/// success, ordinary failure, cancellation and panic alike.
+async fn run_archive(
+    window: &tauri::Window,
+    session_id: String,
+    potential_directories: Vec<String>,
     job_id: Option<u64>,
-) -> Result<String, AppError> {
-    if paths.is_empty() {
-        return Err(AppError::Other("No paths provided".into()));
-    }
-
-    let first_path = PathBuf::from(&paths[0]);
-    let parent_dir = first_path.parent().ok_or(AppError::InvalidPath(
-        "Cannot determine parent directory".into(),
-    ))?;
-
-    // Determine output filename
-    let base_name = if paths.len() == 1 {
-        first_path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Archive".to_string())
-    } else {
-        "Archive".to_string()
+    job: Job,
+) -> Result<MutationReply<String>, AppError> {
+    let owner = renderer_owner::acquire_owner(window, &session_id)?;
+    let app = {
+        use tauri::Manager;
+        window.app_handle().clone()
     };
+    #[cfg(target_os = "linux")]
+    let recovery = crate::files::recovery::commands::owner(window)?;
+    let supervisor = owner.clone();
+    file_history::run_forward(owner, false, potential_directories, async move {
+        let plan = match crate::files::run_blocking(move || Ok(job.select())).await {
+            Ok(plan) => plan,
+            Err(error) => return rejected(error),
+        };
+        #[cfg(target_os = "linux")]
+        let (plan, admission) = {
+            let admission = match recovery.0.admit(recovery.1, plan.resources()).await {
+                Ok(admission) => admission,
+                Err(error) => return rejected(error),
+            };
+            match plan.resolve(admission.paths().map(Path::to_path_buf)) {
+                Ok(plan) => (plan, admission),
+                // No work was dispatched. Retire the reservation explicitly
+                // rather than abandoning a row for the next admission to
+                // reclaim; a failed retirement is still only a warning.
+                Err(error) => return settle(rejected(error), admission).await,
+            }
+        };
+        let outcome = execute(plan, Some(app), job_id, supervisor).await;
+        #[cfg(target_os = "linux")]
+        let outcome = settle(outcome, admission).await;
+        outcome
+    })
+    .await
+}
 
-    let zip_path = find_unique_path(parent_dir, &base_name, "zip");
-
-    let cancelled = job_id
-        .map(|id| COMPRESS_TASKS.start_with_id(id))
-        .transpose()?;
-    let total = estimate_total_bytes(&paths);
-    let mut tracker = ZipTracker::new(
-        app,
-        "zip-progress",
-        "Compression cancelled",
-        job_id.unwrap_or(0),
-        total,
-        cancelled.as_deref(),
-    );
-    let result = write_zip(&zip_path, &paths, &mut tracker);
-    if let Some(id) = job_id {
-        COMPRESS_TASKS.cleanup(id);
+/// Nothing was dispatched, so there is no filesystem effect to publish.
+fn rejected(error: AppError) -> MutationOutcome<String> {
+    MutationOutcome {
+        result: Err(error),
+        effect: ForwardEffect::Unchanged,
+        warning: None,
+        affected: Vec::new(),
     }
+}
 
-    if let Err(e) = result {
-        // Don't leave a corrupt half-written archive behind
-        let _ = fs::remove_file(&zip_path);
-        return Err(e);
+#[cfg(target_os = "linux")]
+async fn settle(
+    mut outcome: MutationOutcome<String>,
+    admission: crate::files::recovery::MutationAdmission,
+) -> MutationOutcome<String> {
+    if let Err(error) = crate::files::run_blocking(move || admission.finish()).await {
+        let warning = format!(
+            "Archive operation finished, but its ownership record could not be retired: {error}"
+        );
+        log::warn!("{warning}");
+        outcome.warning = Some(warning);
     }
+    outcome
+}
 
-    log::info!("Compressed {} items to ZIP", paths.len());
-    Ok(zip_path.to_string_lossy().to_string())
+fn registry_for(request: &Request) -> &'static TaskRegistry {
+    match request {
+        Request::Compress { .. } => &COMPRESS_TASKS,
+        Request::Extract { .. } => &EXTRACT_TASKS,
+    }
+}
+
+async fn execute(
+    plan: ArchivePlan,
+    app: Option<tauri::AppHandle>,
+    job_id: Option<u64>,
+    supervisor: Owner,
+) -> MutationOutcome<String> {
+    let registry = registry_for(plan.request());
+    // Registration is owned by this async supervisor, so a duplicate client id
+    // is refused and the entry is released on every exit including a panic.
+    let registration = match job_id.map(|id| registry.register(id)).transpose() {
+        Ok(registration) => registration,
+        Err(error) => return rejected(error),
+    };
+    let cancelled: Arc<AtomicBool> = registration
+        .as_ref()
+        .map(|registration| registration.flag())
+        .unwrap_or_default();
+    let affected = plan.affected_dirs();
+    let flag = Arc::clone(&cancelled);
+    let mut task = Box::pin(tokio::task::spawn_blocking(move || {
+        run_plan(&plan, app.as_ref(), job_id.unwrap_or(0), &flag)
+    }));
+    // A retired renderer must not leave an archive job writing into a
+    // directory nobody is watching. The blocking worker owns its own cleanup.
+    let joined = tokio::select! {
+        biased;
+        _ = supervisor.retired() => {
+            cancelled.store(true, Ordering::Relaxed);
+            (&mut task).await
+        }
+        result = &mut task => result,
+    };
+    drop(registration);
+    match joined {
+        Ok((result, touched)) => {
+            let effect = if result.is_ok() || touched {
+                ForwardEffect::Changed(None)
+            } else {
+                ForwardEffect::Unchanged
+            };
+            let affected = if matches!(effect, ForwardEffect::Unchanged) {
+                Vec::new()
+            } else {
+                affected
+            };
+            MutationOutcome {
+                result,
+                effect,
+                warning: None,
+                affected,
+            }
+        }
+        // A panicked worker's effects are unknown; publish the directories.
+        Err(error) => MutationOutcome {
+            result: Err(AppError::WorkerFailed(format!(
+                "Archive worker failed: {error}"
+            ))),
+            effect: ForwardEffect::Changed(None),
+            warning: None,
+            affected,
+        },
+    }
+}
+
+/// Returns the committed output path, plus whether a failure may still have
+/// left visible changes behind (so the caller knows to publish a refresh).
+fn run_plan(
+    plan: &ArchivePlan,
+    app: Option<&tauri::AppHandle>,
+    job_id: u64,
+    cancelled: &AtomicBool,
+) -> (Result<String, AppError>, bool) {
+    let output = plan.output();
+    let (result, touched) = match plan.request() {
+        Request::Compress { sources } => {
+            // create_new, not create: the name was chosen as free under an
+            // owned claim, so an occupant that appeared since belongs to
+            // someone else. Truncating it would destroy a file this operation
+            // never planned to write, and the cleanup below would then remove
+            // an output it did not create.
+            let file = match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output)
+            {
+                Ok(file) => file,
+                Err(error) => return (Err(occupied(output, error)), false),
+            };
+            let total = estimate_total_bytes(sources);
+            let mut tracker = ZipTracker::new(
+                app,
+                "zip-progress",
+                "Compression cancelled",
+                job_id,
+                total,
+                Some(cancelled),
+            );
+            match write_zip(file, sources, &mut tracker) {
+                Ok(()) => {
+                    log::info!("Compressed {} items to ZIP", sources.len());
+                    (Ok(()), false)
+                }
+                // Don't leave a corrupt half-written archive behind. A removal
+                // that itself fails leaves a visible file, so say so.
+                Err(error) => (Err(error), fs::remove_file(output).is_err()),
+            }
+        }
+        Request::Extract { archive, here } => {
+            if !archive.exists() {
+                return (
+                    Err(AppError::NotFound(archive.to_string_lossy().into_owned())),
+                    false,
+                );
+            }
+            if !*here {
+                // create_dir, not create_dir_all: same reasoning as above.
+                // Merging into an occupant would make the cleanup below delete
+                // a directory this operation never created.
+                if let Err(error) = fs::create_dir(output) {
+                    return (Err(occupied(output, error)), false);
+                }
+            }
+            match extract_entries(
+                app,
+                archive,
+                output,
+                *here,
+                job_id,
+                Some(cancelled),
+                MAX_EXTRACT_TOTAL_BYTES,
+            ) {
+                Ok(()) => (Ok(()), false),
+                Err(error) => {
+                    // Extract-here writes into a pre-existing directory, so a
+                    // partial result is visible and must not be removed.
+                    let touched = if *here {
+                        true
+                    } else {
+                        fs::remove_dir_all(output).is_err()
+                    };
+                    (Err(error), touched)
+                }
+            }
+        }
+    };
+    (
+        // Report the caller's spelling: the renderer derives its refresh
+        // broadcast from this path, and native publication already covers the
+        // resolved parent through `affected_dirs`.
+        result.map(|()| plan.presented_output().to_string_lossy().into_owned()),
+        touched,
+    )
+}
+
+/// An exclusive create that loses to an occupant is the deliberate fail-closed
+/// case, not an anonymous IO error. Say which name was taken.
+fn occupied(path: &Path, error: std::io::Error) -> AppError {
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        return AppError::AlreadyExists(format!(
+            "{} already exists; it was created after this operation chose its name",
+            path.display()
+        ));
+    }
+    AppError::from(error)
 }
 
 /// Sum file sizes the same way the zip walk will visit them (symlinks
 /// skipped), so byte progress reaches ~100% exactly at completion.
-fn estimate_total_bytes(paths: &[String]) -> u64 {
+fn estimate_total_bytes(paths: &[PathBuf]) -> u64 {
     fn walk(path: &Path, acc: &mut u64) {
         let Ok(md) = fs::symlink_metadata(path) else {
             return;
@@ -138,27 +376,26 @@ fn estimate_total_bytes(paths: &[String]) -> u64 {
 
     let mut total = 0u64;
     for p in paths {
-        walk(Path::new(p), &mut total);
+        walk(p, &mut total);
     }
     total
 }
 
-fn write_zip(zip_path: &Path, paths: &[String], tracker: &mut ZipTracker) -> Result<(), AppError> {
-    let file = fs::File::create(zip_path)?;
+/// `file` is the exclusively created output; the caller owns its removal.
+fn write_zip(file: fs::File, paths: &[PathBuf], tracker: &mut ZipTracker) -> Result<(), AppError> {
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = FileOptions::<()>::default().compression_method(zip::CompressionMethod::Deflated);
 
-    for path_str in paths {
-        let path = PathBuf::from(path_str);
+    for path in paths {
         let entry_name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
         if path.is_dir() {
-            add_directory_to_zip(&mut zip_writer, &path, &entry_name, options, tracker)?;
+            add_directory_to_zip(&mut zip_writer, path, &entry_name, options, tracker)?;
         } else {
-            add_file_to_zip(&mut zip_writer, &path, &entry_name, options, tracker)?;
+            add_file_to_zip(&mut zip_writer, path, &entry_name, options, tracker)?;
         }
     }
 
@@ -179,17 +416,26 @@ fn write_zip(zip_path: &Path, paths: &[String], tracker: &mut ZipTracker) -> Res
 /// `job_id` (client-generated) keys `unzip-progress` events and cancellation
 /// via `cancel_extract`. The blocking work runs off the async runtime.
 #[tauri::command]
-pub async fn extract_archive(
-    app: tauri::AppHandle,
+pub(crate) async fn extract_archive(
+    window: tauri::Window,
+    session_id: String,
     archive_path: String,
     extract_here: bool,
     job_id: Option<u64>,
-) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || {
-        extract_archive_sync(Some(&app), archive_path, extract_here, job_id)
-    })
+) -> Result<MutationReply<String>, AppError> {
+    let request = ExtractRequest::new(archive_path)?;
+    let directories = vec![request.parent().to_string_lossy().into_owned()];
+    run_archive(
+        &window,
+        session_id,
+        directories,
+        job_id,
+        Job::Extract {
+            request,
+            here: extract_here,
+        },
+    )
     .await
-    .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
 /// Cancel a running extraction job. The job fails with "Extraction
@@ -197,64 +443,6 @@ pub async fn extract_archive(
 #[tauri::command]
 pub async fn cancel_extract(job_id: u64) {
     EXTRACT_TASKS.cancel(job_id);
-}
-
-fn extract_archive_sync(
-    app: Option<&tauri::AppHandle>,
-    archive_path: String,
-    extract_here: bool,
-    job_id: Option<u64>,
-) -> Result<String, AppError> {
-    let archive = PathBuf::from(&archive_path);
-    if !archive.exists() {
-        return Err(AppError::NotFound(archive_path));
-    }
-
-    let parent_dir = archive.parent().ok_or(AppError::InvalidPath(
-        "Cannot determine parent directory".into(),
-    ))?;
-
-    let dest = if extract_here {
-        parent_dir.to_path_buf()
-    } else {
-        let folder_name = archive
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "extracted".to_string());
-        find_unique_path(parent_dir, &folder_name, "")
-    };
-
-    // Acquire cancellation ownership before creating the destination so a
-    // duplicate client id cannot begin a second mutation.
-    let cancelled = job_id
-        .map(|id| EXTRACT_TASKS.start_with_id(id))
-        .transpose()?;
-    let result = (|| {
-        if !extract_here {
-            fs::create_dir_all(&dest)?;
-        }
-        extract_entries(
-            app,
-            &archive,
-            &dest,
-            extract_here,
-            job_id.unwrap_or(0),
-            cancelled.as_deref(),
-            MAX_EXTRACT_TOTAL_BYTES,
-        )
-    })();
-    if let Some(id) = job_id {
-        EXTRACT_TASKS.cleanup(id);
-    }
-    if let Err(e) = result {
-        // Don't leave a partially extracted tree behind
-        if !extract_here {
-            let _ = fs::remove_dir_all(&dest);
-        }
-        return Err(e);
-    }
-
-    Ok(dest.to_string_lossy().to_string())
 }
 
 /// Verify that an existing path resolves inside `canon_root` after following
@@ -712,6 +900,61 @@ fn list_archive_contents_sync(archive_path: &str) -> Result<ArchiveListing, AppE
     })
 }
 
+/// Drive one archive job through the exact plan/execute path the commands use,
+/// without a Tauri window. Tests own admission separately; this covers the
+/// filesystem effect, cancellation and cleanup contract.
+#[cfg(test)]
+fn run_job_sync(
+    app: Option<&tauri::AppHandle>,
+    job: Job,
+    job_id: Option<u64>,
+) -> (Result<String, AppError>, bool) {
+    let plan = job.select();
+    let registration = match job_id
+        .map(|id| registry_for(plan.request()).register(id))
+        .transpose()
+    {
+        Ok(registration) => registration,
+        Err(error) => return (Err(error), false),
+    };
+    let cancelled: Arc<AtomicBool> = registration
+        .as_ref()
+        .map(|registration| registration.flag())
+        .unwrap_or_default();
+    run_plan(&plan, app, job_id.unwrap_or(0), &cancelled)
+}
+
+#[cfg(test)]
+fn compress_to_zip_sync(
+    app: Option<&tauri::AppHandle>,
+    paths: Vec<String>,
+    job_id: Option<u64>,
+) -> Result<String, AppError> {
+    run_job_sync(app, Job::Compress(CompressRequest::new(paths)?), job_id).0
+}
+
+#[cfg(test)]
+fn extract_archive_sync(
+    app: Option<&tauri::AppHandle>,
+    archive_path: String,
+    extract_here: bool,
+    job_id: Option<u64>,
+) -> Result<String, AppError> {
+    run_job_sync(
+        app,
+        Job::Extract {
+            request: ExtractRequest::new(archive_path)?,
+            here: extract_here,
+        },
+        job_id,
+    )
+    .0
+}
+
+#[cfg(test)]
+#[path = "../test_support/archive_admission.rs"]
+mod admission_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -912,29 +1155,22 @@ mod tests {
         fs::write(src_dir.join("big.bin"), vec![0u8; 3 * 1024 * 1024]).unwrap();
 
         let job_id = 999_001;
-        // Register and cancel before driving the worker directly, through the
-        // same registry path the command uses.
-        let flag = COMPRESS_TASKS.start_with_id(job_id).unwrap();
-        flag.store(true, Ordering::Relaxed);
+        // Cancel before the command registers, exactly as a client can: the
+        // registry's tombstone makes the job start already cancelled.
+        COMPRESS_TASKS.cancel(job_id);
 
-        // Bypass compress_to_zip_sync's own duplicate registration and drive
-        // write_zip with the cancelled tracker directly.
-        let zip_path = dir.path().join("source.zip");
-        let mut tracker = ZipTracker::new(
+        let (result, touched) = run_job_sync(
             None,
-            "zip-progress",
-            "Compression cancelled",
-            job_id,
-            3 * 1024 * 1024,
-            Some(&flag),
+            Job::Compress(
+                CompressRequest::new(vec![src_dir.to_string_lossy().to_string()]).unwrap(),
+            ),
+            Some(job_id),
         );
-        let err = write_zip(
-            &zip_path,
-            &[src_dir.to_string_lossy().to_string()],
-            &mut tracker,
-        )
-        .expect_err("cancelled compression must fail");
+        let err = result.expect_err("cancelled compression must fail");
         assert!(err.to_string().contains("cancelled"));
+        // The partial archive was removed, so nothing became visible.
+        assert!(!touched);
+        assert!(!dir.path().join("source.zip").exists());
         COMPRESS_TASKS.cleanup(job_id);
     }
 
@@ -1009,7 +1245,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(src_dir.join("a.txt"), src_dir.join("link.txt")).unwrap();
 
-        let total = estimate_total_bytes(&[src_dir.to_string_lossy().to_string()]);
+        let total = estimate_total_bytes(std::slice::from_ref(&src_dir));
         assert_eq!(total, 1500, "symlinks must not count toward total");
     }
 

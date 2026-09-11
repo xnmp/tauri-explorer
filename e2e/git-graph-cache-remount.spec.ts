@@ -42,13 +42,26 @@ async function toggleGraph(page: import("@playwright/test").Page, expectGraph = 
 async function scrollToOldestSyntheticCommit(page: import("@playwright/test").Page) {
   const view = page.locator('[data-testid="git-graph-view"]');
   const oldest = view.locator(".commit-row", { hasText: "(#1)" });
-  for (let pageIndex = 0; pageIndex < 5 && !(await oldest.isVisible().catch(() => false)); pageIndex++) {
-    await view.locator(".graph-scroller").evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-      element.dispatchEvent(new Event("scroll"));
-    });
-    await expect(view.getByTestId("git-graph-loading-more")).toBeHidden({ timeout: 10_000 });
-  }
+  const scroller = view.locator(".graph-scroller");
+
+  // `handleScroll` drops a near-bottom load request whenever a query or append
+  // is already in flight, and the "Loading more…" spinner can appear and clear
+  // between two polls — so a fixed budget of scrolls paced on that spinner can
+  // be spent entirely on dropped requests and then wait out its final timeout
+  // without ever scrolling again (#702). Re-issue the scroll on every pass and
+  // pace on the only outcome that matters: the oldest commit becoming
+  // reachable. A cursor that stops at the cached prefix never gets there and
+  // still fails.
+  await expect
+    .poll(async () => {
+      if ((await oldest.count()) > 0) return true;
+      await scroller.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event("scroll"));
+      });
+      return (await oldest.count()) > 0;
+    }, { timeout: 30_000 })
+    .toBe(true);
   await expect(oldest).toBeVisible({ timeout: 10_000 });
 }
 

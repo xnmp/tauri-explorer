@@ -2,6 +2,36 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.9.1 — 2026-09-11
+
+Durable file-operation recovery, safer archive extraction, and qualification
+work that turns intermittent test failures into recorded evidence.
+
+### Added
+
+- **Cut, paste and drop run as one ordered move session**: each conflict is decided per item, Cancel leaves the already-moved prefix in place, and one Undo returns exactly that prefix (#685).
+- **Durable move records** (opt-in build feature `durable-move-recovery`, Linux): cross-filesystem moves publish the destination before the source is parked, every step is journaled, and Undo restores by record identity rather than by path (#685).
+- **Recovery storage budgets and retirement**: File Recovery shows retained space and record counts, offers "Reclaim space" and per-record discard, and retires artifacts through a crash-safe journal that never removes the only known copy of a displaced or parked file (#687).
+
+### Improved
+
+- **Archive compress and extract are owned operations**: they claim their output like moves and copies do, refuse to run while another operation owns the destination, and release ownership on every exit including window loss (#686).
+- **Startup phases are attributed end to end** with correlated clocks, including the pre-run interval, so unexplained time stays visible rather than inferred; an interactive Mac runbook consumes the same report (#696).
+
+### Fixed
+
+- **Quick Access rows no longer navigate to a placeholder home directory** before the real home directory resolves (#702).
+- **Compressing over an existing file** no longer truncates and then deletes it; **extracting into an existing folder** no longer merges into it and removes it on failure (#686).
+- **A cross-filesystem move whose source cleanup fails** now reports an uncertain outcome that must be inspected in File Recovery instead of a clean success (#685).
+- **Interrupted move restorations** stay retryable and non-destructive; retention enforcement never runs at startup (#685, #687).
+- Backward keyboard traversal out of the file list is qualified per engine; the previous WebKit exemption is now limited to pointer-click entry (#692).
+
+### Release limits
+
+- The macOS half-bounce startup target remains unmet and unverified until the interactive Mac runbook is executed (#696).
+- Durable copy and move recovery remain opt-in build features; move records are listed and measured but not yet automatically retired (#687).
+- Native qualification on Linux intermittently loses the WebDriver session for a freshly opened window; the failure now carries renderer and driver process evidence (#703).
+
 ## v1.9.0 — 2026-09-10
 
 An architecture and reliability update, with new structured previews and safer

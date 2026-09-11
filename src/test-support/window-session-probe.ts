@@ -75,8 +75,15 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
       pending = captured.explorer.confirmDelete(captured.entries, false);
     } else if (op === "undo" || op === "redo") {
       pending = explorer[op]();
-    } else if (op === "cut" && entry) {
-      pending = explorer.cutToClipboard([entry]).then(() => null);
+    } else if (op === "cut" && (entry || paths)) {
+      // A multi-path cut is the ordered-session case: one clipboard, one
+      // native move session, one history entry (#685).
+      const selected = paths
+        ? explorer.displayEntries.filter((listed) => paths.includes(listed.path))
+        : [entry!];
+      pending = selected.length === (paths?.length ?? 1)
+        ? explorer.cutToClipboard(selected).then(() => null)
+        : Promise.resolve("Some requested entries are not listed");
     } else if (op === "paste") {
       pending = explorer.paste();
     } else if (op === "new-folder" && name) {

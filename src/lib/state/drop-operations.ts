@@ -1,30 +1,20 @@
 /**
  * Shared drop handler logic for file drag-and-drop operations.
- * Extracted from FileItem.svelte and FileList.svelte to eliminate triplication.
- * Issue: tauri-explorer-9djf.1
  *
- * Delegates transfer logic to performFileTransfer (file-transfer.ts).
+ * A drop is one ordered native session — copy or move — so conflict pauses,
+ * cancellation, the completed prefix and the inverse are all native-owned.
+ Conflict detection belongs to the
+ * session, which inspects the real destination per item — a renderer name
+ * snapshot cannot do that correctly once earlier items in the batch land.
  */
 
-import { parentDir, basename } from "$lib/domain/path";
 import { dragState } from "./drag.svelte";
-import { performFileTransfer } from "./file-transfer";
-import { undoStore } from "./undo.svelte";
-import { toastStore } from "./toast.svelte";
-import { broadcastFileChange } from "./file-events";
-import { frecencyStore } from "./frecency.svelte";
-import type { UndoAction } from "./types";
-import { fileMutationRecoveryMessage } from "$lib/domain/file";
 
 export interface DropOptions {
   /** Refresh callback after drop completes */
   onRefresh: () => void;
   /** Broadcast undo/toast to other windows (for cross-window DnD) */
   broadcastToOtherWindows?: boolean;
-  /** Names already present in the target dir, for conflict detection without
-   *  a directory fetch. handleFileDropMany extends it as items land so later
-   *  same-named items in the batch still hit the conflict dialog. */
-  existingNames?: Set<string>;
 }
 
 /**
@@ -62,34 +52,9 @@ export function getDropSourcePaths(dataTransfer: DataTransfer): string[] {
 }
 
 /**
- * Handle dropping a file/folder onto a target directory.
- * Delegates to performFileTransfer for conflict resolution, dispatch,
- * undo tracking, toast notifications, and broadcastFileChange.
- */
-export async function handleFileDrop(
-  sourcePath: string,
-  targetDir: string,
-  isCopy: boolean,
-  options: DropOptions,
-): Promise<void> {
-  if (isCopy) {
-    const { copyFiles } = await import("./copy-operations");
-    await copyFiles([sourcePath], targetDir, options);
-    return;
-  }
-  await performFileTransfer(sourcePath, targetDir, isCopy, {
-    onRefresh: options.onRefresh,
-    broadcastToOtherWindows: options.broadcastToOtherWindows,
-    existingNames: options.existingNames,
-  });
-}
-
-/**
  * Handle dropping several files/folders onto a target directory as ONE
- * undoable operation (#163). Each path transfers with per-item side effects
- * suppressed; the batch then records a single undo action, one toast, one
- * refresh, and one file-change broadcast. A single path delegates to
- * handleFileDrop unchanged.
+ * undoable operation (#163): one native session, one history entry, one
+ * toast, one refresh and one file-change broadcast.
  */
 export async function handleFileDropMany(
   sourcePaths: string[],
@@ -98,101 +63,15 @@ export async function handleFileDropMany(
   options: DropOptions,
 ): Promise<void> {
   if (sourcePaths.length === 0) return;
+  const context = {
+    onRefresh: options.onRefresh,
+    broadcastToOtherWindows: options.broadcastToOtherWindows,
+  };
   if (isCopy) {
     const { copyFiles } = await import("./copy-operations");
-    await copyFiles(sourcePaths, targetDir, options);
+    await copyFiles(sourcePaths, targetDir, context);
     return;
   }
-  if (sourcePaths.length === 1) {
-    await handleFileDrop(sourcePaths[0], targetDir, isCopy, options);
-    return;
-  }
-
-  const actions: UndoAction[] = [];
-  const affectedDirs = new Set<string>([targetDir]);
-  const recoveryErrors: string[] = [];
-  const warnings: string[] = [];
-  let committed = 0;
-  let failed = 0;
-  let lastError: string | undefined;
-
-  for (const sourcePath of sourcePaths) {
-    const result = await performFileTransfer(sourcePath, targetDir, isCopy, {
-      onRefresh: options.onRefresh,
-      existingNames: options.existingNames,
-      suppressUndo: true,
-      suppressToast: true,
-      suppressRefresh: true,
-      suppressBroadcast: true,
-      broadcastToOtherWindows: options.broadcastToOtherWindows,
-    });
-    if (!result.ok) {
-      if (result.reason === "cancelled") break;
-      if (result.reason === "failed") {
-        failed++;
-        lastError = result.error;
-      }
-      continue;
-    }
-    committed++;
-    affectedDirs.add(parentDir(sourcePath));
-    // Later items in this batch sharing the landed name must still conflict.
-    options.existingNames?.add(basename(result.path));
-    if (result.warning) warnings.push(result.warning);
-    if (result.recovery) {
-      recoveryErrors.push(fileMutationRecoveryMessage(result.recovery));
-    } else if (!result.replacement) {
-      actions.push(
-        isCopy
-          ? { type: "copy", copiedPath: result.path, parentDir: targetDir }
-          : {
-              type: "move",
-              sourcePath,
-              destPath: result.path,
-              originalDir: parentDir(sourcePath),
-            },
-      );
-    }
-  }
-
-  const verb = isCopy ? "Copied" : "Moved";
-  const successful = committed - recoveryErrors.length;
-  if (actions.length > 0) {
-    const label = `${verb} ${actions.length} items`;
-    const action: UndoAction =
-      actions.length === 1 ? actions[0] : { type: "batch", actions, label };
-    if (options.broadcastToOtherWindows) {
-      await undoStore.pushAndBroadcast(action);
-    } else {
-      await undoStore.push(action);
-    }
-
-  }
-  if (successful > 0) {
-    const message = `${verb} ${successful} item${successful === 1 ? "" : "s"} to ${basename(targetDir)}`;
-    toastStore.show(message, "info");
-    if (options.broadcastToOtherWindows) toastStore.broadcast(message, "info");
-  }
-
-  if (committed > 0) {
-    options.onRefresh();
-    broadcastFileChange([...affectedDirs]);
-    frecencyStore.pruneNonExistent();
-  }
-
-  const failureMessage = failed > 0
-    ? (
-      failed === 1 && lastError
-        ? lastError
-        : `Failed to ${isCopy ? "copy" : "move"} ${failed} item${failed === 1 ? "" : "s"}`
-    )
-    : null;
-  const problems = [...recoveryErrors, ...warnings, ...(failureMessage ? [failureMessage] : [])];
-  if (problems.length > 0) {
-    const message = problems.join("\n");
-    toastStore.error(message);
-    if (options.broadcastToOtherWindows) {
-      toastStore.broadcast(message, "error");
-    }
-  }
+  const { moveFiles } = await import("./move-operations");
+  await moveFiles(sourcePaths, targetDir, context);
 }

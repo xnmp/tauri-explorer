@@ -126,7 +126,18 @@ pub(crate) fn init_test_logger() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
+    run_with_process_entry(launch_dir, std::time::Instant::now());
+}
+
+/// `run`, told when the process entered `main`. Startup qualification needs the
+/// pre-`run` interval (argument parsing, the Linux detach fork) as its own phase
+/// rather than as time no recorded clock covers.
+pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::time::Instant) {
     let t_start = std::time::Instant::now();
+    let t_start_epoch_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64() * 1000.0)
+        .unwrap_or(f64::NAN);
 
     // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
     #[cfg(target_os = "linux")]
@@ -189,7 +200,10 @@ pub fn run(launch_dir: Option<String>) {
 
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
-        .manage(system::StartupClock(t_start))
+        .manage(system::StartupClock {
+            started: t_start,
+            epoch_ms: t_start_epoch_ms,
+        })
         .plugin({
             let mut targets = vec![
                 Target::new(TargetKind::LogDir { file_name: None }),
@@ -243,6 +257,7 @@ pub fn run(launch_dir: Option<String>) {
             // Trash operations
             file_mutation::delete_entries,
             files::recovery::commands::file_recovery_list,
+            files::recovery::commands::file_recovery_retire_eligible,
             files::recovery::commands::file_recovery_subscribe,
             files::recovery::commands::file_recovery_unsubscribe,
             files::recovery::commands::file_recovery_inspect,
@@ -262,6 +277,7 @@ pub fn run(launch_dir: Option<String>) {
             file_mutation::rename_entry,
             file_mutation::copy_entry,
             file_mutation::copy_entries,
+            file_mutation::move_entries,
             file_mutation::resolve_copy_conflict,
             file_mutation::cancel_copy_session,
             files::file_ops::cancel_copy,
@@ -563,6 +579,12 @@ pub fn run(launch_dir: Option<String>) {
                 t_setup - t_plugins,
                 t_window_built - t_setup,
                 t_window_built - t_start,
+            );
+            log::info!(
+                "Startup(native-window): window=main app-run-epoch-ms={:.3} process-entry-to-run={:.1}ms window-built={:.1}ms",
+                t_start_epoch_ms,
+                (t_start - t_process_entry).as_secs_f64() * 1000.0,
+                (t_window_built - t_start).as_secs_f64() * 1000.0,
             );
             Ok(())
         })

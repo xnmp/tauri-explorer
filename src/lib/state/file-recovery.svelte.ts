@@ -21,7 +21,11 @@ function validItem(value: unknown): value is FileRecoveryItem {
     && isRecoveryCounter(item.generation)
     && typeof item.originalPath === "string"
     && (item.retainedPath === null || typeof item.retainedPath === "string")
-    && (item.retainedBytes === null || isRecoveryCounter(item.retainedBytes))
+    // Retention accounting is additive: a port that does not report a retained
+    // size is describing an unknown size, not sending a malformed item. A
+    // present value of the wrong shape is still rejected.
+    && (item.retainedBytes === undefined || item.retainedBytes === null
+      || isRecoveryCounter(item.retainedBytes))
     && typeof item.status === "string" && STATUSES.has(item.status)
     && typeof item.message === "string"
     && Array.isArray(item.actions)
@@ -46,7 +50,8 @@ function validStorage(value: unknown): value is FileRecoveryStorage {
 function validSnapshot(value: unknown): value is FileRecoverySnapshot {
   if (!value || typeof value !== "object") return false;
   const snapshot = value as Partial<FileRecoverySnapshot>;
-  return validStorage(snapshot.storage)
+  // Likewise for the storage block: absent means "no accounting reported".
+  return (snapshot.storage === undefined || validStorage(snapshot.storage))
     && isRecoveryCounter(snapshot.revision)
     && Array.isArray(snapshot.items) && snapshot.items.every(validItem)
     && new Set(snapshot.items.map((item) => item.id)).size === snapshot.items.length
@@ -54,11 +59,16 @@ function validSnapshot(value: unknown): value is FileRecoverySnapshot {
 }
 
 function cloneItem(item: FileRecoveryItem): FileRecoveryItem {
-  return { ...item, actions: [...item.actions] };
+  return { ...item, retainedBytes: item.retainedBytes ?? null, actions: [...item.actions] };
 }
 
 function cloneSnapshot(snapshot: FileRecoverySnapshot): FileRecoverySnapshot {
-  return { revision: snapshot.revision, items: snapshot.items.map(cloneItem), storage: { ...snapshot.storage }, error: snapshot.error };
+  return {
+    revision: snapshot.revision,
+    items: snapshot.items.map(cloneItem),
+    storage: { ...(snapshot.storage ?? emptyRecoveryStorage()) },
+    error: snapshot.error,
+  };
 }
 
 export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPort) {
@@ -96,7 +106,8 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
       return false;
     }
     if (compareRecoveryCounters(value.revision, snapshot.revision) < 0) return false;
-    snapshot = mergeRecoveryPresentation(snapshot, value);
+    // Normalize the optional accounting once, so nothing downstream has to.
+    snapshot = mergeRecoveryPresentation(snapshot, cloneSnapshot(value));
     if (inspectionId && !inspectingId) {
       const item = snapshot.items.find(({ id }) => id === inspectionId);
       if (!item || item.generation !== inspectionGeneration) clearInspection();
@@ -281,6 +292,9 @@ export function createFileRecoveryState(port: FileRecoveryPort = fileRecoveryPor
     const operation = ++resolveRequest;
     loading = true;
     try {
+      if (!port.retireEligible) {
+        throw new Error("This recovery source cannot reclaim retained files");
+      }
       const next = await port.retireEligible();
       if (current(token) && operation === resolveRequest) apply(next, token);
     } catch (error) {

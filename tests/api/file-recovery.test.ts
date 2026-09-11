@@ -26,7 +26,9 @@ describe("native recovery subscriptions", () => {
     expect(backend.invoke).toHaveBeenCalledWith("file_recovery_resolve", {
       sessionId: "renderer-session", id: "operation-id", generation: "9007199254740993", choice: "restore",
     });
-    await fileRecoveryPort.retireEligible();
+    // The native port always supplies it; the interface leaves it optional for
+    // ports that predate retention accounting.
+    await fileRecoveryPort.retireEligible!();
     expect(backend.invoke).toHaveBeenCalledWith("file_recovery_retire_eligible", { sessionId: "renderer-session" });
   });
 

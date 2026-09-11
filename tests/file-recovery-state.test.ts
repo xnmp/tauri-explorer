@@ -527,3 +527,37 @@ it("applies a retention enforcement pass and reports its failure without losing 
   expect(failing.loading).toBe(false);
   await Promise.all([state.dispose(), failing.dispose()]);
 });
+
+it("accepts a port that reports no retention accounting and defaults it", async () => {
+  // Retention accounting is additive. A port that predates it — including the
+  // browser E2E contract fixture — sends items and snapshots without
+  // `retainedBytes` or `storage`; that is an unknown size and no accounting,
+  // not a malformed update, and its items must still reach the UI.
+  const legacyItem = { ...item() } as Partial<FileRecoveryItem>;
+  delete legacyItem.retainedBytes;
+  const legacy = { revision: "1", items: [legacyItem], error: null } as unknown as FileRecoverySnapshot;
+  const state = createFileRecoveryState(port({ subscribe: async (next) => {
+    next(legacy);
+    return async () => {};
+  }}));
+  await state.start();
+
+  expect(state.error).toBeNull();
+  expect(state.items).toHaveLength(1);
+  expect(state.items[0].id).toBe("recovery-a");
+  expect(state.items[0].retainedBytes).toBeNull();
+  expect(state.storage).toEqual(emptyRecoveryStorage());
+  await state.dispose();
+});
+
+it("reports a clear failure when the port cannot reclaim at all", async () => {
+  const base = port({});
+  const { retireEligible: _absent, ...withoutReclaim } = base;
+  const state = createFileRecoveryState(withoutReclaim as typeof base);
+  await state.start();
+
+  await state.retireEligible();
+
+  expect(state.error).toMatch(/cannot reclaim/);
+  await state.dispose();
+});

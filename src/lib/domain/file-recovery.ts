@@ -54,7 +54,9 @@ export interface FileRecoveryPort {
   inspect(id: string): Promise<FileRecoverySnapshot>;
   resolve(id: string, generation: string, choice: FileRecoveryChoice): Promise<FileRecoverySnapshot>;
   /** One bounded retention enforcement pass. Never runs at startup. */
-  retireEligible(): Promise<FileRecoverySnapshot>;
+  /// Optional: a port that predates retention accounting, or a restricted
+  /// source, simply cannot reclaim. Callers must guard rather than assume.
+  retireEligible?(): Promise<FileRecoverySnapshot>;
 }
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;

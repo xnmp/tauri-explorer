@@ -427,7 +427,7 @@ backend for E2E/browser).
 
 ## Archives, external apps, wallpaper, system
 
-- `api/archive.ts`, `src-tauri/src/archive.rs` — zip compress/extract, list contents
+- `api/archive.ts`, `src-tauri/src/archive.rs`, `src-tauri/src/files/archive_plan.rs` — zip compress/extract, list contents. Per ADR 0024 archive writes take the shared mutation admission: `api/archive.ts` goes through `api/file-mutations.ts`, the command acquires the renderer owner, claims its output subtree and input reads through `files/recovery/runtime.rs`, binds the worker to the resolved paths, and retires the claim after the blocking job joins. `src-tauri/test_support/archive_admission.rs` covers competing-operation exclusion, cancellation, renderer detach and cleanup failure on a real filesystem.
 - `src-tauri/src/files/external_apps.rs`, `api/files.ts` (openFileWith, openImageWithSiblings) — open-with
 - `src-tauri/src/wallpaper.rs` (setAsWallpaper), `system.rs` (get_app_info, dirs), `portal.rs` (Linux portals)
 - `src-tauri/src/files/shortcuts.rs` — .lnk/.desktop resolution

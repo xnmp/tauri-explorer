@@ -28,3 +28,4 @@ decision during review.
 | [0020](0020-durable-file-recovery.md) | Durable artifact ownership, discovery and reconciliation | Proposed |
 | [0021](0021-qualification-process-lifecycle.md) | Qualification process lifecycle and artifact boundary | Accepted |
 | [0022](0022-native-qualification-cache-lifecycle.md) | Native qualification cache lifecycle | Accepted |
+| [0024](0024-mutation-admission-coverage.md) | Mutation admission coverage | Accepted |

@@ -402,7 +402,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593). Hot.
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
-- `archive.rs` — zip compress/extract.
+- `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
 - `clipboard.rs` — OS clipboard file operations.
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
 - `task_registry.rs` — cancellable background task registry.
@@ -469,6 +469,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
 - `src-tauri/src/files/copy_session/worker.rs` — the copy effect: physical path/version inspection and observed native child execution without UI waits or size prewalks.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
+- `src-tauri/src/files/archive_plan.rs` — pure compress/extract intent: validated sources, the chosen output, its recovery claims (write subtree on the output, read subtrees on the inputs), admitted execution bindings and both refresh parents.
 - `src-tauri/src/files/move_plan.rs` — bounded move intent supplies source/target claims, admitted execution bindings and physical/requested refresh parents.
 - `src-tauri/src/files/move_execution.rs` — forward/inverse move reservation, retained worker context and warning-preserving ownership settlement.
 - `src-tauri/src/files/entry_plan.rs` — pure owned targets/requests for directory/file creation, rename, new text and symlink creation; forward history and the owned worker consume the same plan; Linux admission binds execution paths while retaining stable alias presentation and both refresh parents.

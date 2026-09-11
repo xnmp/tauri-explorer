@@ -224,6 +224,10 @@ export function createPaneMutations(ctx: PaneMutationContext) {
 
     if (result.ok) {
       operationsManager.completeOperation(op.id);
+      // A committed archive whose native ownership record could not be retired
+      // is still committed; surface the diagnostic the way every other
+      // mutation does rather than dropping it.
+      if (result.warning) toastStore.error(result.warning);
       return result.data;
     }
     if (operationsManager.isOperationCancelled(op.id) || /cancelled/i.test(result.error)) {

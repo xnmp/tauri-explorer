@@ -5,6 +5,7 @@
 
 import type { FileEntry } from "$lib/domain/file";
 import { invoke, extractError, virtualPathGuard, type ApiResult } from "./common";
+import { invokeFileMutation } from "./file-mutations";
 
 /** Payload of `zip-progress` events emitted while a compression job runs. */
 export interface ZipProgressEvent {
@@ -25,12 +26,9 @@ export interface ZipProgressEvent {
 export async function compressToZip(paths: string[], jobId?: number): Promise<ApiResult<string>> {
   const guard = virtualPathGuard(...paths);
   if (guard) return guard;
-  try {
-    const zipPath = await invoke<string>("compress_to_zip", { paths, jobId });
-    return { ok: true, data: zipPath };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+  // Archive writes are admitted mutations: the native command acquires renderer
+  // ownership, a recovery claim on its output, and a forward history position.
+  return invokeFileMutation<string>("compress_to_zip", { paths, jobId });
 }
 
 /** Cancel a running compression job. The pending compressToZip call fails
@@ -59,12 +57,7 @@ export async function extractArchive(
 ): Promise<ApiResult<string>> {
   const guard = virtualPathGuard(archivePath);
   if (guard) return guard;
-  try {
-    const destPath = await invoke<string>("extract_archive", { archivePath, extractHere, jobId });
-    return { ok: true, data: destPath };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
+  return invokeFileMutation<string>("extract_archive", { archivePath, extractHere, jobId });
 }
 
 /** Preview listing of a ZIP archive. `rootFolder` is set when the archive's

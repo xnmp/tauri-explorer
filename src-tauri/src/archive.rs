@@ -135,15 +135,16 @@ async fn run_archive(
         };
         #[cfg(target_os = "linux")]
         let (plan, admission) = {
-            let admitted = async {
-                let admission = recovery.0.admit(recovery.1, plan.resources()).await?;
-                let plan = plan.resolve(admission.paths().map(Path::to_path_buf))?;
-                Ok::<_, AppError>((plan, admission))
-            }
-            .await;
-            match admitted {
-                Ok(admitted) => admitted,
+            let admission = match recovery.0.admit(recovery.1, plan.resources()).await {
+                Ok(admission) => admission,
                 Err(error) => return rejected(error),
+            };
+            match plan.resolve(admission.paths().map(Path::to_path_buf)) {
+                Ok(plan) => (plan, admission),
+                // No work was dispatched. Retire the reservation explicitly
+                // rather than abandoning a row for the next admission to
+                // reclaim; a failed retirement is still only a warning.
+                Err(error) => return settle(rejected(error), admission).await,
             }
         };
         let outcome = execute(plan, Some(app), job_id, supervisor).await;

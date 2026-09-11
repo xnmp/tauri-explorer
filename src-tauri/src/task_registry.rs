@@ -27,6 +27,12 @@ impl TaskRegistration<'_> {
     pub fn cancelled(&self) -> &AtomicBool {
         &self.cancelled
     }
+
+    /// Share the flag with a blocking worker while the async owner keeps the
+    /// registration, so a supervisor can cancel work it does not run itself.
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
 }
 
 impl Drop for TaskRegistration<'_> {

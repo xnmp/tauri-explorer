@@ -49,7 +49,10 @@ impl Root {
             .ok_or_else(|| invalid("Recovery replacement target has no name"))?;
         let finalized = staged.published_version()?;
         let target = probe(&self.parent, target_name)?;
-        let original = probe(&self.directory, OsStr::new(super::super::retention::ORIGINAL))?;
+        let original = probe(
+            &self.directory,
+            OsStr::new(super::super::retention::ORIGINAL),
+        )?;
         let publication = probe(
             &self.directory,
             OsStr::new(super::super::retention::PUBLICATION),
@@ -60,9 +63,7 @@ impl Root {
         Ok(match retained {
             // A completed overwrite: the copy is public, the original private.
             Retained::Original => match (original, publication, target) {
-                (Some(held), None, Some(live))
-                    if held == spec.original && is_copy(&live) =>
-                {
+                (Some(held), None, Some(live)) if held == spec.original && is_copy(&live) => {
                     RetirementStep::Remove
                 }
                 (None, None, Some(live)) if is_copy(&live) => RetirementStep::Removed,
@@ -70,9 +71,7 @@ impl Root {
             },
             // A completed restoration: the original is public, the copy private.
             Retained::Publication => match (original, publication, target) {
-                (None, Some(held), Some(live))
-                    if is_copy(&held) && live == spec.original =>
-                {
+                (None, Some(held), Some(live)) if is_copy(&held) && live == spec.original => {
                     RetirementStep::Remove
                 }
                 (None, None, Some(live)) if live == spec.original => RetirementStep::Removed,
@@ -91,7 +90,10 @@ impl Root {
     ) -> Result<bool, AppError> {
         let spec = intent.operation.replacement()?;
         let finalized = staged.published_version()?;
-        let original = probe(&self.directory, OsStr::new(super::super::retention::ORIGINAL))?;
+        let original = probe(
+            &self.directory,
+            OsStr::new(super::super::retention::ORIGINAL),
+        )?;
         let publication = probe(
             &self.directory,
             OsStr::new(super::super::retention::PUBLICATION),

@@ -202,7 +202,12 @@ fn target_change_after_inspection_cannot_be_restored_or_discarded() {
     .unwrap();
     assert!(refused.error.is_some(), "{refused:?}");
     assert_eq!(
-        fs::read(directory.path().join(".tauri-explorer-recovery-artifacts/original")).unwrap(),
+        fs::read(
+            directory
+                .path()
+                .join(".tauri-explorer-recovery-artifacts/original")
+        )
+        .unwrap(),
         b"original content"
     );
     assert_eq!(

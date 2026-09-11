@@ -3,10 +3,10 @@
 use super::*;
 use crate::files::recovery::{
     coordinator::test_fixture::fixture,
-    retention::Budget,
     model::{OperationSpec, Phase},
     replacement_execution::ReplacementExecution,
     resources::{Access, Request, Scope},
+    retention::Budget,
 };
 use std::{
     fs,
@@ -78,7 +78,12 @@ impl Fixture {
             .into_iter()
             .find(|entry| entry.intent.id == self.id)
             .and_then(|entry| entry.state)
-            .and_then(|state| state.replacement().ok().and_then(|state| state.error.clone()))
+            .and_then(|state| {
+                state
+                    .replacement()
+                    .ok()
+                    .and_then(|state| state.error.clone())
+            })
     }
 
     fn indexed(&self) -> bool {
@@ -159,7 +164,10 @@ fn an_explicit_discard_removes_the_retained_original_and_retires_the_record() {
 #[test]
 fn a_completed_overwrite_is_never_retired_automatically() {
     let fixture = published();
-    assert_eq!(fixture.retirement().eligibility(), &Eligibility::Discardable);
+    assert_eq!(
+        fixture.retirement().eligibility(),
+        &Eligibility::Discardable
+    );
     let usage = enforce(&fixture.coordinator).unwrap();
     assert_eq!(usage.records, 1);
     assert!(
@@ -222,7 +230,10 @@ fn a_parked_copy_is_automatically_retirable_only_while_its_source_is_intact() {
     // Without a live source the parked copy may hold the only surviving bytes,
     // so it needs an explicit decision instead.
     fs::write(fixture.source(), b"the source changed").unwrap();
-    assert_eq!(fixture.retirement().eligibility(), &Eligibility::Discardable);
+    assert_eq!(
+        fixture.retirement().eligibility(),
+        &Eligibility::Discardable
+    );
     let usage = enforce(&fixture.coordinator).unwrap();
     assert_eq!(usage.records, 1);
     assert!(fixture.indexed());
@@ -306,7 +317,9 @@ fn a_journal_failure_after_removal_keeps_the_record_and_resumes() {
         .retirement()
         .retire_with(|checkpoint| {
             if checkpoint == "removed" {
-                Err(AppError::Other("injected disk-full completion write".into()))
+                Err(AppError::Other(
+                    "injected disk-full completion write".into(),
+                ))
             } else {
                 Ok(())
             }
@@ -642,7 +655,10 @@ fn killing_retirement_at_every_checkpoint_leaves_a_resumable_consistent_catalog(
         retirement.retire().unwrap();
         assert!(!root.exists(), "{boundary}");
         assert_eq!(fs::read(&target).unwrap(), NEW_BYTES, "{boundary}");
-        assert!(reopened.inventory().unwrap().entries.is_empty(), "{boundary}");
+        assert!(
+            reopened.inventory().unwrap().entries.is_empty(),
+            "{boundary}"
+        );
     }
 }
 
@@ -730,7 +746,9 @@ fn an_interrupted_retirement_whose_endpoint_changed_is_preserved_and_still_resol
     let fixture = published();
     let mut operation = fixture.claim();
     operation
-        .advance(crate::files::recovery::replacement_transition::ReplacementTransition::BeginDiscard)
+        .advance(
+            crate::files::recovery::replacement_transition::ReplacementTransition::BeginDiscard,
+        )
         .unwrap();
     drop(operation);
     assert_eq!(fixture.phase(), Some(Phase::DiscardIntent));
@@ -771,7 +789,11 @@ fn an_interrupted_retirement_whose_endpoint_changed_is_preserved_and_still_resol
         .find(|item| item.id == fixture.id)
         .expect("the record stays in the inventory");
     assert_eq!(item.status, "attention");
-    assert!(item.message.contains("no longer matches"), "{}", item.message);
+    assert!(
+        item.message.contains("no longer matches"),
+        "{}",
+        item.message
+    );
 }
 
 #[test]
@@ -843,30 +865,28 @@ fn a_full_record_budget_refuses_a_new_durable_record_through_promotion() {
             },
         ])
         .unwrap();
-    let spec = OperationSpec::CopyReplacement(
-        crate::files::recovery::model::ReplacementSpec {
-            artifact_token: "artifacts-two".into(),
-            source_version: crate::files::file_identity::version_from_metadata(
-                &fs::symlink_metadata(&source).unwrap(),
-            )
-            .unwrap(),
-            source: crate::files::recovery::model::NativePath(source),
-            target: crate::files::recovery::model::NativePath(target.clone()),
-            root: crate::files::recovery::model::NativePath(
-                fixture.base.join(".tauri-explorer-recovery-artifacts-two"),
-            ),
-            parent: crate::files::file_identity::of_file(
-                &crate::files::native_directory::Directory::open(&fixture.base)
-                    .unwrap()
-                    .file,
-            )
-            .unwrap(),
-            original: crate::files::file_identity::version_from_metadata(
-                &fs::symlink_metadata(&target).unwrap(),
-            )
-            .unwrap(),
-        },
-    );
+    let spec = OperationSpec::CopyReplacement(crate::files::recovery::model::ReplacementSpec {
+        artifact_token: "artifacts-two".into(),
+        source_version: crate::files::file_identity::version_from_metadata(
+            &fs::symlink_metadata(&source).unwrap(),
+        )
+        .unwrap(),
+        source: crate::files::recovery::model::NativePath(source),
+        target: crate::files::recovery::model::NativePath(target.clone()),
+        root: crate::files::recovery::model::NativePath(
+            fixture.base.join(".tauri-explorer-recovery-artifacts-two"),
+        ),
+        parent: crate::files::file_identity::of_file(
+            &crate::files::native_directory::Directory::open(&fixture.base)
+                .unwrap()
+                .file,
+        )
+        .unwrap(),
+        original: crate::files::file_identity::version_from_metadata(
+            &fs::symlink_metadata(&target).unwrap(),
+        )
+        .unwrap(),
+    });
 
     let failure = reservation
         .promote_within(

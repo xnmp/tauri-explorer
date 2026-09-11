@@ -151,7 +151,10 @@ fn operate(
             Some("Recovery checkpoint is missing; catalog evidence is preserved".into()),
         );
     };
-    if request.expected().is_some_and(|expected| expected != generation) {
+    if request
+        .expected()
+        .is_some_and(|expected| expected != generation)
+    {
         return reply(
             coordinator,
             None,

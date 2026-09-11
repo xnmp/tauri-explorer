@@ -87,8 +87,8 @@ impl Coordinator {
             // The owner is only reclaimable when nothing else references it and
             // its OS lock is actually free; a busy owner stays untouched.
             if !referenced(&intents, &rows, id, &lock) {
-                if let LockAttempt::Acquired(owner) =
-                    OperationLock::acquire(&inner.locks, &lock).or_else(|error| {
+                if let LockAttempt::Acquired(owner) = OperationLock::acquire(&inner.locks, &lock)
+                    .or_else(|error| {
                         if error.kind() == std::io::ErrorKind::NotFound {
                             Ok(LockAttempt::Busy)
                         } else {

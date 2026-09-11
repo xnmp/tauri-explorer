@@ -73,7 +73,9 @@ fn an_indexed_record_is_never_retired_as_orphaned_evidence() {
         .into_iter()
         .find(|entry| entry.intent.id == id)
         .unwrap();
-    assert!(coordinator.retire_orphan_catalog(&id, entry.digest).is_err());
+    assert!(coordinator
+        .retire_orphan_catalog(&id, entry.digest)
+        .is_err());
     assert_eq!(coordinator.inventory().unwrap().entries.len(), 1);
 }
 

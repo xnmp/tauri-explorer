@@ -335,7 +335,10 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
                 }
                 // The volume or artifact parent could not be observed.
                 Err(error) => {
-                    log::debug!("Recovery retention could not observe {}: {error}", entry.intent.id);
+                    log::debug!(
+                        "Recovery retention could not observe {}: {error}",
+                        entry.intent.id
+                    );
                     usage.add(position, None, false);
                     continue;
                 }
@@ -345,11 +348,16 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
         match settle(coordinator, &entry.intent.id, generation) {
             // A reclaimed record holds nothing and is no longer in the catalog.
             Ok(Settled::Retired) => continue,
-            Ok(Settled::Counted(position, bytes, available)) => usage.add(position, bytes, available),
+            Ok(Settled::Counted(position, bytes, available)) => {
+                usage.add(position, bytes, available)
+            }
             Ok(Settled::Busy) => usage.add(position, bytes, true),
             // A busy or changed record is neither lost nor reclaimable now.
             Err(error) => {
-                log::debug!("Recovery retention pass skipped {}: {error}", entry.intent.id);
+                log::debug!(
+                    "Recovery retention pass skipped {}: {error}",
+                    entry.intent.id
+                );
                 usage.add(position, bytes, false);
             }
         }
@@ -403,8 +411,7 @@ fn measure_unsupported(
     intent: &super::model::DurableIntent,
     state: &OperationState,
 ) -> Result<Option<u64>, AppError> {
-    let (OperationSpec::Move(spec), OperationState::Move(move_state)) =
-        (&intent.operation, state)
+    let (OperationSpec::Move(spec), OperationState::Move(move_state)) = (&intent.operation, state)
     else {
         return Ok(None);
     };

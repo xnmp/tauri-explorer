@@ -213,7 +213,9 @@ impl Usage {
         }
         match bytes {
             Some(bytes) => self.bytes = self.bytes.saturating_add(bytes),
-            None if matches!(retention, Retention::Unsupported) || retention.settled().is_some() => {
+            None if matches!(retention, Retention::Unsupported)
+                || retention.settled().is_some() =>
+            {
                 self.unmeasured += 1
             }
             None => {}

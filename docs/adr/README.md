@@ -29,3 +29,4 @@ decision during review.
 | [0021](0021-qualification-process-lifecycle.md) | Qualification process lifecycle and artifact boundary | Accepted |
 | [0022](0022-native-qualification-cache-lifecycle.md) | Native qualification cache lifecycle | Accepted |
 | [0023](0023-recovery-artifact-retention.md) | Recovery artifact retention and durable retirement | Proposed |
+| [0024](0024-mutation-admission-coverage.md) | Mutation admission coverage | Accepted |

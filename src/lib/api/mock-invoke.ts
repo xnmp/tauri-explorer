@@ -3220,6 +3220,11 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       : actions.length === 1 ? actions[0] : { type: "batch", actions, label: "Delete" };
     return { result, history: mockFileHistory.push(action).summary } as T;
   }
+  if (["compress_to_zip", "extract_archive"].includes(cmd)) {
+    // Archive operations mutate but have no inverse yet, so they advance
+    // history with no undoable action (which discards the redo stack).
+    return { result, history: mockFileHistory.push(null).summary } as T;
+  }
   if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "copy_entry", "move_entry"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {

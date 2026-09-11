@@ -3,6 +3,7 @@
 
 #[cfg(unix)]
 mod anchored_copy;
+pub(crate) mod archive_plan;
 pub mod batch;
 pub(crate) mod copy_session;
 pub mod dir_listing;

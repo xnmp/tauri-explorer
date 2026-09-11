@@ -19,6 +19,10 @@ mod transfer;
 #[path = "replacement_restore.rs"]
 mod restore;
 
+#[path = "replacement_retire.rs"]
+mod retire;
+pub(super) use retire::RetirementStep;
+
 /// One planned private artifact namespace. Operation kinds differ in how many
 /// roots they plan and which user objects the root must never alias; the
 /// namespace, manifest and durability discipline below are shared.
@@ -162,6 +166,19 @@ impl Anchor {
         Ok(root)
     }
 
+    /// Retirement legitimately runs after the artifact root is already gone:
+    /// removal completes before its journal checkpoint. Report that verified
+    /// absence instead of failing, but only when the planned parent still
+    /// proves its identity, so an unreachable volume stays an error.
+    pub(super) fn open_optional(self, expected: ObjectId) -> Result<Option<Root>, AppError> {
+        self.verify_parent_namespace()?;
+        if !self.parent.entry_exists(&self.root_name)? {
+            self.verify_parent_namespace()?;
+            return Ok(None);
+        }
+        self.open_existing(expected).map(Some)
+    }
+
     fn finish(self, directory: Directory) -> Result<Root, AppError> {
         let identity = of_file(&directory.file)?;
         if !identity.same_volume(self.parent_identity)
@@ -210,6 +227,7 @@ impl Root {
         intent.validate()?;
         OperationState::Replacement(ReplacementState {
             effect_revision: 0,
+            retained_bytes: None,
             root: Some(self.identity),
             phase: Phase::Staged,
             published: Some(staged.clone()),

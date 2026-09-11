@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { emptyRecoveryStorage } from "$lib/domain/file-recovery";
 import type { FileRecoverySnapshot } from "$lib/domain/file-recovery";
 
 const backend = vi.hoisted(() => ({ invoke: vi.fn(), channels: [] as Array<(value: FileRecoverySnapshot) => void> }));
@@ -11,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 import { fileRecoveryPort } from "$lib/api/file-recovery";
 
-const snapshot = (revision: number): FileRecoverySnapshot => ({ revision: String(revision), items: [], error: null });
+const snapshot = (revision: number): FileRecoverySnapshot => ({ revision: String(revision), items: [], storage: emptyRecoveryStorage(), error: null });
 beforeEach(() => { backend.invoke.mockReset(); backend.channels.length = 0; });
 
 describe("native recovery subscriptions", () => {
@@ -25,6 +26,10 @@ describe("native recovery subscriptions", () => {
     expect(backend.invoke).toHaveBeenCalledWith("file_recovery_resolve", {
       sessionId: "renderer-session", id: "operation-id", generation: "9007199254740993", choice: "restore",
     });
+    // The native port always supplies it; the interface leaves it optional for
+    // ports that predate retention accounting.
+    await fileRecoveryPort.retireEligible!();
+    expect(backend.invoke).toHaveBeenCalledWith("file_recovery_retire_eligible", { sessionId: "renderer-session" });
   });
 
   it("retires an uncertain failed registration and rejects its late channel delivery", async () => {

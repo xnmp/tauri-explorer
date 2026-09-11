@@ -46,6 +46,10 @@ mod replacement_transition;
 #[cfg(unix)]
 pub(super) mod resources;
 #[cfg(unix)]
+mod retention;
+#[cfg(unix)]
+mod retirement;
+#[cfg(unix)]
 mod service;
 #[cfg(unix)]
 mod storage;

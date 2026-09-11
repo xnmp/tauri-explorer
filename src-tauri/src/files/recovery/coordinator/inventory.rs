@@ -11,6 +11,11 @@ pub(in crate::files::recovery) struct InventoryEntry {
     pub intent: DurableIntent,
     /// Catalog-only evidence must remain visible without inventing a checkpoint.
     pub generation: Option<u64>,
+    /// The validated checkpoint state, retained so retention policy can be
+    /// evaluated without claiming ownership of every record (ADR 0023).
+    pub state: Option<super::super::model::OperationState>,
+    /// Immutable evidence digest, required to retire catalog-only residue.
+    pub digest: [u8; 32],
 }
 
 impl Coordinator {
@@ -18,12 +23,12 @@ impl Coordinator {
         self.admitted(|inner| {
             let intents = decode_catalog(&inner.catalog.records()?, &inner.protected)?;
             let rows = inner.journal.records()?;
-            let mut generations = HashMap::new();
+            let mut checkpoints = HashMap::new();
             for row in &rows {
                 match row.kind {
                     RecordKind::Operation => {
-                        decode_checkpoint(row, &intents)?;
-                        generations.insert(row.id.as_str(), row.generation);
+                        let checkpoint = decode_checkpoint(row, &intents)?;
+                        checkpoints.insert(row.id.clone(), (row.generation, checkpoint.state));
                     }
                     RecordKind::Reservation => {
                         let reservation: ReservationRecord = decode(&row.payload)?;
@@ -33,9 +38,14 @@ impl Coordinator {
             }
             let mut entries: Vec<_> = intents
                 .into_values()
-                .map(|entry| InventoryEntry {
-                    generation: generations.get(entry.intent.id.as_str()).copied(),
-                    intent: entry.intent,
+                .map(|entry| {
+                    let checkpoint = checkpoints.remove(&entry.intent.id);
+                    InventoryEntry {
+                        generation: checkpoint.as_ref().map(|(generation, _)| *generation),
+                        state: checkpoint.map(|(_, state)| state),
+                        digest: entry.digest,
+                        intent: entry.intent,
+                    }
                 })
                 .collect();
             entries.sort_by(|left, right| left.intent.id.cmp(&right.intent.id));

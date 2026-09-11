@@ -26,6 +26,7 @@ mod claim;
 mod claims;
 mod inventory;
 mod promotion;
+mod retirement;
 
 pub(super) use inventory::InventoryEntry;
 

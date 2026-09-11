@@ -112,7 +112,7 @@ impl MoveExecution {
 
     /// Plan both roots exactly as the immutable intent named them. A root is a
     /// private sibling of the user entry whose displacement it will retain.
-    fn plans(spec: &MoveSpec) -> Vec<(bool, RootPlan)> {
+    pub(in crate::files::recovery) fn plans(spec: &MoveSpec) -> Vec<(bool, RootPlan)> {
         let mut excluded = vec![spec.source_version.object];
         if let Some(original) = &spec.target_original {
             excluded.push(original.object);

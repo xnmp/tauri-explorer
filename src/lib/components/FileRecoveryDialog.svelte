@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatRecoveryBytes, summarizeRecoveryStorage } from "$lib/domain/file-recovery";
   import type { FileRecoveryItem, FileRecoveryChoice } from "$lib/domain/file-recovery";
   import type { FileRecoverySession } from "$lib/state/file-recovery-session.svelte";
   import "./modal.css";
@@ -14,6 +15,8 @@
   let { open, onClose, recovery }: Props = $props();
   const store = $derived(recovery.state);
   const items = $derived(store?.items ?? []);
+  const storage = $derived(store?.storage ?? null);
+  const usage = $derived(storage ? summarizeRecoveryStorage(storage) : null);
   let card = $state<HTMLDivElement | null>(null);
   let pendingDiscard = $state<FileRecoveryItem | null>(null);
   let discardCancelButton = $state<HTMLButtonElement | null>(null);
@@ -93,7 +96,23 @@
       </div>
     {/if}
 
+    {#if usage && storage}
+      <section class="storage" aria-label="Retained file storage" data-recovery-storage>
+        <div class="storage-heading">
+          <strong>Retained files</strong>
+          <span data-recovery-usage>{usage.usedLabel} of {usage.budgetLabel} · {storage.records} of {storage.recordBudget} records</span>
+        </div>
+        <div class="storage-meter" role="img" aria-label="{Math.round(usage.percent)}% of the retained file budget is in use">
+          <div class="storage-fill" class:full={usage.atCapacity} style:width="{usage.percent}%"></div>
+        </div>
+        {#each usage.notes as note (note)}
+          <p class="storage-note" class:critical={usage.atCapacity}>{note}</p>
+        {/each}
+      </section>
+    {/if}
+
     <div class="recovery-toolbar">
+      <button type="button" class="btn secondary" onclick={() => void store?.retireEligible()} disabled={recovery.loading || !!store?.busyId || !store} data-recovery-reclaim>Reclaim space</button>
       <button type="button" class="btn secondary" onclick={() => void recovery.refresh()} disabled={recovery.loading || !!store?.busyId}>Refresh</button>
     </div>
 
@@ -110,9 +129,12 @@
           <li class="recovery-item">
             <div class="item-heading">
               <strong title={item.originalPath}>{item.originalPath}</strong>
-              <span class="status">{item.status}</span>
+              <span class="status" class:critical={item.status === "attention"}>{item.status}</span>
             </div>
             <p>{item.message}</p>
+            {#if item.retainedPath}
+              <p class="retained-size" data-recovery-retained={item.id}>Retained: {formatRecoveryBytes(item.retainedBytes)}</p>
+            {/if}
 
             {#if details}
               <dl class="inspection">
@@ -155,7 +177,18 @@
 </Modal>
 
 <style>
-  .recovery-toolbar { display: flex; justify-content: flex-end; margin-bottom: var(--spacing-sm); }
+  .recovery-toolbar { display: flex; justify-content: flex-end; gap: var(--spacing-sm); margin-bottom: var(--spacing-sm); }
+  .storage { margin: var(--spacing-md) 0 var(--spacing-sm); padding: var(--spacing-sm) var(--spacing-md); border: 1px solid var(--divider); border-radius: var(--radius-sm); background: var(--background-card-secondary); }
+  .storage-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spacing-md); font-size: var(--font-size-caption); }
+  .storage-heading strong { color: var(--text-primary); font-size: var(--font-size-body); }
+  .storage-heading span { color: var(--text-secondary); }
+  .storage-meter { height: 6px; margin-top: var(--spacing-xs); border-radius: 3px; background: var(--subtle-fill-secondary); overflow: hidden; }
+  .storage-fill { height: 100%; background: var(--accent-default, var(--text-secondary)); }
+  .storage-fill.full { background: var(--system-critical); }
+  .storage-note { margin: var(--spacing-xs) 0 0; color: var(--text-secondary); font-size: var(--font-size-caption); }
+  .storage-note.critical { color: var(--system-critical); }
+  .retained-size { margin: 0 0 var(--spacing-sm) !important; color: var(--text-secondary); font-size: var(--font-size-caption); }
+  .status.critical { color: var(--system-critical); }
   .recovery-dialog { width: min(620px, calc(100vw - 32px)); max-width: 620px; }
   .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--spacing-lg); }
   .close-button, .retry-button { border: 0; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }

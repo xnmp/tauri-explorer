@@ -3,12 +3,17 @@
 Status: Proposed — implementation and crash/platform acceptance outstanding.
 
 Release policy (2026-09-09): creation of new durable replacement-copy records is
-opt-in through Cargo's `durable-copy-recovery` feature until retirement exists
-(#687). Default builds keep transient admission and staged overwrites. Existing
-recovery discovery, restore and history remain available. Executable durable
-moves are implemented (#685) behind the independent `durable-move-recovery`
-feature, opt-in for the same reason: a parked cross-filesystem source and a
-displaced overwrite target are retained bytes with no quota or GC.
+opt-in through Cargo's `durable-copy-recovery` feature; retirement now exists
+(#687, [ADR 0023](0023-recovery-artifact-retention.md)), and the remaining gate on
+default enablement is native acceptance rather than unbounded retention. Default
+builds keep transient admission and staged overwrites. Existing recovery
+discovery, restore and history remain available. Executable durable moves are
+implemented (#685) behind the independent `durable-move-recovery` feature, opt-in
+for the same reason plus its own outstanding retirement plan: ADR 0023 lists a
+Move record, measures its roots and never retires it automatically, but the
+retirement plan naming which of a move's artifacts may be removed is not written
+yet, so a parked cross-filesystem source and a displaced overwrite target remain
+retained bytes only an explicit user decision can reclaim.
 The frozen release scope in `docs/review-completion.md` supersedes broader
 implementation prerequisites below.
 
@@ -767,8 +772,9 @@ descriptor limits. A separate-process regression positively observes that the
 admission gate is busy after the idle owner probe closes, then proves the new
 reservation excludes recovery until it settles. No in-memory completion flag or
 filesystem path probe is used to weaken persisted ownership. Runtime enablement
-remains Linux-only. Artifact retirement, retention budgets and recovery-backed
-history are still required before the complete production overwrite lifecycle.
+remains Linux-only. Artifact retirement and retention budgets are specified and
+implemented by [ADR 0023](0023-recovery-artifact-retention.md); recovery-backed
+history is still required before the complete production overwrite lifecycle.
 
 ### Production Linux copy replacements
 
@@ -799,8 +805,9 @@ Replacement receipts identify retained native recovery records. Single and batch
 frontend transfers must not record these as ordinary Copy inverses: removing the
 new file alone does not restore the displaced original. The command now records a native Replacement inverse; the File Recovery dialog
 can also explicitly restore it. Production paste/drop copies now share native grouped ownership as described below.
-Discard/retirement and retention quotas remain required before
-this lifecycle is complete or qualified for release.
+Discard/retirement and retention quotas are contracted by
+[ADR 0023](0023-recovery-artifact-retention.md); native acceptance on
+Windows/macOS remains required before this lifecycle is qualified for release.
 
 
 ## Retained-copy reapplication and semantic history validity
@@ -867,7 +874,8 @@ active scans still finish before reconciliation and observation-time/navigation
 guards retain their current owners. This does not guarantee delivery within a
 native polling interval or a presented-frame deadline.
 
-Artifact retention/retirement remain required. Production paste/drop copies now
+Artifact retention/retirement are governed by
+[ADR 0023](0023-recovery-artifact-retention.md). Production paste/drop copies now
 group ordinary and replacement inverses through the ordered session below.
 
 

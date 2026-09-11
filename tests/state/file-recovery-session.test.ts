@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { createFileRecoverySession } from "$lib/state/file-recovery-session.svelte";
 import { createFileRecoveryState } from "$lib/state/file-recovery.svelte";
+import { emptyRecoveryStorage } from "$lib/domain/file-recovery";
 import type { FileRecoveryPort } from "$lib/domain/file-recovery";
 
 function deferred<T>() {
@@ -12,8 +13,8 @@ function deferred<T>() {
 function fixture() {
   const release = vi.fn(async () => {});
   const port: FileRecoveryPort = {
-    subscribe: vi.fn(async (receive) => { receive({ revision: "1", items: [], error: null }); return release; }),
-    list: vi.fn(), inspect: vi.fn(), resolve: vi.fn(),
+    subscribe: vi.fn(async (receive) => { receive({ revision: "1", items: [], storage: emptyRecoveryStorage(), error: null }); return release; }),
+    list: vi.fn(), inspect: vi.fn(), resolve: vi.fn(), retireEligible: vi.fn(),
   };
   const state = createFileRecoveryState(port);
   const load = vi.fn(async () => state);

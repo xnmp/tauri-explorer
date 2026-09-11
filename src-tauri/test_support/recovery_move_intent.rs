@@ -119,6 +119,7 @@ fn move_intent_rejects_a_copy_replacement_checkpoint_kind() {
         intent,
         state: OperationState::Replacement(ReplacementState {
             effect_revision: 0,
+            retained_bytes: None,
             root: None,
             phase: Phase::Planned,
             published: None,

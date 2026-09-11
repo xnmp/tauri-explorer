@@ -181,7 +181,7 @@ impl Runtime {
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        self.replace_copy_with(path, source, target, progress, super::service::list)
+        self.replace_copy_with(path, source, target, progress, super::service::enforce)
     }
 
     pub(crate) fn replace_copy_observed(
@@ -197,7 +197,7 @@ impl Runtime {
             &[(source, target)],
             Some(expected),
             progress,
-            super::service::list,
+            super::service::enforce,
         )
         .map(super::forward_copy::BatchExecution::into_single)?
     }
@@ -208,7 +208,7 @@ impl Runtime {
         source: &std::path::Path,
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
-        inventory: impl FnOnce(&Coordinator) -> Result<super::model::RecoverySnapshot, AppError>,
+        inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
         self.replace_copies_with(path, &[(source, target)], progress, inventory)
             .map(super::forward_copy::BatchExecution::into_single)?
@@ -219,7 +219,7 @@ impl Runtime {
         path: PathBuf,
         copies: &[(&std::path::Path, &std::path::Path)],
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
-        inventory: impl FnOnce(&Coordinator) -> Result<super::model::RecoverySnapshot, AppError>,
+        inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<super::forward_copy::BatchExecution, AppError> {
         self.replace_copies_observed(path, copies, None, progress, inventory)
     }
@@ -230,7 +230,7 @@ impl Runtime {
         copies: &[(&std::path::Path, &std::path::Path)],
         expected: Option<&crate::files::mutation::CopyObservation>,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
-        inventory: impl FnOnce(&Coordinator) -> Result<super::model::RecoverySnapshot, AppError>,
+        inventory: impl FnOnce(&Arc<Coordinator>) -> Result<super::model::RecoverySnapshot, AppError>,
     ) -> Result<super::forward_copy::BatchExecution, AppError> {
         let coordinator = self.coordinator(path)?;
         let prepared = super::forward_copy::prepare_batch(&coordinator, copies, progress)?;
@@ -340,6 +340,11 @@ impl Runtime {
                 return Ok(super::service::unindexed(intents, error));
             }
         };
+        // Evidence only. Listing is on the automatic session-bootstrap path
+        // (`subscribe` calls it), so it must not claim ownership, probe user
+        // volumes or remove anything — ADR 0020's startup boundary. Retention
+        // enforcement runs from `retire_eligible` and after a record is
+        // created, both of which are deliberate activity.
         super::service::list(&coordinator)
     }
 
@@ -384,6 +389,14 @@ impl Runtime {
             result
         })
         .await
+    }
+
+    /// Explicit retention enforcement from recovery-session activity.
+    pub(crate) async fn retire_eligible(
+        &self,
+        path: PathBuf,
+    ) -> Result<super::model::RecoverySnapshot, AppError> {
+        self.operate(path, super::service::enforce).await
     }
 
     pub(crate) async fn inspect(

@@ -10,13 +10,19 @@ mod durable_model;
 mod file_lock;
 #[cfg(target_os = "linux")]
 mod forward_copy;
+#[cfg(target_os = "linux")]
+mod forward_move;
 #[cfg(any(unix, test))]
 mod journal;
 #[cfg(unix)]
 mod locks;
 mod model;
 #[cfg(unix)]
+mod move_execution;
+#[cfg(unix)]
 mod move_model;
+#[cfg(unix)]
+mod move_transition;
 pub(crate) use model::{ReplacementDirection, ReplacementHistory, ReplacementOutcome};
 #[cfg(target_os = "linux")]
 mod history;

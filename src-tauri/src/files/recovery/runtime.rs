@@ -101,6 +101,49 @@ impl Runtime {
         }
     }
 
+    /// Production move policy. Durable records park cross-filesystem sources
+    /// and retain displaced originals indefinitely until retirement exists
+    /// (#687), so creating them is opt-in. Discovery, restoration and history
+    /// for existing records stay available in either build.
+    pub(crate) fn move_entry(
+        &self,
+        path: PathBuf,
+        source: &std::path::Path,
+        target: &std::path::Path,
+        progress: &mut impl crate::files::anchored_copy::CopyProgress,
+    ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
+        // Both policies compile against the same recovery contracts. This
+        // constant removes the opt-in branch from ordinary optimized builds.
+        if !cfg!(feature = "durable-move-recovery") {
+            return Err(AppError::Other(
+                "Durable move recovery is not enabled in this build".into(),
+            ));
+        }
+        let coordinator = self.coordinator(path)?;
+        let prepared = super::forward_move::PreparedMove::prepare(&coordinator, source, target)?;
+        let result = prepared.execute(progress);
+        let refresh: Vec<String> = result
+            .as_ref()
+            .ok()
+            .and_then(|receipt| receipt.relocation.as_ref())
+            .map(|relocation| relocation.history.refresh_dirs.clone())
+            .unwrap_or_default();
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::files::fs_watcher::publish_file_changes(&refresh);
+        }))
+        .is_err()
+        {
+            log::warn!("Move completed, but directory refresh publication was interrupted");
+        }
+        // Publication belongs to the owned worker, so losing the requesting IPC
+        // future cannot hide an operation that actually completed.
+        match super::service::list(&coordinator) {
+            Ok(snapshot) => self.subscriptions.publish(&snapshot),
+            Err(error) => log::warn!("Could not refresh move recovery inventory: {error}"),
+        }
+        result
+    }
+
     pub(crate) async fn execute_history(
         &self,
         path: PathBuf,

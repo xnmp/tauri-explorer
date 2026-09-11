@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   osWriteFiles: vi.fn(async () => ({ ok: true, data: null })),
   transfer: vi.fn(),
   copyEntries: vi.fn(),
+  moveEntries: vi.fn(),
   estimateSize: vi.fn(async () => ({ ok: true, data: { totalBytes: 1 } })),
   cancelCopy: vi.fn(),
   clipboardHasImage: vi.fn(),
@@ -57,8 +58,13 @@ vi.mock("$lib/state/file-transfer", () => ({
   performFileTransfer: mocks.transfer,
 }));
 
-vi.mock("$lib/api/copy-session", () => ({
+vi.mock("$lib/api/copy-session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("$lib/api/copy-session")>()),
   copyEntries: mocks.copyEntries,
+}));
+
+vi.mock("$lib/api/move-session", () => ({
+  moveEntries: mocks.moveEntries,
 }));
 
 vi.mock("$lib/api/files", async (importOriginal) => ({
@@ -182,6 +188,7 @@ beforeEach(() => {
     }));
     return copyOutcome(created, destination);
   });
+  mocks.moveEntries.mockImplementation(mocks.copyEntries.getMockImplementation()!);
   for (const operation of [...operationsManager.operations]) {
     operationsManager.clearOperation(operation.id);
   }
@@ -335,13 +342,13 @@ describe("paste and undo publication ownership", () => {
     const newerCopy = entry("newer-copy.txt", "/newer");
     await clipboardStore.cut([oldCut]);
     mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [oldCut.path] });
-    const transfer = deferred<{ ok: true; path: string; entry: FileEntry }>();
-    mocks.transfer.mockReturnValueOnce(transfer.promise);
+    const session = deferred<ApiResult<CopySessionOutcome>>();
+    mocks.moveEntries.mockReturnValueOnce(session.promise);
 
     const pending = explorer.paste();
-    await waitForCall(mocks.transfer);
+    await waitForCall(mocks.moveEntries);
     await clipboardStore.copy([newerCopy]);
-    transfer.resolve(transferSuccess(entry(oldCut.name)));
+    session.resolve(copyOutcome([entry(oldCut.name)]));
     expect(await pending).toBeNull();
 
     expect.soft(clipboardStore.content).toEqual({ entries: [newerCopy], operation: "copy" });
@@ -354,16 +361,13 @@ describe("paste and undo publication ownership", () => {
     const destination = entry(cut.name);
     await clipboardStore.cut([cut]);
     mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [cut.path] });
-    mocks.transfer.mockResolvedValueOnce({
-      ok: true,
-      path: destination.path,
-      entry: null,
-      recovery: {
-        sourcePath: cut.path,
-        destinationPath: destination.path,
-        error: "source cleanup denied",
-      },
-    });
+    // Native reports an incomplete relocation as an uncertain item, never as
+    // a success: the destination exists but the source may still be there.
+    mocks.moveEntries.mockResolvedValueOnce({ ok: true, data: {
+      items: [{ status: "uncertain" as const, error: "source cleanup denied" }],
+      cancelled: false,
+      warnings: [],
+    } });
     serveListing([...explorer.displayEntries, destination]);
 
     const error = await explorer.paste();
@@ -372,7 +376,6 @@ describe("paste and undo publication ownership", () => {
     expect(clipboardStore.content).toEqual({ entries: [cut], operation: "cut" });
     expect(explorer.displayEntries.some(({ path }) => path === destination.path)).toBe(true);
     expect(mocks.undoPush).not.toHaveBeenCalled();
-    expect(mocks.broadcastFileChange).toHaveBeenCalledWith(["/a", "/source"]);
   });
 
   it("keeps clipboard-image destination and completion scoped to A", async () => {

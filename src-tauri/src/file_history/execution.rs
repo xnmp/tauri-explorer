@@ -108,7 +108,9 @@ fn execute_plan<'a, O: Operations>(
                             unreachable!("replacement request must retain its native action");
                         };
                         Execution {
-                            opposite: Some(Action::Replacement {
+                            // A consumed durable record has no opposite: never
+                            // offer a Redo whose evidence no longer exists.
+                            opposite: outcome.reapplicable.then(|| Action::Replacement {
                                 path: path.clone(),
                                 recovery: Some(outcome.history),
                             }),

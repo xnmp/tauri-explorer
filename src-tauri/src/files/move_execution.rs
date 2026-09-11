@@ -59,12 +59,59 @@ pub(crate) async fn execute_owned<O: Send + 'static>(plan: MovePlan, owner: O) -
     }
 }
 
+/// Journalled relocation. `PreparedMove` performs its own admission, so this
+/// path must not take a second reservation over the same resources.
+#[cfg(target_os = "linux")]
+struct DurableWork {
+    plan: MovePlan,
+    runtime: super::recovery::Runtime,
+    storage: std::path::PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl DurableWork {
+    fn execute(&mut self) -> Result<FileMutationReceipt, AppError> {
+        struct Uninterrupted;
+        impl super::anchored_copy::CopyProgress for Uninterrupted {
+            fn check_cancelled(&mut self) -> Result<(), AppError> {
+                Ok(())
+            }
+
+            fn advance(&mut self, _: u64, _: &std::path::Path) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+        self.runtime.move_entry(
+            self.storage.clone(),
+            &self.plan.source,
+            &self.plan.target,
+            &mut Uninterrupted,
+        )
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) async fn execute(
     plan: MovePlan,
     runtime: super::recovery::Runtime,
     storage: std::path::PathBuf,
 ) -> Outcome {
+    if cfg!(feature = "durable-move-recovery") {
+        let affected = plan.affected_dirs();
+        let completion = super::run_blocking_context(
+            DurableWork {
+                plan,
+                runtime,
+                storage,
+            },
+            DurableWork::execute,
+        )
+        .await;
+        return Outcome {
+            completion,
+            affected,
+        };
+    }
     let admission = match runtime.admit(storage, plan.resources()).await {
         Ok(admission) => admission,
         Err(error) => return unchanged(error),

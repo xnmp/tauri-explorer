@@ -180,6 +180,22 @@ impl DurableOperation {
         self.advance_with(event, || Ok(()))
     }
 
+    /// Moves have their own legal-transition contract. Both kinds share this
+    /// compare-and-swap protocol; only the pure state function differs.
+    pub(in crate::files::recovery) fn advance_move(
+        &mut self,
+        event: super::super::move_transition::MoveTransition,
+    ) -> Result<(), AppError> {
+        self.commit(
+            super::super::move_transition::transition(
+                &self.record.intent,
+                &self.record.state,
+                event,
+            )?,
+            || Ok(()),
+        )
+    }
+
     fn advance_with(
         &mut self,
         event: super::super::replacement_transition::ReplacementTransition,
@@ -190,6 +206,14 @@ impl DurableOperation {
             &self.record.state,
             event,
         )?;
+        self.commit(state, after_commit)
+    }
+
+    fn commit(
+        &mut self,
+        state: super::super::model::OperationState,
+        after_commit: impl FnOnce() -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
         let checkpoint = OperationCheckpoint {
             intent_digest: self.evidence.digest(),
             state,

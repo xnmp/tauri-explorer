@@ -126,6 +126,15 @@ impl OperationSpec {
             )),
         }
     }
+
+    pub(super) fn move_spec(&self) -> std::io::Result<&super::move_model::MoveSpec> {
+        match self {
+            Self::Move(spec) => Ok(spec),
+            Self::CopyReplacement(_) => Err(invalid(
+                "Copy replacement authority cannot execute as a move",
+            )),
+        }
+    }
 }
 
 impl OperationState {
@@ -143,6 +152,24 @@ impl OperationState {
             Self::Replacement(state) => Ok(state),
             Self::Move(_) => Err(invalid(
                 "Move checkpoint cannot execute as a copy replacement",
+            )),
+        }
+    }
+
+    pub(super) fn move_state(&self) -> std::io::Result<&super::move_model::MoveState> {
+        match self {
+            Self::Move(state) => Ok(state),
+            Self::Replacement(_) => Err(invalid(
+                "Copy replacement checkpoint cannot execute as a move",
+            )),
+        }
+    }
+
+    pub(super) fn move_state_mut(&mut self) -> std::io::Result<&mut super::move_model::MoveState> {
+        match self {
+            Self::Move(state) => Ok(state),
+            Self::Replacement(_) => Err(invalid(
+                "Copy replacement checkpoint cannot execute as a move",
             )),
         }
     }
@@ -379,7 +406,9 @@ impl OperationState {
             (OperationSpec::CopyReplacement(spec), Self::Replacement(state)) => {
                 state.validate(spec, &intent.resources)
             }
-            (OperationSpec::Move(_), Self::Move(_)) => Ok(()),
+            (OperationSpec::Move(spec), Self::Move(state)) => {
+                state.validate(spec, &intent.resources)
+            }
             _ => Err(invalid(
                 "Recovery checkpoint kind disagrees with its immutable intent",
             )),

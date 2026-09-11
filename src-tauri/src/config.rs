@@ -36,6 +36,10 @@ pub(crate) fn config_dir() -> Result<PathBuf, AppError> {
 /// anything. An absent, oversized or malformed file means "no configured
 /// values"; callers must fall back to their own defaults rather than treating
 /// a broken settings file as a request to disable a bound (ADR 0023).
+///
+/// Only the Unix recovery coordinator reads budgets today; keep the gate in
+/// step with those callers so non-Unix builds do not carry dead code.
+#[cfg(unix)]
 pub(crate) fn read_settings_value() -> Option<serde_json::Value> {
     const SETTINGS_FILE: &str = "settings.json";
     const MAX_SETTINGS_BYTES: usize = 1024 * 1024;

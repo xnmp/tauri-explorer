@@ -45,7 +45,7 @@ footprint is not derivable without an unbounded prewalk, the family defers.
 | Deletion / trash | `file_mutation.rs::delete_entries` | Selected paths plus Linux trash auxiliary namespaces: layout directories, `.trashinfo` metadata, exact artifact names and prepared fallback layouts (lesson 680, *Trash preparation includes its auxiliary namespaces*). | Yes. | **Deferred** — holds (1) and (2) but not (3). See below. |
 | Grouped / bulk rename | `BulkRenameDialog.svelte` → N × `rename_entry` | Each call: old path + new path (write, subtree), plus traversed parent-symlink reads. | Yes, per item. | **No gap** — every item already takes all three through the `entry()` path (`files/entry_plan.rs`). The batch is a renderer loop with no grouped inverse; that is a history-grouping question, not an admission one. |
 | Plugin-driven mutations | `plugins/api.ts::moveFile` → `state/file-transfer.ts::performFileTransfer` → `move_entry` | Source + destination (write, subtree). | Yes. | **No gap** — `performFileTransfer` dispatches through `api/files.ts`, which goes through `api/file-mutations.ts` and therefore carries a session id; `move_entry` already takes all three. `PluginWorkspace` exposes no other mutating method. The remaining difference is that plugins use the per-item path rather than the ordered session (#685); that is ordering, not admission. |
-| Ordinary copy outside the session | `file_mutation.rs::copy_entry` | Source (read) + destination (write). Holds (1) and (2); it takes a recovery claim only on the overwrite path, via `Runtime::copy_overwriting`. | In principle. | **Deferred** — no live caller. Its only frontend caller is `performFileTransfer`'s `isCopy: true` branch, which nothing calls: paste and drop both run the ordered `copy_session`. Extending admission here would harden unreachable code; the honest follow-up is deletion, not resurrection. |
+| Ordinary copy outside the session | `file_mutation.rs::copy_entry` | Source (read) + destination (write). Holds (1) and (2); it takes a recovery claim only on the overwrite path, via `Runtime::copy_overwriting`. | In principle. | **Deferred** — no production caller. Its only frontend caller is `performFileTransfer`'s `isCopy: true` branch, which no UI flow reaches: paste and drop both run the ordered `copy_session`. It is not dead, though — `src/test-support/file-recovery-probe.ts` drives it with `overwrite: true`, so the native recovery suite exercises exactly the `copy_overwriting` path. Extending admission would harden a path only that probe reaches, and deleting it would remove that coverage; the ordered session is where ordinary copy should converge. |
 | Git working-tree mutations | `git_actions.rs` — `git_checkout`, `git_create_branch(checkout)`, `git_cherry_pick`, `git_revert`, `git_merge`, `git_rebase`(+`_continue`/`_abort`), `git_stash_apply`/`_pop`, `git_reset --hard`, `git_merge_abort`, `git_cherry_pick_abort`, `git_revert_abort`, `git_checkout_tracking`, `git_sync_local_branches` (checked-out branch), `git_undo` → `HeadMove` | Every working-tree path that differs between two trees, plus `.git` internals. Not derivable without diffing the two trees — an unbounded prewalk — and the operation runs in a subprocess that chooses its own paths. | Yes, in principle. | **Deferred** — the only capturable footprint is a write claim on the whole worktree root, which would serialize *all* file operations in the repository against any git action. That is a blanket lock, not the footprint, and #686 explicitly does not authorize a blanket rewrite of Git operations. Git's own `index.lock` arbitrates git-vs-git. None of these commands acquires (1) either; adding (1) alone would give renderer-lifetime ownership without filesystem exclusion, which is the misleading half. |
 
 `git_watch.rs`'s lease is an observation lifetime, not filesystem admission; it
@@ -96,15 +96,33 @@ resource, so an extract-here into a directory that contains it is refused. That
 is the intended behaviour, and the contract tests keep their recovery storage
 outside the operated-on tree so they exercise the ordinary path.
 
-Semantics preserved verbatim: client-generated `job_id` cancellation through
-the existing `TaskRegistry` (now via the RAII `register`, so a panicked worker
-releases its id), per-job progress events, conflict refusal before any write in
-extract's pre-scan, and best-effort removal of partial output. Ownership is
-bounded on every exit: the renderer owner is acquired before any effect, its
-retirement sets the job's cancellation flag, and `MutationAdmission::finish`
-runs after the blocking worker joins — success, failure, cancellation or panic.
-A retirement that itself fails becomes a warning attached to the settled
-result, never a lost receipt.
+Semantics preserved: client-generated `job_id` cancellation through the
+existing `TaskRegistry` (now via the RAII `register`, so a panicked worker
+releases its id, which the old explicit `cleanup` did not), per-job progress
+events with the same names and ids, conflict refusal before any write in
+extract's pre-scan, and best-effort removal of partial output.
+
+Input validation is deliberately *stricter* than before, because the request is
+now a claim: paths must be absolute, non-root, NUL-free and free of `.`/`..`
+components; a selection is capped at 32,768 entries and 8 MiB of path bytes;
+and repeated selections are de-duplicated rather than claimed and zipped twice.
+A selection larger than those caps is refused where it previously ran.
+`extract_archive`'s missing-archive check also moved inside the worker, so a
+missing archive now acquires and releases ownership before reporting the same
+`NotFound`; it still precedes destination creation, so no stray directory is
+left behind.
+
+Ownership is bounded on every exit: the renderer owner is acquired before any
+effect, its retirement sets the job's cancellation flag, and
+`MutationAdmission::finish` runs after the blocking worker joins — success,
+ordinary failure, cancellation, a rejected path binding, or a panicking
+blocking worker. A retirement that itself fails becomes a warning on a
+successful result. It is *not* preserved on a failing one: `run_forward`
+attaches warnings inside `map` over `Ok`, so an error result carries only its
+error. That is pre-existing and shared by every family, not archive-specific.
+The committed output path is reported back in the caller's own spelling, so a
+renderer that reached the directory through a symlink broadcasts a refresh its
+other windows recognise; native publication covers the resolved parent too.
 
 Two failure modes the migration closed, both consequences of taking ownership
 of a name seriously:

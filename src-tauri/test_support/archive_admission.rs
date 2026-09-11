@@ -167,6 +167,38 @@ fn an_admitted_archive_excludes_a_competing_operation_on_its_output() {
 }
 
 #[test]
+fn a_selection_containing_its_own_ancestor_still_admits() {
+    let fixture = fixture();
+    // Selecting a folder and something inside it is legal in the file list.
+    // Both become read claims, and a read nested inside another read must not
+    // make an archive refuse its own request.
+    let parent = fixture.base.join("docs");
+    let child = parent.join("nested");
+    fs::create_dir_all(&child).unwrap();
+    fs::write(child.join("a.txt"), b"a").unwrap();
+
+    let plan = compress_plan(
+        &[parent.clone(), child.clone()],
+        fixture.base.join("docs.zip"),
+    );
+    let admission = match fixture.admit(&plan) {
+        Ok(admission) => admission,
+        Err(error) => panic!("nested read claims must not self-conflict: {error}"),
+    };
+    assert_eq!(
+        admission.paths().collect::<Vec<_>>(),
+        vec![
+            fixture.base.join("docs.zip").as_path(),
+            parent.as_path(),
+            child.as_path()
+        ]
+    );
+    // The claims still exclude a writer anywhere in that subtree.
+    assert!(!fixture.claims(&child.join("a.txt"), Access::Write));
+    admission.finish().unwrap();
+}
+
+#[test]
 fn a_compress_releases_its_claim_after_the_work_completes() {
     let fixture = fixture();
     let source = fixture.base.join("docs");
@@ -303,6 +335,56 @@ fn a_failed_extract_here_publishes_the_directory_it_already_wrote_into() {
         b"mine"
     );
     admission.finish().unwrap();
+}
+
+#[test]
+fn the_result_keeps_the_caller_spelling_while_the_worker_uses_the_resolved_one() {
+    let fixture = fixture();
+    let physical = fixture.base.join("physical");
+    fs::create_dir(&physical).unwrap();
+    fs::write(physical.join("a.txt"), b"a").unwrap();
+    let alias = fixture.base.join("alias");
+    std::os::unix::fs::symlink(&physical, &alias).unwrap();
+
+    // The pane reached this directory through the symlink, so that is the
+    // spelling its refresh broadcast must name.
+    let plan = compress_plan(&[alias.join("a.txt")], alias.join("a.zip"));
+    let admission = fixture.admit(&plan).unwrap();
+    let plan = plan
+        .resolve(admission.paths().map(Path::to_path_buf))
+        .unwrap();
+    assert_eq!(plan.output(), physical.join("a.zip"));
+
+    let (result, _) = run_plan(&plan, None, 0, &AtomicBool::new(false));
+    assert_eq!(result.unwrap(), alias.join("a.zip").to_string_lossy());
+    // The bytes landed at the resolved path, and both parents are published.
+    assert!(physical.join("a.zip").exists());
+    assert_eq!(
+        plan.affected_dirs(),
+        vec![
+            alias.to_string_lossy().into_owned(),
+            physical.to_string_lossy().into_owned()
+        ]
+    );
+    admission.finish().unwrap();
+}
+
+#[test]
+fn an_occupied_output_names_the_path_it_refused_to_overwrite() {
+    let fixture = fixture();
+    let source = fixture.base.join("docs");
+    fs::create_dir(&source).unwrap();
+    let output = fixture.base.join("docs.zip");
+    fs::write(&output, b"mine").unwrap();
+
+    let plan = compress_plan(std::slice::from_ref(&source), output.clone());
+    let (result, _) = run_plan(&plan, None, 0, &AtomicBool::new(false));
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("docs.zip"), "unhelpful refusal: {error}");
+    assert!(
+        error.contains("already exists"),
+        "unhelpful refusal: {error}"
+    );
 }
 
 #[test]

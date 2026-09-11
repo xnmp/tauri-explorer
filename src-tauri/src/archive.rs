@@ -273,7 +273,7 @@ fn run_plan(
                 .open(output)
             {
                 Ok(file) => file,
-                Err(error) => return (Err(AppError::from(error)), false),
+                Err(error) => return (Err(occupied(output, error)), false),
             };
             let total = estimate_total_bytes(sources);
             let mut tracker = ZipTracker::new(
@@ -306,7 +306,7 @@ fn run_plan(
                 // Merging into an occupant would make the cleanup below delete
                 // a directory this operation never created.
                 if let Err(error) = fs::create_dir(output) {
-                    return (Err(AppError::from(error)), false);
+                    return (Err(occupied(output, error)), false);
                 }
             }
             match extract_entries(
@@ -333,9 +333,24 @@ fn run_plan(
         }
     };
     (
-        result.map(|()| output.to_string_lossy().into_owned()),
+        // Report the caller's spelling: the renderer derives its refresh
+        // broadcast from this path, and native publication already covers the
+        // resolved parent through `affected_dirs`.
+        result.map(|()| plan.presented_output().to_string_lossy().into_owned()),
         touched,
     )
+}
+
+/// An exclusive create that loses to an occupant is the deliberate fail-closed
+/// case, not an anonymous IO error. Say which name was taken.
+fn occupied(path: &Path, error: std::io::Error) -> AppError {
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        return AppError::AlreadyExists(format!(
+            "{} already exists; it was created after this operation chose its name",
+            path.display()
+        ));
+    }
+    AppError::from(error)
 }
 
 /// Sum file sizes the same way the zip walk will visit them (symlinks

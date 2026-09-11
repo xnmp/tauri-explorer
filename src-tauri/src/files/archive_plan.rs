@@ -182,8 +182,18 @@ pub(crate) struct ArchivePlan {
 }
 
 impl ArchivePlan {
+    /// The path the worker writes: admission's resolved spelling once bound.
     pub(crate) fn output(&self) -> &Path {
         &self.output
+    }
+
+    /// The spelling to report back to the renderer. Effect identity is the
+    /// resolved path, but the caller reached this directory through its own
+    /// spelling and derives its refresh broadcast from what we return; a
+    /// physical path would leave windows on an alias unrefreshed. Native
+    /// publication covers both parents through `affected_dirs`.
+    pub(crate) fn presented_output(&self) -> &Path {
+        self.presentation.as_deref().unwrap_or(&self.output)
     }
 
     pub(crate) fn request(&self) -> &Request {
@@ -220,6 +230,14 @@ impl ArchivePlan {
     }
 
     /// The same owned request determines execution and recovery ownership.
+    ///
+    /// This is a superset of the operation's **writes**. It is not a superset
+    /// of its reads: capture deliberately does not follow the requested entry
+    /// itself, so a selected top-level symlink to a directory is compressed by
+    /// reading through it into a subtree that was never claimed. That matches
+    /// the move/copy capture policy and is read-only, but it is the one place
+    /// the worker touches a path outside `resources()`. Nested symlinks are
+    /// skipped by the zip walk and never reached.
     ///
     /// The output is claimed as a subtree because neither operation's exact
     /// leaf set is known before it runs: compress writes one file but must

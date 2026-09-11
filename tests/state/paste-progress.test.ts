@@ -1,35 +1,22 @@
 /**
- * Large cut/paste progress flow (#165): pasteEntries drives the operations
- * store with byte-level progress, settles the operation on completion,
- * cancellation stops the batch mid-way, and error paths surface without
- * losing the successful items. Observable via operationsManager state and
- * the recorded undo — not implementation internals.
+ * Paste dispatch (#165, #388, #685). Both clipboard modes are now ordered
+ * native sessions, so `pasteEntries` owns exactly two decisions: which
+ * session to open, and whether the cut clipboard may be cleared afterwards.
+ * Progress, conflicts and cancellation belong to the session itself and are
+ * covered by move-operations/copy-operations.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const transfer = vi.hoisted(() => vi.fn());
 const copyFiles = vi.hoisted(() => vi.fn(async () => null));
+const moveFiles = vi.hoisted(() => vi.fn(async (): Promise<{ error: string | null; complete: boolean }> => ({ error: null, complete: true })));
 const undo = vi.hoisted(() => ({ push: vi.fn(), invalidateRedo: vi.fn() }));
-const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
-const estimate = vi.hoisted(() => vi.fn());
 
-vi.mock("$lib/state/file-transfer", () => ({ performFileTransfer: transfer }));
 vi.mock("$lib/state/copy-operations", () => ({ copyFiles }));
+vi.mock("$lib/state/move-operations", () => ({ moveFiles }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
-vi.mock("$lib/state/toast.svelte", () => ({ toastStore: toast }));
-vi.mock("$lib/state/file-events", () => ({ broadcastFileChange: vi.fn() }));
-vi.mock("$lib/state/frecency.svelte", () => ({ frecencyStore: { pruneNonExistent: vi.fn() } }));
-vi.mock("$lib/state/conflict-resolver.svelte", () => ({
-  conflictResolver: { prompt: vi.fn() },
-}));
-vi.mock("$lib/api/files", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  estimateSize: estimate,
-}));
 
 import { pasteEntries, type PasteSource } from "$lib/state/paste-operations";
-import { operationsManager } from "$lib/state/operations.svelte";
 
 function sources(n: number): PasteSource[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -47,129 +34,54 @@ const context = () => ({
   onRefresh: vi.fn(async () => {}),
 });
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  // Settle any operations left over from a previous test.
-  for (const op of [...operationsManager.operations]) {
-    operationsManager.clearOperation(op.id);
-  }
-  estimate.mockResolvedValue({ ok: true, data: { totalBytes: 50 * 1024 } });
-  transfer.mockImplementation(async (path: string) => ({
-    ok: true,
-    path: `/dest/${path.split("/").pop()}`,
-    entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
-  }));
-});
+beforeEach(() => vi.clearAllMocks());
 
-describe("large paste progress", () => {
-  it("tracks byte progress to completion and records one batch undo for 50 items", async () => {
-    const progressSeen: number[] = [];
-    transfer.mockImplementation(async (path: string) => {
-      const op = operationsManager.operations[0];
-      if (op) progressSeen.push(op.progress);
-      return {
-        ok: true,
-        path: `/dest/${path.split("/").pop()}`,
-        entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
-      };
-    });
-
+describe("pasteEntries", () => {
+  it("sends a whole cut selection to one ordered move session", async () => {
     const ctx = context();
-    const error = await pasteEntries(sources(50), true, ctx);
+    const batch = sources(50);
+    const error = await pasteEntries(batch, true, ctx);
 
     expect(error).toBeNull();
-    const op = operationsManager.operations[0];
-    expect(op.status).toBe("completed");
-    expect(op.progress).toBe(100);
-    expect(op.totalBytes).toBe(50 * 1024);
-    // Progress increased monotonically while the batch ran.
-    expect(progressSeen.length).toBe(50);
-    expect([...progressSeen]).toEqual([...progressSeen].sort((a, b) => a - b));
-
-    // One batch undo covering all 50 moves; entries reported to the pane
-    // incrementally as each transfer lands (#388) plus one final batch call.
-    expect(undo.push).toHaveBeenCalledTimes(1);
-    expect(undo.push.mock.calls[0][0]).toMatchObject({ type: "batch" });
-    expect(undo.push.mock.calls[0][0].actions).toHaveLength(50);
-    expect(ctx.onEntriesAdded).toHaveBeenCalledTimes(51);
-    const lastAdd = ctx.onEntriesAdded.mock.calls.at(-1)![0];
-    expect(lastAdd).toHaveLength(50);
-    expect(toast.success).toHaveBeenCalledWith("Pasted successfully");
+    expect(moveFiles).toHaveBeenCalledOnce();
+    expect(moveFiles).toHaveBeenCalledWith(batch.map(({ path }) => path), "/dest", ctx);
+    expect(copyFiles).not.toHaveBeenCalled();
   });
 
-  it("cancellation mid-batch stops transferring and settles as cancelled", async () => {
-    let calls = 0;
-    transfer.mockImplementation(async (path: string) => {
-      calls++;
-      if (calls === 10) {
-        operationsManager.cancelOperation(operationsManager.operations[0].id);
-      }
-      return {
-        ok: true,
-        path: `/dest/${path.split("/").pop()}`,
-        entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
-      };
-    });
-
-    await pasteEntries(sources(50), true, context());
-
-    // The loop noticed the cancel on the next iteration — nowhere near 50.
-    expect(calls).toBeLessThanOrEqual(11);
-    expect(toast.success).not.toHaveBeenCalled();
+  it("leaves the inverse to native history rather than recording its own", async () => {
+    await pasteEntries(sources(3), true, context());
+    expect(undo.push).not.toHaveBeenCalled();
   });
 
-  it("delegates copy paste once and keeps move transfer orchestration separate", async () => {
+  it("clears the cut clipboard only when every requested item arrived", async () => {
+    const completed = vi.fn();
+    await pasteEntries(sources(3), true, context(), completed);
+    expect(completed).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the cut clipboard when the session did not complete the selection", async () => {
+    moveFiles.mockResolvedValue({ error: null, complete: false });
+    const completed = vi.fn();
+    const error = await pasteEntries(sources(3), true, context(), completed);
+    expect(completed).not.toHaveBeenCalled();
+    expect(error).toBeNull();
+  });
+
+  it("reports a session failure and keeps the cut clipboard", async () => {
+    moveFiles.mockResolvedValue({ error: "Move incomplete: a.bin: denied", complete: false });
+    const completed = vi.fn();
+    const error = await pasteEntries(sources(1), true, context(), completed);
+    expect(error).toContain("denied");
+    expect(completed).not.toHaveBeenCalled();
+  });
+
+  it("delegates copy paste once and always releases the copy clipboard", async () => {
     const ctx = context();
     const batch = sources(3);
-    await pasteEntries(batch, false, ctx);
-    expect(copyFiles).toHaveBeenCalledWith(batch.map(({ path }) => path), "/dest", ctx);
-    expect(transfer).not.toHaveBeenCalled();
-    expect(undo.push).not.toHaveBeenCalled();
-  });
-
-  it("publishes and refreshes a committed recovery without an unsafe inverse or success claim", async () => {
-    transfer.mockResolvedValue({
-      ok: true,
-      path: "/dest/a",
-      entry: null,
-      recovery: {
-        sourcePath: "/src/a",
-        destinationPath: "/dest/a",
-        error: "source cleanup denied",
-      },
-    });
-    const ctx = context();
     const completed = vi.fn();
-
-    const error = await pasteEntries(
-      [{ name: "a", path: "/src/a", size: 1 }],
-      true,
-      ctx,
-      completed,
-    );
-
-    expect(error).toContain("source cleanup denied");
-    expect(error).toContain("Paste incomplete");
-    expect(operationsManager.operations[0].status).toBe("error");
-    expect(operationsManager.operations[0].error).toBe(error);
-    expect(operationsManager.operations[0].retryHandler).toBeUndefined();
-    expect(undo.push).not.toHaveBeenCalled();
-    expect(completed).not.toHaveBeenCalled();
-    expect(ctx.onEntriesAdded).not.toHaveBeenCalled();
-    expect(ctx.onRefresh).toHaveBeenCalledOnce();
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("source cleanup denied"));
-  });
-
-  it("estimate failure still runs the batch with file-level progress", async () => {
-    estimate.mockResolvedValue({ ok: false, error: "nope" });
-
-    const error = await pasteEntries(sources(4), true, context());
-
-    expect(error).toBeNull();
-    const op = operationsManager.operations[0];
-    expect(op.status).toBe("completed");
-    expect(op.progress).toBe(100);
-    expect(op.totalBytes).toBeUndefined();
+    await pasteEntries(batch, false, ctx, completed);
+    expect(copyFiles).toHaveBeenCalledWith(batch.map(({ path }) => path), "/dest", ctx);
+    expect(moveFiles).not.toHaveBeenCalled();
+    expect(completed).toHaveBeenCalledOnce();
   });
 });

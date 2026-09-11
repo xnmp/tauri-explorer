@@ -102,8 +102,12 @@ pub(super) enum Retention {
     Retiring,
     /// Removal completed; only the record itself remains.
     Residue,
-    /// An interrupted, errored or unsupported record. Never retired.
+    /// An interrupted or errored record. Never retired.
     Unresolved,
+    /// A settled record of an operation kind that has no retirement plan yet.
+    /// It is listed, measured and counted against both bounds, but nothing
+    /// here may remove any of its artifacts — not even on explicit request.
+    Unsupported,
 }
 
 impl Retention {
@@ -120,8 +124,15 @@ impl Retention {
     }
 }
 
-/// Retention dispatches on operation kind. A kind without a plan is listed and
-/// reported, never retired, so new kinds (Move, #685) are safe by default.
+/// Retention dispatches on operation kind. A kind without a plan is listed,
+/// measured and counted, but never retired, so a new kind is safe by default.
+///
+/// Durable moves (#685) are that case today. A move's artifacts are not a
+/// replacement's: a parked cross-filesystem source is the relocated entry
+/// itself rather than an independent copy of something still published, and a
+/// displaced overwrite target is the only copy of what the destination held.
+/// Neither becomes removable from a replacement's endpoint observations, so a
+/// move record is `Unsupported` until #685 supplies its own retirement plan.
 pub(super) fn retention(operation: &OperationSpec, state: &OperationState) -> Retention {
     match (operation, state) {
         (OperationSpec::CopyReplacement(_), OperationState::Replacement(state)) => {
@@ -148,6 +159,12 @@ pub(super) fn retention(operation: &OperationSpec, state: &OperationState) -> Re
                 Phase::Discarded => Retention::Residue,
                 _ => Retention::Unresolved,
             }
+        }
+        (OperationSpec::Move(_), OperationState::Move(state)) => {
+            if state.error.is_some() {
+                return Retention::Unresolved;
+            }
+            Retention::Unsupported
         }
         _ => Retention::Unresolved,
     }
@@ -196,7 +213,9 @@ impl Usage {
         }
         match bytes {
             Some(bytes) => self.bytes = self.bytes.saturating_add(bytes),
-            None if retention.settled().is_some() => self.unmeasured += 1,
+            None if matches!(retention, Retention::Unsupported) || retention.settled().is_some() => {
+                self.unmeasured += 1
+            }
             None => {}
         }
     }

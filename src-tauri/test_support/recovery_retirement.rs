@@ -896,3 +896,182 @@ fn a_full_record_budget_refuses_a_new_durable_record_through_promotion() {
         .join(".tauri-explorer-recovery-artifacts-two")
         .exists());
 }
+
+/// A durable move's artifacts are not a replacement's, and this is the record
+/// of exactly what retention does with one until #685 supplies its plan.
+mod moves {
+    use super::*;
+    use crate::files::recovery::{
+        forward_move::PreparedMove,
+        retention::{retention, Retention, Usage},
+    };
+    use std::os::unix::fs::MetadataExt;
+
+    const PAYLOAD: &[u8] = b"relocated payload";
+    const DISPLACED: &[u8] = b"displaced payload";
+
+    struct Uninterrupted;
+    impl crate::files::anchored_copy::CopyProgress for Uninterrupted {
+        fn check_cancelled(&mut self) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn advance(&mut self, _: u64, _: &Path) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    struct Moved {
+        _directory: tempfile::TempDir,
+        _shared: Option<tempfile::TempDir>,
+        coordinator: Arc<Coordinator>,
+        from: PathBuf,
+        to: PathBuf,
+    }
+
+    impl Moved {
+        fn usage(&self) -> Usage {
+            enforce(&self.coordinator).unwrap()
+        }
+
+        fn record(&self) -> Retention {
+            let entry = self
+                .coordinator
+                .inventory()
+                .unwrap()
+                .entries
+                .into_iter()
+                .find(|entry| matches!(entry.intent.operation, OperationSpec::Move(_)))
+                .expect("the durable move record is listed");
+            retention(
+                &entry.intent.operation,
+                &entry.state.expect("an indexed move has a checkpoint"),
+            )
+        }
+
+        fn artifacts(&self) -> Vec<PathBuf> {
+            let mut roots = Vec::new();
+            for directory in [&self.from, &self.to] {
+                for entry in fs::read_dir(directory).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with(".tauri-explorer-recovery-"))
+                    {
+                        roots.push(path);
+                    }
+                }
+            }
+            roots
+        }
+    }
+
+    /// An overwriting move on one filesystem: its target root retains the only
+    /// copy of what the destination held.
+    fn overwriting() -> Moved {
+        let directory = tempfile::tempdir().unwrap();
+        let base = fs::canonicalize(directory.path()).unwrap();
+        let (from, to) = (base.join("from"), base.join("to"));
+        fs::create_dir(&from).unwrap();
+        fs::create_dir(&to).unwrap();
+        fs::write(from.join("entry"), PAYLOAD).unwrap();
+        fs::write(to.join("entry"), DISPLACED).unwrap();
+        let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+        PreparedMove::prepare(&coordinator, &from.join("entry"), &to.join("entry"))
+            .unwrap()
+            .execute(&mut Uninterrupted)
+            .unwrap();
+        Moved {
+            _directory: directory,
+            _shared: None,
+            coordinator,
+            from,
+            to,
+        }
+    }
+
+    /// A cross-filesystem move parks its source privately; that parked entry is
+    /// the relocated object itself, not an independent copy of it.
+    fn parked() -> Option<Moved> {
+        let shared_root = Path::new("/dev/shm");
+        if !shared_root.is_dir() {
+            eprintln!("SKIPPED durable move retention: /dev/shm is unavailable");
+            return None;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let shared = tempfile::tempdir_in(shared_root).unwrap();
+        let base = fs::canonicalize(directory.path()).unwrap();
+        let other = fs::canonicalize(shared.path()).unwrap();
+        if fs::metadata(&base).unwrap().dev() == fs::metadata(&other).unwrap().dev() {
+            eprintln!("SKIPPED durable move retention: one shared device");
+            return None;
+        }
+        let (from, to) = (other.join("from"), base.join("to"));
+        fs::create_dir(&from).unwrap();
+        fs::create_dir(&to).unwrap();
+        fs::write(from.join("entry"), PAYLOAD).unwrap();
+        let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+        PreparedMove::prepare(&coordinator, &from.join("entry"), &to.join("entry"))
+            .unwrap()
+            .execute(&mut Uninterrupted)
+            .unwrap();
+        Some(Moved {
+            _directory: directory,
+            _shared: Some(shared),
+            coordinator,
+            from,
+            to,
+        })
+    }
+
+    #[test]
+    fn a_durable_move_is_listed_and_measured_but_never_retired_automatically() {
+        let moved = overwriting();
+        assert_eq!(moved.record(), Retention::Unsupported);
+        let roots = moved.artifacts();
+        assert!(!roots.is_empty(), "an overwriting move retains artifacts");
+
+        // Repeated passes must measure and count it without removing anything.
+        let mut measured = None;
+        for _ in 0..3 {
+            let usage = moved.usage();
+            assert!(usage.records >= 1, "the move occupies the record bound");
+            assert_eq!(usage.discardable, 0, "no discard is offered without a plan");
+            measured = Some(usage.bytes);
+        }
+        assert!(
+            measured.unwrap() >= DISPLACED.len() as u64,
+            "its retained roots are measured against the byte budget"
+        );
+        for root in roots {
+            assert!(root.exists(), "{} was removed", root.display());
+        }
+        assert_eq!(fs::read(moved.to.join("entry")).unwrap(), PAYLOAD);
+    }
+
+    #[test]
+    fn a_parked_move_source_is_never_reclaimed_while_it_is_the_only_copy_there() {
+        let Some(moved) = parked() else { return };
+        assert_eq!(moved.record(), Retention::Unsupported);
+        let parked_copies: Vec<PathBuf> = moved
+            .artifacts()
+            .into_iter()
+            .map(|root| root.join("parked"))
+            .filter(|path| path.exists())
+            .collect();
+        assert_eq!(parked_copies.len(), 1, "the source is parked privately");
+
+        for _ in 0..3 {
+            let usage = moved.usage();
+            assert_eq!(usage.discardable, 0);
+        }
+
+        assert_eq!(
+            fs::read(&parked_copies[0]).unwrap(),
+            PAYLOAD,
+            "the parked source survives every automatic pass"
+        );
+        assert_eq!(fs::read(moved.to.join("entry")).unwrap(), PAYLOAD);
+        assert!(!moved.from.join("entry").exists());
+    }
+}

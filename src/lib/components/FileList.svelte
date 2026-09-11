@@ -338,13 +338,10 @@
     event.preventDefault();
     dragState.clear();
 
-    const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
-    // Multi-item background drops are one undoable batch (#163); the helper
-    // extends existingNames as items land so later same-named files in the
-    // batch still trigger the conflict dialog.
+    // Multi-item background drops are one ordered native session (#163, #685),
+    // which inspects the real destination per item rather than a name snapshot.
     await handleFileDropMany(validPaths, currentPath, false, {
       onRefresh: () => windowTabsManager.refreshAllPanes(),
-      existingNames,
     });
   }
 </script>

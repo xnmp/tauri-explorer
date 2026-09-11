@@ -1,5 +1,5 @@
 //! Filesystem inspection and copy execution for the ordered session.
-use super::{control::Control, model::Conflict, Inspection, Work};
+use super::{Conflict, Control, Inspection, Work};
 use crate::{
     error::AppError,
     files::{self, file_ops, mutation::FileMutationReceipt, WorkerCompletion},
@@ -27,7 +27,7 @@ impl Work for NativeWork {
         files::run_blocking(move || inspect(source, destination, remaining)).await
     }
 
-    async fn copy(
+    async fn apply(
         &self,
         inspection: Inspection,
         overwrite: bool,

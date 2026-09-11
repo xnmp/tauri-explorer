@@ -147,6 +147,23 @@ impl Root {
         Ok(measure(&self.directory, name, 0, &mut budget).ok())
     }
 
+    /// Bounded measurement of every entry a root retains. Used for operation
+    /// kinds whose artifacts are not one named payload — a durable move keeps
+    /// a parked source in one root and a displaced original in another — so
+    /// their retained bytes are accounted even before a retirement plan exists.
+    pub(in crate::files::recovery) fn measure_all(&self) -> Result<Option<u64>, AppError> {
+        let mut budget = MAX_ENTRIES;
+        let mut total = 0u64;
+        for name in self.directory.names(MAX_ENTRIES)? {
+            match measure(&self.directory, &name, 0, &mut budget) {
+                Ok(bytes) => total = total.saturating_add(bytes),
+                // Over bounds is unknown, never zero.
+                Err(_) => return Ok(None),
+            }
+        }
+        Ok(Some(total))
+    }
+
     /// Remove the retained artifact, then every remaining private entry, then
     /// the root itself. Requires a journaled discard intent and a `Remove` or
     /// `Removed` step observed under the same native ownership.

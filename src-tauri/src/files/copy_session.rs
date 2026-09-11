@@ -1,10 +1,19 @@
-//! One ordered copy request owns its pauses, cancellation and confirmed effects.
-//! Filesystem workers never wait for a renderer response.
+//! One ordered native request owns its pauses, cancellation and confirmed
+//! effects. Filesystem workers never wait for a renderer response.
+//!
+//! This is the session engine, not the copy effect: `Work` is the only
+//! operation-specific seam, and `files::move_session` supplies the second
+//! implementation. Ordering, conflict pauses, cancellation, the bounded
+//! diagnostic budget and the completed prefix are shared by construction, so
+//! a move can never acquire a weaker cancellation or retention contract than
+//! a copy by drifting apart from it.
 mod control;
 mod model;
 mod worker;
-pub(crate) use control::{lookup, Registration};
-pub(crate) use model::{Choice, CopyRequest, Decision, Event, ItemOutcome, Outcome, Request};
+pub(crate) use control::{lookup, Control, Registration};
+pub(crate) use model::{
+    Choice, Conflict, Decision, Event, ItemOutcome, Outcome, Request, SessionRequest,
+};
 pub(crate) use worker::NativeWork;
 
 use super::{
@@ -13,8 +22,6 @@ use super::{
     WorkerCompletion,
 };
 use crate::{diagnostics::Warnings, error::AppError};
-use control::Control;
-use model::Conflict;
 use std::{
     collections::BTreeSet,
     future::Future,
@@ -38,7 +45,8 @@ pub(crate) trait Work: Send + 'static {
         destination: String,
         remaining: usize,
     ) -> impl Future<Output = Result<Inspection, AppError>> + Send;
-    fn copy(
+    /// Apply this session's effect to one inspected item.
+    fn apply(
         &self,
         inspection: Inspection,
         overwrite: bool,
@@ -153,7 +161,7 @@ pub(crate) async fn run(
                 }
             });
             let completion = work
-                .copy(inspection, overwrite, inner_control.clone(), progress)
+                .apply(inspection, overwrite, inner_control.clone(), progress)
                 .await;
             let entry = completion
                 .result
@@ -219,7 +227,7 @@ pub(crate) async fn run(
     let mut warnings = Warnings::default();
     if let Err(error) = joined {
         warnings.push(format!(
-            "Copy session was interrupted; inspect unfinished items before retrying: {error}"
+            "Native session was interrupted; inspect unfinished items before retrying: {error}"
         ));
     }
     let items = receipts
@@ -229,7 +237,7 @@ pub(crate) async fn run(
             ItemState::Succeeded(Success { receipt, warning }) => {
                 if let Some(warning) = warning {
                     if warning.is_empty() {
-                        warnings.push("Additional per-item copy diagnostics were omitted");
+                        warnings.push("Additional per-item diagnostics were omitted");
                     } else {
                         warnings.push(warning);
                     }
@@ -248,20 +256,20 @@ pub(crate) async fn run(
             ItemState::Failed(Failure::Skipped) => ItemOutcome::Skipped,
             ItemState::Failed(Failure::Failed(error)) => {
                 if error.is_empty() {
-                    warnings.push("Additional per-item copy diagnostics were omitted");
+                    warnings.push("Additional per-item diagnostics were omitted");
                 }
                 ItemOutcome::Failed { error }
             }
             ItemState::Uncertain(Failure::Uncertain(error)) => {
                 if error.is_empty() {
-                    warnings.push("Additional per-item copy diagnostics were omitted");
+                    warnings.push("Additional per-item diagnostics were omitted");
                 }
                 ItemOutcome::Uncertain { error }
             }
             ItemState::Unstarted => ItemOutcome::Unstarted,
             _ => ItemOutcome::Uncertain {
                 error:
-                    "Copy was interrupted during execution; inspect the destination before retrying"
+                    "The session was interrupted during execution; inspect the destination before retrying"
                         .into(),
             },
         })

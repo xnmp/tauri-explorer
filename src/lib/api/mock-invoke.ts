@@ -3130,7 +3130,8 @@ function loadMockConfigSeed(): Record<string, string> {
 /** Match the native application boundary; inverse execution calls the raw
  * fixture command below so it cannot recursively record forward history. */
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (cmd === "copy_entries") {
+  if (cmd === "copy_entries" || cmd === "move_entries") {
+    const relocating = cmd === "move_entries";
     const request = args!.request as {
       requestId: string; sources: string[]; destDir: string;
     };
@@ -3173,9 +3174,10 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         if (decision?.choice === "skip") { items.push({ status: "skipped" }); continue; }
         send({ type: "started", item, total: sources.length });
         try {
-          const receipt = await invokeMockCommand<FileMutationReceipt>("copy_entry", {
-            source, destDir, overwrite: decision?.choice === "overwrite",
-          });
+          const receipt = await invokeMockCommand<FileMutationReceipt>(
+            relocating ? "move_entry" : "copy_entry",
+            { source, destDir, overwrite: decision?.choice === "overwrite" },
+          );
           items.push({ status: "succeeded", receipt });
           send({ type: "completed", item, total: sources.length, entry: receipt.entry });
         } catch (error) {
@@ -3184,10 +3186,16 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       }
       while (items.length < sources.length) items.push({ status: "unstarted" });
       const outcome: CopySessionOutcome = { items, cancelled: control.cancelled, warnings: [] };
-      const actions: UndoAction[] = items.flatMap((result) => result.status === "succeeded" && !result.receipt.replacement
-        ? [{ type: "copy" as const, copiedPath: result.receipt.path, parentDir: destDir }] : []);
+      const actions: UndoAction[] = items.flatMap((result, index): UndoAction[] => {
+        if (result.status !== "succeeded" || result.receipt.replacement) return [];
+        if (!relocating) return [{ type: "copy" as const, copiedPath: result.receipt.path, parentDir: destDir }];
+        const source = sources[index];
+        if (source === result.receipt.path) return [];
+        return [{ type: "move" as const, sourcePath: source, destPath: result.receipt.path, originalDir: parentDir(source) }];
+      });
+      const verb = relocating ? "Move" : "Copy";
       const action: UndoAction | null = actions.length === 0 ? null : actions.length === 1 ? actions[0]
-        : { type: "batch", actions, label: `Copy ${actions.length} items` };
+        : { type: "batch", actions, label: `${verb} ${actions.length} items` };
       const history = items.some(({ status }) => status === "succeeded")
         ? mockFileHistory.push(action).summary
         : mockFileHistory.summary();

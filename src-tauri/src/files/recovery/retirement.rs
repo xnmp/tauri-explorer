@@ -7,7 +7,7 @@
 
 use super::{
     coordinator::{Coordinator, DurableOperation},
-    model::{OperationState, StagedPayload},
+    model::{OperationSpec, OperationState, StagedPayload},
     replacement_artifact::{Anchor, RetirementStep, Root},
     replacement_transition::ReplacementTransition,
     retention::{measured_bytes, retention, Disposal, Retained, Retention, Usage},
@@ -299,6 +299,20 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
         };
         let position = retention(&entry.intent.operation, &state);
         let bytes = measured_bytes(&state);
+        if matches!(position, Retention::Unsupported) {
+            // Measured, counted, never claimed and never retired.
+            match measure_unsupported(&entry.intent, &state) {
+                Ok(measured) => usage.add(position, measured, true),
+                Err(error) => {
+                    log::debug!(
+                        "Recovery retention could not measure {}: {error}",
+                        entry.intent.id
+                    );
+                    usage.add(position, None, false);
+                }
+            }
+            continue;
+        }
         if !position.retirable() {
             usage.add(position, bytes, true);
             continue;
@@ -378,6 +392,39 @@ fn settle(coordinator: &Arc<Coordinator>, id: &str, generation: u64) -> Result<S
             Ok(Settled::Counted(retirement.retention, bytes, true))
         }
     }
+}
+
+/// Read-only measurement of every artifact root a record retains when its
+/// operation kind has no retirement plan yet (durable moves, #685). Ownership
+/// is never claimed and nothing is journaled, so the bytes are recomputed on
+/// each pass instead of being cached on a checkpoint — the record still counts
+/// against both bounds even though nothing may remove it.
+fn measure_unsupported(
+    intent: &super::model::DurableIntent,
+    state: &OperationState,
+) -> Result<Option<u64>, AppError> {
+    let (OperationSpec::Move(spec), OperationState::Move(move_state)) =
+        (&intent.operation, state)
+    else {
+        return Ok(None);
+    };
+    let mut total = 0u64;
+    for (is_source, plan) in super::move_execution::MoveExecution::plans(spec) {
+        let identity = if is_source {
+            move_state.source_root
+        } else {
+            move_state.target_root
+        };
+        let Some(identity) = identity else { continue };
+        let Some(root) = Anchor::open_plan(intent, plan)?.open_optional(identity)? else {
+            continue;
+        };
+        let Some(bytes) = root.measure_all()? else {
+            return Ok(None);
+        };
+        total = total.saturating_add(bytes);
+    }
+    Ok(Some(total))
 }
 
 /// Read-only observation outside admission and without ownership: is the

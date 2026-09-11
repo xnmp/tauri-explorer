@@ -188,7 +188,18 @@ greater than the supported version continues to fail closed rather than migrate.
 Retirement dispatches on `OperationSpec` / `OperationState` through a single
 `retention` function that names the artifact a record retains and its disposal
 rule, paired with a `retirement_step` observation that verifies the live
-endpoints before anything may be removed. A kind without a
+endpoints before anything may be removed.
+
+Durable moves (#685) are classified `Unsupported`: listed, measured by a
+read-only walk of both artifact roots, and counted against both bounds, but
+never retired — not automatically and not on explicit request. A move's
+artifacts do not reduce to a replacement's: a parked cross-filesystem source is
+the relocated object itself rather than an independent copy of something still
+published, and a displaced overwrite target is the only copy of what the
+destination held. Because that measurement is not journaled, it needs no
+`MoveState` field and no schema change; it is recomputed on each pass. Move
+retirement needs its own plan, naming which artifact a move may release and the
+endpoints that prove it. That plan is the outstanding follow-up. A kind without a
 plan is listed, never retired, and reported as requiring further support. Move
 records (#685) slot in by supplying their plan — parked source and destination
 endpoints — with no change to the state machine, the budget or the UI.

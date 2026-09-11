@@ -1326,6 +1326,7 @@ fn replacement_inventory_warning_does_not_stop_following_batch_effects() {
         Reply::Replacement(ReplacementOutcome {
             history: next.clone(),
             warning: Some("Recovery inventory temporarily unavailable".into()),
+            reapplicable: true,
         }),
         Reply::Unit(Ok(())),
     ]);

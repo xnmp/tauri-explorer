@@ -20,6 +20,9 @@ pub(crate) enum ReplacementDirection {
 pub(crate) struct ReplacementOutcome {
     pub history: ReplacementHistory,
     pub warning: Option<String>,
+    /// A durable move record IS its own inverse and is consumed by Undo: there
+    /// is no retained staged payload to republish, so Redo is not offered.
+    pub reapplicable: bool,
 }
 
 #[cfg(any(unix, test))]

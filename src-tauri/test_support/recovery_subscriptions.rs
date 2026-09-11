@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicUsize;
 
 fn snapshot() -> RecoverySnapshot {
     RecoverySnapshot {
+        storage: Default::default(),
         revision: 1,
         items: vec![],
         error: None,

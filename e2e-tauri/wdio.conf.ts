@@ -14,6 +14,12 @@ import {
   resolveNativeApplication,
   stopNativeQualificationProcesses,
 } from "./native-qualification";
+import {
+  createTerminalKeyProbeCommandBoundary,
+  createTerminalKeyProbeObserver,
+  type TerminalKeyProbeObserver,
+  type TerminalKeyProbeSnapshot,
+} from "./terminal-key-diagnostics";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
@@ -45,10 +51,13 @@ const driverPort = 4444;
 const driverLogPath = path.join(here, "logs", "msedgedriver.log");
 // Each worker appends its own session; the file is uploaded with the WDIO logs.
 const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
+const terminalKeyDiagnosticsDirectory = path.join(here, "logs", "terminal-key-ownership");
 
 let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
 let driverProcessGroup: NativeProcessGroup | undefined;
+let terminalKeyProbeObserver: TerminalKeyProbeObserver | undefined;
+let terminalKeyProbeBoundary: ReturnType<typeof createTerminalKeyProbeCommandBoundary> | undefined;
 
 const waitForPort = async (
   port: number,
@@ -159,6 +168,36 @@ export const config: WebdriverIO.Config = {
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
   onPrepare: processCleanupHooks.prepare,
+
+  before: () => {
+    browser.overwriteCommand("keys", async (originalCommand, keys) => {
+      return terminalKeyProbeBoundary!.keys(keys, () => originalCommand(keys));
+    });
+    browser.overwriteCommand("waitUntil", async (originalCommand, condition, options) => {
+      return terminalKeyProbeBoundary!.waitUntil(
+        options,
+        () => originalCommand(condition, options),
+      );
+    });
+  },
+
+  beforeTest: async () => {
+    terminalKeyProbeObserver = createTerminalKeyProbeObserver(async () => {
+      try {
+        return await browser.execute(() => ({
+          terminalText: document.querySelector(".terminal-panel .xterm-rows")?.textContent ?? null,
+          activeElement: document.activeElement
+            ? { tag: document.activeElement.tagName, classes: document.activeElement.className }
+            : null,
+          terminalDisplayed: !!document.querySelector(".terminal-panel"),
+          modalText: document.querySelector("[role=dialog]")?.textContent ?? null,
+        })) as TerminalKeyProbeSnapshot;
+      } catch (error) {
+        return { error: String(error) };
+      }
+    }, { applicationPath: application, directory: terminalKeyDiagnosticsDirectory });
+    terminalKeyProbeBoundary = createTerminalKeyProbeCommandBoundary(terminalKeyProbeObserver);
+  },
 
   beforeSession: async (_config, capabilities) => {
     if (!isWindows) {

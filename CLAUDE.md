@@ -129,7 +129,9 @@ For a native terminal key-delivery failure, retain a DOM focus/terminal snapshot
 immediately before the WebDriver key command and process evidence after it
 fails. Do not retry, lengthen the timeout, or issue a new renderer read on the
 failure path: a lost WebKit session would turn those into an uninformative
-invalid-session cascade (#709).
+invalid-session cascade (#709). The WDIO command observer owns this evidence;
+keep the existing terminal ownership smoke spec free of additive harness
+instrumentation.
 Real-watcher timing tests must also wait for the backend watch and frontend
 listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A

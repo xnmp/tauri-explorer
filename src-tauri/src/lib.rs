@@ -21,6 +21,7 @@ mod gemini;
 pub mod git;
 pub mod git_actions;
 mod git_common;
+mod git_avatar;
 pub mod git_log;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
 #[path = "../test_support/git_observation_probe.rs"]

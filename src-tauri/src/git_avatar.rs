@@ -367,4 +367,24 @@ mod tests {
             .sum::<u64>();
         assert!(retained_bytes <= MAX_CACHE_BYTES);
     }
+    #[test]
+    fn interrupted_publication_files_are_removed_before_lookup() {
+        let temp = tempfile::tempdir().unwrap();
+        let url = resolve_avatar_url("octocat@users.noreply.github.com", false).unwrap();
+        let (image_path, _) = cache_paths(temp.path(), &url);
+        let interrupted = image_path.with_extension("tmp-interrupted");
+        std::fs::write(&interrupted, b"partial image bytes").unwrap();
+        let png = include_bytes!("../icons/32x32.png").to_vec();
+
+        assert_eq!(
+            load_or_fetch(
+                temp.path(),
+                "octocat@users.noreply.github.com",
+                false,
+                |_| Ok(png.clone())
+            ),
+            Some(png)
+        );
+        assert!(!interrupted.exists());
+    }
 }

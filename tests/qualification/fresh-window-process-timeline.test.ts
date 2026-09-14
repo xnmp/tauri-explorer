@@ -112,11 +112,8 @@ describe("fresh-window blocked lookup process timeline", () => {
       failedAt: 1_500,
       error: expect.stringContaining("page crash or hang"),
     });
-    expect(failure?.nativeDuringLookup?.map((entry) => entry.sampledAt)).toEqual([
-      1_000,
-      1_500,
-      1_500,
-    ]);
+    expect(failure?.nativeDuringLookup?.map((entry) =>
+      "sampledAt" in entry ? entry.sampledAt : null)).toEqual([1_000, 1_500, 1_500]);
     expect(failure?.selectedRendererAtSelection).toMatchObject({
       pid: 21,
       startTime: "210",

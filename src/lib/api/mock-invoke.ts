@@ -2521,6 +2521,7 @@ if (typeof window !== "undefined") {
   // ----- Git history / commit graph (#57) -----
 
   git_author_avatar: (args: Record<string, unknown>) => {
+    localStorage.setItem("mock-avatar-lookups", String(Number(localStorage.getItem("mock-avatar-lookups") ?? "0") + 1));
     if (new URLSearchParams(location.search).get("mockAvatarFailure") === "1") return null;
     const email = String(args.email ?? "").toLowerCase();
     if (!email.endsWith("@users.noreply.github.com")) return null;

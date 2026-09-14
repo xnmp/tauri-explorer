@@ -3,12 +3,15 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 const MAX_AVATAR_BYTES: usize = 256 * 1024;
 const MAX_AVATAR_DIMENSION: u32 = 512;
 const MISSING_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_CACHE_ENTRIES: usize = 512;
+const MAX_CACHE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_ACTIVE_FETCHES: usize = 4;
 
 fn normalized_email(email: &str) -> String {
     email.trim().to_ascii_lowercase()
@@ -96,6 +99,32 @@ fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::write(&temp, bytes)?;
     std::fs::rename(temp, path)
 }
+fn prune_cache_to(cache_dir: &Path, max_entries: usize, max_bytes: u64) {
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    let mut files: Vec<_> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            metadata.is_file().then(|| {
+                (
+                    entry.path(),
+                    metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                    metadata.len(),
+                )
+            })
+        })
+        .collect();
+    files.sort_by_key(|(_, modified, _)| *modified);
+    let mut bytes: u64 = files.iter().map(|(_, _, len)| *len).sum();
+    while files.len() > max_entries || bytes > max_bytes {
+        let (path, _, len) = files.remove(0);
+        if std::fs::remove_file(path).is_ok() {
+            bytes = bytes.saturating_sub(len);
+        }
+    }
+}
 fn load_or_fetch<F>(
     cache_dir: &Path,
     email: &str,
@@ -107,6 +136,7 @@ where
 {
     let url = resolve_avatar_url(email, gravatar_enabled)?;
     std::fs::create_dir_all(cache_dir).ok()?;
+    prune_cache_to(cache_dir, MAX_CACHE_ENTRIES, MAX_CACHE_BYTES);
     let (image_path, missing_path) = cache_paths(cache_dir, &url);
     if let Some(bytes) = load_valid(&image_path) {
         return Some(bytes);
@@ -118,10 +148,12 @@ where
         Some(bytes) => {
             let _ = std::fs::remove_file(&missing_path);
             publish(&image_path, &bytes).ok()?;
+            prune_cache_to(cache_dir, MAX_CACHE_ENTRIES, MAX_CACHE_BYTES);
             Some(bytes)
         }
         None => {
             let _ = std::fs::write(missing_path, []);
+            prune_cache_to(cache_dir, MAX_CACHE_ENTRIES, MAX_CACHE_BYTES);
             None
         }
     }
@@ -150,7 +182,14 @@ fn lookup(email: &str, gravatar_enabled: bool) -> Option<Vec<u8>> {
 }
 #[tauri::command]
 pub async fn git_author_avatar(email: String, gravatar_enabled: bool) -> Option<String> {
+    static ACTIVE_FETCHES: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    let permit = ACTIVE_FETCHES
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_ACTIVE_FETCHES)))
+        .clone()
+        .try_acquire_owned()
+        .ok()?;
     tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         let bytes = lookup(&email, gravatar_enabled)?;
         let mime = image_mime(&bytes)?;
         Some(format!(
@@ -184,6 +223,19 @@ mod tests {
         assert!(resolve_avatar_url("person@example.com", true)
             .is_some_and(|url| url.starts_with("https://www.gravatar.com/avatar/")
                 && url.ends_with("?s=64&d=404")));
+    }
+    #[test]
+    fn no_consent_never_reaches_the_downloader() {
+        let temp = tempfile::tempdir().unwrap();
+        let calls = Cell::new(0);
+        assert_eq!(
+            load_or_fetch(temp.path(), "person@example.com", false, |_| {
+                calls.set(calls.get() + 1);
+                Err(())
+            }),
+            None
+        );
+        assert_eq!(calls.get(), 0);
     }
     #[test]
     fn valid_download_is_reused_from_disk_without_a_second_request() {
@@ -253,6 +305,26 @@ mod tests {
                 |_| Ok(vec![0; MAX_AVATAR_BYTES + 1])
             ),
             None
+        );
+    }
+    #[test]
+    fn disk_cache_prunes_oldest_entries_to_its_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        for index in 0..4 {
+            std::fs::write(
+                temp.path().join(format!("{index}.missing")),
+                [index as u8; 4],
+            )
+            .unwrap();
+        }
+        prune_cache_to(temp.path(), 2, 8);
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 2);
+        assert_eq!(
+            std::fs::read_dir(temp.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().metadata().unwrap().len())
+                .sum::<u64>(),
+            8
         );
     }
 }

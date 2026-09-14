@@ -14,7 +14,9 @@ export function getGitAuthorAvatar(email: string, gravatarEnabled: boolean): Pro
     .catch(() => null)
     .then((value) => {
       if (resolved.size >= MAX_ENTRIES) resolved.delete(resolved.keys().next().value!);
-      resolved.set(key, value);
+      // Native negative entries already carry a TTL. Keeping null forever in
+      // this renderer would turn a transient outage into a session-long miss.
+      if (value !== null) resolved.set(key, value);
       return value;
     })
     .finally(() => { if (pending.get(key) === request) pending.delete(key); });

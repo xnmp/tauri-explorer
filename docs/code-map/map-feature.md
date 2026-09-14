@@ -94,6 +94,7 @@ backend for E2E/browser).
 - `domain/window-launch-plan.ts` — pure query/cwd/home precedence and restoration policy.
 - `state/window-session.ts` — page subscription/delayed-work ownership, rollback, and post-readiness warm priming; borrows window-scoped stores.
 - `src/test-support/window-session-probe.ts` — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; native target, picker, unready and in-flight close fixtures cover rejected handoffs and duplicate-label creation ownership.
+- `e2e-tauri/window-transfer-waits.ts`, `e2e-tauri/specs/window-transfer-lifetime.spec.ts` — one renderer-side asynchronous observation per transfer result or listing entry; operation tokens reject stale results without flooding WebView2's synchronous command queue, and failures retain window/runtime evidence.
 - `state/window-startup.ts` — owns settings → theme/readiness → plugins initialization; teardown revokes late startup.
 
 - `state/repo-root-cache.svelte.ts` — bounded shared root probes for tab labels and Git warming, invalidated by existing file/Git buses.

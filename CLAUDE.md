@@ -166,6 +166,12 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
 
+Windows WebView2 native tests must not poll renderer state with repeated synchronous
+`browser.execute` calls. Under load those commands can fill the WebView2 message
+queue and delay the application event being observed until its real deadline.
+Install one renderer-side observer through `executeAsync`, correlate operation
+results by token, and retain failure JSON/screenshots under `e2e-tauri/logs/`.
+
 `createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
 explorer directory-listener cleanup settles before Vitest closes the worker (#611).
 

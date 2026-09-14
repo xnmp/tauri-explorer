@@ -5,7 +5,10 @@ export type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
 export type CloudProvider = "googledrive" | "wsl";
 export interface Drive {
   name: string;
+  /** Empty for unmounted volumes; never navigate until mounting succeeds. */
   path: string;
+  /** Linux UDisks object identity, independent of the mount path. */
+  device_id?: string;
   kind: DriveKind;
   detail?: string;
   provider?: CloudProvider;

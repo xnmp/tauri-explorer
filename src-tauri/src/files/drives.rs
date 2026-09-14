@@ -50,7 +50,11 @@ pub struct Drive {
     /// Display name. For removable drives this is the volume label when one is
     /// available, falling back to the drive letter / mount name.
     pub name: String,
+    /// Empty only for a discovered, unmounted Linux volume. Never a route.
     pub path: String,
+    /// UDisks object identity, stable across mount-state changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
     pub kind: DriveKind,
     /// Secondary/dimmed label — e.g. the drive letter ("E:") when `name` is the
     /// volume label. `None` when there's nothing useful to show.
@@ -70,6 +74,7 @@ impl Drive {
             kind,
             detail: None,
             provider: None,
+            device_id: None,
         }
     }
 }
@@ -301,6 +306,7 @@ fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
                 kind: DriveKind::Cloud,
                 detail: account,
                 provider: Some(CloudProvider::GoogleDrive),
+                device_id: None,
             })
         })
         .collect()
@@ -356,6 +362,7 @@ fn parse_linux_rclone_mount(line: &str) -> Option<Drive> {
         kind: DriveKind::Cloud,
         detail: (!remote_name.is_empty()).then(|| remote_name.to_string()),
         provider: is_google.then_some(CloudProvider::GoogleDrive),
+        device_id: None,
     })
 }
 
@@ -452,6 +459,7 @@ fn enumerate_drives() -> Vec<Drive> {
                 kind: DriveKind::Cloud,
                 detail: Some(letter_label),
                 provider: Some(CloudProvider::GoogleDrive),
+                device_id: None,
             });
             continue;
         }
@@ -470,6 +478,7 @@ fn enumerate_drives() -> Vec<Drive> {
             kind,
             detail,
             provider: None,
+            device_id: None,
         });
     }
 
@@ -642,6 +651,7 @@ fn windows_wsl_drives() -> Vec<Drive> {
             kind: DriveKind::Cloud,
             detail: Some("WSL".into()),
             provider: Some(CloudProvider::Wsl),
+            device_id: None,
         });
     }
 

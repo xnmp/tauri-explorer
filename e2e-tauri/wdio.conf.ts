@@ -15,6 +15,7 @@ import {
   stopNativeQualificationProcesses,
 } from "./native-qualification";
 import {
+  createTerminalKeyProbeCommandBoundary,
   createTerminalKeyProbeObserver,
   type TerminalKeyProbeObserver,
   type TerminalKeyProbeSnapshot,
@@ -56,10 +57,7 @@ let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
 let driverProcessGroup: NativeProcessGroup | undefined;
 let terminalKeyProbeObserver: TerminalKeyProbeObserver | undefined;
-
-function isCtrlQ(keys: unknown): boolean {
-  return Array.isArray(keys) && keys.length === 2 && keys[0] === "Control" && keys[1] === "q";
-}
+let terminalKeyProbeBoundary: ReturnType<typeof createTerminalKeyProbeCommandBoundary> | undefined;
 
 const waitForPort = async (
   port: number,
@@ -173,14 +171,13 @@ export const config: WebdriverIO.Config = {
 
   before: () => {
     browser.overwriteCommand("keys", async (originalCommand, keys) => {
-      if (!isCtrlQ(keys)) return originalCommand(keys);
-      await terminalKeyProbeObserver!.captureBeforeKey();
-      try {
-        return await originalCommand(keys);
-      } catch (error) {
-        terminalKeyProbeObserver!.recordFailure(error);
-        throw error;
-      }
+      return terminalKeyProbeBoundary!.keys(keys, () => originalCommand(keys));
+    });
+    browser.overwriteCommand("waitUntil", async (originalCommand, condition, options) => {
+      return terminalKeyProbeBoundary!.waitUntil(
+        options,
+        () => originalCommand(condition, options),
+      );
     });
   },
 
@@ -199,12 +196,7 @@ export const config: WebdriverIO.Config = {
         return { error: String(error) };
       }
     }, { applicationPath: application, directory: terminalKeyDiagnosticsDirectory });
-  },
-
-  afterTest: async (_test, _context, result) => {
-    if (String(result.error).includes("terminal-hosted key probe never received Ctrl+Q")) {
-      terminalKeyProbeObserver?.recordFailure(result.error);
-    }
+    terminalKeyProbeBoundary = createTerminalKeyProbeCommandBoundary(terminalKeyProbeObserver);
   },
 
   beforeSession: async (_config, capabilities) => {

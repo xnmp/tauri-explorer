@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createTerminalKeyProbeCommandBoundary,
+  createTerminalKeyProbeObserver,
   runTerminalKeyProbeDiagnostics,
   writeTerminalKeyOwnershipDiagnostics,
   type TerminalKeyOwnershipDiagnostics,
@@ -36,16 +38,53 @@ const beforeKey: TerminalKeyOwnershipDiagnostics = {
 };
 
 describe("terminal key probe diagnostic artifacts", () => {
-  it("wires the native Ctrl+Q smoke spec through the diagnostic command boundary", () => {
-    const config = fs.readFileSync(
-      path.resolve("e2e-tauri/wdio.conf.ts"),
-      "utf8",
-    );
+  it("records a failed delivery before the smoke spec can issue another renderer command", async () => {
+    const calls: string[] = [];
+    const records: TerminalKeyOwnershipDiagnostics[] = [];
+    const deliveryFailure = new Error("terminal-hosted key probe never received Ctrl+Q");
+    const observer = createTerminalKeyProbeObserver(async () => {
+      calls.push("capture");
+      return beforeKey.probe;
+    }, {
+      applicationPath: "/repo/tauri-explorer",
+      directory: scratch(),
+      now: () => 44,
+      collectNative: () => ({ sampledAt: 44, application: [], webkit: [], driver: [] }),
+      write: (record) => {
+        calls.push(`write-${record.phase}`);
+        records.push(record);
+        return "/tmp/terminal-key.json";
+      },
+    });
+    const boundary = createTerminalKeyProbeCommandBoundary(observer);
 
-    expect(config).toContain('browser.overwriteCommand("keys"');
-    expect(config).toContain("await terminalKeyProbeObserver!.captureBeforeKey()");
-    expect(config).toContain("terminalKeyProbeObserver!.recordFailure(error)");
-    expect(config).toContain("terminalKeyProbeObserver?.recordFailure(result.error)");
+    await boundary.keys(["Control", "q"], async () => {
+      calls.push("send-key");
+    });
+    try {
+      await boundary.waitUntil(
+        { timeoutMsg: "terminal-hosted key probe never received Ctrl+Q" },
+        async () => {
+          calls.push("wait-for-delivery");
+          throw deliveryFailure;
+        },
+      );
+      calls.push("renderer-after-failure");
+    } catch (error) {
+      expect(error).toBe(deliveryFailure);
+    }
+
+    expect(calls).toEqual([
+      "capture",
+      "write-before-key",
+      "send-key",
+      "wait-for-delivery",
+      "write-probe-failed",
+    ]);
+    expect(records.at(-1)).toEqual(expect.objectContaining({
+      phase: "probe-failed",
+      error: expect.stringContaining("never received Ctrl+Q"),
+    }));
   });
 
   it("captures before Ctrl+Q and records process-only evidence when delivery fails", async () => {

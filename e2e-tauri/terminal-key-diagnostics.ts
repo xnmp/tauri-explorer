@@ -64,6 +64,48 @@ export interface TerminalKeyProbeObserver {
   recordFailure: (error: unknown) => void;
 }
 
+const terminalDeliveryTimeoutMessage = "terminal-hosted key probe never received Ctrl+Q";
+
+function isCtrlQ(keys: unknown): boolean {
+  return Array.isArray(keys) && keys.length === 2 && keys[0] === "Control" && keys[1] === "q";
+}
+
+function isTerminalDeliveryWait(options: unknown): boolean {
+  return typeof options === "object"
+    && options !== null
+    && "timeoutMsg" in options
+    && options.timeoutMsg === terminalDeliveryTimeoutMessage;
+}
+
+/**
+ * The production WDIO command boundary around the immutable smoke spec. A
+ * failed delivery is recorded before control returns to the spec's catch,
+ * which may be unable to read the renderer after a lost WebDriver session.
+ */
+export function createTerminalKeyProbeCommandBoundary(observer: TerminalKeyProbeObserver) {
+  return {
+    keys: async <T>(keys: unknown, command: () => Promise<T>): Promise<T> => {
+      if (!isCtrlQ(keys)) return command();
+      await observer.captureBeforeKey();
+      try {
+        return await command();
+      } catch (error) {
+        observer.recordFailure(error);
+        throw error;
+      }
+    },
+    waitUntil: async <T>(options: unknown, command: () => Promise<T>): Promise<T> => {
+      if (!isTerminalDeliveryWait(options)) return command();
+      try {
+        return await command();
+      } catch (error) {
+        observer.recordFailure(error);
+        throw error;
+      }
+    },
+  };
+}
+
 /**
  * Create a recorder which can surround a native key command without requiring
  * the smoke spec itself to carry harness diagnostics. Once a failure is

@@ -59,6 +59,61 @@ export interface TerminalKeyProbeDiagnosticOptions {
   write?: (record: TerminalKeyOwnershipDiagnostics, directory: string) => string | null;
 }
 
+export interface TerminalKeyProbeObserver {
+  captureBeforeKey: () => Promise<void>;
+  recordFailure: (error: unknown) => void;
+}
+
+/**
+ * Create a recorder which can surround a native key command without requiring
+ * the smoke spec itself to carry harness diagnostics. Once a failure is
+ * recorded, later hook notifications are ignored so the first native error is
+ * preserved and the artifact remains unambiguous.
+ */
+export function createTerminalKeyProbeObserver(
+  captureProbe: () => Promise<TerminalKeyProbeSnapshot | { error: string }>,
+  options: TerminalKeyProbeDiagnosticOptions,
+): TerminalKeyProbeObserver {
+  const now = options.now ?? Date.now;
+  const collectNative = options.collectNative
+    ?? (() => collectNativeProcessEvidence({ applicationPath: options.applicationPath }));
+  const write = options.write ?? writeTerminalKeyOwnershipDiagnostics;
+  let beforeKey: TerminalKeyOwnershipDiagnostics | null = null;
+  let recordedFailure = false;
+
+  return {
+    captureBeforeKey: async () => {
+      let probe: TerminalKeyProbeSnapshot | { error: string };
+      try {
+        probe = await captureProbe();
+      } catch (error) {
+        probe = { error: String(error) };
+      }
+      beforeKey = {
+        issue: 709,
+        phase: "before-key",
+        capturedAt: now(),
+        probe,
+        native: collectNative(),
+      };
+      write(beforeKey, options.directory);
+    },
+    recordFailure: (error) => {
+      if (!beforeKey || recordedFailure) return;
+      recordedFailure = true;
+      const failure: TerminalKeyOwnershipDiagnostics = {
+        ...beforeKey,
+        phase: "probe-failed",
+        capturedAt: now(),
+        native: collectNative(),
+        error: String(error),
+      };
+      const artifact = write(failure, options.directory);
+      console.error("[terminal-key-diagnostics]", JSON.stringify({ artifact, failure }));
+    },
+  };
+}
+
 /**
  * Preserve the native command boundary: one renderer-side sample before
  * Ctrl+Q, then only observation-safe process evidence if WebDriver cannot
@@ -69,32 +124,14 @@ export async function runTerminalKeyProbeDiagnostics(
   actions: TerminalKeyProbeActions,
   options: TerminalKeyProbeDiagnosticOptions,
 ): Promise<void> {
-  const now = options.now ?? Date.now;
-  const collectNative = options.collectNative
-    ?? (() => collectNativeProcessEvidence({ applicationPath: options.applicationPath }));
-  const write = options.write ?? writeTerminalKeyOwnershipDiagnostics;
-  const beforeKey = {
-    issue: 709 as const,
-    phase: "before-key" as const,
-    capturedAt: now(),
-    probe: await actions.captureProbe(),
-    native: collectNative(),
-  };
-  write(beforeKey, options.directory);
-  await actions.sendKey();
+  const observer = createTerminalKeyProbeObserver(actions.captureProbe, options);
+  await observer.captureBeforeKey();
 
   try {
+    await actions.sendKey();
     await actions.waitForDelivery();
   } catch (error) {
-    const failure = {
-      ...beforeKey,
-      phase: "probe-failed" as const,
-      capturedAt: now(),
-      native: collectNative(),
-      error: String(error),
-    };
-    const artifact = write(failure, options.directory);
-    console.error("[terminal-key-diagnostics]", JSON.stringify({ artifact, failure }));
+    observer.recordFailure(error);
     throw error;
   }
 }

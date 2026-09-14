@@ -37,16 +37,15 @@ const beforeKey: TerminalKeyOwnershipDiagnostics = {
 
 describe("terminal key probe diagnostic artifacts", () => {
   it("wires the native Ctrl+Q smoke spec through the diagnostic command boundary", () => {
-    const spec = fs.readFileSync(
-      path.resolve("e2e-tauri/specs/terminal-key-ownership.spec.ts"),
+    const config = fs.readFileSync(
+      path.resolve("e2e-tauri/wdio.conf.ts"),
       "utf8",
     );
 
-    expect(spec).toContain("await runTerminalKeyProbeDiagnostics({");
-    expect(spec).toContain("captureProbe: captureTerminalKeyProbe");
-    expect(spec).toContain('sendKey: () => browser.keys(["Control", "q"])');
-    expect(spec).toContain("waitForDelivery: () => browser.waitUntil(");
-    expect(spec).toContain('timeout: 15_000, timeoutMsg: "terminal-hosted key probe never received Ctrl+Q"');
+    expect(config).toContain('browser.overwriteCommand("keys"');
+    expect(config).toContain("await terminalKeyProbeObserver!.captureBeforeKey()");
+    expect(config).toContain("terminalKeyProbeObserver!.recordFailure(error)");
+    expect(config).toContain("terminalKeyProbeObserver?.recordFailure(result.error)");
   });
 
   it("captures before Ctrl+Q and records process-only evidence when delivery fails", async () => {
@@ -93,6 +92,42 @@ describe("terminal key probe diagnostic artifacts", () => {
         error: expect.stringContaining("never received Ctrl+Q"),
       }),
     ]);
+  });
+
+  it("records a process-only failure when the Ctrl+Q command itself rejects", async () => {
+    const calls: string[] = [];
+    const records: TerminalKeyOwnershipDiagnostics[] = [];
+    const expectedFailure = new Error("invalid session id while sending Ctrl+Q");
+
+    await expect(runTerminalKeyProbeDiagnostics({
+      captureProbe: async () => {
+        calls.push("capture");
+        return beforeKey.probe;
+      },
+      sendKey: async () => {
+        calls.push("send-key");
+        throw expectedFailure;
+      },
+      waitForDelivery: async () => {
+        calls.push("wait-for-delivery");
+      },
+    }, {
+      applicationPath: "/repo/tauri-explorer",
+      directory: scratch(),
+      now: () => 43,
+      collectNative: () => ({ sampledAt: 43, application: [], webkit: [], driver: [] }),
+      write: (record) => {
+        calls.push(`write-${record.phase}`);
+        records.push(record);
+        return "/tmp/terminal-key.json";
+      },
+    })).rejects.toBe(expectedFailure);
+
+    expect(calls).toEqual(["capture", "write-before-key", "send-key", "write-probe-failed"]);
+    expect(records.at(-1)).toEqual(expect.objectContaining({
+      phase: "probe-failed",
+      error: expect.stringContaining("invalid session id"),
+    }));
   });
 
   it("retains the pre-key focus state and post-failure driver evidence", () => {

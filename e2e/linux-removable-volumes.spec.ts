@@ -20,7 +20,6 @@ test("Linux volume sidebar discovers, mounts, reports errors and removes volumes
     name: "SD Card", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdc1",
   }));
   await expect(page.locator(".drive-item").filter({ hasText: "SD Card" })).toBeVisible();
-  await page.screenshot({ animations: "disabled", path: "evidence/ac-1-linux-unmounted-volumes.png" });
 
   await page.evaluate(() => { (window as unknown as VolumeFixture).__mockMountError = "Not authorized to mount USB Backup"; });
   await usb.click();

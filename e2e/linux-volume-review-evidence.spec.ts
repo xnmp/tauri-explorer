@@ -24,7 +24,7 @@ test("AC 1 shows startup and inserted volumes with spaces and literal escape tex
   await expect(page.locator(".drive-item").filter({ hasText: "SD Card" })).toContainText("Not mounted");
   await expect(page.locator(".drive-item").filter({ hasText: "Raw\\x20" })).toContainText("Not mounted");
   expect(await page.evaluate(() => (window as unknown as VolumeFixture).__mockInvokeCounts?.mount_drive ?? 0)).toBe(0);
-  await page.screenshot({ animations: "disabled", path: "evidence/ac-1-linux-unmounted-volumes.png" });
+  await page.screenshot({ animations: "disabled", path: "evidence/ac-1-linux-literal-labels.png" });
 });
 
 test("AC 3 shows one mounted row after refresh and mounted fallback during UDisks outage", async ({ page }) => {

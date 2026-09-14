@@ -1317,6 +1317,7 @@ const mockFileContent: Record<string, string> = {
 function linuxVolumeFixture() {
   return globalThis as typeof globalThis & {
     __mockLinuxVolumes?: import("./drives").Drive[];
+    __mockUDisksUnavailable?: boolean;
     __mockMountError?: string;
   };
 }
@@ -1430,9 +1431,18 @@ function mockRecoveryPublish(): unknown {
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
-  list_drives: () => linuxVolumeFixture().__mockLinuxVolumes ?? mockDrives,
+  list_drives: () => {
+    const fixture = linuxVolumeFixture();
+    const drives = fixture.__mockLinuxVolumes ?? mockDrives;
+    // Model the native mount-table/cloud fallback when the optional service
+    // disappears. Only mounted paths survive, without a UDisks identity.
+    return fixture.__mockUDisksUnavailable
+      ? drives.filter(d => d.path).map(d => ({ ...d, device_id: undefined }))
+      : drives;
+  },
   mount_drive: (args) => {
     const fixture = linuxVolumeFixture();
+    if (fixture.__mockUDisksUnavailable) throw new Error("Linux storage service (UDisks2) unavailable");
     if (fixture.__mockMountError) throw new Error(fixture.__mockMountError);
     const drive = fixture.__mockLinuxVolumes?.find(d => d.device_id === args?.deviceId);
     if (!drive) throw new Error("Linux storage service (UDisks2) unavailable");

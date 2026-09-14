@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  runTerminalKeyProbeDiagnostics,
   writeTerminalKeyOwnershipDiagnostics,
   type TerminalKeyOwnershipDiagnostics,
 } from "../../e2e-tauri/terminal-key-diagnostics";
@@ -35,6 +36,52 @@ const beforeKey: TerminalKeyOwnershipDiagnostics = {
 };
 
 describe("terminal key probe diagnostic artifacts", () => {
+  it("captures before Ctrl+Q and records process-only evidence when delivery fails", async () => {
+    const calls: string[] = [];
+    const records: TerminalKeyOwnershipDiagnostics[] = [];
+    const expectedFailure = new Error("terminal-hosted key probe never received Ctrl+Q");
+
+    await expect(runTerminalKeyProbeDiagnostics({
+      captureProbe: async () => {
+        calls.push("capture");
+        return beforeKey.probe;
+      },
+      sendKey: async () => {
+        calls.push("send-key");
+      },
+      waitForDelivery: async () => {
+        calls.push("wait-for-delivery");
+        throw expectedFailure;
+      },
+    }, {
+      applicationPath: "/repo/tauri-explorer",
+      directory: scratch(),
+      now: () => 42,
+      collectNative: () => ({ sampledAt: 42, application: [], webkit: [], driver: [] }),
+      write: (record) => {
+        calls.push(`write-${record.phase}`);
+        records.push(record);
+        return "/tmp/terminal-key.json";
+      },
+    })).rejects.toBe(expectedFailure);
+
+    expect(calls).toEqual([
+      "capture",
+      "write-before-key",
+      "send-key",
+      "wait-for-delivery",
+      "write-probe-failed",
+    ]);
+    expect(records).toEqual([
+      expect.objectContaining({ phase: "before-key", probe: beforeKey.probe }),
+      expect.objectContaining({
+        phase: "probe-failed",
+        probe: beforeKey.probe,
+        error: expect.stringContaining("never received Ctrl+Q"),
+      }),
+    ]);
+  });
+
   it("retains the pre-key focus state and post-failure driver evidence", () => {
     const directory = path.join(scratch(), "logs", "terminal-key-ownership");
     const preKeyPath = writeTerminalKeyOwnershipDiagnostics(beforeKey, directory);

@@ -380,6 +380,24 @@ mod tests {
         assert!(retained_bytes <= MAX_CACHE_BYTES);
     }
     #[test]
+    fn failed_deletions_exhaust_prune_candidates_without_panicking() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("old.image"), [1; 8]).unwrap();
+        std::fs::write(temp.path().join("new.image"), [2; 8]).unwrap();
+        let attempts = Cell::new(0);
+
+        prune_cache_to_with(temp.path(), usize::MAX, 0, |_| {
+            attempts.set(attempts.get() + 1);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "deterministic deletion failure",
+            ))
+        });
+
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 2);
+    }
+    #[test]
     fn interrupted_publication_files_are_removed_before_lookup() {
         let temp = tempfile::tempdir().unwrap();
         let url = resolve_avatar_url("octocat@users.noreply.github.com", false).unwrap();

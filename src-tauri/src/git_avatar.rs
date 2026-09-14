@@ -207,6 +207,7 @@ pub async fn git_author_avatar(email: String, gravatar_enabled: bool) -> Option<
 mod tests {
     use super::*;
     use std::cell::Cell;
+    use std::io::Write;
     #[test]
     fn github_noreply_addresses_use_bounded_github_urls() {
         assert_eq!(
@@ -309,6 +310,24 @@ mod tests {
         );
     }
     #[test]
+    fn production_http_reader_rejects_a_response_above_the_byte_limit() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let body = vec![b'x'; MAX_AVATAR_BYTES + 1];
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        });
+        assert!(fetch_avatar(&format!("http://{address}/avatar")).is_err());
+        server.join().unwrap();
+    }
+    #[test]
     fn production_lookup_path_prunes_disk_cache_to_its_bound() {
         let temp = tempfile::tempdir().unwrap();
         let png = include_bytes!("../icons/32x32.png").to_vec();
@@ -328,5 +347,24 @@ mod tests {
             .map(|entry| entry.unwrap().metadata().unwrap().len())
             .sum::<u64>();
         assert!(bytes <= MAX_CACHE_BYTES);
+
+        let byte_limited = tempfile::tempdir().unwrap();
+        let mut padded = png;
+        padded.resize(MAX_AVATAR_BYTES, 0);
+        let count = (MAX_CACHE_BYTES as usize / padded.len()) + 4;
+        for index in 0..count {
+            assert!(load_or_fetch(
+                byte_limited.path(),
+                &format!("bytes-{index}@users.noreply.github.com"),
+                false,
+                |_| Ok(padded.clone()),
+            )
+            .is_some());
+        }
+        let retained_bytes = std::fs::read_dir(byte_limited.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().metadata().unwrap().len())
+            .sum::<u64>();
+        assert!(retained_bytes <= MAX_CACHE_BYTES);
     }
 }

@@ -2524,7 +2524,7 @@ if (typeof window !== "undefined") {
     localStorage.setItem("mock-avatar-lookups", String(Number(localStorage.getItem("mock-avatar-lookups") ?? "0") + 1));
     if (new URLSearchParams(location.search).get("mockAvatarFailure") === "1") return null;
     const email = String(args.email ?? "").toLowerCase();
-    if (!email.endsWith("@users.noreply.github.com")) return null;
+    if (!email.endsWith("@users.noreply.github.com") && args.gravatarEnabled !== true) return null;
     return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Crect width='20' height='20' fill='%232563eb'/%3E%3Ccircle cx='10' cy='8' r='4' fill='white'/%3E%3Cpath d='M3 20c1-6 13-6 14 0' fill='white'/%3E%3C/svg%3E";
   },
 

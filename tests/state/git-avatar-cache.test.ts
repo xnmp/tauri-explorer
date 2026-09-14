@@ -23,4 +23,27 @@ describe("git avatar request ownership", () => {
     calls.slice(1).forEach(({ resolve }) => resolve(null));
     await Promise.all(requests.map(({ promise }) => promise));
   });
+
+  it("deduplicates subscribers and evicts the oldest resolved entry at the bound", async () => {
+    const { requestGitAuthorAvatar } = await import("$lib/state/git-avatar-cache");
+    const first = requestGitAuthorAvatar("shared@example.com", false);
+    const duplicate = requestGitAuthorAvatar("shared@example.com", false);
+    expect(calls).toHaveLength(1);
+    calls[0].resolve("data:image/png;base64,first");
+    await expect(Promise.all([first.promise, duplicate.promise])).resolves.toEqual([
+      "data:image/png;base64,first", "data:image/png;base64,first",
+    ]);
+
+    for (let index = 0; index < 256; index += 1) {
+      const request = requestGitAuthorAvatar(`resolved-${index}@example.com`, false);
+      await vi.waitFor(() => expect(calls).toHaveLength(index + 2));
+      calls[index + 1].resolve(`data:image/png;base64,${index}`);
+      await request.promise;
+    }
+    const beforeReload = calls.length;
+    const evicted = requestGitAuthorAvatar("shared@example.com", false);
+    await vi.waitFor(() => expect(calls).toHaveLength(beforeReload + 1));
+    calls.at(-1)!.resolve(null);
+    await evicted.promise;
+  });
 });

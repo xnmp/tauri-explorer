@@ -58,6 +58,7 @@ test("avatar display and Gravatar consent persist independently", async ({ page 
   await page.reload();
   await waitForEntries(page);
   await openGraph(page);
+  await expect(view.locator(".commit-row", { hasText: "Merge experiment" }).locator("img")).toBeVisible();
   await page.locator(".graph-header").click({ button: "right" });
   await expect(page.locator('[data-testid="toggle-gravatar"]')).toHaveAttribute("aria-checked", "true");
 

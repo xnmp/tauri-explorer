@@ -1,8 +1,7 @@
 import { browser, $, expect } from "@wdio/globals";
 import path from "node:path";
-import { collectNativeProcessEvidence } from "../fresh-window-diagnostics";
 import {
-  writeTerminalKeyOwnershipDiagnostics,
+  runTerminalKeyProbeDiagnostics,
   type TerminalKeyProbeSnapshot,
 } from "../terminal-key-diagnostics";
 import { domText } from "./helpers";
@@ -90,33 +89,15 @@ async function captureTerminalKeyProbe(): Promise<TerminalKeyProbeSnapshot | { e
     // command, then use only process evidence on a failed delivery. Retrying,
     // waiting longer, or reading the renderer after failure would hide whether
     // WebKitGTK/WebDriver lost the event or the session.
-    const beforeKey = {
-      issue: 709 as const,
-      phase: "before-key" as const,
-      capturedAt: Date.now(),
-      probe: await captureTerminalKeyProbe(),
-      native: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
-    };
-    writeTerminalKeyOwnershipDiagnostics(beforeKey, diagnosticsDirectory);
-    // Match the chord path used by the app's other shortcut tests.
-    await browser.keys(["Control", "q"]);
-    try {
-      await browser.waitUntil(async () => (await terminalText()).includes("terminal-key-byte=17"), {
-        timeout: 15_000,
-        timeoutMsg: "terminal-hosted key probe never received Ctrl+Q",
-      });
-    } catch (error) {
-      const failure = {
-        ...beforeKey,
-        phase: "probe-failed" as const,
-        capturedAt: Date.now(),
-        native: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
-        error: String(error),
-      };
-      const artifact = writeTerminalKeyOwnershipDiagnostics(failure, diagnosticsDirectory);
-      console.error("[terminal-key-diagnostics]", JSON.stringify({ artifact, failure }));
-      throw error;
-    }
+    await runTerminalKeyProbeDiagnostics({
+      captureProbe: captureTerminalKeyProbe,
+      // Match the chord path used by the app's other shortcut tests.
+      sendKey: () => browser.keys(["Control", "q"]),
+      waitForDelivery: () => browser.waitUntil(
+        async () => (await terminalText()).includes("terminal-key-byte=17"),
+        { timeout: 15_000, timeoutMsg: "terminal-hosted key probe never received Ctrl+Q" },
+      ),
+    }, { applicationPath: applicationBinary, directory: diagnosticsDirectory });
     await expect($(".terminal-panel")).toBeDisplayed();
     await browser.saveScreenshot("evidence/ac-1-terminal-owns-ctrl-q.png");
     const originalPath = await $(".status-path").getAttribute("title");

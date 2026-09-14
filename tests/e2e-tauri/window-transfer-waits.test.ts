@@ -82,7 +82,10 @@ describe("native transfer renderer waits", () => {
       request: WindowOperationWaitRequest,
     ): Promise<RendererWaitResult<WindowOperationResponse>> => {
       driverCalls += 1;
-      return await new Promise((resolve) => script(request, resolve));
+      return await new Promise((resolve, reject) => script(request, (result) => {
+        if (result === undefined) reject(new Error("renderer wait returned no result"));
+        else resolve(result);
+      }));
     };
 
     const waiting = executeAsync(waitForWindowOperation, {
@@ -117,7 +120,10 @@ describe("native transfer renderer waits", () => {
       request: ListingWaitRequest,
     ): Promise<RendererWaitResult<true>> => {
       driverCalls += 1;
-      return await new Promise((resolve) => script(request, resolve));
+      return await new Promise((resolve, reject) => script(request, (result) => {
+        if (result === undefined) reject(new Error("renderer wait returned no result"));
+        else resolve(result);
+      }));
     };
 
     const waiting = executeAsync(waitForListingEntry, {

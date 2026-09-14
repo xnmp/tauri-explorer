@@ -5,6 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import {
+  waitForListingEntry,
+  waitForWindowOperation,
+  type ListingWaitRequest,
+  type RendererWaitResult,
+  type WindowOperationResponse,
+  type WindowOperationWaitRequest,
+} from "../window-transfer-waits";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-window-transfer-"));
 const sourceDirectory = path.join(scratch, "source");
@@ -14,16 +22,18 @@ const largeLayoutDirectories = Array.from({ length: 8 }, (_, index) =>
 
 async function operation(op: string, target?: string): Promise<unknown> {
   const token = crypto.randomUUID();
-  await browser.execute((detail) => {
-    window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail }));
-  }, { token, op, target });
-  let response: { token?: string; result?: unknown; error?: string } = {};
-  await browser.waitUntil(async () => {
-    response = await browser.execute(() => JSON.parse(document.documentElement.dataset.e2eWindowResult ?? "{}"));
-    return response.token === token;
-  }, { timeout: 25_000, timeoutMsg: `native ${op} did not finish` });
-  expect(response.error).toBeUndefined();
-  return response.result;
+  const observed = await browser.executeAsync<
+    RendererWaitResult<WindowOperationResponse>,
+    [WindowOperationWaitRequest]
+  >(waitForWindowOperation, {
+    token,
+    op,
+    target,
+    timeoutMs: 25_000,
+  });
+  if (!observed.ok) throw new Error(observed.error);
+  expect(observed.value.error).toBeUndefined();
+  return observed.value.result;
 }
 
 async function switchToLabel(label: string): Promise<void> {
@@ -43,8 +53,14 @@ async function switchToLabel(label: string): Promise<void> {
 
 async function listingHas(name: string) {
   try {
-    await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes(name),
-      { timeout: 20_000, timeoutMsg: `native listing did not contain ${name}` });
+    const observed = await browser.executeAsync<
+      RendererWaitResult<true>,
+      [ListingWaitRequest]
+    >(waitForListingEntry, {
+      name,
+      timeoutMs: 20_000,
+    });
+    if (!observed.ok) throw new Error(observed.error);
   } catch (error) {
     await captureDiagnostics(`listing-${name}`);
     throw error;
@@ -91,10 +107,37 @@ async function captureDiagnostics(reason: string): Promise<void> {
       diagnostics.push({ reason, handle, captureError: String(captureError) });
     }
   }
-  console.error(`[window-transfer-diagnostics] ${JSON.stringify(diagnostics, null, 2)}`);
-  await browser.saveScreenshot(`/tmp/window-transfer-${reason.replace(/[^a-z0-9-]/gi, "-")}.png`).catch(() => {});
+  const slug = reason.replace(/[^a-z0-9-]/gi, "-");
+  const logDirectory = path.resolve("e2e-tauri", "logs");
+  const artifact = {
+    reason,
+    capturedAt: new Date().toISOString(),
+    commit: process.env.GITHUB_SHA ?? null,
+    platform: process.platform,
+    runtime: browser.capabilities,
+    windows: diagnostics,
+  };
+  fs.mkdirSync(logDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(logDirectory, `window-transfer-${slug}.json`),
+    JSON.stringify(artifact, null, 2),
+  );
+  console.error(`[window-transfer-diagnostics] ${JSON.stringify(artifact, null, 2)}`);
+  await browser.saveScreenshot(path.join(logDirectory, `window-transfer-${slug}.png`)).catch(() => {});
   if (original && (await browser.getWindowHandles()).includes(original)) {
     await browser.switchToWindow(original).catch(() => {});
+  }
+}
+
+async function expectTransferMoved(
+  moved: { moved: boolean },
+  reason: string,
+): Promise<void> {
+  try {
+    expect(moved.moved).toBe(true);
+  } catch (error) {
+    await captureDiagnostics(reason);
+    throw error;
   }
 }
 
@@ -191,7 +234,7 @@ describe("native window transfer ownership", function () {
     await navigateTo(destinationDirectory);
     const before = await tabCount();
     const moved = await operation("tear-off") as { moved: boolean; target: string };
-    expect(moved.moved).toBe(true);
+    await expectTransferMoved(moved, "split-transfer-not-moved");
     await browser.waitUntil(async () => await tabCount() === before - 1,
       { timeoutMsg: "transferred split tab did not leave its source strip" });
     await switchToLabel(moved.target);
@@ -237,7 +280,7 @@ describe("native window transfer ownership", function () {
     console.info("[window-transfer-phase] large-layout transfer started");
     const before = await tabCount();
     const moved = await operation("tear-off") as { moved: boolean; target: string };
-    expect(moved.moved).toBe(true);
+    await expectTransferMoved(moved, "large-layout-transfer-not-moved");
     await browser.waitUntil(async () => await tabCount() === before - 1,
       { timeoutMsg: "transferred large tab did not leave its source strip" });
     largeLayoutLabel = moved.target;

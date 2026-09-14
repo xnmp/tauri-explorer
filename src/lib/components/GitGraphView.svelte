@@ -546,8 +546,11 @@
   // One message cell contains every ref and the subject. Preserve a usable
   // message region and configured metadata widths; narrow panes scroll the
   // table horizontally instead of allowing badges to displace its columns.
+  // Avatars consume space from that message region at narrow widths. They do
+  // not raise the table minimum: doing so widens inline commit details merely
+  // because a row decoration is visible.
   const minimumTableWidth = $derived(
-    effectiveGraphWidth + 20 + 14 + 160 + (avatarPrefs.visible ? 28 : 0)
+    effectiveGraphWidth + 20 + 14 + 160
     + (shownColumns.author ? authorCol.value + 8 : 0)
     + (shownColumns.date ? dateCol.value + 8 : 0)
     + (shownColumns.commit ? 60 + 8 + 8 : 0)
@@ -1680,7 +1683,7 @@
         <button class="menu-item" role="menuitemcheckbox" aria-checked={avatarPrefs.visible}
           onclick={toggleAvatars} data-testid="toggle-author-avatars">
           <span class="col-check">{avatarPrefs.visible ? "✓" : ""}</span>
-          Author avatars
+          Avatars
         </button>
         <button class="menu-item gravatar-option" role="menuitemcheckbox"
           aria-checked={avatarPrefs.gravatarEnabled} onclick={toggleGravatar} data-testid="toggle-gravatar">

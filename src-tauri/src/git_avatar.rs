@@ -102,12 +102,8 @@ fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     result
 }
-fn prune_cache_to_with<F>(
-    cache_dir: &Path,
-    max_entries: usize,
-    max_bytes: u64,
-    mut remove_file: F,
-) where
+fn prune_cache_to_with<F>(cache_dir: &Path, max_entries: usize, max_bytes: u64, mut remove_file: F)
+where
     F: FnMut(&Path) -> std::io::Result<()>,
 {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {

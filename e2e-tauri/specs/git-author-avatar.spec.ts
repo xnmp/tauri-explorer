@@ -78,6 +78,10 @@ describe("native GitHub author avatar", () => {
 
   after(async () => {
     await browser.execute(() => window.dispatchEvent(new CustomEvent("e2e-reset-view")));
+    // Reset navigation is asynchronous. Keep the fixture alive until the
+    // explorer has visibly left it so the next native session cannot restore
+    // a repository this hook has already deleted.
+    await $(".file-list").waitForExist({ timeout: 15_000 });
     fs.rmSync(repository, { recursive: true, force: true });
   });
 

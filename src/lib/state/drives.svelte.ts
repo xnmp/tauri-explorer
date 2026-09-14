@@ -124,7 +124,7 @@ function createDrivesStore() {
      */
     get removableRoots() {
       return drives
-        .filter((d) => d.kind === "removable" || d.kind === "unknown")
+        .filter((d) => d.path && (d.kind === "removable" || d.kind === "unknown"))
         .map((d) => directoryKey(d.path));
     },
     /**
@@ -133,7 +133,7 @@ function createDrivesStore() {
      * the drive letter prefix (e.g. "e:"); elsewhere it's the mount path.
      */
     get mountedRoots() {
-      return new Set(drives.map((d) => directoryKey(d.path)));
+      return new Set(drives.filter((d) => d.path).map((d) => directoryKey(d.path)));
     },
     refresh,
     startPolling,

@@ -357,8 +357,8 @@ backend for E2E/browser).
 - `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
 - `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
-- `state/drives.svelte.ts` — `drivesStore` (mounted volumes)
-- `domain/drives.ts`; `api/files.ts` (listDrives); `src-tauri/src/files/drives.rs`
+- `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only nonempty paths count as mounted roots)
+- `domain/drives.ts`; `api/drives.ts` (listDrives/mountDrive); `state/drive-opening.ts` (mount-before-navigation and errors); `src-tauri/src/files/drives.rs` + `linux_volumes.rs` (UDisks2 and mounted fallback)
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)
 - `domain/resize-size.ts` → `state/scalar-resize.ts` → `composables/use-resize-owner.svelte.ts` — bounded scalar drafts with captured axis/scale, frame identity and shared DOM lifetime; `state/panel-resize.ts` + `composables/use-panel-resize.svelte.ts` adapt fixed/automatic localStorage widths, while `composables/use-controlled-size.svelte.ts` adapts Terminal/Preview settings and keyed Details sizes with final-only persistence, source supersession and conditional post-teardown finalization

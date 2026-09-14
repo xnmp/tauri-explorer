@@ -20,6 +20,8 @@ pub mod file_ops;
 mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+#[cfg(target_os = "linux")]
+pub mod linux_volumes;
 pub(crate) mod move_execution;
 pub(crate) mod move_plan;
 pub(crate) mod move_session;

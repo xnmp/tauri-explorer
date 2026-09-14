@@ -87,6 +87,7 @@
     gitUndoLedger,
     registerGraphUndoRequester,
   } from "$lib/state/git-graph-undo";
+  import GitAuthorAvatar from "./GitAuthorAvatar.svelte";
 
   const { repoPath }: { repoPath: string } = $props();
 
@@ -438,6 +439,22 @@
     savePersisted(COLUMNS_KEY, shownColumns);
   }
 
+  const AVATAR_PREFS_KEY = "git-graph-avatar-preferences";
+  const savedAvatarPrefs = loadPersisted<unknown>(AVATAR_PREFS_KEY, null);
+  let avatarPrefs = $state({
+    visible: true,
+    gravatarEnabled: false,
+    ...(typeof savedAvatarPrefs === "object" && savedAvatarPrefs !== null ? savedAvatarPrefs : {}),
+  });
+  function toggleAvatars(): void {
+    avatarPrefs = { ...avatarPrefs, visible: !avatarPrefs.visible };
+    savePersisted(AVATAR_PREFS_KEY, avatarPrefs);
+  }
+  function toggleGravatar(): void {
+    avatarPrefs = { ...avatarPrefs, gravatarEnabled: !avatarPrefs.gravatarEnabled };
+    savePersisted(AVATAR_PREFS_KEY, avatarPrefs);
+  }
+
   // Commit-detail metadata (hash/parents/author/date) is hidden by default
   // (#402) — the graph columns already carry it; the detail block leads with
   // the message and files. Toggle lives in the header context menu.
@@ -530,7 +547,7 @@
   // message region and configured metadata widths; narrow panes scroll the
   // table horizontally instead of allowing badges to displace its columns.
   const minimumTableWidth = $derived(
-    effectiveGraphWidth + 20 + 14 + 160
+    effectiveGraphWidth + 20 + 14 + 160 + (avatarPrefs.visible ? 28 : 0)
     + (shownColumns.author ? authorCol.value + 8 : 0)
     + (shownColumns.date ? dateCol.value + 8 : 0)
     + (shownColumns.commit ? 60 + 8 + 8 : 0)
@@ -1660,6 +1677,17 @@
           </button>
         {/each}
         <div class="menu-sep"></div>
+        <button class="menu-item" role="menuitemcheckbox" aria-checked={avatarPrefs.visible}
+          onclick={toggleAvatars} data-testid="toggle-author-avatars">
+          <span class="col-check">{avatarPrefs.visible ? "✓" : ""}</span>
+          Author avatars
+        </button>
+        <button class="menu-item gravatar-option" role="menuitemcheckbox"
+          aria-checked={avatarPrefs.gravatarEnabled} onclick={toggleGravatar} data-testid="toggle-gravatar">
+          <span class="col-check">{avatarPrefs.gravatarEnabled ? "✓" : ""}</span>
+          <span><span>Use Gravatar</span><small>Sends hashed author emails, including private repositories, to Gravatar.</small></span>
+        </button>
+        <div class="menu-sep"></div>
         <!-- Hash/parents/author/date inside the commit detail block (#402):
              hidden by default, toggleable here. -->
         <button
@@ -1900,6 +1928,9 @@
                     onclick={(event) => openReferences(event, commit)}>···</button>
                 {/if}
               </span>
+              {#if avatarPrefs.visible}
+                <GitAuthorAvatar name={commit.author_name} email={commit.author_email} gravatarEnabled={avatarPrefs.gravatarEnabled} />
+              {/if}
               {#if shownColumns.author}<span class="author" style:width="{authorCol.value}px">{commit.author_name}</span>{/if}
               {#if shownColumns.date}<span class="date" style:width="{dateCol.value}px">{formatDate(commit.author_time)}</span>{/if}
               {#if shownColumns.commit}<span class="oid">{commit.short_oid}</span>{/if}
@@ -3743,6 +3774,17 @@
   .references-button[aria-expanded="true"] {
     color: var(--text-primary);
     background: var(--subtle-fill-secondary);
+  }
+
+  .gravatar-option { align-items: flex-start; }
+  .gravatar-option small {
+    display: block;
+    max-width: 290px;
+    margin-top: 2px;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-caption);
+    line-height: 1.3;
+    white-space: normal;
   }
 
   .references-menu {

@@ -16,7 +16,7 @@ test("commit rows expose resolved and deterministic fallback avatars", async ({ 
 
   const view = page.locator('[data-testid="git-graph-view"]');
   const resolved = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
-  const fallback = view.locator(".commit-row", { hasText: "Try alternative parser" });
+  const fallback = view.locator(".commit-row", { hasText: "Merge experiment" });
   await expect(resolved.locator('[data-testid="author-avatar"] img')).toBeVisible();
   await expect(fallback.locator('[data-testid="author-avatar-fallback"]')).toHaveText("B");
   await expect(resolved).toHaveCSS("height", "28px");
@@ -28,7 +28,7 @@ test("commit rows expose resolved and deterministic fallback avatars", async ({ 
   await page.reload();
   await waitForEntries(page);
   await openGraph(page);
-  await expect(view.locator(".commit-row", { hasText: "Try alternative parser" })
+  await expect(view.locator(".commit-row", { hasText: "Merge experiment" })
     .locator('[data-testid="author-avatar-fallback"]')).toHaveAttribute("style", fallbackStyle!);
 });
 
@@ -40,13 +40,13 @@ test("avatar display and Gravatar consent persist independently", async ({ page 
   const view = page.locator('[data-testid="git-graph-view"]');
   await page.locator(".graph-header").click({ button: "right" });
   const menu = page.locator('[data-testid="git-graph-column-menu"]');
-  await expect(menu.getByText("Author avatars", { exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(menu.locator('[data-testid="toggle-author-avatars"]')).toHaveAttribute("aria-checked", "true");
   const consent = menu.locator('[data-testid="toggle-gravatar"]');
   await expect(consent).toHaveAttribute("aria-checked", "false");
   await expect(menu).toContainText("hashed author emails, including private repositories");
   await page.screenshot({ path: "evidence/ac-4-gravatar-opt-in.png" });
 
-  await menu.getByText("Author avatars", { exact: true }).click();
+  await menu.locator('[data-testid="toggle-author-avatars"]').click();
   await expect(view.locator('[data-testid="author-avatar"]')).toHaveCount(0);
   await page.reload();
   await waitForEntries(page);

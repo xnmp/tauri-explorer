@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./common";
 
 /** Best-effort avatar data; null means the caller keeps its local fallback. */
 export async function gitAuthorAvatar(

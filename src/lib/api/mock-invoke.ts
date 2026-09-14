@@ -965,7 +965,7 @@ function mockCommitGraph(): MockCommit[] {
     short_oid: fullOid(c.n).slice(0, 7),
     parents: c.parents.map(fullOid),
     author_name: c.n % 3 === 0 ? "Bob Dev" : "Alice Coder",
-    author_email: c.n % 3 === 0 ? "bob@example.com" : "alice@example.com",
+    author_email: c.n % 3 === 0 ? "bob@example.com" : "12345+octocat@users.noreply.github.com",
     // The newest three commits are "today" (minutes/hours old) so the
     // graph's relative-time wording is exercised (#389); older commits get
     // fixed historical timestamps.
@@ -2519,6 +2519,13 @@ if (typeof window !== "undefined") {
   }),
 
   // ----- Git history / commit graph (#57) -----
+
+  git_author_avatar: (args: Record<string, unknown>) => {
+    if (new URLSearchParams(location.search).get("mockAvatarFailure") === "1") return null;
+    const email = String(args.email ?? "").toLowerCase();
+    if (!email.endsWith("@users.noreply.github.com")) return null;
+    return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Crect width='20' height='20' fill='%232563eb'/%3E%3Ccircle cx='10' cy='8' r='4' fill='white'/%3E%3Cpath d='M3 20c1-6 13-6 14 0' fill='white'/%3E%3C/svg%3E";
+  },
 
   git_log: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";

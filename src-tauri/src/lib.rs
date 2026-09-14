@@ -20,8 +20,8 @@ pub mod files;
 mod gemini;
 pub mod git;
 pub mod git_actions;
-mod git_common;
 mod git_avatar;
+mod git_common;
 pub mod git_log;
 #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
 #[path = "../test_support/git_observation_probe.rs"]
@@ -358,6 +358,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_history::file_history_execute,
             git_watch::git_watch_repo,
             git_watch::git_unwatch_repo,
+            git_avatar::git_author_avatar,
             git_log::git_log,
             git_log::git_refs,
             git_log::git_commit_files,

@@ -387,4 +387,28 @@ mod tests {
         );
         assert!(!interrupted.exists());
     }
+    #[test]
+    fn corrupt_cached_image_is_replaced_by_a_valid_download() {
+        let temp = tempfile::tempdir().unwrap();
+        let url = resolve_avatar_url("octocat@users.noreply.github.com", false).unwrap();
+        let (image_path, _) = cache_paths(temp.path(), &url);
+        std::fs::write(&image_path, b"truncated cache entry").unwrap();
+        let png = include_bytes!("../icons/32x32.png").to_vec();
+        let calls = Cell::new(0);
+
+        assert_eq!(
+            load_or_fetch(
+                temp.path(),
+                "octocat@users.noreply.github.com",
+                false,
+                |_| {
+                    calls.set(calls.get() + 1);
+                    Ok(png.clone())
+                }
+            ),
+            Some(png.clone())
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(std::fs::read(image_path).unwrap(), png);
+    }
 }

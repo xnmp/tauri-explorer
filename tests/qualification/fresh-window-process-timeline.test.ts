@@ -123,5 +123,6 @@ describe("fresh-window blocked lookup process timeline", () => {
     });
     expect(failure?.selectedRendererFirstMissingAt).toBe(1_500);
     expect(driver.execute).toHaveBeenCalledTimes(webDriverCallsBeforeLookup);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

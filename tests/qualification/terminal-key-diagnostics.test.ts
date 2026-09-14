@@ -46,6 +46,7 @@ describe("terminal key probe diagnostic artifacts", () => {
     expect(spec).toContain("captureProbe: captureTerminalKeyProbe");
     expect(spec).toContain('sendKey: () => browser.keys(["Control", "q"])');
     expect(spec).toContain("waitForDelivery: () => browser.waitUntil(");
+    expect(spec).toContain('timeout: 15_000, timeoutMsg: "terminal-hosted key probe never received Ctrl+Q"');
   });
 
   it("captures before Ctrl+Q and records process-only evidence when delivery fails", async () => {

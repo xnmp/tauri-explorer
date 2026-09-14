@@ -102,7 +102,14 @@ fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     result
 }
-fn prune_cache_to(cache_dir: &Path, max_entries: usize, max_bytes: u64) {
+fn prune_cache_to_with<F>(
+    cache_dir: &Path,
+    max_entries: usize,
+    max_bytes: u64,
+    mut remove_file: F,
+) where
+    F: FnMut(&Path) -> std::io::Result<()>,
+{
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return;
     };
@@ -115,7 +122,7 @@ fn prune_cache_to(cache_dir: &Path, max_entries: usize, max_bytes: u64) {
                 .and_then(|extension| extension.to_str())
                 .is_some_and(|extension| extension.starts_with("tmp-"))
             {
-                let _ = std::fs::remove_file(path);
+                let _ = remove_file(&path);
                 return None;
             }
             let metadata = entry.metadata().ok()?;
@@ -131,11 +138,19 @@ fn prune_cache_to(cache_dir: &Path, max_entries: usize, max_bytes: u64) {
     files.sort_by_key(|(_, modified, _)| *modified);
     let mut bytes: u64 = files.iter().map(|(_, _, len)| *len).sum();
     while files.len() > max_entries || bytes > max_bytes {
-        let (path, _, len) = files.remove(0);
-        if std::fs::remove_file(path).is_ok() {
+        let Some((path, _, len)) = files.first().cloned() else {
+            break;
+        };
+        files.remove(0);
+        if remove_file(&path).is_ok() {
             bytes = bytes.saturating_sub(len);
         }
     }
+}
+fn prune_cache_to(cache_dir: &Path, max_entries: usize, max_bytes: u64) {
+    prune_cache_to_with(cache_dir, max_entries, max_bytes, |path| {
+        std::fs::remove_file(path)
+    });
 }
 fn load_or_fetch<F>(
     cache_dir: &Path,

@@ -86,15 +86,20 @@ must use the programmatic CDP attach path.
 `.file-list` count, status path, URL, ready/visibility state) plus a `/proc` scan
 of the application, its WebKit auxiliary processes and the drivers, every time a
 fresh child window is selected. `waitForFreshWindowElement` replays that record
-with a second `/proc` scan if the first element lookup fails — by then the
-WebDriver session may already be invalid, so the failure path observes processes
-only. Records land in `e2e-tauri/logs/fresh-window/` (override with
+with a bounded, timestamped `/proc` timeline while the first element lookup is
+pending — by the time it fails, the WebDriver session may already be invalid,
+so the sampler never issues another driver command. The newest selection-time
+`WebKitWebProcess` is retained as the fresh child's inferred renderer identity
+using both PID and process start time; the artifact reports the first process
+sample where that identity is absent. Records land in
+`e2e-tauri/logs/fresh-window/` (override with
 `TAURI_NATIVE_DIAGNOSTICS_DIR`), and `tauri-driver`'s output — which
 `WebKitWebDriver` inherits — is teed to `e2e-tauri/logs/tauri-driver.log`. CI
 uploads both with the WDIO logs.
 
-A `WebKitWebProcess` present at selection and gone after the failure is renderer
-death; both scans intact points at the driver instead. See
+A renderer that first disappears before the driver timeout supports renderer
+death; one that survives until session deletion points at the driver/session
+path instead. See
 `docs/lessons/703-native-webdriver-session-loss.md`.
 
 

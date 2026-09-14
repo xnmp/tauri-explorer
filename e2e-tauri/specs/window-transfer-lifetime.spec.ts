@@ -21,19 +21,24 @@ const largeLayoutDirectories = Array.from({ length: 8 }, (_, index) =>
   path.join(scratch, `large-pane-${index}`));
 
 async function operation(op: string, target?: string): Promise<unknown> {
-  const token = crypto.randomUUID();
-  const observed = await browser.executeAsync<
-    RendererWaitResult<WindowOperationResponse>,
-    [WindowOperationWaitRequest]
-  >(waitForWindowOperation, {
-    token,
-    op,
-    target,
-    timeoutMs: 25_000,
-  });
-  if (!observed.ok) throw new Error(observed.error);
-  expect(observed.value.error).toBeUndefined();
-  return observed.value.result;
+  try {
+    const token = crypto.randomUUID();
+    const observed = await browser.executeAsync<
+      RendererWaitResult<WindowOperationResponse>,
+      [WindowOperationWaitRequest]
+    >(waitForWindowOperation, {
+      token,
+      op,
+      target,
+      timeoutMs: 25_000,
+    });
+    if (!observed.ok) throw new Error(observed.error);
+    expect(observed.value.error).toBeUndefined();
+    return observed.value.result;
+  } catch (error) {
+    await captureDiagnostics(`operation-${op}`);
+    throw error;
+  }
 }
 
 async function switchToLabel(label: string): Promise<void> {
@@ -74,6 +79,12 @@ async function tabCount() {
 async function captureDiagnostics(reason: string): Promise<void> {
   const original = await browser.getWindowHandle().catch(() => null);
   const diagnostics: unknown[] = [];
+  const slug = reason.replace(/[^a-z0-9-]/gi, "-");
+  const logDirectory = path.resolve("e2e-tauri", "logs");
+  fs.mkdirSync(logDirectory, { recursive: true });
+  // Capture the failing window before inspecting any unrelated window.
+  await browser.saveScreenshot(path.join(logDirectory, `window-transfer-${slug}.png`))
+    .catch((error) => diagnostics.push({ handle: original, screenshotError: String(error) }));
   for (const handle of await browser.getWindowHandles()) {
     try {
       await browser.switchToWindow(handle);
@@ -107,8 +118,6 @@ async function captureDiagnostics(reason: string): Promise<void> {
       diagnostics.push({ reason, handle, captureError: String(captureError) });
     }
   }
-  const slug = reason.replace(/[^a-z0-9-]/gi, "-");
-  const logDirectory = path.resolve("e2e-tauri", "logs");
   const artifact = {
     reason,
     capturedAt: new Date().toISOString(),
@@ -117,13 +126,11 @@ async function captureDiagnostics(reason: string): Promise<void> {
     runtime: browser.capabilities,
     windows: diagnostics,
   };
-  fs.mkdirSync(logDirectory, { recursive: true });
   fs.writeFileSync(
     path.join(logDirectory, `window-transfer-${slug}.json`),
     JSON.stringify(artifact, null, 2),
   );
   console.error(`[window-transfer-diagnostics] ${JSON.stringify(artifact, null, 2)}`);
-  await browser.saveScreenshot(path.join(logDirectory, `window-transfer-${slug}.png`)).catch(() => {});
   if (original && (await browser.getWindowHandles()).includes(original)) {
     await browser.switchToWindow(original).catch(() => {});
   }
@@ -219,6 +226,7 @@ describe("native window transfer ownership", function () {
     expect(await tabCount()).toBe(before + 1);
     fs.writeFileSync(path.join(destinationDirectory, "after-transfer.txt"), "native watcher");
     await listingHas("after-transfer.txt");
+    await browser.saveScreenshot("e2e-tauri/logs/ac-2-last-tab-adopted-watcher.png");
     await switchToLabel(childLabels[1]);
     expect(await tabCount()).toBe(unrelatedBefore);
     await listingHas("source.txt");
@@ -244,6 +252,7 @@ describe("native window transfer ownership", function () {
     }, { timeoutMsg: "the adopted split tab lost a pane or its directory" });
     fs.mkdirSync("screenshots/refactor/repo-health-cleanup", { recursive: true });
     await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-window-transfer.png");
+    await browser.saveScreenshot("e2e-tauri/logs/ac-1-correlated-split-transfer.png");
     await browser.switchToWindow(mainHandle);
     await navigateTo(sourceDirectory);
     await listingHas("source.txt");
@@ -311,6 +320,7 @@ describe("native window transfer ownership", function () {
 
     fs.writeFileSync(path.join(largeLayoutDirectories[0], "after-large-transfer.txt"), "watcher");
     await listingHas("after-large-transfer.txt");
+    await browser.saveScreenshot("e2e-tauri/logs/ac-3-eight-pane-transfer.png");
     console.info("[window-transfer-phase] large-layout transfer completed");
   });
 
@@ -359,6 +369,7 @@ describe("native window transfer ownership", function () {
       await listingHas("destination.txt");
       if (closeCase.kind === "native") {
         await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-window-close.png");
+        await captureDiagnostics("qualification-complete");
       }
       console.info(`[window-transfer-phase] ${closeCase.kind} close completed`);
     });

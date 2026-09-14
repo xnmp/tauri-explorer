@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [dev, main]
   push:
-    branches: [dev, main]
+    # Temporary branch-scoped diagnostics for #710; remove after qualification.
+    branches: [dev, main, fix/710-test-window-transfer-lifetime-native-smo]
   workflow_dispatch:
 
 concurrency:

@@ -216,6 +216,9 @@ consent: GitHub noreply addresses may resolve while Gravatar remains opt-in.
 Their restart-persistent cache is derived, best-effort state: publication uses
 sibling temporary files and rename, interrupted/corrupt entries are discarded,
 and every storage or network failure must leave the deterministic row fallback.
+Pruning must also exhaust its current candidates and return when deletion fails;
+retrying an unchanged byte total after the candidate list empties can panic and
+poison the process-wide lookup lock.
 See ADR 0025.
 Mount `GitAuthorAvatar` only while display is enabled so the off state cannot
 start lookups; native responses are bounded, validated data URIs backed by the

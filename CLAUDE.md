@@ -185,3 +185,13 @@ record rows with `VirtualList` (#666).
 The floating update notice uses the shared `modal-card` and `btn` control chrome;
 import `components/modal.css` in `UpdateNotice.svelte` so the globally scoped
 dialog styles accompany the otherwise standalone notice.
+
+Linux removable-volume discovery combines a single mount-table snapshot with
+UDisks2 filesystem objects (`files/linux_volumes.rs`). UDisks object identity is
+separate from `Drive.path`: an empty path means unmounted and must never enter
+navigation or mounted-root tracking. Mount only on explicit opening, through
+`state/drive-opening.ts` and `mount_drive`; discovery itself is read-only.
+Decode hex escapes only in `/dev/disk/by-label` aliases, once. UDisks `IdLabel`
+and returned mount paths are already decoded, and may contain literal `\x20`.
+Keep isolated-bus regression tests on the production adapter; browser IPC
+fixtures cannot prove native discovery or mount authorization (#677).

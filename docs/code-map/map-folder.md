@@ -188,7 +188,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `recent-files.svelte.ts` — recent files store.
 - `frecency.svelte.ts` — zoxide-style frecency path ranking.
-- `drives.svelte.ts` — mounted drives/volumes reactive store.
+- `drives.svelte.ts` — discovered volumes and mounted-root reactive store.
+- `drive-opening.ts` — coalesces mount requests; navigates only after mounting succeeds and reports failures.
 - `home.svelte.ts` — cached home directory (sync `.value`).
 - `sidebar-views.svelte.ts` — activity-bar sidebar view registry (#52).
 - `folder-views.svelte.ts` — per-folder view overrides (e.g. thumbnail size, #8762).
@@ -495,7 +496,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
-- `drives.rs` — enumerate drives/volumes cross-platform.
+- `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding.
+- `linux_volumes.rs` — UDisks2 filesystem discovery, stable volume identity, mount-table merge and click-to-mount adapter.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 

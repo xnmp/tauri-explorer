@@ -26,7 +26,7 @@ function createHistory(): void {
   execFileSync("git", ["init", "--quiet", "--initial-branch=main"], { cwd: repository });
   const timestamp = Math.floor(Date.now() / 1000) - 240;
   const commits = Array.from({ length: 180 }, (_, index) => {
-    const message = index === 179 ? subject : `avatar history ${index + 1}`;
+    const message = `avatar history ${index + 1}`;
     const parent = index === 0 ? "" : `from :${index}\n`;
     return [
       "commit refs/heads/main",
@@ -39,6 +39,19 @@ function createHistory(): void {
     ].join("\n");
   }).join("\n");
   execFileSync("git", ["fast-import", "--quiet"], { cwd: repository, input: commits });
+  execFileSync("git", ["reset", "--quiet", "--hard", "HEAD"], { cwd: repository });
+  fs.writeFileSync(path.join(repository, "README.md"), "native avatar fixture\n");
+  execFileSync("git", ["add", "README.md"], { cwd: repository });
+  execFileSync(
+    "git",
+    [
+      "-c", "user.name=The Octocat",
+      "-c", "user.email=583231+octocat@users.noreply.github.com",
+      "-c", "commit.gpgsign=false",
+      "commit", "--quiet", "-m", subject,
+    ],
+    { cwd: repository },
+  );
 }
 
 async function openGraph(): Promise<void> {

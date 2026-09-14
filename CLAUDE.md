@@ -210,3 +210,9 @@ service-unavailable fallback. Keep simulated outage screenshots paired with the
 native isolated-D-Bus contract tests. Run the full Cargo format check after
 registering a new module; formatting only its implementation misses module-order
 changes in `files/mod.rs` (#677 / PR #726).
+
+Git Graph author avatars keep display preference separate from third-party
+consent: GitHub noreply addresses may resolve while Gravatar remains opt-in.
+Mount `GitAuthorAvatar` only while display is enabled so the off state cannot
+start lookups; native responses are bounded, validated data URIs backed by the
+disk cache, while the row always owns its deterministic local fallback.

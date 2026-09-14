@@ -49,7 +49,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
-- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), and branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513).
+- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513), and `GitAuthorAvatar.svelte` renders opt-out round author images with deterministic local fallbacks (#514).
 - `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
@@ -139,6 +139,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-undo.ts` — bounded session ledger + active-pane request bus for confirmed graph-operation undo (#513); entries are repository-scoped and contain backend-produced expected-state snapshots.
 - `git-graph-file-history.ts` — per-pane SCM-to-graph handoff: buffers a repository-relative file path through a keyed graph remount, delivers directly to an already matching graph, and drops closed-pane requests (#518).
 - `git-graph-cache.ts` — bounded per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; retains the supported 12-tab fan-out. GitGraphView skips its redundant initial reload for a valid cache hit, while local and external changes revoke pending writers and evict a repo's snapshots before remount (#433, #505, arch Finding 7).
+- `git-avatar-cache.ts` — bounded process-owned author-avatar result and in-flight cache; visible rows for the same identity share one best-effort native lookup (#514).
+- `src/lib/domain/git-avatar.ts` — deterministic author identity normalization, initial selection, and fallback-disc colour (#514).
 - `git-status.svelte.ts` — per-entry git status cache store.
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431); Git-change events revoke cached/joinable reads, publication uses current-flight identity, and successful summaries use a bounded 64-entry LRU.
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
@@ -424,6 +426,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
+- `git_avatar.rs` — privacy-gated GitHub noreply/opt-in Gravatar resolution, bounded image validation, negative results, and restart-safe disk cache (#514).
+- `src/lib/api/git-avatar.ts` — mock-aware IPC wrapper for best-effort author-avatar data (#514).
 - `git_watch.rs` — lazy Git observation adapter using shared renderer ownership; native factory and process shutdown.
 - `file_history/mod.rs` — application-owned history service, renderer channels and supervised native inverse execution.
 - `file_history/model.rs` — pure per-client/shared history admission, reserved forward/opposite ordering, partial settlement, branch/clear retirement and retained-history bounds.

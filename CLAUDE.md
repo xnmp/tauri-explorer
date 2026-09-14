@@ -219,7 +219,7 @@ and every storage or network failure must leave the deterministic row fallback.
 Pruning must also exhaust its current candidates and return when deletion fails;
 retrying an unchanged byte total after the candidate list empties can panic and
 poison the process-wide lookup lock.
-See ADR 0025.
+See ADR 0026.
 Mount `GitAuthorAvatar` only while display is enabled so the off state cannot
 start lookups; native responses are bounded, validated data URIs backed by the
 disk cache, while the row always owns its deterministic local fallback.

@@ -20,9 +20,9 @@ test("commit rows expose resolved and deterministic fallback avatars", async ({ 
   await expect(resolved.locator('[data-testid="author-avatar"] img')).toBeVisible();
   await expect(fallback.locator('[data-testid="author-avatar-fallback"]')).toHaveText("B");
   await expect(resolved).toHaveCSS("height", "28px");
-  await page.screenshot({ path: "evidence/ac-1-resolved-avatar.png" });
+  await resolved.screenshot({ path: "evidence/ac-1-resolved-avatar.png" });
   await fallback.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: "evidence/ac-2-fallback-avatar.png" });
+  await fallback.screenshot({ path: "evidence/ac-2-fallback-avatar.png" });
 
   const fallbackStyle = await fallback.locator('[data-testid="author-avatar-fallback"]').getAttribute("style");
   await page.reload();

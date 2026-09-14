@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createTerminalKeyProbeCommandBoundary,
   createTerminalKeyProbeObserver,
-  runTerminalKeyProbeDiagnostics,
   writeTerminalKeyOwnershipDiagnostics,
   type TerminalKeyOwnershipDiagnostics,
 } from "../../e2e-tauri/terminal-key-diagnostics";
@@ -61,18 +60,23 @@ describe("terminal key probe diagnostic artifacts", () => {
     await boundary.keys(["Control", "q"], async () => {
       calls.push("send-key");
     });
-    try {
-      await boundary.waitUntil(
-        { timeoutMsg: "terminal-hosted key probe never received Ctrl+Q" },
-        async () => {
-          calls.push("wait-for-delivery");
-          throw deliveryFailure;
-        },
-      );
-      calls.push("renderer-after-failure");
-    } catch (error) {
-      expect(error).toBe(deliveryFailure);
+    async function immutableSmokeFailureHandler(): Promise<void> {
+      try {
+        await boundary.waitUntil(
+          { timeoutMsg: "terminal-hosted key probe never received Ctrl+Q" },
+          async () => {
+            calls.push("wait-for-delivery");
+            throw deliveryFailure;
+          },
+        );
+      } catch (error) {
+        // Mirrors the immutable spec's legacy renderer diagnostic catch.
+        calls.push("renderer-after-failure");
+        throw error;
+      }
     }
+
+    await expect(immutableSmokeFailureHandler()).rejects.toBe(deliveryFailure);
 
     expect(calls).toEqual([
       "capture",
@@ -80,57 +84,13 @@ describe("terminal key probe diagnostic artifacts", () => {
       "send-key",
       "wait-for-delivery",
       "write-probe-failed",
+      "renderer-after-failure",
     ]);
+    expect(records.filter((record) => record.phase === "probe-failed")).toHaveLength(1);
     expect(records.at(-1)).toEqual(expect.objectContaining({
       phase: "probe-failed",
       error: expect.stringContaining("never received Ctrl+Q"),
     }));
-  });
-
-  it("captures before Ctrl+Q and records process-only evidence when delivery fails", async () => {
-    const calls: string[] = [];
-    const records: TerminalKeyOwnershipDiagnostics[] = [];
-    const expectedFailure = new Error("terminal-hosted key probe never received Ctrl+Q");
-
-    await expect(runTerminalKeyProbeDiagnostics({
-      captureProbe: async () => {
-        calls.push("capture");
-        return beforeKey.probe;
-      },
-      sendKey: async () => {
-        calls.push("send-key");
-      },
-      waitForDelivery: async () => {
-        calls.push("wait-for-delivery");
-        throw expectedFailure;
-      },
-    }, {
-      applicationPath: "/repo/tauri-explorer",
-      directory: scratch(),
-      now: () => 42,
-      collectNative: () => ({ sampledAt: 42, application: [], webkit: [], driver: [] }),
-      write: (record) => {
-        calls.push(`write-${record.phase}`);
-        records.push(record);
-        return "/tmp/terminal-key.json";
-      },
-    })).rejects.toBe(expectedFailure);
-
-    expect(calls).toEqual([
-      "capture",
-      "write-before-key",
-      "send-key",
-      "wait-for-delivery",
-      "write-probe-failed",
-    ]);
-    expect(records).toEqual([
-      expect.objectContaining({ phase: "before-key", probe: beforeKey.probe }),
-      expect.objectContaining({
-        phase: "probe-failed",
-        probe: beforeKey.probe,
-        error: expect.stringContaining("never received Ctrl+Q"),
-      }),
-    ]);
   });
 
   it("records a process-only failure when the Ctrl+Q command itself rejects", async () => {
@@ -138,18 +98,9 @@ describe("terminal key probe diagnostic artifacts", () => {
     const records: TerminalKeyOwnershipDiagnostics[] = [];
     const expectedFailure = new Error("invalid session id while sending Ctrl+Q");
 
-    await expect(runTerminalKeyProbeDiagnostics({
-      captureProbe: async () => {
+    const observer = createTerminalKeyProbeObserver(async () => {
         calls.push("capture");
         return beforeKey.probe;
-      },
-      sendKey: async () => {
-        calls.push("send-key");
-        throw expectedFailure;
-      },
-      waitForDelivery: async () => {
-        calls.push("wait-for-delivery");
-      },
     }, {
       applicationPath: "/repo/tauri-explorer",
       directory: scratch(),
@@ -160,6 +111,12 @@ describe("terminal key probe diagnostic artifacts", () => {
         records.push(record);
         return "/tmp/terminal-key.json";
       },
+    });
+    const boundary = createTerminalKeyProbeCommandBoundary(observer);
+
+    await expect(boundary.keys(["Control", "q"], async () => {
+        calls.push("send-key");
+        throw expectedFailure;
     })).rejects.toBe(expectedFailure);
 
     expect(calls).toEqual(["capture", "write-before-key", "send-key", "write-probe-failed"]);

@@ -44,13 +44,6 @@ export function writeTerminalKeyOwnershipDiagnostics(
   }
 }
 
-export interface TerminalKeyProbeActions {
-  /** The only renderer read around the potentially session-losing key command. */
-  captureProbe: () => Promise<TerminalKeyProbeSnapshot | { error: string }>;
-  sendKey: () => Promise<void>;
-  waitForDelivery: () => Promise<unknown>;
-}
-
 export interface TerminalKeyProbeDiagnosticOptions {
   applicationPath: string;
   directory: string;
@@ -154,26 +147,4 @@ export function createTerminalKeyProbeObserver(
       console.error("[terminal-key-diagnostics]", JSON.stringify({ artifact, failure }));
     },
   };
-}
-
-/**
- * Preserve the native command boundary: one renderer-side sample before
- * Ctrl+Q, then only observation-safe process evidence if WebDriver cannot
- * observe the raw PTY result. This deliberately performs no retry or
- * renderer read after a failed delivery.
- */
-export async function runTerminalKeyProbeDiagnostics(
-  actions: TerminalKeyProbeActions,
-  options: TerminalKeyProbeDiagnosticOptions,
-): Promise<void> {
-  const observer = createTerminalKeyProbeObserver(actions.captureProbe, options);
-  await observer.captureBeforeKey();
-
-  try {
-    await actions.sendKey();
-    await actions.waitForDelivery();
-  } catch (error) {
-    observer.recordFailure(error);
-    throw error;
-  }
 }

@@ -125,6 +125,11 @@ clock-exact debounce coverage in fake-timer domain tests: an E2E runner may stal
 between synthetic keystrokes for longer than the debounce and legitimately
 start an intermediate query, so contract-level final-query tests should update
 the input atomically.
+For a native terminal key-delivery failure, retain a DOM focus/terminal snapshot
+immediately before the WebDriver key command and process evidence after it
+fails. Do not retry, lengthen the timeout, or issue a new renderer read on the
+failure path: a lost WebKit session would turn those into an uninformative
+invalid-session cascade (#709).
 Real-watcher timing tests must also wait for the backend watch and frontend
 listener to be ready, then acknowledge every filesystem write at the
 application-side watcher callback before attributing listing counts to it. A

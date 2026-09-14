@@ -45,7 +45,15 @@ describe("native window chrome", () => {
   });
 
   after(() => {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    // Windows can briefly retain directory activity after the last rendered
+    // listing. Node retries only recursive removal's documented transient
+    // EBUSY/EPERM/ENOTEMPTY errors, and defaults maxRetries to zero.
+    fs.rmSync(scratch, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   });
 
   it("observes native maximize and restore while preserving explorer navigation", async () => {

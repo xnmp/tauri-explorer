@@ -4,9 +4,12 @@ import type {} from "webdriverio";
 import path from "node:path";
 import {
   collectNativeProcessEvidence,
+  firstMissingRendererAt,
+  newestRenderer,
   writeFreshWindowDiagnostics,
   type FreshWindowDiagnostics,
   type FreshWindowPageSnapshot,
+  type NativeProcessSample,
 } from "../fresh-window-diagnostics";
 
 const applicationBinary = path.resolve(
@@ -63,14 +66,30 @@ async function captureFreshWindowPage(): Promise<FreshWindowPageSnapshot | { err
 export function recordFreshWindowLookupFailure(
   selector: string,
   error: unknown,
+  lookupStartedAt = Date.now(),
+  nativeDuringLookup: NativeProcessSample[] = [],
 ): string | null {
   const selected = lastFreshWindow;
   if (!selected) return null;
+  const nativeAfterFailure = nativeDuringLookup.at(-1)
+    ?? collectNativeProcessEvidence({ applicationPath: applicationBinary });
+  const selectedRendererAtSelection = newestRenderer(selected.nativeAtSelection);
   return writeFreshWindowDiagnostics({
     ...selected,
     phase: "lookup-failed",
-    lookup: { selector, failedAt: Date.now(), error: String(error) },
-    nativeAfterFailure: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
+    lookup: {
+      selector,
+      startedAt: lookupStartedAt,
+      failedAt: Date.now(),
+      error: String(error),
+    },
+    nativeAfterFailure,
+    nativeDuringLookup,
+    selectedRendererAtSelection,
+    selectedRendererFirstMissingAt: firstMissingRendererAt(
+      selectedRendererAtSelection,
+      nativeDuringLookup,
+    ),
   }, diagnosticsDirectory);
 }
 
@@ -83,11 +102,32 @@ export async function waitForFreshWindowElement(
   selector: string,
   timeout: number,
 ): Promise<void> {
+  const lookupStartedAt = Date.now();
+  const nativeDuringLookup: NativeProcessSample[] = [];
+  const sampleInterval = 500;
+  const maxSamples = Math.ceil(timeout / sampleInterval) + 2;
+  const sampleProcesses = () => {
+    if (nativeDuringLookup.length >= maxSamples) return;
+    nativeDuringLookup.push(collectNativeProcessEvidence({
+      applicationPath: applicationBinary,
+    }));
+  };
+  sampleProcesses();
+  const sampler = setInterval(sampleProcesses, sampleInterval);
+  sampler.unref();
   try {
     await $(selector).waitForExist({ timeout });
   } catch (error) {
-    recordFreshWindowLookupFailure(selector, error);
+    sampleProcesses();
+    recordFreshWindowLookupFailure(
+      selector,
+      error,
+      lookupStartedAt,
+      nativeDuringLookup,
+    );
     throw error;
+  } finally {
+    clearInterval(sampler);
   }
 }
 

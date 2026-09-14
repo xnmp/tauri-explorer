@@ -51,6 +51,8 @@ export interface NativeProcessEvidence {
   driver: ProcessObservation[];
 }
 
+export type NativeProcessSample = NativeProcessEvidence | { error: string };
+
 /** WebKitGTK's multi-process names. A missing `WebKitWebProcess` after a lost
  * lookup is renderer death; a surviving one points at the driver instead. */
 const WEBKIT_PROCESS_NAMES = new Set([
@@ -138,8 +140,50 @@ export interface FreshWindowDiagnostics {
   nativeAtSelection: NativeProcessEvidence | { error: string } | null;
   /** Only present on a failed lookup; the session may already be invalid, so
    * this is process evidence only. */
-  lookup?: { selector: string; failedAt: number; error: string };
-  nativeAfterFailure?: NativeProcessEvidence | { error: string };
+  lookup?: { selector: string; startedAt?: number; failedAt: number; error: string };
+  nativeAfterFailure?: NativeProcessSample;
+  /** Bounded, process-only samples captured while the WebDriver command was pending. */
+  nativeDuringLookup?: NativeProcessSample[];
+  /** The newest renderer at selection is the fresh child's best observable identity. */
+  selectedRendererAtSelection?: ProcessObservation | null;
+  /** First sample where that exact PID/start-time identity was absent. */
+  selectedRendererFirstMissingAt?: number | null;
+}
+
+function isNativeProcessEvidence(sample: NativeProcessSample | null): sample is NativeProcessEvidence {
+  return sample !== null && "sampledAt" in sample;
+}
+
+/**
+ * Attribute the selected child to the newest WebKit renderer visible in its
+ * selection sample. Start time is part of the identity so PID reuse cannot
+ * make a dead renderer appear to have survived.
+ */
+export function newestRenderer(
+  selection: NativeProcessSample | null,
+): ProcessObservation | null {
+  if (!isNativeProcessEvidence(selection)) return null;
+  return selection.webkit
+    .filter((entry) => basename(entry.executable) === "WebKitWebProcess" && entry.startTime !== null)
+    .reduce<ProcessObservation | null>((newest, entry) => {
+      if (!newest) return entry;
+      return Number(entry.startTime) > Number(newest.startTime) ? entry : newest;
+    }, null);
+}
+
+/** First trustworthy process sample where the selected renderer is absent. */
+export function firstMissingRendererAt(
+  renderer: ProcessObservation | null,
+  timeline: readonly NativeProcessSample[],
+): number | null {
+  if (!renderer || renderer.startTime === null) return null;
+  for (const sample of timeline) {
+    if (!isNativeProcessEvidence(sample)) continue;
+    const present = sample.webkit.some((entry) =>
+      entry.pid === renderer.pid && entry.startTime === renderer.startTime);
+    if (!present) return sample.sampledAt;
+  }
+  return null;
 }
 
 /**

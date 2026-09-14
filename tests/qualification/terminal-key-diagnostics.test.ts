@@ -36,6 +36,18 @@ const beforeKey: TerminalKeyOwnershipDiagnostics = {
 };
 
 describe("terminal key probe diagnostic artifacts", () => {
+  it("wires the native Ctrl+Q smoke spec through the diagnostic command boundary", () => {
+    const spec = fs.readFileSync(
+      path.resolve("e2e-tauri/specs/terminal-key-ownership.spec.ts"),
+      "utf8",
+    );
+
+    expect(spec).toContain("await runTerminalKeyProbeDiagnostics({");
+    expect(spec).toContain("captureProbe: captureTerminalKeyProbe");
+    expect(spec).toContain('sendKey: () => browser.keys(["Control", "q"])');
+    expect(spec).toContain("waitForDelivery: () => browser.waitUntil(");
+  });
+
   it("captures before Ctrl+Q and records process-only evidence when delivery fails", async () => {
     const calls: string[] = [];
     const records: TerminalKeyOwnershipDiagnostics[] = [];

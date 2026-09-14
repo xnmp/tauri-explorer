@@ -8,10 +8,14 @@ vi.mock("$lib/api/git-avatar", () => ({
 describe("git avatar request ownership", () => {
   beforeEach(() => { calls.length = 0; vi.resetModules(); });
   it("bounds active lookups and removes a queued request when its last owner leaves", async () => {
-    const { requestGitAuthorAvatar } = await import("$lib/state/git-avatar-cache");
+    const { requestGitAuthorAvatar, gitAvatarQueueSizeForTests } = await import("$lib/state/git-avatar-cache");
     const requests = Array.from({ length: 6 }, (_, index) => requestGitAuthorAvatar(`author-${index}@example.com`, false));
     expect(calls.map(({ email }) => email)).toEqual(["author-0@example.com", "author-1@example.com", "author-2@example.com", "author-3@example.com"]);
     requests[5].cancel();
+    for (let index = 0; index < 1_000; index += 1) {
+      requestGitAuthorAvatar(`retired-${index}@example.com`, false).cancel();
+    }
+    expect(gitAvatarQueueSizeForTests()).toBe(1);
     calls[0].resolve(null);
     await requests[0].promise;
     await vi.waitFor(() => expect(calls).toHaveLength(5));

@@ -20,6 +20,9 @@ const pending = new Map<string, PendingRequest>();
 const queue: PendingRequest[] = [];
 let active = 0;
 
+/** Test seam for retained scheduler work; production callers use request handles. */
+export function gitAvatarQueueSizeForTests(): number { return queue.length; }
+
 function drain(): void {
   while (active < MAX_ACTIVE && queue.length > 0) {
     const request = queue.shift()!;
@@ -68,6 +71,8 @@ export function requestGitAuthorAvatar(email: string, gravatarEnabled: boolean):
     request!.subscribers -= 1;
     if (request!.subscribers === 0 && !request!.started) {
       if (pending.get(key) === request) pending.delete(key);
+      const queued = queue.indexOf(request!);
+      if (queued >= 0) queue.splice(queued, 1);
       request!.resolve(null);
     }
   } };

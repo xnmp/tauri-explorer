@@ -11,7 +11,9 @@ import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
 
-const repository = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-avatar-"));
+const repository = fs.realpathSync(
+  fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-avatar-")),
+);
 const subject = "native GitHub avatar resolution";
 const githubAvatarUrl = "https://avatars.githubusercontent.com/u/583231?s=64";
 

@@ -195,3 +195,12 @@ Decode hex escapes only in `/dev/disk/by-label` aliases, once. UDisks `IdLabel`
 and returned mount paths are already decoded, and may contain literal `\x20`.
 Keep isolated-bus regression tests on the production adapter; browser IPC
 fixtures cannot prove native discovery or mount authorization (#677).
+
+ADR 0025 governs Linux volume mount authority, eligible targets, path validation,
+and mount timeout/concurrency behavior. For visual drive evidence, show each
+claimed label and lifecycle state: an ordinary spaced label does not prove a
+literal `\x20`, and removal alone does not prove post-mount deduplication or
+service-unavailable fallback. Keep simulated outage screenshots paired with the
+native isolated-D-Bus contract tests. Run the full Cargo format check after
+registering a new module; formatting only its implementation misses module-order
+changes in `files/mod.rs` (#677 / PR #726).

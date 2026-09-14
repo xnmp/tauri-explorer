@@ -186,7 +186,8 @@ pub async fn git_author_avatar(email: String, gravatar_enabled: bool) -> Option<
     let permit = ACTIVE_FETCHES
         .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(MAX_ACTIVE_FETCHES)))
         .clone()
-        .try_acquire_owned()
+        .acquire_owned()
+        .await
         .ok()?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
@@ -308,23 +309,24 @@ mod tests {
         );
     }
     #[test]
-    fn disk_cache_prunes_oldest_entries_to_its_bound() {
+    fn production_lookup_path_prunes_disk_cache_to_its_bound() {
         let temp = tempfile::tempdir().unwrap();
-        for index in 0..4 {
-            std::fs::write(
-                temp.path().join(format!("{index}.missing")),
-                [index as u8; 4],
+        let png = include_bytes!("../icons/32x32.png").to_vec();
+        for index in 0..(MAX_CACHE_ENTRIES + 4) {
+            assert!(load_or_fetch(
+                temp.path(),
+                &format!("user-{index}@users.noreply.github.com"),
+                false,
+                |_| Ok(png.clone()),
             )
-            .unwrap();
+            .is_some());
         }
-        prune_cache_to(temp.path(), 2, 8);
-        assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 2);
-        assert_eq!(
-            std::fs::read_dir(temp.path())
-                .unwrap()
-                .map(|entry| entry.unwrap().metadata().unwrap().len())
-                .sum::<u64>(),
-            8
-        );
+        let entries: Vec<_> = std::fs::read_dir(temp.path()).unwrap().collect();
+        assert!(entries.len() <= MAX_CACHE_ENTRIES);
+        let bytes = entries
+            .into_iter()
+            .map(|entry| entry.unwrap().metadata().unwrap().len())
+            .sum::<u64>();
+        assert!(bytes <= MAX_CACHE_BYTES);
     }
 }

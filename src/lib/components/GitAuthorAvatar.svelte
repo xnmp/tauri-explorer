@@ -1,6 +1,6 @@
 <script lang="ts">
   import { avatarFallback } from "$lib/domain/git-avatar";
-  import { getGitAuthorAvatar } from "$lib/state/git-avatar-cache";
+  import { requestGitAuthorAvatar } from "$lib/state/git-avatar-cache";
 
   const { name, email, gravatarEnabled }: { name: string; email: string; gravatarEnabled: boolean } = $props();
   const fallback = $derived(avatarFallback({ name, email }));
@@ -11,10 +11,11 @@
     const requestedConsent = gravatarEnabled;
     let current = true;
     image = null;
-    void getGitAuthorAvatar(requestedEmail, requestedConsent).then((value) => {
+    const request = requestGitAuthorAvatar(requestedEmail, requestedConsent);
+    void request.promise.then((value) => {
       if (current && requestedEmail === email && requestedConsent === gravatarEnabled) image = value;
     });
-    return () => { current = false; };
+    return () => { current = false; request.cancel(); };
   });
 </script>
 

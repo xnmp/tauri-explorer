@@ -96,8 +96,11 @@ fn load_valid(path: &Path) -> Option<Vec<u8>> {
 }
 fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let temp = path.with_extension(format!("tmp-{}", std::process::id()));
-    std::fs::write(&temp, bytes)?;
-    std::fs::rename(temp, path)
+    let result = std::fs::write(&temp, bytes).and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp);
+    }
+    result
 }
 fn prune_cache_to(cache_dir: &Path, max_entries: usize, max_bytes: u64) {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
@@ -106,10 +109,19 @@ fn prune_cache_to(cache_dir: &Path, max_entries: usize, max_bytes: u64) {
     let mut files: Vec<_> = entries
         .flatten()
         .filter_map(|entry| {
+            let path = entry.path();
+            if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.starts_with("tmp-"))
+            {
+                let _ = std::fs::remove_file(path);
+                return None;
+            }
             let metadata = entry.metadata().ok()?;
             metadata.is_file().then(|| {
                 (
-                    entry.path(),
+                    path,
                     metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
                     metadata.len(),
                 )

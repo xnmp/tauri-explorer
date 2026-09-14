@@ -1,5 +1,24 @@
 import { browser, $, expect } from "@wdio/globals";
+import path from "node:path";
+import { collectNativeProcessEvidence } from "../fresh-window-diagnostics";
+import {
+  writeTerminalKeyOwnershipDiagnostics,
+  type TerminalKeyProbeSnapshot,
+} from "../terminal-key-diagnostics";
 import { domText } from "./helpers";
+
+const applicationBinary = path.resolve(
+  "src-tauri",
+  "target",
+  "debug",
+  process.platform === "win32" ? "tauri-explorer.exe" : "tauri-explorer",
+);
+
+const diagnosticsDirectory = path.join(
+  process.env.TAURI_NATIVE_DIAGNOSTICS_DIR
+    ?? path.resolve("e2e-tauri", "logs", "fresh-window"),
+  "terminal-key-ownership",
+);
 
 async function terminalText(): Promise<string> {
   return domText(".terminal-panel .xterm-rows");
@@ -11,6 +30,22 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
     timeout: 2_000,
     timeoutMsg: "xterm input never received focus",
   });
+}
+
+/** One DOM-only sample taken before the native key command can strand WebDriver. */
+async function captureTerminalKeyProbe(): Promise<TerminalKeyProbeSnapshot | { error: string }> {
+  try {
+    return await browser.execute(() => ({
+      terminalText: document.querySelector(".terminal-panel .xterm-rows")?.textContent ?? null,
+      activeElement: document.activeElement
+        ? { tag: document.activeElement.tagName, classes: document.activeElement.className }
+        : null,
+      terminalDisplayed: !!document.querySelector(".terminal-panel"),
+      modalText: document.querySelector("[role=dialog]")?.textContent ?? null,
+    })) as TerminalKeyProbeSnapshot;
+  } catch (error) {
+    return { error: String(error) };
+  }
 }
 
 (process.platform !== "win32" ? describe : describe.skip)("terminal key ownership (#496)", () => {
@@ -51,6 +86,18 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
     });
 
     await focusTerminalInput(input);
+    // This mirrors #703's fresh-window evidence: sample before the native
+    // command, then use only process evidence on a failed delivery. Retrying,
+    // waiting longer, or reading the renderer after failure would hide whether
+    // WebKitGTK/WebDriver lost the event or the session.
+    const beforeKey = {
+      issue: 709 as const,
+      phase: "before-key" as const,
+      capturedAt: Date.now(),
+      probe: await captureTerminalKeyProbe(),
+      native: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
+    };
+    writeTerminalKeyOwnershipDiagnostics(beforeKey, diagnosticsDirectory);
     // Match the chord path used by the app's other shortcut tests.
     await browser.keys(["Control", "q"]);
     try {
@@ -59,15 +106,15 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
         timeoutMsg: "terminal-hosted key probe never received Ctrl+Q",
       });
     } catch (error) {
-      console.error("[terminal-key-diagnostics]", JSON.stringify(await browser.execute(() => ({
-        terminalText: document.querySelector(".terminal-panel .xterm-rows")?.textContent,
-        activeElement: document.activeElement
-          ? { tag: document.activeElement.tagName, classes: document.activeElement.className }
-          : null,
-        terminalDisplayed: !!document.querySelector(".terminal-panel"),
-        modalText: document.querySelector("[role=dialog]")?.textContent ?? null,
-      }))));
-      await browser.saveScreenshot("e2e-tauri/logs/terminal-key-ownership-failure.png").catch(() => {});
+      const failure = {
+        ...beforeKey,
+        phase: "probe-failed" as const,
+        capturedAt: Date.now(),
+        native: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
+        error: String(error),
+      };
+      const artifact = writeTerminalKeyOwnershipDiagnostics(failure, diagnosticsDirectory);
+      console.error("[terminal-key-diagnostics]", JSON.stringify({ artifact, failure }));
       throw error;
     }
     await expect($(".terminal-panel")).toBeDisplayed();

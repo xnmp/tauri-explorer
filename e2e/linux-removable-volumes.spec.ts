@@ -20,22 +20,23 @@ test("Linux volume sidebar discovers, mounts, reports errors and removes volumes
     name: "SD Card", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdc1",
   }));
   await expect(page.locator(".drive-item").filter({ hasText: "SD Card" })).toBeVisible();
-  await page.screenshot({ path: "evidence/ac-1-linux-unmounted-volumes.png" });
+  await page.screenshot({ animations: "disabled", path: "evidence/ac-1-linux-unmounted-volumes.png" });
 
   await page.evaluate(() => { (window as unknown as VolumeFixture).__mockMountError = "Not authorized to mount USB Backup"; });
   await usb.click();
   await expect(page.locator(".toast").filter({ hasText: "Not authorized" })).toBeVisible();
   await expect(usb).toContainText("Not mounted");
-  await expect(page.locator(".breadcrumbs-container")).toContainText("user");
-  await page.screenshot({ path: "evidence/ac-2-linux-mount-error.png" });
+  await expect(page.locator(".entry-item").filter({ hasText: "Documents" }).first()).toBeVisible();
+  await page.screenshot({ animations: "disabled", path: "evidence/ac-2-linux-mount-error.png" });
   await page.evaluate(() => { delete (window as unknown as VolumeFixture).__mockMountError; });
   await usb.click();
   await expect(usb).not.toContainText("Not mounted");
-  await expect(page.locator(".entry-item").filter({ hasText: "backup.zip" })).toBeVisible();
+  await expect(page.locator(".entry-item").filter({ hasText: "photo.jpg" })).toBeVisible();
   await expect(usb).toHaveCount(1);
   const mounts = await page.evaluate(() => (window as unknown as VolumeFixture).__mockInvokeCounts?.mount_drive);
   await usb.click();
   expect(await page.evaluate(() => (window as unknown as VolumeFixture).__mockInvokeCounts?.mount_drive)).toBe(mounts);
+  await expect(page.locator(".toast").filter({ hasText: "Not authorized" })).toBeHidden({ timeout: 10000 });
   await page.evaluate(() => {
     const w = window as unknown as VolumeFixture;
     w.__mockLinuxVolumes = w.__mockLinuxVolumes.filter(d => d.name !== "USB Backup");
@@ -43,5 +44,5 @@ test("Linux volume sidebar discovers, mounts, reports errors and removes volumes
   await expect(usb).toHaveCount(0);
   await expect(page.locator(".drive-gone-state")).toContainText("Removable drive removed");
   await expect(page.locator(".drive-item").filter({ hasText: "Google Drive" })).toBeVisible();
-  await page.screenshot({ path: "evidence/ac-3-linux-volume-removal.png" });
+  await page.screenshot({ animations: "disabled", path: "evidence/ac-3-linux-volume-removal.png" });
 });

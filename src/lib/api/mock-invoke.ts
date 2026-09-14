@@ -1313,6 +1313,14 @@ const mockFileContent: Record<string, string> = {
   ].join("\n"),
 };
 
+// Browser-only Linux volume fixtures. Native builds never import this module.
+function linuxVolumeFixture() {
+  return globalThis as typeof globalThis & {
+    __mockLinuxVolumes?: import("./drives").Drive[];
+    __mockMountError?: string;
+  };
+}
+
 // Mutable so manual/E2E testing can simulate ejecting a removable drive: the
 // drives store re-polls `list_drives` every ~1.5s, so replacing this list makes
 // the change propagate. `window.__mockEjectDrive(path)` (set below) removes one.
@@ -1422,7 +1430,15 @@ function mockRecoveryPublish(): unknown {
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
-  list_drives: () => mockDrives,
+  list_drives: () => linuxVolumeFixture().__mockLinuxVolumes ?? mockDrives,
+  mount_drive: (args) => {
+    const fixture = linuxVolumeFixture();
+    if (fixture.__mockMountError) throw new Error(fixture.__mockMountError);
+    const drive = fixture.__mockLinuxVolumes?.find(d => d.device_id === args?.deviceId);
+    if (!drive) throw new Error("Linux storage service (UDisks2) unavailable");
+    drive.path ||= "/media/user/USB_DRIVE";
+    return drive.path;
+  },
   log_startup_timing: () => undefined,
 
   // Crash reporting (#184, #302): a Rust crash is simulated when the e2e test

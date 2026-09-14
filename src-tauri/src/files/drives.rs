@@ -1,6 +1,6 @@
 //! Enumerate drives and volumes across platforms.
 //!
-//! Linux: reads the mount table for block-device volumes, plus GVFS and rclone
+//! Linux: discovers UDisks volumes and mount-table block devices, plus GVFS and rclone
 //! cloud mounts.
 //! macOS: scans `/Volumes/`, skipping the root-mapped system volume.
 //! Windows: iterates drive letters that exist; volume label + provider + type
@@ -18,10 +18,10 @@ use crate::error::AppError;
 /// and the device source to determine whether the backing media is removable.
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LinuxMount {
-    path: String,
+pub(super) struct LinuxMount {
+    pub(super) path: String,
     filesystem: String,
-    source: String,
+    pub(super) source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,11 +81,19 @@ impl Drive {
 
 #[tauri::command]
 pub async fn list_drives() -> Result<Vec<Drive>, AppError> {
-    Ok(enumerate_drives())
+    let drives = tauri::async_runtime::spawn_blocking(enumerate_drives)
+        .await
+        .map_err(|e| AppError::WorkerFailed(e.to_string()))?;
+    #[cfg(target_os = "linux")]
+    {
+        return Ok(super::linux_volumes::supplement(drives.0, &drives.1).await);
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(drives)
 }
 
 #[cfg(target_os = "linux")]
-fn enumerate_drives() -> Vec<Drive> {
+fn enumerate_drives() -> (Vec<Drive>, String) {
     let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
 
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
@@ -99,11 +107,12 @@ fn enumerate_drives() -> Vec<Drive> {
         .into_iter()
         .chain(linux_rclone_drives());
 
-    enumerate_linux_drives(
+    let drives = enumerate_linux_drives(
         mountinfo.as_deref(),
         std::path::Path::new("/sys/block"),
         cloud_drives,
-    )
+    );
+    (drives, mountinfo.unwrap_or_default())
 }
 
 /// The shared production enumeration path. The native command supplies the
@@ -136,11 +145,24 @@ fn enumerate_linux_drives(
 /// mounts when the app has no `USER` environment variable.
 #[cfg(target_os = "linux")]
 fn parse_linux_block_mounts(mountinfo: &str, sys_block: &std::path::Path) -> Vec<Drive> {
+    parse_linux_block_mounts_with_labels(
+        mountinfo,
+        sys_block,
+        std::path::Path::new("/dev/disk/by-label"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn parse_linux_block_mounts_with_labels(
+    mountinfo: &str,
+    sys_block: &std::path::Path,
+    labels: &std::path::Path,
+) -> Vec<Drive> {
     parse_linux_mounts(mountinfo)
         .into_iter()
         .filter(|mount| !is_linux_pseudo_filesystem(&mount.filesystem))
         .filter(|mount| !is_linux_system_mount(&mount.path))
-        .filter_map(|mount| linux_drive_from_mount(&mount, sys_block))
+        .filter_map(|mount| linux_drive_from_mount(&mount, sys_block, labels))
         .collect()
 }
 
@@ -155,7 +177,7 @@ pub fn enumerate_linux_drives_for_test(mountinfo: &str, sys_block: &std::path::P
 }
 
 #[cfg(target_os = "linux")]
-fn parse_linux_mounts(mountinfo: &str) -> Vec<LinuxMount> {
+pub(super) fn parse_linux_mounts(mountinfo: &str) -> Vec<LinuxMount> {
     mountinfo.lines().filter_map(parse_linux_mount).collect()
 }
 
@@ -207,7 +229,7 @@ fn is_linux_pseudo_filesystem(filesystem: &str) -> bool {
 /// block-device backing (for example, a separately mounted `/boot`, its EFI
 /// submount, or `/home`) and must never be offered as sidebar drives.
 #[cfg(target_os = "linux")]
-fn is_linux_system_mount(path: &str) -> bool {
+pub(super) fn is_linux_system_mount(path: &str) -> bool {
     path == "/boot"
         || path.starts_with("/boot/")
         || matches!(
@@ -217,7 +239,11 @@ fn is_linux_system_mount(path: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_drive_from_mount(mount: &LinuxMount, sys_block: &std::path::Path) -> Option<Drive> {
+fn linux_drive_from_mount(
+    mount: &LinuxMount,
+    sys_block: &std::path::Path,
+    labels: &std::path::Path,
+) -> Option<Drive> {
     let kind = if is_removable_block_device(&mount.source, sys_block) {
         DriveKind::Removable
     } else if backing_block_device(&mount.source, sys_block).is_some() {
@@ -227,7 +253,7 @@ fn linux_drive_from_mount(mount: &LinuxMount, sys_block: &std::path::Path) -> Op
     };
     let mount_name = std::path::Path::new(&mount.path).file_name()?.to_str()?;
     Some(Drive::simple(
-        linux_volume_label(&mount.source).unwrap_or_else(|| mount_name.to_owned()),
+        linux_volume_label(&mount.source, labels).unwrap_or_else(|| mount_name.to_owned()),
         mount.path.clone(),
         kind,
     ))
@@ -266,15 +292,46 @@ fn is_removable_block_device(source: &str, sys_block: &std::path::Path) -> bool 
 
 /// Use udev's label aliases when available, otherwise keep the mount name.
 #[cfg(target_os = "linux")]
-fn linux_volume_label(source: &str) -> Option<String> {
-    let source = std::path::Path::new(source).canonicalize().ok()?;
-    std::fs::read_dir("/dev/disk/by-label")
-        .ok()?
-        .flatten()
-        .find_map(|entry| {
-            (entry.path().canonicalize().ok().as_ref() == Some(&source))
-                .then(|| entry.file_name().to_string_lossy().into_owned())
-        })
+fn linux_volume_label(source: &str, labels: &std::path::Path) -> Option<String> {
+    let source = std::path::Path::new(source);
+    let canonical_source = source.canonicalize().unwrap_or_else(|_| source.to_owned());
+    std::fs::read_dir(labels).ok()?.flatten().find_map(|entry| {
+        let target = std::fs::read_link(entry.path()).ok()?;
+        let target = if target.is_absolute() {
+            target
+        } else {
+            labels.join(target)
+        };
+        let canonical_target = target.canonicalize().unwrap_or(target);
+        (canonical_target == canonical_source)
+            .then(|| decode_udev_label(&entry.file_name().to_string_lossy()))
+    })
+}
+
+/// udev aliases encode UTF-8 bytes as hex. Decode once, never on paths or
+/// already-decoded UDisks labels (a literal backslash-x20 is a valid label).
+#[cfg(target_os = "linux")]
+fn decode_udev_label(label: &str) -> String {
+    let bytes = label.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes.get(i..i + 2) == Some(br"\x") {
+            if let Some(pair) = bytes.get(i + 2..i + 4) {
+                if let (Some(a), Some(b)) = (
+                    (pair[0] as char).to_digit(16),
+                    (pair[1] as char).to_digit(16),
+                ) {
+                    decoded.push((a * 16 + b) as u8);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 /// GVFS exposes each connected account as a child of its FUSE mount rather
@@ -852,5 +909,20 @@ mod linux_tests {
     #[test]
     fn leaves_unknown_mountinfo_escape_literal_instead_of_panicking() {
         assert_eq!(decode_mountinfo_field(r"/mnt/a\777b"), r"/mnt/a\777b");
+    }
+}
+
+#[tauri::command]
+pub async fn mount_drive(device_id: String) -> Result<String, AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        return super::linux_volumes::mount(&device_id).await;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device_id;
+        Err(AppError::Other(
+            "Volume mounting is only available on Linux".into(),
+        ))
     }
 }

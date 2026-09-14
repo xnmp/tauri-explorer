@@ -395,6 +395,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             git_actions::git_sync_local_branches,
             // Drives / volumes
             files::drives::list_drives,
+            files::drives::mount_drive,
             // Wallpaper
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)

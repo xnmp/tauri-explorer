@@ -18,3 +18,8 @@ export async function listDrives(): Promise<ApiResult<Drive[]>> {
   try { return { ok: true, data: await invoke<Drive[]>("list_drives") }; }
   catch (err) { return { ok: false, error: extractError(err) }; }
 }
+
+export async function mountDrive(deviceId: string): Promise<ApiResult<string>> {
+  try { return { ok: true, data: await invoke<string>("mount_drive", { deviceId }) }; }
+  catch (err) { return { ok: false, error: extractError(err) }; }
+}

@@ -210,3 +210,20 @@ service-unavailable fallback. Keep simulated outage screenshots paired with the
 native isolated-D-Bus contract tests. Run the full Cargo format check after
 registering a new module; formatting only its implementation misses module-order
 changes in `files/mod.rs` (#677 / PR #726).
+
+Git Graph author avatars keep display preference separate from third-party
+consent: GitHub noreply addresses may resolve while Gravatar remains opt-in.
+Their restart-persistent cache is derived, best-effort state: publication uses
+sibling temporary files and rename, interrupted/corrupt entries are discarded,
+and every storage or network failure must leave the deterministic row fallback.
+Pruning must also exhaust its current candidates and return when deletion fails;
+retrying an unchanged byte total after the candidate list empties can panic and
+poison the process-wide lookup lock.
+See ADR 0026.
+Mount `GitAuthorAvatar` only while display is enabled so the off state cannot
+start lookups; native responses are bounded, validated data URIs backed by the
+disk cache, while the row always owns its deterministic local fallback.
+Keep the avatar decoration out of Git Graph's table minimum width: at narrow
+sizes it should borrow from the message cell, not widen inline commit details.
+Native graph fixtures must wait for the reset view's `.file-list` before their
+repository is deleted, because reset navigation completes asynchronously.

@@ -31,3 +31,4 @@ decision during review.
 | [0023](0023-recovery-artifact-retention.md) | Recovery artifact retention and durable retirement | Proposed |
 | [0024](0024-mutation-admission-coverage.md) | Mutation admission coverage | Accepted |
 | [0025](0025-linux-volume-mount-authority.md) | Linux volume discovery and mount authority | Proposed |
+| [0026](0026-git-avatar-cache-lifecycle.md) | Git avatar lookup and cache lifecycle | Accepted |

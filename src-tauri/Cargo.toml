@@ -60,6 +60,7 @@ lru = "0.18"
 sha2 = "0.11"
 base64 = "0.23"
 hex = "0.4"
+md5 = "0.8"
 getrandom = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "process", "macros"] }

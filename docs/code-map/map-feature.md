@@ -275,6 +275,7 @@ backend for E2E/browser).
   carries an ephemeral file-path query through `state/git-graph-cache.ts` to
   `git_log`, so pagination filters the complete history instead of only rows
   already loaded in the browser (#529)
+- `components/GitAuthorAvatar.svelte`, `domain/git-avatar.ts`, `state/git-avatar-cache.ts`, `api/git-avatar.ts`, `src-tauri/src/git_avatar.rs` — commit-row author avatars (#514): deterministic initial/disc fallback renders immediately; visible rows deduplicate best-effort lookups; native resolution permits GitHub noreply addresses and separately opt-in Gravatar, validates bounded image payloads, and reuses positive/negative disk cache entries across restarts. The persisted display toggle prevents mounting lookup owners while off.
 - `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
 - SCM activation uses `api/git.ts` → `git_directory_scope` in `src-tauri/src/git.rs` to resolve the requested directory's physical repository-relative location. Display aliases stay in the pane; filtering and shared summaries use the repository identity. Late scope replies follow the store's existing path generation.
 - `state/git-summary-cache.ts` — shared per-repo `git_status` fetch (in-flight dedup + short TTL, #431): SCM `refreshSummary` (force), GitGraphView `fetchPage0Snapshot` + uncommitted-row selection route through it, so one `git-status-changed` is one working-tree scan, not several

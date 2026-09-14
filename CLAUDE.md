@@ -223,3 +223,7 @@ See ADR 0025.
 Mount `GitAuthorAvatar` only while display is enabled so the off state cannot
 start lookups; native responses are bounded, validated data URIs backed by the
 disk cache, while the row always owns its deterministic local fallback.
+Keep the avatar decoration out of Git Graph's table minimum width: at narrow
+sizes it should borrow from the message cell, not widen inline commit details.
+Native graph fixtures must wait for the reset view's `.file-list` before their
+repository is deleted, because reset navigation completes asynchronously.

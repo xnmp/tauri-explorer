@@ -1,0 +1,39 @@
+{
+  "date": "2026-09-23",
+  "baseCommit": "eb82ab6c",
+  "platform": "Arch Linux / X11 Xvfb + Openbox / WebKitGTK 4.1",
+  "build": "debug custom-protocol, e2e-renderer-recovery, durable-move-recovery, durable-copy-recovery; VITE_E2E_HOOKS=1",
+  "binarySha256": "a0f813baf780990b90ce9be0014e7dca945cd291e43f11daa9d9fbbd19fa1254",
+  "sourceSha256": {
+    "src/lib/components/FileRecoveryDialog.svelte": "0417048e0353d30a1bdb31f68d68a6b4f910f615cdb362236f6be4de645f6eff",
+    "src/test-support/file-recovery-probe.ts": "24e91e6b5eb7673902887c2d5f7c98a3320d48a9832bf109359b919d8b13dc63",
+    "e2e-tauri/specs/move-retirement.spec.ts": "0b160b1bc18f21e9a060d8ef80f32c44a43ab236b6df9fc3fd5df5b6b4a359a5"
+  },
+  "nativeReport": "/tmp/move-736-native-ui-a8etqe4h",
+  "logSha256": "d23224e398efe1183fb5be8af67d669f4d03b7f01d3824c9455c50caa607bdca",
+  "filesystems": {
+    "source": {
+      "path": "/tmp/move-736-native-ui-a8etqe4h/sources",
+      "device": 44
+    },
+    "target": {
+      "path": "/home/chong/Repos/tauri-explorer/src-tauri/target/move-736-native-ui-5oaq0b3z",
+      "device": 66310
+    }
+  },
+  "passed": 3,
+  "failed": 0,
+  "screenshots": {
+    "screenshots/feat/durable-move-retirement/native-directory-after-discard.png": "a0054dfc9adf68407f7fea510e08d80f5bbc73ee524eea6cac385cdff8c25314",
+    "screenshots/feat/durable-move-retirement/native-directory-before-discard.png": "63a481a2c978107d55eff0ea5a513823c08fe1488a6185527ff3e0bef73e12e8",
+    "screenshots/feat/durable-move-retirement/native-file-after-discard.png": "6ff4358d442f562f101ad772a3932ee2f8ee7ca113a2d721b1a631db54f89575",
+    "screenshots/feat/durable-move-retirement/native-file-before-discard.png": "c50c235135c1990c45efd76a591ae816f74f7bc600b2ffa726ebac0dbb1c36b8",
+    "screenshots/feat/durable-move-retirement/native-unresolved-preserved.png": "43a20b718590c2a830ffed616c0f1aabbdf2a2beea67a686a5f6ab9522ae9eb7"
+  },
+  "limitations": [
+    "real RENAME_NOREPLACE capability probe not implemented",
+    "not missing-volume/unmount acceptance",
+    "not Windows/macOS qualification",
+    "no default feature enablement"
+  ]
+}

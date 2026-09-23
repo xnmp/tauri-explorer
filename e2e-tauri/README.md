@@ -343,3 +343,30 @@ enables release stdout logs explicitly and removes the native warm-probe variabl
 for foreground-only runs. These are fresh processes with uncontrolled OS caches;
 native readiness timing does not establish a presented frame, first input or the
 Dock half-bounce target.
+
+## Move retirement acceptance (Linux, opt-in)
+
+`specs/move-retirement.spec.ts` invokes production moves and uses the native
+recovery dialog to discard retained files/directories. It verifies both private
+roots disappear, destination bytes survive, storage counters decrease, and an
+externally changed destination preserves both recovery copies after Reclaim space.
+It requires `VITE_E2E_HOOKS=1` frontend assets and `durable-move-recovery` in a
+custom-protocol native build. `e2e-renderer-recovery` is not needed unless also
+running the seeded replacement/channel tests.
+
+Set `TAURI_E2E_MOVE_SOURCE_DIR` and `TAURI_E2E_MOVE_TARGET_DIR` to existing scratch
+parents on **different mounted filesystems**. The test checks their device IDs
+and creates exclusive children; it never overwrites an existing fixture. Use an
+isolated application profile (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+`XDG_CACHE_HOME`, `XDG_STATE_HOME`) and run:
+
+```sh
+bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/move-retirement.spec.ts
+```
+
+On Arch, select the WebKitWebDriver matching the application's WebKitGTK ABI
+with `TAURI_NATIVE_DRIVER`. Captures go to
+`screenshots/feat/durable-move-retirement/`. Retain the profile and fixture
+parents alongside the log when collecting evidence, then remove the isolated
+fixtures only after the native application has exited. The changed-destination
+case deliberately leaves recoverable data in that profile.

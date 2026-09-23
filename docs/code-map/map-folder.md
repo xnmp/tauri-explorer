@@ -505,7 +505,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
-- `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery requests and deliberately unmanaged channels for renderer-retirement acceptance.
+- `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery inventory/transfer requests and deliberately unmanaged channels for renderer-retirement acceptance; native move cleanup outcomes in `e2e-tauri/specs/move-retirement.spec.ts`.
 - `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.

@@ -552,7 +552,8 @@ impl DirectoryStep {
     fn access(&self) -> Access {
         match self.action {
             DirectoryAction::Open(_) => Access::Read,
-            DirectoryAction::Create | DirectoryAction::Repair(_) => Access::Write,
+            DirectoryAction::Create => Access::EnsurePrivateDirectory,
+            DirectoryAction::Repair(_) => Access::Write,
         }
     }
 }

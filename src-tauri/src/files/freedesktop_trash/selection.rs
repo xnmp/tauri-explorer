@@ -28,6 +28,25 @@ pub(crate) struct PreparedSelection {
     paths: Arc<Vec<String>>,
     next: usize,
     items: VecDeque<Item>,
+    resources: Vec<resources::Resource>,
+}
+
+#[derive(Default)]
+struct Claims {
+    index: SelectionIndex,
+    resources: HashSet<resources::Resource>,
+}
+
+impl Claims {
+    fn insert(&mut self, resource: &resources::Resource, role: SelectionRole) -> io::Result<()> {
+        self.index.insert(resource, role)?;
+        // Containers exclude selected sources from trash internally. Retaining
+        // their broad subtree read would serialize every independent deletion.
+        if !matches!(role, SelectionRole::Container) {
+            self.resources.insert(resource.clone());
+        }
+        Ok(())
+    }
 }
 
 struct Budget {
@@ -90,7 +109,7 @@ impl Context {
         for path in paths.iter() {
             budget.add(path.capacity())?;
         }
-        let mut index = SelectionIndex::default();
+        let mut index = Claims::default();
         // Observe the entire requested namespace before destination planning:
         // a candidate/layout failure cannot erase a selected ancestor or alias.
         let sources = observe_sources(&paths, &mut index, &mut budget)?;
@@ -166,6 +185,7 @@ impl Context {
             paths,
             next: 0,
             items,
+            resources: index.resources.into_iter().collect(),
         })
     }
 }
@@ -178,7 +198,7 @@ struct ObservedSource {
 
 fn observe_sources(
     paths: &[String],
-    index: &mut SelectionIndex,
+    index: &mut Claims,
     budget: &mut Budget,
 ) -> Result<Vec<ObservedSource>, AppError> {
     budget.add(
@@ -245,6 +265,13 @@ fn share_layout(
 }
 
 impl PreparedSelection {
+    /// The plan and claims come from the same source/layout observations. No
+    /// caller may rebind only the paths while retaining these prepared effects.
+    pub(crate) fn into_admission(mut self) -> (Self, Vec<resources::Resource>) {
+        let resources = std::mem::take(&mut self.resources);
+        (self, resources)
+    }
+
     pub(crate) fn execute_next(&mut self, requested: &str) -> Result<TrashSuccess, AppError> {
         if self.paths.get(self.next).map(String::as_str) != Some(requested) {
             return Err(AppError::WorkerFailed(

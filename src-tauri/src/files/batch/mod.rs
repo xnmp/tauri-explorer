@@ -161,6 +161,7 @@ impl Ledger {
     }
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 pub(crate) async fn run(
     plan: BatchPlan,
     mut operation: impl FnMut(&str) -> Result<(), AppError> + Send + 'static,
@@ -168,6 +169,7 @@ pub(crate) async fn run(
     run_with_effects(plan, move |path, _| operation(path)).await
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 pub(crate) async fn run_with_effects(
     plan: BatchPlan,
     mut operation: impl FnMut(&str, &DirectoryEffects) -> Result<(), AppError> + Send + 'static,

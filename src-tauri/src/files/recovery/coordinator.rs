@@ -146,6 +146,13 @@ impl Coordinator {
     /// Caller chooses an app-local root. Call from blocking work only, after
     /// core-ready discovery or on the first actual mutation, never Tauri setup.
     pub(super) fn open(path: &Path) -> Result<Arc<Self>, AppError> {
+        Self::open_after_gate_miss(path, || {})
+    }
+
+    fn open_after_gate_miss(
+        path: &Path,
+        after_gate_miss: impl FnOnce(),
+    ) -> Result<Arc<Self>, AppError> {
         let parent_path = fs::canonicalize(
             path.parent()
                 .ok_or_else(|| invalid("Recovery storage requires a parent"))?,
@@ -160,27 +167,41 @@ impl Coordinator {
         let gate = match root.open_file(OsStr::new(GATE)) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if !root.names(1)?.is_empty() {
-                    // Another initializer may have published the gate after
-                    // our failed open. Use that gate; never create a replacement
-                    // in a populated root whose gate is actually missing.
-                    root.open_file(OsStr::new(GATE)).map_err(|error| {
-                        if error.kind() == std::io::ErrorKind::NotFound {
-                            invalid("Recovery admission lock is missing; existing evidence is preserved")
-                        } else { error.into() }
-                    })?
-                } else {
-                    match root.create_file(OsStr::new(GATE)) {
-                        Ok(file) => {
-                            file.sync_all()?;
-                            root.sync()?;
-                            file
+                after_gate_miss();
+                // A competing initializer may publish the gate and the rest of
+                // storage after our failed open. Retry the exact gate before a
+                // bounded emptiness probe, which can reject a now-complete root
+                // merely because it contains more than the probe's limit.
+                match root.open_file(OsStr::new(GATE)) {
+                    Ok(file) => file,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        match root.names(1) {
+                            Ok(names) if names.is_empty() => {
+                                match root.create_file(OsStr::new(GATE)) {
+                                    Ok(file) => {
+                                        file.sync_all()?;
+                                        root.sync()?;
+                                        file
+                                    }
+                                    Err(error)
+                                        if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                                    {
+                                        root.open_file(OsStr::new(GATE))?
+                                    }
+                                    Err(error) => return Err(error.into()),
+                                }
+                            }
+                            Ok(_) => reopen_published_gate(&root)?,
+                            Err(probe_error) => match root.open_file(OsStr::new(GATE)) {
+                                Ok(file) => file,
+                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                    return Err(probe_error.into());
+                                }
+                                Err(error) => return Err(error.into()),
+                            },
                         }
-                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                            root.open_file(OsStr::new(GATE))?
-                        }
-                        Err(error) => return Err(error.into()),
                     }
+                    Err(error) => return Err(error.into()),
                 }
             }
             Err(error) => return Err(error.into()),
@@ -479,6 +500,16 @@ fn verify_named_directory(path: &Path, expected: ObjectId) -> Result<(), AppErro
         return Err(invalid("Recovery storage namespace was replaced"));
     }
     Ok(())
+}
+
+fn reopen_published_gate(root: &Directory) -> Result<File, AppError> {
+    root.open_file(OsStr::new(GATE)).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            invalid("Recovery admission lock is missing; existing evidence is preserved")
+        } else {
+            error.into()
+        }
+    })
 }
 
 fn verify_entry(directory: &Directory, name: &str, expected: ObjectId) -> Result<(), AppError> {

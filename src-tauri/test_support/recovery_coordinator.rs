@@ -683,6 +683,32 @@ fn missing_admission_lock_does_not_recreate_authority_over_existing_evidence() {
 }
 
 #[test]
+fn initializer_published_after_gate_miss_is_reopened_without_enumerating_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let storage = directory.path().join("recovery");
+    let first_path = directory.path().join("first");
+    let second_path = directory.path().join("second");
+    let mut competing_owner = None;
+
+    let coordinator = Coordinator::open_after_gate_miss(&storage, || {
+        let competing = Coordinator::open(&storage).unwrap();
+        let owner = competing.reserve(writing(&first_path)).unwrap();
+        competing_owner = Some((competing, owner));
+    })
+    .unwrap();
+    let second_owner = coordinator.reserve(writing(&second_path)).unwrap();
+    let observer = Coordinator::open(&storage).unwrap();
+
+    assert!(observer.reserve(writing(&first_path)).is_err());
+    assert!(observer.reserve(writing(&second_path)).is_err());
+
+    second_owner.finish().unwrap();
+    let (competing, first_owner) = competing_owner.unwrap();
+    first_owner.finish().unwrap();
+    drop(competing);
+}
+
+#[test]
 fn managed_mutations_cannot_modify_storage_or_its_ancestors() {
     let (directory, coordinator, _path) = fixture();
     let storage = directory.path().join("recovery");

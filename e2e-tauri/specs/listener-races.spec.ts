@@ -51,10 +51,12 @@ describe("dir-listing snapshot: complete and keyboard-usable", () => {
 
     await browser.keys(["Control", "End"]);
     await browser.waitUntil(
-      async () => (await domText(".explorer-pane.active .entry-item.selected")).includes("entry-10002.txt"),
+      async () => (await browser.execute(() =>
+        document.querySelector(".explorer-pane .entry-item.selected")?.textContent ?? "",
+      )).includes("entry-10002.txt"),
       { timeoutMsg: "the last entry was not keyboard-selectable" },
     );
-    await expect($(".explorer-pane.active .entry-item.selected")).toBeDisplayed();
+    await expect($(".explorer-pane .entry-item.selected")).toBeDisplayed();
     if (process.env.TAURI_DIRECTORY_STREAM_SCREENSHOT) {
       await browser.saveScreenshot(process.env.TAURI_DIRECTORY_STREAM_SCREENSHOT);
     }

@@ -1,0 +1,63 @@
+{
+  "issue": 749,
+  "base": "fe478fa337d40b5ff9e212072b66d4d5f9b7ac81",
+  "platform": "Arch Linux x86_64, X11/Xvfb, WebKitGTK 2.52.5",
+  "rust": {
+    "passed": 1291,
+    "ignored": 22,
+    "failed": 0,
+    "features": [
+      "durable-copy-recovery",
+      "durable-move-recovery"
+    ]
+  },
+  "native": {
+    "passed": 7,
+    "specs": 2,
+    "features": [
+      "tauri/custom-protocol",
+      "e2e-renderer-recovery"
+    ],
+    "frontend": "Unchanged E2E-hook build from PR750; copied build assets into this worktree before native compilation."
+  },
+  "logs": [
+    {
+      "path": "/tmp/rename-749-repro.log",
+      "sha256": "9201c6cac17bca44cac5b0557d14ad899df3475f49a978ed7166f04346f762e8"
+    },
+    {
+      "path": "/tmp/rename-749-parent-repro.log",
+      "sha256": "f760054893046d3c13e31222b13cd7ccea95d95b3fff04e742f7193dadb8a6ca"
+    },
+    {
+      "path": "/tmp/rename-749-rust-final.log",
+      "sha256": "d3f5ecf05dd800a3f969b4060fea742a9404b83a5b66899433b7ec1a8c107c73"
+    },
+    {
+      "path": "/tmp/rename-749-clippy.log",
+      "sha256": "60b76c1bd090b0a4987832f483e33a2ba15f9faf2b473b0d7fa595ed49660cc2"
+    },
+    {
+      "path": "/tmp/rename-749-native-build.log",
+      "sha256": "3c92d83e1f24d7d271443768ab34d14444d2abf5ea1d7d04753669c91169ffd6"
+    },
+    {
+      "path": "/tmp/rename-749-native-ts.log",
+      "sha256": "e589810d8ba6995d7ca62e9e3edf580e46538d7e208a7a3e1479fd0a44e1a32b"
+    },
+    {
+      "path": "/home/chong/Repos/tauri-explorer/src-tauri/target/rename-749-native-xx_lbuzp/snapshot-0/wdio.log",
+      "sha256": "63462e12ea85caaca17121985c974e06131fe0732a152afe8b073dc488d504e2"
+    }
+  ],
+  "binary_sha256": "e20d491de2134a2313fa4a6c9d35670a1d8272e3a32b280262cbc114f5592a2f",
+  "screenshot": {
+    "path": "screenshots/fix/inverse-rename-admission/native-rename-inverse-lifetime.png",
+    "sha256": "fc30e49c5c90eac65445ae45a116be0c813532adec4762cedc5c2be7bf318f00"
+  },
+  "limitations": [
+    "Linux resource admission only; no native Windows/macOS qualification",
+    "No claim of crash-durable rename or atomic identity-conditional exclusion against external writers",
+    "UTF-8 history cannot retain unrepresentable physical rename paths; confirmed operation warns without unsafe opposite"
+  ]
+}

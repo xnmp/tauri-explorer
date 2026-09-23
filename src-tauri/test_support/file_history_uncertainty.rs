@@ -249,17 +249,22 @@ fn auxiliary_directory_effects_publish_without_completing_a_history_action() {
 
 struct PanicAfterRename;
 impl Operations for PanicAfterRename {
-    async fn rename(&self, path: String, name: String) -> Result<(), OperationError> {
+    async fn rename(&self, path: String, name: String) -> execution::RenameResult {
         if !path.ends_with("panic-new.txt") {
             return NativeOperations::default().rename(path, name).await;
         }
-        run_blocking(move || -> Result<(), AppError> {
+        let result = run_blocking(move || -> Result<std::path::PathBuf, AppError> {
             let source = Path::new(&path);
             fs::rename(source, source.parent().unwrap().join(name))?;
             panic!("injected inverse worker panic after committed rename");
         })
         .await
-        .map_err(operation_error)
+        .map_err(operation_error);
+        execution::RenameResult {
+            result,
+            warning: None,
+            affected: Vec::new(),
+        }
     }
     async fn move_entry(&self, path: String, destination: String) -> execution::MoveResult {
         NativeOperations::default()

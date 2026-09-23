@@ -293,11 +293,50 @@ impl execution::Operations for NativeOperations {
         }
     }
 
-    async fn rename(&self, path: String, name: String) -> Result<(), execution::OperationError> {
-        crate::files::file_ops::rename_entry(path, name)
-            .await
-            .map(|_| ())
-            .map_err(operation_error)
+    async fn rename(&self, path: String, name: String) -> execution::RenameResult {
+        use crate::files::{entry_execution, entry_plan::EntryPlan};
+        let failed = |error| execution::RenameResult {
+            result: Err(error),
+            warning: None,
+            affected: Vec::new(),
+        };
+        let plan = match EntryPlan::rename(path, name) {
+            Ok(plan) => plan,
+            Err(error) => return failed(operation_error(error)),
+        };
+        #[cfg(target_os = "linux")]
+        let outcome = match &self.recovery {
+            Some((runtime, storage)) => {
+                entry_execution::execute(plan, runtime.clone(), storage.clone()).await
+            }
+            #[cfg(test)]
+            None => entry_execution::execute_owned(plan, ()).await,
+            #[cfg(not(test))]
+            None => {
+                return failed(execution::OperationError::Unchanged(
+                    "Rename recovery ownership is unavailable".into(),
+                ))
+            }
+        };
+        #[cfg(not(target_os = "linux"))]
+        let outcome = entry_execution::execute_owned(plan, ()).await;
+        let changed = matches!(
+            &outcome.completion.result,
+            Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
+        );
+        execution::RenameResult {
+            result: outcome
+                .completion
+                .result
+                .map(|_| outcome.target)
+                .map_err(operation_error),
+            warning: outcome.completion.warning,
+            affected: if changed {
+                outcome.affected
+            } else {
+                Vec::new()
+            },
+        }
     }
     async fn move_entry(&self, path: String, destination: String) -> execution::MoveResult {
         let failed = |error| execution::MoveResult {
@@ -450,3 +489,7 @@ mod publication_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test_support/file_history_trash_admission.rs"]
 mod trash_admission_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/file_history_rename_admission.rs"]
+mod rename_admission_tests;

@@ -346,9 +346,9 @@ gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E
       await browser.waitUntil(async () => (await entryNames()).includes(path.basename(fixture.renamed)), {
         timeout: 20_000, timeoutMsg: "surviving listing did not show the redone rename",
       });
-      const proofDirectory = path.resolve("screenshots/refactor/repo-health-cleanup");
+      const proofDirectory = path.resolve("screenshots/fix/inverse-rename-admission");
       fs.mkdirSync(proofDirectory, { recursive: true });
-      await browser.saveScreenshot(path.join(proofDirectory, "native-file-history-lifetime.png"));
+      await browser.saveScreenshot(path.join(proofDirectory, "native-rename-inverse-lifetime.png"));
     } finally {
       if (gate) forceRelease(gate);
     }

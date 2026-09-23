@@ -147,8 +147,35 @@ Shared claims exclude cooperating operations, not arbitrary external programs.
 Directory handles and version checks prevent observed substitutions from redirecting
 execution, but a final check and pathname rename/unlink are not one conditional
 identity syscall. No universal immunity to unmanaged races or cross-platform
-qualification is claimed. Native rename Undo/Redo still requires separate admission
-work; it currently calls the low-level entry executor directly.
+qualification is claimed. Native rename Undo/Redo uses the shared entry admission described below.
+
+## Native rename inverse admission (#749)
+
+Forward entry commands and native rename Undo/Redo share `files/entry_execution.rs`.
+The same `EntryPlan` provides source/destination subtree writes and captured parent
+alias dependencies, then binds execution to the resolved native paths. Source and
+destination must retain their requested leaves and resolve to the same physical
+parent. A symlink changing between the separate observations cannot turn rename
+into a cross-directory move. Other unmanaged replacement races are not claimed
+solved by cooperative admission.
+
+The blocking worker owns the reservation context through execution and context
+cleanup. A dropped waiter cannot release the claim early. Confirmed receipts survive
+cleanup panics and later retirement failures; diagnostics accompany success instead
+of converting it into retryable work. Both native and requested refresh parents
+return to the existing history supervisor. A collision or admission refusal leaves
+the inverse retryable; uncertain work retains the existing partial-batch semantics.
+
+Inverse settlement binds the next direction to the captured physical parent, so a
+later alias change cannot redirect Redo. Rename history currently stores UTF-8
+paths: if the physical path is not representable, the successful operation retains
+its receipt and warning but no unsafe lossy opposite. Forward rename uses the same
+restriction; ordinary same-name rename remains unchanged without history or refresh.
+
+This is Linux resource admission, not a new durable rename journal. Non-Linux
+adapters use the shared execution/completion path without Linux reservations;
+platform-native runtime qualification remains separate. The low-level filesystem
+executor does not publish forward history when called by an inverse.
 
 ## Archive admission contract
 
@@ -221,5 +248,4 @@ inverse exists.
 Archive operations are not durable-recovery operations: they hold an ordinary
 reservation for the life of the call and promote nothing into the catalog, so a
 crash mid-archive is not discoverable after restart. Non-Linux builds keep (1)
-and (2) only, exactly as every other family does. Native rename inverses, ordinary copy outside the session and
-Git remain outside (3); "full managed-mutation coverage" is still not claimed.
+and (2) only, exactly as every other family does. Ordinary copy outside the session and Git remain outside (3); "full managed-mutation coverage" is still not claimed.

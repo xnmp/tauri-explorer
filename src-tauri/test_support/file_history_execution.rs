@@ -114,9 +114,16 @@ impl Operations for FakeOperations {
         }
     }
 
-    async fn rename(&self, path: String, name: String) -> Result<(), OperationError> {
-        self.unit(Call::Rename(path, name))
-            .map_err(OperationError::from)
+    async fn rename(&self, path: String, name: String) -> super::RenameResult {
+        let target = std::path::Path::new(&path).parent().unwrap().join(&name);
+        super::RenameResult {
+            result: self
+                .unit(Call::Rename(path, name))
+                .map(|_| target)
+                .map_err(OperationError::from),
+            warning: None,
+            affected: Vec::new(),
+        }
     }
 
     async fn move_entry(&self, path: String, destination: String) -> super::MoveResult {

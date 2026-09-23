@@ -228,7 +228,7 @@ pub(crate) async fn execute_entry_owned<O: Send + 'static>(
     super::worker::run_blocking_owned(owner, move || execute_entry_impl(plan)).await
 }
 
-fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
+pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
     use super::entry_plan::Request;
     let (target, request, presentation) = plan.into_parts();
     let absent = || {

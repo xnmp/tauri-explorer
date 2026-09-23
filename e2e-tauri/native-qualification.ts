@@ -1423,6 +1423,18 @@ export async function stopNativeQualificationProcesses(
   }
 }
 
+/** Fixtures outlive the application session and are removed by onComplete,
+ * after each worker has awaited native process termination. */
+export function createNativeFixtureDirectory(
+  prefix: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const root = environment.TAURI_NATIVE_CLEANUP_STATE_DIRECTORY;
+  if (!root) throw new Error("native fixture ownership is unavailable before run preparation");
+  if (!/^[a-zA-Z0-9_-]+$/.test(prefix)) throw new Error("invalid native fixture prefix");
+  return fs.mkdtempSync(path.join(root, prefix));
+}
+
 export function createNativeProcessCleanupHooks(options: {
   environment: NodeJS.ProcessEnv;
   stateEnvironmentKey: string;

@@ -34,8 +34,6 @@ pub(crate) mod recovery;
 mod replacement;
 #[cfg(any(target_os = "windows", test))]
 mod restore_outcome;
-#[cfg(target_os = "linux")]
-mod restore_parents;
 pub mod shortcuts;
 pub mod trash;
 pub(crate) mod trash_artifact;

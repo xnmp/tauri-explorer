@@ -491,7 +491,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `windows_paths.rs` — Windows ordinal path comparison and component-aware alias/ancestor rejection before destructive batch admission; receipt spellings remain unchanged.
 - `trash_outcome.rs` — pure Windows delete callback classification; committed recovery warnings remain distinct from uncertain and unchanged outcomes.
 - `restore_outcome.rs` — pure interpretation of Shell item completion, cancellation, source mismatch, and overwrite/merge veto evidence.
-- `restore_parents.rs` — iterative Linux restore-parent creation; bounded supervisor-owned invalidations survive partial creation and panic independently of leaf completion.
+- `src-tauri/src/files/freedesktop_trash/restoration.rs` — immutable exact restoration plans, per-resource shared admission, descriptor-relative missing-parent creation and per-batch identity-checked parent reuse; native target authority stays separate from display receipt keys.
 - `fs_watcher.rs` — blocking native directory watch adapter, coalesced retirement cleanup and recursive search-cache coverage; directory-changed events preserve mutation priority and observation time.
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.

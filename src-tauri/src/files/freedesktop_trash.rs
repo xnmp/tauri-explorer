@@ -1,17 +1,15 @@
 //! Exact, interoperable Freedesktop trash receipts for Linux.
 
-#[cfg(test)]
-use super::native_directory::native_name;
 use super::native_directory::{is_name, Directory};
+#[cfg(test)]
+use super::{batch, native_directory::native_name, trash_artifact::RestoreRequest};
 use super::{
-    batch,
     entry_version::EntryVersion,
     file_identity::version_at,
-    trash_artifact::{EntryIdentity, RestoreRequest, TrashArtifact, TrashSuccess},
+    trash_artifact::{EntryIdentity, TrashArtifact, TrashSuccess},
     trash_mounts::{Mount, MountSnapshot},
 };
 use crate::error::AppError;
-use sha2::{Digest, Sha256};
 use std::{
     ffi::{OsStr, OsString},
     fs::{File, Metadata},
@@ -29,6 +27,7 @@ const INFO_SUFFIX: &[u8] = b".trashinfo";
 const MAX_INFO_BYTES: u64 = 1024 * 1024;
 
 mod plan;
+pub(crate) mod restoration;
 mod selection;
 
 pub(crate) struct Context {
@@ -294,6 +293,7 @@ pub(crate) fn restore(
     restore_receipt(request, effects).map(|_| ())
 }
 
+#[cfg(test)]
 pub(crate) fn restore_receipt(
     request: &RestoreRequest,
     effects: &batch::DirectoryEffects,
@@ -310,112 +310,13 @@ pub(super) fn restore_with_before_publish(
     restore_inner(request, effects, before_publish).map(|_| ())
 }
 
+#[cfg(test)]
 fn restore_inner(
     request: &RestoreRequest,
     effects: &batch::DirectoryEffects,
     before_publish: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<TrashSuccess, AppError> {
-    let TrashArtifact::Freedesktop {
-        root,
-        name,
-        original_path,
-        metadata_digest,
-        metadata_identity,
-        payload_version,
-    } = request.artifact.as_ref()
-    else {
-        return Err(AppError::InvalidPath(
-            "Restore receipt is not a Freedesktop trash artifact".into(),
-        ));
-    };
-    let requested_path = resolved_restore_path(Path::new(&request.path))?;
-    if requested_path != *original_path || !is_name(name) {
-        return Err(AppError::InvalidPath(
-            "Restore request does not match its trash receipt".into(),
-        ));
-    }
-
-    let root_directory = Directory::open(root)?;
-    validate_private(&root_directory)?;
-    let info = root_directory.open_existing(OsStr::new("info"))?;
-    let files = root_directory.open_existing(OsStr::new("files"))?;
-    validate_private(&info)?;
-    validate_private(&files)?;
-
-    let mut info_name = name.clone();
-    info_name.push(OsStr::from_bytes(INFO_SUFFIX));
-    let mut metadata = info.open_file(&info_name)?;
-    let metadata_stat = metadata.metadata()?;
-    if !metadata_stat.is_file() || identity(&metadata_stat) != *metadata_identity {
-        return Err(AppError::Other(
-            "Trash metadata identity changed; refusing to restore an unverified item".into(),
-        ));
-    }
-    let mut bytes = Vec::new();
-    Read::by_ref(&mut metadata)
-        .take(MAX_INFO_BYTES + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_INFO_BYTES
-        || <[u8; 32]>::from(Sha256::digest(&bytes)) != *metadata_digest
-    {
-        return Err(AppError::Other(
-            "Trash metadata changed; refusing to restore an unverified item".into(),
-        ));
-    }
-    if version_at(&files, name)? != *payload_version {
-        return Err(AppError::Other(
-            "Trash payload identity changed; refusing to restore an unverified item".into(),
-        ));
-    }
-
-    let parent = original_path
-        .parent()
-        .ok_or_else(|| AppError::InvalidPath(request.path.clone()))?;
-    let target_name = original_path
-        .file_name()
-        .ok_or_else(|| AppError::InvalidPath(request.path.clone()))?;
-    super::restore_parents::create(parent, effects)?;
-    let target_parent = Directory::open(parent)?;
-    let parent_identity = super::file_identity::of_file(&target_parent.file)?;
-    let physical_target = target_parent.path()?.join(target_name);
-    before_publish()?;
-    rename_noreplace_at(&files, name, &target_parent, target_name)?;
-
-    let restored_version = version_at(&target_parent, target_name).map_err(|error| {
-        AppError::MutationUncertain(format!(
-            "The payload was restored, but its identity could not be read: {error}"
-        ))
-    })?;
-    if restored_version != *payload_version {
-        return Err(AppError::MutationUncertain(
-            "Restored payload identity could not be verified".into(),
-        ));
-    }
-    if let Err(error) = unlink(&info, &info_name) {
-        log::warn!(
-            "Restored {} but could not remove trash metadata: {error}",
-            original_path.display()
-        );
-    }
-    if let Err(error) = target_parent
-        .sync()
-        .and_then(|_| files.sync())
-        .and_then(|_| info.sync())
-    {
-        log::warn!(
-            "Restored {} but could not synchronize directory metadata: {error}",
-            original_path.display()
-        );
-    }
-    Ok(TrashSuccess {
-        artifact: None,
-        publication: Some(Arc::new(super::mutation::PublishedEntry {
-            path: physical_target,
-            parent: parent_identity,
-            version: restored_version,
-        })),
-        warning: None,
-    })
+    restoration::restore(request, effects, before_publish)
 }
 
 enum TrashLayout {

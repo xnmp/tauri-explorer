@@ -180,6 +180,7 @@ pub(crate) async fn run_with_effects(
     .await
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 pub(crate) async fn run_with_receipts(
     plan: BatchPlan,
     operation: impl FnMut(&str, &DirectoryEffects) -> Result<TrashSuccess, AppError> + Send + 'static,

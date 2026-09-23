@@ -112,7 +112,7 @@ impl Context {
         let mut index = Claims::default();
         // Observe the entire requested namespace before destination planning:
         // a candidate/layout failure cannot erase a selected ancestor or alias.
-        let sources = observe_sources(&paths, &mut index, &mut budget)?;
+        let sources = observe_sources(&paths, publication, &mut index, &mut budget)?;
         if let Some(expected) = publication {
             expected.version.validate()?;
             let [source] = sources.as_slice() else {
@@ -198,6 +198,7 @@ struct ObservedSource {
 
 fn observe_sources(
     paths: &[String],
+    publication: Option<&PublishedEntry>,
     index: &mut Claims,
     budget: &mut Budget,
 ) -> Result<Vec<ObservedSource>, AppError> {
@@ -209,7 +210,11 @@ fn observe_sources(
     let mut observed = Vec::with_capacity(paths.len());
     for path in paths {
         let mut claims = resources::capture_requests(&[resources::Request {
-            path: Path::new(path).to_owned(),
+            // A publication carries native authority even when its display key
+            // cannot represent the physical filename as UTF-8.
+            path: publication
+                .map_or_else(|| Path::new(path), |entry| entry.path.as_path())
+                .to_owned(),
             access: Access::Write,
             scope: Scope::Subtree,
         }])?

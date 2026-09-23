@@ -14,6 +14,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
     id?: string;
     source?: string;
     sources?: string[];
+    shared?: boolean;
     destination?: string;
   }>) => {
     const { token, op } = event.detail;
@@ -23,7 +24,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
       if (op === "copy-many") {
         const { copyFiles } = await import("../lib/state/copy-operations");
         signal.throwIfAborted();
-        return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {} });
+        return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {}, broadcastToOtherWindows: event.detail.shared });
       }
       if (op === "copy") {
         const { performFileTransfer } = await import("../lib/state/file-transfer");

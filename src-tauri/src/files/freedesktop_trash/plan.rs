@@ -96,7 +96,7 @@ pub(super) struct DirectoryIdentity {
 }
 
 impl DirectoryIdentity {
-    fn capture(directory: &Directory) -> Result<Self, AppError> {
+    pub(super) fn capture(directory: &Directory) -> Result<Self, AppError> {
         let metadata = directory.metadata()?;
         if metadata.nlink() == 0 {
             return Err(AppError::Other("Trash directory was removed".into()));

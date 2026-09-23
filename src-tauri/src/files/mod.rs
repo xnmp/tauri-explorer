@@ -9,6 +9,7 @@ pub(crate) mod copy_session;
 pub mod dir_listing;
 mod directory_cache;
 mod directory_watches;
+mod directory_wire;
 pub mod drives;
 pub(crate) mod entry_plan;
 mod entry_version;
@@ -109,7 +110,7 @@ pub enum FileKind {
 /// `entries` is an `Arc` so cache hits in `dir_listing` share the cached
 /// allocation instead of deep-cloning thousands of `FileEntry`s per call
 /// (serde's `rc` feature serializes through the Arc transparently).
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct DirectoryListing {
     pub path: String,
     pub entries: std::sync::Arc<Vec<FileEntry>>,

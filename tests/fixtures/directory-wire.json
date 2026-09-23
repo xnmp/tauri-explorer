@@ -1,0 +1,212 @@
+[
+  {
+    "listing": {
+      "path": "/requested/alias",
+      "entries": [
+        {
+          "name": "a\"\\雪.txt",
+          "path": "/physical/Ä/a\"\\雪.txt",
+          "kind": "file",
+          "size": 42,
+          "modified": "2026-09-23T01:02:03.123Z",
+          "is_symlink": true,
+          "symlink_target": "../target\\雪",
+          "is_git_repo": false
+        },
+        {
+          "name": "repo",
+          "path": "/physical/Ä/repo",
+          "kind": "directory",
+          "size": 0,
+          "modified": "",
+          "is_symlink": false,
+          "is_empty": false,
+          "is_git_repo": true
+        },
+        {
+          "name": "empty",
+          "path": "/physical/Ä/empty",
+          "kind": "directory",
+          "size": 0,
+          "modified": "",
+          "is_symlink": false,
+          "is_empty": true,
+          "is_git_repo": false
+        }
+      ]
+    },
+    "wire": {
+      "format": "columns-v1",
+      "path": "/requested/alias",
+      "path_prefix": "/physical/Ä/",
+      "columns": {
+        "names": [
+          "a\"\\雪.txt",
+          "repo",
+          "empty"
+        ],
+        "kinds": [
+          "file",
+          "directory",
+          "directory"
+        ],
+        "sizes": [
+          42,
+          0,
+          0
+        ],
+        "modified": [
+          "2026-09-23T01:02:03.123Z",
+          "",
+          ""
+        ],
+        "is_symlink": [
+          true,
+          false,
+          false
+        ],
+        "symlink_target": [
+          "../target\\雪",
+          null,
+          null
+        ],
+        "is_empty": [
+          null,
+          false,
+          true
+        ],
+        "is_git_repo": [
+          false,
+          true,
+          false
+        ]
+      }
+    }
+  },
+  {
+    "listing": {
+      "path": "C:\\alias",
+      "entries": [
+        {
+          "name": "报告.txt",
+          "path": "\\\\?\\C:\\physical\\报告.txt",
+          "kind": "file",
+          "size": 9007199254740992,
+          "modified": "stamp",
+          "is_symlink": false,
+          "is_git_repo": false
+        }
+      ]
+    },
+    "wire": {
+      "format": "columns-v1",
+      "path": "C:\\alias",
+      "path_prefix": "\\\\?\\C:\\physical\\",
+      "columns": {
+        "names": [
+          "报告.txt"
+        ],
+        "kinds": [
+          "file"
+        ],
+        "sizes": [
+          9007199254740992
+        ],
+        "modified": [
+          "stamp"
+        ]
+      }
+    }
+  },
+  {
+    "listing": {
+      "path": "/mixed",
+      "entries": [
+        {
+          "name": "display",
+          "path": "/other/actual",
+          "kind": "file",
+          "size": 1,
+          "modified": "x",
+          "is_symlink": false,
+          "is_git_repo": false
+        }
+      ]
+    },
+    "wire": {
+      "format": "columns-v1",
+      "path": "/mixed",
+      "path_prefix": null,
+      "columns": {
+        "names": [
+          "display"
+        ],
+        "paths": [
+          "/other/actual"
+        ],
+        "kinds": [
+          "file"
+        ],
+        "sizes": [
+          1
+        ],
+        "modified": [
+          "x"
+        ]
+      }
+    }
+  },
+  {
+    "listing": {
+      "path": "/empty",
+      "entries": []
+    },
+    "wire": {
+      "format": "columns-v1",
+      "path": "/empty",
+      "path_prefix": null,
+      "columns": {
+        "names": [],
+        "paths": [],
+        "kinds": [],
+        "sizes": [],
+        "modified": []
+      }
+    }
+  },
+  {
+    "listing": {
+      "path": ".",
+      "entries": [
+        {
+          "name": "relative",
+          "path": "relative",
+          "kind": "file",
+          "size": 0,
+          "modified": "x",
+          "is_symlink": false,
+          "is_git_repo": false
+        }
+      ]
+    },
+    "wire": {
+      "format": "columns-v1",
+      "path": ".",
+      "path_prefix": "",
+      "columns": {
+        "names": [
+          "relative"
+        ],
+        "kinds": [
+          "file"
+        ],
+        "sizes": [
+          0
+        ],
+        "modified": [
+          "x"
+        ]
+      }
+    }
+  }
+]

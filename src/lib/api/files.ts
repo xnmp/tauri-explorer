@@ -6,6 +6,7 @@
  * dedicated sibling modules and are imported directly by feature consumers.
  */
 
+import { decodeDirectoryListing, type DirectoryListingPayload } from "./directory-wire";
 import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
@@ -110,8 +111,8 @@ export async function fetchDirectory(
     }
   }
   try {
-    const data = await invoke<DirectoryListing>("list_directory", { path });
-    return { ok: true, data };
+    const data = await invoke<DirectoryListingPayload>("list_directory", { path });
+    return { ok: true, data: decodeDirectoryListing(data) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -466,16 +467,17 @@ export async function loadDirectory(
     publishDirectoryListingE2EProbe();
   }
 
-  let acquired: ObservedDirectoryListing | undefined;
+  let acquired: (DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }) | undefined;
   try {
     const native = isTauri();
     const sessionId = observation && native ? await getNativeResourceSession() : undefined;
-    const data = observation && native
-      ? await invoke<ObservedDirectoryListing>("start_observed_directory", {
+    const payload = observation && native
+      ? await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
           path, sessionId,
         })
-      : await invoke<ObservedDirectoryListing>("list_directory_fresh", { path });
-    acquired = data;
+      : await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path });
+    acquired = payload;
+    const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
     if (data.watch_lease) publishReadyDirectoryWatch(path);
     if (e2eProbe) {
       // Keep the literal build flag at this import: the bundler discovers
@@ -509,7 +511,7 @@ export async function loadDirectory(
     });
     return { ok: true, data };
   } catch (err) {
-    // The optional native probe can fail after acquisition. Keep the same
+    // Decoding and the optional native probe can fail after acquisition. Keep the same
     // owner responsible for releasing late leases, including release retries.
     if (acquired?.watch_lease) observation?.discard(acquired.watch_lease);
     const error = extractError(err);

@@ -96,6 +96,10 @@ pub(crate) struct MoveState {
     pub phase: MovePhase,
     /// Only a cross-filesystem move stages an independent copied payload.
     pub staged: Option<super::durable_model::StagedPayload>,
+    #[serde(default)]
+    pub retained_bytes: Option<u64>,
+    #[serde(default)]
+    pub retirement: Option<super::move_retention::RetirementState>,
     pub error: Option<String>,
 }
 
@@ -107,6 +111,8 @@ impl Default for MoveState {
             target_root: None,
             phase: MovePhase::Planned,
             staged: None,
+            retained_bytes: None,
+            retirement: None,
             error: None,
         }
     }
@@ -119,6 +125,9 @@ impl MoveState {
         spec: &MoveSpec,
         resources: &[super::resources::Resource],
     ) -> io::Result<()> {
+        if let Some(retirement) = &self.retirement {
+            retirement.validate(spec, self)?;
+        }
         let observed = self.phase.roots_observed();
         if self.source_root.is_some() != (observed && spec.source_root.is_some())
             || self.target_root.is_some() != (observed && spec.target_root.is_some())

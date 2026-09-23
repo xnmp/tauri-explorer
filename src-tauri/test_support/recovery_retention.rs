@@ -248,3 +248,11 @@ fn capacity_is_reached_by_either_bound_and_unmeasured_records_still_consume_it()
     assert!(by_records.at_capacity(&budget));
     assert_eq!(by_records.bytes, 0);
 }
+
+#[test]
+fn interrupted_retirement_without_a_measurement_is_reported_as_unknown() {
+    let mut usage = Usage::default();
+    usage.add(Retention::Retiring, None, true);
+    assert_eq!(usage.records, 1);
+    assert_eq!(usage.unmeasured, 1);
+}

@@ -190,19 +190,64 @@ Retirement dispatches on `OperationSpec` / `OperationState` through a single
 rule, paired with a `retirement_step` observation that verifies the live
 endpoints before anything may be removed.
 
-Durable moves (#685) are classified `Unsupported`: listed, measured by a
-read-only walk of both artifact roots, and counted against both bounds, but
-never retired — not automatically and not on explicit request. A move's
-artifacts do not reduce to a replacement's: a parked cross-filesystem source is
-the relocated object itself rather than an independent copy of something still
-published, and a displaced overwrite target is the only copy of what the
-destination held. Because that measurement is not journaled, it needs no
-`MoveState` field and no schema change; it is recomputed on each pass. Move
-retirement needs its own plan, naming which artifact a move may release and the
-endpoints that prove it. That plan is the outstanding follow-up. A kind without a
-plan is listed, never retired, and reported as requiring further support. Move
-records (#685) slot in by supplying their plan — parked source and destination
-endpoints — with no change to the state machine, the budget or the UI.
+Durable moves use `move_retention.rs` for pure policy and
+`move_retirement.rs` for native observation and cleanup. Their settled positions
+have these rules:
+
+| Move position | Disposal |
+| --- | --- |
+| Same-volume Published, including a rename with no artifact root | Explicit only: the record is still its Undo authority |
+| Cross-volume Published | Unresolved: source parking has not completed |
+| Cross-volume Parked | Explicit only: the parked source is the exact original required by Undo |
+| Removed with displaced target original | Explicit only |
+| Removed without displaced target original | Automatic verified residue cleanup |
+| Restored rename | Automatic verified empty-root/evidence cleanup |
+| Restored cross-volume regular file | Automatic only after both public endpoints verify |
+| Restored cross-volume directory or symlink | Explicit only |
+
+One durable decision authorizes the whole immutable cleanup plan. Each root has
+its own `Pending -> Removing -> Removed` checkpoints, in source-then-target
+order. Root removal intent precedes effects; completion follows the parent
+sync. The final record-completion checkpoint requires both roots to be removed.
+A resumed explicit decision may finish automatically, but enforcement can never
+invent a decision to discard an original. Beginning retirement prevents both
+history claims and forward/inverse execution, and retains full mutation claims
+until record retirement releases them.
+
+Observation verifies both recorded public parents, the expected source and
+target versions, exact private root identities and manifests, and the allowed
+child set. Missing volumes, unplanned children and changed endpoints preserve
+evidence. Removal deletes the expected payload first, the manifest last, and
+then the empty root. Missing payloads/roots are completed work only after their
+removal intent. Before the global retirement decision, bounded, no-follow walks capture both
+payloads' descendant native paths and versions. Both plans are journaled with
+that decision before any root effect; restart never recaptures a pending root. The journal validates that preorder tree
+against the immutable top-level payload, with unique child paths, directory
+parents and no cross-mount traversal. Resumption permits missing planned entries
+but rejects newly added descendants and changed files before deleting anything.
+Directory size/mtime may differ after the application's own child removals;
+its native identity, ownership, mode and complete remaining child set must still
+match the recorded plan. Every leaf is rechecked before unlink and each parent
+is synced. Plans have depth, entry-count and conservative 8 MiB per-root encoded-byte
+bounds (16 MiB aggregate, below the 32 MiB checkpoint limit). Each completed
+root releases its descendant plan; all later pending plans remain durable. This does not claim protection from an external same-user writer
+swapping a leaf in the final check-to-unlink syscall interval.
+
+Move byte measurements are bounded and journaled in `MoveState.retained_bytes`;
+confirmed effects and retirement steps invalidate them. Cleanup refusal does
+not prevent measuring observable retained roots; unknown interrupted-retirement
+bytes remain explicitly unmeasured rather than becoming zero. A rootless completed
+rename measures zero bytes but still consumes a record and retains Undo.
+Repeated enforcement of measured, explicit-only records does not claim them or
+advance their generations. Both new move fields default when decoding older
+journals; absence never grants cleanup authority. Catalog-only residue requires
+verified absence of every planned root, not just the first one.
+
+Rust acceptance includes real same-volume/cross-volume files and directories,
+overwrite and restoration, changed endpoints, unexpected root children, missing
+roots, accounting stability, injected failures and subprocess kills at both
+roots' intent/removal/completion boundaries. Native UI acceptance and the
+pre-root-intent `RENAME_NOREPLACE` capability probe are still required by #736.
 
 ### Platforms and adapters
 
@@ -227,5 +272,6 @@ is the same class ADR 0020 already creates for a changed restoration target; it
 consumes the record bound until the user acts. Enforcement never stops early on
 such a record, so one unverifiable record does not hide the rest.
 Process-kill acceptance covers the checkpoints in this document with the kernel
-alive; power-loss durability is not claimed. Windows/macOS retirement, Move
-retirement plans and a retention view of native history remain outstanding.
+alive; power-loss durability is not claimed. Windows/macOS retirement, native
+move retirement UI acceptance, the move capability probe and a retention view
+of native history remain outstanding.

@@ -422,6 +422,53 @@ fn relocation(
         MoveTransition::BeginRestoration,
     )
     .is_ok();
+    if matches!(request, Request::Inspect)
+        && retention::retention(&operation.intent().operation, operation.state()).retirable()
+    {
+        let intent = operation.intent().clone();
+        let retirement = match Retirement::open(operation) {
+            Ok(retirement) => retirement,
+            Err(error) => {
+                return reply(
+                    coordinator,
+                    Some(item(
+                        &intent,
+                        generation,
+                        None,
+                        "attention",
+                        "Move recovery files could not be verified; all evidence is preserved",
+                        vec![],
+                    )),
+                    Some(diagnostic(error)),
+                )
+            }
+        };
+        let (status, message, actions) = match retirement.eligibility() {
+            Eligibility::Preserved(reason) => ("attention", reason.clone(), vec![]),
+            _ => {
+                let mut actions = Vec::new();
+                if restorable {
+                    actions.push(RecoveryChoice::Restore);
+                }
+                actions.push(RecoveryChoice::Discard);
+                ("retained", if restorable {
+                    "Restore this move or discard its recovery data. Discard permanently removes its Undo history and any retained originals."
+                } else { "The move no longer needs restoration; its retained recovery data can be discarded." }.to_owned(), actions)
+            }
+        };
+        return reply(
+            coordinator,
+            Some(item(
+                &intent,
+                retirement.generation(),
+                retention::measured_bytes(retirement.state()),
+                status,
+                &message,
+                actions,
+            )),
+            None,
+        );
+    }
     if !restorable {
         let message = match operation.state().move_state().map(|state| state.phase) {
             Ok(MovePhase::Staged) => {
@@ -491,8 +538,7 @@ fn relocation(
                 vec![],
             )
         }),
-        // Discard is dispatched to retirement before a move is reopened, and a
-        // move record has no retirement plan yet, so it is never offered here.
+        // Discard is dispatched to the move retirement observer before reopening.
         Request::Discard(_) => unreachable!("discard never reaches move reconciliation"),
     };
     let (view, error) = match result {

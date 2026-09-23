@@ -109,7 +109,13 @@ fn completed_retirement(state: &OperationState) -> bool {
         OperationState::Replacement(state) => {
             state.phase == Phase::Discarded && state.error.is_none()
         }
-        _ => false,
+        OperationState::Move(state) => {
+            state
+                .retirement
+                .as_ref()
+                .is_some_and(|retirement| retirement.completed)
+                && state.error.is_none()
+        }
     }
 }
 

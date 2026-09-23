@@ -986,7 +986,11 @@ session with exactly one inverse per committed item — the durable record when
 there is one, an `Action::Move` otherwise, never both — which retires the
 renderer's per-item path-based Move inverses for cut/paste and drag-drop.
 
-Still required: artifact retention and retirement (#687); Windows/macOS adapters
-and qualification; and a `RENAME_NOREPLACE` support probe before publishing root
+Move retirement now has operation-specific policy and journaled removal for both
+private roots (ADR 0023). Completed moves retain their exact Undo authority until
+explicit discard; restored redundant artifacts may retire automatically.
+
+Still required: native move-retirement acceptance (#736), Windows/macOS adapters
+and qualification, and a `RENAME_NOREPLACE` support probe before publishing root
 intent, so a filesystem that rejects it does not leave a private artifact pair
 behind on each refused attempt.

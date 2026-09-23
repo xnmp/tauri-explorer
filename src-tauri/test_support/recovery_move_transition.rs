@@ -546,3 +546,248 @@ fn move_checkpoints_roundtrip_through_their_journal_encoding() {
     assert_eq!(decoded, parked);
     decoded.validate(&intent).unwrap();
 }
+
+#[test]
+fn move_disposal_never_automatically_consumes_undo() {
+    for (intent, state) in [fast_path(), same_volume_overwrite(), cross_volume()] {
+        let mut state = to_published(&intent, state);
+        if intent.operation.move_spec().unwrap().strategy == Strategy::CopyParked {
+            // Published is still an interrupted cross-volume move.
+            assert!(transition(
+                &intent,
+                &state,
+                retirement_event(&intent, &state, Decision::Explicit)
+            )
+            .is_err());
+            state = advance(&intent, state, MoveTransition::BeginPark);
+            state = advance(&intent, state, MoveTransition::ParkCompleted);
+        }
+        assert!(transition(
+            &intent,
+            &state,
+            retirement_event(&intent, &state, Decision::Automatic)
+        )
+        .is_err());
+        let discarding = advance(
+            &intent,
+            state.clone(),
+            retirement_event(&intent, &state, Decision::Explicit),
+        );
+        assert!(transition(&intent, &discarding, MoveTransition::BeginRestoration).is_err());
+        assert!(transition(
+            &intent,
+            &discarding,
+            retirement_event(&intent, &state, Decision::Automatic)
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn retirement_requires_each_root_intent_and_completion_in_order() {
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let state = advance(&intent, state, MoveTransition::ParkCompleted);
+    let state = advance(
+        &intent,
+        state.clone(),
+        retirement_event(&intent, &state, Decision::Explicit),
+    );
+    assert!(transition(&intent, &state, MoveTransition::RetirementCompleted).is_err());
+    assert!(transition(
+        &intent,
+        &state,
+        MoveTransition::RootRetired(RootSide::Source)
+    )
+    .is_err());
+    assert!(transition(
+        &intent,
+        &state,
+        MoveTransition::BeginRootRetirement(RootSide::Target)
+    )
+    .is_err());
+    let state = advance(
+        &intent,
+        state.clone(),
+        MoveTransition::BeginRootRetirement(RootSide::Source),
+    );
+    let state = advance(
+        &intent,
+        state,
+        MoveTransition::RootRetired(RootSide::Source),
+    );
+    assert!(transition(&intent, &state, MoveTransition::RetirementCompleted).is_err());
+    let state = advance(
+        &intent,
+        state.clone(),
+        MoveTransition::BeginRootRetirement(RootSide::Target),
+    );
+    let state = advance(
+        &intent,
+        state,
+        MoveTransition::RootRetired(RootSide::Target),
+    );
+    advance(&intent, state, MoveTransition::RetirementCompleted)
+        .validate(&intent)
+        .unwrap();
+}
+
+#[test]
+fn legacy_move_checkpoints_decode_without_retirement_authority() {
+    let (intent, state) = fast_path();
+    let state = to_published(&intent, state);
+    let mut value = serde_json::to_value(&state).unwrap();
+    // Strip new optional fields recursively, like an older release's journal.
+    fn legacy(value: &mut serde_json::Value) {
+        if let serde_json::Value::Object(fields) = value {
+            fields.remove("retirement");
+            fields.remove("retained_bytes");
+            for child in fields.values_mut() {
+                legacy(child);
+            }
+        }
+    }
+    legacy(&mut value);
+    let decoded: OperationState = serde_json::from_value(value).unwrap();
+    decoded.validate(&intent).unwrap();
+    assert!(transition(&intent, &decoded, MoveTransition::BeginRestoration).is_ok());
+    assert!(transition(
+        &intent,
+        &decoded,
+        retirement_event(&intent, &state, Decision::Automatic)
+    )
+    .is_err());
+}
+
+fn removal_plan(
+    intent: &DurableIntent,
+    state: &OperationState,
+    side: RootSide,
+) -> crate::files::recovery::move_cleanup::Plan {
+    use crate::files::recovery::{move_cleanup::Plan, move_retention::expected_payload};
+    let spec = intent.operation.move_spec().unwrap();
+    let root = match side {
+        RootSide::Source => &spec.source_root,
+        RootSide::Target => &spec.target_root,
+    }
+    .as_ref()
+    .unwrap();
+    match expected_payload(spec, state.move_state().unwrap(), side).unwrap() {
+        Some((name, versions)) => {
+            Plan::single(NativePath(root.path.0.join(name)), versions[0].clone())
+        }
+        None => Plan::default(),
+    }
+}
+
+#[test]
+fn cleanup_plan_rejects_duplicate_foreign_and_non_directory_child_authority() {
+    use crate::files::recovery::move_cleanup::Plan;
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let state = advance(&intent, state, MoveTransition::ParkCompleted);
+    let plan = removal_plan(&intent, &state, RootSide::Source);
+    let spec = intent.operation.move_spec().unwrap();
+    let root = &spec.source_root.as_ref().unwrap().path.0;
+    for suffix in ["parked", "foreign", "parked/child"] {
+        let mut encoded = serde_json::to_value(&plan).unwrap();
+        let entries = encoded["entries"].as_array_mut().unwrap();
+        let mut extra = entries[0].clone();
+        extra["path"] = serde_json::to_value(NativePath(root.join(suffix))).unwrap();
+        entries.push(extra);
+        let forged: Plan = serde_json::from_value(encoded).unwrap();
+        assert!(
+            forged
+                .validate(
+                    root,
+                    Some(("parked", std::slice::from_ref(&spec.source_version)))
+                )
+                .is_err(),
+            "{suffix}"
+        );
+    }
+}
+
+#[test]
+fn cleanup_plan_budget_bounds_encoded_checkpoint_and_completed_roots_release_it() {
+    use crate::files::recovery::{model::OperationCheckpoint, move_cleanup::Plan};
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let state = advance(&intent, state, MoveTransition::ParkCompleted);
+    let state = advance(
+        &intent,
+        state.clone(),
+        retirement_event(&intent, &state, Decision::Explicit),
+    );
+    let state = advance(
+        &intent,
+        state,
+        MoveTransition::BeginRootRetirement(RootSide::Source),
+    );
+    let state = advance(
+        &intent,
+        state,
+        MoveTransition::RootRetired(RootSide::Source),
+    );
+    let encoded = serde_json::to_value(&state).unwrap();
+    assert!(
+        encoded["state"]["retirement"]["source_plan"].is_null(),
+        "completed root must not grow the next root's checkpoint"
+    );
+    let state = advance(
+        &intent,
+        state,
+        MoveTransition::BeginRootRetirement(RootSide::Target),
+    );
+    let bytes = serde_json::to_vec(&OperationCheckpoint {
+        intent_digest: [0; 32],
+        state,
+    })
+    .unwrap();
+    assert!(bytes.len() < crate::files::recovery::journal::MAX_RECORD_BYTES);
+
+    // Entry count alone is not a byte bound: long native paths must exhaust
+    // the plan budget well before reaching 65,536 entries.
+    let root = Path::new("/volume/private");
+    let mut top = version(7, 10);
+    top.directory = true;
+    top.mode = 0o40700;
+    let mut encoded =
+        serde_json::to_value(Plan::single(NativePath(root.join("parked")), top.clone())).unwrap();
+    let entries = encoded["entries"].as_array_mut().unwrap();
+    let long = "x".repeat(2000);
+    for index in 0..4200 {
+        let child = Plan::single(
+            NativePath(root.join("parked").join(format!("{long}{index}"))),
+            version(7, 20 + index),
+        );
+        entries.push(serde_json::to_value(child).unwrap()["entries"][0].clone());
+    }
+    let plan: Plan = serde_json::from_value(encoded).unwrap();
+    let error = plan.validate(root, Some(("parked", &[top]))).unwrap_err();
+    assert!(error.to_string().contains("byte budget"), "{error}");
+}
+
+fn retirement_event(
+    intent: &DurableIntent,
+    state: &OperationState,
+    decision: Decision,
+) -> MoveTransition {
+    let spec = intent.operation.move_spec().unwrap();
+    let existing = state.move_state().unwrap().retirement.as_ref();
+    let plan = |side: RootSide, present: bool| {
+        if let Some(existing) = existing {
+            existing.plan(side).cloned()
+        } else {
+            present.then(|| removal_plan(intent, state, side))
+        }
+    };
+    MoveTransition::BeginRetirement(
+        decision,
+        plan(RootSide::Source, spec.source_root.is_some()),
+        plan(RootSide::Target, spec.target_root.is_some()),
+    )
+}

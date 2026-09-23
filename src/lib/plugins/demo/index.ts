@@ -32,7 +32,7 @@ function listDemo(path: string): DirectoryListing {
           entry("hello.txt", `${DEMO_ROOT}hello.txt`, "file", 12),
           entry("readme.md", `${DEMO_ROOT}readme.md`, "file", 128),
         ];
-  return { path, entries, listing_id: null };
+  return { path, entries };
 }
 
 export const demoPlugin: Plugin = {

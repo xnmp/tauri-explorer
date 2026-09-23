@@ -126,7 +126,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
-- `directory-listing.ts` — streaming/event-based incremental dir load management.
+- `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
 - `selection.ts` — pure selection math (range/toggle/anchor).
 - `sort-prefs.ts` — per-directory sort preference persistence.
@@ -462,7 +462,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
-- `dir_listing.rs` — directory listing with caching + streaming. Hot.
+- `dir_listing.rs` — cached directory reads and fresh complete snapshots with owned observation. Hot.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect.
 - `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.

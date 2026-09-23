@@ -12,7 +12,7 @@ import {
 } from "$lib/plugins/fs-providers";
 
 function listing(path: string): DirectoryListing {
-  return { path, entries: [], listing_id: null };
+  return { path, entries: [] };
 }
 
 describe("fs-provider dispatch", () => {

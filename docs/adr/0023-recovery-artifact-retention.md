@@ -246,8 +246,11 @@ verified absence of every planned root, not just the first one.
 Rust acceptance includes real same-volume/cross-volume files and directories,
 overwrite and restoration, changed endpoints, unexpected root children, missing
 roots, accounting stability, injected failures and subprocess kills at both
-roots' intent/removal/completion boundaries. Native UI acceptance and the
-pre-root-intent `RENAME_NOREPLACE` capability probe are still required by #736.
+roots' intent/removal/completion boundaries. Native UI acceptance covers actual
+file/directory move discard, accounting and preservation of externally edited
+endpoints. ADR 0020 describes the journaled per-volume capability preflight:
+interrupted probes permit only evidence-checked explicit cleanup, and aborted
+preflight records retire only after every planned probe name is absent.
 
 ### Platforms and adapters
 
@@ -272,6 +275,5 @@ is the same class ADR 0020 already creates for a changed restoration target; it
 consumes the record bound until the user acts. Enforcement never stops early on
 such a record, so one unverifiable record does not hide the rest.
 Process-kill acceptance covers the checkpoints in this document with the kernel
-alive; power-loss durability is not claimed. Windows/macOS retirement, native
-move retirement UI acceptance, the move capability probe and a retention view
-of native history remain outstanding.
+alive; power-loss durability is not claimed. Windows/macOS retirement and a
+retention view of native history remain outstanding.

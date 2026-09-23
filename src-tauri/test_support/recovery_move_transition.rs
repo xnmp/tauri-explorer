@@ -74,6 +74,7 @@ fn fast_path() -> (DurableIntent, OperationState) {
     let parent = object(7, 10);
     let source_version = version(7, 11);
     let spec = MoveSpec {
+        rename_probes: None,
         source: NativePath("/volume/source".into()),
         source_parent: parent,
         source_version: source_version.clone(),
@@ -98,6 +99,7 @@ fn same_volume_overwrite() -> (DurableIntent, OperationState) {
     let original = version(7, 12);
     let root_path = format!("/volume/.tauri-explorer-recovery-{TARGET_TOKEN}");
     let spec = MoveSpec {
+        rename_probes: None,
         source: NativePath("/volume/source".into()),
         source_parent: parent,
         source_version: source_version.clone(),
@@ -125,6 +127,7 @@ fn cross_volume() -> (DurableIntent, OperationState) {
     let source_root = format!("/source-volume/.tauri-explorer-recovery-{SOURCE_TOKEN}");
     let target_root = format!("/target-volume/.tauri-explorer-recovery-{TARGET_TOKEN}");
     let spec = MoveSpec {
+        rename_probes: None,
         source: NativePath("/source-volume/source".into()),
         source_parent,
         source_version: source_version.clone(),

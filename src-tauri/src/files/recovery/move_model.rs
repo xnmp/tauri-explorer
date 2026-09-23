@@ -20,6 +20,9 @@ pub(crate) struct ArtifactPlan {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MoveSpec {
+    /// Omit legacy absence when reserializing: artifact manifests bind this digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rename_probes: Option<super::move_capability_model::Plans>,
     pub source: NativePath,
     pub source_parent: ObjectId,
     pub source_version: EntryVersion,
@@ -38,6 +41,7 @@ pub(crate) struct MoveSpec {
 #[serde(rename_all = "camelCase")]
 pub(crate) enum MovePhase {
     Planned,
+    Aborted,
     RootIntent,
     Rooted,
     ManifestIntent,
@@ -60,7 +64,7 @@ impl MovePhase {
     /// Artifact roots are planned before admission but observed only after
     /// their exclusive creation. `Planned`/`RootIntent` have no root identity.
     pub(super) fn roots_observed(self) -> bool {
-        !matches!(self, Self::Planned | Self::RootIntent)
+        !matches!(self, Self::Planned | Self::Aborted | Self::RootIntent)
     }
 
     /// A cross-filesystem payload is captured when staging completes and stays
@@ -88,6 +92,8 @@ impl MovePhase {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MoveState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rename_probe: Option<super::move_capability_model::Progress>,
     /// Confirmed public-content transitions, matching the replacement counter.
     #[serde(default)]
     pub effect_revision: u64,
@@ -106,6 +112,7 @@ pub(crate) struct MoveState {
 impl Default for MoveState {
     fn default() -> Self {
         Self {
+            rename_probe: None,
             effect_revision: 0,
             source_root: None,
             target_root: None,
@@ -125,6 +132,7 @@ impl MoveState {
         spec: &MoveSpec,
         resources: &[super::resources::Resource],
     ) -> io::Result<()> {
+        super::move_capability_model::validate(spec, self, resources)?;
         if let Some(retirement) = &self.retirement {
             retirement.validate(spec, self)?;
         }
@@ -155,6 +163,7 @@ impl MoveState {
             && !matches!(
                 self.phase,
                 MovePhase::Planned
+                    | MovePhase::Aborted
                     | MovePhase::PublishIntent
                     | MovePhase::Published
                     | MovePhase::RestoreIntent
@@ -197,6 +206,26 @@ impl MoveState {
 }
 
 impl MoveSpec {
+    pub(super) fn probe_plans(
+        &self,
+    ) -> impl Iterator<Item = (&ArtifactPlan, &NativePath, ObjectId)> {
+        self.rename_probes.iter().flat_map(|plans| {
+            std::iter::once((&plans.source, &self.source, self.source_parent)).chain(
+                plans
+                    .target
+                    .iter()
+                    .map(|plan| (plan, &self.target, self.target_parent)),
+            )
+        })
+    }
+    pub(super) fn capability_ready(&self, state: &MoveState) -> bool {
+        self.rename_probes.is_none()
+            || state
+                .rename_probe
+                .as_ref()
+                .is_some_and(|progress| progress.supported())
+    }
+
     pub(super) fn roots(&self) -> impl Iterator<Item = &ArtifactPlan> {
         self.source_root.iter().chain(&self.target_root)
     }
@@ -242,6 +271,13 @@ impl MoveSpec {
             || self.target_root.is_some() != (cross_volume || self.target_original.is_some())
         {
             return Err(invalid("Move strategy or artifact layout disagrees with its native volumes and overwrite intent"));
+        }
+        if self
+            .rename_probes
+            .as_ref()
+            .is_some_and(|plans| plans.target.is_some() != cross_volume)
+        {
+            return Err(invalid("Rename probe coverage disagrees with move volumes"));
         }
         let mut unique = std::collections::BTreeSet::new();
         if resources
@@ -307,6 +343,7 @@ impl MoveSpec {
                     .iter()
                     .map(|root| (root, &self.target, self.target_parent)),
             )
+            .chain(self.probe_plans())
         {
             if plan.token.len() != 64
                 || !plan

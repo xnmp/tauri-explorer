@@ -647,3 +647,124 @@ fn pending_tree_requires_every_planned_child_even_when_parent_metadata_matches()
         "removing may have already unlinked a planned child"
     );
 }
+
+/// Run explicitly inside a new private mount namespace. The backing mount stays
+/// reachable to the test so it can verify payloads while the public mount is gone.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn unmounted_endpoint_preserves_both_roots_until_same_volume_returns() {
+    use std::{os::unix::fs::MetadataExt, process::Command};
+    let parent_namespace = std::env::var_os("EXPLORER_MOUNT_TEST_PARENT_NS")
+        .expect("run through the documented isolated mount namespace command");
+    assert_ne!(
+        fs::read_link("/proc/self/ns/mnt").unwrap().as_os_str(),
+        parent_namespace
+    );
+    let run = |program: &str, args: &[&std::ffi::OsStr]| {
+        assert!(
+            Command::new(program).args(args).status().unwrap().success(),
+            "{program}"
+        );
+    };
+    for source_on_mount in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let backing = base.path().join("backing");
+        let visible = base.path().join("visible");
+        fs::create_dir(&backing).unwrap();
+        fs::create_dir(&visible).unwrap();
+        run(
+            "mount",
+            &[
+                "-t".as_ref(),
+                "tmpfs".as_ref(),
+                "tmpfs".as_ref(),
+                backing.as_os_str(),
+            ],
+        );
+        run(
+            "mount",
+            &["--bind".as_ref(), backing.as_os_str(), visible.as_os_str()],
+        );
+        assert_ne!(
+            fs::metadata(&visible).unwrap().dev(),
+            fs::metadata(base.path()).unwrap().dev()
+        );
+        let source = if source_on_mount {
+            visible.join("source")
+        } else {
+            base.path().join("source")
+        };
+        let target = if source_on_mount {
+            base.path().join("target")
+        } else {
+            visible.join("target")
+        };
+        fs::write(&source, MOVED).unwrap();
+        fs::write(&target, OLD).unwrap();
+        let coordinator = Coordinator::open(&base.path().join("recovery")).unwrap();
+        let mut progress =
+            crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+        PreparedMove::prepare(&coordinator, &source, &target)
+            .unwrap()
+            .execute(&mut progress)
+            .unwrap();
+        let entry = coordinator.inventory().unwrap().entries.remove(0);
+        let roots: Vec<_> = entry
+            .intent
+            .operation
+            .move_spec()
+            .unwrap()
+            .roots()
+            .map(|p| p.path.0.clone())
+            .collect();
+        assert_eq!(roots.len(), 2);
+        let actual_path = |path: &std::path::Path| match path.strip_prefix(&visible) {
+            Ok(relative) => backing.join(relative),
+            Err(_) => path.to_owned(),
+        };
+        run("umount", &[visible.as_os_str()]);
+        assert!(fs::read_dir(&visible).unwrap().next().is_none());
+        let snapshot = service::inspect(&coordinator, &entry.intent.id).unwrap();
+        assert_eq!(snapshot.items.len(), 1);
+        assert!(snapshot.items[0].actions.is_empty());
+        let refused = service::resolve(
+            &coordinator,
+            &entry.intent.id,
+            snapshot.items[0].generation,
+            RecoveryChoice::Discard,
+        )
+        .unwrap();
+        assert!(refused.error.is_some());
+        assert_eq!(retirement::enforce(&coordinator).unwrap().records, 1);
+        assert_eq!(
+            fs::read(actual_path(&roots[0]).join("parked")).unwrap(),
+            MOVED
+        );
+        assert_eq!(
+            fs::read(actual_path(&roots[1]).join("original")).unwrap(),
+            OLD
+        );
+        assert_eq!(fs::read(actual_path(&target)).unwrap(), MOVED);
+        assert!(!actual_path(&source).exists());
+        run(
+            "mount",
+            &["--bind".as_ref(), backing.as_os_str(), visible.as_os_str()],
+        );
+        let snapshot = service::inspect(&coordinator, &entry.intent.id).unwrap();
+        assert!(snapshot.items[0].actions.contains(&RecoveryChoice::Discard));
+        let result = service::resolve(
+            &coordinator,
+            &entry.intent.id,
+            snapshot.items[0].generation,
+            RecoveryChoice::Discard,
+        )
+        .unwrap();
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert!(result.items.is_empty());
+        assert!(roots.iter().all(|root| !root.exists()));
+        assert_eq!(fs::read(&target).unwrap(), MOVED);
+        assert!(!source.exists());
+        run("umount", &[visible.as_os_str()]);
+        run("umount", &[backing.as_os_str()]);
+    }
+}

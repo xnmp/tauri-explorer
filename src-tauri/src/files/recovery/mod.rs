@@ -18,6 +18,10 @@ mod journal;
 mod locks;
 mod model;
 #[cfg(unix)]
+mod move_capability;
+#[cfg(unix)]
+mod move_capability_model;
+#[cfg(unix)]
 mod move_cleanup;
 #[cfg(unix)]
 mod move_execution;

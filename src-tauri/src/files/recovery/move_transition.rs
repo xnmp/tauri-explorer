@@ -9,6 +9,8 @@ use super::move_retention::{Decision, RetirementState, RootSide, Step};
 use std::io;
 
 pub(super) enum MoveTransition {
+    Probe(usize, super::move_capability_model::Event),
+    AbortPreflight,
     BeginRoots,
     RootsObserved {
         source: Option<ObjectId>,
@@ -75,7 +77,27 @@ pub(super) fn transition(
         ));
     }
     match event {
-        MoveTransition::BeginRoots if state.phase == MovePhase::Planned && rooted => {
+        MoveTransition::Probe(index, event)
+            if state.phase == MovePhase::Planned && spec.rename_probes.is_some() =>
+        {
+            let progress = state.rename_probe.get_or_insert_with(|| {
+                super::move_capability_model::Progress::new(spec.probe_plans().count())
+            });
+            progress.advance(index, event)?;
+        }
+        MoveTransition::AbortPreflight
+            if state.phase == MovePhase::Planned
+                && state
+                    .rename_probe
+                    .as_ref()
+                    .is_some_and(|progress| progress.removed()) =>
+        {
+            state.phase = MovePhase::Aborted;
+            state.error = None;
+        }
+        MoveTransition::BeginRoots
+            if state.phase == MovePhase::Planned && rooted && spec.capability_ready(state) =>
+        {
             state.phase = MovePhase::RootIntent;
         }
         MoveTransition::RootsObserved { source, target }
@@ -124,7 +146,7 @@ pub(super) fn transition(
             if match state.phase {
                 // The same-filesystem non-overwrite fast path is one atomic
                 // no-replace rename; it needs no private storage at all.
-                MovePhase::Planned => !rooted,
+                MovePhase::Planned => !rooted && spec.capability_ready(state),
                 MovePhase::Prepared => !staging && !overwriting,
                 MovePhase::Staged => staging && !overwriting,
                 MovePhase::Displaced | MovePhase::PublishIntent => true,

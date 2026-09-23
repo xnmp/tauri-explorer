@@ -78,7 +78,8 @@ ureq = { version = "3.3.0", default-features = false, features = ["rustls", "jso
 durable-copy-recovery = []
 
 # Durable moves retain exact Undo authority until explicit discard. Keep opt-in
-# until native retirement acceptance and capability preflight are qualified (#736).
+# until platform qualification permits default enablement. Linux retirement and
+# per-volume exclusive-rename preflight are covered by #736 native contracts.
 # Independent of durable-copy-recovery: either policy may ship first.
 durable-move-recovery = []
 

@@ -33,5 +33,16 @@ bytes must be reported as unmeasured or unavailable, never silently zero.
 Regression evidence includes real filesystem outcomes, source/target conflicts,
 foreign children before and during deletion, actual Undo after measurement,
 partial-cleanup ownership fences, and process kills at both root boundaries and
-inside directory deletion. Native UI acceptance and filesystem capability
-preflight remain separate requirements; durable move recovery remains opt-in.
+inside directory deletion. Native UI acceptance also verifies real file/directory
+moves, explicit discard, accounting and edited-endpoint preservation. Durable
+move recovery remains opt-in.
+
+A same-name rename rejection does not prove no-replace filesystem support. Probe
+an actual rename to an absent name on every endpoint volume before move roots.
+The probe itself needs immutable admission claims, durable intent before effects,
+identity observations and explicit interrupted cleanup. An error is not proof of
+non-effect: capability errno classification also requires unchanged endpoints.
+Unknown creation windows preserve evidence; a random private name alone does not
+justify deleting an object. Completed cleanup must retain its original identity
+proof, and new mandatory probe policy needs a versioned intent. Optional legacy
+fields must be omitted on serialization to preserve existing manifest digests.

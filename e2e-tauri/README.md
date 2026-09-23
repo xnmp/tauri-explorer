@@ -370,3 +370,22 @@ with `TAURI_NATIVE_DRIVER`. Captures go to
 parents alongside the log when collecting evidence, then remove the isolated
 fixtures only after the native application has exited. The changed-destination
 case deliberately leaves recoverable data in that profile.
+
+The real missing-volume contract is an ignored Rust test because it requires
+Linux user/mount namespaces and `mount`/`umount`. Run it from the repository root:
+
+```sh
+EXPLORER_MOUNT_TEST_PARENT_NS="$(readlink /proc/self/ns/mnt)" \
+  unshare --user --map-root-user --mount --propagation private \
+  cargo test --manifest-path src-tauri/Cargo.toml --lib \
+    --features durable-copy-recovery,durable-move-recovery \
+    unmounted_endpoint_preserves_both_roots_until_same_volume_returns \
+    -- --ignored --nocapture
+```
+
+The test creates its own tmpfs and bind mount, removes the public mount after a
+real cross-volume overwrite, and checks refusal plus preserved bytes through a
+separate backing mount. Reattaching the same volume restores explicit discard.
+It tests source and destination volume disappearance separately. All mounts live
+only in the new private namespace; it refuses to run in the caller's namespace.
+It does not model physical device failure, power loss or kernel I/O errors.

@@ -467,7 +467,11 @@ fn orphan_root_absent(intent: &super::model::DurableIntent) -> Result<bool, AppE
     let identity = match &intent.operation {
         super::model::OperationSpec::CopyReplacement(spec) => spec,
         super::model::OperationSpec::Move(spec) => {
-            for (_, plan) in super::move_execution::MoveExecution::plans(spec) {
+            for plan in super::move_execution::MoveExecution::plans(spec)
+                .into_iter()
+                .map(|(_, plan)| plan)
+                .chain(super::move_capability::plans(intent)?)
+            {
                 let parent = crate::files::native_directory::Directory::open(&plan.parent_path)?;
                 if crate::files::file_identity::of_file(&parent.file)? != plan.parent {
                     return Err(AppError::Other(

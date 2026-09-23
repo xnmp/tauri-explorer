@@ -29,10 +29,22 @@ fn fixture() -> (tempfile::TempDir, Arc<Coordinator>, Reservation, MoveSpec) {
     let parent = of_file(&Directory::open(&base).unwrap().file).unwrap();
     let source_version = version_from_metadata(&fs::symlink_metadata(&source).unwrap()).unwrap();
     let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+    let probe = super::super::move_model::ArtifactPlan {
+        token: "c".repeat(64),
+        path: NativePath(base.join(format!(".tauri-explorer-recovery-{}", "c".repeat(64)))),
+    };
     let reservation = coordinator
-        .reserve(vec![writing(&source), writing(&target)])
+        .reserve(vec![
+            writing(&source),
+            writing(&target),
+            writing(&probe.path.0),
+        ])
         .unwrap();
     let spec = MoveSpec {
+        rename_probes: Some(super::super::move_capability_model::Plans {
+            source: probe,
+            target: None,
+        }),
         source: NativePath(source),
         source_parent: parent,
         source_version,
@@ -109,7 +121,7 @@ fn rootless_same_volume_move_survives_reopen_as_intent_without_user_file_effects
 fn move_intent_rejects_a_copy_replacement_checkpoint_kind() {
     let (_directory, _coordinator, reservation, spec) = fixture();
     let intent = DurableIntent {
-        version: 1,
+        version: 2,
         id: reservation.id.clone(),
         lock: reservation.owner.identity.clone(),
         resources: reservation.resources.clone(),

@@ -180,11 +180,11 @@ fn operate(
         Err(error) => return reply(coordinator, None, Some(diagnostic(error))),
     };
     let claimed_generation = operation.generation();
-    if let Request::Discard(_) = request {
-        return discard(coordinator, operation, &entry.intent, claimed_generation);
-    }
     if operation.intent().operation.move_spec().is_ok() {
         return relocation(coordinator, operation, request);
+    }
+    if let Request::Discard(_) = request {
+        return discard(coordinator, operation, &entry.intent, claimed_generation);
     }
     // A journaled retirement is presented as retention even though restoration
     // remains a legal transition out of it: retention reporting carries the
@@ -416,6 +416,63 @@ fn relocation(
     use super::move_model::MovePhase;
     use super::move_transition::{transition as move_transition, MoveTransition};
     let generation = operation.generation();
+    if operation
+        .intent()
+        .operation
+        .move_spec()?
+        .rename_probes
+        .is_some()
+        && matches!(
+            operation.state().move_state()?.phase,
+            MovePhase::Planned | MovePhase::Aborted
+        )
+    {
+        let intent = operation.intent().clone();
+        let observation = super::move_capability::inspect(&operation);
+        if matches!(request, Request::Discard(_)) && observation.is_ok() {
+            return match super::move_capability::discard(operation, None) {
+                Ok(()) => reply(coordinator, None, None),
+                Err(error) => reply(coordinator, None, Some(diagnostic(error))),
+            };
+        }
+        let error = match (&request, &observation) {
+            (Request::Restore(_), _) => {
+                Some("This move never started and has no restoration to apply".to_owned())
+            }
+            (Request::Discard(_), Err(error)) => {
+                Some(diagnostic(AppError::Other(error.to_string())))
+            }
+            _ => None,
+        };
+        let (message, actions) = match observation {
+            Ok(()) => ("The move never started. Its verified capability-check data can be discarded.".to_owned(), vec![RecoveryChoice::Discard]),
+            Err(error) => (format!("The move never started; unverified capability-check evidence is preserved: {error}"), vec![]),
+        };
+        let mut view = item(&intent, generation, None, "attention", &message, actions);
+        // Probe evidence is separate from the not-yet-created move artifacts.
+        view.retained_path = operation
+            .state()
+            .move_state()?
+            .rename_probe
+            .as_ref()
+            .and_then(|progress| {
+                progress.steps.iter().position(|step| {
+                    !matches!(
+                        step,
+                        super::move_capability_model::Step::Planned
+                            | super::move_capability_model::Step::Absent
+                            | super::move_capability_model::Step::Removed { .. }
+                    )
+                })
+            })
+            .and_then(|index| intent.operation.move_spec().ok()?.probe_plans().nth(index))
+            .map(|(plan, _, _)| plan.path.0.to_string_lossy().into_owned());
+        return reply(coordinator, Some(view), error);
+    }
+    if let Request::Discard(_) = request {
+        let intent = operation.intent().clone();
+        return discard(coordinator, operation, &intent, generation);
+    }
     let restorable = move_transition(
         operation.intent(),
         operation.state(),

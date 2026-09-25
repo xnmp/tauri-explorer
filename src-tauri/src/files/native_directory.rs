@@ -13,7 +13,7 @@ mod permissions;
 mod unix;
 #[cfg(unix)]
 pub(crate) use unix::is_name;
-#[cfg(all(unix, test))]
+#[cfg(any(target_os = "linux", all(unix, test)))]
 pub(crate) use unix::native_name;
 
 #[cfg(windows)]

@@ -15,13 +15,13 @@ vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
 vi.stubGlobal("window", new EventTarget());
 vi.stubGlobal("document", { documentElement: { dataset: {} } });
 
-const { startStreamingDirectory, watchDirectory } = await import("$lib/api/files");
+const { loadDirectory, watchDirectory } = await import("$lib/api/files");
 
 describe("directory listing Tauri E2E probe", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue({ path: "/probe", entries: [], listing_id: null });
+    invokeMock.mockResolvedValue({ path: "/probe", entries: [] });
     for (const key of Object.keys(document.documentElement.dataset)) {
       delete document.documentElement.dataset[key];
     }
@@ -44,7 +44,7 @@ describe("directory listing Tauri E2E probe", () => {
     );
 
     const completed = vi.fn();
-    const listing = startStreamingDirectory("/probe").then((result) => {
+    const listing = loadDirectory("/probe").then((result) => {
       completed();
       return result;
     });
@@ -53,7 +53,7 @@ describe("directory listing Tauri E2E probe", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     await expect(listing).resolves.toMatchObject({ ok: true });
-    expect(invokeMock).toHaveBeenCalledWith("start_streaming_directory", { path: "/probe" });
+    expect(invokeMock).toHaveBeenCalledWith("list_directory_fresh", { path: "/probe" });
     expect(JSON.parse(document.documentElement.dataset.e2eDirectoryListingProbe ?? "null"))
       .toMatchObject({ calls: 1, completed: 1 });
   });

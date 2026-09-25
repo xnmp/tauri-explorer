@@ -179,6 +179,17 @@ impl Anchor {
         self.open_existing(expected).map(Some)
     }
 
+    /// A probe/retirement may verify absence, but never recreate a missing name.
+    pub(super) fn verify_absent(&self) -> Result<(), AppError> {
+        self.verify_parent_namespace()?;
+        if self.parent.entry_exists(&self.root_name)? {
+            return Err(invalid(
+                "Planned private namespace is unexpectedly occupied",
+            ));
+        }
+        self.verify_parent_namespace()
+    }
+
     fn finish(self, directory: Directory) -> Result<Root, AppError> {
         let identity = of_file(&directory.file)?;
         if !identity.same_volume(self.parent_identity)
@@ -243,6 +254,21 @@ impl Root {
 
     /// Retained handle for operation kinds implemented outside this module.
     /// It is verified by `verify_namespace` before any effect uses it.
+    /// Caller owns a durable cleanup intent for this exact empty probe root.
+    pub(super) fn remove_empty_probe(self) -> Result<(), AppError> {
+        self.verify_namespace()?;
+        if !self.directory.names(1)?.is_empty() {
+            return Err(invalid("Rename probe root contains unrecorded evidence"));
+        }
+        self.verify_namespace()?;
+        self.parent.unlink(&self.name, true)?;
+        self.parent.sync()?;
+        if self.parent.entry_exists(&self.name)? {
+            return Err(invalid("Rename probe root reappeared after cleanup"));
+        }
+        Ok(())
+    }
+
     pub(super) fn directory(&self) -> &Directory {
         &self.directory
     }

@@ -273,7 +273,7 @@ impl LockIdentity {
 impl DurableIntent {
     /// Validate durable data without probing a possibly missing user volume.
     pub(super) fn validate(&self) -> std::io::Result<()> {
-        if self.version != 1
+        if !matches!(self.version, 1 | 2)
             || !valid_token(&self.id)
             || self.lock.name != format!("{}.lock", self.id)
         {
@@ -284,8 +284,15 @@ impl DurableIntent {
         self.lock.validate()?;
         super::resources::validate(&self.resources)?;
         match &self.operation {
-            OperationSpec::CopyReplacement(spec) => spec.validate(&self.resources),
-            OperationSpec::Move(spec) => spec.validate(&self.resources),
+            OperationSpec::CopyReplacement(spec) if self.version == 1 => {
+                spec.validate(&self.resources)
+            }
+            OperationSpec::Move(spec) if (self.version == 2) == spec.rename_probes.is_some() => {
+                spec.validate(&self.resources)
+            }
+            _ => Err(invalid(
+                "Recovery intent version disagrees with its required capability policy",
+            )),
         }
     }
 }

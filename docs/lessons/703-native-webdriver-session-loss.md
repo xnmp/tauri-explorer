@@ -43,11 +43,11 @@ observe processes only:
   (label, hook readiness, `.file-list` count, entry count, status path, URL,
   `readyState`, visibility) plus one `/proc` scan, always on. It reads DOM state
   only, because WebKitWebDriver may evaluate injected scripts in an isolated world.
-- `waitForFreshWindowElement` replays that record with the lookup error and a second
-  `/proc` scan when the element never appears. Comparing the two scans is the
-  discriminator: a `WebKitWebProcess` present at selection and absent afterwards is
-  hypothesis 1; both scans intact points at 2; a selection sample with
-  `fileListCount: 0` or an unexpected `statusPath`/`url` points at 3.
+- `waitForFreshWindowElement` replays that record with the lookup error and a
+  bounded 500 ms `/proc` timeline while the element command is pending. It
+  identifies the newest selection-time `WebKitWebProcess` by PID and start time,
+  then reports the first trustworthy sample where that identity is absent. A
+  capture error is retained and skipped for disappearance classification.
 - `tauri-driver` (whose stdio `WebKitWebDriver` inherits) is now teed to
   `e2e-tauri/logs/tauri-driver.log`, which CI already uploads with the WDIO logs.
 
@@ -56,10 +56,29 @@ a failed capture is stored as `{ error }`, and an unwritable artifact directory
 returns `null` rather than throwing. Per ADR 0021 the window label is digested into
 the artifact file name and kept verbatim inside the JSON body.
 
-Not reproduced locally: `tauri-driver` refuses to start without `WebKitWebDriver`,
-which on Arch ships only in `webkitgtk-6.0`, and the machine has no Xvfb — so the
-suite cannot run there at all. The failure remains an open native qualification
-limitation; the next Linux occurrence should arrive with the evidence attached.
+## Linux reproduction after the first diagnostic landed
+
+The failure reproduced on Ubuntu at dev revision
+`d21479ef22ebee6ba4963639b39d7e6e4208234b`, Actions run `34546220599`, in
+cycle 3 of `directory-watch-lifetime.spec.ts`. At selection the child page was
+complete, visible, hook-ready, and already contained its file list and expected
+path. The fresh child renderer (PID 21084, the newest `WebKitWebProcess`) was
+present beside the application, network process, main renderer, and a stale
+renderer from the previously destroyed child. At the post-timeout sample PID
+21084 was gone while every other listed process survived.
+
+That two-point capture rules out page readiness but does not establish ordering:
+the renderer may have died before the driver timeout, or session deletion may
+have killed the page at the timeout. The pending-command timeline added here is
+the bounded discriminator for the next occurrence. This remains diagnosis, not
+a product fix; watcher receipt, native ownership, destruction, reload, and
+recovery assertions are unchanged.
+
+The original investigation could not reproduce locally: `tauri-driver` refuses
+to start without `WebKitWebDriver`, which on Arch ships only in `webkitgtk-6.0`,
+and that machine had no Xvfb. The real Ubuntu capture above is therefore the
+native evidence, while deterministic unit coverage verifies the new artifact
+contract without pretending to reproduce WebKitGTK process loss.
 
 Do not respond to a recurrence with focus changes, sleeps, larger timeouts or
 blanket retries: none of them are supported by the sequence above.

@@ -346,11 +346,74 @@ gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E
       await browser.waitUntil(async () => (await entryNames()).includes(path.basename(fixture.renamed)), {
         timeout: 20_000, timeoutMsg: "surviving listing did not show the redone rename",
       });
-      const proofDirectory = path.resolve("screenshots/refactor/repo-health-cleanup");
+      const proofDirectory = path.resolve("screenshots/fix/inverse-rename-admission");
       fs.mkdirSync(proofDirectory, { recursive: true });
-      await browser.saveScreenshot(path.join(proofDirectory, "native-file-history-lifetime.png"));
+      await browser.saveScreenshot(path.join(proofDirectory, "native-rename-inverse-lifetime.png"));
     } finally {
       if (gate) forceRelease(gate);
     }
   });
+
+  it("retains exact copy Undo after child destruction and cycles Redo through real trash", async function () {
+    this.timeout(120_000);
+    await browser.switchToWindow(mainHandle);
+    expect((await historyOperation("clear")).error).toBeUndefined();
+    const input = path.join(scratch, "copy-input");
+    const destination = path.join(scratch, "copy-output");
+    fs.mkdirSync(input); fs.mkdirSync(destination);
+    const source = path.join(input, "native-copy.txt");
+    const target = path.join(destination, "native-copy.txt");
+    const contents = `exact native copy ${crypto.randomUUID()}\n`;
+    fs.writeFileSync(source, contents);
+    await navigateTo(destination);
+    const opened = await freshWindow(destination);
+    childHandle = await switchToLabel(opened.label);
+    await waitForHistoryReady();
+    await browser.waitUntil(async () => browser.execute(() => document.documentElement.dataset.e2eRecoveryReady === "true"));
+    const token = crypto.randomUUID();
+    await browser.execute((detail) => window.dispatchEvent(new CustomEvent("e2e-recovery-operation", { detail })), {
+      token, op: "copy-many", sources: [source], destination, shared: true,
+    });
+    let copy: { token?: string; result?: string | null; error?: string } = {};
+    await browser.waitUntil(async () => {
+      copy = JSON.parse(await browser.execute(() => document.documentElement.dataset.e2eRecoveryResult ?? "{}"));
+      return copy.token === token;
+    }, { timeout: 20_000 });
+    expect(copy.error).toBeUndefined();
+    expect(copy.result).toBeNull();
+    expect(fs.readFileSync(target, "utf8")).toBe(contents);
+    const copied = await waitForSummary((s) => !s.busy && s.undoId !== null, "publish the actual copy inverse");
+    let gate: ArmedGate | undefined;
+    try {
+      gate = armGate(copied.undoId!, "undo");
+      await startHistoryOperation("execute", { direction: "undo", expectedEntryId: copied.undoId! });
+      await waitForAccepted(gate);
+      expect(fs.readFileSync(target, "utf8")).toBe(contents);
+      await destroyCurrentWindow(childHandle);
+      childHandle = "";
+      await browser.switchToWindow(mainHandle);
+      await releaseGate(gate);
+      let summary = await waitForSummary((s) => !s.busy && s.redoId !== null && s.undoId === null, "settle copy Undo after child destruction");
+      expect(fs.existsSync(target)).toBe(false);
+      expect(fs.readFileSync(source, "utf8")).toBe(contents);
+      await browser.waitUntil(async () => !(await entryNames()).includes("native-copy.txt"));
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect((await historyOperation("execute", { direction: "redo", expectedEntryId: summary.redoId! })).error).toBeUndefined();
+        expect(fs.readFileSync(target, "utf8")).toBe(contents);
+        await browser.waitUntil(async () => (await entryNames()).includes("native-copy.txt"));
+        summary = await waitForSummary((s) => !s.busy && s.undoId !== null && s.redoId === null, "retain exact Copy Undo after Redo");
+        if (cycle === 0) {
+          expect((await historyOperation("execute", { direction: "undo", expectedEntryId: summary.undoId! })).error).toBeUndefined();
+          expect(fs.existsSync(target)).toBe(false);
+          summary = await waitForSummary((s) => !s.busy && s.redoId !== null && s.undoId === null, "settle repeated Copy Undo");
+        }
+      }
+      const proofDirectory = path.resolve("screenshots/refactor/inverse-trash-admission");
+      fs.mkdirSync(proofDirectory, { recursive: true });
+      await browser.saveScreenshot(path.join(proofDirectory, "native-copy-inverse-lifetime.png"));
+    } finally {
+      if (gate) forceRelease(gate);
+    }
+  });
+
 });

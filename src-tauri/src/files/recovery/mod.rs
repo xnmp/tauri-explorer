@@ -18,9 +18,19 @@ mod journal;
 mod locks;
 mod model;
 #[cfg(unix)]
+mod move_capability;
+#[cfg(unix)]
+mod move_capability_model;
+#[cfg(unix)]
+mod move_cleanup;
+#[cfg(unix)]
 mod move_execution;
 #[cfg(unix)]
 mod move_model;
+#[cfg(unix)]
+mod move_retention;
+#[cfg(unix)]
+mod move_retirement;
 #[cfg(unix)]
 mod move_transition;
 pub(crate) use model::{ReplacementDirection, ReplacementHistory, ReplacementOutcome};

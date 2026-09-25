@@ -671,3 +671,199 @@ fn publication_panic_retains_parent_effects_and_exact_payload_for_inspection() {
         },
     );
 }
+
+#[test]
+fn owned_forward_deletion_excludes_copy_claims_and_preserves_partial_undo_receipts() {
+    isolated(
+        "owned_forward_deletion_excludes_copy_claims_and_preserves_partial_undo_receipts",
+        |fixture| {
+            use crate::files::recovery::{Access, ResourceRequest, Runtime, Scope};
+            let runtime = Runtime::default();
+            let storage = fixture.root.join("recovery");
+            let file = fixture.file("owned", "recover this exact file");
+            let key = path_string(&file);
+            let missing = path_string(&fixture.missing_file("missing"));
+            let request = || {
+                vec![ResourceRequest {
+                    path: file.clone(),
+                    access: Access::Read,
+                    scope: Scope::Subtree,
+                }]
+            };
+            let held = run(runtime.admit(storage.clone(), request())).unwrap();
+            for permanent in [false, true] {
+                let result = run(super::run_admitted_batch(
+                    BatchPlan::new(vec![key.clone()]).unwrap(),
+                    (runtime.clone(), storage.clone()),
+                    permanent,
+                ));
+                assert!(result.is_err());
+                assert_eq!(fs::read(&file).unwrap(), b"recover this exact file");
+            }
+            held.finish().unwrap();
+            let result = run(super::run_admitted_batch(
+                BatchPlan::new(vec![key.clone(), missing.clone()]).unwrap(),
+                (runtime.clone(), storage.clone()),
+                false,
+            ))
+            .unwrap();
+            assert_known_outcome(&result, std::slice::from_ref(&key), &[missing]);
+            let artifact = result.artifacts[&key].clone();
+            let restored = run(restore_entries(vec![RestoreRequest {
+                path: key.clone(),
+                artifact,
+            }]))
+            .unwrap();
+            assert_known_outcome(&restored, std::slice::from_ref(&key), &[]);
+            assert_eq!(fs::read(&file).unwrap(), b"recover this exact file");
+            run(runtime.admit(storage, request()))
+                .unwrap()
+                .finish()
+                .unwrap();
+        },
+    );
+}
+
+#[test]
+fn owned_permanent_deletion_preserves_native_alias_binding_and_receipt_spelling() {
+    use crate::files::recovery::Runtime;
+    use std::os::unix::ffi::OsStringExt;
+    let root = tempfile::tempdir().unwrap();
+    let physical = root
+        .path()
+        .join(std::ffi::OsString::from_vec(b"native-\xff".to_vec()));
+    fs::create_dir(&physical).unwrap();
+    let alias = root.path().join("readable-alias");
+    symlink(&physical, &alias).unwrap();
+    let file = physical.join("entry");
+    fs::write(&file, b"remove me").unwrap();
+    let key = path_string(&alias.join("entry"));
+    let runtime = Runtime::default();
+    let result = run(super::run_admitted_batch(
+        BatchPlan::new(vec![key.clone()]).unwrap(),
+        (runtime, root.path().join("recovery")),
+        true,
+    ))
+    .unwrap();
+    assert_known_outcome(&result, &[key], &[]);
+    assert!(!file.exists());
+    assert!(physical.is_dir() && alias.is_symlink());
+}
+
+#[test]
+fn batch_waiter_loss_cannot_release_admission_while_the_worker_can_delete() {
+    use crate::files::recovery::{Access, ResourceRequest, Runtime, Scope};
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("entry");
+    fs::write(&file, b"owned worker").unwrap();
+    let runtime = Runtime::default();
+    let storage = root.path().join("recovery");
+    let request = || {
+        vec![ResourceRequest {
+            path: file.clone(),
+            access: Access::Write,
+            scope: Scope::Subtree,
+        }]
+    };
+    let owner = run(runtime.admit(storage.clone(), request())).unwrap();
+    let context = owner.context();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let key = path_string(&file);
+    let task = tauri::async_runtime::spawn(batch::run_with_receipts_owned(
+        context,
+        BatchPlan::new(vec![key]).unwrap(),
+        move |path, _| {
+            entered_tx.send(()).unwrap();
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            crate::files::file_ops::delete_path(path)?;
+            done_tx.send(()).unwrap();
+            Ok(crate::files::trash_artifact::TrashSuccess::default())
+        },
+    ));
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    task.abort();
+    drop(owner);
+    assert!(run(runtime.admit(storage.clone(), request())).is_err());
+    assert!(file.exists());
+    release_tx.send(()).unwrap();
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    // Completion acknowledgement precedes capture/owner destruction. Retry the
+    // contract until that real worker lifetime ends, without changing its pace.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(next) = run(runtime.admit(storage.clone(), request())) {
+            next.finish().unwrap();
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(!file.exists());
+}
+
+#[test]
+fn prepared_inverse_waiter_loss_keeps_claims_until_its_worker_finishes() {
+    use crate::files::recovery::{resources, Access, ResourceRequest, Runtime, Scope};
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("inverse");
+    fs::write(&file, b"before inverse").unwrap();
+    let key = path_string(&file);
+    let runtime = Runtime::default();
+    let storage = root.path().join("recovery");
+    let request = ResourceRequest {
+        path: file.clone(),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    };
+    let captured_request = request.clone();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let task = tauri::async_runtime::spawn(super::run_prepared(
+        BatchPlan::new(vec![key]).unwrap(),
+        (runtime.clone(), storage.clone()),
+        move || {
+            Ok((
+                (),
+                resources::capture_requests(std::slice::from_ref(&captured_request))?,
+            ))
+        },
+        move |_, path, _| {
+            entered_tx.send(()).unwrap();
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            fs::write(path, b"inverse completed")?;
+            done_tx.send(()).unwrap();
+            Ok(crate::files::trash_artifact::TrashSuccess::default())
+        },
+    ));
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    task.abort();
+    assert!(run(runtime.admit(storage.clone(), vec![request.clone()])).is_err());
+    assert_eq!(fs::read(&file).unwrap(), b"before inverse");
+    release_tx.send(()).unwrap();
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(next) = run(runtime.admit(storage.clone(), vec![request.clone()])) {
+            next.finish().unwrap();
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(fs::read(file).unwrap(), b"inverse completed");
+}

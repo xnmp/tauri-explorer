@@ -2,6 +2,37 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.10.0 — 2026-09-26
+
+Faster large folders, removable drives that mount on demand, and file operations
+that can no longer act on something other than what you selected.
+
+### Added
+
+- **Unmounted USB and SD volumes appear in the Linux sidebar** and mount when opened, through UDisks2. Labels with spaces display correctly, and a mount failure leaves the current folder in place (#677).
+- **Durable move retirement** (opt-in build feature `durable-move-recovery`, Linux): discarding a completed move, or reclaiming artifacts after a restore, is journaled across both artifact roots. A root that cannot be emptied is refused before anything is recorded (#736).
+
+### Improved
+
+- **Large folders open faster and scroll with shorter pauses.** Listings are delivered as one complete immutable snapshot, in a compact columnar format (#737, #748). Arch release measurements on a 100,000-file folder:
+  - Immutable listings (#737): startup p50 fell from 837 ms to 626 ms, and the median maximum frame gap from 462 ms to 155 ms.
+  - Columnar delivery (#748), measured against a separate baseline: p50 fell from 653 ms to 595 ms, and frame gaps in Details, List and Tiles fell to 94–113 ms.
+- **Every native Undo and Redo takes part in operation ownership.** Trash restore, Copy Undo and rename inverses now wait for, or refuse to run beside, another operation on the same files. They no longer mutate paths that operation holds (#740, #749).
+- **Deleting now reserves the files it will touch before it starts**, so it cannot remove a file that a running copy is reading (#735).
+
+### Fixed
+
+- **Permanent delete removes only the entry you selected** (Linux; macOS uses the same code but was not qualified natively). If another program swaps a different file or folder into its place first, nothing unrelated is deleted. Any leftover item is reported with its location instead of silently removed (#739).
+- **Renaming `foo` to `FOO`** no longer overwrites a separate `FOO` entry on case-sensitive filesystems (#749).
+- Two windows starting at the same moment no longer fail recovery initialization (#742).
+
+### Release limits
+
+- The macOS half-bounce startup target remains unmet and unverified. The performance numbers above are Linux (WebKitGTK) measurements (#696).
+- The permanent-delete identity protection was qualified natively on Linux only. Windows keeps its previous path-based removal. macOS requires read access to the containing folder (#739).
+- Durable copy and move recovery remain opt-in build features.
+- A noticeable pause remains when opening very large folders (#748).
+
 ## v1.9.1 — 2026-09-11
 
 Durable file-operation recovery, safer archive extraction, and qualification

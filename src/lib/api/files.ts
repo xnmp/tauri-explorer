@@ -6,6 +6,7 @@
  * dedicated sibling modules and are imported directly by feature consumers.
  */
 
+import { decodeDirectoryListing, type DirectoryListingPayload } from "./directory-wire";
 import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
@@ -110,8 +111,8 @@ export async function fetchDirectory(
     }
   }
   try {
-    const data = await invoke<DirectoryListing>("list_directory", { path });
-    return { ok: true, data };
+    const data = await invoke<DirectoryListingPayload>("list_directory", { path });
+    return { ok: true, data: decodeDirectoryListing(data) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -417,37 +418,33 @@ export async function checkPathsExist(paths: string[]): Promise<boolean[]> {
   }
 }
 
-/**
- * Event payload for streaming directory entries.
- */
-export interface DirectoryEntriesEvent {
-  listingId: number;
-  path: string;
-  entries: FileEntry[];
-  done: boolean;
-  totalCount: number;
-}
-
-/**
- * Start streaming directory listing.
- * Returns first batch immediately, remaining entries emitted via 'directory-entries' events.
- * For small directories (<100 files), returns everything in one response.
- *
- * @param path - Absolute path to directory
- * @returns Result with initial DirectoryListing (path may include listing ID for event correlation)
- */
+/** A complete fresh listing, optionally coupled to a native observation lease. */
 export interface ObservedDirectoryListing extends DirectoryListing {
   watch_lease?: DirectoryWatchLease;
 }
 
-export async function startStreamingDirectory(
+/**
+ * A native `start_observed_directory` reply must carry a well-formed lease:
+ * an omitted or malformed one would otherwise decode successfully and be
+ * accepted as the new watch by `directory-listing.ts`, silently releasing the
+ * previous (working) watch and leaving refresh permanently stopped for that
+ * pane, since the garbage lease never matches a later watcher event.
+ */
+function isValidWatchLease(lease: unknown): lease is DirectoryWatchLease {
+  return (
+    !!lease && typeof lease === "object" &&
+    typeof (lease as DirectoryWatchLease).id === "string" &&
+    typeof (lease as DirectoryWatchLease).path === "string"
+  );
+}
+
+export async function loadDirectory(
   path: string,
   observation?: { discard(lease: DirectoryWatchLease): void },
 ): Promise<ApiResult<ObservedDirectoryListing>> {
   const startedAt = Date.now();
-  console.debug("[navigation] start_streaming_directory requested", { path });
-  // Virtual paths never stream: the provider returns the full listing inline
-  // (listing_id null), which the caller treats as a non-streaming result.
+  console.debug("[navigation] list_directory_fresh requested", { path });
+  // Providers and native directories share the same complete-snapshot contract.
   const provider = providerFor(path);
   if (provider) {
     try {
@@ -457,7 +454,7 @@ export async function startStreamingDirectory(
         entries: data.entries.length,
         elapsedMs: Date.now() - startedAt,
       });
-      return { ok: true, data: { ...data, listing_id: null } };
+      return { ok: true, data };
     } catch (err) {
       const error = extractError(err);
       console.warn("[navigation] virtual directory listing failed", {
@@ -485,14 +482,21 @@ export async function startStreamingDirectory(
     publishDirectoryListingE2EProbe();
   }
 
-  let acquired: ObservedDirectoryListing | undefined;
+  let acquired: (DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }) | undefined;
   try {
-    const data = observation && isTauri()
-      ? await invoke<ObservedDirectoryListing>("start_observed_directory", {
-          path, sessionId: await getNativeResourceSession(),
+    const native = isTauri();
+    const observed = Boolean(observation && native);
+    const sessionId = observed ? await getNativeResourceSession() : undefined;
+    const payload = observed
+      ? await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
+          path, sessionId,
         })
-      : await invoke<ObservedDirectoryListing>("start_streaming_directory", { path });
-    acquired = data;
+      : await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path });
+    acquired = payload;
+    if (observed && !isValidWatchLease(payload.watch_lease)) {
+      throw new Error("Invalid native directory watch lease");
+    }
+    const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
     if (data.watch_lease) publishReadyDirectoryWatch(path);
     if (e2eProbe) {
       // Keep the literal build flag at this import: the bundler discovers
@@ -519,45 +523,32 @@ export async function startStreamingDirectory(
       e2eProbe.finishes.push(Date.now());
       publishDirectoryListingE2EProbe();
     }
-    console.debug("[navigation] start_streaming_directory completed", {
+    console.debug("[navigation] list_directory_fresh completed", {
       path,
-      listingId: data.listing_id,
       entries: data.entries.length,
       elapsedMs: Date.now() - startedAt,
     });
     return { ok: true, data };
   } catch (err) {
-    // The optional native probe can fail after acquisition. Keep the same
-    // owner responsible for releasing late leases, including release retries.
-    if (acquired?.watch_lease) observation?.discard(acquired.watch_lease);
-    if (acquired?.listing_id != null) await cancelDirectoryListing(acquired.listing_id);
+    // Decoding and the optional native probe can fail after acquisition. Keep the same
+    // owner responsible for releasing late leases, including release retries. A
+    // malformed lease (the failure this catch is also reached for) has nothing
+    // safely releasable — only a well-formed lease is discarded.
+    if (acquired?.watch_lease && isValidWatchLease(acquired.watch_lease)) {
+      observation?.discard(acquired.watch_lease);
+    }
     const error = extractError(err);
-    console.warn("[navigation] start_streaming_directory failed", {
+    console.warn("[navigation] list_directory_fresh failed", {
       path,
       error,
       elapsedMs: Date.now() - startedAt,
     });
-    logFrontendDiagnostic("navigation start_streaming_directory failed", {
+    logFrontendDiagnostic("navigation list_directory_fresh failed", {
       path,
       error,
       elapsedMs: Date.now() - startedAt,
     });
     return { ok: false, error };
-  }
-}
-
-/**
- * Cancel an active directory listing.
- *
- * @param listingId - ID of the listing to cancel
- * @returns Result indicating success or error message
- */
-export async function cancelDirectoryListing(listingId: number): Promise<ApiResult<void>> {
-  try {
-    await invoke("cancel_directory_listing", { listingId });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
   }
 }
 

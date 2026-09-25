@@ -1,11 +1,11 @@
 /** Real native maximize/restore observation and post-transition window health. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domTexts, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-window-chrome-"));
+let scratch: string;
 
 async function geometry() {
   const { width, height } = await browser.getWindowSize();
@@ -41,11 +41,8 @@ async function diagnose(reason: string): Promise<void> {
 
 describe("native window chrome", () => {
   before(() => {
+    scratch = createNativeFixtureDirectory("window-chrome-");
     fs.writeFileSync(path.join(scratch, "window-restored.txt"), "healthy");
-  });
-
-  after(() => {
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("observes native maximize and restore while preserving explorer navigation", async () => {

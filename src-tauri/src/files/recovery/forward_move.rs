@@ -37,6 +37,8 @@ pub(super) struct PreparedMove {
 struct PendingMove {
     requests: Vec<Request>,
     source_token: Option<String>,
+    probe_source_token: Option<String>,
+    probe_target_token: Option<String>,
     target_token: Option<String>,
     requested_source: PathBuf,
     presentation: PathBuf,
@@ -69,6 +71,8 @@ impl PendingMove {
         let overwriting = fs::symlink_metadata(target).is_ok();
         let source_token = cross_volume.then(token).transpose()?;
         let target_token = (cross_volume || overwriting).then(token).transpose()?;
+        let probe_source_token = Some(token()?);
+        let probe_target_token = cross_volume.then(token).transpose()?;
         let mut requests: Vec<Request> = [
             (source.to_owned(), Access::Write),
             (target.to_owned(), Access::Write),
@@ -83,6 +87,8 @@ impl PendingMove {
         for (token, parent) in [
             (source_token.as_ref(), &source_parent),
             (target_token.as_ref(), &target_parent),
+            (probe_source_token.as_ref(), &source_parent),
+            (probe_target_token.as_ref(), &target_parent),
         ] {
             let Some(token) = token else { continue };
             requests.push(Request {
@@ -94,6 +100,8 @@ impl PendingMove {
         Ok(Self {
             requests,
             source_token,
+            probe_source_token,
+            probe_target_token,
             target_token,
             requested_source: source.to_owned(),
             presentation: target.to_owned(),
@@ -149,10 +157,19 @@ impl PendingMove {
             };
         let source_root = plan(&self.source_token, &parent_of(&source, "source")?)?;
         let target_root = plan(&self.target_token, &parent_of(&target, "destination")?)?;
+        let rename_probes = super::move_capability_model::Plans {
+            source: plan(&self.probe_source_token, &parent_of(&source, "source")?)?
+                .ok_or_else(invalid)?,
+            target: plan(
+                &self.probe_target_token,
+                &parent_of(&target, "destination")?,
+            )?,
+        };
         if paths.next().is_some() {
             return Err(invalid());
         }
         let spec = MoveSpec {
+            rename_probes: Some(rename_probes),
             source_version: version_from_metadata(&fs::symlink_metadata(&source)?)?,
             source: NativePath(source),
             source_parent: source_identity,
@@ -197,6 +214,14 @@ impl PreparedMove {
     }
 
     #[cfg(test)]
+    pub(super) fn into_operation(self) -> super::coordinator::DurableOperation {
+        self.reservation
+            .promote(OperationSpec::Move(self.spec))
+            .map_err(|failure| failure.error)
+            .unwrap()
+    }
+
+    #[cfg(test)]
     pub(super) fn strategy(&self) -> Strategy {
         self.spec.strategy
     }
@@ -235,6 +260,7 @@ impl PreparedMove {
                 drop(failure.reservation);
                 retained(error)
             })?;
+        let operation = super::move_capability::qualify(operation, hook.as_ref())?;
         let id = operation.intent().id.clone();
         let result = (|| {
             let mut execution = MoveExecution::prepare_with(operation, hook)?;

@@ -103,12 +103,17 @@ pub(crate) async fn delete_entries(
     use crate::files::{batch, trash};
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let plan = batch::BatchPlan::new(paths).map_err(AppError::InvalidPath)?;
+    #[cfg(target_os = "linux")]
+    let recovery = crate::files::recovery::commands::owner(&window)?;
     let mut directories: Vec<_> = plan.paths.iter().flat_map(|path| parent(path)).collect();
     directories.sort_unstable();
     directories.dedup();
     file_history::run_forward(owner, false, directories, async move {
+        #[cfg(target_os = "linux")]
+        let result = trash::run_admitted_batch(plan, recovery, permanent).await;
+        #[cfg(not(target_os = "linux"))]
         let result = if permanent {
-            Ok(batch::run(plan, file_ops::delete_path).await)
+            Ok(batch::run_with_receipts(plan, |path, _| file_ops::delete_path_receipt(path)).await)
         } else {
             trash::run_batch(plan).await
         };
@@ -646,27 +651,47 @@ fn rename_effect(committed_path: String, old_name: String, new_name: String) -> 
 
 #[cfg(any(test, not(target_os = "linux")))]
 async fn entry_outcome(plan: EntryPlan) -> MutationOutcome<FileMutationReceipt> {
-    entry_outcome_owned(plan, ()).await
+    settle_entry(crate::files::entry_execution::execute_owned(plan, ()).await)
 }
 
-async fn entry_outcome_owned<O: Send + 'static>(
-    plan: EntryPlan,
-    owner: O,
+fn settle_entry(
+    outcome: crate::files::entry_execution::Outcome,
 ) -> MutationOutcome<FileMutationReceipt> {
-    let directories = plan.affected_dirs();
-    let committed_path = plan.target().to_string_lossy().into_owned();
-    let rename = plan
-        .rename_names()
-        .map(|(old, new)| (old.to_owned(), new.to_owned()));
-    outcome(
-        directories,
-        file_ops::execute_entry_owned(owner, plan),
-        move |_| match rename {
-            Some((old, new)) => rename_effect(committed_path, old, new),
+    let changed = matches!(
+        &outcome.completion.result,
+        Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
+    );
+    let mut warning = outcome.completion.warning;
+    let effect = if outcome.completion.result.is_ok() {
+        match outcome.rename {
+            Some((old, new)) if old == new => ForwardEffect::Unchanged,
+            Some((old, new)) => match outcome.target.to_str() {
+                Some(path) => rename_effect(path.to_owned(), old, new),
+                None => {
+                    let mut warnings: crate::diagnostics::Warnings = warning.into_iter().collect();
+                    warnings.push("Rename completed, but its native path cannot be represented in history; Undo is unavailable");
+                    warning = Some(warnings.into_vec().join("\n"));
+                    ForwardEffect::Changed(None)
+                }
+            },
             None => ForwardEffect::Changed(None),
-        },
-    )
-    .await
+        }
+    } else if changed {
+        ForwardEffect::Changed(None)
+    } else {
+        ForwardEffect::Unchanged
+    };
+    let affected = if matches!(effect, ForwardEffect::Changed(_)) {
+        outcome.affected
+    } else {
+        Vec::new()
+    };
+    MutationOutcome {
+        result: outcome.completion.result,
+        effect,
+        warning,
+        affected,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -675,45 +700,7 @@ async fn entry_with_recovery(
     runtime: crate::files::recovery::Runtime,
     storage: std::path::PathBuf,
 ) -> MutationOutcome<FileMutationReceipt> {
-    let (plan, admission) = match admit_entry(plan, runtime, storage).await {
-        Ok(admitted) => admitted,
-        Err(error) => {
-            return MutationOutcome {
-                result: Err(error),
-                effect: ForwardEffect::Unchanged,
-                warning: None,
-                affected: Vec::new(),
-            }
-        }
-    };
-    let outcome = entry_outcome_owned(plan, admission.context()).await;
-    settle_entry(outcome, admission).await
-}
-
-#[cfg(target_os = "linux")]
-async fn admit_entry(
-    plan: EntryPlan,
-    runtime: crate::files::recovery::Runtime,
-    storage: std::path::PathBuf,
-) -> Result<(EntryPlan, crate::files::recovery::MutationAdmission), AppError> {
-    let admission = runtime.admit(storage, plan.resources()).await?;
-    let plan = plan.resolve(admission.paths().map(Path::to_path_buf))?;
-    Ok((plan, admission))
-}
-
-#[cfg(target_os = "linux")]
-async fn settle_entry(
-    mut outcome: MutationOutcome<FileMutationReceipt>,
-    admission: crate::files::recovery::MutationAdmission,
-) -> MutationOutcome<FileMutationReceipt> {
-    if let Err(error) = crate::files::run_blocking(move || admission.finish()).await {
-        let warning = format!(
-            "File operation finished, but its ownership record could not be retired: {error}"
-        );
-        log::warn!("{warning}");
-        outcome.warning = Some(warning);
-    }
-    outcome
+    settle_entry(crate::files::entry_execution::execute(plan, runtime, storage).await)
 }
 
 async fn entry(

@@ -401,3 +401,41 @@ fn finishing_an_ordinary_child_does_not_retire_its_promoted_sibling() {
     );
     super::super::test_fixture::assert_user_files_untouched(directory.path());
 }
+
+#[test]
+fn prepared_admission_rebuilds_the_entire_plan_after_a_managed_change() {
+    let (_directory, base, coordinator) = fixture();
+    let peer = Coordinator::open(&base.join("recovery")).unwrap();
+    let first = base.join("old-candidate");
+    let second = base.join("new-candidate");
+    let mut attempts = 0;
+    let (chosen, held) = coordinator
+        .reserve_prepared(|| {
+            attempts += 1;
+            let chosen = if attempts == 1 {
+                first.clone()
+            } else {
+                second.clone()
+            };
+            let resources = resources::capture_requests(&request(&chosen, Access::Write))?;
+            if attempts == 1 {
+                // A managed change between planning and admission invalidates the
+                // whole plan. Merely recapturing old-candidate would retain stale intent.
+                peer.reserve(request(&base.join("other"), Access::Write))?
+                    .finish()?;
+            }
+            Ok((chosen, resources))
+        })
+        .unwrap();
+    assert_eq!(chosen, second);
+    peer.reserve(request(&first, Access::Write))
+        .unwrap()
+        .finish()
+        .unwrap();
+    assert!(peer.reserve(request(&second, Access::Write)).is_err());
+    held.finish().unwrap();
+    peer.reserve(request(&second, Access::Write))
+        .unwrap()
+        .finish()
+        .unwrap();
+}

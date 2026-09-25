@@ -9,7 +9,9 @@ pub(crate) mod copy_session;
 pub mod dir_listing;
 mod directory_cache;
 mod directory_watches;
+mod directory_wire;
 pub mod drives;
+pub(crate) mod entry_execution;
 pub(crate) mod entry_plan;
 mod entry_version;
 pub mod external_apps;
@@ -20,6 +22,8 @@ pub mod file_ops;
 mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+#[cfg(target_os = "linux")]
+pub mod linux_volumes;
 pub(crate) mod move_execution;
 pub(crate) mod move_plan;
 pub(crate) mod move_session;
@@ -27,13 +31,12 @@ pub(crate) mod mutation;
 #[cfg(any(unix, test))]
 mod native_directory;
 mod object_id;
+mod permanent_delete;
 mod publication;
 pub(crate) mod recovery;
 mod replacement;
 #[cfg(any(target_os = "windows", test))]
 mod restore_outcome;
-#[cfg(target_os = "linux")]
-mod restore_parents;
 pub mod shortcuts;
 pub mod trash;
 pub(crate) mod trash_artifact;
@@ -107,11 +110,10 @@ pub enum FileKind {
 /// `entries` is an `Arc` so cache hits in `dir_listing` share the cached
 /// allocation instead of deep-cloning thousands of `FileEntry`s per call
 /// (serde's `rc` feature serializes through the Arc transparently).
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct DirectoryListing {
     pub path: String,
     pub entries: std::sync::Arc<Vec<FileEntry>>,
-    pub listing_id: Option<u64>,
 }
 
 /// Convert metadata to FileEntry, detecting symlinks.

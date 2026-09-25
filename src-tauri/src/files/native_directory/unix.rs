@@ -44,6 +44,65 @@ impl Directory {
         Ok(directory)
     }
 
+    /// Walk like [`Self::open`] with search-only handles, so a writable but
+    /// unreadable directory can still anchor `*at` namespace operations.
+    /// The handle cannot enumerate entries.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn open_searchable(path: &Path) -> io::Result<Self> {
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Directory path must be absolute",
+            ));
+        }
+        let flags = libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW;
+        let mut directory = Self {
+            file: std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(flags)
+                .open(Path::new("/"))?,
+        };
+        for component in path.components() {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(name) => directory = directory.open_relative(name, flags)?,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Directory path is not normalized",
+                    ));
+                }
+            }
+        }
+        Ok(directory)
+    }
+
+    /// The directory currently containing this one. Callers must verify its
+    /// identity: `..` follows wherever the retained directory now resides.
+    pub(crate) fn open_parent(&self) -> io::Result<Self> {
+        self.open_raw(
+            c"..",
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_relative(&self, name: &OsStr, flags: libc::c_int) -> io::Result<Self> {
+        self.open_raw(&native_name(name)?, flags)
+    }
+
+    fn open_raw(&self, name: &CStr, flags: libc::c_int) -> io::Result<Self> {
+        // SAFETY: name is terminated and the returned descriptor is uniquely owned.
+        let descriptor = unsafe { libc::openat(self.file.as_raw_fd(), name.as_ptr(), flags) };
+        if descriptor < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(Self {
+                file: unsafe { File::from_raw_fd(descriptor) },
+            })
+        }
+    }
+
     pub(crate) fn open_existing(&self, name: &OsStr) -> io::Result<Self> {
         let name = native_name(name)?;
         // SAFETY: name is terminated and the returned descriptor is uniquely owned.
@@ -160,9 +219,34 @@ impl Directory {
 
     /// Exclusive creation only. Existing directories require separate admission.
     pub(crate) fn create_directory(&self, name: &OsStr) -> io::Result<Self> {
+        self.mkdir(name, 0o700)
+    }
+
+    /// Create ordinary user directories with the requested mode subject to umask.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn create_directory_with_mode(
+        &self,
+        name: &OsStr,
+        mode: libc::mode_t,
+    ) -> io::Result<Self> {
+        self.mkdir(name, mode)
+    }
+
+    /// Exclusive private creation without opening, for callers that must
+    /// distinguish "not created" from "created but not opened".
+    pub(crate) fn make_directory(&self, name: &OsStr) -> io::Result<()> {
         let native = native_name(name)?;
         // SAFETY: the descriptor and terminated name remain valid during mkdirat.
         if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    fn mkdir(&self, name: &OsStr, mode: libc::mode_t) -> io::Result<Self> {
+        let native = native_name(name)?;
+        // SAFETY: the descriptor and terminated name remain valid during mkdirat.
+        if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), mode) } != 0 {
             return Err(io::Error::last_os_error());
         }
         self.open_existing(name)
@@ -195,6 +279,26 @@ impl Directory {
                 target_directory.file.as_raw_fd(),
                 target.as_ptr(),
                 libc::RENAME_EXCL,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    /// Whether the effective identity may unlink entries here: write and search
+    /// on this retained descriptor, including ACLs and read-only mounts. Advisory
+    /// preflight only; the later unlink still makes the authoritative decision.
+    pub(crate) fn permits_entry_removal(&self) -> io::Result<()> {
+        // SAFETY: the owned descriptor and constant terminated component are valid.
+        let result = unsafe {
+            libc::faccessat(
+                self.file.as_raw_fd(),
+                c".".as_ptr(),
+                libc::W_OK | libc::X_OK,
+                libc::AT_EACCESS,
             )
         };
         if result == 0 {

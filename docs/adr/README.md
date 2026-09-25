@@ -30,3 +30,4 @@ decision during review.
 | [0022](0022-native-qualification-cache-lifecycle.md) | Native qualification cache lifecycle | Accepted |
 | [0023](0023-recovery-artifact-retention.md) | Recovery artifact retention and durable retirement | Proposed |
 | [0024](0024-mutation-admission-coverage.md) | Mutation admission coverage | Accepted |
+| [0025](0025-linux-volume-mount-authority.md) | Linux volume discovery and mount authority | Proposed |

@@ -97,7 +97,7 @@ fn completed(intent: &DurableIntent, state: &OperationState) -> bool {
             matches!(state.phase, Phase::Published | Phase::Restored) && state.error.is_none()
         }
         OperationState::Move(state) => {
-            if state.error.is_some() {
+            if state.error.is_some() || state.retirement.is_some() {
                 return false;
             }
             // A cross-filesystem move still owns its source at `Published`:

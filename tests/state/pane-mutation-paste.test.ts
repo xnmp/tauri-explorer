@@ -3,7 +3,6 @@ import type { ApiResult } from "$lib/api/common";
 import type { CopySessionEvent, CopySessionOutcome } from "$lib/domain/copy-session";
 import type { FileEntry } from "$lib/domain/file";
 import type {
-  DirectoryListingCallbacks,
   DirectoryListingResult,
   DirectoryObservation,
 } from "$lib/state/directory-listing";
@@ -11,7 +10,6 @@ import type { UndoAction } from "$lib/state/types";
 
 type Load = (
   path: string,
-  callbacks: DirectoryListingCallbacks,
   observation?: DirectoryObservation,
 ) => Promise<DirectoryListingResult>;
 
@@ -36,9 +34,8 @@ vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
     load: (
       path: string,
-      callbacks: DirectoryListingCallbacks,
-      observation?: DirectoryObservation,
-    ) => mocks.load.current(path, callbacks, observation),
+          observation?: DirectoryObservation,
+    ) => mocks.load.current(path, observation),
     cleanup: mocks.cleanup,
   }),
 }));
@@ -146,9 +143,9 @@ function explorerAtA(): ExplorerInstance {
 }
 
 function serveListing(entries: FileEntry[]): void {
-  mocks.load.current = async (path, _callbacks, observation) => {
+  mocks.load.current = async (path, observation) => {
     observation?.accept(null);
-    return { ok: true, path, entries, streaming: false };
+    return { ok: true, path, entries };
   };
 }
 

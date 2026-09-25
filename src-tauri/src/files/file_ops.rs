@@ -31,20 +31,44 @@ fn entry_exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-/// True when two paths refer to the same filesystem entry.
-/// Uses canonicalization; falls back to comparing canonicalized parents and
-/// exact file names for paths that can't be canonicalized (e.g. broken symlinks).
+/// True when two paths name the same directory entry. Parents are resolved,
+/// but the final component is never followed. Differing spellings name one
+/// entry only when the parent lists exactly one of them (case-insensitive
+/// aliasing); when both names are listed they are distinct entries even if
+/// they are symlinks to one target or hardlinks to one inode, and treating
+/// them as one would let a case-only rename overwrite (or no-op onto) the other.
 fn is_same_entry(a: &Path, b: &Path) -> bool {
-    if let (Ok(ca), Ok(cb)) = (fs::canonicalize(a), fs::canonicalize(b)) {
-        return ca == cb;
+    let (Some(pa), Some(pb), Some(na), Some(nb)) =
+        (a.parent(), b.parent(), a.file_name(), b.file_name())
+    else {
+        return false;
+    };
+    match (fs::canonicalize(pa), fs::canonicalize(pb)) {
+        (Ok(ca), Ok(cb)) if ca == cb => {}
+        _ => return false,
     }
-    match (a.parent(), b.parent()) {
-        (Some(pa), Some(pb)) => match (fs::canonicalize(pa), fs::canonicalize(pb)) {
-            (Ok(ca), Ok(cb)) => ca == cb && a.file_name() == b.file_name(),
-            _ => false,
-        },
-        _ => false,
+    if na == nb {
+        return true;
     }
+    if fs::symlink_metadata(a).is_err() || fs::symlink_metadata(b).is_err() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(pa) else {
+        return false;
+    };
+    let (mut listed_a, mut listed_b) = (false, false);
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let name = entry.file_name();
+        listed_a |= name == na;
+        listed_b |= name == nb;
+        if listed_a && listed_b {
+            return false;
+        }
+    }
+    listed_a != listed_b
 }
 
 /// Reject copying/moving a directory into itself or one of its descendants.
@@ -228,7 +252,7 @@ pub(crate) async fn execute_entry_owned<O: Send + 'static>(
     super::worker::run_blocking_owned(owner, move || execute_entry_impl(plan)).await
 }
 
-fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
+pub(super) fn execute_entry_impl(plan: EntryPlan) -> Result<FileMutationReceipt, AppError> {
     use super::entry_plan::Request;
     let (target, request, presentation) = plan.into_parts();
     let absent = || {
@@ -1001,11 +1025,23 @@ pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
 }
 
 pub(crate) fn delete_path(path: &str) -> Result<(), AppError> {
-    let file_path = Path::new(path);
-    let meta = fs::symlink_metadata(file_path)?;
-    remove_entry_at(file_path).map_err(|error| AppError::MutationUncertain(error.to_string()))?;
-    log::info!("Permanently deleted entry (is_dir={})", meta.is_dir());
+    delete_native_path(Path::new(path))
+}
+
+pub(crate) fn delete_native_path(file_path: &Path) -> Result<(), AppError> {
+    let success = super::permanent_delete::delete(file_path)?;
+    if let Some(warning) = success.warning {
+        log::warn!("{warning}");
+    }
     Ok(())
+}
+
+/// Permanent deletion with its completed-with-warning receipt preserved.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn delete_path_receipt(
+    path: &str,
+) -> Result<super::trash_artifact::TrashSuccess, AppError> {
+    super::permanent_delete::delete(Path::new(path))
 }
 
 /// Create a symbolic link.
@@ -1084,6 +1120,77 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    /// Distinct case-variant symlinks to one target are separate entries: a
+    /// case-only rename must not treat them as one and overwrite the other.
+    #[cfg(unix)]
+    #[test]
+    fn case_variant_symlinks_to_one_target_are_not_the_same_entry() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("payload"), b"target").unwrap();
+        std::os::unix::fs::symlink("payload", dir.path().join("foo")).unwrap();
+        std::os::unix::fs::symlink("./payload", dir.path().join("FOO")).unwrap();
+        let result = block_on(rename_entry(
+            dir.path().join("foo").to_string_lossy().into_owned(),
+            "FOO".into(),
+        ));
+        assert!(
+            matches!(result, Err(AppError::AlreadyExists(_))),
+            "{result:?}"
+        );
+        assert_eq!(
+            fs::read_link(dir.path().join("FOO")).unwrap(),
+            Path::new("./payload")
+        );
+        assert_eq!(
+            fs::read_link(dir.path().join("foo")).unwrap(),
+            Path::new("payload")
+        );
+        assert!(!is_same_entry(
+            &dir.path().join("foo"),
+            &dir.path().join("FOO")
+        ));
+        assert!(is_same_entry(
+            &dir.path().join("foo"),
+            &dir.path().join("foo")
+        ));
+    }
+
+    /// Two hardlinked names are distinct entries: rename(2) between them is a
+    /// silent no-op, so a case-only rename must report the collision instead.
+    #[cfg(unix)]
+    #[test]
+    fn case_variant_hardlinks_are_not_the_same_entry() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("foo"), b"shared").unwrap();
+        fs::hard_link(dir.path().join("foo"), dir.path().join("FOO")).unwrap();
+        let result = block_on(rename_entry(
+            dir.path().join("foo").to_string_lossy().into_owned(),
+            "FOO".into(),
+        ));
+        assert!(
+            matches!(result, Err(AppError::AlreadyExists(_))),
+            "{result:?}"
+        );
+        assert!(dir.path().join("foo").exists() && dir.path().join("FOO").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_case_only_rename_of_one_entry_still_succeeds() {
+        let dir = tempdir().unwrap();
+        std::os::unix::fs::symlink("target", dir.path().join("link")).unwrap();
+        block_on(rename_entry(
+            dir.path().join("link").to_string_lossy().into_owned(),
+            "LINK".into(),
+        ))
+        .unwrap();
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("LINK")]);
+    }
 
     #[test]
     fn test_create_directory() {

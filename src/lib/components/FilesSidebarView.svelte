@@ -8,6 +8,8 @@
   import { homeDirectory } from "$lib/state/home.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { mountDrive } from "$lib/api/drives";
+  import { createDriveOpener } from "$lib/state/drive-opening";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
@@ -28,6 +30,11 @@
   const navigateTo = (path: string) => {
     windowTabsManager.getActiveExplorer()?.navigateTo(path);
   };
+
+  const openDrive = createDriveOpener({
+    mount: mountDrive, navigate: navigateTo, error: toastStore.error,
+    refresh: drivesStore.refresh,
+  });
 
   function handleOpenRecycleBin() {
     void openRecycleBinWithFeedback(openRecycleBin, toastStore.error);
@@ -521,16 +528,16 @@
 
       {#if drivesExpanded}
         <div class="section-content">
-          {#each drivesStore.removable as drive (drive.path)}
-            <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+          {#each drivesStore.removable as drive (drive.device_id ?? drive.path)}
+            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path || `Mount ${drive.name}`}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #10b981">
                 <rect x="2" y="4" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
                 <circle cx="11" cy="8" r="0.9" fill="currentColor"/>
                 <path d="M4 4V3M6 4V3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
               <span class="drive-name">{drive.name}</span>
-              {#if drive.detail}
-                <span class="drive-detail">{drive.detail}</span>
+              {#if !drive.path || drive.detail}
+                <span class="drive-detail">{drive.path ? drive.detail : "Not mounted"}</span>
               {/if}
             </button>
           {/each}
@@ -557,7 +564,7 @@
       {#if cloudExpanded}
         <div class="section-content">
           {#each drivesStore.cloud as drive (drive.path)}
-            <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path || `Mount ${drive.name}`}>
               {#if drive.provider === "googledrive"}
                 <!-- Google "G" multi-colour mark -->
                 <svg width="16" height="16" viewBox="0 0 48 48" class="nav-icon">

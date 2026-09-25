@@ -8,12 +8,13 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
   let next = 9_000_000_000_000_000n;
   window.addEventListener("e2e-recovery-operation", ((event: CustomEvent<{
     token: string;
-    op: "subscribe" | "unsubscribe" | "inspect" | "copy" | "copy-many";
+    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many";
     sessionId?: string;
     subscriptionId?: string;
     id?: string;
     source?: string;
     sources?: string[];
+    shared?: boolean;
     destination?: string;
   }>) => {
     const { token, op } = event.detail;
@@ -23,14 +24,17 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
       if (op === "copy-many") {
         const { copyFiles } = await import("../lib/state/copy-operations");
         signal.throwIfAborted();
-        return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {} });
+        return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {}, broadcastToOtherWindows: event.detail.shared });
       }
-      if (op === "copy") {
+      if (op === "copy" || op === "move") {
         const { performFileTransfer } = await import("../lib/state/file-transfer");
         signal.throwIfAborted();
-        return performFileTransfer(event.detail.source!, event.detail.destination!, true, {
+        return performFileTransfer(event.detail.source!, event.detail.destination!, op === "copy", {
           overwrite: true, skipConflictCheck: true, onRefresh: () => {},
         });
+      }
+      if (op === "list") {
+        return invoke<FileRecoverySnapshot>("file_recovery_list", { sessionId });
       }
       if (op === "inspect") {
         return invoke<FileRecoverySnapshot>("file_recovery_inspect", { sessionId, id: event.detail.id });

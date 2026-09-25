@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.9.1"
+version = "1.10.0"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -73,12 +73,13 @@ tauri-plugin-log = "2"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
 
 [features]
-# Durable replacement copies retain originals indefinitely until retirement is
-# implemented (#687). Keep new durable records out of ordinary release builds.
+# Durable copy retirement exists on Linux; native crash acceptance and other
+# platform adapters remain required before ordinary release enablement.
 durable-copy-recovery = []
 
-# Durable moves park a cross-filesystem source and retain a displaced overwrite
-# target until retirement exists (#687), so they hold user bytes indefinitely.
+# Durable moves retain exact Undo authority until explicit discard. Keep opt-in
+# until platform qualification permits default enablement. Linux retirement and
+# per-volume exclusive-rename preflight are covered by #736 native contracts.
 # Independent of durable-copy-recovery: either policy may ship first.
 durable-move-recovery = []
 

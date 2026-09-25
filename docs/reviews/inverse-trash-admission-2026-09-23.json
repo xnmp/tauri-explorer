@@ -1,0 +1,69 @@
+{
+  "issue": 740,
+  "platform": "Arch Linux x86_64, X11/Xvfb, WebKitGTK 2.52.5",
+  "base": "a2890ddba8eb3d5c76ebb690785b6e90dbe19f98",
+  "rust": {
+    "passed": 1281,
+    "ignored": 22,
+    "failed": 0,
+    "features": [
+      "durable-copy-recovery",
+      "durable-move-recovery"
+    ]
+  },
+  "native": {
+    "passed": 10,
+    "specs": 3,
+    "features": [
+      "tauri/custom-protocol",
+      "e2e-renderer-recovery"
+    ]
+  },
+  "logs": [
+    {
+      "path": "/tmp/inverse-740-repro.log",
+      "sha256": "313c1db4eb6eb6f61e736a1a5510313b235262960b4576c7bacd614a64edf031"
+    },
+    {
+      "path": "/tmp/inverse-740-full-rust-final.log",
+      "sha256": "67e55f51e822f6a29d77b546d85d688757c422d8a571536135256ff67226c9cd"
+    },
+    {
+      "path": "/tmp/inverse-740-clippy-final.log",
+      "sha256": "98c6e0ac3c8d91525ae9795a1db60fbb225e36c4d8698998574a1a02c4a12b32"
+    },
+    {
+      "path": "/tmp/inverse-740-native-build-final.log",
+      "sha256": "6217900fc9d177629577250236bb7d7d33d27a4b2452e82656adc387576ca4d8"
+    },
+    {
+      "path": "/tmp/inverse-740-svelte-check.log",
+      "sha256": "16e7a37b2527b91fd775fd1dec5f027693905c1d6af75ff75ae703b74fdd8698"
+    },
+    {
+      "path": "/tmp/inverse-740-native-ts.log",
+      "sha256": "e589810d8ba6995d7ca62e9e3edf580e46538d7e208a7a3e1479fd0a44e1a32b"
+    },
+    {
+      "path": "/home/chong/Repos/tauri-explorer/src-tauri/target/inverse-740-native-_4ce8jat/snapshot-0/wdio.log",
+      "sha256": "a62d25fdbd5af938e73c753902e1d734c9589aa92d2aa522454f520777af3236"
+    }
+  ],
+  "binary_sha256": "fcc7546e546002334a5ffdb26d430d16d2bf8b4267dec189836854d85f505857",
+  "screenshots": [
+    {
+      "path": "screenshots/refactor/inverse-trash-admission/native-copy-inverse-lifetime.png",
+      "sha256": "cfd8f70c97b241700aa456ff47cb873273f9224c33175a98d06784d2b38ee3da"
+    },
+    {
+      "path": "screenshots/refactor/inverse-trash-admission/native-partial-delete-undo.png",
+      "sha256": "9fbdacfe456de85d128af9a280bbbf699915738bb23ef2c3a1377ba4bedcd872"
+    }
+  ],
+  "limitations": [
+    "Linux only; Windows/macOS not qualified",
+    "Cooperative resource exclusion, not atomic identity-conditional protection against unmanaged writers",
+    "No trash crash-durability claim",
+    "Rename inverse admission tracked in #749"
+  ]
+}

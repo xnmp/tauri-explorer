@@ -32,7 +32,7 @@ function activate(ctx: PluginContext): void {
     handler: () => {},
   });
   ctx.registerFsProvider("testscheme", {
-    list: (p) => ({ path: p, entries: [], listing_id: null }),
+    list: (p) => ({ path: p, entries: [] }),
   });
 }
 

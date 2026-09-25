@@ -13,6 +13,7 @@ use std::{
 
 enum Call<'a> {
     Create { name: &'a OsStr },
+    Created { name: &'a OsStr },
     Rename { from: &'a OsStr, to: &'a OsStr },
     Unlink { name: &'a OsStr, directory: bool },
 }
@@ -35,9 +36,10 @@ impl<F: FnMut(&Call) -> io::Result<()>> Operations for Hooks<F> {
         source.rename_to(name, target, target_name)
     }
 
-    fn create_directory(&mut self, parent: &Directory, name: &OsStr) -> io::Result<Directory> {
+    fn make_directory(&mut self, parent: &Directory, name: &OsStr) -> io::Result<()> {
         (self.0)(&Call::Create { name })?;
-        parent.create_directory(name)
+        parent.make_directory(name)?;
+        (self.0)(&Call::Created { name })
     }
 
     fn unlink(
@@ -365,7 +367,7 @@ fn a_failed_capture_whose_staging_remains_is_uncertain_owned_residue() {
     fs::write(&source, b"selected").unwrap();
     let mut deletion = select(&source);
     let result = execute(&mut deletion, &source, |call| match call {
-        Call::Create { .. } => Ok(()),
+        Call::Create { .. } | Call::Created { .. } => Ok(()),
         _ => Err(injected()),
     });
     let Err(AppError::MutationUncertain(message)) = &result else {
@@ -646,14 +648,46 @@ fn bulk_selection_cost_against_plain_unlink() {
 }
 
 #[test]
-fn staging_created_but_not_opened_is_removed_before_an_ordinary_failure() {
+fn staging_created_but_not_opened_is_reported_not_removed() {
+    if running_as_root() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let mut deletion = select(&source);
+    let directory = root.path().to_owned();
+    let result = execute(&mut deletion, &source, |call| {
+        // mkdirat succeeded, but the created directory cannot be opened.
+        if let Call::Created { name } = call {
+            fs::set_permissions(directory.join(name), fs::Permissions::from_mode(0o000))?;
+        }
+        Ok(())
+    });
+    let residue = staging(root.path());
+    for path in &residue {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let Err(AppError::MutationUncertain(message)) = &result else {
+        panic!("expected reported staging residue, got {result:?}");
+    };
+    assert_eq!(residue.len(), 1, "unverified staging is never removed");
+    assert!(
+        message.contains(&residue[0].display().to_string()),
+        "{message}"
+    );
+    assert_eq!(fs::read(&source).unwrap(), b"selected");
+}
+
+#[test]
+fn a_failed_staging_mkdir_is_an_ordinary_failure_without_probing_the_name() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("selected");
     fs::write(&source, b"selected").unwrap();
     let mut deletion = select(&source);
     let directory = root.path().to_owned();
     let result = execute(&mut deletion, &source, |call| match call {
-        // mkdirat succeeds, then the open reports failure.
+        // A foreign directory appears at the name while mkdirat fails.
         Call::Create { name } => {
             fs::create_dir(directory.join(name))?;
             Err(injected())
@@ -662,7 +696,11 @@ fn staging_created_but_not_opened_is_removed_before_an_ordinary_failure() {
     });
     assert!(result.is_err() && !is_uncertain(&result), "{result:?}");
     assert_eq!(fs::read(&source).unwrap(), b"selected");
-    assert!(staging(root.path()).is_empty());
+    assert_eq!(
+        staging(root.path()).len(),
+        1,
+        "a foreign directory is left alone"
+    );
 }
 
 #[test]

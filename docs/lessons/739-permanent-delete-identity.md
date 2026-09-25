@@ -39,13 +39,16 @@ the exact last seam; removing the post-move identity check fails three tests.
 STATX_BTIME) must also match after capture: `utimensat` cannot forge it, so an
 attacker who forces inode reuse and replicates size/mode/mtime still mismatches
 where the filesystem reports btime. Staging is removed only while its name
-still refers to the directory this deletion created, and a staging directory
-that was created but could not be opened is removed (or reported) before an
-ordinary failure is returned.
+still refers to the directory this deletion created. A staging directory
+that was created but cannot be opened or verified is reported as uncertain
+residue and never removed by name; a failed `mkdirat` is an ordinary failure
+with no probe of the name (a foreign directory may appear there).
 
 **Limits.** Not a defence against a hostile same-user process inside the
 private staging directory, inode reuse, or proof of every descendant's
-provenance. Crash after capture can leave a hidden `.tauri-delete-*` sibling;
+provenance. Staging removal is still `fstatat`
+then `rmdir`: a same-user process can swap in an empty directory between them,
+so cleanup may remove that empty directory and leave ours elsewhere. Crash after capture can leave a hidden `.tauri-delete-*` sibling;
 it is never auto-cleaned (a recognisable name proves nothing). Windows still
 removes by path with no identity guarantee; macOS uses the same Unix code
 (`renameatx_np`) but has no native qualification yet, and its parent walk

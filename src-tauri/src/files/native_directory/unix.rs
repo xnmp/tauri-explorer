@@ -232,6 +232,17 @@ impl Directory {
         self.mkdir(name, mode)
     }
 
+    /// Exclusive private creation without opening, for callers that must
+    /// distinguish "not created" from "created but not opened".
+    pub(crate) fn make_directory(&self, name: &OsStr) -> io::Result<()> {
+        let native = native_name(name)?;
+        // SAFETY: the descriptor and terminated name remain valid during mkdirat.
+        if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     fn mkdir(&self, name: &OsStr, mode: libc::mode_t) -> io::Result<Self> {
         let native = native_name(name)?;
         // SAFETY: the descriptor and terminated name remain valid during mkdirat.

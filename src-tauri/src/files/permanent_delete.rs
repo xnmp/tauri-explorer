@@ -48,12 +48,12 @@ pub(super) trait Operations {
         source.rename_to(name, target, target_name)
     }
 
-    fn create_directory(
+    fn make_directory(
         &mut self,
         parent: &super::native_directory::Directory,
         name: &std::ffi::OsStr,
-    ) -> std::io::Result<super::native_directory::Directory> {
-        parent.create_directory(name)
+    ) -> std::io::Result<()> {
+        parent.make_directory(name)
     }
 
     fn unlink(
@@ -391,28 +391,33 @@ mod unix {
                     self.describe()
                 )));
             }
-            let container = match operations.create_directory(&parent, &self.container) {
-                Ok(container) => container,
+            match operations.make_directory(&parent, &self.container) {
+                Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     return Err(AppError::AlreadyExists(format!(
                         "Deletion staging name {} is occupied; nothing was deleted",
                         self.residue()
                     )));
                 }
-                // mkdirat can succeed while the following open fails.
-                Err(error) => {
-                    return match parent.entry_exists(&self.container) {
-                        Ok(false) => Err(error.into()),
-                        _ => self.discard_container(&parent, None, operations, error.into()),
-                    };
-                }
+                // mkdirat failed: nothing was created.
+                Err(error) => return Err(error.into()),
+            }
+            // Created but unverifiable staging is reported, never removed: its
+            // name alone does not prove the directory is still ours.
+            let unverified = |error: io::Error| {
+                Err(AppError::MutationUncertain(format!(
+                    "Could not delete {}: its staging folder {} was created but could not be verified: {error}; nothing was deleted",
+                    self.describe(),
+                    self.residue()
+                )))
+            };
+            let container = match parent.open_existing(&self.container) {
+                Ok(container) => container,
+                Err(error) => return unverified(error),
             };
             let staged = match container.metadata() {
                 Ok(metadata) => (metadata.dev(), metadata.ino()),
-                Err(error) => {
-                    drop(container);
-                    return self.discard_container(&parent, None, operations, error.into());
-                }
+                Err(error) => return unverified(error),
             };
             if let Err(error) = verify_container(&container) {
                 drop(container);

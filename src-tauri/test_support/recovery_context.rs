@@ -264,7 +264,7 @@ fn pooled_and_dedicated_batches_keep_cleanup_owned_after_the_waiter_disappears()
                 }
             });
             let early = batch::drive_until_stopped(future.as_mut(), &drop_rx, |pending| {
-                polled_tx.send(pending).unwrap()
+                let _ = polled_tx.send(pending);
             });
             assert!(
                 early.is_none(),

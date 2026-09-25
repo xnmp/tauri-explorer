@@ -385,7 +385,7 @@ fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
             },
         ));
         let completed = super::drive_until_stopped(future.as_mut(), &stop_rx, |pending| {
-            polled_tx.send(pending).unwrap()
+            let _ = polled_tx.send(pending);
         });
         let _ = completed_tx.send(completed.map(|outcome| outcome.unwrap().succeeded));
     }));
@@ -441,7 +441,7 @@ fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
             },
         ));
         let early = super::drive_until_stopped(future.as_mut(), &drop_rx, |pending| {
-            polled_tx.send(pending).unwrap()
+            let _ = polled_tx.send(pending);
         });
         assert!(
             early.is_none(),

@@ -325,7 +325,8 @@ pub(crate) fn serialize_dedicated_workers() -> std::sync::MutexGuard<'static, ()
 }
 
 /// Polls `future` on the calling thread the way an executor would: it re-polls
-/// only after the future's waker fires, and checks `stop` before every poll.
+/// only after the future's waker fires, and checks `stop` and a 30 s bound
+/// before every re-poll.
 /// `first` observes whether the initial poll was pending. Returns the output if
 /// the future completed before `stop` fired or disconnected. A single poll with
 /// a no-op waker strands a future that is still waiting for a dedicated-worker
@@ -372,16 +373,16 @@ pub(crate) fn drive_until_stopped<F: std::future::Future>(
             Ok(()) | Err(TryRecvError::Disconnected) => return None,
             Err(TryRecvError::Empty) => {}
         }
+        assert!(
+            Instant::now() < deadline,
+            "the test never stopped its driven future"
+        );
         if signal.woken.swap(false, Ordering::Acquire) {
             if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
                 return Some(output);
             }
             continue;
         }
-        assert!(
-            Instant::now() < deadline,
-            "the test never stopped its driven future"
-        );
         // Wake unparks this thread; the timeout only bounds how long a stop
         // signal, which does not unpark, waits to be observed.
         thread::park_timeout(Duration::from_millis(10));

@@ -10,6 +10,42 @@ The user wants a sleek, minimal, customizable cross-platform file explorer with 
 
 The user previously authorized publishing, merging and releasing, but this turn requests a handoff. Respect review/CI gates; do not merge this red checkpoint. The user also asked to disable an old autonomous harness service. **Do not restart or re-enable it.** This checkpoint used ordinary Git and test commands, not that service.
 
+## Where the comprehensive overhaul plan lives
+
+The overhaul is recorded across an audit, a requirements/completion ledger and
+architecture decisions; this handover is the continuation checkpoint, not a
+replacement for that broader plan. Read these documents before implementing:
+
+1. **[Repository health and startup review — #680](../repo-health-review.md)**:
+   the September architectural review, rationale, subsystem findings and proposed
+   direction. This is the main overview of the overhaul behind the current work.
+2. **[Architectural review completion ledger — #680](../review-completion.md)**:
+   requirement-by-requirement implementation/evidence history and the explicit
+   [scope freeze](../review-completion.md#active-scope--frozen-2026-09-09).
+   It links the deferred workstreams (#685–#688) and their acceptance boundaries.
+3. **[Architecture Decision Records](../adr/README.md)**:
+   the detailed contracts for resource ownership, startup readiness, observation,
+   mutation publication, native history, exact trash, durable recovery,
+   retirement and admission coverage. Preserve each ADR's Accepted/Proposed
+   distinction; the existence of a design is not proof it is implemented.
+4. **[Checkpoint archive through September 8](../reviews/architecture-review-history-2026-09-08.md)**:
+   earlier implementation reasoning and evidence moved out of the ledger.
+
+Earlier reviews provide additional provenance:
+[June comprehensive codebase review](../reviews/comprehensive-review-2026-06-11.md),
+[July architectural review](../reviews/architecture-review-2026-07-04.md),
+[July security architecture audit](../reviews/security-architecture-audit-2026-07-05.md),
+and [perceived-latency review](../perf-review.md). These are historical findings,
+not a list of bugs presumed still present or permission to expand current scope.
+
+**Status precedence:** the older overview/ledger preserve checkpoint wording
+(including old “pending,” draft-PR and authorization statements). Do not treat
+those as a fresh report of current GitHub state. For September 23–25 work, use
+this handover's issue/PR table and branch-specific evidence, then refresh GitHub
+status. Current user instructions govern authorization and scope. The seven
+remaining issues are the bounded continuation of the wider overhaul, not its
+entire historical coverage.
+
 ## Durable workspace and checkpoint
 
 - Repository: `/home/chong/Repos/tauri-explorer`.

@@ -54,7 +54,7 @@ backend for E2E/browser).
 - `state/directory-watch.ts` — generic ordered path-lease owner plus the directory adapter used by FolderThumbnail, MillerColumns and drives; teardown retains exact release identity and drains late acquisition.
 - `src-tauri/src/files/directory_watches.rs` — pure directory lease/retirement policy with injected OS observation; shares registrations and retries/rebuilds failed forced cleanup without granting cache coverage to retired owners.
 
-- `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
+- `state/directory-listing.ts` — `createDirectoryListing`: serialized complete snapshots, latest-request supersession and late observation-lease disposal; no listing event listener
 - `state/pane-refresh.ts` — `createPaneRefresh`: complete-listing reconciliation without UI flash
 - `domain/directory-reconciliation.ts` — reconcile external listings with concurrent mutations and selected path identities
 - `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
@@ -62,8 +62,8 @@ backend for E2E/browser).
 - `state/directory-events.ts` — shared ready-before-scan native event hub with acquisition retry and late-listener retirement.
 - `composables/use-file-watchers.ts` — subscribes to `directory-changed` + cross-window channel
 - `state/file-events.ts` — BroadcastChannel `explorer-file-changes` between windows
-- `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `listDirectory`, `startStreamingDirectory` (observed navigation or ordinary refresh)
-- `src-tauri/src/files/fs_watcher.rs` — notify watcher → emits event; `files/dir_listing.rs` — listing + streaming
+- `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `fetchDirectory` (cached reads), `loadDirectory` (fresh snapshots for observed navigation or ordinary refresh)
+- `src-tauri/src/files/fs_watcher.rs` — notify watcher → emits event; `files/dir_listing.rs` — cached reads + fresh complete snapshots; navigation establishes observation before scanning
 - `src-tauri/src/files/directory_cache.rs` — pure snapshot retention/publication policy, bounded by path count and retained allocation estimate; checked blocking scans in `dir_listing.rs` publish only complete results.
 - `src-tauri/src/files/watch_observation.rs` — injected native observation generations and recovery; nonrecursive parent/root sharing, lazy recursive coverage, immediate fault invalidation and deadline-based retries (ADR 0013).
 - FLOW: `start_observed_directory` establishes renderer-owned demand before scanning; the pane stages its returned lease before publishing entries. `directory-changed` (fs_watcher.rs → directory-events.ts → pane-watch.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.

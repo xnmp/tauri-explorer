@@ -3,14 +3,12 @@
  * when nothing changed. Extracted from explorer.svelte.ts.
  *
  * Invariants preserved from the original implementation:
- * - streamed chunks are accumulated (for >100-entry directories the invoke
- *   result only contains the first batch, the rest arrives via events)
+ * - only complete snapshots are reconciled
  * - the result is discarded if the pane navigated away mid-fetch
  *   (path-change bail) or the listing was cancelled by a newer load
  * - unchanged listings do not publish, including watcher echoes of local work
  */
 
-import type { FileEntry } from "$lib/domain/file";
 import { reconcileDirectoryEntries, reconcileDirectorySelection } from "$lib/domain/directory-reconciliation";
 import type { ExplorerCoreState } from "./types";
 import type { createDirectoryListing } from "./directory-listing";
@@ -42,23 +40,8 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     };
 
     // Fetch new data without touching UI state — avoids flash on no-change.
-    const streamedEntries: FileEntry[] = [];
-    let cancelled = false;
-    let resolveDone!: () => void;
-    const donePromise = new Promise<void>((resolve) => {
-      resolveDone = resolve;
-    });
-
-    const result = await dirListing.load(refreshPath, {
-      onEntries: (entries) => {
-        for (const entry of entries) streamedEntries.push(entry);
-      },
-      onDone: () => resolveDone(),
-      onCancelled: () => {
-        cancelled = true;
-        resolveDone();
-      },
-    });
+    const result = await dirListing.load(refreshPath);
+    if (!result.ok && result.cancelled) return;
 
     if (!result.ok) {
       // The pane navigated away while the fetch was in flight — not our call.
@@ -68,19 +51,13 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
       return;
     }
 
-    if (result.streaming) await donePromise;
-
     // Bail if superseded: a navigation cancelled the listing or changed path.
-    if (cancelled || coreState.currentPath !== refreshPath || !ctx.allowRefresh(refreshPath)) return;
+    if (coreState.currentPath !== refreshPath || !ctx.allowRefresh(refreshPath)) return;
 
-    // We now hold a complete listing for the pane's current path. If this
-    // refresh interrupted a still-streaming navigation to the same path
-    // (cancelling its onDone), clear the spinner it left behind.
     coreState.loading = false;
 
-    const allEntries = streamedEntries.length ? [...result.entries, ...streamedEntries] : result.entries;
     const current = coreState.entries;
-    const listing = reconcileDirectoryEntries(oldEntries, current, allEntries);
+    const listing = reconcileDirectoryEntries(oldEntries, current, result.entries);
     const selection = reconcileDirectorySelection(listing.entries, {
       selectedPaths: coreState.selectedPaths,
       cursorPath: coreState.cursorPath,

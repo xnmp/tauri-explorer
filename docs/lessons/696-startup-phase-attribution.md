@@ -100,3 +100,38 @@ Release profile, Arch Linux / WebKitGTK, 10 launches, p50: framework bring-up
 (~32%); frame scheduling 37 ms; readiness IPC 2.3 ms. The debug profile gives
 the same shape (61% / 31%). No application-owned phase was demonstrated to be a
 bottleneck, so no startup logic was changed for performance.
+
+## Do not pace an already materialized snapshot
+
+The old directory command scanned and sorted every entry before returning its
+first 100 entries, then broadcast the remainder in 100-entry batches with a
+1 ms pause per batch. Fresh navigation kept `explorer.loading` true, and
+`FileList` hid its rows until the stream completed. Intermediate batches did
+not provide earlier visible rows; they added transport delay and repeated
+reactive work. A naive per-request channel removed pacing but added another
+completion failure: a failed send could leave an already-successful invocation
+without a terminal callback.
+
+Navigation and refresh now consume a single complete, fresh snapshot. The
+existing cached `list_directory` command remains available for cached readers;
+`list_directory_fresh` deliberately bypasses that cache for navigation and
+watcher reconciliation. Observed navigation still acquires the watch before
+scanning and transfers the lease only if its owner accepts the result.
+
+The listing owner serializes scans, invalidates obsolete requests at enqueue,
+skips stale queued work, and disposes late leases before teardown completes.
+Cancellation is distinct from a filesystem error: a superseded refresh must
+not navigate to its parent. Native scanning and an IPC response already in
+flight remain non-cancellable; do not claim bounded navigation latency for
+slow/unresponsive filesystems from local-directory measurements.
+
+## Keep startup and interaction evidence separate
+
+The Arch comparison uses alternating fresh release processes under Xvfb and
+Openbox, with uncontrolled warm OS caches. Launch-to-native-readiness includes
+pre-main time. WebKitGTK interaction qualification uses the matching 4.1
+WebDriver on isolated ports. The Linux release launcher's detach fork prevents
+WebDriver session creation; a test-only, exact-executable preload shim bypassed
+that fork for the interaction experiment only. It was not used for startup
+timing. RequestAnimationFrame gaps and DOM observations are diagnostic proxies,
+not compositor-presented frame measurements or a macOS half-bounce verdict.

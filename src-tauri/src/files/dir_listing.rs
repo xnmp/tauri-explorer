@@ -4,10 +4,8 @@
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
-use tauri::{AppHandle, Emitter};
 
 use super::directory_cache::{DirectoryCache, Lookup, PreparedSnapshot};
 use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
@@ -87,11 +85,7 @@ where
                 "directory list_directory cache hit: path={path:?}, entries={}",
                 entries.len()
             );
-            return Ok(DirectoryListing {
-                path,
-                entries,
-                listing_id: None,
-            });
+            return Ok(DirectoryListing { path, entries });
         }
         Lookup::Miss(permit) => permit,
     };
@@ -149,11 +143,7 @@ where
         }
     }
 
-    Ok(DirectoryListing {
-        path,
-        entries,
-        listing_id: None,
-    })
+    Ok(DirectoryListing { path, entries })
 }
 
 #[cfg(test)]
@@ -172,25 +162,6 @@ pub fn sort_entries(entries: &mut [FileEntry]) {
         (is_not_directory, e.name.to_lowercase())
     });
 }
-
-// ===================
-// Streaming Directory Listing
-// ===================
-
-/// Event payload for streaming directory entries.
-#[derive(Debug, Clone, Serialize)]
-pub struct DirectoryEntriesEvent {
-    #[serde(rename = "listingId")]
-    pub listing_id: u64,
-    pub path: String,
-    pub entries: Vec<FileEntry>,
-    pub done: bool,
-    #[serde(rename = "totalCount")]
-    pub total_count: usize,
-}
-
-/// Registry for active directory listings
-static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
 
 /// Scan a directory using jwalk for parallel metadata reading.
 /// Returns entries sorted (directories first, then by name).
@@ -320,29 +291,23 @@ fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) 
     Ok((entries, diagnostics))
 }
 
-/// Start streaming directory listing.
-/// Returns first batch immediately and emits remaining entries via events.
-/// Uses jwalk for parallel metadata reading to avoid blocking on large directories.
+/// Read a fresh, complete snapshot for navigation or watcher reconciliation.
+/// Scanning already materializes and sorts the entire directory. Returning that
+/// snapshot directly avoids paced transport batches and partial-success states.
 #[tauri::command]
-pub async fn start_streaming_directory(
-    app: AppHandle,
-    path: String,
-) -> Result<DirectoryListing, AppError> {
+pub async fn list_directory_fresh(path: String) -> Result<DirectoryListing, AppError> {
     let started_at = Instant::now();
-    log::info!("navigation start_streaming_directory requested: path={path:?}");
+    log::info!("navigation list_directory_fresh requested: path={path:?}");
     let dir_path = PathBuf::from(&path);
-    let batch_size = 100;
 
     #[cfg(debug_assertions)]
     let t_scan_start = Instant::now();
     // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
-    let (mut all_entries, scan_diagnostics) =
+    let (all_entries, scan_diagnostics) =
         super::run_blocking(move || scan_directory_with_diagnostics(&dir_path))
             .await
             .inspect_err(|error| {
-                log::warn!(
-                    "navigation start_streaming_directory failed: path={path:?}, error={error}"
-                );
+                log::warn!("navigation list_directory_fresh failed: path={path:?}, error={error}");
             })?;
 
     let total_count = all_entries.len();
@@ -357,83 +322,23 @@ pub async fn start_streaming_directory(
     // The scan leaves is_empty unset (`None`): probing it costs one read_dir per
     // subdirectory, so a 10k-dir scan would pay 10k read_dirs. The frontend
     // resolves emptiness lazily for visible directories via `is_directory_empty`
-    // (#129), so neither the first batch nor the streamed chunks probe it here.
+    // (#129), so a fresh snapshot does not probe emptiness here.
     if scan_diagnostics.error_count > 0 {
         log::warn!(
-            "navigation start_streaming_directory completed with scan errors: path={path:?}, entries={total_count}, scan_errors={}, samples={:?}, elapsed={:?}",
+            "navigation list_directory_fresh completed with scan errors: path={path:?}, entries={total_count}, scan_errors={}, samples={:?}, elapsed={:?}",
             scan_diagnostics.error_count,
             scan_diagnostics.samples,
             started_at.elapsed()
         );
     }
 
-    if total_count <= batch_size {
-        log::info!(
-            "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, streaming=false, elapsed={:?}",
-            started_at.elapsed()
-        );
-        return Ok(DirectoryListing {
-            path,
-            entries: Arc::new(all_entries),
-            listing_id: None,
-        });
-    }
-
-    let first_batch: Vec<FileEntry> = all_entries.drain(..batch_size).collect();
-    let remaining = all_entries;
-
-    let (listing_id, cancelled) = LISTINGS.start();
-
-    let path_clone = path.clone();
-    std::thread::spawn(move || {
-        let mut offset = batch_size;
-        let mut was_cancelled = false;
-
-        for chunk in remaining.chunks(batch_size) {
-            if cancelled.load(Ordering::Relaxed) {
-                was_cancelled = true;
-                break;
-            }
-
-            if let Err(error) = app.emit(
-                "directory-entries",
-                DirectoryEntriesEvent {
-                    listing_id,
-                    path: path_clone.clone(),
-                    entries: chunk.to_vec(),
-                    done: offset + chunk.len() >= total_count,
-                    total_count,
-                },
-            ) {
-                log::warn!(
-                    "navigation directory-entries emit failed: path={path_clone:?}, listing_id={listing_id}, error={error}"
-                );
-            }
-
-            offset += chunk.len();
-            // Brief pacing so batched emits don't flood the IPC channel. The
-            // entries are already fully scanned, so every millisecond here is
-            // pure added latency — 1ms keeps a 10k-entry stream under ~100ms
-            // of pacing (was 5ms ≈ 500ms).
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-
-        log::info!(
-            "navigation directory listing stream ended: path={path_clone:?}, listing_id={listing_id}, emitted_entries={}, cancelled={was_cancelled}",
-            offset.saturating_sub(batch_size)
-        );
-        LISTINGS.cleanup(listing_id);
-    });
-
     log::info!(
-        "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, listing_id={listing_id}, streaming=true, elapsed={:?}",
+        "navigation list_directory_fresh completed: path={path:?}, entries={total_count}, elapsed={:?}",
         started_at.elapsed()
     );
-
     Ok(DirectoryListing {
         path,
-        entries: Arc::new(first_batch),
-        listing_id: Some(listing_id),
+        entries: Arc::new(all_entries),
     })
 }
 
@@ -450,17 +355,13 @@ pub struct ObservedDirectoryListing {
 #[tauri::command]
 pub async fn start_observed_directory(
     window: tauri::Window,
-    app: AppHandle,
     path: String,
     session_id: String,
 ) -> Result<ObservedDirectoryListing, AppError> {
     let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
     let pending = super::fs_watcher::observe_directory(owner.clone(), path.clone()).await?;
-    let listing = start_streaming_directory(app, path).await?;
+    let listing = list_directory_fresh(path).await?;
     if !owner.active() {
-        if let Some(id) = listing.listing_id {
-            LISTINGS.cancel(id);
-        }
         return Err(AppError::Other(
             "Native resource renderer was replaced".into(),
         ));
@@ -469,14 +370,6 @@ pub async fn start_observed_directory(
         listing,
         watch_lease: pending.take(),
     })
-}
-
-/// Cancel an active directory listing.
-#[tauri::command]
-pub async fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
-    log::info!("navigation cancel_directory_listing requested: listing_id={listing_id}");
-    LISTINGS.cancel(listing_id);
-    Ok(())
 }
 
 #[cfg(test)]

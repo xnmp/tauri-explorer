@@ -121,7 +121,7 @@ export function createPaneWatch(deps: PaneWatchDependencies) {
     return {
       ready,
       current,
-      // The transport transfers ownership before publishing stream callbacks.
+      // The listing owner transfers observation before publishing a snapshot.
       // The old committed lease survives until the caller commits its UI state.
       accept(lease: DirectoryWatchLease | null): boolean {
         if (!current() || navigation.staged !== undefined) return false;

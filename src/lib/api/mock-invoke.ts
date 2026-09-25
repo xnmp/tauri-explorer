@@ -1544,7 +1544,7 @@ const mockCommands: Record<string, CommandHandler> = {
       throw new Error(`Path not found: ${path}`);
     }
     const entries = sortListing(getDirectoryEntries(path));
-    return { path, entries, listing_id: null } as DirectoryListing;
+    return { path, entries } as DirectoryListing;
   },
 
   is_directory_empty: (args) => {
@@ -1590,7 +1590,7 @@ const mockCommands: Record<string, CommandHandler> = {
     return { fileCount, totalBytes };
   },
 
-  start_streaming_directory: (args) => {
+  list_directory_fresh: (args) => {
     const raw = args.path as string;
     const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
     const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
@@ -1598,7 +1598,7 @@ const mockCommands: Record<string, CommandHandler> = {
       throw new Error(`Path not found: ${path}`);
     }
     const entries = sortListing(getDirectoryEntries(path));
-    return { path, entries, listing_id: null } as DirectoryListing;
+    return { path, entries } as DirectoryListing;
   },
 
   create_directory: (args) => {
@@ -1817,7 +1817,6 @@ const mockCommands: Record<string, CommandHandler> = {
 
   cancel_search: () => {},
 
-  cancel_directory_listing: () => {},
 
   cancel_copy: () => {},
 

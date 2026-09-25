@@ -324,6 +324,54 @@ pub(crate) fn serialize_dedicated_workers() -> std::sync::MutexGuard<'static, ()
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Polls `future` on the calling thread the way an executor would, re-polling
+/// whenever it is woken, until `stop` fires. `first` observes whether the
+/// initial poll was pending. Returns the output if the future completed before
+/// `stop`. A single poll with a no-op waker strands a future that is still
+/// waiting for a dedicated-worker permit at that instant, because the permit's
+/// release wakes nobody (#743).
+#[cfg(test)]
+pub(crate) fn drive_until_stopped<F: std::future::Future>(
+    mut future: std::pin::Pin<&mut F>,
+    stop: &std::sync::mpsc::Receiver<()>,
+    first: impl FnOnce(bool),
+) -> Option<F::Output> {
+    use std::{
+        sync::mpsc::TryRecvError,
+        task::{Context, Poll, Wake, Waker},
+        thread,
+        time::{Duration, Instant},
+    };
+    struct Unpark(thread::Thread);
+    impl Wake for Unpark {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(Unpark(thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let initial = future.as_mut().poll(&mut context);
+    first(initial.is_pending());
+    if let Poll::Ready(output) = initial {
+        return Some(output);
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match stop.try_recv() {
+            Ok(()) | Err(TryRecvError::Disconnected) => return None,
+            Err(TryRecvError::Empty) => {}
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the test never stopped its driven future"
+        );
+        thread::park_timeout(Duration::from_millis(10));
+        if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+            return Some(output);
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "../../../test_support/file_batch_dedicated.rs"]
 mod dedicated_tests;

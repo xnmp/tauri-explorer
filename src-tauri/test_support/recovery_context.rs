@@ -263,14 +263,16 @@ fn pooled_and_dedicated_batches_keep_cleanup_owned_after_the_waiter_disappears()
                     .await)
                 }
             });
-            polled_tx.send(poll_once(future.as_mut())).unwrap();
-            drop_rx.recv_timeout(DEADLINE).unwrap();
+            let early = batch::drive_until_stopped(future.as_mut(), &drop_rx, |pending| {
+                polled_tx.send(pending).unwrap()
+            });
+            assert!(
+                early.is_none(),
+                "{worker} waiter completed while cleanup was held"
+            );
             drop(future);
         });
-        assert!(matches!(
-            polled_rx.recv_timeout(DEADLINE).unwrap(),
-            Poll::Pending
-        ));
+        assert!(polled_rx.recv_timeout(DEADLINE).unwrap());
         cleanup_rx
             .recv_timeout(DEADLINE)
             .unwrap_or_else(|error| panic!("{worker} worker reached capture cleanup: {error:?}"));

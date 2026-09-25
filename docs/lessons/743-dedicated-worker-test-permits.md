@@ -1,24 +1,38 @@
-# #743 — dedicated-worker tests starved each other's permits
+# #743 — dedicated-worker tests stranded a queued future and aborted the suite
 
 **Symptom.** `pooled_and_dedicated_batches_keep_cleanup_owned_after_the_waiter_disappears`
-timed out under full-suite concurrency and, while unwinding, `Cleanup::drop` /
-`ObservedOwner::drop` unwrapped disconnected channels: a panic in a destructor
+timed out under full-suite concurrency. While it unwound, `Cleanup::drop` /
+`ObservedOwner::drop` unwrapped disconnected channels. A panic in a destructor
 during unwinding aborted the whole test process (SIGABRT).
 
 **Cause.** Dedicated batch workers (`batch::run_dedicated*`) share one
-process-wide semaphore of four permits. Several tests hold a permit while they
-handshake with their own test thread. Under a parallel harness a worker queued
-for a permit behind other tests' handshakes and missed its 3 s deadline. The
-failure was always the `dedicated` variant: 4 of 6 loaded runs
-(`--test-threads=64`) before the fix, 0 of 6 after.
+process-wide semaphore of four permits. The waiter-drop tests polled their
+batch future once with `Waker::noop()` and then blocked on a test channel.
+When all four permits were held by parallel tests at that single poll,
+`acquire_owned()` returned `Pending`. The release of a permit then woke the
+no-op waker. Nothing polled the future again, so its worker never started,
+however soon a permit became free. The failure was always the `dedicated`
+variant: 4 of 6 loaded runs (`--test-threads=64`) failed before the fix and
+0 of 6 after it.
 
-**Fix.** Tests that use dedicated workers take
-`batch::serialize_dedicated_workers()` first, so they queue before their
-deadline starts; production permits are unchanged. Helper destructors never
-panic: a missed handshake leaves the cleanup marker unwritten and the owning
-test's own assertion reports it. An induced early assertion failure now
-reports normally instead of aborting the suite.
+**Fix.**
+- `batch::drive_until_stopped` polls the future like an executor. It uses a
+  thread-unparking waker and re-polls on every wake until the test signals it
+  to stop. A queued caller therefore starts as soon as a permit frees, as it
+  does in production.
+- `a_caller_queued_behind_every_permit_starts_once_one_is_released` holds all
+  four permits, queues a fifth caller, and releases one. It fails with the
+  single-poll behaviour and passes with the driver.
+- Tests that hold a dedicated permit across a timed handshake also take
+  `batch::serialize_dedicated_workers()`. One test's deadline then cannot run
+  while other tests hold permits for their own handshakes.
+- Helper destructors never panic. A missed handshake leaves the cleanup marker
+  unwritten, and the owning test's own assertion reports it. An induced early
+  assertion failure now reports normally instead of aborting the suite.
 
-**Rule.** A test that holds a process-wide resource across a timed handshake
-must serialize with the other holders; teardown helpers must not unwrap
-channel operations.
+**Rules.**
+- Never assert progress on a future that was polled once with a no-op waker
+  if it can wait on a shared resource: the resource's release wakes nobody.
+  Drive it with a real waker.
+- Serialize tests that hold a process-wide resource across a timed handshake.
+- Teardown helpers must not unwrap channel operations.

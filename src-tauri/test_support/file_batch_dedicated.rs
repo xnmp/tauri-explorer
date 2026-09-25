@@ -4,10 +4,8 @@ use std::{
     fs,
     future::Future,
     path::Path,
-    pin::Pin,
     rc::Rc,
     sync::mpsc::{self, SyncSender},
-    task::{Context, Poll, Waker},
     thread::{self, ThreadId},
     time::Duration,
 };
@@ -235,10 +233,6 @@ fn operation_panic_preserves_prior_success_and_marks_only_active_effect_uncertai
     assert_eq!(fs::read(&unstarted).unwrap(), b"unstarted exact bytes");
 }
 
-fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
-    future.poll(&mut Context::from_waker(Waker::noop()))
-}
-
 struct HeldCleanup {
     started: SyncSender<()>,
     release: mpsc::Receiver<()>,
@@ -306,6 +300,86 @@ fn terminal_result_waits_for_operation_capture_cleanup() {
 }
 
 #[test]
+fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
+    let _serial = super::serialize_dedicated_workers();
+    let dir = tempfile::tempdir().unwrap();
+    // Hold all four dedicated permits. Dropping `releases` (also on unwind)
+    // lets every holder finish, so a failed assertion cannot strand them.
+    let (held_tx, held_rx) = mpsc::sync_channel(4);
+    let mut releases = Vec::new();
+    let mut holders = Vec::new();
+    for index in 0..4 {
+        let path = dir.path().join(format!("held-{index}"));
+        fs::write(&path, b"held").unwrap();
+        let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+        releases.push(release_tx);
+        let held_tx = held_tx.clone();
+        holders.push(thread::spawn(move || {
+            run(run_dedicated(
+                plan(&[&path]),
+                || Ok(()),
+                move |_, _| {
+                    held_tx.send(()).unwrap();
+                    let _ = release_rx.recv();
+                    Ok(())
+                },
+            ))
+        }));
+    }
+    for _ in 0..4 {
+        held_rx
+            .recv_timeout(DEADLINE)
+            .expect("each holder acquired a permit");
+    }
+
+    let queued = dir.path().join("queued");
+    fs::write(&queued, b"queued").unwrap();
+    let queued_for_caller = queued.clone();
+    let (started_tx, started_rx) = mpsc::sync_channel(1);
+    let (polled_tx, polled_rx) = mpsc::sync_channel(1);
+    let (stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
+    let caller = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build polling runtime");
+        let _runtime = runtime.enter();
+        let mut future = Box::pin(run_dedicated(
+            plan(&[&queued_for_caller]),
+            || Ok(()),
+            move |_, _| {
+                started_tx.send(()).unwrap();
+                Ok(())
+            },
+        ));
+        super::drive_until_stopped(future.as_mut(), &stop_rx, |pending| {
+            polled_tx.send(pending).unwrap()
+        })
+        .map(|outcome| outcome.unwrap().succeeded)
+    });
+
+    assert!(
+        polled_rx.recv_timeout(DEADLINE).unwrap(),
+        "with every permit held the caller must queue"
+    );
+    assert!(
+        started_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "no permit was free, so the queued worker must not have started"
+    );
+    drop(releases.remove(0));
+    started_rx
+        .recv_timeout(DEADLINE)
+        .expect("releasing a permit must wake and start the queued caller");
+    let completed = caller.join().unwrap();
+    drop(stop_tx);
+    assert_eq!(completed, Some(vec![path_string(&queued)]));
+    drop(releases);
+    for holder in holders {
+        holder.join().unwrap().unwrap();
+    }
+}
+
+#[test]
 fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
     let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
@@ -335,15 +409,20 @@ fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
                 Ok(())
             },
         ));
-        polled_tx.send(poll_once(future.as_mut())).unwrap();
-        drop_rx.recv().unwrap();
+        let early = super::drive_until_stopped(future.as_mut(), &drop_rx, |pending| {
+            polled_tx.send(pending).unwrap()
+        });
+        assert!(
+            early.is_none(),
+            "the caller completed while its worker was held"
+        );
         drop(future);
     });
 
-    let poll = polled_rx
+    let pending = polled_rx
         .recv_timeout(DEADLINE)
         .expect("the async caller must not block while the worker is held");
-    assert!(matches!(poll, Poll::Pending));
+    assert!(pending);
     accepted_rx
         .recv_timeout(DEADLINE)
         .expect("worker accepted its active item");

@@ -10,7 +10,7 @@
 import { browser, expect } from "@wdio/globals";
 import fs from "node:fs";
 import path from "node:path";
-import { entryNames, navigateTo } from "./helpers";
+import { navigateTo } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 interface FileOperationResult {
@@ -20,7 +20,7 @@ interface FileOperationResult {
 }
 
 async function dispatch(
-  detail: { op: string; token: string; paths?: string[]; permanent?: boolean },
+  detail: { op: string; token: string; path?: string; name?: string; paths?: string[]; permanent?: boolean },
   expected: FileOperationResult["status"],
 ): Promise<FileOperationResult> {
   await browser.execute((operation) => {
@@ -41,8 +41,19 @@ async function dispatch(
   return JSON.parse(encoded) as FileOperationResult;
 }
 
+// Session state persists across launches, so an earlier spec can leave a
+// split pane restored beside this one; read only the pane under test. Only a
+// split marks its active pane, so a single pane is read as-is.
+async function activeEntryNames(): Promise<string[]> {
+  return await browser.execute(() => {
+    const pane = document.querySelector(".explorer-pane.active")
+      ?? document.querySelector(".explorer-pane");
+    return Array.from(pane?.querySelectorAll(".entry-item .entry-name") ?? [], (el) => el.textContent?.trim() ?? "");
+  });
+}
+
 async function waitForListed(name: string, present: boolean): Promise<void> {
-  await browser.waitUntil(async () => (await entryNames()).includes(name) === present, {
+  await browser.waitUntil(async () => (await activeEntryNames()).includes(name) === present, {
     timeout: 20_000,
     timeoutMsg: `${name} remained ${present ? "absent from" : "present in"} the file list`,
   });
@@ -64,11 +75,22 @@ describe("native permanent deletion", () => {
     fs.symlinkSync(keep, path.join(tree, "nested", "to-keep"));
     fs.symlinkSync(keep, link);
     const keepIdentity = fs.statSync(keep).ino;
+    // File history persists across app launches, so an earlier spec's entry
+    // could otherwise sit on top of the stack. A reversible rename recorded
+    // just before the deletion makes the expected Undo target this test's own.
+    const sentinel = path.join(scratch, "sentinel-before");
+    fs.mkdirSync(sentinel);
 
     await navigateTo(scratch);
-    for (const name of ["keep.txt", "selected-file.txt", "selected-tree", "selected-link"]) {
+    for (const name of ["keep.txt", "selected-file.txt", "selected-tree", "selected-link", "sentinel-before"]) {
       await waitForListed(name, true);
     }
+    const renamed = await dispatch(
+      { op: "rename", path: sentinel, name: "sentinel-after", token: `rename-${crypto.randomUUID()}` },
+      "completed",
+    );
+    expect(renamed.error).toBeNull();
+    await waitForListed("sentinel-after", true);
 
     const token = `permanent-${crypto.randomUUID()}`;
     const selected = [file, tree, link];
@@ -93,10 +115,13 @@ describe("native permanent deletion", () => {
       "screenshots/fix/permanent-delete-identity/permanent-delete-native.png",
     ));
 
-    // Permanent deletion records no inverse: Undo must not recreate anything.
-    await dispatch({ op: "undo", token: `undo-${crypto.randomUUID()}` }, "completed");
-    await browser.pause(500);
+    // Permanent deletion records no inverse, so Undo skips past it to the
+    // sentinel rename and recreates none of the deleted entries.
+    const undone = await dispatch({ op: "undo", token: `undo-${crypto.randomUUID()}` }, "completed");
+    expect(undone.error).toBeNull();
+    await waitForListed("sentinel-before", true);
     for (const entry of selected) expect(fs.lstatSync(entry, { throwIfNoEntry: false })).toBeUndefined();
-    expect((await entryNames()).sort()).toEqual(["keep.txt"]);
+    expect(fs.readdirSync(scratch).sort()).toEqual(["keep.txt", "sentinel-before"]);
+    expect((await activeEntryNames()).sort()).toEqual(["keep.txt", "sentinel-before"]);
   });
 });

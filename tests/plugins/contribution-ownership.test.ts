@@ -46,18 +46,18 @@ it("old dialog disposers cannot close a newly registered instance", () => {
   expect(dialogRegistry.isOpen(descriptor.id)).toBe(true);
 });
 it("provider disposal distinguishes registrations of the same object", () => {
-  const provider = { list: (path: string) => ({ path, entries: [], listing_id: null }) };
+  const provider = { list: (path: string) => ({ path, entries: [] }) };
   const dispose = registerFsProvider("owned", provider);
   registerFsProvider("owned", provider);
   dispose();
   expect(providerFor("owned://root")).toBe(provider);
 });
 it("rejects plugin provider collisions without replacing the existing provider", () => {
-  const core = { list: (path: string) => ({ path, entries: [], listing_id: null }) };
+  const core = { list: (path: string) => ({ path, entries: [] }) };
   registerFsProvider("owned", core);
   const plugin = createPluginContext("ownership");
   expect(() => plugin.ctx.registerFsProvider("OWNED", {
-    list: (path: string) => ({ path, entries: [], listing_id: null }),
+    list: (path: string) => ({ path, entries: [] }),
   })).toThrow();
   plugin.dispose();
   expect(providerFor("owned://root")).toBe(core);

@@ -5,9 +5,12 @@
 //! after parking is durable, so no boundary can leave both endpoints absent.
 use super::model::{DurableIntent, ObjectId, OperationState, StagedPayload};
 use super::move_model::{MovePhase, MoveSpec, Strategy};
+use super::move_retention::{Decision, RetirementState, RootSide, Step};
 use std::io;
 
 pub(super) enum MoveTransition {
+    Probe(usize, super::move_capability_model::Event),
+    AbortPreflight,
     BeginRoots,
     RootsObserved {
         source: Option<ObjectId>,
@@ -31,6 +34,15 @@ pub(super) enum MoveTransition {
     SourceRemoved,
     BeginRestoration,
     RestorationCompleted,
+    RetentionMeasured(u64),
+    BeginRetirement(
+        Decision,
+        Option<super::move_cleanup::Plan>,
+        Option<super::move_cleanup::Plan>,
+    ),
+    BeginRootRetirement(RootSide),
+    RootRetired(RootSide),
+    RetirementCompleted,
     ReportError(String),
 }
 
@@ -47,8 +59,45 @@ pub(super) fn transition(
     let staging = spec.strategy == Strategy::CopyParked;
     let overwriting = spec.target_original.is_some();
     let rooted = spec.source_root.is_some() || spec.target_root.is_some();
+    // Once discard is durable no forward or inverse mutation can reuse this
+    // record, including after a failed cleanup that has removed only one root.
+    if state.retirement.is_some()
+        && !matches!(
+            &event,
+            MoveTransition::RetentionMeasured(_)
+                | MoveTransition::BeginRetirement(_, _, _)
+                | MoveTransition::BeginRootRetirement(_)
+                | MoveTransition::RootRetired(_)
+                | MoveTransition::RetirementCompleted
+                | MoveTransition::ReportError(_)
+        )
+    {
+        return Err(invalid(
+            "Move retirement has consumed its execution authority",
+        ));
+    }
     match event {
-        MoveTransition::BeginRoots if state.phase == MovePhase::Planned && rooted => {
+        MoveTransition::Probe(index, event)
+            if state.phase == MovePhase::Planned && spec.rename_probes.is_some() =>
+        {
+            let progress = state.rename_probe.get_or_insert_with(|| {
+                super::move_capability_model::Progress::new(spec.probe_plans().count())
+            });
+            progress.advance(index, event)?;
+        }
+        MoveTransition::AbortPreflight
+            if state.phase == MovePhase::Planned
+                && state
+                    .rename_probe
+                    .as_ref()
+                    .is_some_and(|progress| progress.removed()) =>
+        {
+            state.phase = MovePhase::Aborted;
+            state.error = None;
+        }
+        MoveTransition::BeginRoots
+            if state.phase == MovePhase::Planned && rooted && spec.capability_ready(state) =>
+        {
             state.phase = MovePhase::RootIntent;
         }
         MoveTransition::RootsObserved { source, target }
@@ -97,7 +146,7 @@ pub(super) fn transition(
             if match state.phase {
                 // The same-filesystem non-overwrite fast path is one atomic
                 // no-replace rename; it needs no private storage at all.
-                MovePhase::Planned => !rooted,
+                MovePhase::Planned => !rooted && spec.capability_ready(state),
                 MovePhase::Prepared => !staging && !overwriting,
                 MovePhase::Staged => staging && !overwriting,
                 MovePhase::Displaced | MovePhase::PublishIntent => true,
@@ -163,8 +212,77 @@ pub(super) fn transition(
             state.phase = MovePhase::Restored;
             state.error = None;
         }
+        MoveTransition::RetentionMeasured(bytes)
+            if super::move_retention::disposal(&spec, state.phase).is_some() =>
+        {
+            state.retained_bytes = Some(bytes);
+        }
+        MoveTransition::BeginRetirement(decision, source_plan, target_plan) => {
+            if let Some(retirement) = &state.retirement {
+                if retirement.decision != decision
+                    || retirement.source_plan != source_plan
+                    || retirement.target_plan != target_plan
+                {
+                    return Err(invalid("Move disposal decision cannot change"));
+                }
+            } else {
+                if state.error.is_some() {
+                    return Err(invalid("Errored move requires recovery before disposal"));
+                }
+                state.retirement = Some(RetirementState::new(
+                    &spec,
+                    decision,
+                    source_plan,
+                    target_plan,
+                ));
+                state.retained_bytes = None;
+            }
+        }
+        MoveTransition::BeginRootRetirement(side) => {
+            let retirement = state
+                .retirement
+                .as_mut()
+                .ok_or_else(|| invalid("Move has no disposal decision"))?;
+            if retirement.completed
+                || !matches!(retirement.step(side), Some(Step::Pending | Step::Removing))
+            {
+                return Err(invalid("Move root is not awaiting retirement"));
+            }
+            *retirement.step_mut(side) = Some(Step::Removing);
+            state.retained_bytes = None;
+        }
+        MoveTransition::RootRetired(side) => {
+            let retirement = state
+                .retirement
+                .as_mut()
+                .ok_or_else(|| invalid("Move has no disposal decision"))?;
+            if retirement.step(side) != Some(Step::Removing) {
+                return Err(invalid("Move root removal lacks intent"));
+            }
+            *retirement.step_mut(side) = Some(Step::Removed);
+            // Completed roots need only their recorded identity and absence;
+            // later roots retain the plan captured by the same durable decision.
+            *retirement.plan_mut(side) = None;
+            state.retained_bytes = None;
+            state.error = None;
+        }
+        MoveTransition::RetirementCompleted => {
+            let retirement = state
+                .retirement
+                .as_mut()
+                .ok_or_else(|| invalid("Move has no disposal decision"))?;
+            if !retirement.roots_removed() {
+                return Err(invalid("Move still retains artifact roots"));
+            }
+            retirement.completed = true;
+            state.retained_bytes = Some(0);
+            state.error = None;
+        }
         MoveTransition::ReportError(error) => state.error = Some(error),
         _ => return Err(invalid("Illegal recovery move phase transition")),
+    }
+    if state.phase != current.move_state()?.phase {
+        state.retained_bytes = None;
     }
     next.validate(intent)?;
     Ok(next)

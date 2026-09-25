@@ -54,6 +54,7 @@ fn rootless() -> (MoveSpec, Vec<Resource>) {
     let parent = object(7, 10);
     let source_version = version(7, 11);
     let spec = MoveSpec {
+        rename_probes: None,
         source: NativePath("/volume/source".into()),
         source_parent: parent,
         source_version: source_version.clone(),
@@ -102,6 +103,7 @@ fn cross_volume() -> (MoveSpec, Vec<Resource>) {
     let source_root_path = format!("/source-volume/.tauri-explorer-recovery-{SOURCE_TOKEN}");
     let target_root_path = format!("/target-volume/.tauri-explorer-recovery-{TARGET_TOKEN}");
     let spec = MoveSpec {
+        rename_probes: None,
         source: NativePath("/source-volume/source".into()),
         source_parent,
         source_version: source_version.clone(),
@@ -231,6 +233,7 @@ fn source_target_overlap_and_real_hardlink_alias_are_rejected() {
     .unwrap();
     let parent = of_file(&Directory::open(&base).unwrap().file).unwrap();
     let spec = MoveSpec {
+        rename_probes: None,
         source: NativePath(source.clone()),
         source_parent: parent,
         source_version: version_from_metadata(&fs::symlink_metadata(&source).unwrap()).unwrap(),

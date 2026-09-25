@@ -112,7 +112,6 @@ pub enum FileKind {
 pub struct DirectoryListing {
     pub path: String,
     pub entries: std::sync::Arc<Vec<FileEntry>>,
-    pub listing_id: Option<u64>,
 }
 
 /// Convert metadata to FileEntry, detecting symlinks.

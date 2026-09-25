@@ -109,7 +109,20 @@ fn completed_retirement(state: &OperationState) -> bool {
         OperationState::Replacement(state) => {
             state.phase == Phase::Discarded && state.error.is_none()
         }
-        _ => false,
+        OperationState::Move(state) => {
+            if state.phase == super::super::move_model::MovePhase::Aborted {
+                return state
+                    .rename_probe
+                    .as_ref()
+                    .is_some_and(|progress| progress.removed())
+                    && state.error.is_none();
+            }
+            state
+                .retirement
+                .as_ref()
+                .is_some_and(|retirement| retirement.completed)
+                && state.error.is_none()
+        }
     }
 }
 

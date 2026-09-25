@@ -245,3 +245,26 @@ fn unreadable_root_returns_permission_error_and_does_not_cache_empty_success() {
     assert_eq!(entry_names(&restored), vec!["restored.txt"]);
     invalidate_dir_cache_sync(&path);
 }
+
+#[test]
+fn fresh_listing_returns_the_complete_sorted_snapshot_and_bypasses_cache() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let directory = tempdir().unwrap();
+    let path = directory.path().to_string_lossy().into_owned();
+    runtime.block_on(list_directory(path.clone())).unwrap();
+    for index in (0..10_003).rev() {
+        fs::write(directory.path().join(format!("file-{index:05}.txt")), "x").unwrap();
+    }
+    let listing = runtime
+        .block_on(list_directory_fresh(path.clone()))
+        .unwrap();
+    assert_eq!(listing.path, path);
+    assert_eq!(
+        entry_names(&listing),
+        (0..10_003)
+            .map(|index| format!("file-{index:05}.txt"))
+            .collect::<Vec<_>>()
+    );
+    fs::remove_dir_all(directory.path()).unwrap();
+    assert!(runtime.block_on(list_directory_fresh(path)).is_err());
+}

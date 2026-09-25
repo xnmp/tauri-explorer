@@ -6,6 +6,7 @@ const { invokeMock } = vi.hoisted(() => ({
 
 vi.mock("$lib/api/common", () => ({
   invoke: invokeMock,
+  isTauri: () => false,
   extractError: (error: unknown) => error instanceof Error ? error.message : String(error),
   virtualPathGuard: () => null,
   dataUriToBlobUrl: () => "blob:preview",
@@ -13,7 +14,7 @@ vi.mock("$lib/api/common", () => ({
 
 vi.mock("$lib/plugins/fs-providers", () => ({ providerFor: () => undefined }));
 
-import { readImageAsBlobUrl, readTextFile, startStreamingDirectory } from "$lib/api/files";
+import { readImageAsBlobUrl, readTextFile, loadDirectory } from "$lib/api/files";
 
 describe("preview and directory IPC instrumentation (#497)", () => {
   beforeEach(() => {
@@ -72,18 +73,18 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     invokeMock.mockRejectedValueOnce(new Error("permission denied"));
 
-    await expect(startStreamingDirectory("/mnt/wsl/project")).resolves.toEqual({
+    await expect(loadDirectory("/mnt/wsl/project")).resolves.toEqual({
       ok: false,
       error: "permission denied",
     });
 
     expect(warning).toHaveBeenCalledWith(
-      "[navigation] start_streaming_directory failed",
+      "[navigation] list_directory_fresh failed",
       expect.objectContaining({ path: "/mnt/wsl/project", error: "permission denied" }),
     );
     expect(invokeMock).toHaveBeenCalledWith(
       "log_frontend_error",
-      expect.objectContaining({ message: expect.stringContaining("navigation start_streaming_directory failed") }),
+      expect.objectContaining({ message: expect.stringContaining("navigation list_directory_fresh failed") }),
     );
     warning.mockRestore();
   });
@@ -92,21 +93,21 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     invokeMock
       .mockResolvedValueOnce("preview text")
-      .mockResolvedValueOnce({ path: "/tmp/folder", entries: [], listing_id: null });
+      .mockResolvedValueOnce({ path: "/tmp/folder", entries: [] });
 
     await expect(readTextFile("/tmp/note.md")).resolves.toEqual({ ok: true, data: "preview text" });
-    await expect(startStreamingDirectory("/tmp/folder")).resolves.toMatchObject({ ok: true });
+    await expect(loadDirectory("/tmp/folder")).resolves.toMatchObject({ ok: true });
 
     expect(debug).toHaveBeenCalledWith(
       "[preview] read_text_file completed",
       expect.objectContaining({ path: "/tmp/note.md", bytes: 12 }),
     );
     expect(debug).toHaveBeenCalledWith(
-      "[navigation] start_streaming_directory completed",
-      expect.objectContaining({ path: "/tmp/folder", listingId: null, entries: 0 }),
+      "[navigation] list_directory_fresh completed",
+      expect.objectContaining({ path: "/tmp/folder", entries: 0 }),
     );
     expect(debug).toHaveBeenCalledWith(
-      "[navigation] start_streaming_directory requested",
+      "[navigation] list_directory_fresh requested",
       { path: "/tmp/folder" },
     );
     debug.mockRestore();

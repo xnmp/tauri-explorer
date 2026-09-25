@@ -126,7 +126,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-resize.ts` — owns captured divider geometry, one coalesced pointer frame, and cancellation on release, blur or component retirement.
 - `pane-watch.ts` — per-pane observed navigation tickets, lease commit/rollback, pending-change replay and refresh admission.
 - `directory-events.ts` — shared native directory event subscription with explicit readiness, retry and late-listener retirement.
-- `directory-listing.ts` — streaming/event-based incremental dir load management.
+- `directory-listing.ts` — complete directory snapshots, queued-request supersession, teardown and observation transfer.
 - `navigation.ts` — pure back/forward history utilities.
 - `selection.ts` — pure selection math (range/toggle/anchor).
 - `sort-prefs.ts` — per-directory sort preference persistence.
@@ -462,7 +462,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
-- `dir_listing.rs` — directory listing with caching + streaming. Hot.
+- `dir_listing.rs` — cached directory reads and fresh complete snapshots with owned observation. Hot.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
 - `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect.
 - `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.
@@ -506,7 +506,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
-- `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery requests and deliberately unmanaged channels for renderer-retirement acceptance.
+- `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery inventory/transfer requests and deliberately unmanaged channels for renderer-retirement acceptance; native move cleanup outcomes in `e2e-tauri/specs/move-retirement.spec.ts`.
 - `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
@@ -546,7 +546,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/service.rs` — current-generation inspection, restoration and discard through exclusive native claims, plus the retention accounting published with every snapshot; initial unindexed presentation and native/runtime/large-counter contracts in `src-tauri/test_support/recovery_service.rs`.
 - `src-tauri/src/files/recovery/model.rs` — portable recovery IPC/history contracts and lossless decimal counters; platform-tagged native paths remain available to adapter tests.
 - `src-tauri/src/files/recovery/durable_model.rs` — Unix executor authority, catalog-digest checkpoints, typed operation state and replacement phase/manifest validation.
-- `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation; no executable move phases. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
+- `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation and typed move state. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
+- `src-tauri/src/files/recovery/move_capability_model.rs` — pure per-volume probe checkpoints, retained cleanup authority and mandatory version-2 capability validation.
+- `src-tauri/src/files/recovery/move_capability.rs` — journaled real exclusive-rename qualification before move effects; exact interrupted-probe inspection and explicit cleanup.
+- `src-tauri/test_support/recovery_move_capability.rs` — real rename/error preservation, legacy byte compatibility, cross-volume process-kill and namespace-substitution contracts.
+- `src-tauri/src/files/recovery/move_cleanup.rs` — bounded native descendant snapshot, validated durable deletion plan and identity-checked resumption that refuses newly added/modified children.
+- `src-tauri/src/files/recovery/move_retention.rs` — pure move disposal authority, explicit Undo retirement, ordered two-root cleanup checkpoints and legacy-safe evidence validation.
+- `src-tauri/src/files/recovery/move_retirement.rs` — move endpoint/root observation, journaled measurement, per-root cleanup and durable record retirement; no public path mutations.
+- `src-tauri/test_support/recovery_move_retirement.rs` — native filesystem contracts and subprocess-kill recovery for move discard, restored redundancy, endpoint changes, foreign entries and accounting.
 - `src-tauri/src/files/recovery/move_transition.rs` — pure legal-transition function for durable move recovery checkpoints; encodes the crash ordering where publication precedes parking and parking precedes source removal, so no boundary can leave both endpoints absent. State-only transition contracts in `src-tauri/test_support/recovery_move_transition.rs`.
 - `src-tauri/src/files/recovery/move_execution.rs` — concrete durable move executor: creates/reopens private artifact roots, stages a cross-filesystem copy, displaces an overwritten destination, publishes, parks the source, removes a parked source and restores as the record's exact inverse. Real process-kill boundary contracts in `src-tauri/test_support/recovery_move_execution.rs`.
 - `src-tauri/src/files/recovery/forward_move.rs` — production durable-move orchestration: admission, binding a `MoveSpec` from admitted paths, promotion and execution; produces the `FileMutationReceipt` carrying a `MoveRecoveryReceipt`. Real-filesystem contracts in `src-tauri/test_support/recovery_forward_move.rs`.

@@ -16,13 +16,15 @@ variant: 4 of 6 loaded runs (`--test-threads=64`) failed before the fix and
 0 of 6 after it.
 
 **Fix.**
-- `batch::drive_until_stopped` polls the future like an executor. It uses a
-  thread-unparking waker and re-polls on every wake until the test signals it
-  to stop. A queued caller therefore starts as soon as a permit frees, as it
+- `batch::drive_until_stopped` polls the future like an executor. It re-polls
+  only after the future's waker fires, and checks the test's stop signal before
+  every poll. A queued caller therefore starts as soon as a permit frees, as it
   does in production.
 - `a_caller_queued_behind_every_permit_starts_once_one_is_released` holds all
   four permits, queues a fifth caller, and releases one. It fails with the
-  single-poll behaviour and passes with the driver.
+  single-poll behaviour and with a no-op wake, so it proves the wakeup rather
+  than a timed re-poll. Its threads are joined even when an assertion fails,
+  so they cannot hold permits after the serialization guard is released.
 - Tests that hold a dedicated permit across a timed handshake also take
   `batch::serialize_dedicated_workers()`. One test's deadline then cannot run
   while other tests hold permits for their own handshakes.

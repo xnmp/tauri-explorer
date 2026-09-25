@@ -299,22 +299,51 @@ fn terminal_result_waits_for_operation_capture_cleanup() {
     assert_eq!(fs::read(cleanup).unwrap(), b"cleanup finished");
 }
 
+/// Unblocks and joins every thread a test started, also while unwinding, so a
+/// failed assertion cannot leave workers holding permits after the dedicated
+/// serialization guard is released.
+struct ScopedThreads {
+    unblock: Vec<SyncSender<()>>,
+    handles: Vec<thread::JoinHandle<()>>,
+}
+
+impl ScopedThreads {
+    fn finish(mut self) {
+        self.unblock.clear();
+        for handle in self.handles.drain(..) {
+            handle
+                .join()
+                .expect("test thread completed without panicking");
+        }
+    }
+}
+
+impl Drop for ScopedThreads {
+    fn drop(&mut self) {
+        self.unblock.clear();
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[test]
 fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
     let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
-    // Hold all four dedicated permits. Dropping `releases` (also on unwind)
-    // lets every holder finish, so a failed assertion cannot strand them.
+    let mut threads = ScopedThreads {
+        unblock: Vec::new(),
+        handles: Vec::new(),
+    };
+    // Hold all four dedicated permits until each holder's sender is dropped.
     let (held_tx, held_rx) = mpsc::sync_channel(4);
-    let mut releases = Vec::new();
-    let mut holders = Vec::new();
     for index in 0..4 {
         let path = dir.path().join(format!("held-{index}"));
         fs::write(&path, b"held").unwrap();
         let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
-        releases.push(release_tx);
+        threads.unblock.push(release_tx);
         let held_tx = held_tx.clone();
-        holders.push(thread::spawn(move || {
+        threads.handles.push(thread::spawn(move || {
             run(run_dedicated(
                 plan(&[&path]),
                 || Ok(()),
@@ -324,6 +353,7 @@ fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
                     Ok(())
                 },
             ))
+            .unwrap();
         }));
     }
     for _ in 0..4 {
@@ -337,8 +367,10 @@ fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
     let queued_for_caller = queued.clone();
     let (started_tx, started_rx) = mpsc::sync_channel(1);
     let (polled_tx, polled_rx) = mpsc::sync_channel(1);
+    let (completed_tx, completed_rx) = mpsc::sync_channel(1);
     let (stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
-    let caller = thread::spawn(move || {
+    threads.unblock.push(stop_tx);
+    threads.handles.push(thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -352,11 +384,11 @@ fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
                 Ok(())
             },
         ));
-        super::drive_until_stopped(future.as_mut(), &stop_rx, |pending| {
+        let completed = super::drive_until_stopped(future.as_mut(), &stop_rx, |pending| {
             polled_tx.send(pending).unwrap()
-        })
-        .map(|outcome| outcome.unwrap().succeeded)
-    });
+        });
+        let _ = completed_tx.send(completed.map(|outcome| outcome.unwrap().succeeded));
+    }));
 
     assert!(
         polled_rx.recv_timeout(DEADLINE).unwrap(),
@@ -366,17 +398,16 @@ fn a_caller_queued_behind_every_permit_starts_once_one_is_released() {
         started_rx.recv_timeout(Duration::from_millis(200)).is_err(),
         "no permit was free, so the queued worker must not have started"
     );
-    drop(releases.remove(0));
+    drop(threads.unblock.remove(0));
     started_rx
         .recv_timeout(DEADLINE)
         .expect("releasing a permit must wake and start the queued caller");
-    let completed = caller.join().unwrap();
-    drop(stop_tx);
-    assert_eq!(completed, Some(vec![path_string(&queued)]));
-    drop(releases);
-    for holder in holders {
-        holder.join().unwrap().unwrap();
-    }
+    assert_eq!(
+        completed_rx.recv_timeout(DEADLINE).unwrap(),
+        Some(vec![path_string(&queued)]),
+        "the woken caller completed its batch"
+    );
+    threads.finish();
 }
 
 #[test]

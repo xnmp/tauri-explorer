@@ -324,12 +324,12 @@ pub(crate) fn serialize_dedicated_workers() -> std::sync::MutexGuard<'static, ()
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Polls `future` on the calling thread the way an executor would, re-polling
-/// whenever it is woken, until `stop` fires. `first` observes whether the
-/// initial poll was pending. Returns the output if the future completed before
-/// `stop`. A single poll with a no-op waker strands a future that is still
-/// waiting for a dedicated-worker permit at that instant, because the permit's
-/// release wakes nobody (#743).
+/// Polls `future` on the calling thread the way an executor would: it re-polls
+/// only after the future's waker fires, and checks `stop` before every poll.
+/// `first` observes whether the initial poll was pending. Returns the output if
+/// the future completed before `stop` fired or disconnected. A single poll with
+/// a no-op waker strands a future that is still waiting for a dedicated-worker
+/// permit at that instant, because the permit's release wakes nobody (#743).
 #[cfg(test)]
 pub(crate) fn drive_until_stopped<F: std::future::Future>(
     mut future: std::pin::Pin<&mut F>,
@@ -337,18 +337,29 @@ pub(crate) fn drive_until_stopped<F: std::future::Future>(
     first: impl FnOnce(bool),
 ) -> Option<F::Output> {
     use std::{
-        sync::mpsc::TryRecvError,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc::TryRecvError,
+        },
         task::{Context, Poll, Wake, Waker},
         thread,
         time::{Duration, Instant},
     };
-    struct Unpark(thread::Thread);
-    impl Wake for Unpark {
+    struct Signal {
+        woken: AtomicBool,
+        thread: thread::Thread,
+    }
+    impl Wake for Signal {
         fn wake(self: Arc<Self>) {
-            self.0.unpark();
+            self.woken.store(true, Ordering::Release);
+            self.thread.unpark();
         }
     }
-    let waker = Waker::from(Arc::new(Unpark(thread::current())));
+    let signal = Arc::new(Signal {
+        woken: AtomicBool::new(false),
+        thread: thread::current(),
+    });
+    let waker = Waker::from(Arc::clone(&signal));
     let mut context = Context::from_waker(&waker);
     let initial = future.as_mut().poll(&mut context);
     first(initial.is_pending());
@@ -361,14 +372,19 @@ pub(crate) fn drive_until_stopped<F: std::future::Future>(
             Ok(()) | Err(TryRecvError::Disconnected) => return None,
             Err(TryRecvError::Empty) => {}
         }
+        if signal.woken.swap(false, Ordering::Acquire) {
+            if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+                return Some(output);
+            }
+            continue;
+        }
         assert!(
             Instant::now() < deadline,
             "the test never stopped its driven future"
         );
+        // Wake unparks this thread; the timeout only bounds how long a stop
+        // signal, which does not unpark, waits to be observed.
         thread::park_timeout(Duration::from_millis(10));
-        if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
-            return Some(output);
-        }
     }
 }
 

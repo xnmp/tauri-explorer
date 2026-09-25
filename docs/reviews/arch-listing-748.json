@@ -1,0 +1,3552 @@
+{
+  "recordedAt": "2026-09-23T11:00:38Z",
+  "issue": 748,
+  "baseCommit": "b94ae4931f513df3a631ef05cbdc85d5686e8c5b",
+  "binaryHashes": {
+    "baseline": "dc64d73794b212b2c8db6345ac7158b887476ec6c0284f23c0f59c2f8ba8c4a0",
+    "compact": "85a372acab22f93e32d51c7eb81d229fda048af85a0212ba5b6672c443d4ac04"
+  },
+  "productionSources": {
+    "src/lib/api/directory-wire.ts": "9d28ff5326dc0444d3c4bd651508479198975420a29c8de79f76f3f88214e32a",
+    "src/lib/api/files.ts": "88667b96d88c7718da2a6cc4751314564374364a1fb04bec0097ccd3fac4d7f9",
+    "src-tauri/src/files/directory_wire.rs": "b7461441e8e2578f8a1f8d1a5f46ff9502711394286e267985492180d2b2cbf6",
+    "src-tauri/src/files/mod.rs": "132ca94e73ff821957ca7868f937979ffaea88851ace2e71a7d3e6bea6a4ee56"
+  },
+  "productionPatch": "diff --git a/src-tauri/src/files/directory_wire.rs b/src-tauri/src/files/directory_wire.rs\nnew file mode 100644\nindex 00000000..d3568e43\n--- /dev/null\n+++ b/src-tauri/src/files/directory_wire.rs\n@@ -0,0 +1,137 @@\n+//! Compact IPC representation; filesystem/cache ownership keeps ordinary entries.\n+//! Columns avoid repeated JSON keys. A prefix is shared only when it reproduces\n+//! every native presentation path exactly, without frontend path normalization.\n+use super::{DirectoryListing, FileEntry};\n+use serde::{\n+    ser::{SerializeMap, SerializeSeq, SerializeStruct},\n+    Serialize, Serializer,\n+};\n+\n+struct Column<'a, T> {\n+    entries: &'a [FileEntry],\n+    field: fn(&'a FileEntry) -> T,\n+}\n+impl<T: Serialize> Serialize for Column<'_, T> {\n+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n+        let mut sequence = serializer.serialize_seq(Some(self.entries.len()))?;\n+        for entry in self.entries {\n+            sequence.serialize_element(&(self.field)(entry))?;\n+        }\n+        sequence.end()\n+    }\n+}\n+\n+struct Columns<'a> {\n+    entries: &'a [FileEntry],\n+    prefix: Option<&'a str>,\n+}\n+impl Serialize for Columns<'_> {\n+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n+        let entries = self.entries;\n+        let mut fields = serializer.serialize_map(None)?;\n+        fields.serialize_entry(\n+            \"names\",\n+            &Column {\n+                entries,\n+                field: |e| &e.name,\n+            },\n+        )?;\n+        if self.prefix.is_none() {\n+            fields.serialize_entry(\n+                \"paths\",\n+                &Column {\n+                    entries,\n+                    field: |e| &e.path,\n+                },\n+            )?;\n+        }\n+        fields.serialize_entry(\n+            \"kinds\",\n+            &Column {\n+                entries,\n+                field: |e| &e.kind,\n+            },\n+        )?;\n+        fields.serialize_entry(\n+            \"sizes\",\n+            &Column {\n+                entries,\n+                field: |e| e.size,\n+            },\n+        )?;\n+        fields.serialize_entry(\n+            \"modified\",\n+            &Column {\n+                entries,\n+                field: |e| &e.modified,\n+            },\n+        )?;\n+        if entries.iter().any(|e| e.is_symlink) {\n+            fields.serialize_entry(\n+                \"is_symlink\",\n+                &Column {\n+                    entries,\n+                    field: |e| e.is_symlink,\n+                },\n+            )?;\n+        }\n+        if entries.iter().any(|e| e.symlink_target.is_some()) {\n+            fields.serialize_entry(\n+                \"symlink_target\",\n+                &Column {\n+                    entries,\n+                    field: |e| &e.symlink_target,\n+                },\n+            )?;\n+        }\n+        if entries.iter().any(|e| e.is_empty.is_some()) {\n+            fields.serialize_entry(\n+                \"is_empty\",\n+                &Column {\n+                    entries,\n+                    field: |e| e.is_empty,\n+                },\n+            )?;\n+        }\n+        if entries.iter().any(|e| e.is_git_repo) {\n+            fields.serialize_entry(\n+                \"is_git_repo\",\n+                &Column {\n+                    entries,\n+                    field: |e| e.is_git_repo,\n+                },\n+            )?;\n+        }\n+        fields.end()\n+    }\n+}\n+\n+impl Serialize for DirectoryListing {\n+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n+        let prefix = self\n+            .entries\n+            .first()\n+            .and_then(|entry| entry.path.strip_suffix(entry.name.as_str()))\n+            .filter(|prefix| {\n+                self.entries\n+                    .iter()\n+                    .all(|entry| entry.path.strip_prefix(prefix) == Some(entry.name.as_str()))\n+            });\n+        let mut result = serializer.serialize_struct(\"DirectoryListing\", 4)?;\n+        result.serialize_field(\"format\", \"columns-v1\")?;\n+        result.serialize_field(\"path\", &self.path)?;\n+        result.serialize_field(\"path_prefix\", &prefix)?;\n+        result.serialize_field(\n+            \"columns\",\n+            &Columns {\n+                entries: &self.entries,\n+                prefix,\n+            },\n+        )?;\n+        result.end()\n+    }\n+}\n+\n+#[cfg(test)]\n+#[path = \"../../test_support/directory_wire.rs\"]\n+mod tests;\ndiff --git a/src-tauri/src/files/mod.rs b/src-tauri/src/files/mod.rs\nindex afd4d59f..a5f3fa9f 100644\n--- a/src-tauri/src/files/mod.rs\n+++ b/src-tauri/src/files/mod.rs\n@@ -9,6 +9,7 @@ pub(crate) mod copy_session;\n pub mod dir_listing;\n mod directory_cache;\n mod directory_watches;\n+mod directory_wire;\n pub mod drives;\n pub(crate) mod entry_plan;\n mod entry_version;\n@@ -109,7 +110,7 @@ pub enum FileKind {\n /// `entries` is an `Arc` so cache hits in `dir_listing` share the cached\n /// allocation instead of deep-cloning thousands of `FileEntry`s per call\n /// (serde's `rc` feature serializes through the Arc transparently).\n-#[derive(Debug, Serialize)]\n+#[derive(Debug)]\n pub struct DirectoryListing {\n     pub path: String,\n     pub entries: std::sync::Arc<Vec<FileEntry>>,\ndiff --git a/src/lib/api/directory-wire.ts b/src/lib/api/directory-wire.ts\nnew file mode 100644\nindex 00000000..04e722ff\n--- /dev/null\n+++ b/src/lib/api/directory-wire.ts\n@@ -0,0 +1,58 @@\n+/** Native IPC schema only. Stores/components consume ordinary immutable entries. */\n+import type { DirectoryListing, FileEntry } from \"$lib/domain/file\";\n+\n+export interface CompactDirectoryListing {\n+  format: \"columns-v1\";\n+  path: string;\n+  path_prefix: string | null;\n+  columns: {\n+    names: string[];\n+    paths?: string[];\n+    kinds: (\"file\" | \"directory\")[];\n+    sizes: number[];\n+    modified: string[];\n+    is_symlink?: boolean[];\n+    symlink_target?: (string | null)[];\n+    is_empty?: (boolean | null)[];\n+    is_git_repo?: boolean[];\n+  };\n+}\n+\n+export type DirectoryListingPayload = DirectoryListing | CompactDirectoryListing;\n+\n+function invalid(): never { throw new Error(\"Invalid native directory snapshot\"); }\n+\n+export function decodeDirectoryListing(payload: DirectoryListingPayload): DirectoryListing {\n+  if (!payload || typeof payload.path !== \"string\") return invalid();\n+  // Trusted browser fixtures retain the legacy domain shape without revalidation.\n+  // Native versioned payloads are validated below; providers bypass this adapter.\n+  if (!(\"format\" in payload) && \"entries\" in payload && Array.isArray(payload.entries)) return payload;\n+  if (!(\"format\" in payload) || payload.format !== \"columns-v1\") return invalid();\n+  const { columns: c, path_prefix: prefix } = payload;\n+  if (!c || !Array.isArray(c.names) || (prefix !== null && typeof prefix !== \"string\")) return invalid();\n+  if (prefix !== null && c.paths !== undefined) return invalid();\n+  const count = c.names.length;\n+  const required = [c.kinds, c.sizes, c.modified, ...(prefix === null ? [c.paths] : [])];\n+  const optional = [c.is_symlink, c.symlink_target, c.is_empty, c.is_git_repo];\n+  if (required.some((column) => !Array.isArray(column) || column.length !== count) ||\n+      optional.some((column) => column !== undefined && (!Array.isArray(column) || column.length !== count))) return invalid();\n+  const entries = new Array<FileEntry>(count);\n+  for (let i = 0; i < count; i++) {\n+    const name = c.names[i];\n+    const path = prefix === null ? c.paths![i] : prefix + name;\n+    const kind = c.kinds[i];\n+    const size = c.sizes[i];\n+    const modified = c.modified[i];\n+    const is_symlink = c.is_symlink === undefined ? false : c.is_symlink[i];\n+    const target = c.symlink_target?.[i];\n+    const empty = c.is_empty?.[i];\n+    const is_git_repo = c.is_git_repo === undefined ? false : c.is_git_repo[i];\n+    if (typeof name !== \"string\" || typeof path !== \"string\" ||\n+        (kind !== \"file\" && kind !== \"directory\") || !Number.isInteger(size) || size < 0 ||\n+        typeof modified !== \"string\" || typeof is_symlink !== \"boolean\" ||\n+        (c.symlink_target !== undefined && target !== null && typeof target !== \"string\") ||\n+        (c.is_empty !== undefined && empty !== null && typeof empty !== \"boolean\") || typeof is_git_repo !== \"boolean\") return invalid();\n+    entries[i] = { name, path, kind, size, modified, is_symlink, symlink_target: target ?? undefined, is_empty: empty ?? undefined, is_git_repo };\n+  }\n+  return { path: payload.path, entries };\n+}\ndiff --git a/src/lib/api/files.ts b/src/lib/api/files.ts\nindex 1a36fc9a..d7138510 100644\n--- a/src/lib/api/files.ts\n+++ b/src/lib/api/files.ts\n@@ -6,6 +6,7 @@\n  * dedicated sibling modules and are imported directly by feature consumers.\n  */\n \n+import { decodeDirectoryListing, type DirectoryListingPayload } from \"./directory-wire\";\n import { fileBatchError, type FileBatchOutcome } from \"$lib/domain/file-batch-outcome\";\n import type { DirectoryListing, FileEntry, FileMutationReceipt } from \"$lib/domain/file\";\n import { E2E_HOOKS_ENABLED } from \"$lib/domain/e2e-hooks\";\n@@ -110,8 +111,8 @@ export async function fetchDirectory(\n     }\n   }\n   try {\n-    const data = await invoke<DirectoryListing>(\"list_directory\", { path });\n-    return { ok: true, data };\n+    const data = await invoke<DirectoryListingPayload>(\"list_directory\", { path });\n+    return { ok: true, data: decodeDirectoryListing(data) };\n   } catch (err) {\n     return { ok: false, error: extractError(err) };\n   }\n@@ -466,16 +467,17 @@ export async function loadDirectory(\n     publishDirectoryListingE2EProbe();\n   }\n \n-  let acquired: ObservedDirectoryListing | undefined;\n+  let acquired: (DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }) | undefined;\n   try {\n     const native = isTauri();\n     const sessionId = observation && native ? await getNativeResourceSession() : undefined;\n-    const data = observation && native\n-      ? await invoke<ObservedDirectoryListing>(\"start_observed_directory\", {\n+    const payload = observation && native\n+      ? await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>(\"start_observed_directory\", {\n           path, sessionId,\n         })\n-      : await invoke<ObservedDirectoryListing>(\"list_directory_fresh\", { path });\n-    acquired = data;\n+      : await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>(\"list_directory_fresh\", { path });\n+    acquired = payload;\n+    const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };\n     if (data.watch_lease) publishReadyDirectoryWatch(path);\n     if (e2eProbe) {\n       // Keep the literal build flag at this import: the bundler discovers\n@@ -509,7 +511,7 @@ export async function loadDirectory(\n     });\n     return { ok: true, data };\n   } catch (err) {\n-    // The optional native probe can fail after acquisition. Keep the same\n+    // Decoding and the optional native probe can fail after acquisition. Keep the same\n     // owner responsible for releasing late leases, including release retries.\n     if (acquired?.watch_lease) observation?.discard(acquired.watch_lease);\n     const error = extractError(err);\n",
+  "startup": {
+    "metadata": {
+      "sourceCommit": "b94ae4931f513df3a631ef05cbdc85d5686e8c5b",
+      "binarySha256": {
+        "baseline": "dc64d73794b212b2c8db6345ac7158b887476ec6c0284f23c0f59c2f8ba8c4a0",
+        "compact": "85a372acab22f93e32d51c7eb81d229fda048af85a0212ba5b6672c443d4ac04"
+      },
+      "candidatePatchSha256": "99f9b66f205534b42385f14534de0897568e66f0c42bb1bf1c477098f3ee3249",
+      "baselineSourceCommit": "b94ae493 (PR747); binary source and hash provenance in docs/reviews/arch-listing-737.json",
+      "candidateDescription": "compact listing IPC; sourceCommit is base, candidate.patch and source-files capture uncommitted production changes",
+      "buildCommand": "cargo build --release --locked --features tauri/custom-protocol --target-dir /home/chong/Repos/tauri-explorer/src-tauri/target",
+      "buildCwd": "/tmp/tauri-explorer-listing-748/src-tauri",
+      "profile": "release, tauri/custom-protocol, no E2E hooks, default recovery features",
+      "settings": {
+        "warmWindow": false,
+        "viewMode": "details"
+      },
+      "display": "isolated Xvfb + Openbox, 1200x800, X11; not the interactive Wayland compositor",
+      "cachePolicy": "OS caches uncontrolled; 2 excluded warm-up launches per directory; fresh process, same isolated app profile per scenario",
+      "endpoint": "native receipt after settings, commands, initial listing and two animation-frame opportunities; not externally observed presented pixels or input",
+      "kernel": "7.1.5-arch1-2",
+      "cpu": "AMD Ryzen 9 5900X 12-Core Processor",
+      "loadAtStart": [
+        2.17529296875,
+        3.0634765625,
+        2.6474609375
+      ]
+    },
+    "samples": [
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-00.log",
+        "launchEpochMs": 1790160997818.2515,
+        "observedReceiptMs": 395.0509839996812,
+        "load": [
+          2.17529296875,
+          3.0634765625,
+          2.6474609375
+        ],
+        "launchToNativeReadyMs": 391.739501953125,
+        "nativeReadinessMs": 361.7,
+        "webviewTiming": "[2026-09-23][20:56:38][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790160998013.000 bundle-exec=63.0ms mount=89.0ms commands-ready=102.0ms settings-ready=133.0ms list-ready=176.0ms app-ready=176.0ms ui-ready=196.0ms total=196.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-00.log",
+        "launchEpochMs": 1790160998300.3162,
+        "observedReceiptMs": 405.5550030025188,
+        "load": [
+          2.17529296875,
+          3.0634765625,
+          2.6474609375
+        ],
+        "launchToNativeReadyMs": 402.166748046875,
+        "nativeReadinessMs": 372.4,
+        "webviewTiming": "[2026-09-23][20:56:38][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790160998495.000 bundle-exec=67.0ms mount=93.0ms commands-ready=108.0ms settings-ready=140.0ms list-ready=187.0ms app-ready=187.0ms ui-ready=206.0ms total=206.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-01.log",
+        "launchEpochMs": 1790160998793.2397,
+        "observedReceiptMs": 405.203659000108,
+        "load": [
+          2.17529296875,
+          3.0634765625,
+          2.6474609375
+        ],
+        "launchToNativeReadyMs": 400.59326171875,
+        "nativeReadinessMs": 370.6,
+        "webviewTiming": "[2026-09-23][20:56:39][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790160998980.000 bundle-exec=64.0ms mount=90.0ms commands-ready=103.0ms settings-ready=137.0ms list-ready=192.0ms app-ready=192.0ms ui-ready=213.0ms total=213.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-01.log",
+        "launchEpochMs": 1790160999283.2537,
+        "observedReceiptMs": 384.90288500179304,
+        "load": [
+          2.17529296875,
+          3.0634765625,
+          2.6474609375
+        ],
+        "launchToNativeReadyMs": 382.563232421875,
+        "nativeReadinessMs": 354.6,
+        "webviewTiming": "[2026-09-23][20:56:39][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790160999465.000 bundle-exec=66.0ms mount=92.0ms commands-ready=104.0ms settings-ready=136.0ms list-ready=180.0ms app-ready=180.0ms ui-ready=199.0ms total=199.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-02.log",
+        "launchEpochMs": 1790160999756.1536,
+        "observedReceiptMs": 395.0454229998286,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 390.534423828125,
+        "nativeReadinessMs": 361.2,
+        "webviewTiming": "[2026-09-23][20:56:40][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790160999942.000 bundle-exec=65.0ms mount=91.0ms commands-ready=104.0ms settings-ready=138.0ms list-ready=184.0ms app-ready=184.0ms ui-ready=203.0ms total=203.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-02.log",
+        "launchEpochMs": 1790161000241.993,
+        "observedReceiptMs": 384.930489002727,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 378.318115234375,
+        "nativeReadinessMs": 349.0,
+        "webviewTiming": "[2026-09-23][20:56:40][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161000424.000 bundle-exec=64.0ms mount=92.0ms commands-ready=105.0ms settings-ready=138.0ms list-ready=176.0ms app-ready=176.0ms ui-ready=195.0ms total=195.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-03.log",
+        "launchEpochMs": 1790161000715.579,
+        "observedReceiptMs": 384.7905740040005,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 384.347900390625,
+        "nativeReadinessMs": 356.2,
+        "webviewTiming": "[2026-09-23][20:56:41][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161000906.000 bundle-exec=63.0ms mount=88.0ms commands-ready=101.0ms settings-ready=131.0ms list-ready=175.0ms app-ready=175.0ms ui-ready=193.0ms total=193.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-03.log",
+        "launchEpochMs": 1790161001186.013,
+        "observedReceiptMs": 374.51796100504,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 371.72412109375,
+        "nativeReadinessMs": 344.4,
+        "webviewTiming": "[2026-09-23][20:56:41][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161001361.000 bundle-exec=61.0ms mount=87.0ms commands-ready=100.0ms settings-ready=133.0ms list-ready=177.0ms app-ready=177.0ms ui-ready=195.0ms total=195.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-04.log",
+        "launchEpochMs": 1790161001650.5442,
+        "observedReceiptMs": 374.7678029976669,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 372.74072265625,
+        "nativeReadinessMs": 342.2,
+        "webviewTiming": "[2026-09-23][20:56:42][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161001827.000 bundle-exec=61.0ms mount=86.0ms commands-ready=98.0ms settings-ready=129.0ms list-ready=176.0ms app-ready=176.0ms ui-ready=195.0ms total=195.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-04.log",
+        "launchEpochMs": 1790161002117.2026,
+        "observedReceiptMs": 384.7801439987961,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 377.686279296875,
+        "nativeReadinessMs": 349.7,
+        "webviewTiming": "[2026-09-23][20:56:42][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161002293.000 bundle-exec=65.0ms mount=92.0ms commands-ready=105.0ms settings-ready=137.0ms list-ready=181.0ms app-ready=181.0ms ui-ready=200.0ms total=200.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-05.log",
+        "launchEpochMs": 1790161002589.1504,
+        "observedReceiptMs": 374.2992979969131,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 373.254638671875,
+        "nativeReadinessMs": 345.8,
+        "webviewTiming": "[2026-09-23][20:56:42][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161002766.000 bundle-exec=64.0ms mount=91.0ms commands-ready=104.0ms settings-ready=134.0ms list-ready=176.0ms app-ready=176.0ms ui-ready=195.0ms total=195.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-05.log",
+        "launchEpochMs": 1790161003049.4336,
+        "observedReceiptMs": 364.05277399899205,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 358.328369140625,
+        "nativeReadinessMs": 329.9,
+        "webviewTiming": "[2026-09-23][20:56:43][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161003223.000 bundle-exec=57.0ms mount=82.0ms commands-ready=94.0ms settings-ready=124.0ms list-ready=166.0ms app-ready=166.0ms ui-ready=183.0ms total=183.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-06.log",
+        "launchEpochMs": 1790161003498.6685,
+        "observedReceiptMs": 374.40933600009885,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 373.8544921875,
+        "nativeReadinessMs": 346.2,
+        "webviewTiming": "[2026-09-23][20:56:43][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161003675.000 bundle-exec=63.0ms mount=88.0ms commands-ready=100.0ms settings-ready=131.0ms list-ready=178.0ms app-ready=178.0ms ui-ready=196.0ms total=196.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-06.log",
+        "launchEpochMs": 1790161003959.3513,
+        "observedReceiptMs": 374.27238700183807,
+        "load": [
+          2.24169921875,
+          3.06201171875,
+          2.6494140625
+        ],
+        "launchToNativeReadyMs": 369.66162109375,
+        "nativeReadinessMs": 340.4,
+        "webviewTiming": "[2026-09-23][20:56:44][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161004135.000 bundle-exec=63.0ms mount=89.0ms commands-ready=101.0ms settings-ready=132.0ms list-ready=174.0ms app-ready=174.0ms ui-ready=192.0ms total=192.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-07.log",
+        "launchEpochMs": 1790161004419.205,
+        "observedReceiptMs": 374.45582300279057,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 369.77001953125,
+        "nativeReadinessMs": 339.3,
+        "webviewTiming": "[2026-09-23][20:56:44][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161004596.000 bundle-exec=59.0ms mount=85.0ms commands-ready=97.0ms settings-ready=129.0ms list-ready=173.0ms app-ready=173.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-07.log",
+        "launchEpochMs": 1790161004879.8489,
+        "observedReceiptMs": 374.2114920023596,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 366.917236328125,
+        "nativeReadinessMs": 340.0,
+        "webviewTiming": "[2026-09-23][20:56:45][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161005060.000 bundle-exec=63.0ms mount=89.0ms commands-ready=101.0ms settings-ready=130.0ms list-ready=166.0ms app-ready=166.0ms ui-ready=185.0ms total=185.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-08.log",
+        "launchEpochMs": 1790161005339.061,
+        "observedReceiptMs": 384.49492499785265,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 380.5810546875,
+        "nativeReadinessMs": 350.5,
+        "webviewTiming": "[2026-09-23][20:56:45][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161005527.000 bundle-exec=60.0ms mount=88.0ms commands-ready=100.0ms settings-ready=131.0ms list-ready=173.0ms app-ready=173.0ms ui-ready=192.0ms total=192.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-08.log",
+        "launchEpochMs": 1790161005810.8176,
+        "observedReceiptMs": 374.2235149984481,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 372.27734375,
+        "nativeReadinessMs": 342.9,
+        "webviewTiming": "[2026-09-23][20:56:46][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161005990.000 bundle-exec=61.0ms mount=88.0ms commands-ready=101.0ms settings-ready=132.0ms list-ready=172.0ms app-ready=172.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-09.log",
+        "launchEpochMs": 1790161006271.4675,
+        "observedReceiptMs": 374.51591699937126,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 371.08349609375,
+        "nativeReadinessMs": 341.0,
+        "webviewTiming": "[2026-09-23][20:56:46][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161006446.000 bundle-exec=63.0ms mount=88.0ms commands-ready=101.0ms settings-ready=131.0ms list-ready=177.0ms app-ready=177.0ms ui-ready=196.0ms total=196.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-09.log",
+        "launchEpochMs": 1790161006730.4292,
+        "observedReceiptMs": 384.5258039946202,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 375.88671875,
+        "nativeReadinessMs": 346.8,
+        "webviewTiming": "[2026-09-23][20:56:47][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161006914.000 bundle-exec=63.0ms mount=90.0ms commands-ready=102.0ms settings-ready=133.0ms list-ready=172.0ms app-ready=172.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-10.log",
+        "launchEpochMs": 1790161007201.018,
+        "observedReceiptMs": 374.50130000070203,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 373.2509765625,
+        "nativeReadinessMs": 345.1,
+        "webviewTiming": "[2026-09-23][20:56:47][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161007367.000 bundle-exec=63.0ms mount=89.0ms commands-ready=102.0ms settings-ready=136.0ms list-ready=186.0ms app-ready=186.0ms ui-ready=205.0ms total=205.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-10.log",
+        "launchEpochMs": 1790161007664.8738,
+        "observedReceiptMs": 394.6933679981157,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 393.67431640625,
+        "nativeReadinessMs": 364.9,
+        "webviewTiming": "[2026-09-23][20:56:48][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161007865.000 bundle-exec=61.0ms mount=87.0ms commands-ready=101.0ms settings-ready=131.0ms list-ready=174.0ms app-ready=174.0ms ui-ready=192.0ms total=192.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-11.log",
+        "launchEpochMs": 1790161008144.2144,
+        "observedReceiptMs": 364.22122299700277,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 360.5576171875,
+        "nativeReadinessMs": 330.5,
+        "webviewTiming": "[2026-09-23][20:56:48][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161008315.000 bundle-exec=61.0ms mount=87.0ms commands-ready=99.0ms settings-ready=128.0ms list-ready=170.0ms app-ready=170.0ms ui-ready=188.0ms total=188.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-11.log",
+        "launchEpochMs": 1790161008592.0552,
+        "observedReceiptMs": 364.10073599836323,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 360.307861328125,
+        "nativeReadinessMs": 332.0,
+        "webviewTiming": "[2026-09-23][20:56:48][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161008760.000 bundle-exec=64.0ms mount=89.0ms commands-ready=101.0ms settings-ready=131.0ms list-ready=173.0ms app-ready=173.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-12.log",
+        "launchEpochMs": 1790161009040.5742,
+        "observedReceiptMs": 364.533683998161,
+        "load": [
+          2.14208984375,
+          3.02734375,
+          2.64013671875
+        ],
+        "launchToNativeReadyMs": 363.018798828125,
+        "nativeReadinessMs": 335.4,
+        "webviewTiming": "[2026-09-23][20:56:49][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161009208.000 bundle-exec=62.0ms mount=87.0ms commands-ready=100.0ms settings-ready=131.0ms list-ready=177.0ms app-ready=177.0ms ui-ready=195.0ms total=195.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-12.log",
+        "launchEpochMs": 1790161009489.6045,
+        "observedReceiptMs": 364.53416400036076,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 358.659423828125,
+        "nativeReadinessMs": 330.6,
+        "webviewTiming": "[2026-09-23][20:56:49][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161009653.000 bundle-exec=61.0ms mount=87.0ms commands-ready=99.0ms settings-ready=130.0ms list-ready=175.0ms app-ready=175.0ms ui-ready=194.0ms total=194.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-13.log",
+        "launchEpochMs": 1790161009940.0066,
+        "observedReceiptMs": 364.42903600254795,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 361.357421875,
+        "nativeReadinessMs": 333.9,
+        "webviewTiming": "[2026-09-23][20:56:50][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161010114.000 bundle-exec=59.0ms mount=83.0ms commands-ready=96.0ms settings-ready=126.0ms list-ready=169.0ms app-ready=169.0ms ui-ready=186.0ms total=186.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-13.log",
+        "launchEpochMs": 1790161010388.8928,
+        "observedReceiptMs": 374.32782200630754,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 365.938232421875,
+        "nativeReadinessMs": 336.7,
+        "webviewTiming": "[2026-09-23][20:56:50][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161010568.000 bundle-exec=59.0ms mount=84.0ms commands-ready=96.0ms settings-ready=126.0ms list-ready=168.0ms app-ready=168.0ms ui-ready=186.0ms total=186.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-14.log",
+        "launchEpochMs": 1790161010850.4556,
+        "observedReceiptMs": 374.5672149962047,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 365.58154296875,
+        "nativeReadinessMs": 336.6,
+        "webviewTiming": "[2026-09-23][20:56:51][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161011024.000 bundle-exec=61.0ms mount=86.0ms commands-ready=98.0ms settings-ready=129.0ms list-ready=172.0ms app-ready=172.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-14.log",
+        "launchEpochMs": 1790161011310.329,
+        "observedReceiptMs": 384.6009659973788,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 384.182861328125,
+        "nativeReadinessMs": 355.4,
+        "webviewTiming": "[2026-09-23][20:56:51][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161011491.000 bundle-exec=63.0ms mount=88.0ms commands-ready=103.0ms settings-ready=136.0ms list-ready=184.0ms app-ready=184.0ms ui-ready=202.0ms total=202.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-15.log",
+        "launchEpochMs": 1790161011781.289,
+        "observedReceiptMs": 354.15866800030926,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 353.52001953125,
+        "nativeReadinessMs": 326.6,
+        "webviewTiming": "[2026-09-23][20:56:52][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161011944.000 bundle-exec=61.0ms mount=86.0ms commands-ready=98.0ms settings-ready=128.0ms list-ready=171.0ms app-ready=171.0ms ui-ready=189.0ms total=189.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-15.log",
+        "launchEpochMs": 1790161012219.7417,
+        "observedReceiptMs": 374.9636539942003,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 368.357421875,
+        "nativeReadinessMs": 339.4,
+        "webviewTiming": "[2026-09-23][20:56:52][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161012390.000 bundle-exec=68.0ms mount=93.0ms commands-ready=106.0ms settings-ready=136.0ms list-ready=178.0ms app-ready=178.0ms ui-ready=197.0ms total=197.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-16.log",
+        "launchEpochMs": 1790161012678.0945,
+        "observedReceiptMs": 364.30850900069345,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 358.53662109375,
+        "nativeReadinessMs": 330.8,
+        "webviewTiming": "[2026-09-23][20:56:53][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161012845.000 bundle-exec=60.0ms mount=86.0ms commands-ready=98.0ms settings-ready=129.0ms list-ready=172.0ms app-ready=172.0ms ui-ready=190.0ms total=190.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-16.log",
+        "launchEpochMs": 1790161013127.3076,
+        "observedReceiptMs": 364.2469219994382,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 359.163330078125,
+        "nativeReadinessMs": 330.9,
+        "webviewTiming": "[2026-09-23][20:56:53][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161013295.000 bundle-exec=60.0ms mount=84.0ms commands-ready=97.0ms settings-ready=128.0ms list-ready=171.0ms app-ready=171.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-17.log",
+        "launchEpochMs": 1790161013574.957,
+        "observedReceiptMs": 384.25990199903026,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 378.870849609375,
+        "nativeReadinessMs": 348.8,
+        "webviewTiming": "[2026-09-23][20:56:53][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161013755.000 bundle-exec=63.0ms mount=90.0ms commands-ready=103.0ms settings-ready=135.0ms list-ready=179.0ms app-ready=179.0ms ui-ready=197.0ms total=197.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-17.log",
+        "launchEpochMs": 1790161014044.976,
+        "observedReceiptMs": 374.5143750056741,
+        "load": [
+          2.05029296875,
+          2.99365234375,
+          2.630859375
+        ],
+        "launchToNativeReadyMs": 364.68701171875,
+        "nativeReadinessMs": 335.2,
+        "webviewTiming": "[2026-09-23][20:56:54][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161014217.000 bundle-exec=61.0ms mount=86.0ms commands-ready=99.0ms settings-ready=130.0ms list-ready=173.0ms app-ready=173.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-18.log",
+        "launchEpochMs": 1790161014502.0603,
+        "observedReceiptMs": 374.44654700084357,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 373.900634765625,
+        "nativeReadinessMs": 346.3,
+        "webviewTiming": "[2026-09-23][20:56:54][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161014680.000 bundle-exec=62.0ms mount=88.0ms commands-ready=100.0ms settings-ready=131.0ms list-ready=175.0ms app-ready=175.0ms ui-ready=194.0ms total=194.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-18.log",
+        "launchEpochMs": 1790161014962.4546,
+        "observedReceiptMs": 384.7496179951122,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 375.703369140625,
+        "nativeReadinessMs": 347.1,
+        "webviewTiming": "[2026-09-23][20:56:55][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161015139.000 bundle-exec=63.0ms mount=91.0ms commands-ready=104.0ms settings-ready=135.0ms list-ready=179.0ms app-ready=179.0ms ui-ready=198.0ms total=198.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-19.log",
+        "launchEpochMs": 1790161015433.809,
+        "observedReceiptMs": 374.29535100091016,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 371.075927734375,
+        "nativeReadinessMs": 341.6,
+        "webviewTiming": "[2026-09-23][20:56:55][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161015610.000 bundle-exec=64.0ms mount=89.0ms commands-ready=102.0ms settings-ready=132.0ms list-ready=175.0ms app-ready=175.0ms ui-ready=193.0ms total=193.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-19.log",
+        "launchEpochMs": 1790161015894.7234,
+        "observedReceiptMs": 374.5486499974504,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 371.5966796875,
+        "nativeReadinessMs": 342.2,
+        "webviewTiming": "[2026-09-23][20:56:56][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161016074.000 bundle-exec=61.0ms mount=86.0ms commands-ready=98.0ms settings-ready=129.0ms list-ready=173.0ms app-ready=173.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-20.log",
+        "launchEpochMs": 1790161016351.7388,
+        "observedReceiptMs": 384.9144380001235,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 375.326171875,
+        "nativeReadinessMs": 346.6,
+        "webviewTiming": "[2026-09-23][20:56:56][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161016528.000 bundle-exec=67.0ms mount=94.0ms commands-ready=108.0ms settings-ready=139.0ms list-ready=178.0ms app-ready=178.0ms ui-ready=198.0ms total=198.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-20.log",
+        "launchEpochMs": 1790161016823.2087,
+        "observedReceiptMs": 384.31636900349986,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 374.204345703125,
+        "nativeReadinessMs": 344.0,
+        "webviewTiming": "[2026-09-23][20:56:57][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161017005.000 bundle-exec=66.0ms mount=92.0ms commands-ready=105.0ms settings-ready=136.0ms list-ready=173.0ms app-ready=173.0ms ui-ready=191.0ms total=191.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/compact-21.log",
+        "launchEpochMs": 1790161017294.878,
+        "observedReceiptMs": 374.2254390017479,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 371.107177734375,
+        "nativeReadinessMs": 342.0,
+        "webviewTiming": "[2026-09-23][20:56:57][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161017478.000 bundle-exec=64.0ms mount=89.0ms commands-ready=101.0ms settings-ready=131.0ms list-ready=168.0ms app-ready=168.0ms ui-ready=187.0ms total=187.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100/baseline-21.log",
+        "launchEpochMs": 1790161017758.101,
+        "observedReceiptMs": 374.2758340013097,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 370.35595703125,
+        "nativeReadinessMs": 341.3,
+        "webviewTiming": "[2026-09-23][20:56:58][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161017939.000 bundle-exec=59.0ms mount=85.0ms commands-ready=97.0ms settings-ready=128.0ms list-ready=170.0ms app-ready=170.0ms ui-ready=189.0ms total=189.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-00.log",
+        "launchEpochMs": 1790161018323.972,
+        "observedReceiptMs": 617.6105499980622,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 616.89501953125,
+        "nativeReadinessMs": 588.4,
+        "webviewTiming": "[2026-09-23][20:56:58][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161018506.000 bundle-exec=60.0ms mount=85.0ms commands-ready=98.0ms settings-ready=128.0ms list-ready=416.0ms app-ready=416.0ms ui-ready=433.0ms total=433.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-00.log",
+        "launchEpochMs": 1790161019029.312,
+        "observedReceiptMs": 566.7810550003196,
+        "load": [
+          2.0458984375,
+          2.97705078125,
+          2.62744140625
+        ],
+        "launchToNativeReadyMs": 560.85498046875,
+        "nativeReadinessMs": 533.2,
+        "webviewTiming": "[2026-09-23][20:56:59][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161019213.000 bundle-exec=59.0ms mount=84.0ms commands-ready=97.0ms settings-ready=127.0ms list-ready=358.0ms app-ready=358.0ms ui-ready=376.0ms total=376.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-01.log",
+        "launchEpochMs": 1790161021687.435,
+        "observedReceiptMs": 627.1427549945656,
+        "load": [
+          1.9619140625,
+          2.94384765625,
+          2.61865234375
+        ],
+        "launchToNativeReadyMs": 620.23291015625,
+        "nativeReadinessMs": 588.2,
+        "webviewTiming": "[2026-09-23][20:57:02][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161021888.000 bundle-exec=71.0ms mount=100.0ms commands-ready=114.0ms settings-ready=148.0ms list-ready=398.0ms app-ready=398.0ms ui-ready=419.0ms total=419.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-01.log",
+        "launchEpochMs": 1790161022402.6257,
+        "observedReceiptMs": 658.960181994189,
+        "load": [
+          1.9619140625,
+          2.94384765625,
+          2.61865234375
+        ],
+        "launchToNativeReadyMs": 657.029296875,
+        "nativeReadinessMs": 625.8,
+        "webviewTiming": "[2026-09-23][20:57:03][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161022595.000 bundle-exec=68.0ms mount=97.0ms commands-ready=110.0ms settings-ready=142.0ms list-ready=445.0ms app-ready=445.0ms ui-ready=463.0ms total=463.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-02.log",
+        "launchEpochMs": 1790161023148.8418,
+        "observedReceiptMs": 648.7325030029751,
+        "load": [
+          1.9619140625,
+          2.94384765625,
+          2.61865234375
+        ],
+        "launchToNativeReadyMs": 639.6982421875,
+        "nativeReadinessMs": 607.3,
+        "webviewTiming": "[2026-09-23][20:57:03][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161023335.000 bundle-exec=63.0ms mount=90.0ms commands-ready=104.0ms settings-ready=137.0ms list-ready=433.0ms app-ready=433.0ms ui-ready=452.0ms total=452.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-02.log",
+        "launchEpochMs": 1790161023887.6277,
+        "observedReceiptMs": 616.7289560034988,
+        "load": [
+          1.9619140625,
+          2.94384765625,
+          2.61865234375
+        ],
+        "launchToNativeReadyMs": 616.5302734375,
+        "nativeReadinessMs": 586.9,
+        "webviewTiming": "[2026-09-23][20:57:04][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161024096.000 bundle-exec=76.0ms mount=103.0ms commands-ready=117.0ms settings-ready=149.0ms list-ready=386.0ms app-ready=386.0ms ui-ready=407.0ms total=407.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-03.log",
+        "launchEpochMs": 1790161026601.6614,
+        "observedReceiptMs": 608.2233209963306,
+        "load": [
+          3.72705078125,
+          3.29345703125,
+          2.73388671875
+        ],
+        "launchToNativeReadyMs": 599.66357421875,
+        "nativeReadinessMs": 566.3,
+        "webviewTiming": "[2026-09-23][20:57:07][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161026795.000 bundle-exec=68.0ms mount=97.0ms commands-ready=111.0ms settings-ready=143.0ms list-ready=385.0ms app-ready=385.0ms ui-ready=405.0ms total=405.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-03.log",
+        "launchEpochMs": 1790161029316.8323,
+        "observedReceiptMs": 759.870800000499,
+        "load": [
+          3.9892578125,
+          3.35546875,
+          2.7568359375
+        ],
+        "launchToNativeReadyMs": 755.686767578125,
+        "nativeReadinessMs": 726.5,
+        "webviewTiming": "[2026-09-23][20:57:10][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161029513.000 bundle-exec=74.0ms mount=105.0ms commands-ready=123.0ms settings-ready=162.0ms list-ready=538.0ms app-ready=538.0ms ui-ready=559.0ms total=559.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-04.log",
+        "launchEpochMs": 1790161030172.9802,
+        "observedReceiptMs": 689.5392489968799,
+        "load": [
+          3.9892578125,
+          3.35546875,
+          2.7568359375
+        ],
+        "launchToNativeReadyMs": 684.376708984375,
+        "nativeReadinessMs": 648.1,
+        "webviewTiming": "[2026-09-23][20:57:10][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161030379.000 bundle-exec=71.0ms mount=99.0ms commands-ready=113.0ms settings-ready=145.0ms list-ready=457.0ms app-ready=457.0ms ui-ready=477.0ms total=477.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-04.log",
+        "launchEpochMs": 1790161030954.8188,
+        "observedReceiptMs": 618.9035839997814,
+        "load": [
+          3.9892578125,
+          3.35546875,
+          2.7568359375
+        ],
+        "launchToNativeReadyMs": 610.576171875,
+        "nativeReadinessMs": 579.9,
+        "webviewTiming": "[2026-09-23][20:57:11][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161031149.000 bundle-exec=69.0ms mount=97.0ms commands-ready=111.0ms settings-ready=143.0ms list-ready=394.0ms app-ready=394.0ms ui-ready=415.0ms total=415.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-05.log",
+        "launchEpochMs": 1790161033676.5078,
+        "observedReceiptMs": 599.097605998395,
+        "load": [
+          3.9892578125,
+          3.35546875,
+          2.7568359375
+        ],
+        "launchToNativeReadyMs": 592.63916015625,
+        "nativeReadinessMs": 564.2,
+        "webviewTiming": "[2026-09-23][20:57:14][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161033865.000 bundle-exec=66.0ms mount=93.0ms commands-ready=107.0ms settings-ready=141.0ms list-ready=385.0ms app-ready=385.0ms ui-ready=403.0ms total=403.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-05.log",
+        "launchEpochMs": 1790161034364.2876,
+        "observedReceiptMs": 647.4531789936009,
+        "load": [
+          4.23046875,
+          3.416015625,
+          2.77978515625
+        ],
+        "launchToNativeReadyMs": 642.025390625,
+        "nativeReadinessMs": 612.7,
+        "webviewTiming": "[2026-09-23][20:57:15][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161034547.000 bundle-exec=67.0ms mount=93.0ms commands-ready=106.0ms settings-ready=136.0ms list-ready=439.0ms app-ready=439.0ms ui-ready=458.0ms total=458.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-06.log",
+        "launchEpochMs": 1790161035102.0083,
+        "observedReceiptMs": 648.6493379998137,
+        "load": [
+          4.23046875,
+          3.416015625,
+          2.77978515625
+        ],
+        "launchToNativeReadyMs": 639.220703125,
+        "nativeReadinessMs": 608.1,
+        "webviewTiming": "[2026-09-23][20:57:15][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161035287.000 bundle-exec=64.0ms mount=91.0ms commands-ready=104.0ms settings-ready=136.0ms list-ready=435.0ms app-ready=435.0ms ui-ready=453.0ms total=453.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-06.log",
+        "launchEpochMs": 1790161035838.4463,
+        "observedReceiptMs": 577.6224430010188,
+        "load": [
+          4.23046875,
+          3.416015625,
+          2.77978515625
+        ],
+        "launchToNativeReadyMs": 575.20361328125,
+        "nativeReadinessMs": 544.3,
+        "webviewTiming": "[2026-09-23][20:57:16][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161036024.000 bundle-exec=65.0ms mount=91.0ms commands-ready=107.0ms settings-ready=140.0ms list-ready=369.0ms app-ready=369.0ms ui-ready=388.0ms total=388.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-07.log",
+        "launchEpochMs": 1790161038502.477,
+        "observedReceiptMs": 597.1701750022476,
+        "load": [
+          4.23046875,
+          3.416015625,
+          2.77978515625
+        ],
+        "launchToNativeReadyMs": 590.220947265625,
+        "nativeReadinessMs": 560.4,
+        "webviewTiming": "[2026-09-23][20:57:19][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161038691.000 bundle-exec=64.0ms mount=91.0ms commands-ready=104.0ms settings-ready=138.0ms list-ready=382.0ms app-ready=382.0ms ui-ready=400.0ms total=400.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-07.log",
+        "launchEpochMs": 1790161039191.8176,
+        "observedReceiptMs": 659.3936619974556,
+        "load": [
+          4.23046875,
+          3.416015625,
+          2.77978515625
+        ],
+        "launchToNativeReadyMs": 649.71337890625,
+        "nativeReadinessMs": 618.2,
+        "webviewTiming": "[2026-09-23][20:57:19][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161039383.000 bundle-exec=70.0ms mount=97.0ms commands-ready=110.0ms settings-ready=141.0ms list-ready=438.0ms app-ready=438.0ms ui-ready=457.0ms total=457.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-08.log",
+        "launchEpochMs": 1790161039940.9253,
+        "observedReceiptMs": 648.7662489962531,
+        "load": [
+          4.37255859375,
+          3.458984375,
+          2.79736328125
+        ],
+        "launchToNativeReadyMs": 643.148681640625,
+        "nativeReadinessMs": 614.4,
+        "webviewTiming": "[2026-09-23][20:57:20][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161040133.000 bundle-exec=63.0ms mount=90.0ms commands-ready=103.0ms settings-ready=135.0ms list-ready=432.0ms app-ready=432.0ms ui-ready=450.0ms total=450.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-08.log",
+        "launchEpochMs": 1790161040679.2703,
+        "observedReceiptMs": 588.2026469989796,
+        "load": [
+          4.37255859375,
+          3.458984375,
+          2.79736328125
+        ],
+        "launchToNativeReadyMs": 584.1328125,
+        "nativeReadinessMs": 553.2,
+        "webviewTiming": "[2026-09-23][20:57:21][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161040872.000 bundle-exec=66.0ms mount=94.0ms commands-ready=108.0ms settings-ready=141.0ms list-ready=372.0ms app-ready=372.0ms ui-ready=390.0ms total=390.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-09.log",
+        "launchEpochMs": 1790161043348.1013,
+        "observedReceiptMs": 608.7887009998667,
+        "load": [
+          4.37255859375,
+          3.458984375,
+          2.79736328125
+        ],
+        "launchToNativeReadyMs": 603.686767578125,
+        "nativeReadinessMs": 573.1,
+        "webviewTiming": "[2026-09-23][20:57:23][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161043548.000 bundle-exec=66.0ms mount=92.0ms commands-ready=106.0ms settings-ready=138.0ms list-ready=384.0ms app-ready=384.0ms ui-ready=403.0ms total=403.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-09.log",
+        "launchEpochMs": 1790161044049.9019,
+        "observedReceiptMs": 659.490245001507,
+        "load": [
+          4.37255859375,
+          3.458984375,
+          2.79736328125
+        ],
+        "launchToNativeReadyMs": 653.1171875,
+        "nativeReadinessMs": 622.7,
+        "webviewTiming": "[2026-09-23][20:57:24][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161044240.000 bundle-exec=64.0ms mount=92.0ms commands-ready=107.0ms settings-ready=139.0ms list-ready=443.0ms app-ready=443.0ms ui-ready=462.0ms total=462.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-10.log",
+        "launchEpochMs": 1790161044800.5532,
+        "observedReceiptMs": 666.6729319986189,
+        "load": [
+          4.4228515625,
+          3.48486328125,
+          2.8095703125
+        ],
+        "launchToNativeReadyMs": 665.834716796875,
+        "nativeReadinessMs": 633.3,
+        "webviewTiming": "[2026-09-23][20:57:25][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161045003.000 bundle-exec=64.0ms mount=91.0ms commands-ready=105.0ms settings-ready=137.0ms list-ready=443.0ms app-ready=443.0ms ui-ready=462.0ms total=462.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-10.log",
+        "launchEpochMs": 1790161045559.7185,
+        "observedReceiptMs": 598.546556000656,
+        "load": [
+          4.4228515625,
+          3.48486328125,
+          2.8095703125
+        ],
+        "launchToNativeReadyMs": 588.3583984375,
+        "nativeReadinessMs": 556.9,
+        "webviewTiming": "[2026-09-23][20:57:26][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161045742.000 bundle-exec=66.0ms mount=94.0ms commands-ready=109.0ms settings-ready=142.0ms list-ready=385.0ms app-ready=385.0ms ui-ready=404.0ms total=404.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-11.log",
+        "launchEpochMs": 1790161046245.6738,
+        "observedReceiptMs": 597.6091449992964,
+        "load": [
+          4.4228515625,
+          3.48486328125,
+          2.8095703125
+        ],
+        "launchToNativeReadyMs": 590.942138671875,
+        "nativeReadinessMs": 559.3,
+        "webviewTiming": "[2026-09-23][20:57:26][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161046435.000 bundle-exec=71.0ms mount=98.0ms commands-ready=112.0ms settings-ready=144.0ms list-ready=380.0ms app-ready=380.0ms ui-ready=400.0ms total=400.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-11.log",
+        "launchEpochMs": 1790161046932.0369,
+        "observedReceiptMs": 638.7277489993721,
+        "load": [
+          4.4228515625,
+          3.48486328125,
+          2.8095703125
+        ],
+        "launchToNativeReadyMs": 632.2841796875,
+        "nativeReadinessMs": 600.4,
+        "webviewTiming": "[2026-09-23][20:57:27][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161047110.000 bundle-exec=62.0ms mount=88.0ms commands-ready=100.0ms settings-ready=132.0ms list-ready=434.0ms app-ready=434.0ms ui-ready=453.0ms total=453.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-12.log",
+        "launchEpochMs": 1790161047658.277,
+        "observedReceiptMs": 658.4546190060792,
+        "load": [
+          4.4228515625,
+          3.48486328125,
+          2.8095703125
+        ],
+        "launchToNativeReadyMs": 649.409912109375,
+        "nativeReadinessMs": 619.4,
+        "webviewTiming": "[2026-09-23][20:57:28][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161047853.000 bundle-exec=61.0ms mount=88.0ms commands-ready=101.0ms settings-ready=134.0ms list-ready=432.0ms app-ready=432.0ms ui-ready=453.0ms total=453.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-12.log",
+        "launchEpochMs": 1790161048404.2566,
+        "observedReceiptMs": 588.5803420023876,
+        "load": [
+          4.4228515625,
+          3.48486328125,
+          2.8095703125
+        ],
+        "launchToNativeReadyMs": 581.8193359375,
+        "nativeReadinessMs": 551.0,
+        "webviewTiming": "[2026-09-23][20:57:28][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161048590.000 bundle-exec=62.0ms mount=88.0ms commands-ready=101.0ms settings-ready=131.0ms list-ready=375.0ms app-ready=375.0ms ui-ready=394.0ms total=394.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-13.log",
+        "launchEpochMs": 1790161051082.002,
+        "observedReceiptMs": 618.6281159971259,
+        "load": [
+          4.30859375,
+          3.4765625,
+          2.81103515625
+        ],
+        "launchToNativeReadyMs": 609.715087890625,
+        "nativeReadinessMs": 578.2,
+        "webviewTiming": "[2026-09-23][20:57:31][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161051260.000 bundle-exec=66.0ms mount=93.0ms commands-ready=108.0ms settings-ready=143.0ms list-ready=410.0ms app-ready=410.0ms ui-ready=430.0ms total=430.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-13.log",
+        "launchEpochMs": 1790161053782.054,
+        "observedReceiptMs": 698.1614570031525,
+        "load": [
+          4.30859375,
+          3.4765625,
+          2.81103515625
+        ],
+        "launchToNativeReadyMs": 690.873046875,
+        "nativeReadinessMs": 659.6,
+        "webviewTiming": "[2026-09-23][20:57:34][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161053960.000 bundle-exec=68.0ms mount=95.0ms commands-ready=109.0ms settings-ready=141.0ms list-ready=491.0ms app-ready=491.0ms ui-ready=512.0ms total=512.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-14.log",
+        "launchEpochMs": 1790161054571.538,
+        "observedReceiptMs": 668.1785459950333,
+        "load": [
+          4.5244140625,
+          3.53515625,
+          2.833984375
+        ],
+        "launchToNativeReadyMs": 667.907958984375,
+        "nativeReadinessMs": 636.7,
+        "webviewTiming": "[2026-09-23][20:57:35][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161054744.000 bundle-exec=65.0ms mount=92.0ms commands-ready=105.0ms settings-ready=138.0ms list-ready=475.0ms app-ready=475.0ms ui-ready=494.0ms total=494.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-14.log",
+        "launchEpochMs": 1790161055334.2402,
+        "observedReceiptMs": 638.5162109945668,
+        "load": [
+          4.5244140625,
+          3.53515625,
+          2.833984375
+        ],
+        "launchToNativeReadyMs": 633.27880859375,
+        "nativeReadinessMs": 603.3,
+        "webviewTiming": "[2026-09-23][20:57:35][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161055525.000 bundle-exec=63.0ms mount=90.0ms commands-ready=104.0ms settings-ready=138.0ms list-ready=421.0ms app-ready=421.0ms ui-ready=441.0ms total=441.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-15.log",
+        "launchEpochMs": 1790161056062.8694,
+        "observedReceiptMs": 618.1750909963739,
+        "load": [
+          4.5244140625,
+          3.53515625,
+          2.833984375
+        ],
+        "launchToNativeReadyMs": 609.632568359375,
+        "nativeReadinessMs": 580.1,
+        "webviewTiming": "[2026-09-23][20:57:36][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161056248.000 bundle-exec=63.0ms mount=90.0ms commands-ready=106.0ms settings-ready=142.0ms list-ready=403.0ms app-ready=403.0ms ui-ready=423.0ms total=423.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-15.log",
+        "launchEpochMs": 1790161058752.4739,
+        "observedReceiptMs": 667.0666159989196,
+        "load": [
+          4.5244140625,
+          3.53515625,
+          2.833984375
+        ],
+        "launchToNativeReadyMs": 657.148193359375,
+        "nativeReadinessMs": 625.2,
+        "webviewTiming": "[2026-09-23][20:57:39][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161058943.000 bundle-exec=70.0ms mount=99.0ms commands-ready=113.0ms settings-ready=147.0ms list-ready=447.0ms app-ready=447.0ms ui-ready=466.0ms total=466.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-16.log",
+        "launchEpochMs": 1790161059512.013,
+        "observedReceiptMs": 648.8210340030491,
+        "load": [
+          4.5625,
+          3.5595703125,
+          2.845703125
+        ],
+        "launchToNativeReadyMs": 645.1640625,
+        "nativeReadinessMs": 614.7,
+        "webviewTiming": "[2026-09-23][20:57:40][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161059707.000 bundle-exec=65.0ms mount=91.0ms commands-ready=105.0ms settings-ready=136.0ms list-ready=429.0ms app-ready=430.0ms ui-ready=448.0ms total=448.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-16.log",
+        "launchEpochMs": 1790161060250.6208,
+        "observedReceiptMs": 618.2786770004896,
+        "load": [
+          4.5625,
+          3.5595703125,
+          2.845703125
+        ],
+        "launchToNativeReadyMs": 609.858154296875,
+        "nativeReadinessMs": 574.9,
+        "webviewTiming": "[2026-09-23][20:57:40][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161060449.000 bundle-exec=67.0ms mount=93.0ms commands-ready=107.0ms settings-ready=142.0ms list-ready=390.0ms app-ready=390.0ms ui-ready=410.0ms total=410.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-17.log",
+        "launchEpochMs": 1790161060959.9954,
+        "observedReceiptMs": 597.7364569989732,
+        "load": [
+          4.5625,
+          3.5595703125,
+          2.845703125
+        ],
+        "launchToNativeReadyMs": 594.49462890625,
+        "nativeReadinessMs": 561.7,
+        "webviewTiming": "[2026-09-23][20:57:41][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161061156.000 bundle-exec=63.0ms mount=89.0ms commands-ready=102.0ms settings-ready=135.0ms list-ready=378.0ms app-ready=378.0ms ui-ready=397.0ms total=397.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-17.log",
+        "launchEpochMs": 1790161063636.6484,
+        "observedReceiptMs": 678.3204530001967,
+        "load": [
+          4.5625,
+          3.5595703125,
+          2.845703125
+        ],
+        "launchToNativeReadyMs": 671.16748046875,
+        "nativeReadinessMs": 638.5,
+        "webviewTiming": "[2026-09-23][20:57:44][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161063838.000 bundle-exec=68.0ms mount=94.0ms commands-ready=108.0ms settings-ready=140.0ms list-ready=450.0ms app-ready=450.0ms ui-ready=469.0ms total=469.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-18.log",
+        "launchEpochMs": 1790161064404.12,
+        "observedReceiptMs": 658.9890199975343,
+        "load": [
+          4.677734375,
+          3.60009765625,
+          2.86279296875
+        ],
+        "launchToNativeReadyMs": 649.85400390625,
+        "nativeReadinessMs": 618.6,
+        "webviewTiming": "[2026-09-23][20:57:45][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161064598.000 bundle-exec=66.0ms mount=94.0ms commands-ready=107.0ms settings-ready=141.0ms list-ready=436.0ms app-ready=436.0ms ui-ready=455.0ms total=455.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-18.log",
+        "launchEpochMs": 1790161065154.479,
+        "observedReceiptMs": 608.6810389970196,
+        "load": [
+          4.677734375,
+          3.60009765625,
+          2.86279296875
+        ],
+        "launchToNativeReadyMs": 608.10498046875,
+        "nativeReadinessMs": 577.0,
+        "webviewTiming": "[2026-09-23][20:57:45][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161065351.000 bundle-exec=65.0ms mount=93.0ms commands-ready=106.0ms settings-ready=139.0ms list-ready=391.0ms app-ready=391.0ms ui-ready=410.0ms total=410.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-19.log",
+        "launchEpochMs": 1790161067860.2441,
+        "observedReceiptMs": 598.9485569953104,
+        "load": [
+          4.677734375,
+          3.60009765625,
+          2.86279296875
+        ],
+        "launchToNativeReadyMs": 594.100830078125,
+        "nativeReadinessMs": 562.6,
+        "webviewTiming": "[2026-09-23][20:57:48][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161068055.000 bundle-exec=66.0ms mount=94.0ms commands-ready=108.0ms settings-ready=140.0ms list-ready=379.0ms app-ready=379.0ms ui-ready=397.0ms total=397.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-19.log",
+        "launchEpochMs": 1790161070538.3198,
+        "observedReceiptMs": 659.641473001102,
+        "load": [
+          4.78369140625,
+          3.64013671875,
+          2.8798828125
+        ],
+        "launchToNativeReadyMs": 658.10009765625,
+        "nativeReadinessMs": 624.9,
+        "webviewTiming": "[2026-09-23][20:57:51][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161070720.000 bundle-exec=68.0ms mount=102.0ms commands-ready=115.0ms settings-ready=149.0ms list-ready=457.0ms app-ready=457.0ms ui-ready=475.0ms total=475.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-20.log",
+        "launchEpochMs": 1790161071287.2888,
+        "observedReceiptMs": 710.5815280010574,
+        "load": [
+          4.78369140625,
+          3.64013671875,
+          2.8798828125
+        ],
+        "launchToNativeReadyMs": 705.84619140625,
+        "nativeReadinessMs": 673.3,
+        "webviewTiming": "[2026-09-23][20:57:51][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161071467.000 bundle-exec=67.0ms mount=96.0ms commands-ready=109.0ms settings-ready=143.0ms list-ready=505.0ms app-ready=505.0ms ui-ready=524.0ms total=524.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-20.log",
+        "launchEpochMs": 1790161072088.1436,
+        "observedReceiptMs": 597.8348429998732,
+        "load": [
+          4.78369140625,
+          3.64013671875,
+          2.8798828125
+        ],
+        "launchToNativeReadyMs": 589.71240234375,
+        "nativeReadinessMs": 558.4,
+        "webviewTiming": "[2026-09-23][20:57:52][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161072261.000 bundle-exec=62.0ms mount=88.0ms commands-ready=101.0ms settings-ready=134.0ms list-ready=394.0ms app-ready=394.0ms ui-ready=415.0ms total=415.0ms"
+      },
+      {
+        "variant": "compact",
+        "entries": 100000,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/compact-21.log",
+        "launchEpochMs": 1790161074792.158,
+        "observedReceiptMs": 610.1721960003488,
+        "load": [
+          4.88134765625,
+          3.6796875,
+          2.89697265625
+        ],
+        "launchToNativeReadyMs": 600.318115234375,
+        "nativeReadinessMs": 568.2,
+        "webviewTiming": "[2026-09-23][20:57:55][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161074979.000 bundle-exec=70.0ms mount=97.0ms commands-ready=110.0ms settings-ready=143.0ms list-ready=391.0ms app-ready=391.0ms ui-ready=411.0ms total=411.0ms"
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-748-ab-aapwd59v/entries-100000/baseline-21.log",
+        "launchEpochMs": 1790161077509.0796,
+        "observedReceiptMs": 678.8894690034795,
+        "load": [
+          4.88134765625,
+          3.6796875,
+          2.89697265625
+        ],
+        "launchToNativeReadyMs": 669.869384765625,
+        "nativeReadinessMs": 639.7,
+        "webviewTiming": "[2026-09-23][20:57:58][INFO][tauri_explorer_lib::system] Startup(webview): window=main boot-epoch-ms=1790161077697.000 bundle-exec=68.0ms mount=96.0ms commands-ready=111.0ms settings-ready=144.0ms list-ready=461.0ms app-ready=461.0ms ui-ready=481.0ms total=481.0ms"
+      }
+    ],
+    "summary": [
+      {
+        "entries": 100,
+        "variant": "baseline",
+        "n": 20,
+        "p50": 370.35595703125,
+        "p95": 380.5810546875,
+        "min": 358.328369140625,
+        "max": 390.534423828125
+      },
+      {
+        "entries": 100,
+        "variant": "compact",
+        "n": 20,
+        "p50": 371.107177734375,
+        "p95": 384.347900390625,
+        "min": 353.52001953125,
+        "max": 393.67431640625
+      },
+      {
+        "entries": 100000,
+        "variant": "baseline",
+        "n": 20,
+        "p50": 653.1171875,
+        "p95": 705.84619140625,
+        "min": 632.2841796875,
+        "max": 755.686767578125
+      },
+      {
+        "entries": 100000,
+        "variant": "compact",
+        "n": 20,
+        "p50": 594.49462890625,
+        "p95": 616.5302734375,
+        "min": 575.20361328125,
+        "max": 633.27880859375
+      }
+    ]
+  },
+  "nativeInteractions": [
+    {
+      "view": "details",
+      "variant": "baseline",
+      "artifact": "/tmp/listing-748-verified-views-600nfx06/details-baseline-0/report.json",
+      "firstEntriesMs": 355.00000000000006,
+      "completeMs": 355.00000000000006,
+      "maxGap": 163.0000000000001,
+      "keyboardRoundTripMs": 104,
+      "actualView": "details",
+      "initialRssBytes": 845332480,
+      "peakRssBytes": 1101230080,
+      "finalRssBytes": 1089134592,
+      "inputDuringLoad": {
+        "addressReadyMs": 64,
+        "typingMs": 432,
+        "navigationMs": 491,
+        "autocomplete": {
+          "selected": null,
+          "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+          "visible": false,
+          "focused": "path-input svelte-ppi3nj"
+        },
+        "inputRequestedBeforeCompleteFrame": true,
+        "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+      },
+      "externalWatchCreateAndRemove": true
+    },
+    {
+      "view": "details",
+      "variant": "compact",
+      "artifact": "/tmp/listing-748-verified-views-600nfx06/details-compact-0/report.json",
+      "firstEntriesMs": 247,
+      "completeMs": 247,
+      "maxGap": 94,
+      "keyboardRoundTripMs": 126,
+      "actualView": "details",
+      "initialRssBytes": 858525696,
+      "peakRssBytes": 1011650560,
+      "finalRssBytes": 1011462144,
+      "inputDuringLoad": {
+        "addressReadyMs": 65,
+        "typingMs": 355,
+        "navigationMs": 418,
+        "autocomplete": {
+          "selected": null,
+          "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+          "visible": false,
+          "focused": "path-input svelte-ppi3nj"
+        },
+        "inputRequestedBeforeCompleteFrame": true,
+        "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+      },
+      "externalWatchCreateAndRemove": true
+    },
+    {
+      "view": "list",
+      "variant": "baseline",
+      "artifact": "/tmp/listing-748-verified-views-600nfx06/list-baseline-0/report.json",
+      "firstEntriesMs": 351,
+      "completeMs": 351,
+      "maxGap": 174,
+      "keyboardRoundTripMs": 103,
+      "actualView": "list",
+      "initialRssBytes": 862445568,
+      "peakRssBytes": 1080487936,
+      "finalRssBytes": 1079394304,
+      "inputDuringLoad": {
+        "addressReadyMs": 106,
+        "typingMs": 427,
+        "navigationMs": 486,
+        "autocomplete": {
+          "selected": null,
+          "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+          "visible": false,
+          "focused": "path-input svelte-ppi3nj"
+        },
+        "inputRequestedBeforeCompleteFrame": true,
+        "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+      },
+      "externalWatchCreateAndRemove": true
+    },
+    {
+      "view": "list",
+      "variant": "compact",
+      "artifact": "/tmp/listing-748-verified-views-600nfx06/list-compact-0/report.json",
+      "firstEntriesMs": 250,
+      "completeMs": 250,
+      "maxGap": 96.99999999999989,
+      "keyboardRoundTripMs": 78,
+      "actualView": "list",
+      "initialRssBytes": 852721664,
+      "peakRssBytes": 1016664064,
+      "finalRssBytes": 1016688640,
+      "inputDuringLoad": {
+        "addressReadyMs": 64,
+        "typingMs": 298,
+        "navigationMs": 315,
+        "autocomplete": {
+          "selected": null,
+          "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+          "visible": false,
+          "focused": "path-input svelte-ppi3nj"
+        },
+        "inputRequestedBeforeCompleteFrame": true,
+        "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+      },
+      "externalWatchCreateAndRemove": true
+    },
+    {
+      "view": "tiles",
+      "variant": "baseline",
+      "artifact": "/tmp/listing-748-verified-views-600nfx06/tiles-baseline-0/report.json",
+      "firstEntriesMs": 350,
+      "completeMs": 350,
+      "maxGap": 155,
+      "keyboardRoundTripMs": 124,
+      "actualView": "tiles",
+      "initialRssBytes": 855158784,
+      "peakRssBytes": 1106341888,
+      "finalRssBytes": 1092800512,
+      "inputDuringLoad": {
+        "addressReadyMs": 66,
+        "typingMs": 448,
+        "navigationMs": 468,
+        "autocomplete": {
+          "selected": null,
+          "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+          "visible": false,
+          "focused": "path-input svelte-ppi3nj"
+        },
+        "inputRequestedBeforeCompleteFrame": true,
+        "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+      },
+      "externalWatchCreateAndRemove": true
+    },
+    {
+      "view": "tiles",
+      "variant": "compact",
+      "artifact": "/tmp/listing-748-verified-views-600nfx06/tiles-compact-0/report.json",
+      "firstEntriesMs": 266,
+      "completeMs": 266,
+      "maxGap": 113,
+      "keyboardRoundTripMs": 72,
+      "actualView": "tiles",
+      "initialRssBytes": 857264128,
+      "peakRssBytes": 1016188928,
+      "finalRssBytes": 1015730176,
+      "inputDuringLoad": {
+        "addressReadyMs": 62,
+        "typingMs": 333,
+        "navigationMs": 392,
+        "autocomplete": {
+          "selected": null,
+          "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+          "visible": false,
+          "focused": "path-input svelte-ppi3nj"
+        },
+        "inputRequestedBeforeCompleteFrame": true,
+        "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+      },
+      "externalWatchCreateAndRemove": true
+    }
+  ],
+  "diagnosticBaseline": {
+    "method": "Temporary Response.json wrapper, then separate response.text plus JSON.parse; not final benchmark builds. bodyBytes is JS string length, fixture ASCII.",
+    "original": [
+      {
+        "started": 507,
+        "finished": 856,
+        "elapsed": 349,
+        "supported": [
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource"
+        ],
+        "observed": [],
+        "gaps": [
+          {
+            "start": 507,
+            "end": 510,
+            "duration": 3
+          },
+          {
+            "start": 510,
+            "end": 514,
+            "duration": 4
+          },
+          {
+            "start": 514,
+            "end": 529,
+            "duration": 15
+          },
+          {
+            "start": 529,
+            "end": 545,
+            "duration": 16
+          },
+          {
+            "start": 545,
+            "end": 561,
+            "duration": 16
+          },
+          {
+            "start": 561,
+            "end": 577,
+            "duration": 16
+          },
+          {
+            "start": 577,
+            "end": 593,
+            "duration": 16
+          },
+          {
+            "start": 593,
+            "end": 609,
+            "duration": 16
+          },
+          {
+            "start": 609,
+            "end": 625,
+            "duration": 16
+          },
+          {
+            "start": 625,
+            "end": 641,
+            "duration": 16
+          },
+          {
+            "start": 641,
+            "end": 657,
+            "duration": 16
+          },
+          {
+            "start": 657,
+            "end": 660,
+            "duration": 3
+          },
+          {
+            "start": 660,
+            "end": 673,
+            "duration": 13
+          },
+          {
+            "start": 673,
+            "end": 695.0000000000001,
+            "duration": 22.000000000000114
+          },
+          {
+            "start": 695.0000000000001,
+            "end": 850,
+            "duration": 154.9999999999999
+          }
+        ],
+        "events": [
+          {
+            "name": "invoke-start",
+            "at": 509,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 513,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 513,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 522,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 523,
+            "duration": 1,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 678,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 788,
+            "duration": 110,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "entries": 100000
+            }
+          },
+          {
+            "name": "invoke-resolved",
+            "at": 788,
+            "duration": 279,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "listing-clone-start",
+            "at": 788,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "listing-clone-end",
+            "at": 788,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "publication-start",
+            "at": 788,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "entries-assigned",
+            "at": 788,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "display-derived",
+            "at": 809,
+            "duration": 21,
+            "detail": {
+              "entries": 100000,
+              "view": "details"
+            }
+          },
+          {
+            "name": "publication-end",
+            "at": 809,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "complete-frame",
+            "at": 850,
+            "detail": {
+              "elapsed": 343
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 855,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 855,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 855,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 855,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 855,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 855,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          }
+        ],
+        "actualView": "details"
+      },
+      {
+        "started": 530,
+        "finished": 875,
+        "elapsed": 345,
+        "supported": [
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource"
+        ],
+        "observed": [],
+        "gaps": [
+          {
+            "start": 530,
+            "end": 533,
+            "duration": 3
+          },
+          {
+            "start": 533,
+            "end": 545,
+            "duration": 12
+          },
+          {
+            "start": 545,
+            "end": 561,
+            "duration": 16
+          },
+          {
+            "start": 561,
+            "end": 577,
+            "duration": 16
+          },
+          {
+            "start": 577,
+            "end": 593,
+            "duration": 16
+          },
+          {
+            "start": 593,
+            "end": 609,
+            "duration": 16
+          },
+          {
+            "start": 609,
+            "end": 625,
+            "duration": 16
+          },
+          {
+            "start": 625,
+            "end": 641,
+            "duration": 16
+          },
+          {
+            "start": 641,
+            "end": 657,
+            "duration": 16
+          },
+          {
+            "start": 657,
+            "end": 673,
+            "duration": 16
+          },
+          {
+            "start": 673,
+            "end": 683,
+            "duration": 10
+          },
+          {
+            "start": 683,
+            "end": 689,
+            "duration": 6
+          },
+          {
+            "start": 689,
+            "end": 706,
+            "duration": 17
+          },
+          {
+            "start": 706,
+            "end": 727,
+            "duration": 21
+          },
+          {
+            "start": 727,
+            "end": 869,
+            "duration": 142
+          }
+        ],
+        "events": [
+          {
+            "name": "invoke-start",
+            "at": 532,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 537,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 537,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 546,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 547,
+            "duration": 1,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 705,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 814,
+            "duration": 109,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "entries": 100000
+            }
+          },
+          {
+            "name": "invoke-resolved",
+            "at": 814,
+            "duration": 282,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "listing-clone-start",
+            "at": 814,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "listing-clone-end",
+            "at": 814,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "publication-start",
+            "at": 814,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "entries-assigned",
+            "at": 814,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "display-derived",
+            "at": 833,
+            "duration": 17.999999999999886,
+            "detail": {
+              "entries": 100000,
+              "view": "details"
+            }
+          },
+          {
+            "name": "publication-end",
+            "at": 833,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "complete-frame",
+            "at": 869,
+            "detail": {
+              "elapsed": 339
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 874,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 874,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 874,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 874,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 875,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 875,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          }
+        ],
+        "actualView": "details"
+      },
+      {
+        "started": 569.0000000000001,
+        "finished": 919,
+        "elapsed": 349.9999999999999,
+        "supported": [
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource"
+        ],
+        "observed": [],
+        "gaps": [
+          {
+            "start": 569.0000000000001,
+            "end": 572.0000000000001,
+            "duration": 3
+          },
+          {
+            "start": 572.0000000000001,
+            "end": 577,
+            "duration": 4.999999999999886
+          },
+          {
+            "start": 577,
+            "end": 593,
+            "duration": 16
+          },
+          {
+            "start": 593,
+            "end": 609,
+            "duration": 16
+          },
+          {
+            "start": 609,
+            "end": 625,
+            "duration": 16
+          },
+          {
+            "start": 625,
+            "end": 641,
+            "duration": 16
+          },
+          {
+            "start": 641,
+            "end": 657,
+            "duration": 16
+          },
+          {
+            "start": 657,
+            "end": 673,
+            "duration": 16
+          },
+          {
+            "start": 673,
+            "end": 689,
+            "duration": 16
+          },
+          {
+            "start": 689,
+            "end": 705,
+            "duration": 16
+          },
+          {
+            "start": 705,
+            "end": 722,
+            "duration": 17
+          },
+          {
+            "start": 722,
+            "end": 738,
+            "duration": 16
+          },
+          {
+            "start": 738,
+            "end": 762,
+            "duration": 24
+          },
+          {
+            "start": 762,
+            "end": 913,
+            "duration": 151
+          }
+        ],
+        "events": [
+          {
+            "name": "invoke-start",
+            "at": 571.0000000000001,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 741,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 857,
+            "duration": 116,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "entries": 100000
+            }
+          },
+          {
+            "name": "invoke-resolved",
+            "at": 857,
+            "duration": 285.9999999999999,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "listing-clone-start",
+            "at": 857,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "listing-clone-end",
+            "at": 857,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "publication-start",
+            "at": 857,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "entries-assigned",
+            "at": 857,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "display-derived",
+            "at": 876,
+            "duration": 19,
+            "detail": {
+              "entries": 100000,
+              "view": "details"
+            }
+          },
+          {
+            "name": "publication-end",
+            "at": 877,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "complete-frame",
+            "at": 913,
+            "detail": {
+              "elapsed": 343.9999999999999
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 919,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 919,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 919,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 919,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 919,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 919,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          }
+        ],
+        "actualView": "details"
+      }
+    ],
+    "split": [
+      {
+        "started": 507,
+        "finished": 849,
+        "elapsed": 342,
+        "supported": [
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource"
+        ],
+        "observed": [],
+        "gaps": [
+          {
+            "start": 507,
+            "end": 510,
+            "duration": 3
+          },
+          {
+            "start": 510,
+            "end": 513,
+            "duration": 3
+          },
+          {
+            "start": 513,
+            "end": 529,
+            "duration": 16
+          },
+          {
+            "start": 529,
+            "end": 545,
+            "duration": 16
+          },
+          {
+            "start": 545,
+            "end": 561,
+            "duration": 16
+          },
+          {
+            "start": 561,
+            "end": 577,
+            "duration": 16
+          },
+          {
+            "start": 577,
+            "end": 593,
+            "duration": 16
+          },
+          {
+            "start": 593,
+            "end": 609,
+            "duration": 16
+          },
+          {
+            "start": 609,
+            "end": 625,
+            "duration": 16
+          },
+          {
+            "start": 625,
+            "end": 641,
+            "duration": 16
+          },
+          {
+            "start": 641,
+            "end": 657,
+            "duration": 16
+          },
+          {
+            "start": 657,
+            "end": 660,
+            "duration": 3
+          },
+          {
+            "start": 660,
+            "end": 673,
+            "duration": 13
+          },
+          {
+            "start": 673,
+            "end": 696.0000000000001,
+            "duration": 23.000000000000114
+          },
+          {
+            "start": 696.0000000000001,
+            "end": 844,
+            "duration": 147.9999999999999
+          }
+        ],
+        "events": [
+          {
+            "name": "invoke-start",
+            "at": 509,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 518,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 518,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "contentLength": null,
+              "bodyBytes": 665
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 518,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "bodyBytes": 665
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 518,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_status",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 527,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 527,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "contentLength": null,
+              "bodyBytes": 111106
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 528,
+            "duration": 1,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "bodyBytes": 111106
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 528,
+            "duration": 1,
+            "detail": {
+              "url": "ipc://localhost/git_log",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 680,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 756,
+            "duration": 76,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "bodyBytes": 20200168
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 791,
+            "duration": 35,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "bodyBytes": 20200168
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 791,
+            "duration": 111,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "entries": 100000
+            }
+          },
+          {
+            "name": "invoke-resolved",
+            "at": 791,
+            "duration": 282,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "listing-clone-start",
+            "at": 791,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "listing-clone-end",
+            "at": 791,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "publication-start",
+            "at": 791,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "entries-assigned",
+            "at": 791,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "display-derived",
+            "at": 808,
+            "duration": 17,
+            "detail": {
+              "entries": 100000,
+              "view": "details"
+            }
+          },
+          {
+            "name": "publication-end",
+            "at": 808,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "complete-frame",
+            "at": 844,
+            "detail": {
+              "elapsed": 337
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 849,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 849,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 849,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 849,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          }
+        ],
+        "actualView": "details"
+      },
+      {
+        "started": 551,
+        "finished": 891,
+        "elapsed": 340,
+        "supported": [
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource"
+        ],
+        "observed": [],
+        "gaps": [
+          {
+            "start": 551,
+            "end": 554,
+            "duration": 3
+          },
+          {
+            "start": 554,
+            "end": 561,
+            "duration": 7
+          },
+          {
+            "start": 561,
+            "end": 577,
+            "duration": 16
+          },
+          {
+            "start": 577,
+            "end": 593,
+            "duration": 16
+          },
+          {
+            "start": 593,
+            "end": 609,
+            "duration": 16
+          },
+          {
+            "start": 609,
+            "end": 625,
+            "duration": 16
+          },
+          {
+            "start": 625,
+            "end": 641,
+            "duration": 16
+          },
+          {
+            "start": 641,
+            "end": 657,
+            "duration": 16
+          },
+          {
+            "start": 657,
+            "end": 673,
+            "duration": 16
+          },
+          {
+            "start": 673,
+            "end": 689,
+            "duration": 16
+          },
+          {
+            "start": 689,
+            "end": 703.0000000000001,
+            "duration": 14.000000000000114
+          },
+          {
+            "start": 703.0000000000001,
+            "end": 705,
+            "duration": 1.9999999999998863
+          },
+          {
+            "start": 705,
+            "end": 722,
+            "duration": 17
+          },
+          {
+            "start": 722,
+            "end": 886,
+            "duration": 164
+          }
+        ],
+        "events": [
+          {
+            "name": "invoke-start",
+            "at": 553,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 721,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 797,
+            "duration": 76,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "bodyBytes": 20200168
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 831.0000000000001,
+            "duration": 34.000000000000114,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "bodyBytes": 20200168
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 831.0000000000001,
+            "duration": 110.00000000000011,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "entries": 100000
+            }
+          },
+          {
+            "name": "invoke-resolved",
+            "at": 831.0000000000001,
+            "duration": 278.0000000000001,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "listing-clone-start",
+            "at": 831.0000000000001,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "listing-clone-end",
+            "at": 831.0000000000001,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "publication-start",
+            "at": 831.0000000000001,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "entries-assigned",
+            "at": 831.0000000000001,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "display-derived",
+            "at": 850,
+            "duration": 18.999999999999886,
+            "detail": {
+              "entries": 100000,
+              "view": "details"
+            }
+          },
+          {
+            "name": "publication-end",
+            "at": 850,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "complete-frame",
+            "at": 886,
+            "detail": {
+              "elapsed": 335
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 891,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 891,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 891,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 891,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          }
+        ],
+        "actualView": "details"
+      },
+      {
+        "started": 558,
+        "finished": 898,
+        "elapsed": 340,
+        "supported": [
+          "event",
+          "first-input",
+          "largest-contentful-paint",
+          "mark",
+          "measure",
+          "navigation",
+          "paint",
+          "resource"
+        ],
+        "observed": [],
+        "gaps": [
+          {
+            "start": 558,
+            "end": 561,
+            "duration": 3
+          },
+          {
+            "start": 561,
+            "end": 565.0000000000001,
+            "duration": 4.000000000000114
+          },
+          {
+            "start": 565.0000000000001,
+            "end": 577,
+            "duration": 11.999999999999886
+          },
+          {
+            "start": 577,
+            "end": 593,
+            "duration": 16
+          },
+          {
+            "start": 593,
+            "end": 609,
+            "duration": 16
+          },
+          {
+            "start": 609,
+            "end": 625,
+            "duration": 16
+          },
+          {
+            "start": 625,
+            "end": 641,
+            "duration": 16
+          },
+          {
+            "start": 641,
+            "end": 657,
+            "duration": 16
+          },
+          {
+            "start": 657,
+            "end": 673,
+            "duration": 16
+          },
+          {
+            "start": 673,
+            "end": 689,
+            "duration": 16
+          },
+          {
+            "start": 689,
+            "end": 705,
+            "duration": 16
+          },
+          {
+            "start": 705,
+            "end": 711,
+            "duration": 6
+          },
+          {
+            "start": 711,
+            "end": 722,
+            "duration": 11
+          },
+          {
+            "start": 722,
+            "end": 893,
+            "duration": 171
+          }
+        ],
+        "events": [
+          {
+            "name": "invoke-start",
+            "at": 560,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 720,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 798,
+            "duration": 78,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "bodyBytes": 20200168
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 834,
+            "duration": 36,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "bodyBytes": 20200168
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 834,
+            "duration": 114,
+            "detail": {
+              "url": "ipc://localhost/start_observed_directory",
+              "contentLength": null,
+              "entries": 100000
+            }
+          },
+          {
+            "name": "invoke-resolved",
+            "at": 834,
+            "duration": 274,
+            "detail": {
+              "cmd": "start_observed_directory",
+              "path": "/tmp/startup-696-final-ab-mkbq04ib/entries-100000/files"
+            }
+          },
+          {
+            "name": "listing-clone-start",
+            "at": 834,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "listing-clone-end",
+            "at": 834,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "publication-start",
+            "at": 834,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "entries-assigned",
+            "at": 834,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "display-derived",
+            "at": 852,
+            "duration": 18,
+            "detail": {
+              "entries": 100000,
+              "view": "details"
+            }
+          },
+          {
+            "name": "publication-end",
+            "at": 853,
+            "detail": {
+              "entries": 100000
+            }
+          },
+          {
+            "name": "complete-frame",
+            "at": 893,
+            "detail": {
+              "elapsed": 335
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 898,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/plugin%3Awindow%7Cset_title",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 898,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/git_repo_root",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-json-start",
+            "at": 898,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          },
+          {
+            "name": "response-body-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null,
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-parse-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "bodyBytes": 4
+            }
+          },
+          {
+            "name": "response-json-end",
+            "at": 898,
+            "duration": 0,
+            "detail": {
+              "url": "ipc://localhost/unwatch_directory",
+              "contentLength": null
+            }
+          }
+        ],
+        "actualView": "details"
+      }
+    ],
+    "patchSha256": "8fe60667c0bfc6f06b23eb5ba5d73954dc86680aa37da8651a45ea4c4e016f2a"
+  },
+  "harness": {
+    "/tmp/startup-748-ab.py": "import ctypes\nimport hashlib\nimport json\nimport os\nfrom pathlib import Path\nimport shutil\nimport signal\nimport subprocess\nimport select\nimport tempfile\nimport time\n\nROOT = Path(tempfile.mkdtemp(prefix='startup-748-ab-'))\nPath('/tmp/startup-748-ab-latest.txt').write_text(str(ROOT))\nSOURCES = {\n    'baseline': Path('/tmp/responsiveness-737-final-binary'),\n    'compact': Path('/tmp/listing-748-candidate-binary'),\n}\nassert 'Finished `release`' in Path('/tmp/listing-748-native.log').read_text()\nassert SOURCES['compact'].stat().st_mtime >= Path('/tmp/listing-748-frontend.log').stat().st_mtime\nBINARIES = {}\nfor variant, source in SOURCES.items():\n    binary = ROOT / variant / 'tauri-explorer'\n    binary.parent.mkdir()\n    shutil.copy2(source, binary)\n    assert hashlib.sha256(source.read_bytes()).digest() == hashlib.sha256(binary.read_bytes()).digest()\n    BINARIES[variant] = binary\npatch = subprocess.check_output(['git', 'diff', '--binary', 'HEAD'], cwd='/tmp/tauri-explorer-listing-748')\n(ROOT / 'candidate.patch').write_bytes(patch)\nsource_files = ['src/lib/api/directory-wire.ts', 'src/lib/api/files.ts', 'src-tauri/src/files/directory_wire.rs', 'src-tauri/src/files/mod.rs']\nfor name in source_files:\n    target = ROOT / 'source-files' / name\n    target.parent.mkdir(parents=True, exist_ok=True)\n    shutil.copy2(Path('/tmp/tauri-explorer-listing-748') / name, target)\nctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # adopt the release launcher\u2019s forked child\n\ndef descendants():\n    processes = {}\n    for item in Path('/proc').iterdir():\n        if not item.name.isdigit():\n            continue\n        try:\n            fields = (item / 'stat').read_text().rsplit(')', 1)[1].split()\n            processes[int(item.name)] = (int(fields[1]), fields[19], fields[0])\n        except (OSError, IndexError, ValueError):\n            pass\n    owned = {os.getpid()}\n    while True:\n        more = {pid for pid, (parent, _, _) in processes.items() if parent in owned}\n        if more <= owned:\n            break\n        owned |= more\n    return {(pid, processes[pid][1]): processes[pid][2] for pid in owned if pid != os.getpid()}\n\nexcluded = set()\n\ndef stop_app():\n    started = time.monotonic()\n    while time.monotonic() - started < 5:\n        # As a subreaper, this supervisor retains ownership even when the app\n        # dies before its WebKit children. PID/start-time pairs exclude display\n        # processes; no scan or signal targets unrelated application instances.\n        owned = descendants()\n        remaining = {key: state for key, state in owned.items() if key not in excluded}\n        for (pid, birth), state in remaining.items():\n            if state != 'Z':\n                try:\n                    os.kill(pid, signal.SIGTERM if time.monotonic() - started < 2 else signal.SIGKILL)\n                except ProcessLookupError:\n                    pass\n        try:\n            while os.waitpid(-1, os.WNOHANG)[0]:\n                pass\n        except ChildProcessError:\n            pass\n        if not remaining:\n            return\n        time.sleep(.02)\n    raise RuntimeError(f'benchmark children survived cleanup: {remaining}')\n\ndisplay_log = (ROOT / 'display.log').open('w')\nxvfb = wm = None\nsamples = []\nmetadata = {\n    'sourceCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd='/tmp/tauri-explorer-listing-748', text=True).strip(),\n    'binarySha256': {variant: hashlib.sha256(binary.read_bytes()).hexdigest() for variant, binary in BINARIES.items()},\n    'candidatePatchSha256': hashlib.sha256(patch).hexdigest(),\n    'baselineSourceCommit': 'b94ae493 (PR747); binary source and hash provenance in docs/reviews/arch-listing-737.json',\n    'candidateDescription': 'compact listing IPC; sourceCommit is base, candidate.patch and source-files capture uncommitted production changes',\n    'buildCommand': 'cargo build --release --locked --features tauri/custom-protocol --target-dir /home/chong/Repos/tauri-explorer/src-tauri/target',\n    'buildCwd': '/tmp/tauri-explorer-listing-748/src-tauri',\n    'profile': 'release, tauri/custom-protocol, no E2E hooks, default recovery features',\n    'settings': {'warmWindow': False, 'viewMode': 'details'},\n    'display': 'isolated Xvfb + Openbox, 1200x800, X11; not the interactive Wayland compositor',\n    'cachePolicy': 'OS caches uncontrolled; 2 excluded warm-up launches per directory; fresh process, same isolated app profile per scenario',\n    'endpoint': 'native receipt after settings, commands, initial listing and two animation-frame opportunities; not externally observed presented pixels or input',\n    'kernel': os.uname().release,\n    'cpu': next((line.split(':', 1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name')), 'unknown'),\n    'loadAtStart': os.getloadavg(),\n}\ntry:\n    read_fd, write_fd = os.pipe()\n    try:\n        xvfb = subprocess.Popen(['Xvfb', '-displayfd', str(write_fd), '-screen', '0', '1200x800x24', '-nolisten', 'tcp'], pass_fds=(write_fd,), stdout=display_log, stderr=display_log)\n    finally:\n        os.close(write_fd)\n    with os.fdopen(read_fd) as pipe:\n        if not select.select([pipe], [], [], 10)[0]:\n            raise RuntimeError('Xvfb startup timed out')\n        number = pipe.readline().strip()\n        if not number.isdigit():\n            raise RuntimeError('Xvfb failed to provide a display')\n        display = ':' + number\n    env = dict(os.environ, DISPLAY=display, GDK_BACKEND='x11', TAURI_EXPLORER_LOG_STDOUT='1')\n    env.pop('WAYLAND_DISPLAY', None)\n    env.pop('WARM_MEASURE', None)\n    env.pop('LD_PRELOAD', None)\n    wm = subprocess.Popen(['openbox'], env=env, stdout=display_log, stderr=display_log)\n    time.sleep(.5)\n    if xvfb.poll() is not None or wm.poll() is not None:\n        raise RuntimeError('isolated display failed to start')\n    excluded = set(descendants())\n    for count in [100, 100000]:\n        scenario = ROOT / f'entries-{count}'\n        scenario.mkdir()\n        files = Path('/tmp/startup-696-final-ab-mkbq04ib') / f'entries-{count}' / 'files'\n        assert sum(1 for _ in files.iterdir()) == count\n        appenv = dict(env)\n        for kind in ['CONFIG', 'DATA', 'CACHE', 'STATE']:\n            location = scenario / kind.lower()\n            location.mkdir(exist_ok=True)\n            appenv[f'XDG_{kind}_HOME'] = str(location)\n        config = scenario / 'config' / 'tauri-explorer'\n        config.mkdir(exist_ok=True)\n        (config / 'settings.json').write_text(json.dumps({'warmWindow': False, 'viewMode': 'details'}))\n        for i in range(22):\n            variants = ['baseline', 'compact'] if i % 2 == 0 else ['compact', 'baseline']\n            for variant in variants:\n                BINARY = BINARIES[variant]\n                log = scenario / f'{variant}-{i:02d}.log'\n                before_load = os.getloadavg()\n                with log.open('w') as output:\n                    started_epoch_ms = time.time_ns() / 1e6\n                    started = time.monotonic()\n                    launcher = subprocess.Popen([str(BINARY), str(files)], env=appenv, stdout=output, stderr=subprocess.STDOUT)\n                    try:\n                        while time.monotonic() - started < 20:\n                            text = log.read_text(errors='replace')\n                            if all(mark in text for mark in ['Startup(native-ready): window=main', 'Startup(webview): window=main', 'Startup(native-window): window=main']):\n                                break\n                            time.sleep(.01)\n                        else:\n                            raise RuntimeError(f'readiness timed out: {log}')\n                        if str(files) not in text:\n                            raise RuntimeError(f'requested directory absent from log: {log}')\n                        sample = {'variant': variant, 'entries': count, 'iteration': i, 'warmup': i < 2, 'log': str(log), 'launchEpochMs': started_epoch_ms, 'observedReceiptMs': (time.monotonic() - started) * 1000, 'load': before_load}\n                        samples.append(sample)\n                        print(json.dumps(sample), flush=True)\n                    finally:\n                        stop_app()\n                        launcher.wait(timeout=5)\n                (ROOT / 'samples.json').write_text(json.dumps({'metadata': metadata, 'samples': samples}, indent=2))\nfinally:\n    try:\n        stop_app()\n    finally:\n        for child in [wm, xvfb]:\n            if child is None:\n                continue\n            child.terminate()\n            try:\n                child.wait(timeout=5)\n            except subprocess.TimeoutExpired:\n                child.kill()\n                child.wait()\n        display_log.close()\n",
+    "/tmp/listing-748-verified-views.py": "import json, os, subprocess, tempfile\nfrom pathlib import Path\nroot = Path(Path('/tmp/startup-696-final-ab-latest.txt').read_text().strip())\nreports = Path(tempfile.mkdtemp(prefix='listing-748-verified-views-'))\nPath('/tmp/listing-748-verified-views-latest.txt').write_text(str(reports))\nfor i, mode in enumerate(['details', 'list', 'tiles']):\n    variants = ['baseline','compact'] if i % 2 == 0 else ['compact','baseline']\n    for variant in variants:\n        profile = reports / f'{mode}-{variant}-0'\n        profile.mkdir()\n        env = dict(os.environ, GDK_BACKEND='x11', STARTUP_EXPERIMENT_BINARY='/tmp/responsiveness-737-final-binary' if variant == 'baseline' else '/tmp/listing-748-candidate-binary', STARTUP_EXPERIMENT_DIRECTORY=str(root/'entries-100000'/'files'), STARTUP_EXPERIMENT_COUNT='100000', STARTUP_EXPERIMENT_REPORT=str(profile/'report.json'))\n        env['STARTUP_EXPERIMENT_VIEW']=mode\n        env['STARTUP_EXPERIMENT_EMPTY']=str(root/'entries-0'/'files')\n        env.pop('WAYLAND_DISPLAY',None)\n        env['TAURI_NATIVE_DRIVER']='/nix/store/nddysxxabm1hsqh54q0k60gd1615cd3a-webkitgtk-2.52.5+abi=4.1/bin/WebKitWebDriver'\n        env['STARTUP_FORK_BYPASS_SO']='/tmp/startup-696-skip-release-fork.so'\n        env['LD_PRELOAD']='/tmp/startup-696-skip-release-fork.so'\n        env['STARTUP_FORK_BYPASS_EXE']=env['STARTUP_EXPERIMENT_BINARY']\n        env['STARTUP_FORK_BYPASS_LOG']=str(profile/'fork-bypass.log')\n        for kind in ['CONFIG','DATA','CACHE','STATE']:\n            target=profile/kind.lower()\n            target.mkdir()\n            env[f'XDG_{kind}_HOME']=str(target)\n        config = profile/'config'/'tauri-explorer'\n        config.mkdir()\n        (config/'settings.json').write_text(json.dumps({'warmWindow':False,'viewMode':mode}))\n        with (profile/'wdio.log').open('w') as log:\n            result=subprocess.run(['xvfb-run','-a','bash','e2e-tauri/with-window-manager.sh','bunx','wdio','run','e2e-tauri/startup-experiment.conf.ts'],cwd='/tmp/tauri-explorer-listing-748',env=env,stdout=log,stderr=subprocess.STDOUT,timeout=120)\n        print(json.dumps({'variant':variant,'iteration':i,'exitCode':result.returncode,'profile':str(profile)}),flush=True)\n        if result.returncode: raise RuntimeError(f'native interaction failed: {profile}')\n        print((profile/'report.json').read_text(),flush=True)\n",
+    "/tmp/tauri-explorer-listing-748/e2e-tauri/startup-experiment.conf.ts": "import { spawn } from 'node:child_process';\nimport fs from 'node:fs';\nimport net from 'node:net';\nimport os from 'node:os';\nimport path from 'node:path';\nimport { config as base } from './wdio.conf';\nimport { nativeProcessGroup, stopNativeProcessGroup } from './native-process-group';\nimport { createNativeProcessCleanupHooks } from './native-qualification';\n\n// The launcher and WDIO worker load this file separately. Pass the selected\n// ports through the inherited environment so both use the same pair.\nconst reservePort = (): Promise<number> => new Promise((resolve, reject) => {\n  const server = net.createServer();\n  server.once('error', reject);\n  server.listen(0, '127.0.0.1', () => {\n    const address = server.address();\n    if (!address || typeof address === 'string') {\n      server.close();\n      reject(new Error('could not reserve native WebDriver port'));\n      return;\n    }\n    server.close((error) => error ? reject(error) : resolve(address.port));\n  });\n});\n\nif (!process.env.STARTUP_EXPERIMENT_DRIVER_PORT) {\n  process.env.STARTUP_EXPERIMENT_DRIVER_PORT = String(await reservePort());\n  process.env.STARTUP_EXPERIMENT_NATIVE_PORT = String(await reservePort());\n}\nconst driverPort = Number(process.env.STARTUP_EXPERIMENT_DRIVER_PORT);\nconst nativePort = Number(process.env.STARTUP_EXPERIMENT_NATIVE_PORT);\nif (!Number.isSafeInteger(driverPort) || !Number.isSafeInteger(nativePort) ||\n    driverPort <= 0 || nativePort <= 0 || driverPort === nativePort) {\n  throw new Error('invalid isolated WebDriver port pair');\n}\n\nconst report = process.env.STARTUP_EXPERIMENT_REPORT;\nif (!report) throw new Error('STARTUP_EXPERIMENT_REPORT is required');\nconst driverGroupFile = `${report}.driver-group`;\nconst driverLogFile = `${report}.driver.log`;\n\nconst waitForPort = async (port: number, timeoutMs: number): Promise<void> => {\n  const deadline = Date.now() + timeoutMs;\n  while (Date.now() < deadline) {\n    const connected = await new Promise<boolean>((resolve) => {\n      const socket = net.connect(port, '127.0.0.1');\n      socket.once('connect', () => { socket.destroy(); resolve(true); });\n      socket.once('error', () => resolve(false));\n    });\n    if (connected) return;\n    await new Promise((resolve) => setTimeout(resolve, 100));\n  }\n  throw new Error(`tauri-driver did not listen on isolated port ${port}`);\n};\n\nconst stopDriverGroup = async (): Promise<void> => {\n  if (!fs.existsSync(driverGroupFile)) return;\n  const pid = Number(fs.readFileSync(driverGroupFile, 'utf8'));\n  await stopNativeProcessGroup({ pid }, 'startup experiment WebDriver');\n  fs.rmSync(driverGroupFile);\n};\n\nconst cleanup = createNativeProcessCleanupHooks({\n  environment: process.env,\n  stateEnvironmentKey: 'STARTUP_EXPERIMENT_CLEANUP_STATE_DIRECTORY',\n  stop: stopDriverGroup,\n});\n\nexport const config: WebdriverIO.Config = {\n  ...base,\n  port: driverPort,\n  connectionRetryCount: 0,\n  connectionRetryTimeout: 20_000,\n  specs: process.env.STARTUP_EXPERIMENT_SPECS?.split(',') ?? ['./startup-experiment.spec.ts'],\n  capabilities: [{\n    'wdio:enforceWebDriverClassic': true,\n    'tauri:options': { application: process.env.STARTUP_EXPERIMENT_BINARY! },\n  } as WebdriverIO.Capabilities],\n  onPrepare: cleanup.prepare,\n  beforeSession: async () => {\n    const driverPath = path.join(os.homedir(), '.cargo', 'bin', 'tauri-driver');\n    const args = ['--port', String(driverPort), '--native-port', String(nativePort)];\n    if (process.env.TAURI_NATIVE_DRIVER) {\n      args.push('--native-driver', process.env.TAURI_NATIVE_DRIVER);\n    }\n    const driver = spawn(driverPath, args, {\n      detached: true,\n      stdio: ['ignore', 'pipe', 'pipe'],\n    });\n    let driverError: Error | undefined;\n    driver.once('error', (error) => { driverError = error; });\n    const log = fs.createWriteStream(driverLogFile);\n    driver.stdout?.pipe(process.stdout, { end: false });\n    driver.stdout?.pipe(log, { end: false });\n    driver.stderr?.pipe(process.stderr, { end: false });\n    driver.stderr?.pipe(log, { end: false });\n    driver.once('exit', () => log.end());\n    fs.writeFileSync(driverGroupFile, String(nativeProcessGroup(driver).pid));\n    await waitForPort(driverPort, 10_000);\n    if (driverError) throw driverError;\n  },\n  afterSession: cleanup.cleanup,\n  onComplete: async () => {\n    // The worker may exit before afterSession on a failed session. The launcher\n    // retains the group PID and performs the same bounded cleanup in that case.\n    try {\n      await cleanup.cleanup();\n    } finally {\n      cleanup.complete();\n    }\n  },\n};\n",
+    "/tmp/tauri-explorer-listing-748/e2e-tauri/startup-experiment.spec.ts": "import { browser, $, expect } from '@wdio/globals';\nimport fs from 'node:fs';\nimport { measureProcessTreeRss, type NativeProcessRow } from './native-qualification';\nfunction rss(): number {\n  const rows: NativeProcessRow[] = [];\n  for (const id of fs.readdirSync('/proc')) {\n    if (!/^\\d+$/.test(id)) continue;\n    try {\n      const stat = fs.readFileSync(`/proc/${id}/stat`, 'utf8').split(') ').at(-1)!.split(' ');\n      const status = fs.readFileSync(`/proc/${id}/status`, 'utf8');\n      rows.push({ pid: Number(id), parentPid: Number(stat[1]), executable: fs.readlinkSync(`/proc/${id}/exe`), rssBytes: Number(status.match(/VmRSS:\\s+(\\d+)/)?.[1] ?? 0)*1024 });\n    } catch {}\n  }\n  return measureProcessTreeRss(rows, process.env.STARTUP_EXPERIMENT_BINARY!, Date.now()).rssBytes;\n}\n\n\ndescribe('release directory transfer experiment', () => {\n  it('loads the complete directory and responds to real keyboard selection', async () => {\n    const directory = process.env.STARTUP_EXPERIMENT_DIRECTORY!;\n    const count = Number(process.env.STARTUP_EXPERIMENT_COUNT);\n    await $('.file-list').waitForExist({ timeout: 20000 });\n    const mode = process.env.STARTUP_EXPERIMENT_VIEW!;\n    const label = `${mode[0].toUpperCase()}${mode.slice(1)} View`;\n    await browser.keys(['Control', 'Shift', 'p']);\n    await $('.command-palette-dialog .search-input').waitForDisplayed();\n    await browser.keys(label);\n    await browser.waitUntil(async () => (await browser.execute(() => document.querySelector('.command-palette-dialog .command-item.selected')?.textContent ?? '')).includes(label));\n    await browser.keys('Enter');\n    await $('.command-palette-dialog').waitForDisplayed({ reverse: true });\n    await $(`.${mode}-view`).waitForDisplayed();\n    await browser.keys(['Control', 'l']);\n    await $('.path-input').waitForDisplayed();\n    await browser.execute((directory: string, count: number) => {\n      const input = document.querySelector<HTMLInputElement>('.path-input')!;\n      input.value = directory;\n      input.dispatchEvent(new Event('input', { bubbles: true }));\n      const data = document.documentElement.dataset;\n      document.dispatchEvent(new Event(\"directory-profile-start\"));\n      const started = performance.now();\n      let last = started;\n      let maxGap = 0;\n      let firstEntriesMs: number | null = null;\n      const frame = () => {\n        const now = performance.now();\n        maxGap = Math.max(maxGap, now - last);\n        last = now;\n        const path = document.querySelector('.status-path')?.getAttribute('title');\n        const text = document.querySelector('.status-bar')?.textContent ?? '';\n        if (path === directory && document.querySelector('.entry-item')) firstEntriesMs ??= now - started;\n        if (path === directory && text.includes(`${count} items`)) {\n          data.startupExperiment = JSON.stringify({ firstEntriesMs, completeMs: now - started, maxGap });\n        } else if (now - started < 15000) requestAnimationFrame(frame);\n      };\n      requestAnimationFrame(frame);\n      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));\n    }, directory, count);\n    let peakRssBytes = rss();\n    const initialRssBytes = peakRssBytes;\n    const sampler = setInterval(() => { peakRssBytes = Math.max(peakRssBytes, rss()); }, 25);\n    try {\n    await browser.waitUntil(async () => Boolean(await browser.execute(() => document.documentElement.dataset.startupExperiment)), {timeout: 20000});\n    const metrics = JSON.parse(await browser.execute(() => document.documentElement.dataset.startupExperiment!));\n    const inputStarted = Date.now();\n    await browser.keys(['Control', 'End']);\n    const last = `file-${String(count-1).padStart(5, '0')}.txt`;\n    await browser.waitUntil(async () => (await browser.execute(() => document.querySelector('.entry-item.selected')?.textContent ?? '')).includes(last), {timeout: 5000});\n    await expect($('.entry-item.selected')).toBeDisplayed();\n    metrics.keyboardRoundTripMs = Date.now() - inputStarted;\n    await expect($(`.${mode}-view`)).toBeDisplayed();\n    metrics.actualView = mode;\n\n    metrics.initialRssBytes = initialRssBytes;\n    metrics.peakRssBytes = peakRssBytes;\n    metrics.finalRssBytes = rss();\n    fs.writeFileSync(process.env.STARTUP_EXPERIMENT_REPORT!, JSON.stringify(metrics, null, 2));\n    await browser.saveScreenshot(process.env.STARTUP_EXPERIMENT_REPORT! + '.png');\n    } finally { clearInterval(sampler); }\n  });\n});\n\n\ndescribe('native input during directory ingestion', () => {\n  it('accepts address typing and navigation while a large listing is pending', async () => {\n    const directory = process.env.STARTUP_EXPERIMENT_DIRECTORY!;\n    const empty = process.env.STARTUP_EXPERIMENT_EMPTY!;\n    const navigate = async (path: string) => {\n      await browser.keys(['Control', 'l']);\n      await $('.path-input').waitForDisplayed();\n      await browser.execute((path: string) => {\n        const input = document.querySelector<HTMLInputElement>('.path-input')!;\n        input.value = path;\n        input.dispatchEvent(new Event('input', { bubbles: true }));\n        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));\n      }, path);\n    };\n    await navigate(empty);\n    await browser.waitUntil(async () => await browser.execute((empty: string) =>\n      document.querySelector('.status-path')?.getAttribute('title') === empty &&\n      (document.querySelector('.status-bar')?.textContent ?? '').includes('0 items'), empty), { timeout: 10000 });\n    await browser.execute((directory: string) => {\n      delete document.documentElement.dataset.ingestionCompleteAt;\n      const deadline = performance.now() + 10000;\n      const frame = () => {\n        if (document.querySelector('.status-path')?.getAttribute('title') === directory &&\n            (document.querySelector('.status-bar')?.textContent ?? '').includes('100000 items')) {\n          document.documentElement.dataset.ingestionCompleteAt = String(Date.now());\n        } else if (performance.now() < deadline) requestAnimationFrame(frame);\n      };\n      requestAnimationFrame(frame);\n    }, directory);\n    await navigate(directory);\n    const started = Date.now();\n    await browser.keys(['Control', 'l']);\n    await $('.path-input').waitForDisplayed();\n    const addressReadyMs = Date.now() - started;\n    // Real WebDriver typing exercises focus and the input handler, not a DOM assignment.\n    await browser.keys(['Control', 'a']);\n    await browser.keys(empty);\n    await expect($('.path-input')).toHaveValue(empty);\n    const typingMs = Date.now() - started;\n    // Under load the 150 ms autocomplete debounce can finish while WebDriver\n    // is still delivering the path. Enter would then accept the selected\n    // suggestion instead of confirming the address. Record that state and\n    // dismiss only the suggestions with a real Escape key before confirming.\n    const autocomplete = await browser.execute(() => ({\n      visible: Boolean(document.querySelector('.suggestions-dropdown')),\n      selected: document.querySelector('.suggestions-dropdown .suggestion-item.selected')?.textContent?.trim() ?? null,\n      value: document.querySelector<HTMLInputElement>('.path-input')?.value ?? null,\n      focused: document.activeElement?.className ?? null,\n    }));\n    if (autocomplete.visible) {\n      await browser.keys('Escape');\n      await $('.suggestions-dropdown').waitForExist({ reverse: true });\n      await expect($('.path-input')).toHaveValue(empty);\n    }\n    await browser.keys('Enter');\n    await browser.waitUntil(async () => await browser.execute((empty: string) =>\n      document.querySelector('.status-path')?.getAttribute('title') === empty &&\n      (document.querySelector('.status-bar')?.textContent ?? '').includes('0 items'), empty), { timeout: 10000 });\n    const navigationMs = Date.now() - started;\n    await browser.pause(500);\n    await expect($('.status-path')).toHaveAttribute('title', empty);\n    await expect($('.entry-item')).not.toExist();\n    const report = process.env.STARTUP_EXPERIMENT_REPORT!;\n    const metrics = JSON.parse(fs.readFileSync(report, 'utf8'));\n    const completedAt = await browser.execute(() => Number(document.documentElement.dataset.ingestionCompleteAt) || null);\n    metrics.inputDuringLoad = { addressReadyMs, typingMs, navigationMs, autocomplete, inputRequestedBeforeCompleteFrame: completedAt === null || started <= completedAt, finalPath: empty };\n    fs.writeFileSync(report, JSON.stringify(metrics, null, 2));\n    await browser.saveScreenshot(report + '.input.png');\n  });\n});\n\ndescribe('native observation after compact navigation', () => {\n  it('reflects an external create and removal in the active directory', async () => {\n    const empty = process.env.STARTUP_EXPERIMENT_EMPTY!;\n    const marker = `${empty}/wire-watcher-check.txt`;\n    await expect($('.status-path')).toHaveAttribute('title', empty);\n    fs.writeFileSync(marker, 'external watcher update', { flag: 'wx' });\n    try {\n      // Match the native suite's domTexts contract: WebDriver getText treats\n      // CSS-clipped file names as absent even after the watcher publishes them.\n      await browser.waitUntil(async () => browser.execute(() =>\n        (document.querySelector('.status-bar')?.textContent ?? '').includes('1 item') &&\n        document.querySelector('.entry-item .entry-name')?.textContent === 'wire-watcher-check.txt'), { timeout: 10000 });\n      await expect($('.entry-item')).toBeDisplayed();\n      await browser.saveScreenshot(process.env.STARTUP_EXPERIMENT_REPORT! + '.watch.png');\n    } finally {\n      fs.rmSync(marker, { force: true });\n    }\n    await browser.waitUntil(async () => (await $('.status-bar').getText()).includes('0 items'), { timeout: 10000 });\n    await expect($('.entry-item')).not.toExist();\n    const report = process.env.STARTUP_EXPERIMENT_REPORT!;\n    const metrics = JSON.parse(fs.readFileSync(report, 'utf8'));\n    metrics.externalWatchCreateAndRemove = true;\n    fs.writeFileSync(report, JSON.stringify(metrics, null, 2));\n  });\n});\n"
+  },
+  "validation": {
+    "unit": "2506 passed, 3 skipped; 29 performance contracts passed",
+    "rust": "1270 active library tests passed, 21 ignored; initial sandbox run failed 3 socket/cache-restricted tests, all passed with needed permissions",
+    "clippy": "all-targets -D warnings passed",
+    "svelte": "0 errors, 0 warnings",
+    "architecture": "clean",
+    "maps": "502/502",
+    "native": "6 sessions, 3 outcomes per session: exact large count + final-row selection, typed navigation away, external file create/removal"
+  },
+  "limits": [
+    "Fresh process, warm uncontrolled OS caches; Xvfb/Openbox X11, software rendering warnings, not normal Wayland desktop launch.",
+    "Session builds/tests stopped while sampling; unrelated desktop/background work not controlled.",
+    "Startup endpoint is receipt after settings, commands, listing and two rAF opportunities, not observed pixels or first-input latency.",
+    "One native pair per view establishes outcomes and direction, not a distribution. rAF starvation is not compositor frame time.",
+    "Native WebDriver interaction alone uses an exact-executable fork bypass; startup does not.",
+    "RSS is sum of process RSS and double-counts shared mappings; sampling can miss transients.",
+    "A remaining roughly 100ms frame pause is not smooth 60Hz or Ghostty-level qualification. Mac half-bounce remains untested."
+  ],
+  "rejectedQualificationAttempt": {
+    "path": "/tmp/listing-748-verified-views-m9yvqety/details-baseline-0/wdio.log",
+    "reason": "Baseline watcher published count1, but WebDriver getText(row) returned only TXT, omitting CSS-clipped name. Match established native domTexts contract instead; keep displayed row, screenshot and removal assertions. No production change."
+  },
+  "independentReview": {
+    "reviewer": "trash_admission_verifier (GPT-5.6 Sol)",
+    "verdict": "CONFIRMED scoped correctness and measured claims after precise nearest-rank p50 wording; no blocker",
+    "findingsAddressed": [
+      "Reject fractional sizes without imposing new safe-integer limits.",
+      "Test actual private ObservedDirectoryListing, not a mirrored struct.",
+      "Qualify legacy fixture trust; native columns alone have strict validation.",
+      "Use nearest-rank p50 wording: conventional median of 20 values averages positions10/11."
+    ],
+    "verified": [
+      "Exact path and optional metadata contracts, decoder acquisition cleanup, IPC call-site coverage.",
+      "88 startup samples:2warmups+20measurements percell, alternatingAB/BA; all20large-directory pairs favorcompact, smallfixturemixed.",
+      "Baseline and candidate hashes and production source hashes; archived patch consistency.",
+      "6native reports/logs support18outcomes and stated framegaps/RSS."
+    ],
+    "limits": [
+      "Procedural build provenance, not cryptographically reproducible build proof.",
+      "Single native pair/view, driver roundtrip overhead, summedRSS limitations, remaining~100msrAFgap."
+    ]
+  }
+}

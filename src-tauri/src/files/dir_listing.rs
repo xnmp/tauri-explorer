@@ -379,6 +379,27 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn observed_snapshot_keeps_its_lease_outside_the_transport_columns() {
+        let observed = ObservedDirectoryListing {
+            listing: DirectoryListing {
+                path: "/watched".into(),
+                entries: std::sync::Arc::new(Vec::new()),
+            },
+            watch_lease: super::super::directory_watches::Lease {
+                id: "owned-lease".into(),
+                path: "/watched".into(),
+            },
+        };
+        let value = serde_json::to_value(observed).unwrap();
+        assert_eq!(
+            value["watch_lease"],
+            serde_json::json!({ "id": "owned-lease", "path": "/watched" })
+        );
+        assert_eq!(value["format"], "columns-v1");
+        assert_eq!(value["columns"]["names"], serde_json::json!([]));
+    }
+
+    #[test]
     fn test_list_directory() {
         let dir = tempdir().unwrap();
         File::create(dir.path().join("test.txt")).unwrap();

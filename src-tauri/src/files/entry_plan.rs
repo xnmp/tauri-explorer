@@ -152,7 +152,21 @@ impl EntryPlan {
             || AppError::Other("Entry admission returned incomplete path bindings".into());
         let target = paths.next().ok_or_else(missing)?;
         match &mut self.request {
-            Request::Rename { source, .. } => *source = paths.next().ok_or_else(missing)?,
+            Request::Rename { source, .. } => {
+                let resolved_source = paths.next().ok_or_else(missing)?;
+                // Admission observes paths independently. A parent alias can
+                // change between captures; rename must never become a move
+                // from a different directory or change either requested leaf.
+                if resolved_source.parent() != target.parent()
+                    || resolved_source.file_name() != source.file_name()
+                    || target.file_name() != self.target.file_name()
+                {
+                    return Err(AppError::InvalidPath(
+                        "Rename path bindings changed during admission".into(),
+                    ));
+                }
+                *source = resolved_source;
+            }
             Request::Symlink { probe_target, .. } => {
                 *probe_target = Some(paths.next().ok_or_else(missing)?)
             }

@@ -474,6 +474,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/move_plan.rs` — bounded move intent supplies source/target claims, admitted execution bindings and physical/requested refresh parents.
 - `src-tauri/src/files/move_execution.rs` — forward/inverse move reservation, retained worker context and warning-preserving ownership settlement.
 - `src-tauri/src/files/entry_plan.rs` — pure owned targets/requests for directory/file creation, rename, new text and symlink creation; forward history and the owned worker consume the same plan; Linux admission binds execution paths while retaining stable alias presentation and both refresh parents.
+- `src-tauri/src/files/entry_execution.rs` — shared entry admission, bound worker execution and completion/retirement for forward commands and rename inverses.
 - `mutation.rs` — committed-path receipt with optional FileEntry metadata and a native-only ordinary-copy PublishedEntry (physical path, parent identity, entry version); metadata cannot revoke a committed mutation.
 - `replacement.rs` — explicit retained ownership of overwritten destinations; no-replace rollback shared by copy/move, retained-original reporting after partial source cleanup.
 - `publication.rs` — owns unpublished copy/write payloads in an exclusive physical staging directory; observed Linux ordinary-copy publication retains the staged version and uses opened-parent no-replace rename. Generic publication remains path-based.

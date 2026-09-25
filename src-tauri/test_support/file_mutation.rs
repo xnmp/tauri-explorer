@@ -534,7 +534,8 @@ fn wholly_failed_delete_batch_is_unchanged_and_publishes_no_refresh() {
 #[cfg(target_os = "linux")]
 mod recovery_admission {
     use super::*;
-    use crate::file_mutation::{entry_outcome_owned, entry_with_recovery, settle_entry};
+    use crate::file_mutation::{entry_with_recovery, settle_entry};
+    use crate::files::entry_execution::{execute_owned, finish};
     use crate::files::recovery::{Access, ResourceRequest, Runtime, Scope};
     use std::path::{Path, PathBuf};
 
@@ -706,7 +707,7 @@ mod recovery_admission {
                     _ => EntryPlan::write_text(native(&alias.join("new")), "owned bytes".into()),
                 };
                 let (plan, admission) =
-                    crate::file_mutation::admit_entry(plan, runtime.clone(), storage.clone())
+                    crate::files::entry_execution::admit(plan, runtime.clone(), storage.clone())
                         .await
                         .unwrap();
                 let renamed = entry_with_recovery(
@@ -733,8 +734,8 @@ mod recovery_admission {
                     "the literal alias name remains reserved after removal"
                 );
                 std::os::unix::fs::symlink(&other, &alias).unwrap();
-                let outcome = entry_outcome_owned(plan, admission.context()).await;
-                let result = settle_entry(outcome, admission).await;
+                let outcome = execute_owned(plan, admission.context()).await;
+                let result = settle_entry(finish(outcome, admission).await);
                 assert_eq!(result.result.unwrap().path, native(&original.join("new")));
                 assert!(result.affected.contains(&native(&alias)));
                 assert!(result.affected.contains(&native(&original)));
@@ -771,7 +772,7 @@ mod recovery_admission {
             let storage = root.path().join("recovery");
             let target = outer.join("source");
             let link = root.path().join("new-link");
-            let (plan, admission) = crate::file_mutation::admit_entry(
+            let (plan, admission) = crate::files::entry_execution::admit(
                 EntryPlan::symlink(native(&target), native(&link)),
                 runtime.clone(),
                 storage.clone(),
@@ -794,8 +795,8 @@ mod recovery_admission {
                     .file_type()
                     .is_symlink());
             }
-            let outcome = entry_outcome_owned(plan, admission.context()).await;
-            let result = settle_entry(outcome, admission).await;
+            let outcome = execute_owned(plan, admission.context()).await;
+            let result = settle_entry(finish(outcome, admission).await);
             assert!(result.result.is_ok());
             assert_eq!(fs::read_link(&link).unwrap(), target);
             assert_eq!(fs::read(&link).unwrap(), b"owned source");
@@ -837,6 +838,31 @@ mod recovery_admission {
     }
 
     #[test]
+    fn non_utf8_rename_keeps_the_receipt_without_lossy_history_authority() {
+        use std::os::unix::ffi::OsStringExt;
+        tauri::async_runtime::block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let physical = root
+                .path()
+                .join(std::ffi::OsString::from_vec(b"native-\xff".to_vec()));
+            let alias = root.path().join("alias");
+            fs::create_dir(&physical).unwrap();
+            std::os::unix::fs::symlink(&physical, &alias).unwrap();
+            fs::write(physical.join("before"), b"owned").unwrap();
+            let result = entry_with_recovery(
+                EntryPlan::rename(native(&alias.join("before")), "after".into()).unwrap(),
+                Runtime::default(),
+                root.path().join("recovery"),
+            )
+            .await;
+            assert_eq!(result.result.unwrap().path, native(&alias.join("after")));
+            assert_eq!(fs::read(physical.join("after")).unwrap(), b"owned");
+            assert!(matches!(result.effect, ForwardEffect::Changed(None)));
+            assert!(result.warning.unwrap().contains("native path"));
+        });
+    }
+
+    #[test]
     fn cleanup_failure_keeps_the_confirmed_receipt_and_history_effect() {
         tauri::async_runtime::block_on(async {
             let root = tempfile::tempdir().unwrap();
@@ -848,10 +874,10 @@ mod recovery_admission {
                 .admit(storage.clone(), plan.resources())
                 .await
                 .unwrap();
-            let outcome = entry_outcome_owned(plan, admission.context()).await;
+            let outcome = execute_owned(plan, admission.context()).await;
             // Real namespace substitution makes the coordinator reject settlement.
             fs::rename(storage.join("admission.lock"), storage.join("moved-gate")).unwrap();
-            let result = settle_entry(outcome, admission).await;
+            let result = settle_entry(finish(outcome, admission).await);
             assert_eq!(result.result.unwrap().path, native(&target));
             assert_eq!(fs::read(&target).unwrap(), b"confirmed bytes");
             assert!(matches!(result.effect, ForwardEffect::Changed(None)));

@@ -10,6 +10,7 @@ pub mod dir_listing;
 mod directory_cache;
 mod directory_watches;
 pub mod drives;
+pub(crate) mod entry_execution;
 pub(crate) mod entry_plan;
 mod entry_version;
 pub mod external_apps;

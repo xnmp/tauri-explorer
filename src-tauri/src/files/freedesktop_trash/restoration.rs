@@ -96,10 +96,26 @@ impl Claims {
 pub(crate) fn prepare(
     requests: &[RestoreRequest],
 ) -> Result<(PreparedSelection, Vec<Resource>), AppError> {
+    prepare_with(requests, || {})
+}
+
+/// `between` runs after targets are resolved and before claims are captured:
+/// the seam where an external alias retarget could split the two observations.
+fn prepare_with(
+    requests: &[RestoreRequest],
+    mut between: impl FnMut(),
+) -> Result<(PreparedSelection, Vec<Resource>), AppError> {
     let mut claims = Claims::default();
     let mut items = VecDeque::new();
     let mut retained = 0usize;
+    // Claim position of each item's target request, when one was recorded.
+    let mut targets = Vec::with_capacity(requests.len());
     for request in requests {
+        targets.push(
+            target_request_path(request)
+                .file_name()
+                .map(|_| claims.requests.len()),
+        );
         // Even an invalid artifact retains its requested namespace claim. It
         // cannot execute, but its aligned per-item error survives batch setup.
         claims.add(
@@ -165,8 +181,22 @@ pub(crate) fn prepare(
             item.map_err(|error| error.to_string()),
         ));
     }
+    between();
     let (requests, roles): (Vec<_>, Vec<_>) = claims.requests.into_iter().unzip();
     let captured = resources::capture_requests(&requests)?;
+    // Execution restores into the target resolved above; the admitted claim
+    // must name that same physical entry, or the pair came from different
+    // observations of an alias and this item cannot run under the claim.
+    for ((_, item), position) in items.iter_mut().zip(&targets) {
+        if let (Ok(prepared), Some(position)) = (&*item, position) {
+            if captured.get(*position).map(|resource| &resource.path.0) != Some(&prepared.target) {
+                *item = Err(
+                    "Restore destination changed while it was being prepared; nothing was restored"
+                        .into(),
+                );
+            }
+        }
+    }
     let mut index = SelectionIndex::default();
     let mut resources = HashSet::new();
     for (position, resource) in captured.into_iter().enumerate() {

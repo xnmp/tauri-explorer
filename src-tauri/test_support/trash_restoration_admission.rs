@@ -353,3 +353,27 @@ fn partial_parent_creation_failure_preserves_refresh_effects_and_original_payloa
     }
     assert!(artifact_paths(&request).0.exists());
 }
+
+#[test]
+fn an_alias_retargeted_between_resolution_and_claim_capture_cannot_restore() {
+    let mut f = Fixture::new();
+    let mut request = f.trash("physical/item");
+    let alias = f.root.path().join("alias");
+    symlink(f.root.path().join("physical"), &alias).unwrap();
+    request.path = alias.join("item").to_str().unwrap().into();
+    let foreign = f.root.path().join("foreign");
+    fs::create_dir(&foreign).unwrap();
+    let (mut plan, claims) = prepare_with(std::slice::from_ref(&request), || {
+        fs::remove_file(&alias).unwrap();
+        symlink(&foreign, &alias).unwrap();
+    })
+    .unwrap();
+    assert!(claims
+        .iter()
+        .any(|claim| claim.path.0 == fs::canonicalize(&foreign).unwrap().join("item")));
+    let result = plan.execute_next(&request.path, &DirectoryEffects::default());
+    assert!(result.is_err(), "{result:?}");
+    assert!(!f.root.path().join("physical/item").exists());
+    assert!(!foreign.join("item").exists());
+    assert!(artifact_paths(&request).0.exists());
+}

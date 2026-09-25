@@ -254,6 +254,17 @@ impl execution::Operations for NativeOperations {
         &self,
         publication: std::sync::Arc<crate::files::mutation::PublishedEntry>,
     ) -> Result<crate::files::trash::FileBatchOutcome, execution::OperationError> {
+        #[cfg(target_os = "linux")]
+        if let Some(recovery) = &self.recovery {
+            return crate::files::trash::trash_publication_admitted(publication, recovery.clone())
+                .await
+                .map_err(operation_error);
+        }
+        #[cfg(all(target_os = "linux", not(test)))]
+        return Err(execution::OperationError::Unchanged(
+            "Trash ownership is unavailable".into(),
+        ));
+        #[cfg(any(not(target_os = "linux"), test))]
         crate::files::trash::trash_publication(publication)
             .await
             .map_err(operation_error)
@@ -339,6 +350,19 @@ impl execution::Operations for NativeOperations {
         &self,
         paths: Vec<String>,
     ) -> Result<crate::files::trash::FileBatchOutcome, execution::OperationError> {
+        #[cfg(target_os = "linux")]
+        if let Some(recovery) = &self.recovery {
+            let plan = crate::files::batch::BatchPlan::new(paths)
+                .map_err(execution::OperationError::Unchanged)?;
+            return crate::files::trash::run_admitted_batch(plan, recovery.clone(), false)
+                .await
+                .map_err(operation_error);
+        }
+        #[cfg(all(target_os = "linux", not(test)))]
+        return Err(execution::OperationError::Unchanged(
+            "Trash ownership is unavailable".into(),
+        ));
+        #[cfg(any(not(target_os = "linux"), test))]
         crate::files::trash::move_multiple_to_trash(paths)
             .await
             .map_err(operation_error)
@@ -347,6 +371,17 @@ impl execution::Operations for NativeOperations {
         &self,
         requests: Vec<crate::files::trash_artifact::RestoreRequest>,
     ) -> Result<crate::files::trash::FileBatchOutcome, execution::OperationError> {
+        #[cfg(target_os = "linux")]
+        if let Some(recovery) = &self.recovery {
+            return crate::files::trash::restore_entries_admitted(requests, recovery.clone())
+                .await
+                .map_err(operation_error);
+        }
+        #[cfg(all(target_os = "linux", not(test)))]
+        return Err(execution::OperationError::Unchanged(
+            "Restore ownership is unavailable".into(),
+        ));
+        #[cfg(any(not(target_os = "linux"), test))]
         crate::files::trash::restore_entries(requests)
             .await
             .map_err(operation_error)
@@ -411,3 +446,7 @@ mod replacement_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test_support/file_history_publication.rs"]
 mod publication_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/file_history_trash_admission.rs"]
+mod trash_admission_tests;

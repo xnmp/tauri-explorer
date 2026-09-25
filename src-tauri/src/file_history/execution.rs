@@ -286,9 +286,13 @@ fn settled_copy(action: Action, outcome: FileBatchOutcome, direction: Direction)
         let restored = outcome
             .publications
             .get(copied_path)
+            // The display key can be lossy for a native filename. Compare
+            // against the prior native authority, never reconstruct a path
+            // from that key; restoration may legitimately recreate its parent.
             .filter(|entry| {
-                entry.path == std::path::Path::new(copied_path)
-                    && entry.path.parent() == Some(std::path::Path::new(parent_dir))
+                publication
+                    .as_ref()
+                    .is_some_and(|previous| entry.path == previous.path)
             })
             .cloned();
         if restored.is_none() {

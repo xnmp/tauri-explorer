@@ -160,9 +160,23 @@ impl Directory {
 
     /// Exclusive creation only. Existing directories require separate admission.
     pub(crate) fn create_directory(&self, name: &OsStr) -> io::Result<Self> {
+        self.mkdir(name, 0o700)
+    }
+
+    /// Create ordinary user directories with the requested mode subject to umask.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn create_directory_with_mode(
+        &self,
+        name: &OsStr,
+        mode: libc::mode_t,
+    ) -> io::Result<Self> {
+        self.mkdir(name, mode)
+    }
+
+    fn mkdir(&self, name: &OsStr, mode: libc::mode_t) -> io::Result<Self> {
         let native = native_name(name)?;
         // SAFETY: the descriptor and terminated name remain valid during mkdirat.
-        if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), 0o700) } != 0 {
+        if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), mode) } != 0 {
             return Err(io::Error::last_os_error());
         }
         self.open_existing(name)
@@ -195,6 +209,26 @@ impl Directory {
                 target_directory.file.as_raw_fd(),
                 target.as_ptr(),
                 libc::RENAME_EXCL,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    /// Whether the effective identity may unlink entries here: write and search
+    /// on this retained descriptor, including ACLs and read-only mounts. Advisory
+    /// preflight only; the later unlink still makes the authoritative decision.
+    pub(crate) fn permits_entry_removal(&self) -> io::Result<()> {
+        // SAFETY: the owned descriptor and constant terminated component are valid.
+        let result = unsafe {
+            libc::faccessat(
+                self.file.as_raw_fd(),
+                c".".as_ptr(),
+                libc::W_OK | libc::X_OK,
+                libc::AT_EACCESS,
             )
         };
         if result == 0 {

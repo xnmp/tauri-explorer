@@ -7,7 +7,7 @@
 
 use super::{
     coordinator::{Coordinator, DurableOperation},
-    model::{OperationSpec, OperationState, StagedPayload},
+    model::{OperationState, StagedPayload},
     replacement_artifact::{Anchor, RetirementStep, Root},
     replacement_transition::ReplacementTransition,
     retention::{measured_bytes, retention, Disposal, Retained, Retention, Usage},
@@ -35,14 +35,74 @@ impl Eligibility {
     }
 }
 
-pub(super) struct Retirement {
+/// Operation-specific observation and effects behind one retention lifecycle.
+pub(super) enum Retirement {
+    Replacement(ReplacementRetirement),
+    Move(super::move_retirement::MoveRetirement),
+}
+impl Retirement {
+    pub(super) fn open(operation: DurableOperation) -> Result<Self, AppError> {
+        match operation.state() {
+            OperationState::Move(_) => {
+                super::move_retirement::MoveRetirement::open(operation).map(Self::Move)
+            }
+            OperationState::Replacement(_) => {
+                ReplacementRetirement::open(operation).map(Self::Replacement)
+            }
+        }
+    }
+    pub(super) fn eligibility(&self) -> &Eligibility {
+        match self {
+            Self::Replacement(r) => r.eligibility(),
+            Self::Move(r) => r.eligibility(),
+        }
+    }
+    pub(super) fn generation(&self) -> u64 {
+        match self {
+            Self::Replacement(r) => r.generation(),
+            Self::Move(r) => r.operation.generation(),
+        }
+    }
+    pub(super) fn state(&self) -> &OperationState {
+        match self {
+            Self::Replacement(r) => r.state(),
+            Self::Move(r) => r.operation.state(),
+        }
+    }
+    fn position(&self) -> Retention {
+        match self {
+            Self::Replacement(r) => r.retention,
+            Self::Move(r) => retention(&r.operation.intent().operation, r.operation.state()),
+        }
+    }
+    pub(super) fn measure(&mut self) -> Result<Option<u64>, AppError> {
+        match self {
+            Self::Replacement(r) => r.measure(),
+            Self::Move(r) => r.measure(),
+        }
+    }
+    pub(super) fn retire(self) -> Result<(), AppError> {
+        self.retire_with(|_| Ok(()))
+    }
+    fn retire_with(
+        self,
+        checkpoint: impl FnMut(&'static str) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        match self {
+            Self::Replacement(r) => r.retire_with(checkpoint),
+            Self::Move(r) => r.retire_with(checkpoint),
+        }
+    }
+}
+
+pub(super) struct ReplacementRetirement {
     operation: DurableOperation,
     retention: Retention,
     root: Option<Root>,
     eligibility: Eligibility,
 }
 
-impl Retirement {
+impl ReplacementRetirement {
     /// Reopen an already-claimed record tolerantly: retirement legitimately
     /// runs after its artifact root is gone, unlike replacement execution.
     pub(super) fn open(operation: DurableOperation) -> Result<Self, AppError> {
@@ -103,10 +163,6 @@ impl Retirement {
     }
 
     /// Run the complete journaled machine. Idempotent at every checkpoint.
-    pub(super) fn retire(self) -> Result<(), AppError> {
-        self.retire_with(|_| Ok(()))
-    }
-
     fn retire_with(
         mut self,
         mut checkpoint: impl FnMut(&'static str) -> Result<(), AppError>,
@@ -299,20 +355,6 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
         };
         let position = retention(&entry.intent.operation, &state);
         let bytes = measured_bytes(&state);
-        if matches!(position, Retention::Unsupported) {
-            // Measured, counted, never claimed and never retired.
-            match measure_unsupported(&entry.intent, &state) {
-                Ok(measured) => usage.add(position, measured, true),
-                Err(error) => {
-                    log::debug!(
-                        "Recovery retention could not measure {}: {error}",
-                        entry.intent.id
-                    );
-                    usage.add(position, None, false);
-                }
-            }
-            continue;
-        }
         if !position.retirable() {
             usage.add(position, bytes, true);
             continue;
@@ -322,7 +364,7 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
         // redundant artifact. Claiming advances the generation, which
         // invalidates the generation the user is looking at, so a record with
         // nothing to do must never be claimed by an enforcement pass.
-        if position.settled().is_some() {
+        if position.settled().is_some() || matches!(position, Retention::MoveSettled { .. }) {
             if bytes.is_some() {
                 usage.add(position, bytes, true);
                 continue;
@@ -397,41 +439,9 @@ fn settle(coordinator: &Arc<Coordinator>, id: &str, generation: u64) -> Result<S
         }
         _ => {
             let bytes = retirement.measure()?;
-            Ok(Settled::Counted(retirement.retention, bytes, true))
+            Ok(Settled::Counted(retirement.position(), bytes, true))
         }
     }
-}
-
-/// Read-only measurement of every artifact root a record retains when its
-/// operation kind has no retirement plan yet (durable moves, #685). Ownership
-/// is never claimed and nothing is journaled, so the bytes are recomputed on
-/// each pass instead of being cached on a checkpoint — the record still counts
-/// against both bounds even though nothing may remove it.
-fn measure_unsupported(
-    intent: &super::model::DurableIntent,
-    state: &OperationState,
-) -> Result<Option<u64>, AppError> {
-    let (OperationSpec::Move(spec), OperationState::Move(move_state)) = (&intent.operation, state)
-    else {
-        return Ok(None);
-    };
-    let mut total = 0u64;
-    for (is_source, plan) in super::move_execution::MoveExecution::plans(spec) {
-        let identity = if is_source {
-            move_state.source_root
-        } else {
-            move_state.target_root
-        };
-        let Some(identity) = identity else { continue };
-        let Some(root) = Anchor::open_plan(intent, plan)?.open_optional(identity)? else {
-            continue;
-        };
-        let Some(bytes) = root.measure_all()? else {
-            return Ok(None);
-        };
-        total = total.saturating_add(bytes);
-    }
-    Ok(Some(total))
 }
 
 /// Read-only observation outside admission and without ownership: is the
@@ -441,6 +451,10 @@ fn artifact_present(
     intent: &super::model::DurableIntent,
     state: &OperationState,
 ) -> Result<bool, AppError> {
+    if matches!(state, OperationState::Move(_)) {
+        // Even a rootless move retains Undo authority and needs its first zero-byte measurement.
+        return Ok(true);
+    }
     let Some(identity) = root_identity(state) else {
         return Ok(false);
     };
@@ -452,7 +466,24 @@ fn artifact_present(
 fn orphan_root_absent(intent: &super::model::DurableIntent) -> Result<bool, AppError> {
     let identity = match &intent.operation {
         super::model::OperationSpec::CopyReplacement(spec) => spec,
-        _ => return Ok(false),
+        super::model::OperationSpec::Move(spec) => {
+            for plan in super::move_execution::MoveExecution::plans(spec)
+                .into_iter()
+                .map(|(_, plan)| plan)
+                .chain(super::move_capability::plans(intent)?)
+            {
+                let parent = crate::files::native_directory::Directory::open(&plan.parent_path)?;
+                if crate::files::file_identity::of_file(&parent.file)? != plan.parent {
+                    return Err(AppError::Other(
+                        "Move artifact parent identity changed".into(),
+                    ));
+                }
+                if parent.entry_exists(plan.root.file_name().expect("validated root"))? {
+                    return Ok(false);
+                }
+            }
+            return Ok(true);
+        }
     };
     let parent = crate::files::native_directory::Directory::open(
         identity

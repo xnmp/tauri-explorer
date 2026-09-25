@@ -42,7 +42,7 @@ footprint is not derivable without an unbounded prewalk, the family defers.
 | --- | --- | --- | --- | --- |
 | Archive compress | `archive.rs::compress_to_zip` | One chosen `<name>.zip` under the selection's parent (write); every selected source subtree (read). No temp files, no sidecars; a failed run removes the archive it created. | Yes — writes a new entry into a directory a move/copy session may own, and reads sources such a session may be relocating. | **Migrated** |
 | Archive extract | `archive.rs::extract_archive` | Extract-here: the archive's containing directory (write, subtree — the archive chooses its own entry names). Extract-to-folder: one chosen sibling directory (write, subtree). The archive itself (read). | Yes — the same directories panes and sessions operate in. | **Migrated** |
-| Deletion / trash | `file_mutation.rs::delete_entries` | Selected paths plus Linux trash auxiliary namespaces: layout directories, `.trashinfo` metadata, exact artifact names and prepared fallback layouts (lesson 680, *Trash preparation includes its auxiliary namespaces*). | Yes. | **Deferred** — holds (1) and (2) but not (3). See below. |
+| Deletion / trash | `file_mutation.rs::delete_entries` | Selected paths plus Linux trash auxiliary namespaces: layout directories, `.trashinfo` metadata, exact artifact names and prepared fallback layouts (lesson 680, *Trash preparation includes its auxiliary namespaces*). | Yes. | **Migrated on Linux for forward `delete_entries` and native Trash Undo/Redo**, including permanent forward deletion. Trash claims its full prepared source/layout/artifact set; permanent deletion binds its source paths. See below. |
 | Grouped / bulk rename | `BulkRenameDialog.svelte` → N × `rename_entry` | Each call: old path + new path (write, subtree), plus traversed parent-symlink reads. | Yes, per item. | **No gap** — every item already takes all three through the `entry()` path (`files/entry_plan.rs`). The batch is a renderer loop with no grouped inverse; that is a history-grouping question, not an admission one. |
 | Plugin-driven mutations | `plugins/api.ts::moveFile` → `state/file-transfer.ts::performFileTransfer` → `move_entry` | Source + destination (write, subtree). | Yes. | **No gap** — `performFileTransfer` dispatches through `api/files.ts`, which goes through `api/file-mutations.ts` and therefore carries a session id; `move_entry` already takes all three. `PluginWorkspace` exposes no other mutating method. The remaining difference is that plugins use the per-item path rather than the ordered session (#685); that is ordering, not admission. |
 | Ordinary copy outside the session | `file_mutation.rs::copy_entry` | Source (read) + destination (write). Holds (1) and (2); it takes a recovery claim only on the overwrite path, via `Runtime::copy_overwriting`. | In principle. | **Deferred** — no production caller. Its only frontend caller is `performFileTransfer`'s `isCopy: true` branch, which no UI flow reaches: paste and drop both run the ordered `copy_session`. It is not dead, though — `src/test-support/file-recovery-probe.ts` drives it with `overwrite: true`, so the native recovery suite exercises exactly the `copy_overwriting` path. Extending admission would harden a path only that probe reaches, and deleting it would remove that coverage; the ordered session is where ordinary copy should converge. |
@@ -51,29 +51,104 @@ footprint is not derivable without an unbounded prewalk, the family defers.
 `git_watch.rs`'s lease is an observation lifetime, not filesystem admission; it
 is not evidence of Git coverage.
 
-### Why deletion defers rather than migrates
+## Deletion admission contract (#735)
 
-Deletion is the next migration, and it is deferred on evidence rather than
-effort. Its exact artifact names are chosen by whole-selection preparation,
-which by #680's design runs *inside* the owned batch worker, after admission
-would have to have happened. Two conservative supersets were considered and
-both are worse than waiting:
+`delete_entries` now sends accepted Linux work through
+`files/trash.rs::run_admitted_batch`. Trash preparation runs in
+`Runtime::admit_prepared`: the coordinator reads its journal revision, builds the
+complete read-only selection outside the gate, and reserves its captured claims
+only if that revision still matches. A retry rebuilds the whole plan, including
+candidate names, layouts and source observations. Preparing first and then using
+ordinary path recapture would leave the old plan outside that revision fence.
 
-- Claiming the trash roots as write subtrees covers every layout directory,
-  `.trashinfo` and payload name — and makes every deletion conflict with every
-  other deletion, including two panes deleting unrelated files. Trash-internal
-  exclusion is already a whole-selection policy (#680); replacing it with a
-  global lock is a concurrency regression, not a safety gain.
-- Claiming only the selected sources leaves the artifact namespace unclaimed
-  while advertising admission, and it forces the worker onto admission's
-  resolved paths. #680 requires the opposite: trash preparation observes
-  requested sources *in their requested spelling*, including nested parent
-  symlinks, and the batch ledger preserves that spelling through its receipts.
+The plan contributes selected physical sources as write subtrees, requested
+parent-symlink reads, layout dependencies, and exact payload/final metadata/staged
+metadata writes for both preferred and fallback destinations. Intra-selection
+container reads still reject selecting a trash ancestor, but are not broad
+inter-operation claims. Requested spelling remains the batch key and receipt key;
+native execution keeps the source parent/version checks from preparation.
 
-The correct shape is for trash preparation's read-only phase to produce the
-claim set, which means hoisting it above the worker or admitting from inside
-it. That is a change to `files/batch`, not to one command, and belongs in its
-own reviewable delivery.
+First-use private directories use `EnsurePrivateDirectory`, restricted to entry
+scope. It permits exclusive mkdir or read-only adoption of a validated private
+directory, never replacement, symlink traversal or unplanned permission repair.
+Two ensures commute. Ordinary claims on that exact entry and enclosing subtree
+claims exclude an ensure; distinct descendant payload entries keep independent
+claims. Existing layout reads remain ordinary reads and planned permission repairs
+remain writes. Thus two fresh disjoint selections can share planned directories,
+including unused fallback layouts. A selection prepared after another worker has
+created a directory can temporarily conflict as an ordinary reader until that
+worker releases its ensure. This conservative first-use refusal does not hold a
+blanket write claim on the trash tree.
+
+The actual batch worker owns `admission.context()` through closure destruction.
+The native forward supervisor awaits the worker and then explicitly retires
+admission. Accepted work survives renderer closure; deletion has no separate
+Cancel API, and dropping its IPC waiter is not cancellation. Ordinary per-item
+failures retain their aligned receipts, uncertain work stops later items, and a
+retirement failure remains an unattributed batch diagnostic without erasing
+confirmed success or exact Undo artifacts.
+
+Permanent deletion uses ordinary write-subtree admission and executes its resolved
+native paths without lossy UTF-8 conversion. This coordinates managed peers; the
+pre-existing path-based permanent removal still does not protect against an
+unmanaged process replacing an entry between observation and removal ([#739](https://github.com/xnmp/tauri-explorer/issues/739)).
+
+Regression evidence: the pre-fix trash executor removed a source while a managed
+copy held a read claim. The admitted path now refuses it before effects. Rust
+contracts also cover complete-plan revision retry, fresh disjoint layouts,
+source/alias exclusion, candidate collisions, partial-batch exact restoration,
+non-UTF-8 physical aliases and worker ownership after waiter loss. Existing trash
+fallback, metadata-failure and substitution contracts remain applicable.
+
+This delivery covers forward deletion and native Trash Undo/Redo on Linux.
+Windows/macOS retain their existing platform implementations. It does not make
+trash a durable recovery record or claim complete mutation-family coverage.
+
+## Native trash inverse admission (#740)
+
+`NativeOperations` passes its existing recovery owner to prepared ordinary-copy
+Undo, trash Redo and exact restoration. These adapters use the same worker-owned
+reservation and finish path as forward trash; they never recursively record a
+forward history action. Missing ownership fails closed in production. Direct
+unadmitted inverse wrappers are available only to platform adapters and tests.
+
+Restoration prepares immutable item plans inside `Runtime::admit_prepared`'s
+revision fence. Claims include the target and exact trash payload subtrees,
+metadata entry, existing trash/parent directory entry reads, parent-alias reads,
+and every missing destination-parent entry write. A shared selection index
+rejects overlapping targets/artifacts and physical alias duplicates while
+allowing distinct hardlink payloads. Missing-parent write claims are shared only
+within the same batch; they still exclude other managed writers. Trash roots are
+not claimed as broad subtrees, so disjoint artifacts can proceed concurrently.
+
+Execution reopens captured directories without following symlinks, verifies
+stable object/mount identities and exact metadata/payload versions, and publishes
+with descriptor-relative no-replace rename. Missing parents use descriptor-relative
+mkdir with ordinary user-directory permissions, subject to umask. Only parents
+created by this batch may be reused, and their identities are rechecked. An
+unexpected existing directory or symlink is rejected. Prepared plans do not retain
+one descriptor set per item, avoiding selection-sized file-descriptor pressure.
+
+The external batch ledger retains parent refresh effects even after partial
+creation or leaf failure. Ordinary failed items leave later independent items
+executable; uncertain items stop the remaining suffix. Metadata cleanup and sync
+failure after publication become warnings without discarding the confirmed
+restore or its fresh native publication. The actual worker retains admission
+after its waiter disappears.
+
+Copy history deliberately retains the physical publication's display projection
+as its single-item receipt key; it must not redirect when the original UI alias
+changes. Native preparation and settlement use the actual `PathBuf`, including
+non-UTF-8 names. Restoration recognizes the exact trusted artifact's display key
+and otherwise validates a requested alias against the artifact's physical path.
+Display projections are not injective; they are never native path authority.
+
+Shared claims exclude cooperating operations, not arbitrary external programs.
+Directory handles and version checks prevent observed substitutions from redirecting
+execution, but a final check and pathname rename/unlink are not one conditional
+identity syscall. No universal immunity to unmanaged races or cross-platform
+qualification is claimed. Native rename Undo/Redo still requires separate admission
+work; it currently calls the low-level entry executor directly.
 
 ## Archive admission contract
 
@@ -146,5 +221,5 @@ inverse exists.
 Archive operations are not durable-recovery operations: they hold an ordinary
 reservation for the life of the call and promote nothing into the catalog, so a
 crash mid-archive is not discoverable after restart. Non-Linux builds keep (1)
-and (2) only, exactly as every other family does. Deletion, ordinary copy and
+and (2) only, exactly as every other family does. Native rename inverses, ordinary copy outside the session and
 Git remain outside (3); "full managed-mutation coverage" is still not claimed.

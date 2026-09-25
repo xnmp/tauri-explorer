@@ -13,7 +13,11 @@ pub(in crate::files::recovery) struct PromotionFailure {
 impl Reservation {
     fn planned(&self, operation: OperationSpec) -> OperationRecord {
         OperationRecord::planned(DurableIntent {
-            version: 1,
+            version: if matches!(&operation, OperationSpec::Move(_)) {
+                2
+            } else {
+                1
+            },
             id: self.id.clone(),
             lock: self.owner.identity.clone(),
             resources: self.resources.clone(),

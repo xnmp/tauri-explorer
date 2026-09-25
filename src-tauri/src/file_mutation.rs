@@ -103,10 +103,15 @@ pub(crate) async fn delete_entries(
     use crate::files::{batch, trash};
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let plan = batch::BatchPlan::new(paths).map_err(AppError::InvalidPath)?;
+    #[cfg(target_os = "linux")]
+    let recovery = crate::files::recovery::commands::owner(&window)?;
     let mut directories: Vec<_> = plan.paths.iter().flat_map(|path| parent(path)).collect();
     directories.sort_unstable();
     directories.dedup();
     file_history::run_forward(owner, false, directories, async move {
+        #[cfg(target_os = "linux")]
+        let result = trash::run_admitted_batch(plan, recovery, permanent).await;
+        #[cfg(not(target_os = "linux"))]
         let result = if permanent {
             Ok(batch::run(plan, file_ops::delete_path).await)
         } else {

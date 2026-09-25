@@ -332,6 +332,48 @@ describe("native qualification process boundaries", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it("reports a failed marker-directory removal alongside already-collected cleanup failures, retrying first", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "NATIVE_CLEANUP_TEST_STATE",
+      temporaryRoot: dir,
+      stop: async () => {
+        throw new Error("WebDriver remained alive after SIGKILL");
+      },
+    });
+
+    hooks.prepare();
+    const markerDirectory = environment.NATIVE_CLEANUP_TEST_STATE!;
+    await expect(hooks.cleanup()).rejects.toThrow(
+      "WebDriver remained alive after SIGKILL",
+    );
+    expect(fs.readdirSync(markerDirectory)).toHaveLength(1);
+
+    const rmSyncSpy = vi
+      .spyOn(fs, "rmSync")
+      .mockImplementationOnce(() => {
+        throw new Error("EBUSY: resource busy or locked");
+      });
+    try {
+      expect(() => hooks.complete()).toThrow(
+        "native qualification cleanup failed: WebDriver remained alive after SIGKILL; " +
+          "failed to remove cleanup marker directory: EBUSY: resource busy or locked",
+      );
+      // Retries were requested rather than surfacing a single bare attempt.
+      expect(rmSyncSpy).toHaveBeenCalledWith(
+        markerDirectory,
+        expect.objectContaining({ maxRetries: 5, retryDelay: 200 }),
+      );
+    } finally {
+      rmSyncSpy.mockRestore();
+    }
+    // The mocked failure prevented real removal; clean up for real now.
+    fs.rmSync(markerDirectory, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it("keeps hostile replay seeds inside the qualification artifact root", () => {
     const root = path.resolve("qualification-results");
     const rawSeed = "  ../../outside/../release seed  ";

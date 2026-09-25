@@ -808,3 +808,62 @@ fn batch_waiter_loss_cannot_release_admission_while_the_worker_can_delete() {
     }
     assert!(!file.exists());
 }
+
+#[test]
+fn prepared_inverse_waiter_loss_keeps_claims_until_its_worker_finishes() {
+    use crate::files::recovery::{resources, Access, ResourceRequest, Runtime, Scope};
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("inverse");
+    fs::write(&file, b"before inverse").unwrap();
+    let key = path_string(&file);
+    let runtime = Runtime::default();
+    let storage = root.path().join("recovery");
+    let request = ResourceRequest {
+        path: file.clone(),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    };
+    let captured_request = request.clone();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let task = tauri::async_runtime::spawn(super::run_prepared(
+        BatchPlan::new(vec![key]).unwrap(),
+        (runtime.clone(), storage.clone()),
+        move || {
+            Ok((
+                (),
+                resources::capture_requests(std::slice::from_ref(&captured_request))?,
+            ))
+        },
+        move |_, path, _| {
+            entered_tx.send(()).unwrap();
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            fs::write(path, b"inverse completed")?;
+            done_tx.send(()).unwrap();
+            Ok(crate::files::trash_artifact::TrashSuccess::default())
+        },
+    ));
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    task.abort();
+    assert!(run(runtime.admit(storage.clone(), vec![request.clone()])).is_err());
+    assert_eq!(fs::read(&file).unwrap(), b"before inverse");
+    release_tx.send(()).unwrap();
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(next) = run(runtime.admit(storage.clone(), vec![request.clone()])) {
+            next.finish().unwrap();
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(fs::read(file).unwrap(), b"inverse completed");
+}

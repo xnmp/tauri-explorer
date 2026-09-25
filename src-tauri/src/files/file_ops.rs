@@ -1005,7 +1005,19 @@ pub(crate) fn delete_path(path: &str) -> Result<(), AppError> {
 }
 
 pub(crate) fn delete_native_path(file_path: &Path) -> Result<(), AppError> {
-    super::permanent_delete::Prepared::capture(file_path)?.execute()
+    let success = super::permanent_delete::delete(file_path)?;
+    if let Some(warning) = success.warning {
+        log::warn!("{warning}");
+    }
+    Ok(())
+}
+
+/// Permanent deletion with its completed-with-warning receipt preserved.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn delete_path_receipt(
+    path: &str,
+) -> Result<super::trash_artifact::TrashSuccess, AppError> {
+    super::permanent_delete::delete(Path::new(path))
 }
 
 /// Create a symbolic link.

@@ -105,48 +105,31 @@ pub(crate) async fn run_admitted_batch(
         return Ok(FileBatchOutcome::default());
     }
     let paths = Arc::new(plan.paths.clone());
-    let (result, admission) = if permanent {
-        use super::recovery::{Access, ResourceRequest, Scope};
-        let admission = recovery
-            .0
-            .admit(
-                recovery.1,
-                paths
-                    .iter()
-                    .map(|path| ResourceRequest {
-                        path: path.into(),
-                        access: Access::Write,
-                        scope: Scope::Subtree,
-                    })
-                    .collect(),
-            )
-            .await?;
-        let mut resolved = admission
-            .paths()
-            .map(std::path::Path::to_path_buf)
-            .collect::<Vec<_>>()
-            .into_iter();
-        let result = batch::run_with_receipts_owned(admission.context(), plan, move |_, _| {
-            let path = resolved.next().expect("one binding per deletion request");
-            super::file_ops::delete_native_path(&path)?;
-            Ok(super::trash_artifact::TrashSuccess::default())
-        })
-        .await;
-        (result, admission)
-    } else {
+    if permanent {
+        // Claims, physical parents and staging names come from one fenced
+        // observation; execution binds each receipt to its prepared item.
         return run_prepared(
             plan,
             recovery,
             move || {
-                super::freedesktop_trash::Context::new()?
-                    .prepare_selection(Arc::clone(&paths))
+                super::permanent_delete::prepare_selection(Arc::clone(&paths))
                     .map(|selection| selection.into_admission())
             },
             |selection, path, _| selection.execute_next(path),
         )
         .await;
-    };
-    finish_admitted(result, admission).await
+    }
+    run_prepared(
+        plan,
+        recovery,
+        move || {
+            super::freedesktop_trash::Context::new()?
+                .prepare_selection(Arc::clone(&paths))
+                .map(|selection| selection.into_admission())
+        },
+        |selection, path, _| selection.execute_next(path),
+    )
+    .await
 }
 
 #[cfg(target_os = "linux")]

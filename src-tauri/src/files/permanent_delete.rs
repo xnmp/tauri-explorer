@@ -1,31 +1,455 @@
-//! Observation and execution of a permanent deletion are separate phases.
-use crate::error::AppError;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+//! Permanent deletion binds its effect to the object that was selected.
+//!
+//! On Unix a selected entry is first captured by an atomic no-replace rename
+//! into a fresh private sibling directory, through a retained handle to the
+//! verified physical parent. Its identity is checked after that move and
+//! before any irreversible removal: a replaced leaf or ancestor is restored
+//! (or retained and reported), never deleted. The guarantee covers
+//! substitution of the requested namespace by other processes; it does not
+//! defend the private staging directory against a hostile same-user process,
+//! nor prove the provenance of every descendant discovered while removing.
+//!
+//! Windows keeps its path-based removal and makes no identity claim; a
+//! handle-disposition adapter is separate work.
+use crate::{error::AppError, files::trash_artifact::TrashSuccess};
+use std::path::Path;
 
-pub(crate) struct Prepared {
-    path: PathBuf,
-    observed: fs::Metadata,
+#[cfg(target_os = "linux")]
+pub(crate) use unix::prepare_selection;
+
+/// Delete one entry now. The returned warning reports completed deletion with
+/// leftover empty staging, which must not become an uncertain failure.
+pub(crate) fn delete(path: &Path) -> Result<TrashSuccess, AppError> {
+    #[cfg(unix)]
+    {
+        unix::delete_native(path)
+    }
+    #[cfg(not(unix))]
+    {
+        let is_dir = std::fs::symlink_metadata(path)?.is_dir();
+        super::file_ops::remove_entry_at(path)
+            .map_err(|error| AppError::MutationUncertain(error.to_string()))?;
+        log::info!("Permanently deleted entry (is_dir={is_dir})");
+        Ok(TrashSuccess::default())
+    }
 }
 
-impl Prepared {
-    pub(crate) fn capture(path: &Path) -> Result<Self, AppError> {
-        Ok(Self {
-            path: path.to_owned(),
-            observed: fs::symlink_metadata(path)?,
+/// Native namespace effects, injectable so tests can substitute entries at the
+/// exact seam between the last check and the atomic capture.
+#[cfg(unix)]
+pub(super) trait Operations {
+    fn rename(
+        &mut self,
+        source: &super::native_directory::Directory,
+        name: &std::ffi::OsStr,
+        target: &super::native_directory::Directory,
+        target_name: &std::ffi::OsStr,
+    ) -> std::io::Result<()> {
+        source.rename_to(name, target, target_name)
+    }
+
+    fn unlink(
+        &mut self,
+        directory: &super::native_directory::Directory,
+        name: &std::ffi::OsStr,
+        is_directory: bool,
+    ) -> std::io::Result<()> {
+        directory.unlink(name, is_directory)
+    }
+}
+
+#[cfg(unix)]
+struct Native;
+
+#[cfg(unix)]
+impl Operations for Native {}
+
+#[cfg(unix)]
+#[path = "permanent_delete/tree.rs"]
+mod tree;
+
+// Selections are admitted on Linux only; other Unix platforms delete one path.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod unix {
+    use super::{tree, Native, Operations};
+    use crate::{
+        error::AppError,
+        files::{
+            entry_version::EntryVersion,
+            file_identity::{of_file, version_at, version_from_metadata},
+            native_directory::Directory,
+            object_id::ObjectId,
+            recovery::resources::{self, Access, Scope, SelectionIndex, SelectionRole},
+            trash_artifact::TrashSuccess,
+        },
+    };
+    use std::{
+        collections::{HashSet, VecDeque},
+        ffi::{OsStr, OsString},
+        fs, io,
+        os::unix::fs::MetadataExt,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
+    const PAYLOAD: &str = "payload";
+    const CONTAINER_PREFIX: &str = ".tauri-delete-";
+
+    pub(crate) struct PreparedSelection {
+        paths: Arc<Vec<String>>,
+        next: usize,
+        items: VecDeque<Result<Item, String>>,
+        resources: Vec<resources::Resource>,
+    }
+
+    /// One observed physical entry and its planned private staging sibling.
+    pub(super) struct Item {
+        parent: PathBuf,
+        parent_object: ObjectId,
+        name: OsString,
+        version: EntryVersion,
+        container: OsString,
+    }
+
+    fn random(bytes: &mut [u8]) -> io::Result<()> {
+        getrandom::fill(bytes).map_err(io::Error::other)
+    }
+
+    pub(crate) fn prepare_selection(
+        paths: Arc<Vec<String>>,
+    ) -> Result<PreparedSelection, AppError> {
+        prepare_with(paths, &mut random)
+    }
+
+    /// A native path keeps non-Unicode names exact; there is no receipt key.
+    pub(super) fn delete_native(path: &Path) -> Result<TrashSuccess, AppError> {
+        let (mut items, _) = prepare_items(std::iter::once(path), &mut random)?;
+        items
+            .pop_front()
+            .expect("one prepared item per path")
+            .map_err(AppError::Other)?
+            .execute(&mut Native)
+    }
+
+    /// Observe the whole selection before any effect. Physical duplicates,
+    /// ancestor overlap and alias conflicts are rejected by the shared index;
+    /// hardlinked leaves stay distinct namespace entries.
+    pub(super) fn prepare_with(
+        paths: Arc<Vec<String>>,
+        random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
+    ) -> Result<PreparedSelection, AppError> {
+        let (items, resources) = prepare_items(paths.iter().map(Path::new), random)?;
+        Ok(PreparedSelection {
+            paths,
+            next: 0,
+            items,
+            resources,
         })
     }
 
-    pub(crate) fn execute(self) -> Result<(), AppError> {
-        super::file_ops::remove_entry_at(&self.path)
-            .map_err(|error| AppError::MutationUncertain(error.to_string()))?;
-        log::info!(
-            "Permanently deleted entry (is_dir={})",
-            self.observed.is_dir()
-        );
+    type Prepared = (VecDeque<Result<Item, String>>, Vec<resources::Resource>);
+
+    fn prepare_items<'a>(
+        paths: impl ExactSizeIterator<Item = &'a Path>,
+        random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
+    ) -> Result<Prepared, AppError> {
+        let mut index = SelectionIndex::default();
+        let mut claims = HashSet::new();
+        let mut insert = |resource: resources::Resource, role| -> io::Result<()> {
+            index.insert(&resource, role)?;
+            claims.insert(resource);
+            Ok(())
+        };
+        let mut items = VecDeque::with_capacity(paths.len());
+        for path in paths {
+            let mut captured = resources::capture_requests(&[resources::Request {
+                path: path.to_owned(),
+                access: Access::Write,
+                scope: Scope::Subtree,
+            }])?
+            .into_iter();
+            let source = captured
+                .next()
+                .expect("capture retains the primary request first");
+            let version = match fs::symlink_metadata(&source.path.0) {
+                Ok(metadata) => Some(version_from_metadata(&metadata)?),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            if source.object != version.as_ref().map(|version| version.object) {
+                return Err(AppError::Other(
+                    "Deletion source changed during namespace capture".into(),
+                ));
+            }
+            let physical = source.path.0.clone();
+            let parent_object = *source
+                .ancestors
+                .first()
+                .expect("validated source has a parent identity");
+            insert(
+                source,
+                SelectionRole::Source {
+                    directory: version.as_ref().is_some_and(|version| version.directory),
+                },
+            )?;
+            for dependency in captured {
+                insert(dependency, SelectionRole::Shared)?;
+            }
+            let Some(version) = version else {
+                items.push_back(Err(
+                    AppError::NotFound(path.display().to_string()).to_string()
+                ));
+                continue;
+            };
+            let (Some(parent), Some(name)) = (physical.parent(), physical.file_name()) else {
+                return Err(AppError::InvalidPath(path.display().to_string()));
+            };
+            let mut nonce = [0u8; 16];
+            random(&mut nonce)?;
+            let container: OsString = format!(
+                "{CONTAINER_PREFIX}{}",
+                nonce
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            )
+            .into();
+            insert(
+                resources::capture(&parent.join(&container), Access::Write, Scope::Subtree)?,
+                SelectionRole::Exclusive,
+            )?;
+            items.push_back(Ok(Item {
+                parent: parent.to_owned(),
+                parent_object,
+                name: name.to_owned(),
+                version,
+                container,
+            }));
+        }
+        Ok((items, claims.into_iter().collect()))
+    }
+
+    impl PreparedSelection {
+        /// Plan and claims come from one observation; callers must not rebind
+        /// paths while retaining these prepared effects.
+        pub(crate) fn into_admission(mut self) -> (Self, Vec<resources::Resource>) {
+            let resources = std::mem::take(&mut self.resources);
+            (self, resources)
+        }
+
+        pub(crate) fn execute_next(&mut self, requested: &str) -> Result<TrashSuccess, AppError> {
+            self.execute_next_with(requested, &mut Native)
+        }
+
+        pub(super) fn execute_next_with(
+            &mut self,
+            requested: &str,
+            operations: &mut impl Operations,
+        ) -> Result<TrashSuccess, AppError> {
+            if self.paths.get(self.next).map(String::as_str) != Some(requested) {
+                return Err(AppError::WorkerFailed(
+                    "Deletion does not match its prepared selection".into(),
+                ));
+            }
+            let item = self.items.pop_front().ok_or_else(|| {
+                AppError::WorkerFailed("Deletion exceeded its prepared selection".into())
+            })?;
+            self.next += 1;
+            item.map_err(AppError::Other)?.execute(operations)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn open_parent(path: &Path) -> io::Result<Directory> {
+        Directory::open_searchable(path)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn open_parent(path: &Path) -> io::Result<Directory> {
+        Directory::open(path)
+    }
+
+    /// Fresh staging must be an empty private directory owned by this user.
+    fn verify_container(container: &Directory) -> io::Result<()> {
+        let metadata = container.metadata()?;
+        // SAFETY: geteuid has no preconditions.
+        let uid = unsafe { libc::geteuid() };
+        if !metadata.is_dir()
+            || metadata.uid() != uid
+            || metadata.mode() & 0o077 != 0
+            || container.entries()?.next().is_some()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Deletion staging directory is not a fresh private directory",
+            ));
+        }
         Ok(())
+    }
+
+    impl Item {
+        fn describe(&self) -> String {
+            self.parent.join(&self.name).display().to_string()
+        }
+
+        fn residue(&self) -> String {
+            self.parent.join(&self.container).display().to_string()
+        }
+
+        fn execute(self, operations: &mut impl Operations) -> Result<TrashSuccess, AppError> {
+            let parent = open_parent(&self.parent)?;
+            if of_file(&parent.file)? != self.parent_object {
+                return Err(AppError::Other(format!(
+                    "The folder containing {} changed after it was selected; nothing was deleted",
+                    self.describe()
+                )));
+            }
+            if version_at(&parent, &self.name)? != self.version {
+                return Err(AppError::Other(format!(
+                    "{} changed after it was selected; nothing was deleted",
+                    self.describe()
+                )));
+            }
+            let container = match parent.create_directory(&self.container) {
+                Ok(container) => container,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(AppError::AlreadyExists(format!(
+                        "Deletion staging name {} is occupied; nothing was deleted",
+                        self.residue()
+                    )));
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if let Err(error) = verify_container(&container) {
+                drop(container);
+                return self.discard_container(&parent, operations, error.into());
+            }
+            let payload = OsStr::new(PAYLOAD);
+            if let Err(error) = operations.rename(&parent, &self.name, &container, payload) {
+                drop(container);
+                return self.discard_container(&parent, operations, error.into());
+            }
+            // Captured: from here the selected name may hold a newcomer.
+            match version_at(&container, payload) {
+                Ok(version) if version == self.version => {}
+                Ok(_) => {
+                    return self.restore(
+                        &parent,
+                        container,
+                        operations,
+                        false,
+                        format!(
+                            "{} was replaced before it could be deleted; nothing was deleted",
+                            self.describe()
+                        ),
+                    );
+                }
+                Err(error) => {
+                    return Err(AppError::MutationUncertain(format!(
+                        "{} was moved to {} for deletion, but its identity could not be verified: {error}",
+                        self.describe(),
+                        self.residue()
+                    )));
+                }
+            }
+            if let Err(partial) =
+                tree::remove(&container, payload, self.version.directory, operations)
+            {
+                return self.restore(
+                    &parent,
+                    container,
+                    operations,
+                    partial.removed,
+                    format!("Could not delete {}: {}", self.describe(), partial.error),
+                );
+            }
+            drop(container);
+            log::info!(
+                "Permanently deleted entry (is_dir={})",
+                self.version.directory
+            );
+            let warning = operations
+                .unlink(&parent, &self.container, true)
+                .err()
+                .map(|error| {
+                    format!(
+                        "Deleted, but its empty staging folder {} could not be removed: {error}",
+                        self.residue()
+                    )
+                });
+            Ok(TrashSuccess {
+                warning,
+                ..TrashSuccess::default()
+            })
+        }
+
+        /// Remove staging that never held the payload; failure to do so is
+        /// owned residue and cannot be reported as a clean no-effect failure.
+        fn discard_container(
+            &self,
+            parent: &Directory,
+            operations: &mut impl Operations,
+            error: AppError,
+        ) -> Result<TrashSuccess, AppError> {
+            match operations.unlink(parent, &self.container, true) {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(AppError::MutationUncertain(format!(
+                    "Could not delete {}: {error}; its empty staging folder {} remains: {cleanup}",
+                    self.describe(),
+                    self.residue()
+                ))),
+            }
+        }
+
+        /// Return a captured payload (or whatever remains of it) to its name
+        /// with a no-replace rename. A clean outcome requires that nothing was
+        /// unlinked and the staging directory was removed.
+        fn restore(
+            &self,
+            parent: &Directory,
+            container: Directory,
+            operations: &mut impl Operations,
+            removed: bool,
+            failure: String,
+        ) -> Result<TrashSuccess, AppError> {
+            let payload = OsStr::new(PAYLOAD);
+            let restored = match container.entry_exists(payload) {
+                Ok(true) => operations.rename(&container, payload, parent, &self.name),
+                Ok(false) => Ok(()),
+                Err(error) => Err(error),
+            };
+            drop(container);
+            if let Err(error) = restored {
+                return Err(AppError::MutationUncertain(format!(
+                    "{failure}; the captured item was kept at {} because it could not be returned to {}: {error}",
+                    self.residue_payload(),
+                    self.describe()
+                )));
+            }
+            if let Err(cleanup) = operations.unlink(parent, &self.container, true) {
+                return Err(AppError::MutationUncertain(format!(
+                    "{failure}; the item was returned to {}, but its staging folder {} remains: {cleanup}",
+                    self.describe(),
+                    self.residue()
+                )));
+            }
+            if removed {
+                return Err(AppError::MutationUncertain(format!(
+                    "{failure}; it was partially deleted and what remains is at {}",
+                    self.describe()
+                )));
+            }
+            Err(AppError::Other(failure))
+        }
+
+        fn residue_payload(&self) -> String {
+            self.parent
+                .join(&self.container)
+                .join(PAYLOAD)
+                .display()
+                .to_string()
+        }
     }
 }
 

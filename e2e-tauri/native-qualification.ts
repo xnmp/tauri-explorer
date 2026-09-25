@@ -1423,6 +1423,18 @@ export async function stopNativeQualificationProcesses(
   }
 }
 
+/** Fixtures outlive the application session and are removed by onComplete,
+ * after each worker has awaited native process termination. */
+export function createNativeFixtureDirectory(
+  prefix: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const root = environment.TAURI_NATIVE_CLEANUP_STATE_DIRECTORY;
+  if (!root) throw new Error("native fixture ownership is unavailable before run preparation");
+  if (!/^[a-zA-Z0-9_-]+$/.test(prefix)) throw new Error("invalid native fixture prefix");
+  return fs.mkdtempSync(path.join(root, prefix));
+}
+
 export function createNativeProcessCleanupHooks(options: {
   environment: NodeJS.ProcessEnv;
   stateEnvironmentKey: string;
@@ -1484,21 +1496,40 @@ export function createNativeProcessCleanupHooks(options: {
       if (!preparedDirectory) return;
       const markerDirectory = preparedDirectory;
       preparedDirectory = undefined;
-      let failures: string[] = [];
+      const failures: string[] = [];
       try {
-        failures = fs
-          .readdirSync(markerDirectory)
-          .filter((entry) => entry.endsWith(".json"))
-          .map((entry) => {
-            const marker = JSON.parse(
-              fs.readFileSync(path.join(markerDirectory, entry), "utf8"),
-            ) as { message?: unknown };
-            return typeof marker.message === "string"
-              ? marker.message
-              : `invalid cleanup marker ${entry}`;
-          });
-      } finally {
-        fs.rmSync(markerDirectory, { recursive: true, force: true });
+        failures.push(
+          ...fs
+            .readdirSync(markerDirectory)
+            .filter((entry) => entry.endsWith(".json"))
+            .map((entry) => {
+              const marker = JSON.parse(
+                fs.readFileSync(path.join(markerDirectory, entry), "utf8"),
+              ) as { message?: unknown };
+              return typeof marker.message === "string"
+                ? marker.message
+                : `invalid cleanup marker ${entry}`;
+            }),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(`failed to read cleanup markers: ${message}`);
+      }
+      try {
+        // Retry transient removal failures (e.g. a watcher briefly holding a
+        // marker file open) rather than surfacing them as cleanup failures.
+        fs.rmSync(markerDirectory, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 200,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Report alongside any already-collected marker failures instead of
+        // discarding them: a `finally` block that itself throws would
+        // otherwise replace the original failure list.
+        failures.push(`failed to remove cleanup marker directory: ${message}`);
       }
       if (failures.length > 0) {
         throw new Error(

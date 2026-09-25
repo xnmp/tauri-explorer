@@ -20,7 +20,8 @@ impl Expected {
                 // A completed move rests at `Published` (rename) or `Parked`
                 // (cross filesystem); the exact revision pins which one.
                 OperationState::Move(state) => {
-                    state.error.is_none()
+                    state.retirement.is_none()
+                        && state.error.is_none()
                         && state.effect_revision == *revision
                         && match phase {
                             Phase::Published => matches!(

@@ -917,8 +917,7 @@ fn a_full_record_budget_refuses_a_new_durable_record_through_promotion() {
         .exists());
 }
 
-/// A durable move's artifacts are not a replacement's, and this is the record
-/// of exactly what retention does with one until #685 supplies its plan.
+/// Completed moves retain Undo authority until the user explicitly discards it.
 mod moves {
     use super::*;
     use crate::files::recovery::{
@@ -1047,7 +1046,12 @@ mod moves {
     #[test]
     fn a_durable_move_is_listed_and_measured_but_never_retired_automatically() {
         let moved = overwriting();
-        assert_eq!(moved.record(), Retention::Unsupported);
+        assert_eq!(
+            moved.record(),
+            Retention::MoveSettled {
+                disposal: Disposal::ExplicitOnly
+            }
+        );
         let roots = moved.artifacts();
         assert!(!roots.is_empty(), "an overwriting move retains artifacts");
 
@@ -1056,7 +1060,10 @@ mod moves {
         for _ in 0..3 {
             let usage = moved.usage();
             assert!(usage.records >= 1, "the move occupies the record bound");
-            assert_eq!(usage.discardable, 0, "no discard is offered without a plan");
+            assert_eq!(
+                usage.discardable, 1,
+                "explicit discard is available without automatic eviction"
+            );
             measured = Some(usage.bytes);
         }
         assert!(
@@ -1072,7 +1079,12 @@ mod moves {
     #[test]
     fn a_parked_move_source_is_never_reclaimed_while_it_is_the_only_copy_there() {
         let Some(moved) = parked() else { return };
-        assert_eq!(moved.record(), Retention::Unsupported);
+        assert_eq!(
+            moved.record(),
+            Retention::MoveSettled {
+                disposal: Disposal::ExplicitOnly
+            }
+        );
         let parked_copies: Vec<PathBuf> = moved
             .artifacts()
             .into_iter()
@@ -1083,7 +1095,7 @@ mod moves {
 
         for _ in 0..3 {
             let usage = moved.usage();
-            assert_eq!(usage.discardable, 0);
+            assert_eq!(usage.discardable, 1);
         }
 
         assert_eq!(
@@ -1094,4 +1106,45 @@ mod moves {
         assert_eq!(fs::read(moved.to.join("entry")).unwrap(), PAYLOAD);
         assert!(!moved.from.join("entry").exists());
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn completed_move_discard_reclaims_its_overwritten_original() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = fs::canonicalize(directory.path()).unwrap();
+    let source = base.join("source");
+    let target = base.join("target");
+    fs::write(&source, NEW_BYTES).unwrap();
+    fs::write(&target, ORIGINAL_BYTES).unwrap();
+    let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+    let mut progress = crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+    crate::files::recovery::forward_move::PreparedMove::prepare(&coordinator, &source, &target)
+        .unwrap()
+        .execute(&mut progress)
+        .unwrap();
+    let entry = coordinator.inventory().unwrap().entries.remove(0);
+    let root = entry
+        .intent
+        .operation
+        .move_spec()
+        .unwrap()
+        .target_root
+        .as_ref()
+        .unwrap()
+        .path
+        .0
+        .clone();
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    let operation = coordinator
+        .try_claim(&entry.intent.id, entry.generation.unwrap())
+        .unwrap()
+        .unwrap();
+    let retirement = Retirement::open(operation).unwrap();
+    assert_eq!(retirement.eligibility(), &Eligibility::Discardable);
+    retirement.retire().unwrap();
+    assert_eq!(fs::read(target).unwrap(), NEW_BYTES);
+    assert!(!source.exists());
+    assert!(!root.exists());
+    assert!(coordinator.inventory().unwrap().entries.is_empty());
 }

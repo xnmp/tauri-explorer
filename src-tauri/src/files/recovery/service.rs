@@ -180,11 +180,11 @@ fn operate(
         Err(error) => return reply(coordinator, None, Some(diagnostic(error))),
     };
     let claimed_generation = operation.generation();
-    if let Request::Discard(_) = request {
-        return discard(coordinator, operation, &entry.intent, claimed_generation);
-    }
     if operation.intent().operation.move_spec().is_ok() {
         return relocation(coordinator, operation, request);
+    }
+    if let Request::Discard(_) = request {
+        return discard(coordinator, operation, &entry.intent, claimed_generation);
     }
     // A journaled retirement is presented as retention even though restoration
     // remains a legal transition out of it: retention reporting carries the
@@ -416,12 +416,133 @@ fn relocation(
     use super::move_model::MovePhase;
     use super::move_transition::{transition as move_transition, MoveTransition};
     let generation = operation.generation();
+    if operation
+        .intent()
+        .operation
+        .move_spec()?
+        .rename_probes
+        .is_some()
+        && matches!(
+            operation.state().move_state()?.phase,
+            MovePhase::Planned | MovePhase::Aborted
+        )
+    {
+        let intent = operation.intent().clone();
+        let observation = super::move_capability::inspect(&operation);
+        if matches!(request, Request::Discard(_)) && observation.is_ok() {
+            return match super::move_capability::discard(operation, None) {
+                Ok(()) => reply(coordinator, None, None),
+                Err(error) => reply(coordinator, None, Some(diagnostic(error))),
+            };
+        }
+        let error = match (&request, &observation) {
+            (Request::Restore(_), _) => {
+                Some("This move never started and has no restoration to apply".to_owned())
+            }
+            (Request::Discard(_), Err(error)) => {
+                Some(diagnostic(AppError::Other(error.to_string())))
+            }
+            _ => None,
+        };
+        let (message, actions) = match observation {
+            Ok(()) => ("The move never started. Its verified capability-check data can be discarded.".to_owned(), vec![RecoveryChoice::Discard]),
+            Err(error) => (format!("The move never started; unverified capability-check evidence is preserved: {error}"), vec![]),
+        };
+        let mut view = item(&intent, generation, None, "attention", &message, actions);
+        // Probe evidence is separate from the not-yet-created move artifacts.
+        view.retained_path = operation
+            .state()
+            .move_state()?
+            .rename_probe
+            .as_ref()
+            .and_then(|progress| {
+                progress.steps.iter().position(|step| {
+                    !matches!(
+                        step,
+                        super::move_capability_model::Step::Planned
+                            | super::move_capability_model::Step::Absent
+                            | super::move_capability_model::Step::Removed { .. }
+                    )
+                })
+            })
+            .and_then(|index| intent.operation.move_spec().ok()?.probe_plans().nth(index))
+            .map(|(plan, _, _)| plan.path.0.to_string_lossy().into_owned());
+        return reply(coordinator, Some(view), error);
+    }
+    if let Request::Discard(_) = request {
+        let intent = operation.intent().clone();
+        return discard(coordinator, operation, &intent, generation);
+    }
     let restorable = move_transition(
         operation.intent(),
         operation.state(),
         MoveTransition::BeginRestoration,
     )
     .is_ok();
+    if matches!(request, Request::Inspect)
+        && retention::retention(&operation.intent().operation, operation.state()).retirable()
+    {
+        let intent = operation.intent().clone();
+        let retirement = match Retirement::open(operation) {
+            Ok(retirement) => retirement,
+            Err(error) => {
+                return reply(
+                    coordinator,
+                    Some(item(
+                        &intent,
+                        generation,
+                        None,
+                        "attention",
+                        "Move recovery files could not be verified; all evidence is preserved",
+                        vec![],
+                    )),
+                    Some(diagnostic(error)),
+                )
+            }
+        };
+        // A committed discard that failed has already consumed Undo; it is
+        // not an ordinary retained record, so say so and offer only a retry.
+        let interrupted = retirement
+            .state()
+            .move_state()
+            .ok()
+            .filter(|state| state.retirement.is_some())
+            .and_then(|state| state.error.clone());
+        let (status, message, actions) = match (retirement.eligibility(), interrupted) {
+            (Eligibility::Preserved(reason), _) => ("attention", reason.clone(), vec![]),
+            (_, Some(error)) => (
+                "attention",
+                format!(
+                    "Discard stopped before finishing; its Undo history is gone and the \
+                     remaining recovery files are preserved. Retry Discard once this is \
+                     resolved: {error}"
+                ),
+                vec![RecoveryChoice::Discard],
+            ),
+            _ => {
+                let mut actions = Vec::new();
+                if restorable {
+                    actions.push(RecoveryChoice::Restore);
+                }
+                actions.push(RecoveryChoice::Discard);
+                ("retained", if restorable {
+                    "Restore this move or discard its recovery data. Discard permanently removes its Undo history and any retained originals."
+                } else { "The move no longer needs restoration; its retained recovery data can be discarded." }.to_owned(), actions)
+            }
+        };
+        return reply(
+            coordinator,
+            Some(item(
+                &intent,
+                retirement.generation(),
+                retention::measured_bytes(retirement.state()),
+                status,
+                &message,
+                actions,
+            )),
+            None,
+        );
+    }
     if !restorable {
         let message = match operation.state().move_state().map(|state| state.phase) {
             Ok(MovePhase::Staged) => {
@@ -491,8 +612,7 @@ fn relocation(
                 vec![],
             )
         }),
-        // Discard is dispatched to retirement before a move is reopened, and a
-        // move record has no retirement plan yet, so it is never offered here.
+        // Discard is dispatched to the move retirement observer before reopening.
         Request::Discard(_) => unreachable!("discard never reaches move reconciliation"),
     };
     let (view, error) = match result {

@@ -100,14 +100,12 @@ pub(super) enum Retention {
     },
     /// Retirement was journaled but has not completed. Resumable.
     Retiring,
+    /// A move retains its own inverse, possibly across two artifact roots.
+    MoveSettled { disposal: Disposal },
     /// Removal completed; only the record itself remains.
     Residue,
     /// An interrupted or errored record. Never retired.
     Unresolved,
-    /// A settled record of an operation kind that has no retirement plan yet.
-    /// It is listed, measured and counted against both bounds, but nothing
-    /// here may remove any of its artifacts — not even on explicit request.
-    Unsupported,
 }
 
 impl Retention {
@@ -120,19 +118,16 @@ impl Retention {
 
     /// Only a settled or interrupted retirement has artifacts to remove.
     pub(super) fn retirable(self) -> bool {
-        matches!(self, Self::Settled { .. } | Self::Retiring | Self::Residue)
+        matches!(
+            self,
+            Self::Settled { .. } | Self::MoveSettled { .. } | Self::Retiring | Self::Residue
+        )
     }
 }
 
 /// Retention dispatches on operation kind. A kind without a plan is listed,
 /// measured and counted, but never retired, so a new kind is safe by default.
 ///
-/// Durable moves (#685) are that case today. A move's artifacts are not a
-/// replacement's: a parked cross-filesystem source is the relocated entry
-/// itself rather than an independent copy of something still published, and a
-/// displaced overwrite target is the only copy of what the destination held.
-/// Neither becomes removable from a replacement's endpoint observations, so a
-/// move record is `Unsupported` until #685 supplies its own retirement plan.
 pub(super) fn retention(operation: &OperationSpec, state: &OperationState) -> Retention {
     match (operation, state) {
         (OperationSpec::CopyReplacement(_), OperationState::Replacement(state)) => {
@@ -160,11 +155,21 @@ pub(super) fn retention(operation: &OperationSpec, state: &OperationState) -> Re
                 _ => Retention::Unresolved,
             }
         }
-        (OperationSpec::Move(_), OperationState::Move(state)) => {
+        (OperationSpec::Move(spec), OperationState::Move(state)) => {
+            if let Some(retirement) = &state.retirement {
+                return if retirement.completed {
+                    Retention::Residue
+                } else {
+                    Retention::Retiring
+                };
+            }
             if state.error.is_some() {
                 return Retention::Unresolved;
             }
-            Retention::Unsupported
+            super::move_retention::disposal(spec, state.phase)
+                .map_or(Retention::Unresolved, |disposal| Retention::MoveSettled {
+                    disposal,
+                })
         }
         _ => Retention::Unresolved,
     }
@@ -175,7 +180,7 @@ pub(super) fn retention(operation: &OperationSpec, state: &OperationState) -> Re
 pub(super) fn measured_bytes(state: &OperationState) -> Option<u64> {
     match state {
         OperationState::Replacement(state) => state.retained_bytes,
-        _ => None,
+        OperationState::Move(state) => state.retained_bytes,
     }
 }
 
@@ -208,13 +213,15 @@ impl Usage {
             self.unavailable += 1;
             return;
         }
-        if retention.settled().is_some() {
+        if retention.settled().is_some() || matches!(retention, Retention::MoveSettled { .. }) {
             self.discardable += 1;
         }
         match bytes {
             Some(bytes) => self.bytes = self.bytes.saturating_add(bytes),
-            None if matches!(retention, Retention::Unsupported)
-                || retention.settled().is_some() =>
+            None if matches!(
+                retention,
+                Retention::MoveSettled { .. } | Retention::Retiring
+            ) || retention.settled().is_some() =>
             {
                 self.unmeasured += 1
             }

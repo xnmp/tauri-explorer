@@ -229,6 +229,77 @@ git ls-tree -r --name-only feat/durable-move-retirement docs/reviews
 
 ## Remaining work and re-entry sequence
 
+### Reconcile historical scope before declaring completion
+
+Fresh issue reads on September 25 confirmed that the original umbrella issues
+are **closed**, despite stale open/pending wording in the overview and ledger:
+
+| Historical issue | Closure record / relationship to current work |
+| --- | --- |
+| [#680](https://github.com/xnmp/tauri-explorer/issues/680) | Frozen architecture pass merged via #684 at dev `775e97b6`; closed September 10. Closure explicitly excludes broader recovery/startup follow-ups. |
+| [#685](https://github.com/xnmp/tauri-explorer/issues/685) | Durable moves and ordered sessions landed via #712; closed September 11. Linux-gated `durable-move-recovery` remains off by default. Do not rebuild the move engine. |
+| [#686](https://github.com/xnmp/tauri-explorer/issues/686) | Admission inventory/archive migration landed via #714; closed September 11. ADR 0024 records the deliberately deferred deletion/trash, ordinary-copy and Git roots. #735/#740/#749 are subsequent coverage work, not proof every possible root is admitted. |
+| [#687](https://github.com/xnmp/tauri-explorer/issues/687) | Retention and journaled replacement retirement landed via #713; closed September 11. Move artifacts were counted but excluded from retirement; #736 supplies that next slice. |
+| [#688](https://github.com/xnmp/tauri-explorer/issues/688) | Closed September 9. Qualification tooling/matrix exists; issue closure alone does not prove an hours-long run or every platform outcome. Inspect the actual reports before claiming that coverage. |
+
+The current [latest release](https://github.com/xnmp/tauri-explorer/releases/tag/v1.9.1)
+is **v1.9.1**, published September 11. Thus “no release during this checkpoint”
+does not mean the previous architecture integration was never released.
+
+At final integration, reconcile the ledger's requirement table against landed
+commits and current issues: mark completed contracts with evidence, identify
+bounded remaining issues, and preserve explicit platform/measurement gaps.
+Do not reopen closed umbrella issues solely because their historical prose is
+stale, and do not declare the entire historical audit fulfilled merely because
+the seven current issues have closed. Any newly discovered nonblocking scope
+goes into a separate issue under the user's scope freeze.
+
+### Qualification, build policy and release mechanics
+
+- Read the finite [native product qualification matrix](../testing/native-product-qualification.md),
+  [native suite instructions](../../e2e-tauri/README.md), and
+  [qualification process ADR](../adr/0021-qualification-process-lifecycle.md).
+  The opt-in runner is `bun run test:e2e:tauri:soak`; do not silently turn an
+  extended soak into a required PR gate. Browser proxies, native checks and
+  actual Mac usability measurements remain different evidence categories.
+- On Arch, use the documented isolated Xvfb/Openbox/D-Bus wrapper for window
+  behavior. Keep disposable `XDG_DATA_HOME` on the same filesystem as fixtures
+  for Freedesktop trash; never repurpose `HOME`. Install workspace dependencies
+  with the locked package-manager configuration if this restored worktree lacks
+  them. Root dependencies exist, but no worktree dependency setup was performed
+  during the Rust-only checkpoint.
+- [Cargo features](../../src-tauri/Cargo.toml) currently leave both
+  `durable-copy-recovery` and `durable-move-recovery` opt-in. Preserve this until
+  the applicable runtime/retirement/platform acceptance justifies a separate
+  enablement decision. Completing retirement does not itself enable a feature.
+  Keep E2E hooks and Windows debug attachment out of shipping builds.
+- [Release workflow](../../.github/workflows/release.yml) runs on **push to main**.
+  It reads the version from `package.json`, skips building if that version's tag
+  already exists, builds Linux/macOS ARM64/Windows bundles, then creates the
+  GitHub release and uploads assets. `dev` integration alone does not release.
+  Before a future release, refresh the actual main/dev/tag state, synchronize
+  applicable package/Cargo versions and lock metadata, validate the intended
+  integrated commit, and use the normal reviewed dev-to-main path. Do not
+  manually create a premature tag: an existing tag causes this workflow to skip
+  the build. Verify the resulting release's commit and expected platform assets.
+- Current remote reads and the checkpoint push succeeded through authenticated
+  `gh`/Git. Credentials are not copied into this document. This does not prove
+  every signing/deployment permission or platform runner will be available to
+  the next agent. Diagnose actual access failures if they arise.
+- The user-supplied AGENTS instructions contain the current preferences and
+  constraints; this document does not reproduce every repository rule. The
+  recorded service-disable request remains binding. The unit name and live
+  disabled state of the old autonomous service were **not reverified** during
+  this handoff; do not claim otherwise or restart it for convenience.
+
+Completion of the active release work means the agreed fixes are implemented,
+independently reviewed where required, integrated with appropriate passing
+checks, and released with accurate evidence and issue status. Any hardware or
+platform gate that cannot be exercised stays explicitly unverified; it does not
+silently become a success or an excuse for unrelated expansion. No additional
+user preference is currently required to start #739. Actual Mac half-bounce
+acceptance still requires suitable hardware later.
+
 The original seven issues are **#696, #735, #736, #737, #739, #740, #742**, all still open at this checkpoint. #739 has only a repro; the others have implementations awaiting integration/remaining qualification. Follow-ups #748, #749 and #745 are published. **[#743 recovery-context teardown timeout](https://github.com/xnmp/tauri-explorer/issues/743)** remains open and needs bounded reproduction plus correction or justified qualification. Older native flakes #709/#710/#715 are separate; don't silently conflate them with current failures. Broad platform recovery enablement is not finished.
 
 1. Read this document and the current user-provided AGENTS instructions. Fetch current remote state, check root/worktree status and ancestry. Do not resume old `.claude/worktrees/issue-*` checkouts merely because their names resemble the current issues; some are stale implementations.

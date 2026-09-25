@@ -31,6 +31,7 @@ pub(crate) mod mutation;
 #[cfg(any(unix, test))]
 mod native_directory;
 mod object_id;
+mod permanent_delete;
 mod publication;
 pub(crate) mod recovery;
 mod replacement;

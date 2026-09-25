@@ -113,7 +113,7 @@ pub(crate) async fn delete_entries(
         let result = trash::run_admitted_batch(plan, recovery, permanent).await;
         #[cfg(not(target_os = "linux"))]
         let result = if permanent {
-            Ok(batch::run(plan, file_ops::delete_path).await)
+            Ok(batch::run_with_receipts(plan, |path, _| file_ops::delete_path_receipt(path)).await)
         } else {
             trash::run_batch(plan).await
         };

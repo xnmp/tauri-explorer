@@ -1029,10 +1029,19 @@ pub(crate) fn delete_path(path: &str) -> Result<(), AppError> {
 }
 
 pub(crate) fn delete_native_path(file_path: &Path) -> Result<(), AppError> {
-    let meta = fs::symlink_metadata(file_path)?;
-    remove_entry_at(file_path).map_err(|error| AppError::MutationUncertain(error.to_string()))?;
-    log::info!("Permanently deleted entry (is_dir={})", meta.is_dir());
+    let success = super::permanent_delete::delete(file_path)?;
+    if let Some(warning) = success.warning {
+        log::warn!("{warning}");
+    }
     Ok(())
+}
+
+/// Permanent deletion with its completed-with-warning receipt preserved.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn delete_path_receipt(
+    path: &str,
+) -> Result<super::trash_artifact::TrashSuccess, AppError> {
+    super::permanent_delete::delete(Path::new(path))
 }
 
 /// Create a symbolic link.

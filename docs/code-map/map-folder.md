@@ -472,6 +472,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
 - `src-tauri/src/files/copy_session/worker.rs` — the copy effect: physical path/version inspection and observed native child execution without UI waits or size prewalks.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
+- `src-tauri/src/files/permanent_delete.rs` — identity-bound permanent deletion (#739): Unix captures the prepared physical entry into a fresh private `.tauri-delete-*` sibling by no-replace rename through a verified parent handle, checks its `EntryVersion` before removal, restores substitutes, and classifies residue; Linux selections supply admission claims. Windows keeps path-based removal.
+- `src-tauri/src/files/permanent_delete/tree.rs` — bounded handle-relative, no-follow removal of a captured payload; constant descriptors via verified `..` ascent, refuses device/mount crossings.
 - `src-tauri/src/files/archive_plan.rs` — pure compress/extract intent: validated sources, the chosen output, its recovery claims (write subtree on the output, read subtrees on the inputs), admitted execution bindings and both refresh parents.
 - `src-tauri/src/files/move_plan.rs` — bounded move intent supplies source/target claims, admitted execution bindings and physical/requested refresh parents.
 - `src-tauri/src/files/move_execution.rs` — forward/inverse move reservation, retained worker context and warning-preserving ownership settlement.

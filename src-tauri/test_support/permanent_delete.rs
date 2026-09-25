@@ -12,6 +12,7 @@ use std::{
 };
 
 enum Call<'a> {
+    Create { name: &'a OsStr },
     Rename { from: &'a OsStr, to: &'a OsStr },
     Unlink { name: &'a OsStr, directory: bool },
 }
@@ -32,6 +33,11 @@ impl<F: FnMut(&Call) -> io::Result<()>> Operations for Hooks<F> {
             to: target_name,
         })?;
         source.rename_to(name, target, target_name)
+    }
+
+    fn create_directory(&mut self, parent: &Directory, name: &OsStr) -> io::Result<Directory> {
+        (self.0)(&Call::Create { name })?;
+        parent.create_directory(name)
     }
 
     fn unlink(
@@ -358,7 +364,10 @@ fn a_failed_capture_whose_staging_remains_is_uncertain_owned_residue() {
     let source = root.path().join("selected");
     fs::write(&source, b"selected").unwrap();
     let mut deletion = select(&source);
-    let result = execute(&mut deletion, &source, |_| Err(injected()));
+    let result = execute(&mut deletion, &source, |call| match call {
+        Call::Create { .. } => Ok(()),
+        _ => Err(injected()),
+    });
     let Err(AppError::MutationUncertain(message)) = &result else {
         panic!("expected uncertain residue, got {result:?}");
     };
@@ -634,4 +643,69 @@ fn bulk_selection_cost_against_plain_unlink() {
         "{COUNT} files: staged {staged_total:?} (prepare {prepared:?}), plain {plain_total:?}"
     );
     assert_eq!(fs::read_dir(&staged).unwrap().count(), 0);
+}
+
+#[test]
+fn staging_created_but_not_opened_is_removed_before_an_ordinary_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let mut deletion = select(&source);
+    let directory = root.path().to_owned();
+    let result = execute(&mut deletion, &source, |call| match call {
+        // mkdirat succeeds, then the open reports failure.
+        Call::Create { name } => {
+            fs::create_dir(directory.join(name))?;
+            Err(injected())
+        }
+        _ => Ok(()),
+    });
+    assert!(result.is_err() && !is_uncertain(&result), "{result:?}");
+    assert_eq!(fs::read(&source).unwrap(), b"selected");
+    assert!(staging(root.path()).is_empty());
+}
+
+#[test]
+fn a_replaced_staging_name_is_neither_removed_nor_reported_as_clean() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let mut deletion = select(&source);
+    let directory = root.path().to_owned();
+    let moved = directory.join("moved-staging");
+    let success = execute(&mut deletion, &source, |call| {
+        if let Call::Unlink {
+            name,
+            directory: true,
+        } = call
+        {
+            if is_staging(name) {
+                fs::rename(directory.join(name), &moved)?;
+                fs::create_dir(directory.join(name))?;
+                fs::write(directory.join(name).join("theirs"), b"x")?;
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(success.warning.is_some());
+    assert!(fs::symlink_metadata(&source).is_err());
+    let residue = staging(root.path());
+    assert_eq!(residue.len(), 1);
+    assert_eq!(fs::read(residue[0].join("theirs")).unwrap(), b"x");
+    assert_eq!(fs::read_dir(&moved).unwrap().count(), 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn birth_time_is_captured_where_the_filesystem_reports_it() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    fs::write(&source, b"x").unwrap();
+    let before = unix::birth_of_path_for_test(&source).unwrap();
+    let mut deletion = select(&source);
+    // A same-inode replacement cannot be forced portably; the recorded birth
+    // must at least match the live object so a mismatch path is meaningful.
+    assert_eq!(unix::birth_of_path_for_test(&source).unwrap(), before);
+    execute(&mut deletion, &source, no_hook).unwrap();
 }

@@ -48,6 +48,14 @@ pub(super) trait Operations {
         source.rename_to(name, target, target_name)
     }
 
+    fn create_directory(
+        &mut self,
+        parent: &super::native_directory::Directory,
+        name: &std::ffi::OsStr,
+    ) -> std::io::Result<super::native_directory::Directory> {
+        parent.create_directory(name)
+    }
+
     fn unlink(
         &mut self,
         directory: &super::native_directory::Directory,
@@ -109,7 +117,74 @@ mod unix {
         parent_object: ObjectId,
         name: OsString,
         version: EntryVersion,
+        /// Linux birth time: unlike mtime it cannot be forged with `utimensat`,
+        /// so a reused inode with replicated metadata still mismatches.
+        birth: Option<Birth>,
         container: OsString,
+    }
+
+    type Birth = (i64, u32);
+
+    /// Birth time of `name` relative to `directory` (or an absolute path with
+    /// `AT_FDCWD`), without following a final symlink. `None` when the
+    /// filesystem or kernel does not report it.
+    #[cfg(target_os = "linux")]
+    fn birth_time(directory: libc::c_int, name: &std::ffi::CStr) -> io::Result<Option<Birth>> {
+        let mut stat = std::mem::MaybeUninit::<libc::statx>::zeroed();
+        // SAFETY: the descriptor (or AT_FDCWD) and terminated name are valid,
+        // and stat is writable storage for the kernel to fill.
+        let result = unsafe {
+            libc::statx(
+                directory,
+                name.as_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+                libc::STATX_BTIME,
+                stat.as_mut_ptr(),
+            )
+        };
+        if result != 0 {
+            let error = io::Error::last_os_error();
+            return match error.raw_os_error() {
+                Some(libc::ENOSYS) => Ok(None),
+                _ => Err(error),
+            };
+        }
+        // SAFETY: successful statx initialized stat.
+        let stat = unsafe { stat.assume_init() };
+        Ok((stat.stx_mask & libc::STATX_BTIME != 0)
+            .then_some((stat.stx_btime.tv_sec, stat.stx_btime.tv_nsec)))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn birth_of_path(path: &Path) -> io::Result<Option<Birth>> {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Path contains a NUL byte"))?;
+        birth_time(libc::AT_FDCWD, &path)
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(super) fn birth_of_path_for_test(path: &Path) -> io::Result<Option<Birth>> {
+        birth_of_path(path)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn birth_at(directory: &Directory, name: &OsStr) -> io::Result<Option<Birth>> {
+        use std::os::fd::AsRawFd;
+        birth_time(
+            directory.file.as_raw_fd(),
+            &crate::files::native_directory::native_name(name)?,
+        )
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn birth_of_path(_: &Path) -> io::Result<Option<Birth>> {
+        Ok(None)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn birth_at(_: &Directory, _: &OsStr) -> io::Result<Option<Birth>> {
+        Ok(None)
     }
 
     fn random(bytes: &mut [u8]) -> io::Result<()> {
@@ -183,6 +258,10 @@ mod unix {
                 ));
             }
             let physical = source.path.0.clone();
+            let birth = match version {
+                Some(_) => birth_of_path(&physical)?,
+                None => None,
+            };
             let parent_object = *source
                 .ancestors
                 .first()
@@ -224,6 +303,7 @@ mod unix {
                 parent_object,
                 name: name.to_owned(),
                 version,
+                birth,
                 container,
             }));
         }
@@ -311,7 +391,7 @@ mod unix {
                     self.describe()
                 )));
             }
-            let container = match parent.create_directory(&self.container) {
+            let container = match operations.create_directory(&parent, &self.container) {
                 Ok(container) => container,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     return Err(AppError::AlreadyExists(format!(
@@ -319,24 +399,45 @@ mod unix {
                         self.residue()
                     )));
                 }
-                Err(error) => return Err(error.into()),
+                // mkdirat can succeed while the following open fails.
+                Err(error) => {
+                    return match parent.entry_exists(&self.container) {
+                        Ok(false) => Err(error.into()),
+                        _ => self.discard_container(&parent, None, operations, error.into()),
+                    };
+                }
+            };
+            let staged = match container.metadata() {
+                Ok(metadata) => (metadata.dev(), metadata.ino()),
+                Err(error) => {
+                    drop(container);
+                    return self.discard_container(&parent, None, operations, error.into());
+                }
             };
             if let Err(error) = verify_container(&container) {
                 drop(container);
-                return self.discard_container(&parent, operations, error.into());
+                return self.discard_container(&parent, Some(staged), operations, error.into());
             }
             let payload = OsStr::new(PAYLOAD);
             if let Err(error) = operations.rename(&parent, &self.name, &container, payload) {
                 drop(container);
-                return self.discard_container(&parent, operations, error.into());
+                return self.discard_container(&parent, Some(staged), operations, error.into());
             }
             // Captured: from here the selected name may hold a newcomer.
-            match version_at(&container, payload) {
-                Ok(version) if version == self.version => {}
-                Ok(_) => {
+            let captured = version_at(&container, payload).and_then(|version| {
+                let birth = match self.birth {
+                    Some(_) => birth_at(&container, payload)?,
+                    None => None,
+                };
+                Ok(version == self.version && birth == self.birth)
+            });
+            match captured {
+                Ok(true) => {}
+                Ok(false) => {
                     return self.restore(
                         &parent,
                         container,
+                        staged,
                         operations,
                         false,
                         format!(
@@ -359,6 +460,7 @@ mod unix {
                 return self.restore(
                     &parent,
                     container,
+                    staged,
                     operations,
                     partial.removed,
                     format!("Could not delete {}: {}", self.describe(), partial.error),
@@ -369,8 +471,8 @@ mod unix {
                 "Permanently deleted entry (is_dir={})",
                 self.version.directory
             );
-            let warning = operations
-                .unlink(&parent, &self.container, true)
+            let warning = self
+                .remove_container(&parent, Some(staged), operations)
                 .err()
                 .map(|error| {
                     format!(
@@ -389,10 +491,11 @@ mod unix {
         fn discard_container(
             &self,
             parent: &Directory,
+            staged: Option<(u64, u64)>,
             operations: &mut impl Operations,
             error: AppError,
         ) -> Result<TrashSuccess, AppError> {
-            match operations.unlink(parent, &self.container, true) {
+            match self.remove_container(parent, staged, operations) {
                 Ok(()) => Err(error),
                 Err(cleanup) => Err(AppError::MutationUncertain(format!(
                     "Could not delete {}: {error}; its empty staging folder {} remains: {cleanup}",
@@ -409,6 +512,7 @@ mod unix {
             &self,
             parent: &Directory,
             container: Directory,
+            staged: (u64, u64),
             operations: &mut impl Operations,
             removed: bool,
             failure: String,
@@ -427,7 +531,7 @@ mod unix {
                     self.describe()
                 )));
             }
-            if let Err(cleanup) = operations.unlink(parent, &self.container, true) {
+            if let Err(cleanup) = self.remove_container(parent, Some(staged), operations) {
                 return Err(AppError::MutationUncertain(format!(
                     "{failure}; the item was returned to {}, but its staging folder {} remains: {cleanup}",
                     self.describe(),
@@ -441,6 +545,27 @@ mod unix {
                 )));
             }
             Err(AppError::Other(failure))
+        }
+
+        /// Remove the staging name only while it still names the directory
+        /// this deletion created; a renamed-and-replaced staging name is not ours.
+        fn remove_container(
+            &self,
+            parent: &Directory,
+            staged: Option<(u64, u64)>,
+            operations: &mut impl Operations,
+        ) -> io::Result<()> {
+            if let Some(expected) = staged {
+                let stat = parent.stat(&self.container)?;
+                #[allow(clippy::unnecessary_cast)] // Darwin dev_t/ino_t differ from Linux.
+                if (stat.st_dev as u64, stat.st_ino as u64) != expected {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "the staging name no longer refers to the staging folder",
+                    ));
+                }
+            }
+            operations.unlink(parent, &self.container, true)
         }
 
         fn residue_payload(&self) -> String {

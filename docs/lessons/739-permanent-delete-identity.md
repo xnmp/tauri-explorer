@@ -35,9 +35,25 @@ verifying the recorded identity.
 injectable `Operations` seam substitutes entries *inside* the rename call, at
 the exact last seam; removing the post-move identity check fails three tests.
 
+**Hardening from review.** On Linux the prepared birth time (`statx`
+STATX_BTIME) must also match after capture: `utimensat` cannot forge it, so an
+attacker who forces inode reuse and replicates size/mode/mtime still mismatches
+where the filesystem reports btime. Staging is removed only while its name
+still refers to the directory this deletion created, and a staging directory
+that was created but could not be opened is removed (or reported) before an
+ordinary failure is returned.
+
 **Limits.** Not a defence against a hostile same-user process inside the
 private staging directory, inode reuse, or proof of every descendant's
 provenance. Crash after capture can leave a hidden `.tauri-delete-*` sibling;
 it is never auto-cleaned (a recognisable name proves nothing). Windows still
 removes by path with no identity guarantee; macOS uses the same Unix code
-(`renameatx_np`) but has no native qualification yet.
+(`renameatx_np`) but has no native qualification yet, and its parent walk
+needs read permission (Linux uses search-only `O_PATH`), so a writable but
+unreadable parent fails closed there. Kernels without `STATX_MNT_ID` (<5.8)
+fall back to device comparison, which cannot distinguish same-device bind
+mounts. Descendants created or swapped by a process holding a handle inside
+the captured tree are removed like `rm -rf` would; only the selected entry
+and its ancestors are identity-bound. Staging adds a mkdir, rename and rmdir
+per item: 5,000 files took 292 ms versus 30 ms for plain unlink (tmpfs,
+release), with preparation (shared admission capture) 155 ms of that.

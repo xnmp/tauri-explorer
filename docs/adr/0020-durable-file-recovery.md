@@ -943,8 +943,9 @@ distinguish those execution paths.
 than borrowing the replacement's: `MovePhase`/`MoveState` in `recovery/move_model.rs`
 and the pure legal transitions in `recovery/move_transition.rs`. Parking and source
 removal exist only here, and a same-filesystem move without an overwrite reaches
-`Published` from `Planned` with no artifact root at all — one
-`renameat2(RENAME_NOREPLACE)` remains the fast path.
+`Published` from `Planned` with no retained artifact root. User publication is
+one `renameat2(RENAME_NOREPLACE)`; new durable moves first perform the journaled
+capability preflight below, so the whole operation is not a single syscall.
 
 The transition function, not execution discipline, enforces the crash ordering.
 `BeginPark` is reachable only from `Published`; `BeginSourceRemoval` only from a
@@ -986,7 +987,38 @@ session with exactly one inverse per committed item — the durable record when
 there is one, an `Action::Move` otherwise, never both — which retires the
 renderer's per-item path-based Move inverses for cut/paste and drag-drop.
 
-Still required: artifact retention and retirement (#687); Windows/macOS adapters
-and qualification; and a `RENAME_NOREPLACE` support probe before publishing root
-intent, so a filesystem that rejects it does not leave a private artifact pair
-behind on each refused attempt.
+Move retirement now has operation-specific policy and journaled removal for both
+private roots (ADR 0023). Completed moves retain their exact Undo authority until
+explicit discard; restored redundant artifacts may retire automatically.
+
+Native move-retirement acceptance covers file/directory moves, explicit two-root
+discard, accounting and preservation after an external destination edit (#736).
+Windows/macOS adapters and qualification remain required.
+
+### Exclusive-rename capability preflight
+
+New moves use immutable intent version 2 with one absent, admitted private probe
+root per distinct endpoint volume. `move_capability_model.rs` owns the pure
+checkpoint contract; `move_capability.rs` owns native effects and inspection.
+Before `RootIntent` or rootless publication, each probe creates an empty file,
+executes the actual no-replace primitive to an absent name, verifies its identity,
+and removes its file and root with journaled intent and directory barriers.
+Later move transitions require every probe's successful terminal checkpoint.
+There is no filesystem allowlist or cache; this adds per-move I/O to the opt-in
+recovery path and is not presented as a performance improvement.
+
+Only ENOSYS, EOPNOTSUPP or EINVAL with an exactly unchanged probe namespace means
+unsupported capability. The move is rejected after its owned probes are cleaned
+and the record durably aborted. Permission, space and I/O failures, ambiguous
+rename outcomes, foreign entries and substituted identities preserve evidence.
+An interrupted probe can be inspected and explicitly discarded through File
+Recovery; cleanup never resumes the user's move. A crash between creation and
+identity recording leaves unknown evidence for attention, not inferred ownership.
+
+Terminal removal checkpoints retain historical root/file identities and whether
+the real rename succeeded. Version-1 moves omit the new optional fields exactly,
+so existing manifest digests remain valid; they do not acquire a new preflight
+requirement during recovery. Version 2 cannot omit its plans. Literal old catalog
+and manifest fixtures exercise byte compatibility, and native tests exercise
+unsupported errors, exact cleanup, external substitution and process termination
+on both endpoint volumes. Process-kill tests do not establish power-loss behavior.

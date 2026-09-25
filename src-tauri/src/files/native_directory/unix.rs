@@ -288,6 +288,26 @@ impl Directory {
         }
     }
 
+    /// Whether the effective identity may unlink entries here: write and search
+    /// on this retained descriptor, including ACLs and read-only mounts. Advisory
+    /// preflight only; the later unlink still makes the authoritative decision.
+    pub(crate) fn permits_entry_removal(&self) -> io::Result<()> {
+        // SAFETY: the owned descriptor and constant terminated component are valid.
+        let result = unsafe {
+            libc::faccessat(
+                self.file.as_raw_fd(),
+                c".".as_ptr(),
+                libc::W_OK | libc::X_OK,
+                libc::AT_EACCESS,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
     /// Does not follow a symlink. Directory removal must be requested explicitly.
     pub(crate) fn unlink(&self, name: &OsStr, directory: bool) -> io::Result<()> {
         let name = native_name(name)?;

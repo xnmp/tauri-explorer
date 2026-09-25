@@ -47,6 +47,10 @@ import { broadcastFileChange } from "./file-events";
 import type { ExplorerSeed } from "$lib/domain/window-input";
 
 function createExplorerState(seed?: ExplorerSeed) {
+  // Listings are immutable revisions. Deep proxies would create per-entry
+  // signals during whole-directory filtering, sorting and status aggregation.
+  let entries = $state.raw<readonly FileEntry[]>(seed?.entries ?? []);
+
   // Core per-pane state using $state rune
   let coreState = $state<ExplorerCoreState>({
     // Navigation
@@ -55,7 +59,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     historyIndex: -1,
 
     // Entries
-    entries: seed?.entries ?? [],
+    get entries() { return entries; },
+    set entries(next: readonly FileEntry[]) { entries = next; },
     loading: !seed, // not loading if seeded
     error: null,
 
@@ -192,54 +197,10 @@ function createExplorerState(seed?: ExplorerSeed) {
       filterQuery = "";
       showFilter = false;
 
-      // Accumulate streamed continuation batches off the reactive graph. Writing
-      // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
-      // each write copies the growing array AND re-runs the `displayEntries`
-      // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
-      // dir). Instead we push into a private buffer and commit a snapshot on a
-      // throttle (preserving progressive fill-in) plus once at done. See
-      // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
-      // `result.entries` assignment below, which always runs before the first
-      // streaming callback (the continuation between them is synchronous).
-      const FLUSH_INTERVAL_MS = 100;
-      let streamBuffer: FileEntry[] | null = null;
-      let pendingFlush: ReturnType<typeof setTimeout> | null = null;
-
-      const commitBuffer = () => {
-        pendingFlush = null;
-        if (gen !== navGeneration || streamBuffer === null) return;
-        coreState.entries = streamBuffer.slice();
-      };
-
-      const result = await dirListing.load(path, {
-        onEntries: (entries) => {
-          if (gen !== navGeneration) return;
-          if (streamBuffer === null) streamBuffer = coreState.entries.slice();
-          for (const e of entries) streamBuffer.push(e);
-          if (pendingFlush === null) {
-            pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
-          }
-        },
-        onCancelled: () => {
-          if (pendingFlush !== null) clearTimeout(pendingFlush);
-          pendingFlush = null;
-          streamBuffer = null;
-        },
-        onDone: () => {
-          if (gen !== navGeneration) return;
-          if (pendingFlush !== null) {
-            clearTimeout(pendingFlush);
-            pendingFlush = null;
-          }
-          if (streamBuffer !== null) {
-            coreState.entries = streamBuffer.slice();
-          }
-          coreState.loading = false;
-        },
-      }, observation);
+      const result = await dirListing.load(path, observation);
 
       // A newer navigation started while this one was in flight — discard.
-      if (gen !== navGeneration) return "stale";
+      if (gen !== navGeneration || (!result.ok && result.cancelled)) return "stale";
 
       if (result.ok) {
         coreState.currentPath = result.path;
@@ -265,9 +226,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
         onNavigateCallback?.();
 
-        if (!result.streaming) {
-          coreState.loading = false;
-        }
+        coreState.loading = false;
         return "ok";
       } else {
         coreState.error = result.error;
@@ -899,8 +858,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     directoryChanged: watch.changed,
     // Cleanup
     destroy: async (): Promise<void> => {
-      // Tear down the streaming listener and any in-flight listing,
-      // otherwise each closed tab leaks a Tauri event listener.
+      // Seal pending listings and release late observation leases,
+      // so a closed tab cannot retain a late native observation lease.
       destroyed = true;
       creationSession = null;
       navGeneration += 1;

@@ -166,6 +166,137 @@ impl Root {
         Ok(Some(total))
     }
 
+    /// A move owns an exact child set, not a replacement's generic root. A
+    /// missing manifest is acceptable only after a journaled removal consumed
+    /// the payload; a mismatching manifest is never treated as missing.
+    pub(in crate::files::recovery) fn verify_move_retirement(
+        &self,
+        intent: &DurableIntent,
+        expected: Option<&(&str, Vec<EntryVersion>)>,
+        plan: Option<&super::super::move_cleanup::Plan>,
+        removing: bool,
+    ) -> Result<(), AppError> {
+        self.verify_namespace()?;
+        let names = self.directory.names(3)?;
+        let manifest = OsStr::new("manifest.intent");
+        let payload_name = expected.map(|(name, _)| OsStr::new(name));
+        if names
+            .iter()
+            .any(|name| name != manifest && Some(name.as_os_str()) != payload_name)
+        {
+            return Err(invalid(
+                "Move artifact contains an unplanned entry; evidence is preserved",
+            ));
+        }
+        let payload_present =
+            payload_name.is_some_and(|name| names.iter().any(|entry| entry == name));
+        if names.iter().any(|name| name == manifest) {
+            self.verify_manifest(intent)?;
+        } else if !removing || payload_present {
+            return Err(invalid(
+                "Move artifact manifest is missing before payload removal",
+            ));
+        }
+        if let Some((name, versions)) = expected {
+            match probe(&self.directory, OsStr::new(name))? {
+                Some(actual) if versions.contains(&actual) => {}
+                // An explicitly authorized tree can be partially unlinked at a
+                // crash. Keep requiring its exact directory object and metadata
+                // other than the size/mtime changed by removing its children.
+                Some(actual)
+                    if removing
+                        && versions.iter().any(|version| {
+                            actual.directory
+                                && version.directory
+                                && actual.object == version.object
+                                && actual.mode == version.mode
+                                && actual.uid == version.uid
+                                && actual.gid == version.gid
+                        }) => {}
+                None if removing => {}
+                _ => {
+                    return Err(invalid(
+                        "Move retained payload changed or disappeared; evidence is preserved",
+                    ))
+                }
+            }
+        }
+        if let Some(plan) = plan {
+            plan.verify(&self.directory, &self.path, removing)?;
+        }
+        self.verify_namespace()
+    }
+
+    pub(in crate::files::recovery) fn plan_move_retirement(
+        &self,
+        intent: &DurableIntent,
+        expected: Option<&(&str, Vec<EntryVersion>)>,
+    ) -> Result<super::super::move_cleanup::Plan, AppError> {
+        self.verify_move_retirement(intent, expected, None, false)?;
+        let plan = super::super::move_cleanup::Plan::capture(
+            &self.directory,
+            &self.path,
+            expected.map(|(name, _)| *name),
+        )?;
+        plan.validate(
+            &self.path,
+            expected.map(|(name, versions)| (*name, versions.as_slice())),
+        )?;
+        self.verify_move_retirement(intent, expected, None, false)?;
+        plan.verify(&self.directory, &self.path, false)?;
+        Ok(plan)
+    }
+
+    /// Read-only proof, before the discard decision is journaled, that this
+    /// user may unlink every planned entry, the manifest and the root itself.
+    pub(in crate::files::recovery) fn preflight_move_retirement(
+        &self,
+        plan: &super::super::move_cleanup::Plan,
+    ) -> Result<(), AppError> {
+        for directory in [&self.parent, &self.directory] {
+            directory.permits_entry_removal().map_err(|error| {
+                AppError::PermissionDenied(format!(
+                    "Discard cannot remove this move's recovery folder ({error}). \
+                     Nothing was removed and its recovery record is unchanged."
+                ))
+            })?;
+        }
+        plan.preflight(&self.directory, &self.path)
+    }
+
+    /// Remove the recorded child first and the manifest last. Unlike the
+    /// replacement remover this never sweeps arbitrary entries in a root.
+    pub(in crate::files::recovery) fn retire_move_artifacts(
+        self,
+        intent: &DurableIntent,
+        expected: Option<&(&str, Vec<EntryVersion>)>,
+        plan: &super::super::move_cleanup::Plan,
+        checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
+    ) -> Result<(), AppError> {
+        self.verify_move_retirement(intent, expected, Some(plan), true)?;
+        if expected.is_some() {
+            plan.remove(&self.directory, &self.path, checkpoint)?;
+            self.directory.sync()?;
+            checkpoint("payload-removed")?;
+        }
+        self.verify_move_retirement(intent, None, Some(plan), true)?;
+        let manifest = OsStr::new("manifest.intent");
+        if self.directory.entry_exists(manifest)? {
+            self.verify_manifest(intent)?;
+            self.directory.unlink(manifest, false)?;
+            self.directory.sync()?;
+        }
+        checkpoint("manifest-removed")?;
+        self.verify_namespace()?;
+        // rmdir refuses any unexpected entry that arrived after verification.
+        self.parent.unlink(&self.name, true)?;
+        self.parent.sync()?;
+        if self.parent.entry_exists(&self.name)? {
+            return Err(invalid("Move artifact root reappeared after retirement"));
+        }
+        Ok(())
+    }
+
     /// Remove the retained artifact, then every remaining private entry, then
     /// the root itself. Requires a journaled discard intent and a `Remove` or
     /// `Removed` step observed under the same native ownership.

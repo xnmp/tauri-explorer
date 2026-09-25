@@ -1,6 +1,6 @@
 /**
  * Pane refresh lifecycle (src/lib/state/pane-refresh.ts): no-flash change
- * detection, streamed-chunk accumulation, path-change bail, cooldown skip.
+ * detection, path-change bail, cooldown skip.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -16,7 +16,6 @@ import type { FileEntry } from "../../src/lib/domain/file";
 import type { createDirectoryListing } from "../../src/lib/state/directory-listing";
 
 type DirListing = ReturnType<typeof createDirectoryListing>;
-type LoadArgs = Parameters<DirListing["load"]>;
 
 function entry(name: string, size = 1): FileEntry {
   return { name, path: `/d/${name}`, kind: "file", size, modified: "2024-01-01" };
@@ -42,33 +41,22 @@ function coreState(entries: FileEntry[]): ExplorerCoreState {
 interface FakeListingOptions {
   ok?: boolean;
   entries?: FileEntry[];
-  streamed?: FileEntry[][];
-  /** Run between returning the result and streaming (simulates mid-fetch changes). */
-  beforeStream?: (callbacks: LoadArgs[1]) => void;
+  /** Run before publishing the result (simulates mid-fetch changes). */
+  beforeResult?: () => void;
+  cancelled?: boolean;
 }
 
-/** Listing that returns `entries` inline and streams `streamed` chunks. */
+/** A complete listing that can pause/change ownership before returning. */
 function fakeListing(opts: FakeListingOptions): DirListing {
   return {
-    load: async (path: string, callbacks: LoadArgs[1]) => {
-      if (opts.ok === false) {
-        return { ok: false as const, error: "gone" };
-      }
-      const streamed = opts.streamed ?? [];
-      queueMicrotask(() => {
-        opts.beforeStream?.(callbacks);
-        for (const chunk of streamed) callbacks.onEntries(chunk);
-        callbacks.onDone();
-      });
-      return {
-        ok: true as const,
-        path,
-        entries: opts.entries ?? [],
-        streaming: true,
-      };
+    load: async (path: string) => {
+      if (opts.ok === false) return { ok: false, error: "gone" };
+      opts.beforeResult?.();
+      if (opts.cancelled) return { ok: false, cancelled: true, error: "superseded" };
+      return { ok: true, path, entries: opts.entries ?? [] };
     },
     cleanup: async () => {},
-  } as DirListing;
+  };
 }
 
 function makeRefresh(
@@ -102,11 +90,11 @@ beforeEach(() => {
 });
 
 describe("createPaneRefresh", () => {
-  it("replaces entries when the listing changed, accumulating streamed chunks", async () => {
+  it("replaces entries when the complete listing changed", async () => {
     const state = coreState([entry("old")]);
     const { refresh } = makeRefresh(
       state,
-      fakeListing({ entries: [entry("a")], streamed: [[entry("b")], [entry("c")]] })
+      fakeListing({ entries: [entry("a"), entry("b"), entry("c")] })
     );
 
     await refresh();
@@ -121,7 +109,7 @@ describe("createPaneRefresh", () => {
     const sameReference = state.entries;
     const { refresh } = makeRefresh(
       state,
-      fakeListing({ entries: [entry("a")], streamed: [[entry("b")]] })
+      fakeListing({ entries: [entry("a"), entry("b")] })
     );
 
     await refresh({ silent: true });
@@ -152,7 +140,7 @@ describe("createPaneRefresh", () => {
       state,
       fakeListing({
         entries: [entry("new")],
-        beforeStream: () => { allowed = false; },
+        beforeResult: () => { allowed = false; },
       }),
       { allowRefresh: () => allowed },
     );
@@ -218,39 +206,35 @@ describe("createPaneRefresh", () => {
     expect(state.cursorPath).toBeNull();
   });
 
-  it("waits for the final streamed listing before reconciling selection", async () => {
+  it("waits for the complete listing before reconciling selection", async () => {
     const removed = entry("removed");
-    const streamedSurvivor = entry("streamed-survivor");
-    const state = coreState([removed, streamedSurvivor]);
-    state.selectedPaths = new Set([removed.path, streamedSurvivor.path]);
+    const survivor = entry("survivor");
+    const state = coreState([removed, survivor]);
+    state.selectedPaths = new Set([removed.path, survivor.path]);
     state.selectionAnchorPath = removed.path;
     state.cursorPath = removed.path;
-    let callbacks: LoadArgs[1] | null = null;
-    const listing = {
-      load: vi.fn(async (path: string, nextCallbacks: LoadArgs[1]) => {
-        callbacks = nextCallbacks;
-        return { ok: true as const, path, entries: [], streaming: true };
-      }),
+    let complete!: (result: Awaited<ReturnType<DirListing["load"]>>) => void;
+    const listing: DirListing = {
+      load: () => new Promise((resolve) => { complete = resolve; }),
       cleanup: async () => {},
-    } as DirListing;
+    };
     const { refresh } = makeRefresh(state, listing);
 
     const pending = refresh({ silent: true });
     await Promise.resolve();
-    callbacks!.onEntries([streamedSurvivor]);
 
-    expect([...state.selectedPaths]).toEqual([removed.path, streamedSurvivor.path]);
+    expect([...state.selectedPaths]).toEqual([removed.path, survivor.path]);
     expect(state.cursorPath).toBe(removed.path);
 
-    callbacks!.onDone();
+    complete({ ok: true, path: "/d", entries: [survivor] });
     await pending;
 
-    expect([...state.selectedPaths]).toEqual([streamedSurvivor.path]);
+    expect([...state.selectedPaths]).toEqual([survivor.path]);
     expect(state.selectionAnchorPath).toBeNull();
     expect(state.cursorPath).toBeNull();
   });
 
-  it("leaves selection untouched when a streamed refresh is cancelled", async () => {
+  it("leaves selection untouched when a refresh is superseded", async () => {
     const selected = entry("selected");
     const state = coreState([selected]);
     state.selectedPaths = new Set([selected.path]);
@@ -260,7 +244,7 @@ describe("createPaneRefresh", () => {
       state,
       fakeListing({
         entries: [entry("replacement")],
-        beforeStream: ({ onCancelled }) => onCancelled?.(),
+        cancelled: true,
       }),
     );
 
@@ -284,7 +268,7 @@ describe("createPaneRefresh", () => {
       state,
       fakeListing({
         entries: [initial, selectedDuringFetch, external],
-        beforeStream: () => {
+        beforeResult: () => {
           state.selectedPaths.clear();
           state.selectedPaths.add(selectedDuringFetch.path);
           state.selectionAnchorPath = selectedDuringFetch.path;
@@ -325,7 +309,7 @@ describe("createPaneRefresh", () => {
         state,
         fakeListing({
           entries: [old, stable, external],
-          beforeStream: () => {
+          beforeResult: () => {
             state.entries = currentEntries;
             state.selectedPaths.clear();
             state.selectedPaths.add(selected.path);
@@ -361,7 +345,7 @@ describe("createPaneRefresh", () => {
       let assignCommittedIdentity = true;
       const listing = fakeListing({
         entries: [old],
-        beforeStream: () => {
+        beforeResult: () => {
           if (!assignCommittedIdentity) return;
           state.selectedPaths.clear();
           state.selectedPaths.add(committedPath);
@@ -399,7 +383,7 @@ describe("createPaneRefresh", () => {
       state,
       fakeListing({
         entries: [entry("new")],
-        beforeStream: () => {
+        beforeResult: () => {
           state.currentPath = "/elsewhere"; // navigation happened mid-stream
         },
       })

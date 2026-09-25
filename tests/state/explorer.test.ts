@@ -9,19 +9,18 @@
  *  - navigation commits path + entries and auto-selects the first row;
  *  - navigation pushes exactly one history entry (Back/Forward wiring);
  *  - the error path surfaces the error and leaves the current path untouched;
- *  - streaming ingest: post-return onEntries batches accumulate and onDone
- *    commits + clears loading;
+ *  - snapshot publication: complete results clear loading and publish entries;
  *  - the navGeneration race documented in lessons_learnt (async A→B navigation:
  *    the slower first result must be discarded, never clobbering B).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
-import type { DirectoryListingCallbacks, DirectoryListingResult } from "$lib/state/directory-listing";
+import type { DirectoryListingResult } from "$lib/state/directory-listing";
 
 // Controllable directory-listing: every explorer instance gets a `load` we
 // drive per test. This is the only seam mocked — all navigation/history/
 // selection logic under test is the real module.
-type LoadFn = (path: string, cbs: DirectoryListingCallbacks) => Promise<DirectoryListingResult>;
+type LoadFn = (path: string) => Promise<DirectoryListingResult>;
 const { loadImpl, cleanupMock, deleteEntriesMock } = vi.hoisted(() => ({
   loadImpl: { current: (async () => ({ ok: false, error: "unset" })) as LoadFn },
   cleanupMock: vi.fn(async () => {}),
@@ -30,7 +29,7 @@ const { loadImpl, cleanupMock, deleteEntriesMock } = vi.hoisted(() => ({
 
 vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
-    load: (path: string, cbs: DirectoryListingCallbacks) => loadImpl.current(path, cbs),
+    load: (path: string) => loadImpl.current(path),
     cleanup: cleanupMock,
   }),
 }));
@@ -53,7 +52,7 @@ function staticLoad(map: Record<string, FileEntry[]>): LoadFn {
   return async (path) => {
     const entries = map[path];
     if (!entries) return { ok: false, error: `no such dir: ${path}` };
-    return { ok: true, path, entries, streaming: false };
+    return { ok: true, path, entries };
   };
 }
 
@@ -137,32 +136,15 @@ describe("navigation error path", () => {
   });
 });
 
-describe("streaming ingest", () => {
-  it("accumulates post-return onEntries batches and commits on done", async () => {
-    vi.useFakeTimers();
-    let captured: DirectoryListingCallbacks | null = null;
-
-    loadImpl.current = async (path, cbs) => {
-      captured = cbs;
-      // Initial batch arrives with the (streaming) result.
-      return { ok: true, path, entries: [entry("a")], streaming: true };
-    };
-
+describe("snapshot publication", () => {
+  it("keeps loading until the complete snapshot arrives, then publishes once", async () => {
+    let complete!: (result: DirectoryListingResult) => void;
+    loadImpl.current = () => new Promise((resolve) => { complete = resolve; });
     const explorer = createExplorerState();
-    await explorer.navigateTo("/root");
-
-    expect(explorer.currentPath).toBe("/root");
-    expect(explorer.displayEntries.map((e) => e.name)).toEqual(["a"]);
-    // Still loading: streaming continuation is outstanding.
+    const pending = explorer.navigateTo("/root");
     expect(explorer.loading).toBe(true);
-
-    // A continuation batch streams in; commit is throttled behind a timer.
-    captured!.onEntries([entry("b"), entry("c")]);
-    vi.advanceTimersByTime(100);
-    expect(explorer.displayEntries.map((e) => e.name)).toEqual(["a", "b", "c"]);
-
-    // Done flushes any remainder and drops the loading flag.
-    captured!.onDone();
+    complete({ ok: true, path: "/root", entries: [entry("a"), entry("b"), entry("c")] });
+    await pending;
     expect(explorer.loading).toBe(false);
     expect(explorer.displayEntries.map((e) => e.name)).toEqual(["a", "b", "c"]);
   });
@@ -289,11 +271,11 @@ describe("navGeneration race (documented in lessons_learnt)", () => {
       if (path === "/A") {
         // /A resolves only when we release it — simulating the slow request.
         return new Promise<DirectoryListingResult>((resolve) => {
-          resolveA = () => resolve({ ok: true, path, entries: entriesA, streaming: false });
+          resolveA = () => resolve({ ok: true, path, entries: entriesA });
         });
       }
       // /B resolves immediately.
-      return { ok: true, path, entries: entriesB, streaming: false };
+      return { ok: true, path, entries: entriesB };
     };
 
     const explorer = createExplorerState();
@@ -329,6 +311,33 @@ describe("per-pane numeric preferences", () => {
       expect(explorer.millerLayers).toBe(3);
       explorer.setMillerLayers(-1);
       expect(explorer.millerLayers).toBe(0);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});
+
+describe("immutable listing revisions", () => {
+  it("publishes refreshed metadata and resolves the cursor to the new entry", async () => {
+    const original = entry("a.txt");
+    let listing = [original];
+    loadImpl.current = async (path) => ({ ok: true, path, entries: listing });
+    const explorer = createExplorerState();
+    try {
+      await explorer.navigateTo("/root");
+      const previous = explorer.state.entries;
+      const changed = { ...original, size: 4096, modified: "2026-09-23T00:00:00Z", is_symlink: true, symlink_target: "/other" };
+      listing = [changed, entry("b.txt")];
+      await explorer.refresh({ silent: true });
+      expect(explorer.displayEntries).toEqual(listing);
+      expect(explorer.focusedEntry).toEqual(changed);
+      expect(explorer.displayEntries.indexOf(explorer.focusedEntry!)).toBe(0);
+      expect([...explorer.selectedPaths]).toEqual([original.path]);
+      expect(previous).toEqual([original]);
+      const unchanged = explorer.state.entries;
+      listing = listing.map((item) => ({ ...item }));
+      await explorer.refresh({ silent: true });
+      expect(explorer.state.entries).toBe(unchanged);
     } finally {
       await explorer.destroy();
     }

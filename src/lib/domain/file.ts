@@ -28,7 +28,6 @@ export interface FileEntry {
 export interface DirectoryListing {
   readonly path: string;
   readonly entries: readonly FileEntry[];
-  readonly listing_id: number | null;
 }
 
 /** A committed mutation and an optional, subsequent presentation snapshot.

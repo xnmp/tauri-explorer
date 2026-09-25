@@ -149,11 +149,11 @@
 
             {#if pendingDiscard?.id === item.id && pendingDiscard.generation === item.generation}
               <div class="discard-confirmation" role="alert">
-                <strong>Delete the retained original?</strong>
-                <p>This permanently removes the retained data and cannot be undone.</p>
+                <strong>Discard this recovery record?</strong>
+                <p>This permanently deletes any retained files and removes recovery and Undo for this operation. It cannot be undone.</p>
                 <div class="confirmation-actions">
                   <button bind:this={discardCancelButton} type="button" class="btn secondary" onclick={() => void closeDiscardConfirmation(item.id)}>Cancel</button>
-                  <button type="button" class="btn danger" onclick={() => resolve(item, "discard")} disabled={!!store?.busyId || recovery.loading}>Delete retained original</button>
+                  <button type="button" class="btn danger" onclick={() => resolve(item, "discard")} disabled={!!store?.busyId || recovery.loading}>Discard recovery data</button>
                 </div>
               </div>
             {:else}

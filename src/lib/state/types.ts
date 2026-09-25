@@ -18,8 +18,9 @@ export interface SelectOptions {
 
 /**
  * Core per-pane explorer state. Owned by explorer.svelte.ts (as a $state
- * proxy) and shared with the pane-* modules, which mutate it through the
- * proxy so reactivity is preserved.
+ * proxy) and shared with the pane-* modules. Entries use a raw reactive
+ * accessor and must be replaced as immutable revisions; other properties
+ * retain granular reactivity.
  */
 export interface ExplorerCoreState {
   // Navigation
@@ -28,7 +29,7 @@ export interface ExplorerCoreState {
   historyIndex: number;
 
   // Entries
-  entries: import("$lib/domain/file").FileEntry[];
+  entries: readonly import("$lib/domain/file").FileEntry[];
   loading: boolean;
   error: string | null;
 

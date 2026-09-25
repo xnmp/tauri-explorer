@@ -192,13 +192,12 @@ impl Coordinator {
                                 }
                             }
                             Ok(_) => reopen_published_gate(&root)?,
-                            Err(probe_error) => match root.open_file(OsStr::new(GATE)) {
-                                Ok(file) => file,
-                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                                    return Err(probe_error.into());
-                                }
-                                Err(error) => return Err(error.into()),
-                            },
+                            // The probe itself failed (e.g. the root exceeds
+                            // the probe's entry limit); still retry the exact
+                            // gate before failing closed, and report the same
+                            // missing-lock message as the empty-probe path
+                            // rather than leaking the probe's raw error.
+                            Err(_probe_error) => reopen_published_gate(&root)?,
                         }
                     }
                     Err(error) => return Err(error.into()),

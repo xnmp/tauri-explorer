@@ -699,13 +699,56 @@ fn initializer_published_after_gate_miss_is_reopened_without_enumerating_storage
     let second_owner = coordinator.reserve(writing(&second_path)).unwrap();
     let observer = Coordinator::open(&storage).unwrap();
 
-    assert!(observer.reserve(writing(&first_path)).is_err());
-    assert!(observer.reserve(writing(&second_path)).is_err());
+    let first_conflict = observer
+        .reserve(writing(&first_path))
+        .err()
+        .expect("first path is owned by the competing initializer");
+    assert!(
+        first_conflict.to_string().contains("owns these files"),
+        "{first_conflict}"
+    );
+    let second_conflict = observer
+        .reserve(writing(&second_path))
+        .err()
+        .expect("second path is owned by this coordinator");
+    assert!(
+        second_conflict.to_string().contains("owns these files"),
+        "{second_conflict}"
+    );
 
     second_owner.finish().unwrap();
     let (competing, first_owner) = competing_owner.unwrap();
     first_owner.finish().unwrap();
     drop(competing);
+}
+
+#[test]
+fn populated_root_without_gate_fails_closed_with_the_missing_lock_message() {
+    // Root has entries but never got a gate published (unlike the empty-probe
+    // path, which creates one). The bounded emptiness probe rejects a root
+    // this populated before the gate is even considered, and the retried
+    // gate open must still report the standard missing-lock message rather
+    // than leaking the probe's raw "entry limit" error.
+    let directory = tempfile::tempdir().unwrap();
+    let storage = directory.path().join("recovery");
+    fs::create_dir(&storage).unwrap();
+    fs::set_permissions(
+        &storage,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
+    fs::write(storage.join("one"), b"").unwrap();
+    fs::write(storage.join("two"), b"").unwrap();
+
+    let error = Coordinator::open(&storage)
+        .err()
+        .expect("a populated root with no gate must fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("Recovery admission lock is missing"),
+        "{error}"
+    );
 }
 
 #[test]

@@ -247,6 +247,23 @@ impl Root {
         Ok(plan)
     }
 
+    /// Read-only proof, before the discard decision is journaled, that this
+    /// user may unlink every planned entry, the manifest and the root itself.
+    pub(in crate::files::recovery) fn preflight_move_retirement(
+        &self,
+        plan: &super::super::move_cleanup::Plan,
+    ) -> Result<(), AppError> {
+        for directory in [&self.parent, &self.directory] {
+            directory.permits_entry_removal().map_err(|error| {
+                AppError::PermissionDenied(format!(
+                    "Discard cannot remove this move's recovery folder ({error}). \
+                     Nothing was removed and its recovery record is unchanged."
+                ))
+            })?;
+        }
+        plan.preflight(&self.directory, &self.path)
+    }
+
     /// Remove the recorded child first and the manifest last. Unlike the
     /// replacement remover this never sweeps arbitrary entries in a root.
     pub(in crate::files::recovery) fn retire_move_artifacts(

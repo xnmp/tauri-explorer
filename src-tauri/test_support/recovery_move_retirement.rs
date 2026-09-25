@@ -21,18 +21,29 @@ struct Fixture {
 }
 impl Fixture {
     fn new(cross: bool, overwrite: bool, directory: bool) -> Self {
+        Self::build(cross, overwrite, directory, |source| {
+            if directory {
+                fs::create_dir(source).unwrap();
+                fs::write(source.join("entry"), MOVED).unwrap();
+            } else {
+                fs::write(source, MOVED).unwrap();
+            }
+        })
+    }
+    /// `populate` creates the moved source entry; `directory` only shapes an overwritten target.
+    fn build(
+        cross: bool,
+        overwrite: bool,
+        directory: bool,
+        populate: impl FnOnce(&std::path::Path),
+    ) -> Self {
         let base = tempfile::tempdir().unwrap();
         let shared = cross.then(|| tempfile::tempdir_in("/dev/shm").unwrap());
         let source = fs::canonicalize(shared.as_ref().unwrap_or(&base).path())
             .unwrap()
             .join("source");
         let target = fs::canonicalize(base.path()).unwrap().join("target");
-        if directory {
-            fs::create_dir(&source).unwrap();
-            fs::write(source.join("entry"), MOVED).unwrap();
-        } else {
-            fs::write(&source, MOVED).unwrap();
-        }
+        populate(&source);
         if overwrite {
             if directory {
                 fs::create_dir(&target).unwrap();
@@ -767,4 +778,192 @@ fn unmounted_endpoint_preserves_both_roots_until_same_volume_returns() {
         run("umount", &[visible.as_os_str()]);
         run("umount", &[backing.as_os_str()]);
     }
+}
+
+fn set_mode(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// Root bypasses directory write permission, so the refusal is unobservable.
+fn running_as_root() -> bool {
+    // SAFETY: geteuid has no preconditions and does not mutate memory.
+    unsafe { libc::geteuid() == 0 }
+}
+
+/// A moved tree whose `pkg` subdirectory is read-only, as a Go module cache or
+/// read-only checkout is. Returns the fixture and its parked payload.
+fn read_only_payload(read_only: bool) -> (Fixture, PathBuf) {
+    let f = Fixture::build(true, false, true, |source| {
+        fs::create_dir_all(source.join("pkg")).unwrap();
+        fs::write(source.join("pkg/a"), MOVED).unwrap();
+        fs::write(source.join("pkg/b"), MOVED).unwrap();
+        if read_only {
+            set_mode(&source.join("pkg"), 0o555);
+        }
+    });
+    let parked = f
+        .roots
+        .iter()
+        .map(|root| root.join("parked"))
+        .find(|path| path.exists())
+        .expect("a cross-volume move parks its source");
+    (f, parked)
+}
+
+fn release_read_only(f: &Fixture, parked: &std::path::Path) {
+    for path in [parked.join("pkg"), f.target.join("pkg")] {
+        if path.exists() {
+            set_mode(&path, 0o755);
+        }
+    }
+}
+
+#[test]
+fn read_only_payload_directory_refuses_discard_before_consuming_undo() {
+    if running_as_root() {
+        return;
+    }
+    let (f, parked) = read_only_payload(true);
+    let error = f.retirement().retire_with(|_| Ok(())).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("Nothing was removed"), "{message}");
+    assert!(message.contains("pkg"), "{message}");
+    // Nothing was removed, the decision was not journaled, and Undo survives.
+    assert_eq!(fs::read(parked.join("pkg/a")).unwrap(), MOVED);
+    assert_eq!(fs::read(parked.join("pkg/b")).unwrap(), MOVED);
+    assert_eq!(f.retirement().eligibility(), &Eligibility::Discardable);
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    assert!(snapshot.items[0].actions.contains(&RecoveryChoice::Restore));
+    let refused = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(refused.error.is_some());
+    assert_eq!(fs::read(parked.join("pkg/a")).unwrap(), MOVED);
+    // The user's permission fix, never ours, makes the same Discard succeed.
+    set_mode(&parked.join("pkg"), 0o755);
+    f.retirement().retire_with(|_| Ok(())).unwrap();
+    f.assert_retired();
+    assert_eq!(fs::read(f.target.join("pkg/a")).unwrap(), MOVED);
+    release_read_only(&f, &parked);
+}
+
+#[test]
+fn read_only_payload_refusal_leaves_restoration_available() {
+    if running_as_root() {
+        return;
+    }
+    let (f, parked) = read_only_payload(true);
+    assert!(f.retirement().retire_with(|_| Ok(())).is_err());
+    f.restore();
+    assert_eq!(fs::read(f.source.join("pkg/a")).unwrap(), MOVED);
+    set_mode(&f.source.join("pkg"), 0o755);
+    release_read_only(&f, &parked);
+}
+
+#[test]
+fn persistent_failure_after_discard_intent_is_reported_for_attention_and_retryable() {
+    let (f, parked) = read_only_payload(false);
+    let pkg = parked.join("pkg");
+    let result = f.retirement().retire_with(|label| {
+        if label == "intent" {
+            // Changed after the preflight: the committed cleanup must stop.
+            set_mode(&pkg, 0o555);
+        }
+        Ok(())
+    });
+    assert!(result.is_err());
+    assert_eq!(fs::read(pkg.join("a")).unwrap(), MOVED);
+    // While the committed plan cannot be proven, nothing is offered.
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let item = &snapshot.items[0];
+    assert_eq!(item.status, "attention", "{}", item.message);
+    assert!(item.message.contains("Discard stopped"), "{}", item.message);
+    assert!(item.actions.is_empty());
+    // Once the user restores it, the failure is still called out, with a retry.
+    set_mode(&pkg, 0o755);
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let item = &snapshot.items[0];
+    assert_eq!(item.status, "attention", "{}", item.message);
+    assert!(item.message.contains("Discard stopped"), "{}", item.message);
+    assert_eq!(item.actions, vec![RecoveryChoice::Discard]);
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        item.generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+    assert_eq!(fs::read(f.target.join("pkg/a")).unwrap(), MOVED);
+}
+
+fn tree(path: &std::path::Path) -> Vec<(PathBuf, Option<Vec<u8>>, u32)> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut entries = vec![];
+    let mut pending = vec![path.to_owned()];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        let bytes = if metadata.is_dir() {
+            pending.extend(fs::read_dir(&path).unwrap().map(|e| e.unwrap().path()));
+            None
+        } else {
+            Some(fs::read(&path).unwrap())
+        };
+        entries.push((path, bytes, metadata.permissions().mode()));
+    }
+    entries.sort();
+    entries
+}
+
+#[test]
+fn rootless_move_can_be_forgotten_after_user_edits_without_deleting_anything() {
+    for directory in [false, true] {
+        for edit in ["content", "mode", "source-reused"] {
+            let f = Fixture::new(false, false, directory);
+            assert!(f.roots.is_empty(), "a same-volume rename retains nothing");
+            match (edit, directory) {
+                ("content", false) => fs::write(&f.target, b"user edit").unwrap(),
+                ("content", true) => fs::write(f.target.join("added"), b"user").unwrap(),
+                ("mode", _) => set_mode(&f.target, 0o700),
+                ("source-reused", _) => fs::write(&f.source, b"new source").unwrap(),
+                _ => unreachable!(),
+            }
+            let target_before = tree(&f.target);
+            let source_before = f.source.exists().then(|| tree(&f.source));
+            let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+            let item = &snapshot.items[0];
+            assert!(
+                item.actions.contains(&RecoveryChoice::Discard),
+                "{edit}: {}",
+                item.message
+            );
+            let reply = service::resolve(
+                &f.coordinator,
+                &f.id,
+                item.generation,
+                RecoveryChoice::Discard,
+            )
+            .unwrap();
+            assert!(reply.error.is_none(), "{edit}: {:?}", reply.error);
+            assert!(f.coordinator.inventory().unwrap().entries.is_empty());
+            assert_eq!(tree(&f.target), target_before, "{edit}");
+            assert_eq!(f.source.exists().then(|| tree(&f.source)), source_before);
+        }
+    }
+}
+
+#[test]
+fn restored_rootless_move_is_reclaimed_after_the_restored_entry_is_edited() {
+    let f = Fixture::new(false, false, false);
+    f.restore();
+    fs::write(&f.source, b"edited after undo").unwrap();
+    assert_eq!(retirement::enforce(&f.coordinator).unwrap().records, 0);
+    assert_eq!(fs::read(&f.source).unwrap(), b"edited after undo");
+    assert!(!f.target.exists());
 }

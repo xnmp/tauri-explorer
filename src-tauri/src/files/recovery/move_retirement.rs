@@ -74,13 +74,27 @@ impl MoveRetirement {
             eligibility,
         };
         if let Err(error) = result.verify() {
-            result.eligibility = Eligibility::Preserved(error.to_string());
+            result.eligibility = Eligibility::Preserved(if result.retiring() {
+                format!(
+                    "Discard stopped before finishing; its Undo history is gone and the \
+                     remaining recovery files are preserved: {error}"
+                )
+            } else {
+                error.to_string()
+            });
         }
         Ok(result)
     }
 
     pub(super) fn eligibility(&self) -> &Eligibility {
         &self.eligibility
+    }
+
+    fn retiring(&self) -> bool {
+        self.operation
+            .state()
+            .move_state()
+            .is_ok_and(|state| state.retirement.is_some())
     }
 
     fn step(&self, side: RootSide) -> Option<Step> {
@@ -132,6 +146,12 @@ impl MoveRetirement {
     }
 
     fn verify(&self) -> Result<(), AppError> {
+        // A rootless record (a same-volume rename) retains nothing, so there is
+        // nothing public-endpoint proof could protect: forgetting it removes no
+        // file. Requiring exact endpoints would pin it forever after any edit.
+        if self.roots.is_empty() {
+            return Ok(());
+        }
         let retiring = self.operation.state().move_state()?.retirement.as_ref();
         let artifacts_gone =
             !self.roots.is_empty() && self.roots.iter().all(|(_, root)| root.is_none());
@@ -266,6 +286,13 @@ impl MoveRetirement {
                     .map(Some)
             })
             .collect::<Result<Vec<_>, AppError>>()?;
+        // Before the decision consumes Undo: a cleanup this user cannot
+        // perform must be refused while nothing is journaled or removed.
+        for ((_, root), plan) in self.roots.iter().zip(&plans) {
+            if let (Some(root), Some(plan)) = (root, plan) {
+                root.preflight_move_retirement(plan)?;
+            }
+        }
         let planned = |side| {
             self.roots
                 .iter()

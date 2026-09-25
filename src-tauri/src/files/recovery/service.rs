@@ -500,8 +500,25 @@ fn relocation(
                 )
             }
         };
-        let (status, message, actions) = match retirement.eligibility() {
-            Eligibility::Preserved(reason) => ("attention", reason.clone(), vec![]),
+        // A committed discard that failed has already consumed Undo; it is
+        // not an ordinary retained record, so say so and offer only a retry.
+        let interrupted = retirement
+            .state()
+            .move_state()
+            .ok()
+            .filter(|state| state.retirement.is_some())
+            .and_then(|state| state.error.clone());
+        let (status, message, actions) = match (retirement.eligibility(), interrupted) {
+            (Eligibility::Preserved(reason), _) => ("attention", reason.clone(), vec![]),
+            (_, Some(error)) => (
+                "attention",
+                format!(
+                    "Discard stopped before finishing; its Undo history is gone and the \
+                     remaining recovery files are preserved. Retry Discard once this is \
+                     resolved: {error}"
+                ),
+                vec![RecoveryChoice::Discard],
+            ),
             _ => {
                 let mut actions = Vec::new();
                 if restorable {

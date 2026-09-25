@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     ffi::OsStr,
+    fs::Metadata,
     io,
+    os::unix::fs::MetadataExt,
     path::{Component, Path},
 };
 
@@ -159,6 +161,39 @@ impl Plan {
             );
         }
         Ok(())
+    }
+
+    /// Read-only feasibility check before any removal is journaled: every
+    /// planned directory whose entries cleanup unlinks must permit that for
+    /// this user. A read-only directory (a Go module cache, a read-only
+    /// checkout) would otherwise fail midway after Undo is already consumed.
+    /// Walks the retained handles without following links; never changes modes.
+    pub(super) fn preflight(&self, directory: &Directory, root: &Path) -> Result<(), AppError> {
+        let Some(top) = self.entries.first() else {
+            return Ok(());
+        };
+        let index: HashMap<&Path, &EntryVersion> = self
+            .entries
+            .iter()
+            .map(|entry| (entry.path.0.as_path(), &entry.version))
+            .collect();
+        let name = top
+            .path
+            .0
+            .file_name()
+            .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
+        removable_in(directory, root, root)?;
+        let mut budget = MAX_ENTRIES;
+        preflight_tree(
+            directory,
+            &directory.metadata()?,
+            name,
+            &root.join(name),
+            root,
+            &index,
+            1,
+            &mut budget,
+        )
     }
 
     pub(super) fn remove(
@@ -308,6 +343,82 @@ fn verify_tree(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::unnecessary_cast)] // Darwin mode_t is u16.
+fn preflight_tree(
+    parent: &Directory,
+    parent_metadata: &Metadata,
+    name: &OsStr,
+    path: &Path,
+    root: &Path,
+    index: &HashMap<&Path, &EntryVersion>,
+    depth: usize,
+    budget: &mut usize,
+) -> Result<(), AppError> {
+    walk_budget(depth, budget)?;
+    let Some(actual) = observed(parent, name, path, index, true)? else {
+        return Ok(());
+    };
+    // A sticky directory lets only the entry's or directory's owner unlink it.
+    // SAFETY: geteuid has no preconditions and does not mutate memory.
+    let user = unsafe { libc::geteuid() };
+    if parent_metadata.mode() & libc::S_ISVTX as u32 != 0
+        && user != 0
+        && user != actual.uid
+        && user != parent_metadata.uid()
+    {
+        return Err(refusal(
+            path,
+            root,
+            io::Error::from_raw_os_error(libc::EPERM),
+        ));
+    }
+    if actual.directory {
+        let directory = parent.open_existing(name)?;
+        if of_file(&directory.file)? != actual.object {
+            return Err(invalid("Move cleanup directory identity changed").into());
+        }
+        let children = directory.names(MAX_ENTRIES)?;
+        if !children.is_empty() {
+            removable_in(&directory, path, root)?;
+            let metadata = directory.metadata()?;
+            for child in children {
+                preflight_tree(
+                    &directory,
+                    &metadata,
+                    &child,
+                    &path.join(&child),
+                    root,
+                    index,
+                    depth + 1,
+                    budget,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn removable_in(directory: &Directory, path: &Path, root: &Path) -> Result<(), AppError> {
+    directory
+        .permits_entry_removal()
+        .map_err(|error| refusal(path, root, error))
+}
+
+/// A definite pre-intent refusal: nothing was journaled or removed.
+fn refusal(path: &Path, root: &Path, error: io::Error) -> AppError {
+    let shown = path.strip_prefix(root).unwrap_or(path);
+    let shown = if shown.as_os_str().is_empty() {
+        "its recovery folder".to_owned()
+    } else {
+        format!("'{}'", shown.display())
+    };
+    AppError::PermissionDenied(format!(
+        "Discard cannot remove the retained contents of {shown} ({error}). \
+         Nothing was removed and this move's recovery record is unchanged; make it writable and retry."
+    ))
 }
 
 fn remove_tree(

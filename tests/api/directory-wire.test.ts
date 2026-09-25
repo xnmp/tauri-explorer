@@ -15,6 +15,37 @@ describe("native directory transport", () => {
     expect(decode(listing)).toBe(listing);
   });
 
+  it("rejects a legacy-shaped listing with a malformed row instead of publishing it", () => {
+    const base = fixtures[0].listing;
+    const validEntry = base.entries[0];
+    const badRows: unknown[] = [
+      null,
+      undefined,
+      "not-an-entry",
+      {}, // missing every field
+      { ...validEntry, name: undefined },
+      { ...validEntry, path: 42 },
+      { ...validEntry, kind: "device" },
+      { ...validEntry, size: -1 },
+      { ...validEntry, size: 0.5 },
+      { ...validEntry, modified: 12345 },
+      { ...validEntry, is_symlink: "false" },
+      { ...validEntry, symlink_target: 7 },
+      { ...validEntry, is_empty: "false" },
+      { ...validEntry, is_git_repo: "true" },
+    ];
+    for (const bad of badRows) {
+      expect(() => decode({ path: base.path, entries: [validEntry, bad] })).toThrow(
+        "Invalid native directory snapshot"
+      );
+    }
+  });
+
+  it("accepts a legacy-shaped listing whose rows are all valid", () => {
+    const base = fixtures[0].listing;
+    expect(decode({ path: base.path, entries: base.entries })).toEqual(base);
+  });
+
   it("rejects malformed versions and columns instead of publishing partial entries", () => {
     const cases: unknown[] = [null, {}, { ...example(), format: "columns-v2", entries: [] }];
     for (const key of ["names", "kinds", "sizes", "modified", "is_symlink", "symlink_target", "is_empty", "is_git_repo"]) {

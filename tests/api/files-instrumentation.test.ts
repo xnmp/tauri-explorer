@@ -116,6 +116,55 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     }
   });
 
+  it("rejects a native observed reply with a missing watch lease without releasing the previous watch", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    isTauriMock.mockReturnValue(true);
+    invokeMock.mockResolvedValueOnce({ path: "/watched", entries: [] }); // no watch_lease
+    const discard = vi.fn();
+    try {
+      await expect(loadDirectory("/watched", { discard })).resolves.toEqual({
+        ok: false, error: "Invalid native directory watch lease",
+      });
+      expect(discard).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("rejects a native observed reply with a malformed lease id without releasing the previous watch", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    isTauriMock.mockReturnValue(true);
+    invokeMock.mockResolvedValueOnce({
+      path: "/watched", entries: [], watch_lease: { id: 42, path: "/watched" },
+    });
+    const discard = vi.fn();
+    try {
+      await expect(loadDirectory("/watched", { discard })).resolves.toEqual({
+        ok: false, error: "Invalid native directory watch lease",
+      });
+      expect(discard).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("rejects a native observed reply with a malformed lease path without releasing the previous watch", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    isTauriMock.mockReturnValue(true);
+    invokeMock.mockResolvedValueOnce({
+      path: "/watched", entries: [], watch_lease: { id: "owned-lease", path: null },
+    });
+    const discard = vi.fn();
+    try {
+      await expect(loadDirectory("/watched", { discard })).resolves.toEqual({
+        ok: false, error: "Invalid native directory watch lease",
+      });
+      expect(discard).not.toHaveBeenCalled();
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("records completed preview and directory requests with their paths and outcomes", async () => {
     const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     invokeMock

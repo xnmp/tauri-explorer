@@ -22,11 +22,39 @@ export type DirectoryListingPayload = DirectoryListing | CompactDirectoryListing
 
 function invalid(): never { throw new Error("Invalid native directory snapshot"); }
 
+/**
+ * Same field checks the compact (columns-v1) decoder applies per-index,
+ * applied to a single reconstructed-shape entry. Required so a malformed
+ * legacy-shaped row (missing/wrong-typed fields, or a non-object entry like
+ * `null`) is rejected up front instead of publishing and crashing a later
+ * consumer (e.g. hidden-file filtering) that assumes valid `FileEntry` shape.
+ */
+function isValidLegacyEntry(value: unknown): value is FileEntry {
+  if (!value || typeof value !== "object") return false;
+  const e = value as Record<string, unknown>;
+  return (
+    typeof e.name === "string" &&
+    typeof e.path === "string" &&
+    (e.kind === "file" || e.kind === "directory") &&
+    Number.isInteger(e.size) && (e.size as number) >= 0 &&
+    typeof e.modified === "string" &&
+    (e.is_symlink === undefined || typeof e.is_symlink === "boolean") &&
+    (e.symlink_target === undefined || typeof e.symlink_target === "string") &&
+    (e.is_empty === undefined || typeof e.is_empty === "boolean") &&
+    (e.is_git_repo === undefined || typeof e.is_git_repo === "boolean")
+  );
+}
+
 export function decodeDirectoryListing(payload: DirectoryListingPayload): DirectoryListing {
   if (!payload || typeof payload.path !== "string") return invalid();
-  // Trusted browser fixtures retain the legacy domain shape without revalidation.
-  // Native versioned payloads are validated below; providers bypass this adapter.
-  if (!("format" in payload) && "entries" in payload && Array.isArray(payload.entries)) return payload;
+  // Trusted browser fixtures retain the legacy domain shape without
+  // reconstructing entries, but each row is still validated: a malformed
+  // legacy-shaped reply (e.g. a null entry) must be rejected here, not
+  // published and left to crash a later consumer.
+  if (!("format" in payload) && "entries" in payload && Array.isArray(payload.entries)) {
+    if (!payload.entries.every(isValidLegacyEntry)) return invalid();
+    return payload;
+  }
   if (!("format" in payload) || payload.format !== "columns-v1") return invalid();
   const { columns: c, path_prefix: prefix } = payload;
   if (!c || !Array.isArray(c.names) || (prefix !== null && typeof prefix !== "string")) return invalid();

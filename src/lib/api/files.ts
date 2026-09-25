@@ -423,6 +423,21 @@ export interface ObservedDirectoryListing extends DirectoryListing {
   watch_lease?: DirectoryWatchLease;
 }
 
+/**
+ * A native `start_observed_directory` reply must carry a well-formed lease:
+ * an omitted or malformed one would otherwise decode successfully and be
+ * accepted as the new watch by `directory-listing.ts`, silently releasing the
+ * previous (working) watch and leaving refresh permanently stopped for that
+ * pane, since the garbage lease never matches a later watcher event.
+ */
+function isValidWatchLease(lease: unknown): lease is DirectoryWatchLease {
+  return (
+    !!lease && typeof lease === "object" &&
+    typeof (lease as DirectoryWatchLease).id === "string" &&
+    typeof (lease as DirectoryWatchLease).path === "string"
+  );
+}
+
 export async function loadDirectory(
   path: string,
   observation?: { discard(lease: DirectoryWatchLease): void },
@@ -470,13 +485,17 @@ export async function loadDirectory(
   let acquired: (DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }) | undefined;
   try {
     const native = isTauri();
-    const sessionId = observation && native ? await getNativeResourceSession() : undefined;
-    const payload = observation && native
+    const observed = Boolean(observation && native);
+    const sessionId = observed ? await getNativeResourceSession() : undefined;
+    const payload = observed
       ? await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
           path, sessionId,
         })
       : await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path });
     acquired = payload;
+    if (observed && !isValidWatchLease(payload.watch_lease)) {
+      throw new Error("Invalid native directory watch lease");
+    }
     const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
     if (data.watch_lease) publishReadyDirectoryWatch(path);
     if (e2eProbe) {
@@ -512,8 +531,12 @@ export async function loadDirectory(
     return { ok: true, data };
   } catch (err) {
     // Decoding and the optional native probe can fail after acquisition. Keep the same
-    // owner responsible for releasing late leases, including release retries.
-    if (acquired?.watch_lease) observation?.discard(acquired.watch_lease);
+    // owner responsible for releasing late leases, including release retries. A
+    // malformed lease (the failure this catch is also reached for) has nothing
+    // safely releasable — only a well-formed lease is discarded.
+    if (acquired?.watch_lease && isValidWatchLease(acquired.watch_lease)) {
+      observation?.discard(acquired.watch_lease);
+    }
     const error = extractError(err);
     console.warn("[navigation] list_directory_fresh failed", {
       path,

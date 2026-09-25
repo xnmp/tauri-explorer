@@ -2,6 +2,15 @@
 
 ## Read this first
 
+> **Status 2026-09-26 — superseded.** All work planned below has landed on
+> dev: #738, #741, #744, #746, #747, #750, #751, #752, #753, #762 and #763.
+> Issues #735, #736, #737, #739, #740, #742, #743, #745, #748 and #749 are
+> closed with evidence. #696 stays
+> open for Mac half-bounce qualification, and #739 had no macOS/Windows native
+> qualification. See the
+> [2026-09-26 ledger section](../review-completion.md#architecture-integration-on-dev--2026-09-26).
+> The rest of this document is the historical 2026-09-25 checkpoint.
+
 The user's latest instruction was **“please commit WIP then write a comprehensive handover document for another agent to continue the goal.”** This checkpoint fulfills that instruction, not the overall architectural goal. No PR was merged and no release was cut during this checkpoint. Do not declare the review complete.
 
 The immediate next implementation is **[#739 permanent-delete identity](https://github.com/xnmp/tauri-explorer/issues/739)**. Its current checkpoint is **deliberately red and not merge-ready**. Six of the original seven remaining issues have published implementations; integration, review, native acceptance and platform qualification remain distinct gates.

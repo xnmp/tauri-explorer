@@ -31,19 +31,37 @@ fn entry_exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-/// True when two paths refer to the same filesystem entry.
-/// Uses canonicalization; falls back to comparing canonicalized parents and
-/// exact file names for paths that can't be canonicalized (e.g. broken symlinks).
+/// True when two paths name the same directory entry. Parents are resolved,
+/// but the final component is never followed: two distinct symlinks (or case
+/// variants of them) resolving to one target are different entries, and
+/// treating them as one would let a case-only rename overwrite the other.
 fn is_same_entry(a: &Path, b: &Path) -> bool {
-    if let (Ok(ca), Ok(cb)) = (fs::canonicalize(a), fs::canonicalize(b)) {
-        return ca == cb;
+    let (Some(pa), Some(pb), Some(na), Some(nb)) =
+        (a.parent(), b.parent(), a.file_name(), b.file_name())
+    else {
+        return false;
+    };
+    match (fs::canonicalize(pa), fs::canonicalize(pb)) {
+        (Ok(ca), Ok(cb)) if ca == cb => {}
+        _ => return false,
     }
-    match (a.parent(), b.parent()) {
-        (Some(pa), Some(pb)) => match (fs::canonicalize(pa), fs::canonicalize(pb)) {
-            (Ok(ca), Ok(cb)) => ca == cb && a.file_name() == b.file_name(),
-            _ => false,
-        },
-        _ => false,
+    if na == nb {
+        return true;
+    }
+    let (Ok(ma), Ok(mb)) = (fs::symlink_metadata(a), fs::symlink_metadata(b)) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        ma.dev() == mb.dev() && ma.ino() == mb.ino()
+    }
+    // Windows names are case-insensitive: differing spellings in one parent
+    // name one entry, except that two coexisting links must stay distinct.
+    #[cfg(not(unix))]
+    {
+        !(ma.file_type().is_symlink() && mb.file_type().is_symlink())
+            && fs::canonicalize(a).ok() == fs::canonicalize(b).ok()
     }
 }
 
@@ -1087,6 +1105,41 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    /// Distinct case-variant symlinks to one target are separate entries: a
+    /// case-only rename must not treat them as one and overwrite the other.
+    #[cfg(unix)]
+    #[test]
+    fn case_variant_symlinks_to_one_target_are_not_the_same_entry() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("payload"), b"target").unwrap();
+        std::os::unix::fs::symlink("payload", dir.path().join("foo")).unwrap();
+        std::os::unix::fs::symlink("./payload", dir.path().join("FOO")).unwrap();
+        let result = block_on(rename_entry(
+            dir.path().join("foo").to_string_lossy().into_owned(),
+            "FOO".into(),
+        ));
+        assert!(
+            matches!(result, Err(AppError::AlreadyExists(_))),
+            "{result:?}"
+        );
+        assert_eq!(
+            fs::read_link(dir.path().join("FOO")).unwrap(),
+            Path::new("./payload")
+        );
+        assert_eq!(
+            fs::read_link(dir.path().join("foo")).unwrap(),
+            Path::new("payload")
+        );
+        assert!(!is_same_entry(
+            &dir.path().join("foo"),
+            &dir.path().join("FOO")
+        ));
+        assert!(is_same_entry(
+            &dir.path().join("foo"),
+            &dir.path().join("foo")
+        ));
+    }
 
     #[test]
     fn test_create_directory() {

@@ -48,6 +48,19 @@ entire historical coverage.
 
 ## Durable workspace and checkpoint
 
+**Resume in the existing `permanent-739` worktree on
+`fix/permanent-delete-identity` and read this handover before changing code.**
+This preserves the #739 checkpoint and its mutation-admission dependencies.
+It is not an integration branch containing the entire overhaul: the performance,
+retirement, initializer and fixture-cleanup branches below are separate.
+
+A worktree is another checkout of the same repository. It was used to keep
+development off `dev`, as required by the repository workflow, and preserve the
+unrelated changes in the main checkout. The `.claude/worktrees` directory name
+does not indicate a running Claude agent or autonomous service. Old worktree
+registrations are not evidence that their branches still need merging; inspect
+their PRs and actual changes before deciding whether to retain or remove them.
+
 - Repository: `/home/chong/Repos/tauri-explorer`.
 - Active continuation worktree: `/home/chong/Repos/tauri-explorer/.claude/worktrees/permanent-739`.
 - Branch: `fix/permanent-delete-identity`.
@@ -177,6 +190,39 @@ dev -> #752 Windows fixture cleanup
 ```
 
 Source ancestry and PR base are different: several stacked PRs still target dev. Recheck merge-bases against the actual remote tip before integration. After squash merges, transplant only the remaining dependent changes; avoid duplicate patches or accidentally dropping dependency work. Retarget #753 and require the full dev CI/review gates. Integrate the initializer and fixture lifecycle fixes before relying on fresh native acceptance of affected branches. Do not mark every stack “ready” from the table.
+
+### User-confirmed priority: reduce the integration backlog
+
+The September 25 handoff has **nine open PRs plus the #739 WIP branch**. The
+changes were split for review, but implementation continued while earlier PRs
+awaited integration. This accumulated backlog is unfinished delivery work, not
+a reason to start another broad implementation wave. The user explicitly asked
+to carry this explanation and priority into the handover.
+
+Prioritize resolving reviews/CI and landing the existing dependencies into `dev`,
+alongside finishing #739. Six PRs currently have successful checks but require
+review; #741 and #751 have native failures; #753 has only its two performance
+checks. Successful checks alone are not merge approval.
+
+1. Refresh the PR state and satisfy review requirements for ready independent
+   fixes, especially #746 initialization and #752 cleanup, which affect downstream
+   acceptance. #744 retirement can proceed independently through its gates.
+2. Integrate the performance stack in order: #738 → #747 → #753. Rebase/retarget
+   dependents after each squash merge and run the required checks on their new
+   heads; #753 must receive the full dev-targeted checks.
+3. Resolve and integrate the mutation stack in order: #741 → #750 → #751, using
+   the initializer/cleanup fixes for fresh acceptance. Preserve and transplant
+   the #739 checkpoint onto the resulting integrated base, then land its actual
+   fix only after the red regressions and required safety matrix pass.
+4. Track each landed issue explicitly and close it with evidence. After integration,
+   remove obsolete task branches/worktrees only after verifying their changes
+   landed and they contain no unique uncommitted work or evidence. Historical
+   checkouts and stale `/tmp` registrations are not nine additional open PRs.
+
+Do not merge the whole WIP branch into dev as a shortcut, bypass review gates,
+or silently discard dependent commits during squash-stack cleanup. The goal is
+to consolidate accepted work into dev and finish the bounded release, not merely
+increase the number of implemented but unmerged branches.
 
 ### Known failing gates
 

@@ -362,10 +362,11 @@ fn preflight_tree(
         return Ok(());
     };
     // A sticky directory lets only the entry's or directory's owner unlink it.
+    // Root is not exempted: without CAP_FOWNER it obeys the same rule, and a
+    // refusal here is always safe because nothing has been journaled yet.
     // SAFETY: geteuid has no preconditions and does not mutate memory.
     let user = unsafe { libc::geteuid() };
     if parent_metadata.mode() & libc::S_ISVTX as u32 != 0
-        && user != 0
         && user != actual.uid
         && user != parent_metadata.uid()
     {

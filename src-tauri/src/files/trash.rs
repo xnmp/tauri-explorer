@@ -93,6 +93,74 @@ pub(crate) async fn run_batch(plan: BatchPlan) -> Result<FileBatchOutcome, AppEr
     }
 }
 
+/// Accepted forward deletion holds admission until the actual batch worker and
+/// its captures finish. Renderer retirement does not abandon native-owned work.
+#[cfg(target_os = "linux")]
+pub(crate) async fn run_admitted_batch(
+    plan: BatchPlan,
+    recovery: (super::recovery::Runtime, std::path::PathBuf),
+    permanent: bool,
+) -> Result<FileBatchOutcome, AppError> {
+    if plan.paths.is_empty() {
+        return Ok(FileBatchOutcome::default());
+    }
+    let paths = Arc::new(plan.paths.clone());
+    let (result, admission) = if permanent {
+        use super::recovery::{Access, ResourceRequest, Scope};
+        let admission = recovery
+            .0
+            .admit(
+                recovery.1,
+                paths
+                    .iter()
+                    .map(|path| ResourceRequest {
+                        path: path.into(),
+                        access: Access::Write,
+                        scope: Scope::Subtree,
+                    })
+                    .collect(),
+            )
+            .await?;
+        let mut resolved = admission
+            .paths()
+            .map(std::path::Path::to_path_buf)
+            .collect::<Vec<_>>()
+            .into_iter();
+        let result = batch::run_with_receipts_owned(admission.context(), plan, move |_, _| {
+            let path = resolved.next().expect("one binding per deletion request");
+            super::file_ops::delete_native_path(&path)?;
+            Ok(super::trash_artifact::TrashSuccess::default())
+        })
+        .await;
+        (result, admission)
+    } else {
+        let (mut selection, admission) = recovery
+            .0
+            .admit_prepared(recovery.1, move || {
+                super::freedesktop_trash::Context::new()?
+                    .prepare_selection(Arc::clone(&paths))
+                    .map(|selection| selection.into_admission())
+            })
+            .await?;
+        let result = batch::run_with_receipts_owned(admission.context(), plan, move |path, _| {
+            selection.execute_next(path)
+        })
+        .await;
+        (result, admission)
+    };
+    let mut result = result;
+    // A cleanup failure cannot erase confirmed receipts or invite replay of a
+    // completed deletion. Keep it in the batch's unattributed diagnostic slot.
+    if let Err(error) = super::run_blocking(move || admission.finish()).await {
+        let cleanup = format!("Deletion finished, but ownership cleanup failed: {error}");
+        result.worker_error = Some(match result.worker_error {
+            Some(previous) => format!("{previous}; {cleanup}"),
+            None => cleanup,
+        });
+    }
+    Ok(result)
+}
+
 /// Trash only the exact native object published by an ordinary copy. This
 /// inverse is native-owned: callers provide neither a path-only fallback nor a
 /// replacement identity reconstructed from presentation metadata.

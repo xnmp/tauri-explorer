@@ -292,3 +292,146 @@ fn selected_ancestor_still_conflicts_when_its_destination_preparation_fails() {
         0
     );
 }
+
+#[test]
+fn deletion_is_refused_while_a_managed_copy_owns_its_source() {
+    use crate::files::recovery::{ResourceRequest, Runtime};
+    let (root, context, source) = fixture();
+    let file = source.join("held.txt");
+    fs::write(&file, b"must remain while a copy reads it").unwrap();
+    let runtime = Runtime::default();
+    let storage = root.path().join("recovery");
+    let held = tauri::async_runtime::block_on(runtime.admit(
+        storage.clone(),
+        vec![ResourceRequest {
+            path: file.clone(),
+            access: Access::Read,
+            scope: Scope::Subtree,
+        }],
+    ))
+    .unwrap();
+    let key = file.to_string_lossy().into_owned();
+    let result = tauri::async_runtime::block_on(runtime.admit_prepared(storage, move || {
+        context
+            .prepare_selection(Arc::new(vec![key.clone()]))
+            .map(PreparedSelection::into_admission)
+    }));
+    assert!(
+        result.is_err(),
+        "deletion must reject a source still owned by a copy"
+    );
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        b"must remain while a copy reads it"
+    );
+    held.finish().unwrap();
+}
+
+fn admit(
+    runtime: &crate::files::recovery::Runtime,
+    storage: &Path,
+    context: Context,
+    paths: Vec<String>,
+) -> Result<(PreparedSelection, crate::files::recovery::MutationAdmission), AppError> {
+    let paths = Arc::new(paths);
+    tauri::async_runtime::block_on(runtime.admit_prepared(storage.to_owned(), move || {
+        context
+            .prepare_selection(Arc::clone(&paths))
+            .map(PreparedSelection::into_admission)
+    }))
+}
+
+fn claim(
+    runtime: &crate::files::recovery::Runtime,
+    storage: &Path,
+    path: &Path,
+    access: Access,
+) -> Result<crate::files::recovery::MutationAdmission, AppError> {
+    tauri::async_runtime::block_on(runtime.admit(
+        storage.to_owned(),
+        vec![resources::Request {
+            path: path.to_owned(),
+            access,
+            scope: Scope::Subtree,
+        }],
+    ))
+}
+
+#[test]
+fn disjoint_deletions_share_first_use_layouts_and_retain_exact_artifact_claims() {
+    let (root, context, source) = fixture();
+    let runtime = crate::files::recovery::Runtime::default();
+    let storage = root.path().join("recovery");
+    let data = context.data_home.clone();
+    let other_context = Context {
+        mounts: crate::files::trash_mounts::MountSnapshot::read().unwrap(),
+        data_home: data.clone(),
+    };
+    let first = source.join("first");
+    let second = source.join("second");
+    fs::write(&first, b"one").unwrap();
+    fs::write(&second, b"two").unwrap();
+    let first_key = first.to_string_lossy().into_owned();
+    let second_key = second.to_string_lossy().into_owned();
+    let (mut a, a_owner) = admit(&runtime, &storage, context, vec![first_key.clone()]).unwrap();
+    let (mut b, b_owner) =
+        admit(&runtime, &storage, other_context, vec![second_key.clone()]).unwrap();
+    assert!(!data.exists(), "both preparations must be read-only");
+    assert!(claim(&runtime, &storage, &first, Access::Read).is_err());
+    assert!(claim(&runtime, &storage, &data.join("Trash"), Access::Write).is_err());
+    let a_receipt = a.execute_next(&first_key).unwrap();
+    let b_receipt = b.execute_next(&second_key).unwrap();
+    assert!(a_receipt.artifact.is_some() && b_receipt.artifact.is_some());
+    assert!(!first.exists() && !second.exists());
+    assert_eq!(fs::read_dir(data.join("Trash/files")).unwrap().count(), 2);
+    a_owner.finish().unwrap();
+    b_owner.finish().unwrap();
+    claim(&runtime, &storage, &data.join("Trash"), Access::Write)
+        .unwrap()
+        .finish()
+        .unwrap();
+}
+
+#[test]
+fn admitted_selection_keeps_alias_dependencies_and_requested_receipt_keys() {
+    let (root, context, source) = fixture();
+    let runtime = crate::files::recovery::Runtime::default();
+    let storage = root.path().join("recovery");
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&source, &alias).unwrap();
+    let file = source.join("entry");
+    fs::write(&file, b"owned").unwrap();
+    let key = alias.join("entry").to_string_lossy().into_owned();
+    let (mut selection, owner) = admit(&runtime, &storage, context, vec![key.clone()]).unwrap();
+    assert!(claim(&runtime, &storage, &alias, Access::Write).is_err());
+    assert!(claim(&runtime, &storage, &file, Access::Read).is_err());
+    assert!(selection.execute_next(&key).unwrap().artifact.is_some());
+    assert!(!file.exists());
+    owner.finish().unwrap();
+}
+
+#[test]
+fn an_unmanaged_candidate_collision_never_reallocates_unclaimed_trash_names() {
+    let (root, context, source) = fixture();
+    let runtime = crate::files::recovery::Runtime::default();
+    let storage = root.path().join("recovery");
+    // Establish the layout without moving any selected object.
+    let dirs = context
+        .open_trash(&super::super::TrashLayout::Home)
+        .unwrap();
+    let file = source.join("entry");
+    fs::write(&file, b"source").unwrap();
+    let key = file.to_string_lossy().into_owned();
+    let (mut selection, owner) = admit(&runtime, &storage, context, vec![key.clone()]).unwrap();
+    let prepared = selection.items.front().unwrap().as_ref().unwrap();
+    let candidate = dirs.root_path.join("files").join(&prepared.name);
+    fs::write(&candidate, b"external occupant").unwrap();
+    assert!(selection.execute_next(&key).is_err());
+    assert_eq!(fs::read(&file).unwrap(), b"source");
+    assert_eq!(fs::read(&candidate).unwrap(), b"external occupant");
+    assert_eq!(
+        fs::read_dir(dirs.root_path.join("files")).unwrap().count(),
+        1
+    );
+    owner.finish().unwrap();
+}

@@ -423,6 +423,29 @@ impl Runtime {
         .await
     }
 
+    /// Preparation and its captured claims share the coordinator's revision
+    /// fence. The returned plan is already bound to those observations; this
+    /// admission intentionally exposes no replacement execution paths.
+    pub(crate) async fn admit_prepared<T: Send + 'static>(
+        &self,
+        path: PathBuf,
+        prepare: impl FnMut() -> Result<(T, Vec<resources::Resource>), AppError> + Send + 'static,
+    ) -> Result<(T, MutationAdmission), AppError> {
+        let runtime = self.clone();
+        super::super::run_blocking(move || {
+            runtime
+                .coordinator(path)?
+                .reserve_prepared(prepare)
+                .map(|(prepared, reservation)| (prepared, MutationAdmission::new(reservation)))
+        })
+        .await
+        .map_err(|error| {
+            AppError::Other(format!(
+                "Could not acquire file operation ownership: {error}"
+            ))
+        })
+    }
+
     pub(crate) async fn admit(
         &self,
         path: PathBuf,

@@ -1,19 +1,21 @@
 /**
- * Streaming-ingest navigation correctness.
+ * Directory-ingest navigation correctness.
  * Issue: streaming-ingest-batching
  *
- * Guards the buffered-batch refactor in explorer.svelte.ts (navigateInternal):
- * streamed directory batches are now accumulated in a non-reactive buffer and
- * committed on a throttle + at done, instead of a per-batch reactive
- * `entries = [...entries, ...batch]`. This test asserts the user-visible
- * OUTCOME the refactor must preserve — every entry of a navigated directory
- * appears, in the correct order (directories first, then alphabetical) — so a
- * regression that drops, duplicates, or misorders entries fails here.
+ * Directory navigation no longer paces entries in batches (#696): the backend
+ * `list_directory_fresh` command scans and sorts a directory once and returns
+ * a single complete snapshot, which `explorer.svelte.ts` (navigateInternal)
+ * commits in one reactive update instead of accumulating per-batch pushes.
+ * This test asserts the user-visible OUTCOME that change must preserve —
+ * every entry of a navigated directory appears, in the correct order
+ * (directories first, then alphabetical) — so a regression that drops,
+ * duplicates, or misorders entries fails here.
  *
- * Note: the browser mock (mock-invoke.ts) returns listings inline
- * (listing_id null), i.e. the non-streaming path; per-batch streaming cost is
- * covered by tests/perf/streaming-ingest.bench.ts. This spec covers the
- * navigation outcome end-to-end.
+ * Note: the browser mock (mock-invoke.ts) returns the same complete-snapshot
+ * shape used natively, so this spec covers the navigation outcome end-to-end
+ * against the current (non-streaming) contract. Snapshot-scan cost is covered
+ * by the Rust criterion benches in `src-tauri/benches/` (e.g.
+ * `scan_directory_parallel.rs`), not this spec.
  */
 
 import { test, expect, type Page } from "./fixtures";

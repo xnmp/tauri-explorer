@@ -52,15 +52,19 @@ all merged into dev by squash, in dependency order:
 - `dev → #741 → #750 → #751 → #762`
 - #744, #746, #752 and #763 independently
 
-Every PR had an independent adversarial review (GPT-5.6 Sol, prompted without
-the implementer's conclusions). Each review finding was fixed and re-reviewed,
-or recorded below as an explicit limit. The review-watcher gate stayed disabled
-at the user's request, so each PR was admin-merged after that review and after
-all required checks passed on its final head: `frontend`, `rust`, `webkit`,
-`smoke (ubuntu-latest)`, `launch-smoke` and `code-maps`.
+Each PR had an independent adversarial review during this integration (GPT-5.6
+Sol through the Codex CLI, prompted without the implementer's conclusions).
+These reviews ran out of band. They are summarized here and in the issue
+closing comments, not recorded as GitHub PR reviews. Findings were either fixed,
+and re-reviewed where the fix was non-trivial, or recorded below as limits.
+The review-watcher gate stayed disabled at the user's request, so each PR was
+admin-merged after its review and after all required checks passed on its final
+head: `frontend`, `rust`, `webkit`, `smoke (ubuntu-latest)`, `launch-smoke` and
+`code-maps`.
 
-Stacked branches were refreshed after each squash. Each refresh was accepted
-only when its net diff against dev equalled the PR's own diff.
+Stacked branches were refreshed after each squash. For each refresh, the
+integrator checked locally that its net diff against dev equalled the PR's own
+diff. That check was not archived separately.
 
 | PR → issue | Dev commit | Production seam and regression evidence | Limits kept open |
 | --- | --- | --- | --- |
@@ -68,28 +72,31 @@ only when its net diff against dev equalled the PR's own diff.
 | #746 → #742 | `20b1a478` | Concurrent recovery initializers reopen the exact admission gate before and after a raced emptiness probe. A deterministic paused-initializer test failed before the fix | — |
 | #741 → #735 | `bb9eabfd` | Linux forward deletion reserves its full footprint before effects: sources, aliases, trash layouts, payload and metadata names. Claims are retained through capture destruction and history retirement. The original read-claim gap was reproduced | Linux admission only |
 | #738 → #696 | `5a34b115` | Complete directory snapshots are published without paced streaming. Cold-start phase attribution uses one shared parser, rejects negative residuals and duplicate markers, and records `processEntryMs` as its own phase | **Mac half-bounce, first-presented-frame and usable-input qualification is not done (no hardware). #696 stays open** |
-| #744 → #736 | `a77a576e` | Journaled two-root durable-move retirement. A pre-intent preflight (`Plan::preflight`, `Root::preflight_move_retirement`) refuses a non-removable root, including a sticky root the process does not own, before `BeginRetirement` is recorded. A rootless retirement short-circuits verification; a stopped discard offers a retry. Reverting the preflight fails 4 of the 5 new tests | `durable-move-recovery` stays opt-in; this does not enable it |
+| #744 → #736 | `a77a576e` | Journaled two-root durable-move retirement. A pre-intent preflight (`Plan::preflight`, `Root::preflight_move_retirement`) refuses a non-removable root, including a sticky root the process does not own, before `BeginRetirement` is recorded. A rootless retirement short-circuits verification; a stopped discard offers a retry. In the integrator's local mutation check, reverting the preflight failed 4 of the 5 new tests | `durable-move-recovery` stays opt-in; this does not enable it |
 | #750 → #740 | `db0bf7ac` | Exact native Trash Undo, Redo and restoration admit their full effects. A restoration binds its prepared target to the claim it actually captured. The alias-retarget regression fails without the check | Linux admission only |
 | #747 → #737 | `2fd028e3` | Only the immutable listing is held in raw reactive state; the browser regression fails when only the accessor is reverted. On Arch, 100k-file startup p50 fell from 837 to 626 ms (20 pairs), and the median maximum rAF gap fell from 462 to 155 ms | Arch/WebKitGTK only |
 | #751 → #749 | `6f8b86fd` | Rename Undo and Redo share entry admission and physical path binding. Case-only renames are decided by exact directory names, so distinct case-variant symlinks and hardlinks stay collisions | Windows case-insensitive behaviour is CI-only; no crash-durable rename claim |
 | #753 → #748 | `198f5f7d` | Versioned columnar IPC listing with exact path-prefix factoring, validated reconstruction and watch release on decode failure. Arch 100k p50 fell from 653.1 to 594.5 ms, and native view frame gaps fell from 155–174 to 94–113 ms | Warm-cache Xvfb only; a noticeable large-directory pause remains |
-| #763 → #743 | `416b7f6a` | Waiter-drop tests poll with a real waker (`batch::drive_until_stopped`) and serialize permit holders; teardown helpers no longer panic. The permit-starvation regression fails with a single poll and with a no-op wake. Loaded (`--test-threads=64`) failures went from 4 of 6 runs to 0 of 12 | An unrelated `git_status` flake surfaced; it is #764 |
+| #763 → #743 | `416b7f6a` | Waiter-drop tests poll with a real waker (`batch::drive_until_stopped`) and serialize permit holders; teardown helpers no longer panic. The permit-starvation regression fails with a single poll and with a no-op wake. Local loaded runs (`--test-threads=64`): 4 of 6 failed before the fix, and 0 of 15 failed on this issue across the three reviewed revisions | One run hit a separate `git_status` flake whose cause is unconfirmed (#764) |
 | #762 → #739 | `44d53520` | Unix permanent deletion captures each physical entry into a private no-replace staging sibling through a verified no-follow parent handle. Identity (`EntryVersion`, plus statx birth time on Linux) is verified before anything irreversible. Removal is handle-relative, bounded to a constant descriptor count, and never crosses a device or mount. Outcomes follow the phase table in `docs/lessons/739-permanent-delete-identity.md`. 29 deterministic Rust seam tests cover the final-seam substitution, restore and residue cases, and a native spec asserts selection-only removal and that Undo has nothing to restore | Documented in the lesson: same-user staging race, no btime protection on filesystems without it, macOS needs read permission on the parent, kernels older than 5.8 lack mount-id checks. Bulk deletion is slower (292 vs 30 ms per 5,000 files). **No macOS or Windows native qualification** |
 
-Integrated-tree evidence, on the #762 head after refreshing it on dev at
-`6f8b86fd` (Arch Linux, isolated Xvfb/Openbox/D-Bus):
+Final-dev qualification. Every gate ran locally on dev at `44d53520`, which
+includes all the PRs above (Arch Linux, isolated Xvfb/Openbox/D-Bus):
 
-- 1,370 Rust library tests pass (26 ignored). The same suite also passes with
-  `durable-move-recovery` and `durable-copy-recovery` enabled.
-- Strict all-target Clippy and `cargo fmt --check` pass.
-- All 38 native specs pass against the hooks-enabled debug binary
-  (sha256 `e51eccd17fedf76c…`).
+- svelte-check: 0 errors across 1,353 files.
+- Unit tests: 2,514 passed (3 skipped), plus 29 performance contracts.
+- `cargo fmt --check`, and strict all-target Clippy both default and
+  `--all-features`.
+- Rust library tests: 1,374 passed (26 ignored). With `durable-move-recovery`
+  and `durable-copy-recovery` enabled: 1,373 passed (26 ignored).
+- All 38 native specs pass against the hooks-enabled debug binary (sha256
+  `cb209eb931713d9e2cd7fa773d03f95a7de5f95f04b426c1665f47ba3bfdfe6a`), with the
+  same display, window-manager and D-Bus wrapper as CI.
+- `ALL_VIEW_MODES=1` Playwright: 993 passed, covering the Details, List and
+  Tiles projects.
 
-On dev at `198f5f7d`:
-
-- svelte-check reports 0 errors.
-- 2,514 unit tests pass (3 skipped), plus 29 performance contracts.
-- `ALL_VIEW_MODES=1` Playwright: 993 passed, covering the Details, List and Tiles projects.
+This is Linux evidence for one commit. It is not macOS or Windows native
+qualification, and not release acceptance.
 
 Native smoke flakes seen during this integration are tracked separately and are
 not attributed to it:
@@ -98,6 +105,8 @@ not attributed to it:
   order.
 - #710 — Windows `window-transfer-lifetime`. That check is not required.
 - #764 — the `git_status` rev-parse cancellation test under a parallel suite.
+  Its cause is unconfirmed: it may be a test-environment race or a real
+  cancellation race.
 
 ## Publication and dev integration — 2026-09-09
 
@@ -1778,7 +1787,7 @@ narratives and their exact historical limits are in the
 | Platform release acceptance | Windows ConPTY, macOS PTY, config replacement/autoreload, watcher soak; native suites on supported platforms | Linux baseline passes; Windows/Mac outstanding |
 | File operation ownership and recovery | Native whole-intent copy/move/paste/drop/grouped rename, conflict revalidation, bounded progress/cancellation; exact inverse artifacts; durable discovery/reconciliation before source parking; overwrite Undo and explicit artifact retention; real crash and cross-filesystem acceptance | Five simple forward commands and selection deletion have native history ownership; the five Linux simple-entry commands now also hold recovery reservations, captured execution bindings and parent-alias read claims; Linux whole-selection source/alias observation and exact destination planning now have bounded resource checks and native acceptance, alongside exact trash identity and shared history; deletion recovery reservation is still open. Windows batch spelling validation is implemented and cross-compiled; runtime/physical-identity acceptance remains open. Explicit Linux recovery inventory/inspection/restore commands now use current native claims, with initial catalog visibility after index loss. UI subscription/startup wiring and explicit Linux native restore/reload/destruction/crash acceptance are implemented; production Linux overwrite journaling and single-replacement Undo/Redo are implemented and native-tested; warning/failure separation and atomic independent-child admission are implemented and tested; ordered paste/drop copy sessions and grouped ordinary/replacement history now pass Linux native acceptance; artifact retirement/retention, ordinary-copy recovery admission, ordered move/remaining forward batches and broader cancellation qualification are still implementation work; forward and inverse moves now share Linux recovery reservation and admitted path bindings, with Windows/macOS and real cross-filesystem acceptance outstanding. See ADRs 0018–0020 and the latest exact-trash/Windows admission evidence. 2026-09-26: Linux admission now also covers forward deletion (#741), Trash Undo/Redo/restoration (#750) and rename inverses (#751). Unix permanent deletion is bound to the captured object (#762). Durable-move retirement is journaled but opt-in (#744). None of this is macOS/Windows runtime or cross-filesystem acceptance. |
 | Product acceptance | Built-in themes, accessibility/keyboard behavior, narrow splits, view modes, DPI/zoom, preview formats and plugin failure combinations | Dense split viewport policy implemented with all three views, zoomed pointer/keyboard resizing, saved-layout preservation and Chromium/WebKit acceptance; Linux window/transfer regressions pass. Inline SCM/Miller minimum contributions, hoist/unmount shrink and continuous zoomed resizing now pass targeted browser/native acceptance. The focused resize migration is implemented; the wider themes/accessibility/platform matrix remains outstanding |
-| Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | The Linux integration of the 2026-09 follow-ups is accepted on dev (2026-09-26 section). The macOS/Windows platform gates, Mac startup measurements and the wider product matrix remain outstanding |
+| Final integration | Typecheck, architecture lint, source maps, unit/perf/Rust/native/browser/load acceptance, screenshots, updated ADRs/report and issue; independent falsification of structural/performance claims | The Linux gates pass on dev `44d53520` with all 2026-09 follow-ups merged (2026-09-26 section). The macOS/Windows platform gates, Mac startup measurements and the wider product matrix remain outstanding |
 
 Every completion update must name the actual production seam, regression or
 measurement, result and limitations. Platform gates stay open until directly

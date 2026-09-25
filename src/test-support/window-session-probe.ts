@@ -51,11 +51,11 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   }) as EventListener);
 
   listen("e2e-file-op", ((
-    e: CustomEvent<{ op: string; name?: string; path?: string; paths?: string[]; token?: string }>,
+    e: CustomEvent<{ op: string; name?: string; path?: string; paths?: string[]; token?: string; permanent?: boolean }>,
   ) => {
     const explorer = windowTabsManager.getActiveExplorer();
     if (!explorer) return;
-    const { op, name, path, paths, token } = e.detail;
+    const { op, name, path, paths, token, permanent } = e.detail;
     const entry = path
       ? explorer.displayEntries.find((en) => en.path === path)
       : undefined;
@@ -72,7 +72,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
     } else if (op === "confirm-captured-delete" && capturedDelete && capturedDelete.token === token) {
       const captured = capturedDelete;
       capturedDelete = null;
-      pending = captured.explorer.confirmDelete(captured.entries, false);
+      pending = captured.explorer.confirmDelete(captured.entries, permanent === true);
     } else if (op === "undo" || op === "redo") {
       pending = explorer[op]();
     } else if (op === "cut" && (entry || paths)) {

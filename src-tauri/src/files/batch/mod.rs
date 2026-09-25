@@ -314,6 +314,16 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 #[path = "../../../test_support/file_batch_worker.rs"]
 mod tests;
 
+/// Dedicated workers share one process-wide pool of four permits. Tests that
+/// hold a permit while handshaking with their own test thread serialize here,
+/// so a parallel harness cannot queue one test's worker behind other tests'
+/// handshakes past its deadline (#743). Production is unaffected.
+#[cfg(test)]
+pub(crate) fn serialize_dedicated_workers() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(test)]
 #[path = "../../../test_support/file_batch_dedicated.rs"]
 mod dedicated_tests;

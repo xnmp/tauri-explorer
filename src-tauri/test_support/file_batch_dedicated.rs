@@ -75,6 +75,7 @@ fn assert_sta() {
 
 #[test]
 fn setup_failure_returns_an_ordinary_error_before_any_filesystem_effect() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("untouched.txt");
     fs::write(&file, b"exact original bytes").unwrap();
@@ -97,6 +98,7 @@ fn setup_failure_returns_an_ordinary_error_before_any_filesystem_effect() {
 
 #[test]
 fn setup_panic_is_an_ordinary_pre_effect_error() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("untouched.txt");
     fs::write(&file, b"exact original bytes").unwrap();
@@ -142,6 +144,7 @@ impl Drop for LocalContext {
 
 #[test]
 fn non_send_context_is_created_used_and_dropped_on_one_dedicated_thread() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let first = dir.path().join("first.txt");
     let second = dir.path().join("second.txt");
@@ -196,6 +199,7 @@ fn non_send_context_is_created_used_and_dropped_on_one_dedicated_thread() {
 
 #[test]
 fn operation_panic_preserves_prior_success_and_marks_only_active_effect_uncertain() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let first = dir.path().join("first.txt");
     let active = dir.path().join("active.txt");
@@ -250,14 +254,18 @@ impl HeldCleanup {
 
 impl Drop for HeldCleanup {
     fn drop(&mut self) {
-        self.started.send(()).unwrap();
-        self.release.recv_timeout(DEADLINE).unwrap();
-        fs::write(&self.path, b"cleanup finished").unwrap();
+        // Never panic in teardown (#743); a missed handshake leaves the
+        // marker unwritten and the owning test reports it.
+        let _ = self.started.send(());
+        if self.release.recv_timeout(DEADLINE).is_ok() {
+            let _ = fs::write(&self.path, b"cleanup finished");
+        }
     }
 }
 
 #[test]
 fn terminal_result_waits_for_operation_capture_cleanup() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("entry");
     let cleanup = dir.path().join("cleanup");
@@ -299,6 +307,7 @@ fn terminal_result_waits_for_operation_capture_cleanup() {
 
 #[test]
 fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
+    let _serial = super::serialize_dedicated_workers();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("committed-after-caller-drop.txt");
     fs::write(&file, b"must be removed").unwrap();
@@ -351,6 +360,7 @@ fn dropping_a_polled_future_after_acceptance_does_not_cancel_the_worker() {
 #[cfg(target_os = "windows")]
 #[test]
 fn dedicated_sta_does_not_change_a_fresh_mta_caller_apartment() {
+    let _serial = super::serialize_dedicated_workers();
     use crate::files::windows_restore::StaApartment;
 
     thread::Builder::new()
@@ -390,6 +400,7 @@ fn dedicated_sta_does_not_change_a_fresh_mta_caller_apartment() {
 #[cfg(target_os = "windows")]
 #[test]
 fn public_trash_and_restore_batches_preserve_an_mta_caller_and_exact_file_bytes() {
+    let _serial = super::serialize_dedicated_workers();
     use crate::files::{
         trash::{move_multiple_to_trash, restore_entries},
         trash_artifact::RestoreRequest,

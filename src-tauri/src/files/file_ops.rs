@@ -32,9 +32,11 @@ fn entry_exists(path: &Path) -> bool {
 }
 
 /// True when two paths name the same directory entry. Parents are resolved,
-/// but the final component is never followed: two distinct symlinks (or case
-/// variants of them) resolving to one target are different entries, and
-/// treating them as one would let a case-only rename overwrite the other.
+/// but the final component is never followed. Differing spellings name one
+/// entry only when the parent lists exactly one of them (case-insensitive
+/// aliasing); when both names are listed they are distinct entries even if
+/// they are symlinks to one target or hardlinks to one inode, and treating
+/// them as one would let a case-only rename overwrite (or no-op onto) the other.
 fn is_same_entry(a: &Path, b: &Path) -> bool {
     let (Some(pa), Some(pb), Some(na), Some(nb)) =
         (a.parent(), b.parent(), a.file_name(), b.file_name())
@@ -48,21 +50,25 @@ fn is_same_entry(a: &Path, b: &Path) -> bool {
     if na == nb {
         return true;
     }
-    let (Ok(ma), Ok(mb)) = (fs::symlink_metadata(a), fs::symlink_metadata(b)) else {
+    if fs::symlink_metadata(a).is_err() || fs::symlink_metadata(b).is_err() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(pa) else {
         return false;
     };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        ma.dev() == mb.dev() && ma.ino() == mb.ino()
+    let (mut listed_a, mut listed_b) = (false, false);
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let name = entry.file_name();
+        listed_a |= name == na;
+        listed_b |= name == nb;
+        if listed_a && listed_b {
+            return false;
+        }
     }
-    // Windows names are case-insensitive: differing spellings in one parent
-    // name one entry, except that two coexisting links must stay distinct.
-    #[cfg(not(unix))]
-    {
-        !(ma.file_type().is_symlink() && mb.file_type().is_symlink())
-            && fs::canonicalize(a).ok() == fs::canonicalize(b).ok()
-    }
+    listed_a != listed_b
 }
 
 /// Reject copying/moving a directory into itself or one of its descendants.
@@ -1139,6 +1145,42 @@ mod tests {
             &dir.path().join("foo"),
             &dir.path().join("foo")
         ));
+    }
+
+    /// Two hardlinked names are distinct entries: rename(2) between them is a
+    /// silent no-op, so a case-only rename must report the collision instead.
+    #[cfg(unix)]
+    #[test]
+    fn case_variant_hardlinks_are_not_the_same_entry() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("foo"), b"shared").unwrap();
+        fs::hard_link(dir.path().join("foo"), dir.path().join("FOO")).unwrap();
+        let result = block_on(rename_entry(
+            dir.path().join("foo").to_string_lossy().into_owned(),
+            "FOO".into(),
+        ));
+        assert!(
+            matches!(result, Err(AppError::AlreadyExists(_))),
+            "{result:?}"
+        );
+        assert!(dir.path().join("foo").exists() && dir.path().join("FOO").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_case_only_rename_of_one_entry_still_succeeds() {
+        let dir = tempdir().unwrap();
+        std::os::unix::fs::symlink("target", dir.path().join("link")).unwrap();
+        block_on(rename_entry(
+            dir.path().join("link").to_string_lossy().into_owned(),
+            "LINK".into(),
+        ))
+        .unwrap();
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("LINK")]);
     }
 
     #[test]

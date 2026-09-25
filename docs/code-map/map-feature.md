@@ -44,6 +44,8 @@ backend for E2E/browser).
 
 ## Directory listing & refresh/watcher events
 
+- `state/explorer.svelte.ts` owns each immutable listing revision in `$state.raw`; its entries accessor preserves replacement publication through pane refresh/mutations without creating per-entry signals. Keep `ExplorerCoreState.entries` readonly; selection and other pane fields retain granular reactivity. Browser contracts in `e2e/listing-revisions.spec.ts` verify snapshot identity plus rendered publication in all three views.
+
 - `src/test-support/watcher-listing-probe.ts` — E2E-only real-write/receipt protocol holds a listing without relying on WebDriver mid-flight observations.
 
 - `state/git-repo-watch.ts` — shares ordered native lease acquisition/release across graph and SCM, retaining failed releases for retry.

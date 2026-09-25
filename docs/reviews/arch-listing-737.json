@@ -1,0 +1,3876 @@
+{
+  "sourceHead": "04258e40241967e32f02523694ef9e53dd20fb4d",
+  "productionPatch": "diff --git a/src/lib/domain/directory-reconciliation.ts b/src/lib/domain/directory-reconciliation.ts\nindex 1bc33092..43103827 100644\n--- a/src/lib/domain/directory-reconciliation.ts\n+++ b/src/lib/domain/directory-reconciliation.ts\n@@ -14,8 +14,8 @@ function sameEntries(a: readonly FileEntry[], b: readonly FileEntry[]): boolean\n }\n \n export function reconcileDirectoryEntries(\n-  before: FileEntry[], current: FileEntry[], incoming: FileEntry[],\n-): { entries: FileEntry[]; needsRefresh: boolean } {\n+  before: readonly FileEntry[], current: readonly FileEntry[], incoming: readonly FileEntry[],\n+): { entries: readonly FileEntry[]; needsRefresh: boolean } {\n   if (sameEntries(before, current)) {\n     return { entries: sameEntries(current, incoming) ? current : incoming, needsRefresh: false };\n   }\ndiff --git a/src/lib/state/explorer.svelte.ts b/src/lib/state/explorer.svelte.ts\nindex 2d14c3b7..56c70291 100644\n--- a/src/lib/state/explorer.svelte.ts\n+++ b/src/lib/state/explorer.svelte.ts\n@@ -47,6 +47,10 @@ import { broadcastFileChange } from \"./file-events\";\n import type { ExplorerSeed } from \"$lib/domain/window-input\";\n \n function createExplorerState(seed?: ExplorerSeed) {\n+  // Listings are immutable revisions. Deep proxies would create per-entry\n+  // signals during whole-directory filtering, sorting and status aggregation.\n+  let entries = $state.raw<readonly FileEntry[]>(seed?.entries ?? []);\n+\n   // Core per-pane state using $state rune\n   let coreState = $state<ExplorerCoreState>({\n     // Navigation\n@@ -55,7 +59,8 @@ function createExplorerState(seed?: ExplorerSeed) {\n     historyIndex: -1,\n \n     // Entries\n-    entries: seed?.entries ?? [],\n+    get entries() { return entries; },\n+    set entries(next: readonly FileEntry[]) { entries = next; },\n     loading: !seed, // not loading if seeded\n     error: null,\n \ndiff --git a/src/lib/state/paste-operations.ts b/src/lib/state/paste-operations.ts\nindex e8ed2c2c..02616ab1 100644\n--- a/src/lib/state/paste-operations.ts\n+++ b/src/lib/state/paste-operations.ts\n@@ -20,7 +20,7 @@ export interface PasteSource {\n \n export interface PasteContext {\n   destPath: string;\n-  existingEntries: FileEntry[];\n+  existingEntries: readonly FileEntry[];\n   onEntriesAdded: (entries: FileEntry[]) => void;\n   onRefresh: () => Promise<unknown>;\n }\ndiff --git a/src/lib/state/types.ts b/src/lib/state/types.ts\nindex 920cf973..630c2a66 100644\n--- a/src/lib/state/types.ts\n+++ b/src/lib/state/types.ts\n@@ -18,8 +18,9 @@ export interface SelectOptions {\n \n /**\n  * Core per-pane explorer state. Owned by explorer.svelte.ts (as a $state\n- * proxy) and shared with the pane-* modules, which mutate it through the\n- * proxy so reactivity is preserved.\n+ * proxy) and shared with the pane-* modules. Entries use a raw reactive\n+ * accessor and must be replaced as immutable revisions; other properties\n+ * retain granular reactivity.\n  */\n export interface ExplorerCoreState {\n   // Navigation\n@@ -28,7 +29,7 @@ export interface ExplorerCoreState {\n   historyIndex: number;\n \n   // Entries\n-  entries: import(\"$lib/domain/file\").FileEntry[];\n+  entries: readonly import(\"$lib/domain/file\").FileEntry[];\n   loading: boolean;\n   error: string | null;\n \n",
+  "productionPatchSha256": "2a365b773a5597f41585fd11a311f83a7457ff9cb96b5f7267f5186c30ec9228",
+  "binarySha256": {
+    "baseline": "b94fcf286277c588e2cfc3a3da06e03aaeed9025c2a31abe9d36a16190025fff",
+    "raw": "dc64d73794b212b2c8db6345ac7158b887476ec6c0284f23c0f59c2f8ba8c4a0"
+  },
+  "interaction": {
+    "root": "/tmp/responsiveness-737-final-tvyx7bwo",
+    "sampleCount": 18,
+    "samples": [
+      {
+        "firstEntriesMs": 637.0000000000001,
+        "completeMs": 637.0000000000001,
+        "maxGap": 444.0000000000001,
+        "keyboardRoundTripMs": 153,
+        "initialRssBytes": 831729664,
+        "peakRssBytes": 1341530112,
+        "finalRssBytes": 1312985088,
+        "inputDuringLoad": {
+          "addressReadyMs": 106,
+          "typingMs": 741,
+          "navigationMs": 817,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "details-baseline-0",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 663,
+        "completeMs": 663,
+        "maxGap": 488,
+        "keyboardRoundTripMs": 225,
+        "initialRssBytes": 831078400,
+        "peakRssBytes": 1333264384,
+        "finalRssBytes": 1309827072,
+        "inputDuringLoad": {
+          "addressReadyMs": 67,
+          "typingMs": 710,
+          "navigationMs": 787,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "details-baseline-1",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 667,
+        "completeMs": 667,
+        "maxGap": 486,
+        "keyboardRoundTripMs": 199,
+        "initialRssBytes": 832491520,
+        "peakRssBytes": 1342644224,
+        "finalRssBytes": 1311637504,
+        "inputDuringLoad": {
+          "addressReadyMs": 63,
+          "typingMs": 641,
+          "navigationMs": 713,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "details-baseline-2",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 348,
+        "completeMs": 348,
+        "maxGap": 151,
+        "keyboardRoundTripMs": 128,
+        "initialRssBytes": 830767104,
+        "peakRssBytes": 1094848512,
+        "finalRssBytes": 1094512640,
+        "inputDuringLoad": {
+          "addressReadyMs": 64,
+          "typingMs": 434,
+          "navigationMs": 491,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "details-raw-0",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 339,
+        "completeMs": 339,
+        "maxGap": 162,
+        "keyboardRoundTripMs": 78,
+        "initialRssBytes": 834449408,
+        "peakRssBytes": 1102540800,
+        "finalRssBytes": 1099313152,
+        "inputDuringLoad": {
+          "addressReadyMs": 64,
+          "typingMs": 431,
+          "navigationMs": 488,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "details-raw-1",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 343,
+        "completeMs": 343,
+        "maxGap": 153,
+        "keyboardRoundTripMs": 77,
+        "initialRssBytes": 831033344,
+        "peakRssBytes": 1098821632,
+        "finalRssBytes": 1093181440,
+        "inputDuringLoad": {
+          "addressReadyMs": 64,
+          "typingMs": 390,
+          "navigationMs": 447,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "details-raw-2",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 636,
+        "completeMs": 636,
+        "maxGap": 462,
+        "keyboardRoundTripMs": 178,
+        "initialRssBytes": 831184896,
+        "peakRssBytes": 1313394688,
+        "finalRssBytes": 1310224384,
+        "inputDuringLoad": {
+          "addressReadyMs": 64,
+          "typingMs": 643,
+          "navigationMs": 720,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "list-baseline-0",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 651.0000000000001,
+        "completeMs": 651.0000000000001,
+        "maxGap": 458.0000000000001,
+        "keyboardRoundTripMs": 151,
+        "initialRssBytes": 830779392,
+        "peakRssBytes": 1341251584,
+        "finalRssBytes": 1316044800,
+        "inputDuringLoad": {
+          "addressReadyMs": 63,
+          "typingMs": 640,
+          "navigationMs": 672,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "list-baseline-1",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 650.0000000000001,
+        "completeMs": 650.0000000000001,
+        "maxGap": 472.0000000000001,
+        "keyboardRoundTripMs": 149,
+        "initialRssBytes": 831315968,
+        "peakRssBytes": 1328365568,
+        "finalRssBytes": 1311965184,
+        "inputDuringLoad": {
+          "addressReadyMs": 22,
+          "typingMs": 611,
+          "navigationMs": 684,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "list-baseline-2",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 342,
+        "completeMs": 342,
+        "maxGap": 157,
+        "keyboardRoundTripMs": 101,
+        "initialRssBytes": 830566400,
+        "peakRssBytes": 1099358208,
+        "finalRssBytes": 1093623808,
+        "inputDuringLoad": {
+          "addressReadyMs": 64,
+          "typingMs": 342,
+          "navigationMs": 398,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "list-raw-0",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 344,
+        "completeMs": 344,
+        "maxGap": 159,
+        "keyboardRoundTripMs": 97,
+        "initialRssBytes": 844537856,
+        "peakRssBytes": 1092317184,
+        "finalRssBytes": 1090867200,
+        "inputDuringLoad": {
+          "addressReadyMs": 65,
+          "typingMs": 375,
+          "navigationMs": 432,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "list-raw-1",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 343,
+        "completeMs": 343,
+        "maxGap": 154,
+        "keyboardRoundTripMs": 124,
+        "initialRssBytes": 857092096,
+        "peakRssBytes": 1092456448,
+        "finalRssBytes": 1092231168,
+        "inputDuringLoad": {
+          "addressReadyMs": 65,
+          "typingMs": 356,
+          "navigationMs": 372,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "list-raw-2",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 629,
+        "completeMs": 629,
+        "maxGap": 458,
+        "keyboardRoundTripMs": 149,
+        "initialRssBytes": 831426560,
+        "peakRssBytes": 1333587968,
+        "finalRssBytes": 1312952320,
+        "inputDuringLoad": {
+          "addressReadyMs": 62,
+          "typingMs": 642,
+          "navigationMs": 675,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "tiles-baseline-0",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 633,
+        "completeMs": 633,
+        "maxGap": 445,
+        "keyboardRoundTripMs": 156,
+        "initialRssBytes": 857612288,
+        "peakRssBytes": 1332355072,
+        "finalRssBytes": 1329463296,
+        "inputDuringLoad": {
+          "addressReadyMs": 64,
+          "typingMs": 663,
+          "navigationMs": 738,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "tiles-baseline-1",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 657,
+        "completeMs": 657,
+        "maxGap": 477,
+        "keyboardRoundTripMs": 178,
+        "initialRssBytes": 831971328,
+        "peakRssBytes": 1328865280,
+        "finalRssBytes": 1308442624,
+        "inputDuringLoad": {
+          "addressReadyMs": 66,
+          "typingMs": 700,
+          "navigationMs": 735,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "tiles-baseline-2",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 349,
+        "completeMs": 349,
+        "maxGap": 155,
+        "keyboardRoundTripMs": 122,
+        "initialRssBytes": 830332928,
+        "peakRssBytes": 1092612096,
+        "finalRssBytes": 1092579328,
+        "inputDuringLoad": {
+          "addressReadyMs": 64,
+          "typingMs": 401,
+          "navigationMs": 459,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "tiles-raw-0",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 353,
+        "completeMs": 353,
+        "maxGap": 154,
+        "keyboardRoundTripMs": 107,
+        "initialRssBytes": 831225856,
+        "peakRssBytes": 1098919936,
+        "finalRssBytes": 1097768960,
+        "inputDuringLoad": {
+          "addressReadyMs": 63,
+          "typingMs": 395,
+          "navigationMs": 412,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "tiles-raw-1",
+        "actualView": "details"
+      },
+      {
+        "firstEntriesMs": 352,
+        "completeMs": 352,
+        "maxGap": 177,
+        "keyboardRoundTripMs": 103,
+        "initialRssBytes": 831635456,
+        "peakRssBytes": 1102159872,
+        "finalRssBytes": 1095426048,
+        "inputDuringLoad": {
+          "addressReadyMs": 66,
+          "typingMs": 425,
+          "navigationMs": 483,
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        },
+        "originalScenario": "tiles-raw-2",
+        "actualView": "details"
+      }
+    ],
+    "summaries": [
+      {
+        "view": "details",
+        "variant": "baseline",
+        "samples": 9,
+        "medians": {
+          "completeMs": 650.0000000000001,
+          "maxGap": 462,
+          "keyboardRoundTripMs": 156,
+          "peakRssBytes": 1333264384
+        }
+      },
+      {
+        "view": "details",
+        "variant": "raw",
+        "samples": 9,
+        "medians": {
+          "completeMs": 344,
+          "maxGap": 155,
+          "keyboardRoundTripMs": 103,
+          "peakRssBytes": 1098821632
+        }
+      }
+    ],
+    "allTestsPassed": true,
+    "runner": "/tmp/responsiveness-737-final.py",
+    "harnessArchive": "/tmp/responsiveness-737-qualification",
+    "limits": [
+      "9 pairs in Details; original per-view labels invalidated after screenshot verification",
+      "rAF gaps are not compositor presentation",
+      "Keyboard timings include WebDriver latency",
+      "summed process RSS double-counts shared mappings",
+      "input started before complete frame, not guaranteed during the blocking span; bounded 500ms late-result observation",
+      "Interaction only: exact-binary release fork bypass shim required by driver"
+    ],
+    "viewSetupCorrection": "All original scenarios rendered Details. Labels preserved as originalScenario only; cross-view claims rejected after visual inspection."
+  },
+  "startup": {
+    "metadata": {
+      "sourceCommit": "04258e40241967e32f02523694ef9e53dd20fb4d",
+      "binarySha256": {
+        "baseline": "b94fcf286277c588e2cfc3a3da06e03aaeed9025c2a31abe9d36a16190025fff",
+        "raw": "dc64d73794b212b2c8db6345ac7158b887476ec6c0284f23c0f59c2f8ba8c4a0"
+      },
+      "candidatePatchSha256": "9420955bed6c1d5c881cd46fde9ef450b2e7374244b332502e1f5026cb1607d3",
+      "baselineSourceCommit": "822f8751",
+      "candidateDescription": "immutable raw listing revision implementation; sourceCommit names candidate, candidate.patch records any tracked build-time differences",
+      "buildCommand": "cargo build --release --locked --features tauri/custom-protocol --target-dir /home/chong/Repos/tauri-explorer/src-tauri/target",
+      "buildCwd": "/tmp/tauri-explorer-responsiveness-737/src-tauri",
+      "profile": "release, tauri/custom-protocol, no E2E hooks, default recovery features",
+      "settings": {
+        "warmWindow": false,
+        "viewMode": "details"
+      },
+      "display": "isolated Xvfb + Openbox, 1200x800, X11; not the interactive Wayland compositor",
+      "cachePolicy": "OS caches uncontrolled; 2 excluded warm-up launches per directory; fresh process, same isolated app profile per scenario",
+      "endpoint": "native receipt after settings, commands, initial listing and two animation-frame opportunities; not externally observed presented pixels or input",
+      "kernel": "7.1.5-arch1-2",
+      "cpu": "AMD Ryzen 9 5900X 12-Core Processor",
+      "loadAtStart": [
+        1.03271484375,
+        1.7607421875,
+        2.06298828125
+      ]
+    },
+    "samples": [
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-00.log",
+        "launchEpochMs": 1790155624549.667,
+        "observedReceiptMs": 394.65663699957076,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 387.885986328125,
+        "measurement": {
+          "coldTotalMs": 360.5,
+          "readinessTotalMs": 360.5,
+          "launchTotalMs": 361.4,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 79.2,
+            "frameworkNavigationMs": 92.76904296875,
+            "documentBootMs": 59,
+            "requiredAppWorkMs": 111,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 1.552978515625,
+            "unattributedMs": -0.022
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-00.log",
+        "launchEpochMs": 1790155625028.409,
+        "observedReceiptMs": 384.60193399805576,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 380.820068359375,
+        "measurement": {
+          "coldTotalMs": 350.7,
+          "readinessTotalMs": 350.7,
+          "launchTotalMs": 351.7,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 70.6,
+            "frameworkNavigationMs": 85.850830078125,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 112,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 2.22900390625,
+            "unattributedMs": 0.02
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-01.log",
+        "launchEpochMs": 1790155625498.429,
+        "observedReceiptMs": 384.4397380016744,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 378.092041015625,
+        "measurement": {
+          "coldTotalMs": 351.4,
+          "readinessTotalMs": 351.4,
+          "launchTotalMs": 352.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 69.7,
+            "frameworkNavigationMs": 84.200927734375,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 113,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.52099609375,
+            "unattributedMs": -0.022
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-01.log",
+        "launchEpochMs": 1790155625966.992,
+        "observedReceiptMs": 384.5955819997471,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 384.037109375,
+        "measurement": {
+          "coldTotalMs": 355,
+          "readinessTotalMs": 355,
+          "launchTotalMs": 355.9,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.7,
+            "frameworkNavigationMs": 85.301025390625,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 117,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.029052734375,
+            "unattributedMs": -0.03
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-02.log",
+        "launchEpochMs": 1790155626438.4622,
+        "observedReceiptMs": 384.5631910007796,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 376.78173828125,
+        "measurement": {
+          "coldTotalMs": 349.4,
+          "readinessTotalMs": 349.4,
+          "launchTotalMs": 350.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 72.9,
+            "frameworkNavigationMs": 79.215087890625,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 115,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.243896484375,
+            "unattributedMs": 0.041
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-02.log",
+        "launchEpochMs": 1790155626908.927,
+        "observedReceiptMs": 364.3472249968909,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 357.7109375,
+        "measurement": {
+          "coldTotalMs": 330.1,
+          "readinessTotalMs": 330.1,
+          "launchTotalMs": 331,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.5,
+            "frameworkNavigationMs": 77.006103515625,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 102,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.637939453125,
+            "unattributedMs": -0.044
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-03.log",
+        "launchEpochMs": 1790155627362.0552,
+        "observedReceiptMs": 395.0010780026787,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 389.373779296875,
+        "measurement": {
+          "coldTotalMs": 360.8,
+          "readinessTotalMs": 360.8,
+          "launchTotalMs": 361.7,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 75.4,
+            "frameworkNavigationMs": 86.964111328125,
+            "documentBootMs": 65,
+            "requiredAppWorkMs": 113,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.428955078125,
+            "unattributedMs": 0.007
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-03.log",
+        "launchEpochMs": 1790155627844.5603,
+        "observedReceiptMs": 385.11790899792686,
+        "load": [
+          1.03271484375,
+          1.7607421875,
+          2.06298828125
+        ],
+        "launchToNativeReadyMs": 382.997802734375,
+        "measurement": {
+          "coldTotalMs": 353.5,
+          "readinessTotalMs": 353.5,
+          "launchTotalMs": 354.4,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 74.1,
+            "frameworkNavigationMs": 79.823974609375,
+            "documentBootMs": 65,
+            "requiredAppWorkMs": 115,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.55810546875,
+            "unattributedMs": 0.018
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-04.log",
+        "launchEpochMs": 1790155628316.9368,
+        "observedReceiptMs": 395.22343799762893,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 386.293212890625,
+        "measurement": {
+          "coldTotalMs": 353.2,
+          "readinessTotalMs": 353.2,
+          "launchTotalMs": 354.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 71.5,
+            "frameworkNavigationMs": 85.447021484375,
+            "documentBootMs": 65,
+            "requiredAppWorkMs": 111,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.22998046875,
+            "unattributedMs": 0.023
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-04.log",
+        "launchEpochMs": 1790155628800.627,
+        "observedReceiptMs": 395.06660099868895,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 386.77392578125,
+        "measurement": {
+          "coldTotalMs": 356.5,
+          "readinessTotalMs": 356.5,
+          "launchTotalMs": 357.6,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.1,
+            "nativeWindowMs": 71.6,
+            "frameworkNavigationMs": 76.468994140625,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 126,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.40087890625,
+            "unattributedMs": 0.03
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-05.log",
+        "launchEpochMs": 1790155629284.24,
+        "observedReceiptMs": 395.58599299925845,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 389.031005859375,
+        "measurement": {
+          "coldTotalMs": 357.2,
+          "readinessTotalMs": 357.2,
+          "launchTotalMs": 358.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.1,
+            "nativeWindowMs": 73.6,
+            "frameworkNavigationMs": 84.2978515625,
+            "documentBootMs": 65,
+            "requiredAppWorkMs": 113,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.27099609375,
+            "unattributedMs": 0.031
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-05.log",
+        "launchEpochMs": 1790155629768.848,
+        "observedReceiptMs": 375.0996259987005,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 373.55712890625,
+        "measurement": {
+          "coldTotalMs": 344.4,
+          "readinessTotalMs": 344.4,
+          "launchTotalMs": 345.4,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 69.6,
+            "frameworkNavigationMs": 81.428955078125,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 110,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.405029296875,
+            "unattributedMs": -0.034
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-06.log",
+        "launchEpochMs": 1790155630230.475,
+        "observedReceiptMs": 384.89706199470675,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 380.796875,
+        "measurement": {
+          "coldTotalMs": 352.1,
+          "readinessTotalMs": 352.1,
+          "launchTotalMs": 353.1,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 69.2,
+            "frameworkNavigationMs": 79.6259765625,
+            "documentBootMs": 68,
+            "requiredAppWorkMs": 116,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.27197265625,
+            "unattributedMs": 0.002
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-06.log",
+        "launchEpochMs": 1790155630700.157,
+        "observedReceiptMs": 374.0695400047116,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 369.041015625,
+        "measurement": {
+          "coldTotalMs": 340.6,
+          "readinessTotalMs": 340.6,
+          "launchTotalMs": 341.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 69.9,
+            "frameworkNavigationMs": 76.510009765625,
+            "documentBootMs": 59,
+            "requiredAppWorkMs": 116,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.197998046875,
+            "unattributedMs": -0.008
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-07.log",
+        "launchEpochMs": 1790155631156.7197,
+        "observedReceiptMs": 384.9050879944116,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 380.79736328125,
+        "measurement": {
+          "coldTotalMs": 352.5,
+          "readinessTotalMs": 352.5,
+          "launchTotalMs": 353.4,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 65.8,
+            "frameworkNavigationMs": 83.218994140625,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 121,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.51708984375,
+            "unattributedMs": -0.036
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-07.log",
+        "launchEpochMs": 1790155631626.4836,
+        "observedReceiptMs": 384.41808800416766,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 376.50146484375,
+        "measurement": {
+          "coldTotalMs": 348.2,
+          "readinessTotalMs": 348.2,
+          "launchTotalMs": 349.1,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 67,
+            "frameworkNavigationMs": 83.257080078125,
+            "documentBootMs": 57,
+            "requiredAppWorkMs": 120,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 0.985107421875,
+            "unattributedMs": -0.042
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-08.log",
+        "launchEpochMs": 1790155632095.5977,
+        "observedReceiptMs": 374.4687750004232,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 371.062255859375,
+        "measurement": {
+          "coldTotalMs": 342.3,
+          "readinessTotalMs": 342.3,
+          "launchTotalMs": 343.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.2,
+            "nativeWindowMs": 70.5,
+            "frameworkNavigationMs": 76.18701171875,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 112,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.659912109375,
+            "unattributedMs": -0.047
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-08.log",
+        "launchEpochMs": 1790155632553.686,
+        "observedReceiptMs": 394.5957329997327,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 385.385009765625,
+        "measurement": {
+          "coldTotalMs": 355.5,
+          "readinessTotalMs": 355.5,
+          "launchTotalMs": 356.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 71.1,
+            "frameworkNavigationMs": 84.352783203125,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 104,
+            "frameSchedulingMs": 34,
+            "readinessIpcMs": 1.071044921875,
+            "unattributedMs": -0.024
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-09.log",
+        "launchEpochMs": 1790155633032.7817,
+        "observedReceiptMs": 364.40170900459634,
+        "load": [
+          1.1103515625,
+          1.76513671875,
+          2.0625
+        ],
+        "launchToNativeReadyMs": 359.4052734375,
+        "measurement": {
+          "coldTotalMs": 331.3,
+          "readinessTotalMs": 331.3,
+          "launchTotalMs": 332.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.4,
+            "frameworkNavigationMs": 73.754150390625,
+            "documentBootMs": 58,
+            "requiredAppWorkMs": 109,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 2.18701171875,
+            "unattributedMs": -0.041
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-09.log",
+        "launchEpochMs": 1790155633485.211,
+        "observedReceiptMs": 384.620310003811,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 379.7431640625,
+        "measurement": {
+          "coldTotalMs": 350.7,
+          "readinessTotalMs": 350.7,
+          "launchTotalMs": 351.6,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 67.2,
+            "frameworkNavigationMs": 82.51416015625,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 106,
+            "frameSchedulingMs": 32,
+            "readinessIpcMs": 1.9541015625,
+            "unattributedMs": 0.032
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-10.log",
+        "launchEpochMs": 1790155633954.3428,
+        "observedReceiptMs": 374.5715890036081,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 367.440185546875,
+        "measurement": {
+          "coldTotalMs": 337.3,
+          "readinessTotalMs": 337.3,
+          "launchTotalMs": 338.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 71,
+            "frameworkNavigationMs": 75.47802734375,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 110,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.782958984375,
+            "unattributedMs": 0.039
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-10.log",
+        "launchEpochMs": 1790155634412.9685,
+        "observedReceiptMs": 384.90086999809137,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 378.255615234375,
+        "measurement": {
+          "coldTotalMs": 348.4,
+          "readinessTotalMs": 348.4,
+          "launchTotalMs": 349.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.5,
+            "frameworkNavigationMs": 84.714111328125,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 112,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.22412109375,
+            "unattributedMs": -0.038
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-11.log",
+        "launchEpochMs": 1790155634881.1716,
+        "observedReceiptMs": 384.7892889971263,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 376.21826171875,
+        "measurement": {
+          "coldTotalMs": 348.3,
+          "readinessTotalMs": 348.3,
+          "launchTotalMs": 349.1,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.8,
+            "nativeWindowMs": 68.7,
+            "frameworkNavigationMs": 82.193115234375,
+            "documentBootMs": 59,
+            "requiredAppWorkMs": 117,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.389892578125,
+            "unattributedMs": 0.017
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-11.log",
+        "launchEpochMs": 1790155635351.0247,
+        "observedReceiptMs": 384.6620990007068,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 380.604248046875,
+        "measurement": {
+          "coldTotalMs": 351.4,
+          "readinessTotalMs": 351.4,
+          "launchTotalMs": 352.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.6,
+            "frameworkNavigationMs": 85.14697265625,
+            "documentBootMs": 67,
+            "requiredAppWorkMs": 108,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.62890625,
+            "unattributedMs": 0.024
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-12.log",
+        "launchEpochMs": 1790155635822.1526,
+        "observedReceiptMs": 374.5068470016122,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 369.308349609375,
+        "measurement": {
+          "coldTotalMs": 340.5,
+          "readinessTotalMs": 340.5,
+          "launchTotalMs": 341.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 69.9,
+            "frameworkNavigationMs": 77.166015625,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 114,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 0.4609375,
+            "unattributedMs": -0.027
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-12.log",
+        "launchEpochMs": 1790155636280.3408,
+        "observedReceiptMs": 374.36870600504335,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 367.403076171875,
+        "measurement": {
+          "coldTotalMs": 338.8,
+          "readinessTotalMs": 338.8,
+          "launchTotalMs": 339.7,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 65.6,
+            "frameworkNavigationMs": 81.414794921875,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 107,
+            "frameSchedulingMs": 21,
+            "readinessIpcMs": 1.743896484375,
+            "unattributedMs": 0.041
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-13.log",
+        "launchEpochMs": 1790155636743.8118,
+        "observedReceiptMs": 374.6604070038302,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 368.351318359375,
+        "measurement": {
+          "coldTotalMs": 336.8,
+          "readinessTotalMs": 336.8,
+          "launchTotalMs": 337.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 71.4,
+            "frameworkNavigationMs": 80.20703125,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 103,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.1630859375,
+            "unattributedMs": 0.03
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-13.log",
+        "launchEpochMs": 1790155637202.2595,
+        "observedReceiptMs": 385.0665729987668,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 384.33447265625,
+        "measurement": {
+          "coldTotalMs": 356.9,
+          "readinessTotalMs": 356.9,
+          "launchTotalMs": 357.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70,
+            "frameworkNavigationMs": 83.327880859375,
+            "documentBootMs": 66,
+            "requiredAppWorkMs": 118,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 0.593994140625,
+            "unattributedMs": -0.022
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-14.log",
+        "launchEpochMs": 1790155637673.9744,
+        "observedReceiptMs": 374.5770099994843,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 371.03955078125,
+        "measurement": {
+          "coldTotalMs": 342.4,
+          "readinessTotalMs": 342.4,
+          "launchTotalMs": 343.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.9,
+            "frameworkNavigationMs": 82.443115234375,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 107,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.013916015625,
+            "unattributedMs": 0.043
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-14.log",
+        "launchEpochMs": 1790155638132.205,
+        "observedReceiptMs": 354.4578660003026,
+        "load": [
+          1.341796875,
+          1.80224609375,
+          2.0732421875
+        ],
+        "launchToNativeReadyMs": 350.83203125,
+        "measurement": {
+          "coldTotalMs": 322.4,
+          "readinessTotalMs": 322.4,
+          "launchTotalMs": 323.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 67.7,
+            "frameworkNavigationMs": 67.653076171875,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 106,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 2.037109375,
+            "unattributedMs": 0.01
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-15.log",
+        "launchEpochMs": 1790155638570.3625,
+        "observedReceiptMs": 364.36886800220236,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 354.676513671875,
+        "measurement": {
+          "coldTotalMs": 326.4,
+          "readinessTotalMs": 326.4,
+          "launchTotalMs": 327.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.5,
+            "frameworkNavigationMs": 68.8740234375,
+            "documentBootMs": 58,
+            "requiredAppWorkMs": 111,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.0390625,
+            "unattributedMs": -0.013
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-15.log",
+        "launchEpochMs": 1790155639017.7559,
+        "observedReceiptMs": 364.5624030032195,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 359.03515625,
+        "measurement": {
+          "coldTotalMs": 330.8,
+          "readinessTotalMs": 330.8,
+          "launchTotalMs": 331.7,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 69.5,
+            "frameworkNavigationMs": 66.51611328125,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 113,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 0.791015625,
+            "unattributedMs": -0.007
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-16.log",
+        "launchEpochMs": 1790155639467.1526,
+        "observedReceiptMs": 364.2133039975306,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 356.8544921875,
+        "measurement": {
+          "coldTotalMs": 329.5,
+          "readinessTotalMs": 329.5,
+          "launchTotalMs": 330.4,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71,
+            "frameworkNavigationMs": 67.47705078125,
+            "documentBootMs": 59,
+            "requiredAppWorkMs": 112,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 2.007080078125,
+            "unattributedMs": 0.016
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-16.log",
+        "launchEpochMs": 1790155639917.682,
+        "observedReceiptMs": 374.3038339962368,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 364.611083984375,
+        "measurement": {
+          "coldTotalMs": 333.6,
+          "readinessTotalMs": 333.6,
+          "launchTotalMs": 334.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.9,
+            "frameworkNavigationMs": 71.427001953125,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 112,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.29296875,
+            "unattributedMs": -0.02
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-17.log",
+        "launchEpochMs": 1790155640376.9585,
+        "observedReceiptMs": 354.4296040054178,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 354.324462890625,
+        "measurement": {
+          "coldTotalMs": 325.1,
+          "readinessTotalMs": 325.1,
+          "launchTotalMs": 326,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.9,
+            "frameworkNavigationMs": 68.906005859375,
+            "documentBootMs": 58,
+            "requiredAppWorkMs": 110,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.282958984375,
+            "unattributedMs": 0.011
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-17.log",
+        "launchEpochMs": 1790155640818.5278,
+        "observedReceiptMs": 374.5800659962697,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 371.084228515625,
+        "measurement": {
+          "coldTotalMs": 341.8,
+          "readinessTotalMs": 341.8,
+          "launchTotalMs": 342.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 69,
+            "frameworkNavigationMs": 70.18994140625,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 118,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.612060546875,
+            "unattributedMs": -0.002
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-18.log",
+        "launchEpochMs": 1790155641275.8757,
+        "observedReceiptMs": 364.4383189966902,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 356.2021484375,
+        "measurement": {
+          "coldTotalMs": 326.8,
+          "readinessTotalMs": 326.8,
+          "launchTotalMs": 327.7,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 66.7,
+            "frameworkNavigationMs": 67.010986328125,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 112,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.077880859375,
+            "unattributedMs": 0.011
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-18.log",
+        "launchEpochMs": 1790155641725.7124,
+        "observedReceiptMs": 374.54405799508095,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 366.378662109375,
+        "measurement": {
+          "coldTotalMs": 337.3,
+          "readinessTotalMs": 337.3,
+          "launchTotalMs": 338.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 70,
+            "frameworkNavigationMs": 75.242919921875,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 112,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.091064453125,
+            "unattributedMs": -0.034
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-19.log",
+        "launchEpochMs": 1790155642185.386,
+        "observedReceiptMs": 364.8855840001488,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 364.5419921875,
+        "measurement": {
+          "coldTotalMs": 336.6,
+          "readinessTotalMs": 336.6,
+          "launchTotalMs": 337.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.3,
+            "frameworkNavigationMs": 80.328857421875,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 105,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 0.927978515625,
+            "unattributedMs": 0.043
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-19.log",
+        "launchEpochMs": 1790155642635.289,
+        "observedReceiptMs": 364.38193299545674,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 363.4638671875,
+        "measurement": {
+          "coldTotalMs": 335.9,
+          "readinessTotalMs": 335.9,
+          "launchTotalMs": 336.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.3,
+            "frameworkNavigationMs": 73.823974609375,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 110,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 0.7529296875,
+            "unattributedMs": 0.023
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-20.log",
+        "launchEpochMs": 1790155643085.2188,
+        "observedReceiptMs": 384.38674000644824,
+        "load": [
+          1.5546875,
+          1.8388671875,
+          2.083984375
+        ],
+        "launchToNativeReadyMs": 375.982177734375,
+        "measurement": {
+          "coldTotalMs": 347.4,
+          "readinessTotalMs": 347.4,
+          "launchTotalMs": 348.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.3,
+            "frameworkNavigationMs": 81.867919921875,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 111,
+            "frameSchedulingMs": 21,
+            "readinessIpcMs": 1.200927734375,
+            "unattributedMs": 0.031
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-20.log",
+        "launchEpochMs": 1790155643555.1196,
+        "observedReceiptMs": 364.61521300225286,
+        "load": [
+          1.5908203125,
+          1.841796875,
+          2.08349609375
+        ],
+        "launchToNativeReadyMs": 362.3134765625,
+        "measurement": {
+          "coldTotalMs": 334.1,
+          "readinessTotalMs": 334.1,
+          "launchTotalMs": 335,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 67.8,
+            "frameworkNavigationMs": 75.841064453125,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 110,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.43310546875,
+            "unattributedMs": 0.026
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/raw-21.log",
+        "launchEpochMs": 1790155644003.0166,
+        "observedReceiptMs": 374.6617900033016,
+        "load": [
+          1.5908203125,
+          1.841796875,
+          2.08349609375
+        ],
+        "launchToNativeReadyMs": 372.3583984375,
+        "measurement": {
+          "coldTotalMs": 345,
+          "readinessTotalMs": 345,
+          "launchTotalMs": 345.9,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 74.2,
+            "frameworkNavigationMs": 79.4560546875,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 111,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.375,
+            "unattributedMs": -0.031
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100/baseline-21.log",
+        "launchEpochMs": 1790155644463.3513,
+        "observedReceiptMs": 374.4700989991543,
+        "load": [
+          1.5908203125,
+          1.841796875,
+          2.08349609375
+        ],
+        "launchToNativeReadyMs": 373.24072265625,
+        "measurement": {
+          "coldTotalMs": 345.5,
+          "readinessTotalMs": 345.5,
+          "launchTotalMs": 346.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 69.9,
+            "frameworkNavigationMs": 87.047119140625,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 107,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 0.592041015625,
+            "unattributedMs": -0.039
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-00.log",
+        "launchEpochMs": 1790155645025.002,
+        "observedReceiptMs": 840.8970450036577,
+        "load": [
+          1.5908203125,
+          1.841796875,
+          2.08349609375
+        ],
+        "launchToNativeReadyMs": 834.033935546875,
+        "measurement": {
+          "coldTotalMs": 804.8,
+          "readinessTotalMs": 804.8,
+          "launchTotalMs": 805.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 68.5,
+            "frameworkNavigationMs": 77.281005859375,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 577,
+            "frameSchedulingMs": 21,
+            "readinessIpcMs": 1.035888671875,
+            "unattributedMs": -0.017
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 0,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-00.log",
+        "launchEpochMs": 1790155645952.0376,
+        "observedReceiptMs": 627.962109996588,
+        "load": [
+          1.5908203125,
+          1.841796875,
+          2.08349609375
+        ],
+        "launchToNativeReadyMs": 624.597412109375,
+        "measurement": {
+          "coldTotalMs": 595.6,
+          "readinessTotalMs": 595.6,
+          "launchTotalMs": 596.6,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 67.6,
+            "frameworkNavigationMs": 84.337890625,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 361,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 1.635009765625,
+            "unattributedMs": 0.027
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-01.log",
+        "launchEpochMs": 1790155646664.8503,
+        "observedReceiptMs": 628.2100700045703,
+        "load": [
+          1.5908203125,
+          1.841796875,
+          2.08349609375
+        ],
+        "launchToNativeReadyMs": 624.74169921875,
+        "measurement": {
+          "coldTotalMs": 596.7,
+          "readinessTotalMs": 596.7,
+          "launchTotalMs": 597.6,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.1,
+            "frameworkNavigationMs": 80.966796875,
+            "documentBootMs": 66,
+            "requiredAppWorkMs": 360,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 0.592041015625,
+            "unattributedMs": 0.041
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 1,
+        "warmup": true,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-01.log",
+        "launchEpochMs": 1790155647379.7617,
+        "observedReceiptMs": 861.0643800057005,
+        "load": [
+          1.5908203125,
+          1.841796875,
+          2.08349609375
+        ],
+        "launchToNativeReadyMs": 860.538330078125,
+        "measurement": {
+          "coldTotalMs": 831.3,
+          "readinessTotalMs": 831.3,
+          "launchTotalMs": 832.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.5,
+            "frameworkNavigationMs": 88.47705078125,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 590,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.300048828125,
+            "unattributedMs": 0.023
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-02.log",
+        "launchEpochMs": 1790155648326.5054,
+        "observedReceiptMs": 820.9592749990406,
+        "load": [
+          1.7041015625,
+          1.861328125,
+          2.0888671875
+        ],
+        "launchToNativeReadyMs": 818.7705078125,
+        "measurement": {
+          "coldTotalMs": 791.1,
+          "readinessTotalMs": 791.1,
+          "launchTotalMs": 792,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70,
+            "frameworkNavigationMs": 73.81201171875,
+            "documentBootMs": 59,
+            "requiredAppWorkMs": 568,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.27587890625,
+            "unattributedMs": 0.012
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 2,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-02.log",
+        "launchEpochMs": 1790155649232.0444,
+        "observedReceiptMs": 607.561586999509,
+        "load": [
+          1.7041015625,
+          1.861328125,
+          2.0888671875
+        ],
+        "launchToNativeReadyMs": 597.49267578125,
+        "measurement": {
+          "coldTotalMs": 569.4,
+          "readinessTotalMs": 569.4,
+          "launchTotalMs": 570.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.8,
+            "nativeWindowMs": 69.3,
+            "frameworkNavigationMs": 66.52099609375,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 350,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.537109375,
+            "unattributedMs": 0.042
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-03.log",
+        "launchEpochMs": 1790155649926.6213,
+        "observedReceiptMs": 608.097659998748,
+        "load": [
+          1.7041015625,
+          1.861328125,
+          2.0888671875
+        ],
+        "launchToNativeReadyMs": 601.353759765625,
+        "measurement": {
+          "coldTotalMs": 574.1,
+          "readinessTotalMs": 574.1,
+          "launchTotalMs": 575,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 69.8,
+            "frameworkNavigationMs": 69.3359375,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 355,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 1.97509765625,
+            "unattributedMs": -0.011
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 3,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-03.log",
+        "launchEpochMs": 1790155650623.1187,
+        "observedReceiptMs": 840.6614510022337,
+        "load": [
+          1.7041015625,
+          1.861328125,
+          2.0888671875
+        ],
+        "launchToNativeReadyMs": 834.416259765625,
+        "measurement": {
+          "coldTotalMs": 806.9,
+          "readinessTotalMs": 806.9,
+          "launchTotalMs": 807.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.1,
+            "frameworkNavigationMs": 77.242919921875,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 577,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.534912109375,
+            "unattributedMs": 0.022
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-04.log",
+        "launchEpochMs": 1790155651549.5366,
+        "observedReceiptMs": 820.5791979999049,
+        "load": [
+          1.7041015625,
+          1.861328125,
+          2.0888671875
+        ],
+        "launchToNativeReadyMs": 811.933349609375,
+        "measurement": {
+          "coldTotalMs": 785.3,
+          "readinessTotalMs": 785.3,
+          "launchTotalMs": 786.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.2,
+            "frameworkNavigationMs": 73.6640625,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 563,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.469970703125,
+            "unattributedMs": -0.034
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 4,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-04.log",
+        "launchEpochMs": 1790155652455.5151,
+        "observedReceiptMs": 627.9582849965664,
+        "load": [
+          1.7041015625,
+          1.861328125,
+          2.0888671875
+        ],
+        "launchToNativeReadyMs": 618.303955078125,
+        "measurement": {
+          "coldTotalMs": 587.9,
+          "readinessTotalMs": 587.9,
+          "launchTotalMs": 588.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.4,
+            "frameworkNavigationMs": 80.692138671875,
+            "documentBootMs": 67,
+            "requiredAppWorkMs": 349,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.819091796875,
+            "unattributedMs": -0.011
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-05.log",
+        "launchEpochMs": 1790155653169.073,
+        "observedReceiptMs": 617.3751239984995,
+        "load": [
+          1.7041015625,
+          1.861328125,
+          2.0888671875
+        ],
+        "launchToNativeReadyMs": 614.881103515625,
+        "measurement": {
+          "coldTotalMs": 587.4,
+          "readinessTotalMs": 587.4,
+          "launchTotalMs": 588.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 69.1,
+            "frameworkNavigationMs": 78.347900390625,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 357,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 1.9541015625,
+            "unattributedMs": -0.002
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 5,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-05.log",
+        "launchEpochMs": 1790155653872.726,
+        "observedReceiptMs": 851.7770380058209,
+        "load": [
+          1.6474609375,
+          1.8466796875,
+          2.0830078125
+        ],
+        "launchToNativeReadyMs": 850.27880859375,
+        "measurement": {
+          "coldTotalMs": 821.4,
+          "readinessTotalMs": 821.4,
+          "launchTotalMs": 822.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.6,
+            "frameworkNavigationMs": 74.808837890625,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 593,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.0048828125,
+            "unattributedMs": -0.014
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-06.log",
+        "launchEpochMs": 1790155654808.2273,
+        "observedReceiptMs": 872.6002930052346,
+        "load": [
+          1.6474609375,
+          1.8466796875,
+          2.0830078125
+        ],
+        "launchToNativeReadyMs": 870.810791015625,
+        "measurement": {
+          "coldTotalMs": 839.9,
+          "readinessTotalMs": 839.9,
+          "launchTotalMs": 840.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 74,
+            "frameworkNavigationMs": 83.830078125,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 599,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 2.0380859375,
+            "unattributedMs": 0.032
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 6,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-06.log",
+        "launchEpochMs": 1790155655765.655,
+        "observedReceiptMs": 617.5035779961036,
+        "load": [
+          1.6474609375,
+          1.8466796875,
+          2.0830078125
+        ],
+        "launchToNativeReadyMs": 611.444091796875,
+        "measurement": {
+          "coldTotalMs": 582.4,
+          "readinessTotalMs": 582.4,
+          "launchTotalMs": 583.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71,
+            "frameworkNavigationMs": 83.330078125,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 348,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.09912109375,
+            "unattributedMs": -0.029
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-07.log",
+        "launchEpochMs": 1790155656471.629,
+        "observedReceiptMs": 638.0791929987026,
+        "load": [
+          1.6474609375,
+          1.8466796875,
+          2.0830078125
+        ],
+        "launchToNativeReadyMs": 635.793212890625,
+        "measurement": {
+          "coldTotalMs": 604.9,
+          "readinessTotalMs": 604.9,
+          "launchTotalMs": 606,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.1,
+            "nativeWindowMs": 75,
+            "frameworkNavigationMs": 83.51708984375,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 364,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.422119140625,
+            "unattributedMs": -0.039
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 7,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-07.log",
+        "launchEpochMs": 1790155657194.462,
+        "observedReceiptMs": 820.832869001606,
+        "load": [
+          1.6474609375,
+          1.8466796875,
+          2.0830078125
+        ],
+        "launchToNativeReadyMs": 817.97705078125,
+        "measurement": {
+          "coldTotalMs": 789.5,
+          "readinessTotalMs": 789.5,
+          "launchTotalMs": 790.4,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.7,
+            "frameworkNavigationMs": 70.39306640625,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 566,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.43896484375,
+            "unattributedMs": -0.032
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-08.log",
+        "launchEpochMs": 1790155658101.3298,
+        "observedReceiptMs": 820.9959169980721,
+        "load": [
+          1.6474609375,
+          1.8466796875,
+          2.0830078125
+        ],
+        "launchToNativeReadyMs": 817.01416015625,
+        "measurement": {
+          "coldTotalMs": 789.2,
+          "readinessTotalMs": 789.2,
+          "launchTotalMs": 790.1,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.9,
+            "frameworkNavigationMs": 64.916015625,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 574,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 2.343994140625,
+            "unattributedMs": 0.04
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 8,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-08.log",
+        "launchEpochMs": 1790155659006.983,
+        "observedReceiptMs": 638.1028479954693,
+        "load": [
+          1.59521484375,
+          1.83251953125,
+          2.0771484375
+        ],
+        "launchToNativeReadyMs": 633.257080078125,
+        "measurement": {
+          "coldTotalMs": 605,
+          "readinessTotalMs": 605,
+          "launchTotalMs": 605.9,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.4,
+            "frameworkNavigationMs": 82.31201171875,
+            "documentBootMs": 66,
+            "requiredAppWorkMs": 366,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.239990234375,
+            "unattributedMs": 0.048
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-09.log",
+        "launchEpochMs": 1790155659731.3047,
+        "observedReceiptMs": 607.828130996495,
+        "load": [
+          1.59521484375,
+          1.83251953125,
+          2.0771484375
+        ],
+        "launchToNativeReadyMs": 599.228271484375,
+        "measurement": {
+          "coldTotalMs": 568.8,
+          "readinessTotalMs": 568.8,
+          "launchTotalMs": 569.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 66.9,
+            "frameworkNavigationMs": 68.360107421875,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 354,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 1.532958984375,
+            "unattributedMs": 0.007
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 9,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-09.log",
+        "launchEpochMs": 1790155660425.2695,
+        "observedReceiptMs": 831.0248910056544,
+        "load": [
+          1.59521484375,
+          1.83251953125,
+          2.0771484375
+        ],
+        "launchToNativeReadyMs": 824.423583984375,
+        "measurement": {
+          "coldTotalMs": 797.2,
+          "readinessTotalMs": 797.2,
+          "launchTotalMs": 798,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.8,
+            "nativeWindowMs": 67.9,
+            "frameworkNavigationMs": 77.59619140625,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 568,
+            "frameSchedulingMs": 21,
+            "readinessIpcMs": 1.693115234375,
+            "unattributedMs": 0.011
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-10.log",
+        "launchEpochMs": 1790155661342.7031,
+        "observedReceiptMs": 841.1915639953804,
+        "load": [
+          1.59521484375,
+          1.83251953125,
+          2.0771484375
+        ],
+        "launchToNativeReadyMs": 834.973876953125,
+        "measurement": {
+          "coldTotalMs": 806.8,
+          "readinessTotalMs": 806.8,
+          "launchTotalMs": 807.7,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 69.4,
+            "frameworkNavigationMs": 75.739990234375,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 578,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.677001953125,
+            "unattributedMs": -0.017
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 10,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-10.log",
+        "launchEpochMs": 1790155662268.733,
+        "observedReceiptMs": 627.7916320032091,
+        "load": [
+          1.59521484375,
+          1.83251953125,
+          2.0771484375
+        ],
+        "launchToNativeReadyMs": 626.3271484375,
+        "measurement": {
+          "coldTotalMs": 594.9,
+          "readinessTotalMs": 594.9,
+          "launchTotalMs": 595.9,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 71.1,
+            "frameworkNavigationMs": 80.761962890625,
+            "documentBootMs": 67,
+            "requiredAppWorkMs": 357,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.06005859375,
+            "unattributedMs": -0.022
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-11.log",
+        "launchEpochMs": 1790155662983.5955,
+        "observedReceiptMs": 617.87813599949,
+        "load": [
+          1.59521484375,
+          1.83251953125,
+          2.0771484375
+        ],
+        "launchToNativeReadyMs": 617.408447265625,
+        "measurement": {
+          "coldTotalMs": 589.5,
+          "readinessTotalMs": 589.5,
+          "launchTotalMs": 590.4,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.6,
+            "frameworkNavigationMs": 78.935791015625,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 360,
+            "frameSchedulingMs": 17,
+            "readinessIpcMs": 1.00390625,
+            "unattributedMs": -0.04
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 11,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-11.log",
+        "launchEpochMs": 1790155663689.129,
+        "observedReceiptMs": 820.5227140060742,
+        "load": [
+          1.54736328125,
+          1.818359375,
+          2.0712890625
+        ],
+        "launchToNativeReadyMs": 814.653076171875,
+        "measurement": {
+          "coldTotalMs": 787.3,
+          "readinessTotalMs": 787.3,
+          "launchTotalMs": 788.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 69,
+            "frameworkNavigationMs": 71.553955078125,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 564,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.781982421875,
+            "unattributedMs": -0.036
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-12.log",
+        "launchEpochMs": 1790155664593.42,
+        "observedReceiptMs": 851.7170470004203,
+        "load": [
+          1.54736328125,
+          1.818359375,
+          2.0712890625
+        ],
+        "launchToNativeReadyMs": 846.49609375,
+        "measurement": {
+          "coldTotalMs": 818.7,
+          "readinessTotalMs": 818.7,
+          "launchTotalMs": 819.6,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 66.3,
+            "frameworkNavigationMs": 87.48486328125,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 583,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.916015625,
+            "unattributedMs": -0.001
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 12,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-12.log",
+        "launchEpochMs": 1790155665533.3726,
+        "observedReceiptMs": 638.0657199988491,
+        "load": [
+          1.54736328125,
+          1.818359375,
+          2.0712890625
+        ],
+        "launchToNativeReadyMs": 630.58740234375,
+        "measurement": {
+          "coldTotalMs": 599.8,
+          "readinessTotalMs": 599.8,
+          "launchTotalMs": 600.9,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.1,
+            "nativeWindowMs": 73.2,
+            "frameworkNavigationMs": 89.6630859375,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 355,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 0.9599609375,
+            "unattributedMs": -0.023
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-13.log",
+        "launchEpochMs": 1790155666257.5403,
+        "observedReceiptMs": 628.0688159968122,
+        "load": [
+          1.54736328125,
+          1.818359375,
+          2.0712890625
+        ],
+        "launchToNativeReadyMs": 625.519775390625,
+        "measurement": {
+          "coldTotalMs": 597.2,
+          "readinessTotalMs": 597.2,
+          "launchTotalMs": 598.1,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 67.8,
+            "frameworkNavigationMs": 86.387939453125,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 360,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.06005859375,
+            "unattributedMs": -0.048
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 13,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-13.log",
+        "launchEpochMs": 1790155666972.2065,
+        "observedReceiptMs": 870.4023319951375,
+        "load": [
+          1.54736328125,
+          1.818359375,
+          2.0712890625
+        ],
+        "launchToNativeReadyMs": 861.20751953125,
+        "measurement": {
+          "coldTotalMs": 829.1,
+          "readinessTotalMs": 829.1,
+          "launchTotalMs": 830.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.7,
+            "nativeWindowMs": 75.6,
+            "frameworkNavigationMs": 84.060791015625,
+            "documentBootMs": 65,
+            "requiredAppWorkMs": 583,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.4140625,
+            "unattributedMs": 0.025
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-14.log",
+        "launchEpochMs": 1790155667926.9397,
+        "observedReceiptMs": 841.6155669983709,
+        "load": [
+          1.54736328125,
+          1.818359375,
+          2.0712890625
+        ],
+        "launchToNativeReadyMs": 835.452392578125,
+        "measurement": {
+          "coldTotalMs": 807.3,
+          "readinessTotalMs": 807.3,
+          "launchTotalMs": 808.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.4,
+            "frameworkNavigationMs": 85.463134765625,
+            "documentBootMs": 66,
+            "requiredAppWorkMs": 565,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.39208984375,
+            "unattributedMs": 0.045
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 14,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-14.log",
+        "launchEpochMs": 1790155668860.319,
+        "observedReceiptMs": 659.6629439954995,
+        "load": [
+          1.50341796875,
+          1.8046875,
+          2.0654296875
+        ],
+        "launchToNativeReadyMs": 658.676025390625,
+        "measurement": {
+          "coldTotalMs": 624.2,
+          "readinessTotalMs": 624.2,
+          "launchTotalMs": 625.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.1,
+            "nativeWindowMs": 69.7,
+            "frameworkNavigationMs": 89.489013671875,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 380,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.9951171875,
+            "unattributedMs": 0.016
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-15.log",
+        "launchEpochMs": 1790155669610.4512,
+        "observedReceiptMs": 670.1967219996732,
+        "load": [
+          1.50341796875,
+          1.8046875,
+          2.0654296875
+        ],
+        "launchToNativeReadyMs": 664.94873046875,
+        "measurement": {
+          "coldTotalMs": 630.1,
+          "readinessTotalMs": 630.1,
+          "launchTotalMs": 631.1,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 80.6,
+            "frameworkNavigationMs": 92.10888671875,
+            "documentBootMs": 66,
+            "requiredAppWorkMs": 371,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.39990234375,
+            "unattributedMs": -0.009
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 15,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-15.log",
+        "launchEpochMs": 1790155670367.294,
+        "observedReceiptMs": 861.4963310028543,
+        "load": [
+          1.50341796875,
+          1.8046875,
+          2.0654296875
+        ],
+        "launchToNativeReadyMs": 853.48193359375,
+        "measurement": {
+          "coldTotalMs": 824.6,
+          "readinessTotalMs": 824.6,
+          "launchTotalMs": 825.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 72.1,
+            "frameworkNavigationMs": 77.73095703125,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 591,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.77587890625,
+            "unattributedMs": -0.007
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-16.log",
+        "launchEpochMs": 1790155671312.4888,
+        "observedReceiptMs": 881.8703450015164,
+        "load": [
+          1.50341796875,
+          1.8046875,
+          2.0654296875
+        ],
+        "launchToNativeReadyMs": 874.109130859375,
+        "measurement": {
+          "coldTotalMs": 844.4,
+          "readinessTotalMs": 844.4,
+          "launchTotalMs": 845.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 71.6,
+            "frameworkNavigationMs": 85.19384765625,
+            "documentBootMs": 71,
+            "requiredAppWorkMs": 597,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 0.597900390625,
+            "unattributedMs": 0.008
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 16,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-16.log",
+        "launchEpochMs": 1790155672281.6094,
+        "observedReceiptMs": 638.1250720005482,
+        "load": [
+          1.50341796875,
+          1.8046875,
+          2.0654296875
+        ],
+        "launchToNativeReadyMs": 636.230712890625,
+        "measurement": {
+          "coldTotalMs": 606.1,
+          "readinessTotalMs": 606.1,
+          "launchTotalMs": 607.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.1,
+            "nativeWindowMs": 70.4,
+            "frameworkNavigationMs": 85.877197265625,
+            "documentBootMs": 67,
+            "requiredAppWorkMs": 363,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.840087890625,
+            "unattributedMs": -0.017
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-17.log",
+        "launchEpochMs": 1790155673010.9294,
+        "observedReceiptMs": 628.3462610008428,
+        "load": [
+          1.50341796875,
+          1.8046875,
+          2.0654296875
+        ],
+        "launchToNativeReadyMs": 620.840576171875,
+        "measurement": {
+          "coldTotalMs": 589.3,
+          "readinessTotalMs": 589.3,
+          "launchTotalMs": 590.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 71.1,
+            "frameworkNavigationMs": 70.389892578125,
+            "documentBootMs": 61,
+            "requiredAppWorkMs": 367,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.77001953125,
+            "unattributedMs": 0.04
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 17,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-17.log",
+        "launchEpochMs": 1790155673729.9565,
+        "observedReceiptMs": 841.4445250018616,
+        "load": [
+          1.70361328125,
+          1.84130859375,
+          2.076171875
+        ],
+        "launchToNativeReadyMs": 837.370361328125,
+        "measurement": {
+          "coldTotalMs": 808.6,
+          "readinessTotalMs": 808.6,
+          "launchTotalMs": 809.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 68.8,
+            "frameworkNavigationMs": 72.446044921875,
+            "documentBootMs": 60,
+            "requiredAppWorkMs": 587,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.326904296875,
+            "unattributedMs": 0.027
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-18.log",
+        "launchEpochMs": 1790155674656.7295,
+        "observedReceiptMs": 851.9082599959802,
+        "load": [
+          1.70361328125,
+          1.84130859375,
+          2.076171875
+        ],
+        "launchToNativeReadyMs": 842.570556640625,
+        "measurement": {
+          "coldTotalMs": 812.8,
+          "readinessTotalMs": 812.8,
+          "launchTotalMs": 813.8,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1,
+            "nativeWindowMs": 70.5,
+            "frameworkNavigationMs": 82.02294921875,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 577,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.300048828125,
+            "unattributedMs": -0.023
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 18,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-18.log",
+        "launchEpochMs": 1790155675596.956,
+        "observedReceiptMs": 637.7862029985408,
+        "load": [
+          1.70361328125,
+          1.84130859375,
+          2.076171875
+        ],
+        "launchToNativeReadyMs": 633.44482421875,
+        "measurement": {
+          "coldTotalMs": 604.4,
+          "readinessTotalMs": 604.4,
+          "launchTotalMs": 605.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 74.4,
+            "frameworkNavigationMs": 77.576171875,
+            "documentBootMs": 65,
+            "requiredAppWorkMs": 367,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.40087890625,
+            "unattributedMs": 0.023
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-19.log",
+        "launchEpochMs": 1790155676322.9463,
+        "observedReceiptMs": 646.9450119984685,
+        "load": [
+          1.70361328125,
+          1.84130859375,
+          2.076171875
+        ],
+        "launchToNativeReadyMs": 642.109619140625,
+        "measurement": {
+          "coldTotalMs": 614,
+          "readinessTotalMs": 614,
+          "launchTotalMs": 614.9,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 74,
+            "frameworkNavigationMs": 80.948974609375,
+            "documentBootMs": 63,
+            "requiredAppWorkMs": 377,
+            "frameSchedulingMs": 18,
+            "readinessIpcMs": 1.055908203125,
+            "unattributedMs": -0.005
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 19,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-19.log",
+        "launchEpochMs": 1790155677057.6592,
+        "observedReceiptMs": 881.016824998369,
+        "load": [
+          1.70361328125,
+          1.84130859375,
+          2.076171875
+        ],
+        "launchToNativeReadyMs": 878.94873046875,
+        "measurement": {
+          "coldTotalMs": 851.8,
+          "readinessTotalMs": 851.8,
+          "launchTotalMs": 852.7,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 74.6,
+            "frameworkNavigationMs": 80.61083984375,
+            "documentBootMs": 74,
+            "requiredAppWorkMs": 600,
+            "frameSchedulingMs": 21,
+            "readinessIpcMs": 1.60791015625,
+            "unattributedMs": -0.019
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-20.log",
+        "launchEpochMs": 1790155678026.319,
+        "observedReceiptMs": 861.4741100027459,
+        "load": [
+          1.70361328125,
+          1.84130859375,
+          2.076171875
+        ],
+        "launchToNativeReadyMs": 853.014892578125,
+        "measurement": {
+          "coldTotalMs": 823.2,
+          "readinessTotalMs": 823.2,
+          "launchTotalMs": 824.3,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 1.1,
+            "nativeWindowMs": 71.1,
+            "frameworkNavigationMs": 76.81494140625,
+            "documentBootMs": 62,
+            "requiredAppWorkMs": 593,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.333984375,
+            "unattributedMs": -0.049
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 20,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-20.log",
+        "launchEpochMs": 1790155678975.428,
+        "observedReceiptMs": 648.4668479970424,
+        "load": [
+          1.7275390625,
+          1.84423828125,
+          2.07568359375
+        ],
+        "launchToNativeReadyMs": 647.43701171875,
+        "measurement": {
+          "coldTotalMs": 616.6,
+          "readinessTotalMs": 616.6,
+          "launchTotalMs": 617.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 70.3,
+            "frameworkNavigationMs": 90.416015625,
+            "documentBootMs": 65,
+            "requiredAppWorkMs": 371,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 0.864990234375,
+            "unattributedMs": 0.019
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "raw",
+        "entries": 100000,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/raw-21.log",
+        "launchEpochMs": 1790155679712.5662,
+        "observedReceiptMs": 619.451160004246,
+        "load": [
+          1.7275390625,
+          1.84423828125,
+          2.07568359375
+        ],
+        "launchToNativeReadyMs": 619.284912109375,
+        "measurement": {
+          "coldTotalMs": 589.3,
+          "readinessTotalMs": 589.3,
+          "launchTotalMs": 590.2,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 72.1,
+            "frameworkNavigationMs": 70.337890625,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 362,
+            "frameSchedulingMs": 19,
+            "readinessIpcMs": 1.85107421875,
+            "unattributedMs": 0.011
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      },
+      {
+        "variant": "baseline",
+        "entries": 100000,
+        "iteration": 21,
+        "warmup": false,
+        "log": "/tmp/startup-737-ab-0lp1wtc0/entries-100000/baseline-21.log",
+        "launchEpochMs": 1790155680420.0935,
+        "observedReceiptMs": 851.6767439941759,
+        "load": [
+          1.7275390625,
+          1.84423828125,
+          2.07568359375
+        ],
+        "launchToNativeReadyMs": 847.508544921875,
+        "measurement": {
+          "coldTotalMs": 817.6,
+          "readinessTotalMs": 817.6,
+          "launchTotalMs": 818.5,
+          "warmShowMs": null,
+          "phases": {
+            "processEntryMs": 0.9,
+            "nativeWindowMs": 73,
+            "frameworkNavigationMs": 69.989990234375,
+            "documentBootMs": 64,
+            "requiredAppWorkMs": 589,
+            "frameSchedulingMs": 20,
+            "readinessIpcMs": 1.60205078125,
+            "unattributedMs": 0.008
+          },
+          "firstFunctionalFrame": "not-observed",
+          "firstFunctionalFrameMs": null,
+          "inputOutcome": "not-verified",
+          "inputReadyMs": null
+        }
+      }
+    ],
+    "summaries": [
+      {
+        "entries": 100,
+        "variant": "baseline",
+        "p50": 373.24072265625,
+        "p95": 384.33447265625,
+        "phases": {
+          "readinessTotalMs": {
+            "sampleCount": 20,
+            "p50": 344.4,
+            "p95": 353.5
+          },
+          "launchTotalMs": {
+            "sampleCount": 20,
+            "p50": 345.4,
+            "p95": 354.4
+          },
+          "processEntryMs": {
+            "sampleCount": 20,
+            "p50": 0.9,
+            "p95": 1
+          },
+          "nativeWindowMs": {
+            "sampleCount": 20,
+            "p50": 69.9,
+            "p95": 72.9
+          },
+          "frameworkNavigationMs": {
+            "sampleCount": 20,
+            "p50": 79.6259765625,
+            "p95": 85.447021484375
+          },
+          "documentBootMs": {
+            "sampleCount": 20,
+            "p50": 62,
+            "p95": 67
+          },
+          "requiredAppWorkMs": {
+            "sampleCount": 20,
+            "p50": 112,
+            "p95": 118
+          },
+          "frameSchedulingMs": {
+            "sampleCount": 20,
+            "p50": 19,
+            "p95": 21
+          },
+          "readinessIpcMs": {
+            "sampleCount": 20,
+            "p50": 1.22998046875,
+            "p95": 1.9541015625
+          },
+          "unattributedMs": {
+            "sampleCount": 20,
+            "p50": 0.011,
+            "p95": 0.041
+          }
+        }
+      },
+      {
+        "entries": 100,
+        "variant": "raw",
+        "p50": 367.403076171875,
+        "p95": 389.031005859375,
+        "phases": {
+          "readinessTotalMs": {
+            "sampleCount": 20,
+            "p50": 337.3,
+            "p95": 357.2
+          },
+          "launchTotalMs": {
+            "sampleCount": 20,
+            "p50": 338.3,
+            "p95": 358.3
+          },
+          "processEntryMs": {
+            "sampleCount": 20,
+            "p50": 0.9,
+            "p95": 1.1
+          },
+          "nativeWindowMs": {
+            "sampleCount": 20,
+            "p50": 70,
+            "p95": 74.2
+          },
+          "frameworkNavigationMs": {
+            "sampleCount": 20,
+            "p50": 77.006103515625,
+            "p95": 84.714111328125
+          },
+          "documentBootMs": {
+            "sampleCount": 20,
+            "p50": 61,
+            "p95": 65
+          },
+          "requiredAppWorkMs": {
+            "sampleCount": 20,
+            "p50": 111,
+            "p95": 121
+          },
+          "frameSchedulingMs": {
+            "sampleCount": 20,
+            "p50": 19,
+            "p95": 21
+          },
+          "readinessIpcMs": {
+            "sampleCount": 20,
+            "p50": 1.29296875,
+            "p95": 2.037109375
+          },
+          "unattributedMs": {
+            "sampleCount": 20,
+            "p50": -0.008,
+            "p95": 0.041
+          }
+        }
+      },
+      {
+        "entries": 100000,
+        "variant": "baseline",
+        "p50": 837.370361328125,
+        "p95": 874.109130859375,
+        "phases": {
+          "readinessTotalMs": {
+            "sampleCount": 20,
+            "p50": 808.6,
+            "p95": 844.4
+          },
+          "launchTotalMs": {
+            "sampleCount": 20,
+            "p50": 809.5,
+            "p95": 845.3
+          },
+          "processEntryMs": {
+            "sampleCount": 20,
+            "p50": 0.9,
+            "p95": 1.1
+          },
+          "nativeWindowMs": {
+            "sampleCount": 20,
+            "p50": 70.5,
+            "p95": 74.6
+          },
+          "frameworkNavigationMs": {
+            "sampleCount": 20,
+            "p50": 76.81494140625,
+            "p95": 85.463134765625
+          },
+          "documentBootMs": {
+            "sampleCount": 20,
+            "p50": 62,
+            "p95": 71
+          },
+          "requiredAppWorkMs": {
+            "sampleCount": 20,
+            "p50": 578,
+            "p95": 599
+          },
+          "frameSchedulingMs": {
+            "sampleCount": 20,
+            "p50": 19,
+            "p95": 21
+          },
+          "readinessIpcMs": {
+            "sampleCount": 20,
+            "p50": 1.469970703125,
+            "p95": 2.0380859375
+          },
+          "unattributedMs": {
+            "sampleCount": 20,
+            "p50": -0.001,
+            "p95": 0.04
+          }
+        }
+      },
+      {
+        "entries": 100000,
+        "variant": "raw",
+        "p50": 625.519775390625,
+        "p95": 658.676025390625,
+        "phases": {
+          "readinessTotalMs": {
+            "sampleCount": 20,
+            "p50": 594.9,
+            "p95": 624.2
+          },
+          "launchTotalMs": {
+            "sampleCount": 20,
+            "p50": 595.9,
+            "p95": 625.3
+          },
+          "processEntryMs": {
+            "sampleCount": 20,
+            "p50": 0.9,
+            "p95": 1.1
+          },
+          "nativeWindowMs": {
+            "sampleCount": 20,
+            "p50": 71,
+            "p95": 75
+          },
+          "frameworkNavigationMs": {
+            "sampleCount": 20,
+            "p50": 80.761962890625,
+            "p95": 90.416015625
+          },
+          "documentBootMs": {
+            "sampleCount": 20,
+            "p50": 64,
+            "p95": 67
+          },
+          "requiredAppWorkMs": {
+            "sampleCount": 20,
+            "p50": 360,
+            "p95": 377
+          },
+          "frameSchedulingMs": {
+            "sampleCount": 20,
+            "p50": 18,
+            "p95": 19
+          },
+          "readinessIpcMs": {
+            "sampleCount": 20,
+            "p50": 1.40087890625,
+            "p95": 1.97509765625
+          },
+          "unattributedMs": {
+            "sampleCount": 20,
+            "p50": -0.009,
+            "p95": 0.042
+          }
+        }
+      }
+    ]
+  },
+  "verifiedViews": {
+    "root": "/tmp/responsiveness-737-verified-views-vcs3zimg",
+    "samples": [
+      {
+        "scenario": "details-baseline-0",
+        "firstEntriesMs": 653,
+        "completeMs": 653,
+        "maxGap": 469,
+        "keyboardRoundTripMs": 200,
+        "actualView": "details",
+        "initialRssBytes": 875741184,
+        "peakRssBytes": 1318182912,
+        "finalRssBytes": 1267109888,
+        "inputDuringLoad": {
+          "addressReadyMs": 62,
+          "typingMs": 643,
+          "navigationMs": 762,
+          "autocomplete": {
+            "selected": null,
+            "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+            "visible": false,
+            "focused": "path-input svelte-ppi3nj"
+          },
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        }
+      },
+      {
+        "scenario": "details-raw-0",
+        "firstEntriesMs": 336,
+        "completeMs": 336,
+        "maxGap": 175,
+        "keyboardRoundTripMs": 122,
+        "actualView": "details",
+        "initialRssBytes": 870227968,
+        "peakRssBytes": 1093492736,
+        "finalRssBytes": 1049387008,
+        "inputDuringLoad": {
+          "addressReadyMs": 61,
+          "typingMs": 355,
+          "navigationMs": 415,
+          "autocomplete": {
+            "selected": null,
+            "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+            "visible": false,
+            "focused": "path-input svelte-ppi3nj"
+          },
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        }
+      },
+      {
+        "scenario": "list-baseline-0",
+        "firstEntriesMs": 635.9999999999999,
+        "completeMs": 635.9999999999999,
+        "maxGap": 453,
+        "keyboardRoundTripMs": 226,
+        "actualView": "list",
+        "initialRssBytes": 853942272,
+        "peakRssBytes": 1300946944,
+        "finalRssBytes": 1250893824,
+        "inputDuringLoad": {
+          "addressReadyMs": 65,
+          "typingMs": 644,
+          "navigationMs": 720,
+          "autocomplete": {
+            "selected": null,
+            "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+            "visible": false,
+            "focused": "path-input svelte-ppi3nj"
+          },
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        }
+      },
+      {
+        "scenario": "list-raw-0",
+        "firstEntriesMs": 343.9999999999999,
+        "completeMs": 343.9999999999999,
+        "maxGap": 159,
+        "keyboardRoundTripMs": 130,
+        "actualView": "list",
+        "initialRssBytes": 852176896,
+        "peakRssBytes": 1113038848,
+        "finalRssBytes": 1098768384,
+        "inputDuringLoad": {
+          "addressReadyMs": 66,
+          "typingMs": 376,
+          "navigationMs": 436,
+          "autocomplete": {
+            "selected": null,
+            "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+            "visible": false,
+            "focused": "path-input svelte-ppi3nj"
+          },
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        }
+      },
+      {
+        "scenario": "tiles-baseline-0",
+        "firstEntriesMs": 653,
+        "completeMs": 653,
+        "maxGap": 473,
+        "keyboardRoundTripMs": 148,
+        "actualView": "tiles",
+        "initialRssBytes": 856244224,
+        "peakRssBytes": 1345552384,
+        "finalRssBytes": 1276280832,
+        "inputDuringLoad": {
+          "addressReadyMs": 66,
+          "typingMs": 672,
+          "navigationMs": 747,
+          "autocomplete": {
+            "selected": null,
+            "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+            "visible": false,
+            "focused": "path-input svelte-ppi3nj"
+          },
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        }
+      },
+      {
+        "scenario": "tiles-raw-0",
+        "firstEntriesMs": 341,
+        "completeMs": 341,
+        "maxGap": 167,
+        "keyboardRoundTripMs": 125,
+        "actualView": "tiles",
+        "initialRssBytes": 866996224,
+        "peakRssBytes": 1109168128,
+        "finalRssBytes": 1108996096,
+        "inputDuringLoad": {
+          "addressReadyMs": 65,
+          "typingMs": 422,
+          "navigationMs": 481,
+          "autocomplete": {
+            "selected": null,
+            "value": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files",
+            "visible": false,
+            "focused": "path-input svelte-ppi3nj"
+          },
+          "inputRequestedBeforeCompleteFrame": true,
+          "finalPath": "/tmp/startup-696-final-ab-mkbq04ib/entries-0/files"
+        }
+      }
+    ],
+    "limits": [
+      "One baseline/candidate pair per view: outcome qualification and directional corroboration only",
+      "Explicit command-palette view selection; live DOM view asserted before and after listing",
+      "Earlier baseline final Enter timed out; autocomplete hypothesis not proven. Diagnostics retained in /tmp/responsiveness-737-verified-views-9xbj6rbe",
+      "Harness can dismiss visible autocomplete with Escape before Enter; no dropdown was visible in any of these six successful samples."
+    ],
+    "allPassed": true
+  }
+}

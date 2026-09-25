@@ -316,3 +316,30 @@ describe("per-pane numeric preferences", () => {
     }
   });
 });
+
+describe("immutable listing revisions", () => {
+  it("publishes refreshed metadata and resolves the cursor to the new entry", async () => {
+    const original = entry("a.txt");
+    let listing = [original];
+    loadImpl.current = async (path) => ({ ok: true, path, entries: listing });
+    const explorer = createExplorerState();
+    try {
+      await explorer.navigateTo("/root");
+      const previous = explorer.state.entries;
+      const changed = { ...original, size: 4096, modified: "2026-09-23T00:00:00Z", is_symlink: true, symlink_target: "/other" };
+      listing = [changed, entry("b.txt")];
+      await explorer.refresh({ silent: true });
+      expect(explorer.displayEntries).toEqual(listing);
+      expect(explorer.focusedEntry).toEqual(changed);
+      expect(explorer.displayEntries.indexOf(explorer.focusedEntry!)).toBe(0);
+      expect([...explorer.selectedPaths]).toEqual([original.path]);
+      expect(previous).toEqual([original]);
+      const unchanged = explorer.state.entries;
+      listing = listing.map((item) => ({ ...item }));
+      await explorer.refresh({ silent: true });
+      expect(explorer.state.entries).toBe(unchanged);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});

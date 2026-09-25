@@ -47,6 +47,10 @@ import { broadcastFileChange } from "./file-events";
 import type { ExplorerSeed } from "$lib/domain/window-input";
 
 function createExplorerState(seed?: ExplorerSeed) {
+  // Listings are immutable revisions. Deep proxies would create per-entry
+  // signals during whole-directory filtering, sorting and status aggregation.
+  let entries = $state.raw<readonly FileEntry[]>(seed?.entries ?? []);
+
   // Core per-pane state using $state rune
   let coreState = $state<ExplorerCoreState>({
     // Navigation
@@ -55,7 +59,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     historyIndex: -1,
 
     // Entries
-    entries: seed?.entries ?? [],
+    get entries() { return entries; },
+    set entries(next: readonly FileEntry[]) { entries = next; },
     loading: !seed, // not loading if seeded
     error: null,
 

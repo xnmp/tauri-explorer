@@ -1005,10 +1005,7 @@ pub(crate) fn delete_path(path: &str) -> Result<(), AppError> {
 }
 
 pub(crate) fn delete_native_path(file_path: &Path) -> Result<(), AppError> {
-    let meta = fs::symlink_metadata(file_path)?;
-    remove_entry_at(file_path).map_err(|error| AppError::MutationUncertain(error.to_string()))?;
-    log::info!("Permanently deleted entry (is_dir={})", meta.is_dir());
-    Ok(())
+    super::permanent_delete::Prepared::capture(file_path)?.execute()
 }
 
 /// Create a symbolic link.

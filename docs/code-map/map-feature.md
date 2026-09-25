@@ -200,6 +200,7 @@ backend for E2E/browser).
 ## Delete / trash / undo
 
 - `components/DeleteDialog.svelte` — confirms explicit permanent deletion and explains mixed local/UNC disposition.
+- `src-tauri/src/files/permanent_delete.rs`, `src-tauri/test_support/permanent_delete.rs` — WIP permanent-delete observation/execution seam and deterministic source/parent replacement repros (#739); existing unsafe behavior is retained pending implementation.
 - `state/pane-mutations.ts` — submits one native deletion intent; removes only confirmed rows and reconciles confirmed/uncertain parents.
 - `domain/file-history.ts`, `api/file-history.ts`, `api/native-resource-session.ts` — typed native history requests and ordered revisioned summary channel on the existing renderer acknowledgement.
 - `state/undo.svelte.ts` — window projection captures expected native entry IDs, including the exact receipt of already queued local writes.

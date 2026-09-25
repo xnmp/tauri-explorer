@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildNativeQualificationReport,
   createNativeProcessCleanupHooks,
+  createNativeFixtureDirectory,
   executeLoggedQualificationProcess,
   measureProcessTreeRss,
   parseAttributedMacStartupLog,
@@ -262,6 +263,48 @@ describe("native qualification process boundaries", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("keeps native fixtures until worker teardown and removes them at launcher completion", async () => {
+    const environment: NodeJS.ProcessEnv = {};
+    const launcher = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
+      stop: async () => { throw new Error("launcher does not own worker processes"); },
+    });
+    launcher.prepare();
+    const workerEnvironment = { ...environment };
+    const root = environment.TAURI_NATIVE_CLEANUP_STATE_DIRECTORY!;
+    const fixture = createNativeFixtureDirectory("window-chrome-", workerEnvironment);
+    let stopped = false;
+    const worker = createNativeProcessCleanupHooks({
+      environment: workerEnvironment,
+      stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
+      stop: async () => {
+        expect(fs.readFileSync(path.join(fixture, "retained.txt"), "utf8")).toBe("session-owned");
+        stopped = true;
+      },
+    });
+    try {
+      fs.writeFileSync(path.join(fixture, "retained.txt"), "session-owned");
+      expect(fs.existsSync(fixture)).toBe(true);
+      expect(stopped).toBe(false);
+      await worker.cleanup();
+      expect(stopped).toBe(true);
+      expect(fs.existsSync(fixture)).toBe(true);
+      launcher.complete();
+      expect(fs.existsSync(fixture)).toBe(false);
+      expect(fs.existsSync(root)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses unowned native fixtures and nested fixture prefixes", () => {
+    expect(() => createNativeFixtureDirectory("fixture-", {})).toThrow("ownership is unavailable");
+    expect(() => createNativeFixtureDirectory("../escape-", {
+      TAURI_NATIVE_CLEANUP_STATE_DIRECTORY: os.tmpdir(),
+    })).toThrow("invalid native fixture prefix");
+  });
+
   it("propagates worker cleanup failures through native run completion", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
     const environment: NodeJS.ProcessEnv = {};
@@ -286,6 +329,48 @@ describe("native qualification process boundaries", () => {
     );
     expect(fs.existsSync(markerDirectory!)).toBe(false);
     expect(environment.NATIVE_CLEANUP_TEST_STATE).toBeUndefined();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reports a failed marker-directory removal alongside already-collected cleanup failures, retrying first", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "NATIVE_CLEANUP_TEST_STATE",
+      temporaryRoot: dir,
+      stop: async () => {
+        throw new Error("WebDriver remained alive after SIGKILL");
+      },
+    });
+
+    hooks.prepare();
+    const markerDirectory = environment.NATIVE_CLEANUP_TEST_STATE!;
+    await expect(hooks.cleanup()).rejects.toThrow(
+      "WebDriver remained alive after SIGKILL",
+    );
+    expect(fs.readdirSync(markerDirectory)).toHaveLength(1);
+
+    const rmSyncSpy = vi
+      .spyOn(fs, "rmSync")
+      .mockImplementationOnce(() => {
+        throw new Error("EBUSY: resource busy or locked");
+      });
+    try {
+      expect(() => hooks.complete()).toThrow(
+        "native qualification cleanup failed: WebDriver remained alive after SIGKILL; " +
+          "failed to remove cleanup marker directory: EBUSY: resource busy or locked",
+      );
+      // Retries were requested rather than surfacing a single bare attempt.
+      expect(rmSyncSpy).toHaveBeenCalledWith(
+        markerDirectory,
+        expect.objectContaining({ maxRetries: 5, retryDelay: 200 }),
+      );
+    } finally {
+      rmSyncSpy.mockRestore();
+    }
+    // The mocked failure prevented real removal; clean up for real now.
+    fs.rmSync(markerDirectory, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

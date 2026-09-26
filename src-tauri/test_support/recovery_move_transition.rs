@@ -442,6 +442,43 @@ fn root_observations_must_match_the_immutable_plan() {
     .is_err());
 }
 
+/// Admission records each symlink an endpoint traverses as an entry-scoped
+/// read carrying the link's inode. The move neither keeps that link alive nor
+/// forbids retargeting it, so ext4 and XFS can give its freed number to the new
+/// artifact root (#788). Only the move's subjects may disqualify a root.
+#[test]
+fn a_reused_parent_alias_identity_does_not_disqualify_an_observed_root() {
+    let (mut intent, _) = same_volume_overwrite();
+    let reused = object(7, 51);
+    let mut link = resource("/volume/retargeted-link", Some(reused), object(7, 10));
+    link.access = Access::Read;
+    link.scope = Scope::Entry;
+    intent.resources.push(link);
+    intent.validate().unwrap();
+    let state = OperationRecord::planned(intent.clone()).state;
+    let state = advance(&intent, state, MoveTransition::BeginRoots);
+
+    transition(
+        &intent,
+        &state,
+        MoveTransition::RootsObserved {
+            source: None,
+            target: Some(reused),
+        },
+    )
+    .unwrap();
+    // The displaced original is a subject, so its identity still disqualifies.
+    assert!(transition(
+        &intent,
+        &state,
+        MoveTransition::RootsObserved {
+            source: None,
+            target: Some(object(7, 12)),
+        }
+    )
+    .is_err());
+}
+
 #[test]
 fn a_rename_never_stages_a_payload() {
     for (intent, state) in [fast_path(), same_volume_overwrite()] {

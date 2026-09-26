@@ -415,10 +415,11 @@ impl Root {
             || self.path.parent() != Some(self.parent_path.as_path())
             || !self.identity.same_volume(self.parent_identity)
             || self.identity == self.parent_identity
+            // Compare only with the intent's subjects, which `excluded` names.
+            // Other resources, such as the parent-alias entries admission
+            // records for traversed symlinks, are not kept alive: a fresh root
+            // can reuse a freed inode number from any of them (#788).
             || self.excluded.contains(&self.identity)
-            || intent.resources.iter().any(|resource| {
-                resource.path.0 != self.path && resource.object == Some(self.identity)
-            })
         {
             return Err(invalid(
                 "Recovery manifest does not belong to this artifact root",

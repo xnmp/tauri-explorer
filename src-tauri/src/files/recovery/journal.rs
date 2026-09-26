@@ -309,6 +309,21 @@ impl Journal {
         expected_generation: u64,
         payload: &[u8],
     ) -> Result<Record, AppError> {
+        self.replace_leaving(id, expected_generation, payload, 0)?
+            .ok_or_else(|| invalid("total record payload size exceeds storage limit"))
+    }
+
+    /// `replace`, except that a write growing its record is declined (`None`,
+    /// nothing changed) unless `headroom` bytes of the total budget remain
+    /// free afterwards. Writes that do not grow a record are never declined,
+    /// so a record already inside the headroom can always shrink or finish.
+    pub(crate) fn replace_leaving(
+        &mut self,
+        id: &str,
+        expected_generation: u64,
+        payload: &[u8],
+        headroom: usize,
+    ) -> Result<Option<Record>, AppError> {
         validate_id(id)?;
         validate_payload(payload)?;
         let expected_generation = stored_generation(expected_generation)?;
@@ -338,6 +353,11 @@ impl Journal {
         }
         let old_length = bounded_length(old_length, MAX_RECORD_BYTES, "record")?;
         ensure_total(total, old_length, payload.len())?;
+        if payload.len() > old_length
+            && total - old_length + payload.len() > MAX_TOTAL_BYTES.saturating_sub(headroom)
+        {
+            return Ok(None);
+        }
         let kind = RecordKind::parse(&kind)?;
         let (revision, next) = next_revision(&transaction)?;
         let changed = transaction
@@ -353,12 +373,12 @@ impl Journal {
         transaction
             .commit()
             .map_err(|error| sql("commit record replacement", error))?;
-        Ok(Record {
+        Ok(Some(Record {
             id: id.to_owned(),
             kind,
             generation: next as u64,
             payload: payload.to_vec(),
-        })
+        }))
     }
 
     #[cfg(test)]

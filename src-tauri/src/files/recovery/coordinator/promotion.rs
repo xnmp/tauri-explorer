@@ -254,6 +254,22 @@ impl DurableOperation {
         )
     }
 
+    /// `advance_move` for a transition that may be declined: `false` means
+    /// the journal could not grow this record while keeping `headroom` bytes
+    /// free for other operations, and nothing was committed.
+    pub(in crate::files::recovery) fn advance_move_leaving(
+        &mut self,
+        event: super::super::move_transition::MoveTransition,
+        headroom: usize,
+    ) -> Result<bool, AppError> {
+        let state = super::super::move_transition::transition(
+            &self.record.intent,
+            &self.record.state,
+            event,
+        )?;
+        self.commit_leaving(state, || Ok(()), headroom)
+    }
+
     fn advance_with(
         &mut self,
         event: super::super::replacement_transition::ReplacementTransition,
@@ -272,6 +288,19 @@ impl DurableOperation {
         state: super::super::model::OperationState,
         after_commit: impl FnOnce() -> Result<(), AppError>,
     ) -> Result<(), AppError> {
+        if self.commit_leaving(state, after_commit, 0)? {
+            Ok(())
+        } else {
+            Err(invalid("Recovery journal declined a checkpoint"))
+        }
+    }
+
+    fn commit_leaving(
+        &mut self,
+        state: super::super::model::OperationState,
+        after_commit: impl FnOnce() -> Result<(), AppError>,
+        headroom: usize,
+    ) -> Result<bool, AppError> {
         let checkpoint = OperationCheckpoint {
             intent_digest: self.evidence.digest(),
             state,
@@ -292,7 +321,7 @@ impl DurableOperation {
                 // An exact retry can acknowledge a commit whose reply was lost;
                 // changed evidence or any different phase stays fenced.
                 if row.generation > self.generation && current == checkpoint {
-                    return Ok(row.generation);
+                    return Ok(Some(row.generation));
                 }
                 return Err(invalid("Durable operation generation changed"));
             }
@@ -302,15 +331,24 @@ impl DurableOperation {
                 ));
             }
             if current == checkpoint {
-                return Ok(row.generation);
+                return Ok(Some(row.generation));
             }
-            let row = inner.journal.replace(&row.id, row.generation, &payload)?;
+            let Some(row) =
+                inner
+                    .journal
+                    .replace_leaving(&row.id, row.generation, &payload, headroom)?
+            else {
+                return Ok(None);
+            };
             after_commit()?;
-            Ok(row.generation)
+            Ok(Some(row.generation))
         })?;
+        let Some(generation) = generation else {
+            return Ok(false);
+        };
         self.generation = generation;
         self.record.state = checkpoint.state;
-        Ok(())
+        Ok(true)
     }
 }
 

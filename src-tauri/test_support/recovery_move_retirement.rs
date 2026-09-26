@@ -102,6 +102,22 @@ impl Fixture {
     }
 }
 
+/// A process killed at the first `boundary` of a discard: unlike a returned
+/// error, nothing reports the failure, so enforcement may resume it.
+fn crash_at(f: &Fixture, boundary: &str, mut before: impl FnMut()) {
+    let retirement = f.retirement();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        retirement.retire_with(|label| {
+            if label == boundary {
+                before();
+                panic!("process killed at {boundary}");
+            }
+            Ok(())
+        })
+    }));
+    assert!(outcome.is_err(), "cleanup never reached {boundary}");
+}
+
 #[test]
 fn all_completed_move_shapes_preserve_undo_until_explicit_discard() {
     for cross in [false, true] {
@@ -260,15 +276,7 @@ fn every_cleanup_checkpoint_can_resume_without_replaying_public_effects() {
         };
         for boundary in checkpoints {
             let f = Fixture::new(cross, true, false);
-            let mut hit = false;
-            let result = f.retirement().retire_with(|label| {
-                if label == *boundary && !hit {
-                    hit = true;
-                    return Err(invalid("injected interruption"));
-                }
-                Ok(())
-            });
-            assert!(hit && result.is_err(), "{boundary}");
+            crash_at(&f, boundary, || {});
             assert_eq!(fs::read(&f.target).unwrap(), MOVED);
             // A new coordinator uses only durable evidence, not captured handles.
             let coordinator =
@@ -441,15 +449,7 @@ fn killed_process_cleanup_resumes_both_roots_from_durable_evidence() {
 fn foreign_descendant_after_root_intent_survives_resume() {
     let f = Fixture::new(true, true, true);
     let parked = f.roots[0].join("parked");
-    assert!(f
-        .retirement()
-        .retire_with(|label| {
-            if label == "source-intent" {
-                return Err(invalid("interrupted before any unlink"));
-            }
-            Ok(())
-        })
-        .is_err());
+    crash_at(&f, "source-intent", || {});
     fs::write(parked.join("foreign"), b"new user bytes").unwrap();
     let usage = retirement::enforce(&f.coordinator).unwrap();
     assert_eq!(usage.records, 1);
@@ -461,16 +461,9 @@ fn foreign_descendant_after_root_intent_survives_resume() {
 fn preserved_retirement_accounts_for_all_surviving_bytes() {
     for boundary in ["source-intent", "source-completed"] {
         let f = Fixture::new(true, true, false);
-        assert!(f
-            .retirement()
-            .retire_with(|label| {
-                if label == boundary {
-                    fs::write(&f.target, b"changed during cleanup")?;
-                    return Err(invalid("interrupted cleanup"));
-                }
-                Ok(())
-            })
-            .is_err());
+        crash_at(&f, boundary, || {
+            fs::write(&f.target, b"changed during cleanup").unwrap();
+        });
         let usage = retirement::enforce(&f.coordinator).unwrap();
         assert_eq!(usage.records, 1);
         assert!(
@@ -485,15 +478,7 @@ fn preserved_retirement_accounts_for_all_surviving_bytes() {
 fn foreign_descendant_after_partial_tree_removal_is_never_adopted() {
     let f = Fixture::new(true, true, true);
     let parked = f.roots[0].join("parked");
-    assert!(f
-        .retirement()
-        .retire_with(|label| {
-            if label == "entry-removed" {
-                return Err(invalid("interrupted inside tree"));
-            }
-            Ok(())
-        })
-        .is_err());
+    crash_at(&f, "entry-removed", || {});
     assert!(parked.is_dir());
     fs::write(parked.join("foreign"), b"new user bytes").unwrap();
     assert_eq!(retirement::enforce(&f.coordinator).unwrap().records, 1);
@@ -504,15 +489,7 @@ fn foreign_descendant_after_partial_tree_removal_is_never_adopted() {
 #[test]
 fn partial_tree_removal_resumes_without_a_foreign_descendant() {
     let f = Fixture::new(true, true, true);
-    assert!(f
-        .retirement()
-        .retire_with(|label| {
-            if label == "entry-removed" {
-                return Err(invalid("interrupted inside tree"));
-            }
-            Ok(())
-        })
-        .is_err());
+    crash_at(&f, "entry-removed", || {});
     assert_eq!(retirement::enforce(&f.coordinator).unwrap().records, 0);
     f.assert_retired();
     assert_eq!(fs::read(f.target.join("entry")).unwrap(), MOVED);
@@ -561,15 +538,7 @@ fn partial_cleanup_fences_history_and_managed_mutations_until_completion() {
         .move_state()
         .unwrap()
         .effect_revision;
-    assert!(f
-        .retirement()
-        .retire_with(|label| {
-            if label == "source-completed" {
-                return Err(invalid("interrupt between roots"));
-            }
-            Ok(())
-        })
-        .is_err());
+    crash_at(&f, "source-completed", || {});
     assert!(f
         .coordinator
         .try_claim_history(&f.id, revision, HistoryPosition::Published)
@@ -589,15 +558,7 @@ fn partial_cleanup_fences_history_and_managed_mutations_until_completion() {
 #[test]
 fn edited_planned_descendant_is_preserved_after_interruption() {
     let f = Fixture::new(true, true, true);
-    assert!(f
-        .retirement()
-        .retire_with(|label| {
-            if label == "source-intent" {
-                return Err(invalid("interrupted before unlink"));
-            }
-            Ok(())
-        })
-        .is_err());
+    crash_at(&f, "source-intent", || {});
     let child = f.roots[0].join("parked/entry");
     fs::write(&child, b"edited file inside the retained directory").unwrap();
     assert_eq!(retirement::enforce(&f.coordinator).unwrap().records, 1);
@@ -610,15 +571,7 @@ fn edited_planned_descendant_is_preserved_after_interruption() {
 #[test]
 fn foreign_descendant_in_later_root_is_preserved_after_cross_root_crash() {
     let f = Fixture::new(true, true, true);
-    assert!(f
-        .retirement()
-        .retire_with(|label| {
-            if label == "source-completed" {
-                return Err(invalid("interrupted between roots"));
-            }
-            Ok(())
-        })
-        .is_err());
+    crash_at(&f, "source-completed", || {});
     let foreign = f.roots[1].join("original/nested/foreign");
     fs::write(&foreign, b"new user bytes in pending root").unwrap();
     assert_eq!(retirement::enforce(&f.coordinator).unwrap().records, 1);
@@ -1240,6 +1193,121 @@ fn an_interrupted_decision_resumed_after_an_endpoint_change_withdraws_itself() {
     assert!(error.contains("withdrawn"), "{error}");
     assert_eq!(fs::read(f.roots[0].join("parked")).unwrap(), MOVED);
     assert_eq!(fs::read(f.roots[1].join("original")).unwrap(), OLD);
+    assert!(f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .unwrap()
+        .is_some());
+}
+
+fn generation(f: &Fixture) -> u64 {
+    f.coordinator.inventory().unwrap().entries[0]
+        .generation
+        .unwrap()
+}
+
+/// A cross-volume directory move whose discard removed one planned file and
+/// then stopped, as a crash (`crash`) or as a reported failure.
+fn partially_retired(crash: bool) -> Fixture {
+    let f = Fixture::build(true, false, false, |source| {
+        fs::create_dir(source).unwrap();
+        fs::write(source.join("a"), MOVED).unwrap();
+        fs::write(source.join("b"), MOVED).unwrap();
+    });
+    if crash {
+        crash_at(&f, "entry-removed", || {});
+    } else {
+        let stopped = f.retirement().retire_with(|label| match label {
+            "entry-removed" => Err(invalid("stopped after the first unlink")),
+            _ => Ok(()),
+        });
+        assert!(stopped.is_err());
+    }
+    let parked = f.roots[0].join("parked");
+    assert_eq!(
+        ["a", "b"]
+            .iter()
+            .filter(|name| parked.join(name).exists())
+            .count(),
+        1
+    );
+    f
+}
+
+#[test]
+fn a_reported_retirement_failure_is_never_reclaimed_by_enforcement() {
+    let f = partially_retired(false);
+    let before = generation(&f);
+    for _ in 0..3 {
+        retirement::enforce(&f.coordinator).unwrap();
+        assert!(
+            !f.coordinator.inventory().unwrap().entries.is_empty(),
+            "a reported failure was retried automatically"
+        );
+    }
+    assert_eq!(
+        generation(&f),
+        before,
+        "enforcement churned a reported failure"
+    );
+    assert!(f.roots[0].join("parked").is_dir());
+    // Only the user's explicit retry finishes the committed decision.
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    assert_eq!(snapshot.items[0].actions, vec![RecoveryChoice::Discard]);
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+}
+
+#[test]
+fn an_interrupted_retirement_that_cannot_resume_is_claimed_at_most_once() {
+    let f = partially_retired(true);
+    // The public endpoint no longer proves the committed plan.
+    fs::write(&f.source, b"foreign entry at the vacated source").unwrap();
+    retirement::enforce(&f.coordinator).unwrap();
+    let after_first = generation(&f);
+    for _ in 0..3 {
+        retirement::enforce(&f.coordinator).unwrap();
+    }
+    assert_eq!(
+        generation(&f),
+        after_first,
+        "enforcement re-claims every pass"
+    );
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    assert!(
+        snapshot.items[0].message.contains("Discard stopped"),
+        "{}",
+        snapshot.items[0].message
+    );
+    assert!(f.roots[0].join("parked").is_dir());
+}
+
+#[test]
+fn a_decision_the_journal_cannot_hold_with_headroom_is_refused_before_consuming_undo() {
+    use crate::files::recovery::{coordinator::HistoryPosition, journal::MAX_TOTAL_BYTES};
+    let f = Fixture::new(true, true, true);
+    let revision = effect_revision(&f);
+    let before = generation(&f);
+    // No journal can grow a record while leaving all of itself free.
+    let error = f
+        .retirement()
+        .leaving(MAX_TOTAL_BYTES)
+        .retire_with(|_| Ok(()))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("too many unfinished discards"), "{error}");
+    assert!(error.contains("Undo is kept"), "{error}");
+    assert_eq!(fs::read(f.roots[0].join("parked/entry")).unwrap(), MOVED);
+    assert_eq!(fs::read(f.roots[1].join("original/entry")).unwrap(), OLD);
+    // Only the claim itself advanced the generation; no decision was journaled.
+    assert_eq!(generation(&f), before + 1);
     assert!(f
         .coordinator
         .try_claim_history(&f.id, revision, HistoryPosition::Published)

@@ -764,10 +764,19 @@ fn an_interrupted_retirement_whose_endpoint_changed_is_preserved_and_still_resol
     // The refusal is a classification, not an effect: it journals nothing,
     // and the reason reaches the user through the recovery service instead.
 
-    // Repeated automatic passes must neither remove anything nor lose it.
+    // Repeated automatic passes must neither remove anything nor lose it, and
+    // after the first records the reason none claims the record again.
+    enforce(&fixture.coordinator).unwrap();
+    let reported = fixture.current_generation();
     for _ in 0..3 {
         enforce(&fixture.coordinator).unwrap();
     }
+    assert_eq!(
+        fixture.current_generation(),
+        reported,
+        "an unprogressable retirement is re-claimed every pass"
+    );
+    assert!(fixture.recorded_error().is_some());
     assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
     assert!(fixture.indexed());
     // Restoration remains a legal transition out of an interrupted retirement,

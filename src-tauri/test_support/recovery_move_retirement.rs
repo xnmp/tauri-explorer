@@ -831,19 +831,22 @@ fn persistent_failure_after_discard_intent_is_reported_for_attention_and_retryab
     });
     assert!(result.is_err());
     assert_eq!(fs::read(pkg.join("a")).unwrap(), MOVED);
-    // While the committed plan cannot be proven, nothing is offered.
+    // While the committed plan cannot be proven, only forgetting is offered.
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     let item = &snapshot.items[0];
     assert_eq!(item.status, "attention", "{}", item.message);
     assert!(item.message.contains("Discard stopped"), "{}", item.message);
-    assert!(item.actions.is_empty());
+    assert_eq!(item.actions, vec![RecoveryChoice::Release]);
     // Once the user restores it, the failure is still called out, with a retry.
     set_mode(&pkg, 0o755);
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     let item = &snapshot.items[0];
     assert_eq!(item.status, "attention", "{}", item.message);
     assert!(item.message.contains("Discard stopped"), "{}", item.message);
-    assert_eq!(item.actions, vec![RecoveryChoice::Discard]);
+    assert_eq!(
+        item.actions,
+        vec![RecoveryChoice::Discard, RecoveryChoice::Release]
+    );
     let reply = service::resolve(
         &f.coordinator,
         &f.id,
@@ -1253,7 +1256,10 @@ fn a_reported_retirement_failure_is_never_reclaimed_by_enforcement() {
     assert!(f.roots[0].join("parked").is_dir());
     // Only the user's explicit retry finishes the committed decision.
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
-    assert_eq!(snapshot.items[0].actions, vec![RecoveryChoice::Discard]);
+    assert_eq!(
+        snapshot.items[0].actions,
+        vec![RecoveryChoice::Discard, RecoveryChoice::Release]
+    );
     let reply = service::resolve(
         &f.coordinator,
         &f.id,
@@ -1313,4 +1319,115 @@ fn a_decision_the_journal_cannot_hold_with_headroom_is_refused_before_consuming_
         .try_claim_history(&f.id, revision, HistoryPosition::Published)
         .unwrap()
         .is_some());
+}
+
+fn write_claim(f: &Fixture) -> Result<(), AppError> {
+    use crate::files::recovery::resources::{Access, Request, Scope};
+    f.coordinator
+        .reserve(vec![Request {
+            path: f.target.clone(),
+            access: Access::Write,
+            scope: Scope::Subtree,
+        }])?
+        .finish()
+}
+
+#[test]
+fn a_stranded_discard_can_be_forgotten_without_touching_any_file() {
+    let f = partially_retired(false);
+    // The vacated source is reused, so the committed plan can never finish.
+    fs::write(&f.source, b"foreign entry at the vacated source").unwrap();
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let item = snapshot.items[0].clone();
+    assert!(
+        item.actions.contains(&RecoveryChoice::Release),
+        "{:?}: {}",
+        item.actions,
+        item.message
+    );
+    assert!(
+        write_claim(&f).is_err(),
+        "the stranded record locks the moved entry"
+    );
+    let before = tree(&f.roots[0]);
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        item.generation,
+        RecoveryChoice::Release,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert!(f.coordinator.inventory().unwrap().entries.is_empty());
+    assert_eq!(
+        tree(&f.roots[0]),
+        before,
+        "forgetting removed or changed a file"
+    );
+    assert_eq!(
+        fs::read(&f.source).unwrap(),
+        b"foreign entry at the vacated source"
+    );
+    write_claim(&f).expect("forgetting released the record's locks");
+}
+
+#[test]
+fn a_discard_whose_volume_changed_identity_can_still_be_forgotten() {
+    let f = partially_retired(true);
+    // The source volume's parent is replaced: nothing can be observed there.
+    let parent = f.roots[0].parent().unwrap().to_owned();
+    let away = parent.with_extension("away");
+    fs::rename(&parent, &away).unwrap();
+    fs::create_dir(&parent).unwrap();
+    let before = tree(&away);
+    retirement::enforce(&f.coordinator).unwrap();
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let item = snapshot.items[0].clone();
+    assert_eq!(
+        item.actions,
+        vec![RecoveryChoice::Release],
+        "{}",
+        item.message
+    );
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        item.generation,
+        RecoveryChoice::Release,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert!(f.coordinator.inventory().unwrap().entries.is_empty());
+    assert_eq!(tree(&away), before);
+    fs::remove_dir(&parent).unwrap();
+    fs::rename(&away, &parent).unwrap();
+}
+
+#[test]
+fn only_a_stopped_discard_can_be_forgotten() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    for cross in [false, true] {
+        let f = Fixture::new(cross, true, false);
+        let revision = effect_revision(&f);
+        let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+        assert!(!snapshot.items[0].actions.contains(&RecoveryChoice::Release));
+        let reply = service::resolve(
+            &f.coordinator,
+            &f.id,
+            snapshot.items[0].generation,
+            RecoveryChoice::Release,
+        )
+        .unwrap();
+        assert!(reply.error.is_some(), "a settled move was forgotten");
+        assert!(f
+            .coordinator
+            .try_claim_history(&f.id, revision, HistoryPosition::Published)
+            .unwrap()
+            .is_some());
+    }
+    // A resumable interruption offers only the retry that finishes it.
+    let f = Fixture::new(true, true, false);
+    crash_at(&f, "source-completed", || {});
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    assert_eq!(snapshot.items[0].actions, vec![RecoveryChoice::Discard]);
 }

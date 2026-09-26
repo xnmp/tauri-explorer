@@ -127,12 +127,8 @@ impl Default for MoveState {
 
 #[cfg(unix)]
 impl MoveState {
-    pub(super) fn validate(
-        &self,
-        spec: &MoveSpec,
-        resources: &[super::resources::Resource],
-    ) -> io::Result<()> {
-        super::move_capability_model::validate(spec, self, resources)?;
+    pub(super) fn validate(&self, spec: &MoveSpec) -> io::Result<()> {
+        super::move_capability_model::validate(spec, self)?;
         if let Some(retirement) = &self.retirement {
             retirement.validate(spec, self)?;
         }
@@ -178,10 +174,10 @@ impl MoveState {
             (self.source_root, &spec.source_root, spec.source_parent),
             (self.target_root, &spec.target_root, spec.target_parent),
         ] {
-            let (Some(identity), Some(plan)) = (identity, plan.as_ref()) else {
+            let (Some(identity), Some(_)) = (identity, plan.as_ref()) else {
                 continue;
             };
-            spec.validate_root(resources, plan, parent, identity)?;
+            spec.validate_root(parent, identity)?;
         }
         if let Some(staged) = &self.staged {
             staged.validate()?;
@@ -232,14 +228,12 @@ impl MoveSpec {
 
     /// An observed artifact root must be a private sibling of its owning user
     /// entry: same volume as that parent, and never an alias of user data.
+    /// Only the move's subjects are compared. Other intent resources, such as
+    /// the parent-alias entries admission records for traversed symlinks, are
+    /// not kept alive, so a fresh root can reuse a freed inode number from any
+    /// of them (#788).
     #[cfg(unix)]
-    pub(super) fn validate_root(
-        &self,
-        resources: &[super::resources::Resource],
-        plan: &ArtifactPlan,
-        parent: ObjectId,
-        root: ObjectId,
-    ) -> io::Result<()> {
+    pub(super) fn validate_root(&self, parent: ObjectId, root: ObjectId) -> io::Result<()> {
         if !root.same_volume(parent)
             || root == parent
             || root == self.source_version.object
@@ -247,11 +241,6 @@ impl MoveSpec {
                 .target_original
                 .as_ref()
                 .is_some_and(|original| original.object == root)
-            || resources.iter().any(|resource| {
-                !resource.is_parent_alias()
-                    && resource.object == Some(root)
-                    && resource.path.0 != plan.path.0
-            })
         {
             return Err(invalid(
                 "Move artifact root aliases a user object or lies on another device",

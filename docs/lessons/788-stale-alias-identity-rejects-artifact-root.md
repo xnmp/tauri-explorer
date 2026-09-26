@@ -17,10 +17,20 @@ intent resource, so it read the reused number as "this root aliases a user
 object" and refused a root it had just created. `MoveSpec::validate_root` made
 the same comparison.
 
-A new identity may only be compared with identities the operation keeps
-alive: its subjects (subtree claims whose versions it verifies) and its
-parents. `move_capability_model.rs` already applied this rule to removed
-rename probes.
+## Fix
+
+A fresh root is a new directory, so it can equal only a freed inode number.
+Comparing it with a recorded identity proves something only when that
+identity names an object the operation verifies: its subjects (the source and
+the displaced original) and its parents. Those checks are explicit in
+`MoveSpec::validate_root` and in each anchor's `excluded` set. The fix
+therefore deletes the scan over every intent resource rather than filtering it
+by a resource's (access, scope) shape. Other code also produces entry-scoped
+reads (symlink-creation targets, trash anchors), so a shape filter would
+silently misclassify a future durable producer's resources.
+`durable_model.rs` already selected by role (the resource at the source path),
+and `move_capability_model.rs` already applied the same rule to removed rename
+probes.
 
 ## Why it never reproduced locally
 
@@ -31,7 +41,8 @@ opened lower free inodes: the new link and the catalog intent file took those,
 and the root got the old link's number. To reproduce, put `TMPDIR` on ext4 and
 free a few inodes around the link's creation. Better, test the rule directly:
 push an alias entry recording the root's identity, as
-`a_reused_parent_alias_identity_does_not_disown_a_fresh_root` does.
+`a_reused_parent_alias_identity_does_not_disown_a_fresh_root` (copy) and
+`a_reused_parent_alias_identity_does_not_disqualify_an_observed_root` (move) do.
 
 ## When hunting similar flakes
 

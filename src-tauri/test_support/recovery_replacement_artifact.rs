@@ -338,7 +338,8 @@ fn a_valid_target_alias_cannot_rebind_an_existing_root() {
 /// but the operation neither keeps that link alive nor forbids retargeting it.
 /// Once a retargeted link's inode is freed, ext4 and XFS can give the same
 /// number to the new artifact root (#788). The reused number in that
-/// admission-only entry must not disown the root; on a subject it still does.
+/// admission-only entry must not disown the root. Only the intent's subjects,
+/// the source and the displaced original, may disqualify a root identity.
 #[test]
 fn a_reused_parent_alias_identity_does_not_disown_a_fresh_root() {
     let fixture = Fixture::new("reused-alias");
@@ -351,37 +352,22 @@ fn a_reused_parent_alias_identity_does_not_disown_a_fresh_root() {
         .find(|resource| resource.path.0 == fixture.target)
         .unwrap()
         .clone();
-    let recording = |access, scope| {
-        let mut intent = fixture.intent.clone();
-        intent.resources.push(Resource {
-            path: NativePath(fixture.base.join("retargeted-link")),
-            object: Some(identity),
-            access,
-            scope,
-            ..target.clone()
-        });
-        intent.validate().unwrap();
-        intent
-    };
+    let mut alias = fixture.intent.clone();
+    alias.resources.push(Resource {
+        path: NativePath(fixture.base.join("retargeted-link")),
+        object: Some(identity),
+        access: Access::Read,
+        scope: Scope::Entry,
+        ..target
+    });
+    alias.validate().unwrap();
 
-    let alias = recording(Access::Read, Scope::Entry);
     let root = Anchor::open(&alias)
         .unwrap()
         .open_existing(identity)
         .unwrap();
     root.publish_manifest(&alias).unwrap();
     root.verify_manifest(&alias).unwrap();
-
-    let subject = recording(Access::Read, Scope::Subtree);
-    let root = Anchor::open(&subject)
-        .unwrap()
-        .open_existing(identity)
-        .unwrap();
-    let error = root.verify_manifest(&subject).unwrap_err().to_string();
-    assert!(
-        error.contains("does not belong to this artifact root"),
-        "{error}"
-    );
     fixture.assert_user_data();
 }
 

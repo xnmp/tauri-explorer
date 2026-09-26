@@ -532,15 +532,6 @@ pub(crate) struct Resource {
 }
 
 impl Resource {
-    /// Parent-alias dependencies are the entry-scoped reads `capture_requests`
-    /// appends for traversed symlinks. They fence admission only: the operation
-    /// neither keeps the link alive nor forbids retargeting it, so its recorded
-    /// identity may be freed and reused by any later object, including a fresh
-    /// artifact root. Only operation subjects may be compared with new identities.
-    pub(super) fn is_parent_alias(&self) -> bool {
-        self.access == Access::Read && self.scope == Scope::Entry
-    }
-
     pub(super) fn validate(&self) -> io::Result<()> {
         validate_path(&self.path.0)?;
         if self.access == Access::EnsurePrivateDirectory && self.scope != Scope::Entry {

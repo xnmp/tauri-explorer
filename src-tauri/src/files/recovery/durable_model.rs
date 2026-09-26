@@ -420,9 +420,7 @@ impl OperationState {
             (OperationSpec::CopyReplacement(spec), Self::Replacement(state)) => {
                 state.validate(spec, &intent.resources)
             }
-            (OperationSpec::Move(spec), Self::Move(state)) => {
-                state.validate(spec, &intent.resources)
-            }
+            (OperationSpec::Move(spec), Self::Move(state)) => state.validate(spec),
             _ => Err(invalid(
                 "Recovery checkpoint kind disagrees with its immutable intent",
             )),

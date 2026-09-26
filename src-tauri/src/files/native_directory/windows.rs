@@ -586,12 +586,7 @@ fn aligned_storage(bytes: usize) -> Vec<usize> {
     vec![0; bytes.div_ceil(size_of::<usize>())]
 }
 
-/// Opens a second handle, with its own file object, to the entry behind
-/// `file`. `ReOpenFile` rejects directory handles with ERROR_ACCESS_DENIED on
-/// Windows (#772), so this opens by the 128-bit file ID instead. The ID names
-/// the same entry after its path is renamed or replaced, and `file` keeps that
-/// entry, and so its ID, from being released.
-fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
+fn file_id(file: &File) -> io::Result<FILE_ID_INFO> {
     let mut identity = FILE_ID_INFO::default();
     // SAFETY: the handle is valid and the output buffer is exactly one
     // FILE_ID_INFO for the synchronous call.
@@ -604,6 +599,17 @@ fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
         )
         .map_err(io_error)?;
     }
+    Ok(identity)
+}
+
+/// Opens a second handle, with its own file object, to the entry behind
+/// `file`. `ReOpenFile` rejects directory handles with ERROR_ACCESS_DENIED on
+/// Windows (#772), so this opens by the 128-bit file ID instead. `file` keeps
+/// its entry from being released, but not every filesystem keeps an ID stable
+/// across a concurrent move, so the opened handle must report the same volume
+/// and ID or the reopen fails closed.
+fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
+    let identity = file_id(file)?;
     let descriptor = FILE_ID_DESCRIPTOR {
         dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
         Type: ExtendedFileIdType,
@@ -625,7 +631,16 @@ fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
         .map_err(io_error)?
     };
     // SAFETY: OpenFileById returned a uniquely owned valid HANDLE.
-    Ok(unsafe { File::from_raw_handle(handle.0) })
+    let reopened = unsafe { File::from_raw_handle(handle.0) };
+    let opened = file_id(&reopened)?;
+    if opened.VolumeSerialNumber != identity.VolumeSerialNumber
+        || opened.FileId.Identifier != identity.FileId.Identifier
+    {
+        return Err(io::Error::other(
+            "Reopened directory is no longer the anchored entry",
+        ));
+    }
+    Ok(reopened)
 }
 
 fn file_handle(file: &File) -> HANDLE {

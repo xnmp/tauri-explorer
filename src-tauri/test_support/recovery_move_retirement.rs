@@ -1431,3 +1431,62 @@ fn only_a_stopped_discard_can_be_forgotten() {
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     assert_eq!(snapshot.items[0].actions, vec![RecoveryChoice::Discard]);
 }
+
+/// Two bind mounts of one filesystem share st_dev, yet rename(2) between them
+/// fails with EXDEV. Requires the isolated namespace documented for
+/// `unmounted_endpoint_preserves_both_roots_until_same_volume_returns`.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn bind_mounted_endpoints_on_one_device_are_refused_before_any_record() {
+    use std::{os::unix::fs::MetadataExt, process::Command};
+    let parent_namespace = std::env::var_os("EXPLORER_MOUNT_TEST_PARENT_NS")
+        .expect("run through the documented isolated mount namespace command");
+    assert_ne!(
+        fs::read_link("/proc/self/ns/mnt").unwrap().as_os_str(),
+        parent_namespace
+    );
+    for overwrite in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let base_path = fs::canonicalize(base.path()).unwrap();
+        let (left, right) = (base_path.join("left"), base_path.join("right"));
+        fs::create_dir(&left).unwrap();
+        fs::create_dir(&right).unwrap();
+        let alias = base_path.join("alias");
+        fs::create_dir(&alias).unwrap();
+        assert!(Command::new("mount")
+            .args(["--bind".as_ref(), right.as_os_str(), alias.as_os_str()])
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(
+            fs::metadata(&left).unwrap().dev(),
+            fs::metadata(&alias).unwrap().dev(),
+            "a bind mount keeps its device"
+        );
+        let (source, target) = (left.join("source"), alias.join("target"));
+        fs::write(&source, MOVED).unwrap();
+        if overwrite {
+            fs::write(&target, OLD).unwrap();
+        }
+        // The kernel refuses the plain rename the Rename strategy would use.
+        let scratch = left.join("scratch");
+        fs::write(&scratch, b"").unwrap();
+        let exdev = fs::rename(&scratch, alias.join("scratch")).unwrap_err();
+        assert_eq!(exdev.raw_os_error(), Some(libc::EXDEV));
+        fs::remove_file(&scratch).unwrap();
+        let coordinator = Coordinator::open(&base_path.join("recovery")).unwrap();
+        let error = PreparedMove::prepare(&coordinator, &source, &target)
+            .err()
+            .expect("a bind-mounted destination was admitted")
+            .to_string();
+        assert!(error.contains("Nothing was moved"), "{error}");
+        assert!(coordinator.inventory().unwrap().entries.is_empty());
+        assert_eq!(fs::read(&source).unwrap(), MOVED);
+        assert!(private_residue(&left).is_empty() && private_residue(&alias).is_empty());
+        assert!(Command::new("umount")
+            .arg(&alias)
+            .status()
+            .unwrap()
+            .success());
+    }
+}

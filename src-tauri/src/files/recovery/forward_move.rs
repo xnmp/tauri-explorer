@@ -127,6 +127,7 @@ impl PendingMove {
         let target_parent = Directory::open(&parent_of(&target, "destination")?)?;
         let source_identity = of_file(&source_parent.file)?;
         let target_identity = of_file(&target_parent.file)?;
+        refuse_bind_mounted_endpoints(&source_parent, &target_parent)?;
         let cross_volume = !source_identity.same_volume(target_identity);
         let target_original = match fs::symlink_metadata(&target) {
             Ok(metadata) => Some(version_from_metadata(&metadata)?),
@@ -231,6 +232,26 @@ fn admit_retirement(
             .map_err(|error| refuse("the replaced destination", &spec.target.0, error))?;
     }
     Ok(())
+}
+
+/// One device is not one mount. A bind mount exposes the same st_dev as its
+/// source, yet rename(2) between the two fails with EXDEV, and no probe
+/// renaming inside one directory can observe that. A durable move's layout is
+/// derived from device identity alone, so such a pair is refused before any
+/// record or effect exists rather than failing at publication (#760).
+/// Kernels without STATX_MNT_ID keep the device-only decision.
+fn refuse_bind_mounted_endpoints(source: &Directory, target: &Directory) -> Result<(), AppError> {
+    if !of_file(&source.file)?.same_volume(of_file(&target.file)?) {
+        return Ok(());
+    }
+    match (source.mount_id()?, target.mount_id()?) {
+        (Some(source), Some(target)) if source != target => Err(AppError::Other(
+            "The source and destination are different mounts of one filesystem (a bind \
+             mount), which recoverable moves cannot rename between yet. Nothing was moved."
+                .into(),
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn same_volume(left: &Path, right: &Path) -> Result<bool, AppError> {

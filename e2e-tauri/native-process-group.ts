@@ -117,6 +117,40 @@ export async function stopNativeProcessGroup(
   }
 }
 
+/**
+ * SIGKILLs a Linux process group without waiting. Only for process exit,
+ * where no asynchronous graceful stop can run; ordinary cleanup uses
+ * `stopNativeProcessGroup`.
+ */
+export function killNativeProcessGroupSync(group: NativeProcessGroup): boolean {
+  const groupId = assertSafeProcessGroup(group);
+  return processGroupExists(groupId) && signalProcessGroup(groupId, "SIGKILL");
+}
+
+/**
+ * Reaps a group this process still owns when it exits. WDIO skips
+ * `afterSession` when session creation fails, and the worker then exits with
+ * the detached driver group still holding the WebDriver ports, which fails
+ * every later spec in the run.
+ */
+export function reapNativeProcessGroupOnExit(
+  owned: () => NativeProcessGroup | undefined,
+  label: string,
+): void {
+  process.once("exit", () => {
+    const group = owned();
+    if (!group) return;
+    try {
+      if (killNativeProcessGroupSync(group)) {
+        process.stderr.write(`reaped ${label} process group ${group.pid} left by an incomplete session\n`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`failed to reap ${label} process group ${group.pid}: ${message}\n`);
+    }
+  });
+}
+
 export function nativeProcessGroup(child: ChildProcess): NativeProcessGroup {
   if (child.pid === undefined) {
     throw new Error("native process-group leader has no pid");

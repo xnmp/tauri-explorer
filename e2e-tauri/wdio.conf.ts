@@ -6,6 +6,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   nativeProcessGroup,
+  reapNativeProcessGroupOnExit,
   stopNativeProcessGroup,
   type NativeProcessGroup,
 } from "./native-process-group";
@@ -117,6 +118,10 @@ const stopProcesses = async (): Promise<void> => {
     }
   }
 };
+
+// The ordinary stop runs from afterSession, which WDIO skips when session
+// creation fails (for example when the application panics during setup).
+reapNativeProcessGroupOnExit(() => driverProcessGroup, "native WebKit session");
 
 const processCleanupHooks = createNativeProcessCleanupHooks({
   environment: process.env,

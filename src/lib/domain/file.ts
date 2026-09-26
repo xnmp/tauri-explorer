@@ -41,6 +41,9 @@ export interface FileMutationReceipt {
   readonly recovery?: FileMutationRecovery;
   /** Displaced original belongs to durable recovery, not a path-only Copy inverse. */
   readonly replacement?: { readonly id: string };
+  /** A durable move record, already native history's inverse for this move.
+   * A path-only Move action could relocate the last copy of the data. */
+  readonly relocation?: { readonly id: string };
 }
 
 export interface FileMutationRecovery {

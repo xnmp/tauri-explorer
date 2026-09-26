@@ -595,7 +595,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ### Native qualification tooling
 
 - `e2e-tauri/native-qualification.ts` — native process lifetime, verified build identity, bounded artifacts and foreground-ready/warm startup log parsing.
-- `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group.
+- `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
+- `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
+- `e2e-tauri/specs/gated-describe.ts` — `gatedDescribe`, the Mocha adapter over that decision; separate from `specs/helpers.ts` because qualification tests import the helpers without Mocha types.
 - `e2e-tauri/fresh-window-diagnostics.ts` — always-on fresh-child-window evidence: renderer snapshot, `/proc` renderer/driver classification and failure artifacts for lost native sessions (#703).
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.

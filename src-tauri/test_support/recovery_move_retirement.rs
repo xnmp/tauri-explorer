@@ -1645,3 +1645,127 @@ fn a_destination_grown_while_undo_runs_is_kept_public_and_retryable() {
     assert!(reply.error.is_none(), "{:?}", reply.error);
     f.assert_retired();
 }
+
+/// `mount`/`umount` inside the documented isolated namespace only (see
+/// `unmounted_endpoint_preserves_both_roots_until_same_volume_returns`).
+fn isolated_mount(program: &str, args: &[&std::ffi::OsStr]) {
+    let parent_namespace = std::env::var_os("EXPLORER_MOUNT_TEST_PARENT_NS")
+        .expect("run through the documented isolated mount namespace command");
+    assert_ne!(
+        fs::read_link("/proc/self/ns/mnt").unwrap().as_os_str(),
+        parent_namespace
+    );
+    assert!(
+        std::process::Command::new(program)
+            .args(args)
+            .status()
+            .unwrap()
+            .success(),
+        "{program} {args:?}"
+    );
+}
+
+fn refused_move(
+    source: &std::path::Path,
+    target: &std::path::Path,
+    base: &std::path::Path,
+) -> String {
+    let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+    let mut progress = crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+    let error = match PreparedMove::prepare(&coordinator, source, target)
+        .and_then(|prepared| prepared.execute(&mut progress))
+    {
+        Ok(_) => panic!("the move was admitted"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("Nothing was moved"), "{error}");
+    assert!(coordinator.inventory().unwrap().entries.is_empty());
+    assert!(private_residue(source.parent().unwrap()).is_empty());
+    assert!(private_residue(target.parent().unwrap()).is_empty());
+    error
+}
+
+/// A payload with a submount inside it could be captured by admission's walk
+/// and later never validated as a retirement plan. Requires the isolated
+/// namespace documented in e2e-tauri/README.md.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn a_payload_that_crosses_into_another_mount_is_refused_before_any_record() {
+    for overwrite_only in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let shared = tempfile::tempdir_in("/dev/shm").unwrap();
+        let base_path = fs::canonicalize(base.path()).unwrap();
+        // Cross volume: the source tree would be parked. Same volume with an
+        // overwrite: the displaced destination tree would be retained.
+        let (source, target) = if overwrite_only {
+            (base_path.join("source"), base_path.join("target"))
+        } else {
+            let shared_path = fs::canonicalize(shared.path()).unwrap();
+            (shared_path.join("source"), base_path.join("target"))
+        };
+        let tree = if overwrite_only { &target } else { &source };
+        if overwrite_only {
+            fs::write(&source, MOVED).unwrap();
+        }
+        fs::create_dir_all(tree.join("inner")).unwrap();
+        fs::write(tree.join("entry"), OLD).unwrap();
+        isolated_mount(
+            "mount",
+            &[
+                "-t".as_ref(),
+                "tmpfs".as_ref(),
+                "tmpfs".as_ref(),
+                tree.join("inner").as_os_str(),
+            ],
+        );
+        fs::write(tree.join("inner/mounted"), OLD).unwrap();
+        let error = refused_move(&source, &target, &base_path);
+        assert!(error.contains("another mounted volume"), "{error}");
+        assert_eq!(fs::read(tree.join("inner/mounted")).unwrap(), OLD);
+        assert_eq!(fs::read(tree.join("entry")).unwrap(), OLD);
+        isolated_mount("umount", &[tree.join("inner").as_os_str()]);
+    }
+}
+
+/// rename(2) of a mount point is EBUSY; a bind mount point even keeps its
+/// parent's device, so only its mount id reveals it.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn mount_point_endpoints_are_refused_before_any_record() {
+    for destination in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let base_path = fs::canonicalize(base.path()).unwrap();
+        let (left, right, elsewhere) = (
+            base_path.join("left"),
+            base_path.join("right"),
+            base_path.join("elsewhere"),
+        );
+        for directory in [&left, &right, &elsewhere] {
+            fs::create_dir(directory).unwrap();
+        }
+        fs::write(elsewhere.join("entry"), OLD).unwrap();
+        let (source, target) = (left.join("source"), right.join("target"));
+        let mounted = if destination { &target } else { &source };
+        if destination {
+            fs::write(&source, MOVED).unwrap();
+        }
+        fs::create_dir(mounted).unwrap();
+        isolated_mount(
+            "mount",
+            &[
+                "--bind".as_ref(),
+                elsewhere.as_os_str(),
+                mounted.as_os_str(),
+            ],
+        );
+        let error = refused_move(&source, &target, &base_path);
+        assert!(error.contains("is a mount point"), "{error}");
+        assert_eq!(fs::read(mounted.join("entry")).unwrap(), OLD);
+        if destination {
+            assert_eq!(fs::read(&source).unwrap(), MOVED);
+        } else {
+            assert!(!target.exists());
+        }
+        isolated_mount("umount", &[mounted.as_os_str()]);
+    }
+}

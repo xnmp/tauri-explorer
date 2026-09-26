@@ -1014,9 +1014,15 @@ intent proves and is left to an owner decision (#760).
 A probe renames inside one directory, so it cannot observe a cross-mount
 `EXDEV`. Bind mounts share `st_dev`, so a move between two mounts of one device
 would choose `Rename` and fail at publication. Binding compares `STATX_MNT_ID`
-when devices match and refuses differing mounts before any record exists;
-kernels without it keep the device comparison. Supporting such moves through the
-cross-volume layout needs a recorded mount identity in `MoveSpec`.
+when devices match and refuses differing mounts before any record exists.
+Kernels without it (`ENOSYS`, `EINVAL`) and seccomp profiles that reject `statx`
+(`EPERM`) keep the device comparison rather than refusing every move. Supporting
+such moves through the cross-volume layout needs a recorded mount identity in
+`MoveSpec`. `rename(2)` also refuses an endpoint that is itself a mount point
+(`EBUSY`), which a cross-volume move would meet only when parking its source
+beside the published copy. Binding therefore refuses a source, or an existing
+destination, whose mount id differs from its parent's (its device, where mount
+ids are unavailable) before any record exists.
 
 Probe files and directories are private storage, so they are created owner-only
 and their owner access is restored explicitly when a restrictive umask (for

@@ -50,7 +50,13 @@ honoring the umask.
 **One device is not one mount.** Bind mounts share `st_dev`, yet `rename(2)`
 between them is `EXDEV`, and a same-directory probe cannot see that. Compare
 `STATX_MNT_ID` when devices match. Only a real mount namespace test proves this
-(`unshare --user --map-root-user --mount`).
+(`unshare --user --map-root-user --mount`). Treat a rejected query (`ENOSYS`,
+`EINVAL`, and `EPERM` from seccomp) as "mount id unavailable", not as a failure,
+or one sandbox refuses every durable move. An endpoint that is itself a mount
+point fails `rename(2)` with `EBUSY`; compare its mount id with its parent's
+before journaling. Admission must also reject a submount inside a retained
+payload, because the plan validator does, and parity between the two is the
+whole point.
 
 **Give stranded records an exit that deletes nothing.** Forget
 (`RecoveryChoice::Release`) removes only the record and its locks. Decide it

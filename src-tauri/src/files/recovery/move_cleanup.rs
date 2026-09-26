@@ -74,11 +74,7 @@ impl Plan {
         for entry in &self.entries {
             spend_bytes(&entry.path.0, &mut bytes)?;
             entry.version.validate()?;
-            if !entry.version.object.same_volume(versions[0].object) {
-                return Err(invalid(
-                    "Move cleanup cannot traverse another mounted volume",
-                ));
-            }
+            on_payload_volume(&entry.version, &versions[0])?;
             let relative = entry
                 .path
                 .0
@@ -134,16 +130,22 @@ impl Plan {
         Ok(plan)
     }
 
-    /// Forward-move admission. Walk a live payload under exactly the bounds
-    /// `capture` applies, charging each entry at every private path it may
-    /// later occupy, so an admitted payload always has a retirement plan (#760).
+    /// Admission of a payload a move is about to retain: at the move's start,
+    /// and for the destination an Undo parks. Walk the live payload under
+    /// exactly the rules a plan must satisfy: `capture`'s depth, entry and byte
+    /// bounds, charging each entry at every private path it may later occupy,
+    /// and `validate`'s refusal to cross into another mounted volume. An
+    /// admitted payload therefore always has a retirement plan (#760).
     pub(super) fn admit(
         parent: &Directory,
         name: &OsStr,
         destinations: &[std::path::PathBuf],
     ) -> Result<(), AppError> {
         let mut budget = Budget::new(destinations.len());
-        walk(parent, name, Path::new(""), 1, &mut |relative, _| {
+        let mut payload: Option<EntryVersion> = None;
+        walk(parent, name, Path::new(""), 1, &mut |relative, version| {
+            // Preorder: the first entry visited is the payload itself.
+            on_payload_volume(version, payload.get_or_insert_with(|| version.clone()))?;
             let paths: Vec<_> = destinations
                 .iter()
                 .map(|top| located(top, relative))
@@ -520,6 +522,18 @@ fn remove_tree(
     }
     Ok(())
 }
+/// Cleanup unlinks through one volume's handles; a submount inside a payload
+/// is someone else's filesystem, never retained evidence.
+fn on_payload_volume(entry: &EntryVersion, payload: &EntryVersion) -> io::Result<()> {
+    if entry.object.same_volume(payload.object) {
+        Ok(())
+    } else {
+        Err(invalid(
+            "Move cleanup cannot traverse another mounted volume",
+        ))
+    }
+}
+
 fn spend_bytes(path: &Path, budget: &mut usize) -> io::Result<()> {
     let cost = path
         .as_os_str()

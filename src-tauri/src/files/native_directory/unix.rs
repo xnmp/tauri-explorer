@@ -162,18 +162,47 @@ impl Directory {
         self.file.metadata()
     }
 
-    /// Distinguish bind mounts that expose the same device/inode. None is
-    /// reserved for kernels without STATX_MNT_ID support.
+    /// Distinguish bind mounts that expose the same device/inode. None means
+    /// STATX_MNT_ID is unavailable here (see [`mount_id_unavailable`]).
     #[cfg(target_os = "linux")]
     pub(crate) fn mount_id(&self) -> io::Result<Option<u64>> {
+        self.statx_mount_id(c"", libc::AT_EMPTY_PATH)
+    }
+
+    /// The mount of one entry, without following a final symlink. A lookup
+    /// crosses into a mount, so a mount point reports the mounted root's id.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn entry_mount_id(&self, name: &OsStr) -> io::Result<Option<u64>> {
+        self.statx_mount_id(&native_name(name)?, libc::AT_SYMLINK_NOFOLLOW)
+    }
+
+    /// Whether an entry is the root of a mount other than this directory's.
+    /// `rename(2)` refuses such an entry with EBUSY.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn is_mount_root(&self, name: &OsStr) -> io::Result<bool> {
+        use std::os::unix::fs::MetadataExt;
+        #[allow(clippy::unnecessary_cast)] // st_dev's width differs across libc targets.
+        let entry = MountIdentity {
+            device: self.stat(name)?.st_dev as u64,
+            mount: self.entry_mount_id(name)?,
+        };
+        let parent = MountIdentity {
+            device: self.metadata()?.dev(),
+            mount: self.mount_id()?,
+        };
+        Ok(entry.is_other_mount(parent))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn statx_mount_id(&self, name: &CStr, flags: libc::c_int) -> io::Result<Option<u64>> {
         let mut stat = std::mem::MaybeUninit::<libc::statx>::zeroed();
-        // SAFETY: the owned descriptor and empty terminated path are valid;
-        // AT_EMPTY_PATH addresses the descriptor and stat is writable storage.
+        // SAFETY: the owned descriptor and terminated name are valid for the
+        // call; stat is writable storage for one statx record.
         let result = unsafe {
             libc::statx(
                 self.file.as_raw_fd(),
-                c"".as_ptr(),
-                libc::AT_EMPTY_PATH,
+                name.as_ptr(),
+                flags,
                 libc::STATX_MNT_ID,
                 stat.as_mut_ptr(),
             )
@@ -184,7 +213,7 @@ impl Directory {
             return Ok((stat.stx_mask & libc::STATX_MNT_ID != 0).then_some(stat.stx_mnt_id));
         }
         let error = io::Error::last_os_error();
-        if matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL)) {
+        if mount_id_unavailable(&error) {
             Ok(None)
         } else {
             Err(error)
@@ -483,6 +512,40 @@ impl Drop for Entries {
         // SAFETY: fdopendir transferred this uniquely owned stream to Entries.
         unsafe { libc::closedir(self.stream) };
     }
+}
+
+/// A mount identity observation: its device, and its mount id when the
+/// kernel reports one.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug)]
+struct MountIdentity {
+    device: u64,
+    mount: Option<u64>,
+}
+
+#[cfg(target_os = "linux")]
+impl MountIdentity {
+    /// Mount ids decide when both are known: a bind mount keeps its device.
+    /// Otherwise only a device change reveals a mount, and a bind mount of the
+    /// same filesystem stays undetectable.
+    fn is_other_mount(self, parent: Self) -> bool {
+        match (self.mount, parent.mount) {
+            (Some(entry), Some(parent)) => entry != parent,
+            _ => self.device != parent.device,
+        }
+    }
+}
+
+/// STATX_MNT_ID is unavailable rather than failed: an old kernel rejects
+/// statx (ENOSYS) or its mask (EINVAL), and some seccomp profiles reject
+/// statx itself (EPERM). Callers then fall back to device comparison instead
+/// of refusing every operation that asks.
+#[cfg(target_os = "linux")]
+fn mount_id_unavailable(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::ENOSYS | libc::EINVAL | libc::EPERM)
+    )
 }
 
 /// Creation modes are filtered by the process umask. Private storage requires

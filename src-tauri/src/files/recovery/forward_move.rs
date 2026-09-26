@@ -134,6 +134,10 @@ impl PendingMove {
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
+        refuse_mount_point(&source_parent, &source, "source")?;
+        if target_original.is_some() {
+            refuse_mount_point(&target_parent, &target, "destination")?;
+        }
         // The artifact layout was planned before admission. If the volumes or
         // the conflict changed underneath it, retire rather than improvise.
         if cross_volume != self.source_token.is_some()
@@ -252,6 +256,24 @@ fn refuse_bind_mounted_endpoints(source: &Directory, target: &Directory) -> Resu
         )),
         _ => Ok(()),
     }
+}
+
+/// rename(2) refuses a mount point with EBUSY, which a durable move would
+/// only meet after journaling: at publication for a same-volume move, or when
+/// parking the source beside its already published copy across volumes.
+/// Refuse such an endpoint before any record or effect exists (#760).
+fn refuse_mount_point(parent: &Directory, path: &Path, what: &str) -> Result<(), AppError> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| AppError::InvalidPath(format!("Move {what} has no name")))?;
+    if parent.is_mount_root(name)? {
+        return Err(AppError::Other(format!(
+            "The {what} '{}' is a mount point, which a recoverable move cannot rename. \
+             Nothing was moved.",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn same_volume(left: &Path, right: &Path) -> Result<bool, AppError> {

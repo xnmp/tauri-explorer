@@ -1,0 +1,56 @@
+# Rust suites on the platforms that ci.yml's ubuntu `rust` job cannot prove
+# (#772). Every `cfg(unix)` recovery, move-retention/retirement and
+# native_directory module compiles on macOS, and the Windows adapters compile
+# on Windows; neither was tested here before. e2e-tauri.yml keeps its filtered
+# Windows contract loop because it gates that job's native smoke.
+name: Rust platforms
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # tauri::generate_context! requires the frontendDist dir to exist.
+      - name: Create empty frontend dist
+        shell: bash
+        run: mkdir -p build
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # The opt-in durable policies are `cfg(unix)` code; macOS is the only
+      # non-Linux platform where they compile to anything.
+      - name: Opt-in recovery Clippy
+        if: runner.os == 'macOS'
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features durable-copy-recovery,durable-move-recovery -- -D warnings
+
+      - name: Opt-in recovery tests
+        if: runner.os == 'macOS'
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features durable-copy-recovery,durable-move-recovery

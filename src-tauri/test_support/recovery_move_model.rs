@@ -263,6 +263,31 @@ fn source_target_overlap_and_real_hardlink_alias_are_rejected() {
     assert!(spec.validate(&resources).is_err());
 }
 
+/// A parent-alias entry records a symlink the move neither keeps alive nor
+/// forbids retargeting, so its freed inode can be reused by the new artifact
+/// root (#788). Only an operation subject disqualifies a root identity.
+#[test]
+fn a_reused_parent_alias_identity_does_not_disqualify_a_move_root() {
+    let (spec, mut resources) = overwrite();
+    let plan = spec.target_root.clone().unwrap();
+    let reused = object(7, 30);
+    let mut link = resource(
+        "/volume/retargeted-link",
+        Some(reused),
+        spec.target_parent,
+        Access::Read,
+    );
+    link.scope = Scope::Entry;
+    resources.push(link);
+    spec.validate_root(&resources, &plan, spec.target_parent, reused)
+        .unwrap();
+
+    resources.last_mut().unwrap().scope = Scope::Subtree;
+    assert!(spec
+        .validate_root(&resources, &plan, spec.target_parent, reused)
+        .is_err());
+}
+
 #[test]
 fn artifact_tokens_namespaces_and_vacancy_are_exact() {
     let (spec, resources) = cross_volume();

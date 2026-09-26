@@ -417,7 +417,9 @@ impl Root {
             || self.identity == self.parent_identity
             || self.excluded.contains(&self.identity)
             || intent.resources.iter().any(|resource| {
-                resource.path.0 != self.path && resource.object == Some(self.identity)
+                !resource.is_parent_alias()
+                    && resource.path.0 != self.path
+                    && resource.object == Some(self.identity)
             })
         {
             return Err(invalid(

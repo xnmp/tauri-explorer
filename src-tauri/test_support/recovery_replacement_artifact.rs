@@ -3,7 +3,7 @@ use crate::files::{
     file_identity::{of_file, version_from_metadata},
     recovery::{
         model::{LockIdentity, NativePath, ReplacementSpec},
-        resources::{capture_requests, Access, Request, Scope},
+        resources::{capture_requests, Access, Request, Resource, Scope},
     },
 };
 use std::{fs, os::unix::fs::PermissionsExt};
@@ -331,6 +331,57 @@ fn a_valid_target_alias_cannot_rebind_an_existing_root() {
     assert!(root.verify_manifest(&aliased).is_err());
     assert_eq!(fs::read(&manifest).unwrap(), before);
     assert_eq!(fs::read(alias).unwrap(), b"original bytes");
+    fixture.assert_user_data();
+}
+
+/// Admission records each symlink the admitted paths traverse, with its inode,
+/// but the operation neither keeps that link alive nor forbids retargeting it.
+/// Once a retargeted link's inode is freed, ext4 and XFS can give the same
+/// number to the new artifact root (#788). The reused number in that
+/// admission-only entry must not disown the root; on a subject it still does.
+#[test]
+fn a_reused_parent_alias_identity_does_not_disown_a_fresh_root() {
+    let fixture = Fixture::new("reused-alias");
+    Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let identity = of_file(&Directory::open(&fixture.root).unwrap().file).unwrap();
+    let target = fixture
+        .intent
+        .resources
+        .iter()
+        .find(|resource| resource.path.0 == fixture.target)
+        .unwrap()
+        .clone();
+    let recording = |access, scope| {
+        let mut intent = fixture.intent.clone();
+        intent.resources.push(Resource {
+            path: NativePath(fixture.base.join("retargeted-link")),
+            object: Some(identity),
+            access,
+            scope,
+            ..target.clone()
+        });
+        intent.validate().unwrap();
+        intent
+    };
+
+    let alias = recording(Access::Read, Scope::Entry);
+    let root = Anchor::open(&alias)
+        .unwrap()
+        .open_existing(identity)
+        .unwrap();
+    root.publish_manifest(&alias).unwrap();
+    root.verify_manifest(&alias).unwrap();
+
+    let subject = recording(Access::Read, Scope::Subtree);
+    let root = Anchor::open(&subject)
+        .unwrap()
+        .open_existing(identity)
+        .unwrap();
+    let error = root.verify_manifest(&subject).unwrap_err().to_string();
+    assert!(
+        error.contains("does not belong to this artifact root"),
+        "{error}"
+    );
     fixture.assert_user_data();
 }
 

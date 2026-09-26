@@ -145,21 +145,24 @@
     border-left-color: var(--accent);
   }
 
-  .list-view :global(.list-item.cut) {
-    opacity: 0.5;
+  /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
+     their label to --text-secondary. Dimming the whole row pulled the name
+     below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
+     the icon for the same states. */
+  .list-view :global(.list-item:is(.hidden-entry, .empty-folder, .cut)) {
+    color: var(--text-secondary);
   }
 
-  .list-view :global(.list-item.hidden-entry) {
+  .list-view :global(.list-item:is(.hidden-entry, .empty-folder) [data-drag-icon]) {
     opacity: 0.55;
   }
 
-  .list-view :global(.list-item.empty-folder) {
-    opacity: 0.55;
-  }
-
-  .list-view :global(.list-item.empty-folder:hover),
-  .list-view :global(.list-item.empty-folder.selected) {
+  .list-view :global(.list-item.empty-folder:is(:hover, .selected) [data-drag-icon]) {
     opacity: 0.8;
+  }
+
+  .list-view :global(.list-item.cut [data-drag-icon]) {
+    opacity: 0.5;
   }
 
   .list-view :global(.list-item.in-clipboard:not(.cut)) {

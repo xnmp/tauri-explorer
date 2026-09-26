@@ -256,20 +256,23 @@
     background: var(--subtle-fill-tertiary);
   }
 
-  .tiles-view :global(.tile-item.hidden-entry) {
+  /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
+     their label to --text-secondary. Dimming the whole row pulled the name
+     below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
+     the icon for the same states. */
+  .tiles-view :global(.tile-item:is(.hidden-entry, .empty-folder, .cut)) {
+    color: var(--text-secondary);
+  }
+
+  .tiles-view :global(.tile-item:is(.hidden-entry, .empty-folder) [data-drag-icon]) {
     opacity: 0.55;
   }
 
-  .tiles-view :global(.tile-item.empty-folder) {
-    opacity: 0.55;
-  }
-
-  .tiles-view :global(.tile-item.empty-folder:hover),
-  .tiles-view :global(.tile-item.empty-folder.selected) {
+  .tiles-view :global(.tile-item.empty-folder:is(:hover, .selected) [data-drag-icon]) {
     opacity: 0.8;
   }
 
-  .tiles-view :global(.tile-item.cut) {
+  .tiles-view :global(.tile-item.cut [data-drag-icon]) {
     opacity: 0.5;
   }
 

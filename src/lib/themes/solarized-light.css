@@ -33,11 +33,15 @@
   --accent: #268bd2;
   --accent-light: #2aa198;
   --accent-dark: #073642;
+  /* Accent, caution and critical as text (--*-text): the fill colours fall
+     below AA on this theme's surfaces, so text uses darker shades of the same
+     hues (#785). */
+  --accent-text: #0070b5;
 
   /* Text colors - Solarized base tones */
   --text-primary: #002b36;    /* Shifted from base00 to base01 */
   --text-secondary: #073642;  /* Shifted from base0 to base00 */
-  --text-tertiary: #586e75;   /* Shifted from base1 to base0 */
+  --text-tertiary: #52686f;   /* base01, darkened to meet AA on selected rows (#785) */
   --text-on-accent: #fdf6e3;
 
   /* Background colors - Warm cream tones */
@@ -81,8 +85,10 @@
 
   /* System status colors - Solarized accents */
   --system-critical: #dc322f;
+  --system-critical-text: #d12425;
   --system-success: #859900;
   --system-caution: #b58900;
+  --system-caution-text: #8f6400;
 
   /* Shadows - Softer, warmer shadows */
   --shadow-flyout: 0 8px 16px rgba(0, 43, 54, 0.12), 0 0 12px rgba(38, 139, 210, 0.03);

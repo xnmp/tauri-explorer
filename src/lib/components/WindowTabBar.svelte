@@ -455,7 +455,9 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
-  <div class="tab-area" role="tablist">
+  <div class="tab-area">
+    <!-- A tablist owns only tabs; the new-tab button sits beside it (#785). -->
+    <div class="tab-list" role="tablist" aria-label="Tabs">
     {#each tabs as tab (tab.id)}
       {@const display = windowTabsManager.getTabDisplay(tab)}
       <div
@@ -542,10 +544,15 @@
             <span class="tab-cwd">{display.name}</span>
           </span>
         {/if}
-        <button
+        <!-- Pointer-only, and deliberately not a <button>: role="tab" has
+             presentational children, so a focusable descendant (even at
+             tabindex -1) is a nested control that assistive technology
+             cannot reach. The keyboard closes the active tab with Ctrl+W
+             (#785). -->
+        <span
           class="tab-close"
           onclick={(e) => handleTabClose(e, tab.id)}
-          aria-label="Close tab"
+          aria-hidden="true"
           title="Close"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
@@ -556,9 +563,10 @@
               stroke-linecap="round"
             />
           </svg>
-        </button>
+        </span>
       </div>
     {/each}
+    </div>
 
     <button
       class="new-tab-btn"
@@ -594,6 +602,14 @@
        a second (semi-transparent) layer here made the tabbed section a
        different shade from the tabless remainder of the bar (#238). */
     background: transparent;
+  }
+
+  .tab-list {
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+    height: 100%;
+    flex-shrink: 0;
   }
 
   .tab-area::-webkit-scrollbar {

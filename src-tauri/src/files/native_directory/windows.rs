@@ -37,16 +37,18 @@ use windows::{
         },
         Security::SECURITY_DESCRIPTOR,
         Storage::FileSystem::{
-            FileAttributeTagInfo, FileDispositionInfoEx, FileRenameInfo,
-            GetFileInformationByHandleEx, GetVolumeInformationByHandleW, ReOpenFile,
-            SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY,
-            FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO,
-            FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
-            FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
+            ExtendedFileIdType, FileAttributeTagInfo, FileDispositionInfoEx, FileIdInfo,
+            FileRenameInfo, GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
+            OpenFileById, SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS,
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+            FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
+            FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX,
+            FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0,
-            FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
-            READ_CONTROL, SYNCHRONIZE,
+            FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_ID_INFO, FILE_LIST_DIRECTORY,
+            FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
+            FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL,
+            SYNCHRONIZE,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -298,23 +300,15 @@ impl Directory {
         Ok(())
     }
 
-    /// Enumerates through a freshly reopened handle so calls never share a cursor.
-    /// Records follow `FILE_NAMES_INFORMATION`'s checked linked-buffer layout:
+    /// Enumerates through a fresh handle to the same directory, so calls never
+    /// share a cursor. Records follow `FILE_NAMES_INFORMATION`'s checked
+    /// linked-buffer layout:
     /// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_names_information
     pub(crate) fn names(&self, maximum: usize) -> io::Result<Vec<OsString>> {
-        // SAFETY: the source handle remains valid for the call and the returned
-        // handle is transferred immediately to one File owner.
-        let handle = unsafe {
-            ReOpenFile(
-                file_handle(&self.file),
-                (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE).0,
-                SHARE_ALL,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            )
-            .map_err(io_error)?
-        };
-        // SAFETY: ReOpenFile returned a uniquely owned valid HANDLE.
-        let directory = unsafe { File::from_raw_handle(handle.0) };
+        let directory = reopen_by_id(
+            &self.file,
+            (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE).0,
+        )?;
         let mut buffer = vec![0usize; ENUMERATION_BUFFER_BYTES.div_ceil(size_of::<usize>())];
         let mut restart = true;
         let mut names = Vec::new();
@@ -592,6 +586,48 @@ fn aligned_storage(bytes: usize) -> Vec<usize> {
     vec![0; bytes.div_ceil(size_of::<usize>())]
 }
 
+/// Opens a second handle, with its own file object, to the entry behind
+/// `file`. `ReOpenFile` rejects directory handles with ERROR_ACCESS_DENIED on
+/// Windows (#772), so this opens by the 128-bit file ID instead. The ID names
+/// the same entry after its path is renamed or replaced, and `file` keeps that
+/// entry, and so its ID, from being released.
+fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
+    let mut identity = FILE_ID_INFO::default();
+    // SAFETY: the handle is valid and the output buffer is exactly one
+    // FILE_ID_INFO for the synchronous call.
+    unsafe {
+        GetFileInformationByHandleEx(
+            file_handle(file),
+            FileIdInfo,
+            ptr::from_mut(&mut identity).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+        .map_err(io_error)?;
+    }
+    let descriptor = FILE_ID_DESCRIPTOR {
+        dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
+        Type: ExtendedFileIdType,
+        Anonymous: FILE_ID_DESCRIPTOR_0 {
+            ExtendedFileId: identity.FileId,
+        },
+    };
+    // SAFETY: `file` is on the entry's volume and outlives the call, and the
+    // descriptor is initialized for the extended ID it declares.
+    let handle = unsafe {
+        OpenFileById(
+            file_handle(file),
+            &descriptor,
+            access,
+            SHARE_ALL,
+            None,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        )
+        .map_err(io_error)?
+    };
+    // SAFETY: OpenFileById returned a uniquely owned valid HANDLE.
+    Ok(unsafe { File::from_raw_handle(handle.0) })
+}
+
 fn file_handle(file: &File) -> HANDLE {
     HANDLE(file.as_raw_handle())
 }
@@ -609,71 +645,6 @@ mod tests {
     use super::*;
 
     const HEADER_BYTES: usize = offset_of!(FILE_NAMES_INFORMATION, FileName);
-
-    /// TEMPORARY (#772): `names` fails with ERROR_ACCESS_DENIED on the Windows
-    /// runner. Record which reopen inputs Windows accepts before changing it.
-    #[test]
-    fn reopen_access_diagnostics() {
-        let root = tempfile::tempdir().unwrap();
-        let walked = Directory::open(root.path()).unwrap();
-        let by_path = OpenOptions::new()
-            .read(true)
-            .access_mode(DIRECTORY_ACCESS.0)
-            .share_mode(SHARE_ALL.0)
-            .custom_flags((FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT).0)
-            .open(root.path())
-            .unwrap();
-        let listing = (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE).0;
-        let variants = [
-            (
-                "current",
-                listing,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            ),
-            ("no-reparse-flag", listing, FILE_FLAG_BACKUP_SEMANTICS),
-            (
-                "list-only",
-                FILE_LIST_DIRECTORY.0,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            ),
-            (
-                "attributes-only",
-                FILE_READ_ATTRIBUTES.0,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            ),
-            (
-                "generic-read",
-                FILE_GENERIC_READ.0,
-                FILE_FLAG_BACKUP_SEMANTICS,
-            ),
-            (
-                "same-as-open",
-                DIRECTORY_ACCESS.0,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            ),
-        ];
-        // Passing tests' output is captured, so the report fails the test.
-        let mut report = Vec::new();
-        for (label, file) in [("walked", &walked.file), ("by-path", &by_path)] {
-            for (name, access, flags) in variants {
-                // SAFETY: the source handle outlives the call; a returned
-                // handle is transferred to a File that closes it.
-                let result = unsafe { ReOpenFile(file_handle(file), access, SHARE_ALL, flags) }
-                    .map(|handle| drop(unsafe { File::from_raw_handle(handle.0) }));
-                report.push(format!(
-                    "REOPEN-DIAG {label} {name}: {:?}",
-                    result.map_err(|e| e.code())
-                ));
-            }
-        }
-        let by_path_directory = Directory { file: by_path };
-        report.push(format!(
-            "REOPEN-DIAG names walked={:?} by-path={:?}",
-            walked.names(4).map_err(|e| e.raw_os_error()),
-            by_path_directory.names(4).map_err(|e| e.raw_os_error()),
-        ));
-        panic!("{}", report.join("\n"));
-    }
 
     #[test]
     fn parser_preserves_wtf16_names() {

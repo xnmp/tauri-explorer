@@ -156,11 +156,10 @@ gatedDescribe("native cross-device move history", [
         await browser.waitUntil(async () => (await entryNames()).includes(name), {
           timeoutMsg: "the moved entry never appeared in the destination listing",
         });
-        if (kind === "file") {
-          await browser.saveScreenshot(path.join(
-            process.cwd(),
-            `screenshots/test/native-recovery-suites/cross-device-move-${durable ? "durable" : "default"}.png`,
-          ));
+        if (durable && kind === "file") {
+          const evidence = path.join(process.cwd(), "screenshots/test/native-recovery-suites");
+          fs.mkdirSync(evidence, { recursive: true });
+          await browser.saveScreenshot(path.join(evidence, "cross-device-move-durable.png"));
         }
         const inventory = await acknowledged<FileRecoverySnapshot>(
           "e2e-recovery-operation", "e2eRecoveryResult", { op: "list" },

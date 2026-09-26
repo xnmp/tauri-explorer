@@ -196,16 +196,31 @@ describe("Linux native process-group cleanup", () => {
     }
   });
 
-  linuxIt("leaves a group alone once ordinary cleanup released it", async () => {
+  linuxIt("reads ownership when the owner exits, not when it registers", async () => {
+    // Ordinary cleanup releases the group (here: without stopping it, so a
+    // wrong kill is observable). The reaper must see that release at exit.
+    const module = path.resolve("e2e-tauri/native-process-group.ts");
     const owner = spawn("bun", ["-e", `
-      const { reapNativeProcessGroupOnExit } = require(${JSON.stringify(path.resolve("e2e-tauri/native-process-group.ts"))});
-      reapNativeProcessGroupOnExit(() => undefined, "released driver");
-      process.exit(0);
-    `], { stdio: ["ignore", "ignore", "pipe"] });
+      const { spawn } = require("node:child_process");
+      const { nativeProcessGroup, reapNativeProcessGroupOnExit } = require(${JSON.stringify(module)});
+      const leader = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+      let owned = nativeProcessGroup(leader);
+      reapNativeProcessGroupOnExit(() => owned, "released driver");
+      console.log(owned.pid);
+      owned = undefined;
+      setTimeout(() => process.exit(0), 300);
+    `], { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     owner.stderr!.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-    const code = await new Promise<number | null>((resolve) => owner.once("exit", resolve));
-    expect(code).toBe(0);
-    expect(stderr).not.toContain("released driver");
+    const exited = new Promise<number | null>((resolve) => owner.once("exit", resolve));
+    const group = { pid: Number(await waitForLine(owner, 5_000)) };
+    try {
+      expect(await exited).toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(groupExists(group), "a released group must outlive its former owner").toBe(true);
+      expect(stderr).not.toContain("released driver");
+    } finally {
+      await forceCleanup(group);
+    }
   });
 });

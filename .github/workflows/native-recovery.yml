@@ -4,11 +4,25 @@
 # TAURI_E2E_REQUIRE_GATED=1 turns any remaining skip into a named failure.
 name: Native recovery (Linux)
 
+# A debug build with three features is ~12 minutes; changes that cannot
+# reach the binary or the specs skip it.
 on:
   pull_request:
     branches: [dev, main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "screenshots/**"
+      - "evidence/**"
+      - "website/**"
   push:
     branches: [dev, main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "screenshots/**"
+      - "evidence/**"
+      - "website/**"
   workflow_dispatch:
 
 concurrency:
@@ -27,15 +41,6 @@ jobs:
           bun-version: latest
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-registry-
 
       # Its own key: the feature set differs from the smoke build, so sharing
       # a target directory would rebuild the crate on every alternation.
@@ -63,6 +68,7 @@ jobs:
       # The Tauri CLI embeds the hooks-enabled frontend (custom-protocol).
       # Warm priming stays off: the recovery fixture requires it.
       - name: Build Tauri binary with recovery features
+        id: build
         env:
           VITE_E2E_HOOKS: "1"
           VITE_E2E_NO_WARM_PRIME: "1"
@@ -73,11 +79,12 @@ jobs:
       # Move retirement needs source and target on different mounted
       # filesystems: tmpfs /dev/shm and the runner disk.
       - name: Prepare fixtures
+        id: fixtures
         run: |
           root="$RUNNER_TEMP/native-recovery"
-          mkdir -p "$root"/{file-recovery,history-gate,move-target}
+          mkdir -p "$root"/{file-recovery,move-target}
           for profile in fixture-profile history-profile; do
-            mkdir -p "$root/$profile"/{config,data,cache,state}
+            mkdir -p "$root/$profile"/{config,data,cache,state,history-gate}
           done
           move_source="$(mktemp -d /dev/shm/native-move-source.XXXXXX)"
           source_device="$(stat -c %d "$move_source")"
@@ -87,7 +94,6 @@ jobs:
             exit 1
           fi
           {
-            echo "TAURI_E2E_HISTORY_GATE_DIR=$root/history-gate"
             echo "TAURI_E2E_MOVE_SOURCE_DIR=$move_source"
             echo "TAURI_E2E_MOVE_TARGET_DIR=$root/move-target"
             echo "TAURI_E2E_REQUIRE_GATED=1"
@@ -97,10 +103,13 @@ jobs:
       # Every launch with TAURI_E2E_FILE_RECOVERY_DIR set seeds its recovery
       # fixture there and refuses to overwrite one, so only this suite, which
       # consumes the seeded record, runs with it, in a profile of its own.
+      # Each suite step has its own history gate directory, so arm files a
+      # failed protocol leaves behind cannot reach a later step.
       - name: Run file recovery acceptance
         timeout-minutes: 15
         env:
           TAURI_E2E_FILE_RECOVERY_DIR: ${{ runner.temp }}/native-recovery/file-recovery
+          TAURI_E2E_HISTORY_GATE_DIR: ${{ runner.temp }}/native-recovery/fixture-profile/history-gate
           XDG_CONFIG_HOME: ${{ runner.temp }}/native-recovery/fixture-profile/config
           XDG_DATA_HOME: ${{ runner.temp }}/native-recovery/fixture-profile/data
           XDG_CACHE_HOME: ${{ runner.temp }}/native-recovery/fixture-profile/cache
@@ -111,10 +120,21 @@ jobs:
           bunx wdio run e2e-tauri/wdio.conf.ts
           --spec e2e-tauri/specs/file-recovery.spec.ts
 
+      # The driver runs in its own process group. A step that timed out was
+      # killed without its exit-time reaper, and a driver it left holds the
+      # fixed WebDriver ports that every later session needs.
+      - name: Reap native processes left by an earlier step
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.fixtures.outcome == 'success' }}
+        run: |
+          for name in tauri-driver WebKitWebDriver tauri-explorer; do
+            pkill -KILL -x "$name" || true
+          done
+
       - name: Run history and move recovery suites
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.fixtures.outcome == 'success' }}
         timeout-minutes: 25
         env:
+          TAURI_E2E_HISTORY_GATE_DIR: ${{ runner.temp }}/native-recovery/history-profile/history-gate
           XDG_CONFIG_HOME: ${{ runner.temp }}/native-recovery/history-profile/config
           XDG_DATA_HOME: ${{ runner.temp }}/native-recovery/history-profile/data
           XDG_CACHE_HOME: ${{ runner.temp }}/native-recovery/history-profile/cache
@@ -131,8 +151,18 @@ jobs:
       # WebDriver sessions die with the renderer, so renderer crash recovery
       # has its own retained-WebView controller, which creates its own
       # isolated profile and fixture.
+      # The driver runs in its own process group. A step that timed out was
+      # killed without its exit-time reaper, and a driver it left holds the
+      # fixed WebDriver ports that every later session needs.
+      - name: Reap native processes left by the suites
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          for name in tauri-driver WebKitWebDriver tauri-explorer; do
+            pkill -KILL -x "$name" || true
+          done
+
       - name: Run renderer recovery harness
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 15
         run: >-
           GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24"

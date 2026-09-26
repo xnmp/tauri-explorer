@@ -652,24 +652,27 @@ mod tests {
                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
             ),
         ];
+        // Passing tests' output is captured, so the report fails the test.
+        let mut report = Vec::new();
         for (label, file) in [("walked", &walked.file), ("by-path", &by_path)] {
             for (name, access, flags) in variants {
                 // SAFETY: the source handle outlives the call; a returned
                 // handle is transferred to a File that closes it.
                 let result = unsafe { ReOpenFile(file_handle(file), access, SHARE_ALL, flags) }
                     .map(|handle| drop(unsafe { File::from_raw_handle(handle.0) }));
-                eprintln!(
+                report.push(format!(
                     "REOPEN-DIAG {label} {name}: {:?}",
                     result.map_err(|e| e.code())
-                );
+                ));
             }
         }
         let by_path_directory = Directory { file: by_path };
-        eprintln!(
+        report.push(format!(
             "REOPEN-DIAG names walked={:?} by-path={:?}",
             walked.names(4).map_err(|e| e.raw_os_error()),
             by_path_directory.names(4).map_err(|e| e.raw_os_error()),
-        );
+        ));
+        panic!("{}", report.join("\n"));
     }
 
     #[test]

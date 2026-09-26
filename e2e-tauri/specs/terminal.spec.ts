@@ -30,12 +30,10 @@ async function sendTerminalCommand(
     timeout: 2_000,
     timeoutMsg: "xterm input never received focus",
   });
-  // msedgedriver can deliver a multi-character element Send Keys payload to
-  // xterm/ConPTY out of order. Awaiting one WebDriver command per character
-  // gives the terminal an ordering boundary between key events.
-  for (const character of command) {
-    await browser.keys(character);
-  }
+  // One Send Keys payload. Per-character typing used to hide the app's own
+  // input reordering (#709); keystrokes must now arrive in order however fast
+  // the driver sends them.
+  await input.addValue(command);
   await browser.keys("Enter");
 }
 

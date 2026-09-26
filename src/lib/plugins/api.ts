@@ -180,8 +180,13 @@ export function createPluginStorage(pluginId: string): PluginStorage {
 /**
  * Build a plugin context plus a `dispose` that runs every tracked teardown.
  * Disposers run in reverse registration order.
+ *
+ * A plugin's command or menu action that fails is reported to the user under
+ * `pluginName` (#782). Commands still reject, so `executeCommand` reports the
+ * failure to its caller; menu actions resolve, because the context menu fires
+ * them without awaiting and a reported failure is not an unhandled rejection.
  */
-export function createPluginContext(pluginId: string): {
+export function createPluginContext(pluginId: string, pluginName = pluginId): {
   ctx: PluginContext;
   dispose: () => void;
 } {
@@ -192,14 +197,31 @@ export function createPluginContext(pluginId: string): {
     else disposers.push(fn);
   };
   const storage = createPluginStorage(pluginId);
-
+  const report = (error: unknown) =>
+    toastStore.error(`${pluginName}: ${error instanceof Error ? error.message : String(error)}`);
 
   const ctx: PluginContext = {
     registerCommand(cmd: Command): void {
-      track(registerCommandContribution(cmd));
+      const handler = async () => {
+        try {
+          await cmd.handler();
+        } catch (error) {
+          report(error);
+          throw error;
+        }
+      };
+      track(registerCommandContribution({ ...cmd, handler }));
     },
     registerContextMenuItem(item: ContextMenuItem): void {
-      track(contextMenuItems.register(item));
+      const handler = async (entries: FileEntry[]) => {
+        try {
+          await item.handler(entries);
+        } catch (error) {
+          report(error);
+          console.error(`[plugins] "${pluginId}" menu action ${item.id} failed:`, error);
+        }
+      };
+      track(contextMenuItems.register({ ...item, handler }));
     },
     registerSettingsSection(section: SettingsSectionDescriptor): void {
       track(pluginSettingsSections.register(pluginId, section, storage));

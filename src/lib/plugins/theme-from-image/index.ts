@@ -39,7 +39,7 @@ async function createThemeFrom(ctx: PluginContext, imagePath: string): Promise<v
     themeStore.setTheme(id);
     ctx.toast.show(`Theme "${theme.name}" created and applied`);
   } catch (err) {
-    ctx.toast.error(`Theme generation failed: ${err}`);
+    ctx.toast.error(`Theme generation failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

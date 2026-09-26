@@ -63,7 +63,7 @@ function createPluginRegistry(
         : inFlight.promise;
     }
 
-    const { ctx, dispose } = createPluginContext(plugin.id);
+    const { ctx, dispose } = createPluginContext(plugin.id, plugin.name);
     // Plugin code can synchronously request shutdown or retry. Publish the
     // actual completion before invoking it so those operations join this run.
     let resolve!: () => void;
@@ -145,10 +145,9 @@ function createPluginRegistry(
       if (closed) return;
       // Job event ownership starts lazily inside jobs.accept, before its
       // backend invocation. Unused optional jobs do no startup IPC work.
-      for (const plugin of plugins) {
-        if (closed) return;
-        if (isEnabled(plugin)) await activate(plugin);
-      }
+      // Activations start together, in list order, so one that awaits
+      // storage that never answers cannot hold back the others (#782).
+      await Promise.all(plugins.filter(isEnabled).map(activate));
     },
 
     dispose(): Promise<void> {

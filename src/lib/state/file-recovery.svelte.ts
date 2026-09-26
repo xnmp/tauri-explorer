@@ -12,7 +12,7 @@ import type {
 const EMPTY_SNAPSHOT: FileRecoverySnapshot = { revision: "0", items: [], storage: emptyRecoveryStorage(), error: null };
 const INVALID_UPDATE = "Recovery status update was invalid";
 const STATUSES = new Set(["pending", "busy", "ready", "attention", "retained"]);
-const CHOICES = new Set<FileRecoveryChoice>(["restore", "discard"]);
+const CHOICES = new Set<FileRecoveryChoice>(["restore", "discard", "release"]);
 
 function validItem(value: unknown): value is FileRecoveryItem {
   if (!value || typeof value !== "object") return false;

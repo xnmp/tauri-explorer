@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatRecoveryBytes, summarizeRecoveryStorage } from "$lib/domain/file-recovery";
+  import { formatRecoveryBytes, recoveryConfirmation, summarizeRecoveryStorage } from "$lib/domain/file-recovery";
   import type { FileRecoveryItem, FileRecoveryChoice } from "$lib/domain/file-recovery";
   import type { FileRecoverySession } from "$lib/state/file-recovery-session.svelte";
   import "./modal.css";
@@ -18,38 +18,42 @@
   const storage = $derived(store?.storage ?? null);
   const usage = $derived(storage ? summarizeRecoveryStorage(storage) : null);
   let card = $state<HTMLDivElement | null>(null);
-  let pendingDiscard = $state<FileRecoveryItem | null>(null);
-  let discardCancelButton = $state<HTMLButtonElement | null>(null);
+  /** One irreversible choice awaiting confirmation, bound to the exact
+   *  generation it was offered for. */
+  let pending = $state<{ item: FileRecoveryItem; choice: FileRecoveryChoice } | null>(null);
+  const confirmation = $derived(pending ? recoveryConfirmation(pending.choice, pending.item) : null);
+  let confirmationCancelButton = $state<HTMLButtonElement | null>(null);
   let closeButton = $state<HTMLButtonElement | null>(null);
 
-  function discardTrigger(id: string): HTMLButtonElement | null {
-    return [...document.querySelectorAll<HTMLButtonElement>("[data-recovery-discard]")]
-      .find((button) => button.dataset.recoveryDiscard === id) ?? null;
+  function confirmationTrigger(id: string, choice: FileRecoveryChoice): HTMLButtonElement | null {
+    return [...document.querySelectorAll<HTMLButtonElement>(`[data-recovery-${choice}]`)]
+      .find((button) => button.getAttribute(`data-recovery-${choice}`) === id) ?? null;
   }
 
-  async function openDiscardConfirmation(item: FileRecoveryItem): Promise<void> {
-    pendingDiscard = item;
+  async function openConfirmation(item: FileRecoveryItem, choice: FileRecoveryChoice): Promise<void> {
+    pending = { item, choice };
     await tick();
-    if (pendingDiscard?.id === item.id) discardCancelButton?.focus();
+    if (pending?.item.id === item.id) confirmationCancelButton?.focus();
   }
 
-  async function closeDiscardConfirmation(id: string, restoreFocus = true): Promise<void> {
-    pendingDiscard = null;
-    if (!restoreFocus) return;
+  async function closeConfirmation(restoreFocus = true): Promise<void> {
+    const closed = pending;
+    pending = null;
+    if (!restoreFocus || !closed) return;
     await tick();
-    (discardTrigger(id) ?? closeButton)?.focus();
+    (confirmationTrigger(closed.item.id, closed.choice) ?? closeButton)?.focus();
   }
 
   $effect(() => {
-    if (!open && pendingDiscard) {
-      pendingDiscard = null;
+    if (!open && pending) {
+      pending = null;
       return;
     }
-    if (pendingDiscard && !items.some(
-      (item) => item.id === pendingDiscard?.id
-        && item.generation === pendingDiscard.generation
-        && item.actions.includes("discard"),
-    )) void closeDiscardConfirmation(pendingDiscard.id);
+    if (pending && !items.some(
+      (item) => item.id === pending?.item.id
+        && item.generation === pending.item.generation
+        && item.actions.includes(pending.choice),
+    )) void closeConfirmation();
   });
 
   async function runItemAction(id: string, action: () => Promise<void>): Promise<void> {
@@ -73,7 +77,7 @@
     const state = store;
     if (!state || state.busyId) return;
     void runItemAction(item.id, async () => {
-      pendingDiscard = null;
+      pending = null;
       await state.resolve(item, choice);
     });
   }
@@ -147,13 +151,14 @@
               <p class="inspection-error" role="alert">{store?.inspectionError}</p>
             {/if}
 
-            {#if pendingDiscard?.id === item.id && pendingDiscard.generation === item.generation}
-              <div class="discard-confirmation" role="alert">
-                <strong>Discard this recovery record?</strong>
-                <p>This permanently deletes any retained files and removes recovery and Undo for this operation. It cannot be undone.</p>
+            {#if pending && confirmation && pending.item.id === item.id && pending.item.generation === item.generation}
+              {@const choice = pending.choice}
+              <div class="confirmation {choice}-confirmation" role="alert">
+                <strong>{confirmation.title}</strong>
+                <p>{confirmation.body}</p>
                 <div class="confirmation-actions">
-                  <button bind:this={discardCancelButton} type="button" class="btn secondary" onclick={() => void closeDiscardConfirmation(item.id)}>Cancel</button>
-                  <button type="button" class="btn danger" onclick={() => resolve(item, "discard")} disabled={!!store?.busyId || recovery.loading}>Discard recovery data</button>
+                  <button bind:this={confirmationCancelButton} type="button" class="btn secondary" onclick={() => void closeConfirmation()}>Cancel</button>
+                  <button type="button" class="btn danger" onclick={() => resolve(item, choice)} disabled={!!store?.busyId || recovery.loading}>{confirmation.confirm}</button>
                 </div>
               </div>
             {:else}
@@ -165,7 +170,10 @@
                   <button type="button" class="btn primary" onclick={() => resolve(item, "restore")} disabled={!!store?.busyId || recovery.loading}>Restore</button>
                 {/if}
                 {#if item.actions.includes("discard")}
-                  <button type="button" class="btn danger" data-recovery-discard={item.id} onclick={() => void openDiscardConfirmation(item)} disabled={!!store?.busyId || recovery.loading}>Discard…</button>
+                  <button type="button" class="btn danger" data-recovery-discard={item.id} onclick={() => void openConfirmation(item, "discard")} disabled={!!store?.busyId || recovery.loading}>Discard…</button>
+                {/if}
+                {#if item.actions.includes("release")}
+                  <button type="button" class="btn secondary" data-recovery-release={item.id} onclick={() => void openConfirmation(item, "release")} disabled={!!store?.busyId || recovery.loading}>Forget…</button>
                 {/if}
               </div>
             {/if}
@@ -210,8 +218,8 @@
   .inspection dt { color: var(--text-secondary); }
   .inspection dd { margin: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
   .inspection-error { color: var(--system-critical) !important; }
-  .discard-confirmation { margin-top: var(--spacing-sm); padding: var(--spacing-sm); border: 1px solid var(--system-critical); border-radius: var(--radius-sm); }
-  .discard-confirmation strong { color: var(--system-critical); }
-  .discard-confirmation p { margin: var(--spacing-xs) 0 var(--spacing-sm); color: var(--text-secondary); font-size: var(--font-size-caption); }
+  .confirmation { margin-top: var(--spacing-sm); padding: var(--spacing-sm); border: 1px solid var(--system-critical); border-radius: var(--radius-sm); }
+  .confirmation strong { color: var(--system-critical); }
+  .confirmation p { margin: var(--spacing-xs) 0 var(--spacing-sm); color: var(--text-secondary); font-size: var(--font-size-caption); overflow-wrap: anywhere; }
   @media (max-width: 480px) { .recovery-dialog { min-width: 0; padding: var(--spacing-lg); } .item-actions, .confirmation-actions { flex-wrap: wrap; } }
 </style>

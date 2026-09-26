@@ -561,3 +561,31 @@ it("reports a clear failure when the port cannot reclaim at all", async () => {
   expect(state.error).toMatch(/cannot reclaim/);
   await state.dispose();
 });
+
+describe("forgetting a stranded move discard", () => {
+  it("accepts a native release offer and resolves it at the exact inspected generation", async () => {
+    const stranded: FileRecoveryItem = {
+      ...item("stranded", 4),
+      retainedPath: "/volume/.tauri-explorer-recovery-9e41",
+      actions: ["discard", "release"],
+    };
+    const resolve = vi.fn(async () => snapshot(5, []));
+    const state = createFileRecoveryState(port({
+      subscribe: vi.fn(async (receive) => {
+        receive(snapshot(4, [stranded]));
+        return async () => {};
+      }),
+      resolve,
+    }));
+    await state.start();
+    // An update offering `release` is valid native state, not a malformed one.
+    expect(state.error).toBeNull();
+    expect(state.items[0].actions).toEqual(["discard", "release"]);
+
+    await state.resolve(state.items[0], "release");
+
+    expect(resolve).toHaveBeenCalledWith("stranded", "4", "release");
+    expect(state.items).toEqual([]);
+    await state.dispose();
+  });
+});

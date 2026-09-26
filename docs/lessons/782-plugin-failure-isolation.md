@@ -1,26 +1,52 @@
 # 782 — Plugin failures must stay with their plugin
 
-Each case below was tested while another plugin was active, and two defects
-turned up.
+Each case below was tested while another plugin was active.
 
-- **A hung activation held back every later plugin.** `initPlugins` awaited
-  each activation in turn. nano-banana and ai-organize await plugin storage
-  during activation, so a storage read that never answered left every plugin
-  after them unregistered. Activations now start together, in list order.
-  Synchronous registration therefore keeps its order, and one plugin's await
-  delays no other.
-- **An uncaught plugin failure was invisible.** `executeCommand` only logs a
-  rejected handler. `ContextMenu` fires menu actions with `void`, so a
-  rejection there became an unhandled rejection: a crash-report capture and
-  no user message. The plugin context now reports any failure its command or
-  menu action lets escape, as a toast that names the plugin.
-  - Commands still reject, so `executeCommand` returns `false`.
-  - Menu actions resolve after reporting, because their call site has no
-    failure channel.
-- **Report `error.message`, not the Error.** Interpolating an `Error` gives
-  `Error: …`, which theme-from-image showed in its failure toast.
+## A hung activation held back every later plugin
 
-The built-in plugins catch their own backend errors, and a failed storage read
-degrades to an empty object. So the context-level report is a safety net for
-failures a plugin does not anticipate. The browser test instead exercises
-isolation through a real backend failure (`__MOCK_FAILURES__`).
+`initPlugins` awaited each activation in turn. nano-banana and ai-organize
+await plugin storage before they register anything, so a storage read that
+never answered left every plugin after them unregistered. Activations now
+start together, in list order.
+
+Starting them together made registration order follow completion order.
+nano-banana and ai-organize finish after the synchronous plugins, in whichever
+order their storage reads return, so the AI submenu and the Settings sections
+changed order between launches. The plugin context now carries the plugin's
+list position, and the context-menu and settings registries sort by it (stable
+within one plugin). A re-enabled plugin also returns to its own place instead
+of the end. Enablement is read as each activation starts, because an earlier
+plugin's activation may have disabled a later one.
+
+## A plugin failure has to reach the context to be reported
+
+`ContextMenu` fires menu actions without awaiting them, and `executeCommand`
+only logs a rejected handler. The plugin context wraps both kinds of handler.
+A failure is reported as a toast that names the plugin, and written to the app
+log through `logFrontendError`. Commands still reject, so `executeCommand`
+returns `false`. Menu actions resolve after reporting, because their call site
+has no failure channel.
+
+The wrapper only sees what a handler returns. Five built-in plugins started
+their work with `void openX()` and returned nothing, so their failures bypassed
+it entirely. Handlers now return that promise. theme-from-image no longer
+catches and toasts its own failures: the context reports them under the
+plugin's name.
+
+## A real backend error is not an `Error`
+
+Tauri rejects a failed command with the serialized `AppError`,
+`{ kind, message }` (`src-tauri/src/error.rs`). `err instanceof Error ?
+err.message : String(err)` turns it into `[object Object]`, which is what
+theme-from-image showed for a real failure. Use `extractError`.
+
+`mock-invoke`'s `__MOCK_FAILURES__` used to throw `new Error(message)`, so a
+browser test could pass against a message format the real app never produces.
+It now rejects with the same `{ kind, message }` shape.
+
+## Browser tests: error toasts are short-lived
+
+Error toasts dismiss after 3 s. On WebKit CI, opening a second plugin's
+dialog took longer than that, so asserting the toast afterwards failed on every
+attempt. Assert the toast right after the failure, and wait for its opacity to
+reach 1 before a screenshot: the entrance animation starts at zero.

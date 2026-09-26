@@ -53,9 +53,7 @@ export const demoPlugin: Plugin = {
       id: "plugin.demo.open",
       label: "Demo: Open Virtual Folder",
       category: "plugins",
-      handler: () => {
-        void ctx.workspace.navigate(DEMO_ROOT);
-      },
+      handler: () => ctx.workspace.navigate(DEMO_ROOT),
     });
 
     ctx.registerContextMenuItem({

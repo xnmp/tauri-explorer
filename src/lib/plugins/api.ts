@@ -28,7 +28,8 @@ import { performFileTransfer } from "$lib/state/file-transfer";
 import type { FileEntry, FileMutationRecovery } from "$lib/domain/file";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
-import type { ApiResult } from "$lib/api/common";
+import { extractError, type ApiResult } from "$lib/api/common";
+import { logFrontendError } from "$lib/api/crash";
 
 // ----- Settings descriptors -----
 
@@ -124,6 +125,9 @@ export interface PluginWorkspace {
  * Such cases carry a justification comment at the import site.
  */
 export interface PluginContext {
+  /** Return the handler's work as a promise: a rejection is reported to the
+   *  user under the plugin's name and written to the app log. Work started
+   *  with `void` and never returned is invisible to that reporting. */
   registerCommand(cmd: Command): void;
   registerContextMenuItem(item: ContextMenuItem): void;
   registerSettingsSection(section: SettingsSectionDescriptor): void;
@@ -182,11 +186,20 @@ export function createPluginStorage(pluginId: string): PluginStorage {
  * Disposers run in reverse registration order.
  *
  * A plugin's command or menu action that fails is reported to the user under
- * `pluginName` (#782). Commands still reject, so `executeCommand` reports the
- * failure to its caller; menu actions resolve, because the context menu fires
- * them without awaiting and a reported failure is not an unhandled rejection.
+ * `pluginName` and written to the app log (#782). Commands still reject, so
+ * `executeCommand` reports the failure to its caller; menu actions resolve,
+ * because the context menu fires them without awaiting and a reported failure
+ * is not an unhandled rejection.
+ *
+ * `order` is the plugin's position in the plugin list. Menu items and settings
+ * sections are placed by it, so their order does not depend on which
+ * activation happened to register first.
  */
-export function createPluginContext(pluginId: string, pluginName = pluginId): {
+export function createPluginContext(
+  pluginId: string,
+  pluginName = pluginId,
+  order = Number.MAX_SAFE_INTEGER,
+): {
   ctx: PluginContext;
   dispose: () => void;
 } {
@@ -197,8 +210,15 @@ export function createPluginContext(pluginId: string, pluginName = pluginId): {
     else disposers.push(fn);
   };
   const storage = createPluginStorage(pluginId);
-  const report = (error: unknown) =>
-    toastStore.error(`${pluginName}: ${error instanceof Error ? error.message : String(error)}`);
+  // Tauri rejects with a serialized AppError ({ kind, message }), not an Error.
+  const report = (error: unknown, contribution: string) => {
+    const message = extractError(error);
+    toastStore.error(`${pluginName}: ${message}`);
+    const stack = error instanceof Error && error.stack ? `\n${error.stack}` : "";
+    console.error(`[plugins] "${pluginId}" ${contribution} failed:`, error);
+    void logFrontendError(`[plugins] "${pluginId}" ${contribution} failed: ${message}${stack}`)
+      .catch(() => {});
+  };
 
   const ctx: PluginContext = {
     registerCommand(cmd: Command): void {
@@ -206,7 +226,7 @@ export function createPluginContext(pluginId: string, pluginName = pluginId): {
         try {
           await cmd.handler();
         } catch (error) {
-          report(error);
+          report(error, `command ${cmd.id}`);
           throw error;
         }
       };
@@ -217,14 +237,13 @@ export function createPluginContext(pluginId: string, pluginName = pluginId): {
         try {
           await item.handler(entries);
         } catch (error) {
-          report(error);
-          console.error(`[plugins] "${pluginId}" menu action ${item.id} failed:`, error);
+          report(error, `menu action ${item.id}`);
         }
       };
-      track(contextMenuItems.register({ ...item, handler }));
+      track(contextMenuItems.register({ ...item, handler }, order));
     },
     registerSettingsSection(section: SettingsSectionDescriptor): void {
-      track(pluginSettingsSections.register(pluginId, section, storage));
+      track(pluginSettingsSections.register(pluginId, section, storage, order));
     },
     registerFsProvider(scheme: string, provider: FsProvider): void {
       track(registerFsProvider(scheme, provider, false));

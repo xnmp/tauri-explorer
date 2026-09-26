@@ -32,11 +32,16 @@ test("a failing plugin action reports its error while another plugin still works
   await waitForEntries(page);
   const themeBefore = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
 
+  // The plugin lets the backend's rejection escape; the plugin context reports
+  // it under the plugin's name.
   await setFailure(page, "extract_palette", "palette service unavailable");
   let menu = await contextMenuOn(page, "image.png");
   await menu.locator(".menu-item", { hasText: "Create Theme from Image" }).click();
-  const failure = page.locator(".toast", { hasText: "Theme generation failed" });
-  await expect(failure).toHaveText("Theme generation failed: palette service unavailable");
+  // Error toasts dismiss after 3 s, so assert and capture it before anything slower.
+  const failure = page.locator(".toast.error");
+  await expect(failure).toHaveText("Theme from Image: palette service unavailable");
+  await expect(failure).toHaveCSS("opacity", "1"); // entrance animation finished
+  await page.screenshot({ path: "screenshots/test/plugin-failure-isolation/failure-beside-working-plugin.png" });
   expect(await page.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe(themeBefore);
 
   // Another plugin's action on the same file is unaffected.
@@ -45,8 +50,6 @@ test("a failing plugin action reports its error while another plugin still works
   const dialog = page.locator('[aria-labelledby="upscale-title"]');
   await expect(dialog).toBeVisible();
   await expect(dialog.locator(".file-name")).toContainText("image.png");
-  await expect(failure).toBeVisible();
-  await page.screenshot({ path: "screenshots/test/plugin-failure-isolation/failure-beside-working-plugin.png" });
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 

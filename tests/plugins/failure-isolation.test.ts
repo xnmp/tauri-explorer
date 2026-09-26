@@ -10,6 +10,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 vi.mock("$lib/plugins/nano-banana/NanoBananaDialog.svelte", () => ({ default: {} }));
 vi.mock("$lib/plugins/ai-rename/AiRenameDialog.svelte", () => ({ default: {} }));
 vi.mock("$lib/plugins/ai-organize/AiOrganizeDialog.svelte", () => ({ default: {} }));
+vi.mock("$lib/api/crash", async (original) => ({
+  ...(await original<typeof import("$lib/api/crash")>()),
+  logFrontendError: vi.fn(async () => {}),
+}));
 
 import { createPluginRegistry } from "$lib/plugins/registry.svelte";
 import type { Plugin, PluginContext } from "$lib/plugins/api";
@@ -17,6 +21,8 @@ import { executeCommand, getCommand } from "$lib/state/commands.svelte";
 import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 import { toastStore } from "$lib/state/toast.svelte";
 import { createPluginJobsController } from "$lib/state/plugin-jobs";
+import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
+import { logFrontendError } from "$lib/api/crash";
 
 const jobs = { dispose: vi.fn(async () => {}) };
 
@@ -39,12 +45,17 @@ const errorToasts = () => toastStore.toasts.filter((toast) => toast.type === "er
 beforeEach(() => {
   localStorage.clear();
   toastStore.clear();
+  vi.mocked(logFrontendError).mockClear();
 });
 
 afterEach(() => {
   toastStore.clear();
   contextMenuItems.clear();
+  pluginSettingsSections.clear();
 });
+
+/** Tauri rejects a failed command with its serialized AppError. */
+const backendError = (message: string) => ({ kind: "other", message });
 
 describe("plugin failure isolation", () => {
   it("keeps other plugins working when one activation throws, and retries it on enable", async () => {
@@ -118,7 +129,7 @@ describe("plugin failure isolation", () => {
           id: "plugin.quota.item",
           label: "Quota item",
           when: () => true,
-          handler: async () => { throw new Error("service unavailable"); },
+          handler: async () => { throw backendError("service unavailable"); },
         });
       },
     };
@@ -134,10 +145,78 @@ describe("plugin failure isolation", () => {
       const item = contextMenuItems.items.find((candidate) => candidate.id === "plugin.quota.item");
       await expect(Promise.resolve(item!.handler([]))).resolves.toBeUndefined();
       expect(errorToasts()).toEqual(["Quota Plugin: service unavailable"]);
+      // The failure also reaches the app log, which a report can include.
+      expect(vi.mocked(logFrontendError).mock.calls.map(([message]) => message)).toEqual([
+        expect.stringContaining('"quota" command plugin.quota.cmd failed: quota exceeded'),
+        expect.stringContaining('"quota" menu action plugin.quota.item failed: service unavailable'),
+      ]);
 
       expect(await executeCommand("plugin.bystander.cmd")).toBe(true);
       expect(healthy.runs).toEqual(["bystander"]);
       expect(registry.isActive("quota")).toBe(true);
+    } finally {
+      await registry.dispose();
+    }
+  });
+
+  it("places contributions by plugin list position, whichever activation finishes first", async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const contributing = (id: string, gate: Promise<void>): Plugin => ({
+      id,
+      name: id,
+      description: "registers after reading its storage",
+      activate: async (ctx) => {
+        await gate;
+        ctx.registerContextMenuItem({ id: `${id}.item`, label: id, when: () => true, handler: () => {} });
+        ctx.registerSettingsSection({ id, title: id, rows: [] });
+      },
+    });
+    const registry = createPluginRegistry(
+      [contributing("first", firstGate), contributing("second", Promise.resolve())],
+      jobs,
+    );
+    try {
+      const initialization = registry.initPlugins();
+      await vi.waitFor(() => expect(registry.isActive("second")).toBe(true));
+      releaseFirst();
+      await initialization;
+
+      expect(contextMenuItems.items.map((item) => item.id)).toEqual(["first.item", "second.item"]);
+      expect(pluginSettingsSections.sections.map((section) => section.id)).toEqual(["first", "second"]);
+
+      // A re-enabled plugin returns to its own place, not the end.
+      await registry.setEnabled("first", false);
+      await registry.setEnabled("first", true);
+      expect(contextMenuItems.items.map((item) => item.id)).toEqual(["first.item", "second.item"]);
+    } finally {
+      await registry.dispose();
+    }
+  });
+
+  it("never activates a plugin that an earlier plugin disabled during startup", async () => {
+    const activated: string[] = [];
+    let registry!: ReturnType<typeof createPluginRegistry>;
+    const disabler: Plugin = {
+      id: "disabler",
+      name: "Disabler",
+      description: "turns the next plugin off while activating",
+      activate: () => {
+        activated.push("disabler");
+        void registry.setEnabled("target", false);
+      },
+    };
+    const target: Plugin = {
+      id: "target",
+      name: "Target",
+      description: "must not run once disabled",
+      activate: () => { activated.push("target"); },
+    };
+    registry = createPluginRegistry([disabler, target], jobs);
+    try {
+      await registry.initPlugins();
+      expect(activated).toEqual(["disabler"]);
+      expect(registry.isActive("target")).toBe(false);
     } finally {
       await registry.dispose();
     }

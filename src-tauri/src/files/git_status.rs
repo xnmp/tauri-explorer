@@ -651,7 +651,15 @@ mod tests {
     fn fake_git_runs_while_other_threads_fork() {
         use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        /// Stops the forkers when the test panics, too.
+        struct StopOnDrop(Arc<AtomicBool>);
+        impl Drop for StopOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
         let stop = Arc::new(AtomicBool::new(false));
+        let stop_forkers = StopOnDrop(Arc::clone(&stop));
         let forkers: Vec<_> = (0..8)
             .map(|_| {
                 let stop = stop.clone();
@@ -673,7 +681,7 @@ mod tests {
                     .map_err(|error| error.raw_os_error())
             })
             .collect();
-        stop.store(true, Ordering::Relaxed);
+        drop(stop_forkers);
         for forker in forkers {
             forker.join().unwrap();
         }

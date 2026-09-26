@@ -14,8 +14,9 @@ nano-banana and ai-organize finish after the synchronous plugins, in whichever
 order their storage reads return, so the AI submenu and the Settings sections
 changed order between launches. The plugin context now carries the plugin's
 list position, and the context-menu and settings registries sort by it (stable
-within one plugin). A re-enabled plugin also returns to its own place instead
-of the end. Enablement is read as each activation starts, because an earlier
+within one plugin). A re-enabled plugin also returns to its own place in those two
+surfaces instead of the end. Command-palette insertion order is not keyed:
+the palette ranks commands by frecency and match score. Enablement is read as each activation starts, because an earlier
 plugin's activation may have disabled a later one.
 
 ## A plugin failure has to reach the context to be reported

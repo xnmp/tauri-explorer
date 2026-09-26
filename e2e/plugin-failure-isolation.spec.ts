@@ -40,8 +40,8 @@ test("a failing plugin action reports its error while another plugin still works
   // Error toasts dismiss after 3 s, so assert and capture it before anything slower.
   const failure = page.locator(".toast.error");
   await expect(failure).toHaveText("Theme from Image: palette service unavailable");
-  await expect(failure).toHaveCSS("opacity", "1"); // entrance animation finished
-  await page.screenshot({ path: "screenshots/test/plugin-failure-isolation/failure-beside-working-plugin.png" });
+  // Finish the toast's entrance animation so the capture shows it.
+  await page.screenshot({ path: "screenshots/test/plugin-failure-isolation/failure-beside-working-plugin.png", animations: "disabled" });
   expect(await page.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe(themeBefore);
 
   // Another plugin's action on the same file is unaffected.

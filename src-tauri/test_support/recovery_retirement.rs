@@ -449,9 +449,10 @@ fn a_legacy_checkpoint_without_retention_fields_still_lists_and_retires() {
         )
         .unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-    // The schema before ADR 0023 had neither key; both must default.
+    // The schema before ADR 0023 had neither key; both must default. An
+    // unmeasured checkpoint already omits `retained_bytes` on write (#760).
     let state = value["state"]["state"].as_object_mut().unwrap();
-    assert!(state.remove("retained_bytes").is_some());
+    assert!(!state.contains_key("retained_bytes"));
     assert!(state.remove("effect_revision").is_some());
     connection
         .execute(

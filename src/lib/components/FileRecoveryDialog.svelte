@@ -186,16 +186,16 @@
   .storage-fill { height: 100%; background: var(--accent-default, var(--text-secondary)); }
   .storage-fill.full { background: var(--system-critical); }
   .storage-note { margin: var(--spacing-xs) 0 0; color: var(--text-secondary); font-size: var(--font-size-caption); }
-  .storage-note.critical { color: var(--system-critical); }
+  .storage-note.critical { color: var(--system-critical-text, var(--system-critical)); }
   .retained-size { margin: 0 0 var(--spacing-sm) !important; color: var(--text-secondary); font-size: var(--font-size-caption); }
-  .status.critical { color: var(--system-critical); }
+  .status.critical { color: var(--system-critical-text, var(--system-critical)); }
   .recovery-dialog { width: min(620px, calc(100vw - 32px)); max-width: 620px; }
   .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--spacing-lg); }
   .close-button, .retry-button { border: 0; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
   .close-button { width: 28px; height: 28px; border-radius: var(--radius-sm); font-size: 20px; line-height: 1; }
   .close-button:hover, .retry-button:hover { background: var(--subtle-fill-secondary); color: var(--text-primary); }
   .close-button:focus-visible, .retry-button:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: 1px; }
-  .error-panel { display: flex; justify-content: space-between; gap: var(--spacing-md); margin-bottom: var(--spacing-md); padding: var(--spacing-sm) var(--spacing-md); border: 1px solid var(--system-critical); border-radius: var(--radius-sm); color: var(--system-critical); font-size: var(--font-size-caption); }
+  .error-panel { display: flex; justify-content: space-between; gap: var(--spacing-md); margin-bottom: var(--spacing-md); padding: var(--spacing-sm) var(--spacing-md); border: 1px solid var(--system-critical); border-radius: var(--radius-sm); color: var(--system-critical-text, var(--system-critical)); font-size: var(--font-size-caption); }
   .retry-button { min-height: 24px; color: inherit; font-weight: 600; }
   .state-message { margin: var(--spacing-xl) 0; color: var(--text-secondary); text-align: center; }
   .recovery-list { display: flex; flex-direction: column; gap: var(--spacing-sm); max-height: min(55vh, 520px); margin: 0; padding: 0; overflow-y: auto; list-style: none; }
@@ -209,9 +209,9 @@
   .inspection div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--spacing-sm); }
   .inspection dt { color: var(--text-secondary); }
   .inspection dd { margin: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
-  .inspection-error { color: var(--system-critical) !important; }
+  .inspection-error { color: var(--system-critical-text, var(--system-critical)) !important; }
   .discard-confirmation { margin-top: var(--spacing-sm); padding: var(--spacing-sm); border: 1px solid var(--system-critical); border-radius: var(--radius-sm); }
-  .discard-confirmation strong { color: var(--system-critical); }
+  .discard-confirmation strong { color: var(--system-critical-text, var(--system-critical)); }
   .discard-confirmation p { margin: var(--spacing-xs) 0 var(--spacing-sm); color: var(--text-secondary); font-size: var(--font-size-caption); }
   @media (max-width: 480px) { .recovery-dialog { min-width: 0; padding: var(--spacing-lg); } .item-actions, .confirmation-actions { flex-wrap: wrap; } }
 </style>

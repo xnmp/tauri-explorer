@@ -491,7 +491,7 @@
   }
 
   .col-entry.active .col-chevron {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     opacity: 1;
   }
 

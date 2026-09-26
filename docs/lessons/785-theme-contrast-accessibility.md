@@ -61,5 +61,12 @@ buttons). Where a fill is too light for text, the theme defines a separate
 text rule falls back to the fill token. This is Fluent's accent-text versus
 accent-fill split. Darkening the fill would restyle every accent surface.
 
+The scan cannot see this rule's reach: it renders only the main window, while
+about 30 dialogs and panels also used `color: var(--accent)` and the status
+fills as text. Every text use now reads the `-text` variant with the fill as
+fallback. `tests/themes/theme-token-contrast.test.ts` checks every theme's
+text tokens against `--background-solid`, and fails if a component draws a
+fill token as text directly.
+
 States the main scan never renders need their own case: the recovery notice's
 error state is reached by failing `file_recovery_subscribe` in the browser mock.

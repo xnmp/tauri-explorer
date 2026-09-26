@@ -1042,7 +1042,7 @@
 
   .view-toggle[aria-pressed="true"] {
     background: color-mix(in srgb, var(--accent) 18%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     border-color: var(--accent);
   }
 
@@ -1115,7 +1115,7 @@
 
   .commit-error {
     font-size: 11px;
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
     padding: 2px 4px;
   }
 
@@ -1175,12 +1175,12 @@
 
   .op-banner-btn.abort {
     border-color: color-mix(in srgb, var(--system-critical, #dc2626) 50%, var(--divider));
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
   }
 
   .op-banner-btn.continue {
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .op-banner-btn:disabled {
@@ -1439,7 +1439,7 @@
   }
 
   .row-btn.destructive:hover {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     background: color-mix(in srgb, var(--system-critical) 15%, transparent);
   }
 

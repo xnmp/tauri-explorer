@@ -801,7 +801,7 @@
     margin-left: auto;
     font-size: 11px;
     font-weight: 500;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     background: color-mix(in srgb, var(--accent) 15%, transparent);
     padding: 2px 6px;
     border-radius: 4px;
@@ -838,7 +838,7 @@
   .folder-item .remove-bookmark:hover,
   .user-bookmark .remove-bookmark:hover {
     background: var(--subtle-fill-secondary);
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .user-bookmark.dragging {

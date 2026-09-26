@@ -357,6 +357,6 @@
   }
 
   .delete-btn:hover {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 </style>

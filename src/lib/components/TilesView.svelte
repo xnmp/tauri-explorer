@@ -268,7 +268,7 @@
     opacity: 0.55;
   }
 
-  .tiles-view :global(.tile-item.empty-folder:is(:hover, .selected) [data-drag-icon]) {
+  .tiles-view :global(.tile-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon]) {
     opacity: 0.8;
   }
 

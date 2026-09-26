@@ -701,7 +701,7 @@
 
   .crumb.current {
     font-weight: var(--font-weight-semibold);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     background: var(--breadcrumb-active-bg, var(--breadcrumb-bg, transparent));
   }
 

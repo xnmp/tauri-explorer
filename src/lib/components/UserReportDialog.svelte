@@ -442,7 +442,7 @@
     font-size: 12px;
   }
   .attachment-hint { color: var(--text-secondary); }
-  .attachment-error { color: var(--system-critical); }
+  .attachment-error { color: var(--system-critical-text, var(--system-critical)); }
   .attachment-list {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

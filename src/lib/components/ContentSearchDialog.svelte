@@ -620,7 +620,7 @@
   .file-name {
     font-size: 13px;
     font-weight: 500;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -663,7 +663,7 @@
 
   .show-more-text {
     font-size: 12px;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     cursor: pointer;
     font-style: italic;
   }

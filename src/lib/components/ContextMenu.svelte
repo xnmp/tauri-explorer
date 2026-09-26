@@ -829,11 +829,11 @@
   }
 
   .menu-item.danger {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .menu-item.danger svg {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .menu-divider {
@@ -856,7 +856,7 @@
   }
 
   .check-icon {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     margin-left: auto;
   }
 

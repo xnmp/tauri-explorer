@@ -158,7 +158,7 @@
   }
 
   .search-prefix {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     font-size: 18px;
     font-weight: 600;
     flex-shrink: 0;

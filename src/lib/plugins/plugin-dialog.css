@@ -37,7 +37,7 @@
 }
 
 .plugin-dialog .header-icon {
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
 }
 
 .plugin-dialog .dialog-header h2 {
@@ -109,14 +109,14 @@
 }
 
 .plugin-dialog .api-key-warning svg {
-  color: var(--system-caution);
+  color: var(--system-caution-text, var(--system-caution));
   flex-shrink: 0;
 }
 
 .plugin-dialog .link-btn {
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;

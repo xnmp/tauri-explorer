@@ -157,7 +157,7 @@
     opacity: 0.55;
   }
 
-  .list-view :global(.list-item.empty-folder:is(:hover, .selected) [data-drag-icon]) {
+  .list-view :global(.list-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon]) {
     opacity: 0.8;
   }
 

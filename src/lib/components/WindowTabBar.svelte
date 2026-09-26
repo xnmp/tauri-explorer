@@ -904,7 +904,7 @@
   /* Git icon uses stroked shapes in the accent colour (override the folder
      icon's fill rule, which would otherwise fill the branch glyph). */
   .tab-icon-git {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     opacity: 0.85;
   }
 

@@ -24,10 +24,11 @@ use windows::{
     Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
-            FileNamesInformation, NtCreateFile, NtQueryDirectoryFile, FILE_CREATE,
-            FILE_DIRECTORY_FILE, FILE_NAMES_INFORMATION, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
-            FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_DISPOSITION,
-            NTCREATEFILE_CREATE_OPTIONS,
+            FileNamesInformation, FileRenameInformation, NtCreateFile, NtQueryDirectoryFile,
+            NtSetInformationFile, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NAMES_INFORMATION,
+            FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION,
+            FILE_RENAME_INFORMATION_0, FILE_SYNCHRONOUS_IO_NONALERT,
+            NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS,
         },
     },
     Win32::{
@@ -38,7 +39,7 @@ use windows::{
         Security::SECURITY_DESCRIPTOR,
         Storage::FileSystem::{
             ExtendedFileIdType, FileAttributeTagInfo, FileDispositionInfoEx, FileIdInfo,
-            FileRenameInfo, GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
+            GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
             OpenFileById, SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS,
             FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
             FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
@@ -46,7 +47,7 @@ use windows::{
             FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
             FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_ID_INFO, FILE_LIST_DIRECTORY,
-            FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
+            FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
             FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL,
             SYNCHRONIZE,
         },
@@ -199,8 +200,11 @@ impl Directory {
     }
 
     /// Renames the exact opened source; the destination can never replace an entry.
-    /// `FILE_RENAME_INFO::RootDirectory` keeps destination lookup handle-relative:
-    /// https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
+    /// `FILE_RENAME_INFORMATION::RootDirectory` keeps destination lookup
+    /// handle-relative. This goes to the native call directly: the Win32
+    /// `SetFileInformationByHandle(FileRenameInfo)` wrapper rejects a relative
+    /// name with a root directory as `ERROR_INVALID_PARAMETER`.
+    /// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
     pub(crate) fn rename_to(
         &self,
         source: &OsStr,
@@ -219,19 +223,21 @@ impl Directory {
             .len()
             .checked_mul(size_of::<u16>())
             .ok_or_else(|| invalid_input("Filesystem name is too long"))?;
-        let information_bytes = offset_of!(FILE_RENAME_INFO, FileName)
+        let information_bytes = offset_of!(FILE_RENAME_INFORMATION, FileName)
             .checked_add(name_bytes)
             .ok_or_else(|| invalid_input("Filesystem name is too long"))?;
-        let storage_bytes = information_bytes.max(size_of::<FILE_RENAME_INFO>());
+        let storage_bytes = information_bytes.max(size_of::<FILE_RENAME_INFORMATION>());
         let mut storage = aligned_storage(storage_bytes);
-        let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+        let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+        let mut status_block = IO_STATUS_BLOCK::default();
         // SAFETY: storage is aligned, zeroed, and large enough for the fixed fields
-        // plus the complete UTF-16 name passed to SetFileInformationByHandle.
-        unsafe {
+        // plus the complete UTF-16 name passed to NtSetInformationFile. The source
+        // handle is synchronous, so the stack status block outlives the call.
+        let status = unsafe {
             ptr::write(
                 information,
-                FILE_RENAME_INFO {
-                    Anonymous: FILE_RENAME_INFO_0 {
+                FILE_RENAME_INFORMATION {
+                    Anonymous: FILE_RENAME_INFORMATION_0 {
                         ReplaceIfExists: false,
                     },
                     RootDirectory: file_handle(&target_directory.file),
@@ -245,15 +251,19 @@ impl Directory {
                 ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
                 target.len(),
             );
-            SetFileInformationByHandle(
+            NtSetInformationFile(
                 file_handle(&source),
-                FileRenameInfo,
+                &mut status_block,
                 information.cast(),
                 u32::try_from(storage_bytes)
                     .map_err(|_| invalid_input("Filesystem name is too long"))?,
+                FileRenameInformation,
             )
-            .map_err(io_error)
+        };
+        if status.is_err() {
+            return Err(nt_error(status));
         }
+        Ok(())
     }
 
     /// Removes the exact opened leaf. Reparse points are removed as links.

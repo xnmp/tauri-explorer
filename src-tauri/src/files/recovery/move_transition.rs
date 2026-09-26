@@ -43,6 +43,10 @@ pub(super) enum MoveTransition {
     BeginRootRetirement(RootSide),
     RootRetired(RootSide),
     RetirementCompleted,
+    /// Return a journaled discard that has not removed anything to the settled
+    /// record it came from, so a refusal after the decision keeps Undo. The
+    /// executor proves by observation that every planned entry is intact.
+    WithdrawRetirement,
     ReportError(String),
 }
 
@@ -69,6 +73,7 @@ pub(super) fn transition(
                 | MoveTransition::BeginRootRetirement(_)
                 | MoveTransition::RootRetired(_)
                 | MoveTransition::RetirementCompleted
+                | MoveTransition::WithdrawRetirement
                 | MoveTransition::ReportError(_)
         )
     {
@@ -276,6 +281,24 @@ pub(super) fn transition(
             }
             retirement.completed = true;
             state.retained_bytes = Some(0);
+            state.error = None;
+        }
+        MoveTransition::WithdrawRetirement => {
+            let retirement = state
+                .retirement
+                .as_ref()
+                .ok_or_else(|| invalid("Move has no disposal decision"))?;
+            if retirement.completed
+                || [retirement.source, retirement.target].contains(&Some(Step::Removed))
+            {
+                return Err(invalid(
+                    "A discard that removed a root can only be completed",
+                ));
+            }
+            // The effect revision is untouched: the history entry that named
+            // this record before the decision names it again afterwards.
+            state.retirement = None;
+            state.retained_bytes = None;
             state.error = None;
         }
         MoveTransition::ReportError(error) => state.error = Some(error),

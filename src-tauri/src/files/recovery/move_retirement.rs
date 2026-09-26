@@ -74,6 +74,11 @@ impl MoveRetirement {
             eligibility,
         };
         if let Err(error) = result.verify() {
+            // An interrupted decision that removed nothing resumes only to
+            // withdraw itself on its post-intent verification (below).
+            if result.untouched() {
+                return Ok(result);
+            }
             result.eligibility = Eligibility::Preserved(if result.retiring() {
                 format!(
                     "Discard stopped before finishing; its Undo history is gone and the \
@@ -95,6 +100,54 @@ impl MoveRetirement {
             .state()
             .move_state()
             .is_ok_and(|state| state.retirement.is_some())
+    }
+
+    /// Observation that a journaled decision has removed nothing yet: no root
+    /// is retired and every root still strictly matches its captured plan,
+    /// manifest and exact payload version.
+    fn untouched(&self) -> bool {
+        let Ok(state) = self.operation.state().move_state() else {
+            return false;
+        };
+        let Some(retirement) = state.retirement.as_ref() else {
+            return false;
+        };
+        !retirement.completed
+            && self.roots.iter().all(|(side, root)| {
+                retirement.step(*side) != Some(Step::Removed)
+                    && root.as_ref().is_some_and(|root| {
+                        self.expected(*side).is_ok_and(|expected| {
+                            root.verify_move_retirement(
+                                self.operation.intent(),
+                                expected.as_ref(),
+                                retirement.plan(*side),
+                                false,
+                            )
+                            .is_ok()
+                        })
+                    })
+            })
+    }
+
+    /// A verification refusal after the decision is journaled but before any
+    /// unlink withdraws that decision rather than consuming Undo for nothing.
+    fn refuse(&mut self, error: AppError) -> AppError {
+        if !self.untouched() {
+            return error;
+        }
+        match self
+            .operation
+            .advance_move(MoveTransition::WithdrawRetirement)
+        {
+            Ok(()) => invalid(&format!(
+                "{error}. Discard was withdrawn before removing anything; Undo and every \
+                 recovery file are kept"
+            )),
+            Err(persistence) => {
+                log::warn!("Could not withdraw move retirement: {persistence}");
+                error
+            }
+        }
     }
 
     fn step(&self, side: RootSide) -> Option<Step> {
@@ -250,6 +303,7 @@ impl MoveRetirement {
         checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
     ) -> Result<(), AppError> {
         let state = self.operation.state().move_state()?;
+        let fresh = state.retirement.is_none();
         let decision = state
             .retirement
             .as_ref()
@@ -293,6 +347,11 @@ impl MoveRetirement {
                 root.preflight_move_retirement(plan)?;
             }
         }
+        // The last read-only proof immediately before the decision consumes
+        // Undo: planning a large tree takes time the endpoints can change in.
+        if fresh {
+            self.verify()?;
+        }
         let planned = |side| {
             self.roots
                 .iter()
@@ -306,7 +365,9 @@ impl MoveRetirement {
                 planned(RootSide::Target),
             ))?;
         checkpoint("intent")?;
-        self.verify()?;
+        if let Err(error) = self.verify() {
+            return Err(self.refuse(error));
+        }
         for (index, planned) in plans.iter().enumerate() {
             let side = self.roots[index].0;
             if self.step(side) == Some(Step::Removed) {
@@ -323,7 +384,9 @@ impl MoveRetirement {
             })?;
             // Re-observe every public endpoint after journaling, before touching this root.
             if self.roots[index].1.is_some() {
-                self.verify_public()?;
+                if let Err(error) = self.verify_public() {
+                    return Err(self.refuse(error));
+                }
             }
             if let Some(root) = self.roots[index].1.take() {
                 root.retire_move_artifacts(

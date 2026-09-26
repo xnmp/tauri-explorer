@@ -1123,3 +1123,126 @@ fn a_payload_that_could_never_be_discarded_is_refused_before_any_record_or_effec
         assert!(private_residue(target.parent().unwrap()).is_empty());
     }
 }
+
+fn effect_revision(f: &Fixture) -> u64 {
+    f.coordinator.inventory().unwrap().entries[0]
+        .state
+        .as_ref()
+        .unwrap()
+        .move_state()
+        .unwrap()
+        .effect_revision
+}
+
+#[test]
+fn an_endpoint_change_after_the_discard_decision_withdraws_it_and_keeps_undo() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    // Both boundaries follow a journaled decision but precede every unlink.
+    for boundary in ["intent", "source-intent"] {
+        let f = Fixture::new(true, true, false);
+        let revision = effect_revision(&f);
+        let result = f.retirement().retire_with(|label| {
+            if label == boundary {
+                // A foreign entry now occupies the vacated source name.
+                fs::write(&f.source, b"new entry at the source name")?;
+            }
+            Ok(())
+        });
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("withdrawn"), "{boundary}: {error}");
+        assert_eq!(fs::read(f.roots[0].join("parked")).unwrap(), MOVED);
+        assert_eq!(fs::read(f.roots[1].join("original")).unwrap(), OLD);
+        // The committed decision is gone: history can claim the record again.
+        let claimed = f
+            .coordinator
+            .try_claim_history(&f.id, revision, HistoryPosition::Published)
+            .unwrap_or_else(|error| panic!("{boundary}: Undo was consumed: {error}"))
+            .unwrap();
+        drop(claimed);
+        // Once the name is free again, the same Undo returns both entries.
+        fs::remove_file(&f.source).unwrap();
+        let operation = f
+            .coordinator
+            .try_claim_history(&f.id, revision, HistoryPosition::Published)
+            .unwrap()
+            .unwrap();
+        MoveExecution::reopen(operation)
+            .unwrap()
+            .restore_move()
+            .unwrap();
+        assert_eq!(fs::read(&f.source).unwrap(), MOVED, "{boundary}");
+        assert_eq!(fs::read(&f.target).unwrap(), OLD, "{boundary}");
+    }
+}
+
+#[test]
+fn a_decision_that_already_removed_a_planned_entry_is_never_withdrawn() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    let f = Fixture::build(true, true, true, |source| {
+        fs::create_dir(source).unwrap();
+        fs::write(source.join("a"), MOVED).unwrap();
+        fs::write(source.join("b"), MOVED).unwrap();
+    });
+    let revision = effect_revision(&f);
+    let mut removed = 0;
+    let result = f.retirement().retire_with(|label| {
+        if label == "entry-removed" {
+            removed += 1;
+            if removed == 1 {
+                fs::write(&f.source, b"new entry at the source name")?;
+                return Err(invalid("interrupted after the first unlink"));
+            }
+        }
+        Ok(())
+    });
+    assert!(result.is_err());
+    let parked = f.roots[0].join("parked");
+    let survivors = ["a", "b"]
+        .iter()
+        .filter(|name| parked.join(name).exists())
+        .count();
+    assert_eq!(survivors, 1, "exactly one planned file was removed");
+    // A resumed attempt observes the missing child and must not withdraw.
+    assert!(f.retirement().retire_with(|_| Ok(())).is_err());
+    assert!(f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .is_err());
+    assert!(parked.is_dir());
+    assert_eq!(fs::read(f.roots[1].join("original/entry")).unwrap(), OLD);
+}
+
+#[test]
+fn an_interrupted_decision_resumed_after_an_endpoint_change_withdraws_itself() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    let f = Fixture::new(true, true, false);
+    let revision = effect_revision(&f);
+    let interrupted = f.retirement().retire_with(|label| match label {
+        "intent" => Err(invalid("interrupted after the decision")),
+        _ => Ok(()),
+    });
+    assert!(interrupted.is_err());
+    assert!(f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .is_err());
+    fs::write(&f.target, b"edited while the decision was pending").unwrap();
+    // The explicit retry proves the change and returns the decision.
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    let error = reply.error.unwrap_or_default();
+    assert!(error.contains("withdrawn"), "{error}");
+    assert_eq!(fs::read(f.roots[0].join("parked")).unwrap(), MOVED);
+    assert_eq!(fs::read(f.roots[1].join("original")).unwrap(), OLD);
+    assert!(f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .unwrap()
+        .is_some());
+}

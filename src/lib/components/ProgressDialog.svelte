@@ -273,7 +273,7 @@
   }
 
   .header-btn.cancel-all {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .header-btn.close {
@@ -320,11 +320,11 @@
   }
 
   .operation-icon.success {
-    color: var(--system-success);
+    color: var(--system-success-text, var(--system-success));
   }
 
   .operation-icon.error {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .operation-icon.cancelled {
@@ -402,7 +402,7 @@
   }
 
   .status-text.success {
-    color: var(--system-success);
+    color: var(--system-success-text, var(--system-success));
   }
 
   .status-text.cancelled {
@@ -411,7 +411,7 @@
 
   .error-text {
     font-size: 11px;
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -442,15 +442,15 @@
 
   .action-btn.cancel:hover {
     background: rgba(220, 53, 69, 0.1);
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .action-btn.retry {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .action-btn.retry:hover {
     background: rgba(0, 120, 212, 0.1);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 </style>

@@ -388,7 +388,7 @@
   }
 
   .suggestion-spark {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     flex: none;
   }
 

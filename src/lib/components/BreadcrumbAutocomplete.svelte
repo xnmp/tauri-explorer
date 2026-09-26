@@ -237,7 +237,7 @@
   }
 
   .suggestion-item.directory .suggestion-icon {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .suggestion-name {

@@ -38,14 +38,14 @@
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--system-caution);
+    color: var(--system-caution-text, var(--system-caution));
     font: inherit;
     cursor: pointer;
     white-space: nowrap;
   }
 
   .recovery-notice.error {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .recovery-notice:hover {

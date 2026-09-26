@@ -272,7 +272,7 @@ import { openFile } from "$lib/api/open";
 
   .badge.unstaged {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .header-actions {
@@ -299,7 +299,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .action-btn.danger:hover {
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
     border-color: var(--system-critical, #dc2626);
   }
 
@@ -325,7 +325,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .diff-placeholder.error {
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
   }
 
   .line {

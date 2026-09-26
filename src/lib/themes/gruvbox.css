@@ -21,8 +21,8 @@
 
   /* Text colors */
   --text-primary: #ebdbb2;
-  --text-secondary: #bdae93;
-  --text-tertiary: #928374;
+  --text-secondary: #c8b99d;
+  --text-tertiary: #b7a797;
   --text-on-accent: #1d2021;
 
   /* Background colors - bg0/bg1/bg2 ladder */
@@ -77,6 +77,8 @@
 
   /* System status colors - bright red / green / yellow */
   --system-critical: #fb4934;
+  /* Critical as text: the fill colour falls below AA on this theme's surfaces (#785). */
+  --system-critical-text: #ff5e47;
   --system-success: #b8bb26;
   --system-caution: #fabd2f;
 

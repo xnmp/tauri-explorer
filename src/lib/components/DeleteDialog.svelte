@@ -156,7 +156,7 @@
     width: 48px;
     height: 48px;
     margin: 0 auto var(--spacing-lg);
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     animation: iconPulse 600ms ease-out;
   }
 

@@ -114,7 +114,7 @@
   }
 
   .selected-info {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .status-path {

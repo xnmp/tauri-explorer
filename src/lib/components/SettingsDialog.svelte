@@ -1198,7 +1198,7 @@
 
   .ts-record.recording {
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .ts-record.unbound {

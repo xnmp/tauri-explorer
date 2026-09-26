@@ -423,7 +423,7 @@ backend for E2E/browser).
 
 ## Terminal panel
 
-- `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal.
+- `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input goes through `session.write`, backed by `domain/ordered-writer.ts`: separate `terminal_write` invocations complete in any order, so at most one is in flight and later input coalesces behind it (#709).
 
 - `components/TerminalPanel.svelte` — embedded terminal UI
 - `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)

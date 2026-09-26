@@ -193,7 +193,8 @@ mod tests {
         #[cfg(windows)]
         let mut command = {
             let mut command = Command::new("cmd.exe");
-            command.args(["/C", "<nul set /p =observable-output"]);
+            // `set /p` with no input always sets errorlevel 1; exit explicitly.
+            command.args(["/C", "<nul set /p =observable-output& exit 0"]);
             command
         };
 

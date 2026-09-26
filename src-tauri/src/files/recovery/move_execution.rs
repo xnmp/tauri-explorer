@@ -799,6 +799,7 @@ fn uncertain(message: &str) -> AppError {
     AppError::MutationUncertain(message.into())
 }
 
-#[cfg(test)]
+// The crash acceptance plans moves through `forward_move`, which is Linux-only.
+#[cfg(all(test, target_os = "linux"))]
 #[path = "../../../test_support/recovery_move_execution.rs"]
 mod tests;

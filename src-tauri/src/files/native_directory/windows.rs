@@ -24,10 +24,11 @@ use windows::{
     Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
-            FileNamesInformation, NtCreateFile, NtQueryDirectoryFile, FILE_CREATE,
-            FILE_DIRECTORY_FILE, FILE_NAMES_INFORMATION, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
-            FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT, NTCREATEFILE_CREATE_DISPOSITION,
-            NTCREATEFILE_CREATE_OPTIONS,
+            FileNamesInformation, FileRenameInformation, NtCreateFile, NtQueryDirectoryFile,
+            NtSetInformationFile, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NAMES_INFORMATION,
+            FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION,
+            FILE_RENAME_INFORMATION_0, FILE_SYNCHRONOUS_IO_NONALERT,
+            NTCREATEFILE_CREATE_DISPOSITION, NTCREATEFILE_CREATE_OPTIONS,
         },
     },
     Win32::{
@@ -37,16 +38,16 @@ use windows::{
         },
         Security::SECURITY_DESCRIPTOR,
         Storage::FileSystem::{
-            FileAttributeTagInfo, FileDispositionInfoEx, FileRenameInfo,
-            GetFileInformationByHandleEx, GetVolumeInformationByHandleW, ReOpenFile,
+            ExtendedFileIdType, FileAttributeTagInfo, FileDispositionInfoEx, FileIdInfo,
+            GetFileInformationByHandleEx, GetVolumeInformationByHandleW, OpenFileById,
             SetFileInformationByHandle, DELETE, FILE_ACCESS_RIGHTS, FILE_ATTRIBUTE_DIRECTORY,
             FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO,
             FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
             FILE_DISPOSITION_INFO_EX, FILE_DISPOSITION_INFO_EX_FLAGS, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_RENAME_INFO_0,
-            FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
-            READ_CONTROL, SYNCHRONIZE,
+            FILE_ID_DESCRIPTOR, FILE_ID_DESCRIPTOR_0, FILE_ID_INFO, FILE_LIST_DIRECTORY,
+            FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, FILE_TRAVERSE, READ_CONTROL, SYNCHRONIZE,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -197,8 +198,12 @@ impl Directory {
     }
 
     /// Renames the exact opened source; the destination can never replace an entry.
-    /// `FILE_RENAME_INFO::RootDirectory` keeps destination lookup handle-relative:
-    /// https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
+    /// `FILE_RENAME_INFORMATION::RootDirectory` keeps destination lookup
+    /// handle-relative. This goes to the native call directly: on the
+    /// windows-latest runner, the Win32 `SetFileInformationByHandle(FileRenameInfo)`
+    /// wrapper failed a relative name with a root directory as
+    /// `ERROR_INVALID_PARAMETER` (#772).
+    /// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
     pub(crate) fn rename_to(
         &self,
         source: &OsStr,
@@ -217,41 +222,45 @@ impl Directory {
             .len()
             .checked_mul(size_of::<u16>())
             .ok_or_else(|| invalid_input("Filesystem name is too long"))?;
-        let information_bytes = offset_of!(FILE_RENAME_INFO, FileName)
+        let information_bytes = offset_of!(FILE_RENAME_INFORMATION, FileName)
             .checked_add(name_bytes)
             .ok_or_else(|| invalid_input("Filesystem name is too long"))?;
-        let storage_bytes = information_bytes.max(size_of::<FILE_RENAME_INFO>());
+        let storage_bytes = information_bytes.max(size_of::<FILE_RENAME_INFORMATION>());
+        let name_length =
+            u32::try_from(name_bytes).map_err(|_| invalid_input("Filesystem name is too long"))?;
+        let storage_length = u32::try_from(storage_bytes)
+            .map_err(|_| invalid_input("Filesystem name is too long"))?;
         let mut storage = aligned_storage(storage_bytes);
-        let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFO>();
-        // SAFETY: storage is aligned, zeroed, and large enough for the fixed fields
-        // plus the complete UTF-16 name passed to SetFileInformationByHandle.
-        unsafe {
-            ptr::write(
-                information,
-                FILE_RENAME_INFO {
-                    Anonymous: FILE_RENAME_INFO_0 {
-                        ReplaceIfExists: false,
-                    },
-                    RootDirectory: file_handle(&target_directory.file),
-                    FileNameLength: u32::try_from(name_bytes)
-                        .map_err(|_| invalid_input("Filesystem name is too long"))?,
-                    FileName: [0],
-                },
-            );
+        let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+        let mut status_block = IO_STATUS_BLOCK::default();
+        // SAFETY: storage is aligned, zero-initialized, and large enough for the
+        // fixed fields plus the complete UTF-16 name. Each field is written in
+        // place, so the union's unused bytes and the padding stay zero. The
+        // source handle is synchronous, so the stack status block outlives the
+        // call.
+        let status = unsafe {
+            ptr::addr_of_mut!((*information).Anonymous)
+                .write(FILE_RENAME_INFORMATION_0 { Flags: 0 });
+            ptr::addr_of_mut!((*information).RootDirectory)
+                .write(file_handle(&target_directory.file));
+            ptr::addr_of_mut!((*information).FileNameLength).write(name_length);
             ptr::copy_nonoverlapping(
                 target.as_ptr(),
                 ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
                 target.len(),
             );
-            SetFileInformationByHandle(
+            NtSetInformationFile(
                 file_handle(&source),
-                FileRenameInfo,
+                &mut status_block,
                 information.cast(),
-                u32::try_from(storage_bytes)
-                    .map_err(|_| invalid_input("Filesystem name is too long"))?,
+                storage_length,
+                FileRenameInformation,
             )
-            .map_err(io_error)
+        };
+        if status.is_err() {
+            return Err(nt_error(status));
         }
+        Ok(())
     }
 
     /// Removes the exact opened leaf. Reparse points are removed as links.
@@ -298,23 +307,15 @@ impl Directory {
         Ok(())
     }
 
-    /// Enumerates through a freshly reopened handle so calls never share a cursor.
-    /// Records follow `FILE_NAMES_INFORMATION`'s checked linked-buffer layout:
+    /// Enumerates through a fresh handle to the same directory, so calls never
+    /// share a cursor. Records follow `FILE_NAMES_INFORMATION`'s checked
+    /// linked-buffer layout:
     /// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_names_information
     pub(crate) fn names(&self, maximum: usize) -> io::Result<Vec<OsString>> {
-        // SAFETY: the source handle remains valid for the call and the returned
-        // handle is transferred immediately to one File owner.
-        let handle = unsafe {
-            ReOpenFile(
-                file_handle(&self.file),
-                (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE).0,
-                SHARE_ALL,
-                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            )
-            .map_err(io_error)?
-        };
-        // SAFETY: ReOpenFile returned a uniquely owned valid HANDLE.
-        let directory = unsafe { File::from_raw_handle(handle.0) };
+        let directory = reopen_by_id(
+            &self.file,
+            (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE).0,
+        )?;
         let mut buffer = vec![0usize; ENUMERATION_BUFFER_BYTES.div_ceil(size_of::<usize>())];
         let mut restart = true;
         let mut names = Vec::new();
@@ -590,6 +591,63 @@ fn native_name(name: &OsStr) -> io::Result<Vec<u16>> {
 
 fn aligned_storage(bytes: usize) -> Vec<usize> {
     vec![0; bytes.div_ceil(size_of::<usize>())]
+}
+
+fn file_id(file: &File) -> io::Result<FILE_ID_INFO> {
+    let mut identity = FILE_ID_INFO::default();
+    // SAFETY: the handle is valid and the output buffer is exactly one
+    // FILE_ID_INFO for the synchronous call.
+    unsafe {
+        GetFileInformationByHandleEx(
+            file_handle(file),
+            FileIdInfo,
+            ptr::from_mut(&mut identity).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+        .map_err(io_error)?;
+    }
+    Ok(identity)
+}
+
+/// Opens a second handle, with its own file object, to the entry behind
+/// `file`. `ReOpenFile` rejects directory handles with ERROR_ACCESS_DENIED on
+/// Windows (#772), so this opens by the 128-bit file ID instead. `file` keeps
+/// its entry from being released, but not every filesystem keeps an ID stable
+/// across a concurrent move, so the opened handle must report the same volume
+/// and ID or the reopen fails closed.
+fn reopen_by_id(file: &File, access: u32) -> io::Result<File> {
+    let identity = file_id(file)?;
+    let descriptor = FILE_ID_DESCRIPTOR {
+        dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
+        Type: ExtendedFileIdType,
+        Anonymous: FILE_ID_DESCRIPTOR_0 {
+            ExtendedFileId: identity.FileId,
+        },
+    };
+    // SAFETY: `file` is on the entry's volume and outlives the call, and the
+    // descriptor is initialized for the extended ID it declares.
+    let handle = unsafe {
+        OpenFileById(
+            file_handle(file),
+            &descriptor,
+            access,
+            SHARE_ALL,
+            None,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        )
+        .map_err(io_error)?
+    };
+    // SAFETY: OpenFileById returned a uniquely owned valid HANDLE.
+    let reopened = unsafe { File::from_raw_handle(handle.0) };
+    let opened = file_id(&reopened)?;
+    if opened.VolumeSerialNumber != identity.VolumeSerialNumber
+        || opened.FileId.Identifier != identity.FileId.Identifier
+    {
+        return Err(io::Error::other(
+            "Reopened directory is no longer the anchored entry",
+        ));
+    }
+    Ok(reopened)
 }
 
 fn file_handle(file: &File) -> HANDLE {

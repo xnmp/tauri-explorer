@@ -70,7 +70,7 @@ for anything else.
 | W2.2 | #764: `git_status` rev-parse cancellation flake under the parallel suite. Decide whether it is a test race or a product race using instrumentation before changing logic | `--test-threads=64` loop, 0 failures in 30 runs | Open |
 | W2.3 | #761: migrate every spec that `rmSync`s a fixture while the app is alive onto `createNativeFixtureDirectory` | grep guard in the native contract tests, full native suite green | Open |
 | W2.4 | #710 (`window-transfer-lifetime`) and #715 (`context-clipboard`) Windows flakes. Retain diagnostics, find the missing wait or race, and fix it | Windows smoke green on 5 consecutive dev runs | Open |
-| W2.5 | #703: fresh-window lookup renderer loss. The diagnostic sampler exists; use its output to decide whether a product change is needed | Retained `/proc` samples from a failing run | Open |
+| W2.5 | Fresh-window lookup renderer loss. #703 closed once its `/proc` sampler landed; the renderer-crash vs driver-session question was never decided. Open a new issue only if the sampler records another occurrence | Retained sampler output from a failing run | Done (#703); reopen on recurrence |
 
 ## W3 — File-operation ownership (Linux remainder)
 
@@ -78,7 +78,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W3.1 | Converge ordinary copy onto the ordered copy session, as ADR 0024 prescribes. Route `performFileTransfer`'s `isCopy` branch through `copy_session`, move the recovery probe's overwrite coverage onto the session path, and remove the unadmitted `copy_entry` family | Vitest caller tests, Rust session tests, and the native recovery suite, including the overwrite probe | Open |
 | W3.2 | #760 durable-move retirement follow-ups: a plan byte budget consistent with `MAX_ENTRIES`, endpoint changes after intent, resumption of stuck `Retiring` records, probe cost, macOS `ENOTSUP` and probe-mode umask, a downgrade story for `deny_unknown_fields` records, and a documented escape hatch | Rust temp-tree tests for each, run under the W1.3 job | Open |
-| W3.3 | Real cross-filesystem move acceptance on Linux (tmpfs ↔ ext4; `/dev/shm` ↔ runner disk in CI). Cover forward move, Undo, Redo, and interruption residue | Rust temp-tree tests across two real mounts, plus a native spec | Open |
+| W3.3 | Run the gated native recovery suites in CI. `file-recovery`, `file-forward-history`, `file-history-lifetime`, `file-move-recovery` and `move-retirement` need a binary built with `e2e-renderer-recovery`, `durable-copy-recovery` and `durable-move-recovery`, and they need the `TAURI_E2E_FILE_RECOVERY_DIR`, `TAURI_E2E_HISTORY_GATE_DIR` and `TAURI_E2E_MOVE_SOURCE_DIR`/`TAURI_E2E_MOVE_TARGET_DIR` variables. No workflow sets these, so the suites skip in CI, and they skipped in the local 2026-09-26 run as well. Add a Linux job that builds that binary and points source and target at `/dev/shm` and the runner disk, so they are two real mounts. Then add the missing real cross-device forward, Undo and Redo cases: the existing Undo/Redo cycles use a single `os.tmpdir()` | New CI job green; each suite reports executed, not skipped, tests | Open |
 | W3.4 | Broader cancellation qualification. For copy and move sessions, cancel at each phase boundary. Prove that no output is published late, that residue exactly matches the phase table, and that history stays consistent | Rust interleaving tests with deterministic phase gates, plus one native outcome per session | Open |
 | W3.5 | Git working-tree mutations under admission | — | **Closed by ADR 0024**. The only capturable footprint is a blanket worktree lock, and Git's `index.lock` arbitrates git-vs-git |
 
@@ -91,6 +91,7 @@ for anything else.
 | W4.3 | ConPTY terminal acceptance. The terminal spec already runs on Windows; add key ownership, which `terminal-key-ownership` skips on `win32`, and resize | Windows smoke | Open |
 | W4.4 | Config replacement and autoreload on Windows, through an atomic-replace writer rather than an in-place write | Windows smoke | Open |
 | W4.5 | Windows runtime physical-identity acceptance for batch spelling validation (`file_identity/windows.rs`), on real NTFS: a case variant, a short name, and a hardlink | Rust tests on the Windows runner (after W1.2) | Open |
+| W4.6 | Window launch and transfer ownership on Windows (ledger gate 6): closing the destination during a real handoff receipt, an unready native target with later app initialization, and a failed asynchronous creation with a duplicate label. Enable or port the Linux specs that cover these on WebView2 | Windows smoke | Open |
 
 ## W5 — macOS platform acceptance
 
@@ -107,6 +108,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W6.1 | A 4-hour Linux native soak (`SOAK_DURATION_MS=14400000`) against a qualification build, with a recorded seed and the report committed to the ledger | `qualification-results/` report | Open |
 | W6.2 | A bounded Windows soak (`SOAK_MAX_CYCLES=1`) on the runner. Make the runner portable if it is not | Windows job artifact | Open |
+| W6.3 | External jobs (ledger gate 2): list the Rust tests for worker draining, held staging files, serialized cancel and publication, bounded fal requests and Nano child kill/reap, and confirm they run in the default suite on every W1 platform. Add one native outcome that cancels a real long-running external process (a fake executable on `PATH`) and asserts that no output is published late | Per-platform CI, plus the native outcome | Open |
 
 ## W7 — Product acceptance matrix (ledger gates 8 and "Product acceptance")
 
@@ -121,8 +123,8 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W8.1 | Re-run the full gate set on the final dev tip: svelte-check, Vitest, perf contracts, Rust (default and feature-gated), Clippy, native suite, and `ALL_VIEW_MODES=1` Playwright. Record the exact numbers against that commit | Ledger section with its commit SHA | Open |
-| W8.2 | Update each ledger acceptance row and the ADR 0020 and 0024 status lines to match the evidence. Mark the "existing ownership overhaul" and "external jobs" rows accepted only if W8.1 covers them | Adversarial fact-check of the ledger against PRs and CI runs | Open |
+| W8.1 | Re-run the full gate set on the final dev tip: svelte-check, Vitest, perf contracts, Rust (default and feature-gated), Clippy, native suite (including the W3.3 gated suites), and `ALL_VIEW_MODES=1` Playwright. Record the exact numbers against that commit. For native specs, count executed tests, not spec files: a file whose `describe` skips still counts as "passed" in the WDIO summary | Ledger section with its commit SHA | Open |
+| W8.2 | Correct the 2026-09-26 ledger claim that "all 38 native specs pass": the gated recovery suites were skipped in that run. Update each ledger acceptance row and the ADR 0020 and 0024 status lines to match the evidence. Mark the "existing ownership overhaul" and "external jobs" rows accepted only if W8.1 covers them | Adversarial fact-check of the ledger against PRs and CI runs | Open |
 | W8.3 | Cut the next minor release: bump the versions, write the CHANGELOG entry, open a Release PR from dev to main with `--merge` (the owner merges it; never tag manually), then verify the release assets | GitHub release with every platform asset | Open |
 
 ## Decisions for the owner
@@ -136,7 +138,7 @@ for anything else.
 
 1. W1, because every later platform claim depends on it.
 2. W2.1 and W2.2, because they make required checks trustworthy.
-3. W3.1, W3.3 and W3.4, then W3.2.
+3. W3.3 (it turns existing recovery acceptance into CI evidence), then W3.1 and W3.4, then W3.2.
 4. W4 and W5.1–W5.2, in parallel with W7.
 5. W6.
 6. W8.

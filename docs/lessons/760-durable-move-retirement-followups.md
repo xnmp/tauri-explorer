@@ -10,6 +10,15 @@ same bounded walk and budgets over every payload they would retain before any
 record exists. When a limit is enforced at a later phase, apply the same limit
 at admission.
 
+**Admission is wherever a retained payload is defined, not just move start.**
+Undo parks the live destination as `publication`, and the user may have grown
+it deep inside after the move. The top-level version check sees only the top
+directory's own mtime. Such a destination was parked, and the restored record
+could then never be discarded, forgotten or re-applied. Undo now walks the
+destination under the same bounds before any durable effect, returning an
+unchanged (not uncertain) error so the history entry survives, and once more
+right before parking it.
+
 **A decision that removed nothing should be withdrawable.** `BeginRetirement`
 fences history. Re-verifying endpoints after it and refusing consumed Undo for
 nothing. Withdraw only on verification refusals, never on checkpoint errors: a

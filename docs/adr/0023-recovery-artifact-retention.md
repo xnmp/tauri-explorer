@@ -269,9 +269,18 @@ bounds (16 MiB aggregate, below the 32 MiB checkpoint limit). With long paths
 the byte bound admits far fewer entries than the 65,536-entry bound (roughly
 12,000 when each entry costs 2·path+512 bytes). Forward moves therefore apply the same walk and budgets
 to every payload they would retain *before* any record exists, and refuse a
-payload that could never be discarded (#760). A tree that grows after admission
-(for example, edited after an Undo) can still exceed them; its discard then
-refuses before the decision and keeps Undo. Each completed
+payload that could never be discarded (#760). The parked source and a displaced
+original live in private storage from then on. The one retained payload a user
+can still change is a cross-volume destination, which Undo parks as the
+target root's `publication`. Undo therefore walks it under the same bounds
+before `BeginRestoration` and refuses, with nothing changed, the destination in
+place and the same Undo still available, when it no longer fits; the settled
+record stays discardable, which keeps the destination. The walk is repeated
+immediately before the destination is parked. If the destination grew in
+between, restoration stops with the source already home and the destination
+still public, and the interrupted restoration can be retried once it fits.
+Neither walk defends against an external writer racing the final
+walk-to-rename interval or writing into private storage. Each completed
 root releases its descendant plan; all later pending plans remain durable. This does not claim protection from an external same-user writer
 swapping a leaf in the final check-to-unlink syscall interval.
 

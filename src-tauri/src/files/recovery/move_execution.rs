@@ -44,6 +44,11 @@ pub(super) struct MoveExecution {
 
 pub(super) type Boundary = Box<dyn Fn(&'static str) -> Result<(), AppError> + Send>;
 
+/// Proof that an Undo passed its read-only admission. Only
+/// [`MoveExecution::admit_restoration`] creates one, so no caller can reach
+/// restoration's durable effects without it.
+pub(super) struct AdmittedRestoration(());
+
 /// A user endpoint addressed through its retained parent handle. Reopening the
 /// public path instead would let a namespace substitution redirect the effect.
 struct Endpoint {
@@ -572,6 +577,72 @@ impl MoveExecution {
     /// The record's own exact inverse. Nothing is deleted before the source
     /// exists again at its original name.
     pub(super) fn restore_move(&mut self) -> Result<(), AppError> {
+        let admitted = self.admit_restoration()?;
+        self.restore_admitted(admitted)
+    }
+
+    /// Read-only Undo admission. An `Err` here precedes every durable effect,
+    /// so the caller may keep offering the same Undo.
+    ///
+    /// Undo retains a cross-volume destination as the target root's
+    /// `publication`, which is the one retained payload a user can still
+    /// change after the move's own admission. It must fit a retirement plan
+    /// under the bounds a discard captures, or the restored record could never
+    /// be discarded (#760).
+    pub(super) fn admit_restoration(&self) -> Result<AdmittedRestoration, AppError> {
+        if let Some(target) = self.parkable_publication()? {
+            self.admit_publication(&target).map_err(|error| {
+                AppError::Other(format!(
+                    "Undo cannot keep '{}' in File Recovery: it has grown too large to be \
+                     discarded later ({error}). Nothing was changed. Remove entries from it and \
+                     Undo again, or discard this move's recovery data to keep it where it is.",
+                    target.path.display()
+                ))
+            })?;
+        }
+        Ok(AdmittedRestoration(()))
+    }
+
+    /// The destination restoration would park as `publication`: present and
+    /// still exactly the published payload. An absent destination parks
+    /// nothing; a changed one is kept public by `park_publication`.
+    fn parkable_publication(&self) -> Result<Option<Endpoint>, AppError> {
+        if restoration_source(self.spec()?) != RestorationSource::Parked {
+            return Ok(None);
+        }
+        let Some(staged) = self.operation.state().move_state()?.staged.as_ref() else {
+            return Ok(None);
+        };
+        let target = self.target()?;
+        Ok(match target.probe()? {
+            Some(observed)
+                if observed == staged.version || observed == staged.published_version()? =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+    }
+
+    /// Walk the destination under exactly the bounds `Plan::capture` will
+    /// apply to it inside the target root.
+    fn admit_publication(&self, target: &Endpoint) -> Result<(), AppError> {
+        let root = self
+            .spec()?
+            .target_root
+            .as_ref()
+            .ok_or_else(|| invalid("Move has no target artifact root"))?;
+        super::move_cleanup::Plan::admit(
+            &target.directory,
+            &target.name,
+            &[root.path.0.join(PUBLICATION)],
+        )
+    }
+
+    pub(super) fn restore_admitted(
+        &mut self,
+        _admitted: AdmittedRestoration,
+    ) -> Result<(), AppError> {
         let spec = self.spec()?.clone();
         let origin = restoration_source(&spec);
         self.operation
@@ -684,6 +755,17 @@ impl MoveExecution {
                 "Move destination differs from the published payload; it is retained",
             ));
         }
+        // Admission ran before `BeginRestoration`; the destination can have
+        // grown since. Refusing here keeps it public beside the returned
+        // source, and the interrupted restoration stays retryable.
+        self.admit_publication(target).map_err(|error| {
+            uncertain(&format!(
+                "'{}' grew too large to be kept in File Recovery while Undo ran ({error}). \
+                 It stays in place and the source is back at its original location; remove \
+                 entries from it and retry Restore in File Recovery.",
+                target.path.display()
+            ))
+        })?;
         relocate(
             &target.directory,
             &target.name,

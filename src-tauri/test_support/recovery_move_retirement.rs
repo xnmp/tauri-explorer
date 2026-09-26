@@ -1490,3 +1490,158 @@ fn bind_mounted_endpoints_on_one_device_are_refused_before_any_record() {
             .success());
     }
 }
+
+/// Eight nested 200-byte directory names: each recorded path below this costs
+/// several KiB of a retirement plan's byte budget, so ~2k entries exhaust it.
+fn deep(root: &std::path::Path) -> PathBuf {
+    let mut deepest = root.to_owned();
+    for level in 0..8 {
+        deepest.push(format!("{level}{}", "d".repeat(200)));
+    }
+    deepest
+}
+
+fn populate_deep(deepest: &std::path::Path, files: std::ops::Range<usize>) {
+    for index in files {
+        fs::write(deepest.join(format!("{index:05}{}", "f".repeat(200))), b"x").unwrap();
+    }
+}
+
+fn trim_deep(deepest: &std::path::Path, files: std::ops::Range<usize>) {
+    for index in files {
+        fs::remove_file(deepest.join(format!("{index:05}{}", "f".repeat(200)))).unwrap();
+    }
+}
+
+/// A cross-volume move of a tree that fits its retirement plans at admission.
+fn plannable_deep_move() -> Fixture {
+    Fixture::build(true, false, false, |source| {
+        let deepest = deep(source);
+        fs::create_dir_all(&deepest).unwrap();
+        populate_deep(&deepest, 0..1_200);
+    })
+}
+
+fn history_undo(f: &Fixture, revision: u64) -> Result<(), AppError> {
+    use crate::files::recovery::model::{ReplacementDirection, ReplacementHistory};
+    crate::files::recovery::history::execute(
+        &f.coordinator,
+        ReplacementHistory {
+            id: f.id.clone(),
+            revision,
+            refresh_dirs: vec![],
+        },
+        ReplacementDirection::Restore,
+    )
+    .map(drop)
+}
+
+#[test]
+fn undo_refuses_a_destination_grown_past_any_retirement_plan_and_keeps_it() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    let f = plannable_deep_move();
+    let revision = effect_revision(&f);
+    // The user keeps working deep inside the moved destination.
+    populate_deep(&deep(&f.target), 1_200..2_600);
+    let error = history_undo(&f, revision)
+        .expect_err("Undo retained a destination no discard could ever remove");
+    // A refusal before any durable effect keeps the Undo entry itself.
+    assert!(!matches!(error, AppError::MutationUncertain(_)), "{error}");
+    assert!(error.to_string().contains("Nothing was changed"), "{error}");
+    assert_eq!(fs::read_dir(deep(&f.target)).unwrap().count(), 2_600);
+    assert!(!f.source.exists(), "the source stayed parked");
+    assert!(f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .unwrap()
+        .is_some());
+    // Once the destination fits again, the same Undo succeeds, and the
+    // publication it retains can still be discarded.
+    trim_deep(&deep(&f.target), 1_200..2_600);
+    history_undo(&f, revision).unwrap();
+    assert_eq!(fs::read_dir(deep(&f.source)).unwrap().count(), 1_200);
+    assert!(!f.target.exists());
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+}
+
+#[test]
+fn a_refused_undo_leaves_discard_able_to_keep_the_grown_destination() {
+    let f = plannable_deep_move();
+    let revision = effect_revision(&f);
+    populate_deep(&deep(&f.target), 1_200..2_600);
+    assert!(history_undo(&f, revision).is_err());
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    assert!(
+        snapshot.items[0].actions.contains(&RecoveryChoice::Discard),
+        "{:?}",
+        snapshot.items[0].actions
+    );
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+    assert_eq!(fs::read_dir(deep(&f.target)).unwrap().count(), 2_600);
+    assert!(!f.source.exists());
+}
+
+#[test]
+fn a_destination_grown_while_undo_runs_is_kept_public_and_retryable() {
+    let f = plannable_deep_move();
+    let deepest = deep(&f.target);
+    let grown = deepest.clone();
+    // Grows after Undo admitted the destination but before it is parked.
+    let result = MoveExecution::reopen(f.claim())
+        .unwrap()
+        .with_boundary(Box::new(move |label| {
+            if label == "restore-intent" {
+                populate_deep(&grown, 1_200..2_600);
+            }
+            Ok(())
+        }))
+        .restore_move();
+    assert!(result.is_err(), "a grown destination was parked");
+    assert_eq!(fs::read_dir(&deepest).unwrap().count(), 2_600);
+    // The retry File Recovery offers succeeds once the destination fits.
+    trim_deep(&deepest, 1_200..2_600);
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    assert!(
+        snapshot.items[0].actions.contains(&RecoveryChoice::Restore),
+        "{:?}: {}",
+        snapshot.items[0].actions,
+        snapshot.items[0].message
+    );
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Restore,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert_eq!(fs::read_dir(deep(&f.source)).unwrap().count(), 1_200);
+    assert!(!f.target.exists());
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+}

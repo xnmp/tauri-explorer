@@ -1769,3 +1769,49 @@ fn mount_point_endpoints_are_refused_before_any_record() {
         isolated_mount("umount", &[mounted.as_os_str()]);
     }
 }
+
+#[test]
+fn an_automatic_retirement_that_cannot_start_is_reported_once_and_left_for_a_retry() {
+    if running_as_root() {
+        return;
+    }
+    let f = Fixture::new(true, false, false);
+    f.restore();
+    // Undo retained the published copy; its root no longer permits removal.
+    let root = f.roots[1].clone();
+    assert!(root.join("publication").exists());
+    set_mode(&root, 0o500);
+    retirement::enforce(&f.coordinator).unwrap();
+    let after_first = generation(&f);
+    for _ in 0..3 {
+        retirement::enforce(&f.coordinator).unwrap();
+    }
+    let after_passes = generation(&f);
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    set_mode(&root, 0o700);
+    assert_eq!(
+        after_passes, after_first,
+        "enforcement re-claimed an automatic retirement that cannot start"
+    );
+    let item = &snapshot.items[0];
+    assert!(item.message.contains("could not start"), "{}", item.message);
+    assert!(
+        item.message.contains("Permission denied"),
+        "{}",
+        item.message
+    );
+    assert_eq!(item.actions, vec![RecoveryChoice::Discard]);
+    assert!(root.join("publication").exists());
+    // The user's explicit retry, after the condition is fixed, finishes it.
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+    assert_eq!(fs::read(&f.source).unwrap(), MOVED);
+}

@@ -361,14 +361,16 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
             continue;
         }
         // Only a crash-interrupted retirement resumes automatically. A
-        // reported failure waits for the user's explicit retry, and one whose
-        // volume is away cannot progress; claiming either would accomplish
-        // nothing but a new generation for the record the user is inspecting.
+        // reported failure waits for the user's explicit retry, whether its
+        // decision was journaled or an automatic one could not start; and one
+        // whose volume is away cannot progress. Claiming either would
+        // accomplish nothing but a new generation for the record the user is
+        // inspecting.
+        if awaits_retry(&state) {
+            usage.add(position, bytes, true);
+            continue;
+        }
         if position == Retention::Retiring {
-            if awaits_retry(&state) {
-                usage.add(position, bytes, true);
-                continue;
-            }
             if let Err(error) = anchors_observable(&entry.intent) {
                 log::debug!(
                     "Recovery retirement could not observe {}: {error}",
@@ -477,8 +479,10 @@ fn artifact_present(
     state: &OperationState,
 ) -> Result<bool, AppError> {
     if matches!(state, OperationState::Move(_)) {
-        // Even a rootless move retains Undo authority and needs its first zero-byte measurement.
-        return Ok(true);
+        // Even a rootless move retains Undo authority and needs its first
+        // zero-byte measurement; a rooted one whose artifact parents cannot
+        // be observed is left unclaimed, as a retiring one is.
+        return anchors_observable(intent).map(|()| true);
     }
     let Some(identity) = root_identity(state) else {
         return Ok(false);

@@ -35,7 +35,11 @@ for an explicit retry. An unobservable volume is checked read-only before any
 claim, and a Preserved retirement records its reason once. Tests that injected
 `Err` at checkpoints and expected automatic resumption conflated "reported
 failure" with "crash". They now panic inside `catch_unwind`, so nothing reports
-the failure.
+the failure. A failure *before* the decision is reported too: an automatic move
+discard refused by its preflight, headroom or pre-decision verify journals
+nothing, so without `MoveState.deferred` every pass re-claimed it. The move's
+`error` field could not carry it, because on a settled move `error` means
+"needs recovery" and would have withdrawn Discard.
 
 **Strict decoders make optional fields a downgrade hazard.** A field with
 `#[serde(default)]` that still serializes as `null` breaks older builds that use

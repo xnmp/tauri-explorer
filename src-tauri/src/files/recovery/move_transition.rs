@@ -47,6 +47,9 @@ pub(super) enum MoveTransition {
     /// record it came from, so a refusal after the decision keeps Undo. The
     /// executor proves by observation that every planned entry is intact.
     WithdrawRetirement,
+    /// Record why an automatic discard could not be journaled at all, so
+    /// enforcement stops claiming the record until an explicit retry.
+    DeferRetirement(String),
     ReportError(String),
 }
 
@@ -241,6 +244,7 @@ pub(super) fn transition(
                     target_plan,
                 ));
                 state.retained_bytes = None;
+                state.deferred = None;
             }
         }
         MoveTransition::BeginRootRetirement(side) => {
@@ -301,11 +305,18 @@ pub(super) fn transition(
             state.retained_bytes = None;
             state.error = None;
         }
+        MoveTransition::DeferRetirement(reason)
+            if super::move_retention::disposal(&spec, state.phase)
+                == Some(super::retention::Disposal::AutomaticWhenSourceIntact) =>
+        {
+            state.deferred = Some(reason);
+        }
         MoveTransition::ReportError(error) => state.error = Some(error),
         _ => return Err(invalid("Illegal recovery move phase transition")),
     }
     if state.phase != current.move_state()?.phase {
         state.retained_bytes = None;
+        state.deferred = None;
     }
     next.validate(intent)?;
     Ok(next)

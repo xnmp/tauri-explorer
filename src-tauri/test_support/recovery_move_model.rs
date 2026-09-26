@@ -350,8 +350,15 @@ fn records_without_new_move_state_stay_readable_by_pre_retirement_builds() {
         retained_bytes: Some(0),
         ..MoveState::default()
     };
-    assert!(serde_json::from_value::<PreRetirementMoveState>(
-        serde_json::to_value(measured).unwrap()
-    )
-    .is_err());
+    let deferred = MoveState {
+        phase: MovePhase::Restored,
+        deferred: Some("automatic cleanup could not start".into()),
+        ..MoveState::default()
+    };
+    for state in [measured, deferred] {
+        assert!(serde_json::from_value::<PreRetirementMoveState>(
+            serde_json::to_value(state).unwrap()
+        )
+        .is_err());
+    }
 }

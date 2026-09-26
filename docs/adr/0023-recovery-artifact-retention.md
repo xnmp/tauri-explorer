@@ -176,6 +176,18 @@ reason, so later passes skip it. None of these is claimed on every pass, which
 would otherwise advance its generation each time and invalidate the one the user
 is inspecting.
 
+The same holds for an automatic move discard that cannot even be journaled: a
+removal preflight refusal (a read-only root or `EROFS`), declined journal
+headroom, or an endpoint that changed while its plans were captured. It records
+its reason in `MoveState.deferred`, which is omitted from the encoding while
+absent, measures the record, and leaves it for the user's explicit Discard,
+which retries it. Nothing was removed and Undo is untouched. A journaled
+decision or any phase change clears the deferral. It is not re-attempted when
+the condition clears by itself, because observing that would itself need a
+claim; the record stays listed, measured and discardable. A settled move whose
+artifact parents cannot be observed is likewise not claimed for its first
+measurement.
+
 `ENOSPC` cannot lose records. The intent write precedes every effect, so a
 disk-full journal write aborts retirement before anything is removed. A
 disk-full write of the *completion* checkpoint leaves `DiscardIntent` with the

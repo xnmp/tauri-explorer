@@ -855,3 +855,33 @@ fn an_untouched_discard_decision_withdraws_to_the_exact_prior_history_position()
     // Without a decision there is nothing to withdraw.
     assert!(transition(&intent, &settled, MoveTransition::WithdrawRetirement).is_err());
 }
+
+#[test]
+fn only_an_automatically_retirable_move_defers_cleanup_and_a_decision_clears_it() {
+    use crate::files::recovery::{durable_model::MAX_ERROR_BYTES, retention::awaits_retry};
+    let defer = |reason: &str| MoveTransition::DeferRetirement(reason.into());
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let parked = advance(&intent, state, MoveTransition::ParkCompleted);
+    // Nothing discards an explicit-only record automatically, so it has
+    // nothing to defer; neither has a restoration still under way.
+    assert!(transition(&intent, &parked, defer("read-only")).is_err());
+    let restoring = advance(&intent, parked, MoveTransition::BeginRestoration);
+    assert!(transition(&intent, &restoring, defer("read-only")).is_err());
+    let restored = advance(&intent, restoring, MoveTransition::RestorationCompleted);
+    assert!(!awaits_retry(&restored));
+    assert!(transition(&intent, &restored, defer(&"x".repeat(MAX_ERROR_BYTES + 1))).is_err());
+    let deferred = advance(&intent, restored, defer("read-only"));
+    assert_eq!(state_of(&deferred).deferred.as_deref(), Some("read-only"));
+    assert!(awaits_retry(&deferred), "enforcement would claim it again");
+    // The user's retry journals a decision, which supersedes the deferral.
+    let deciding = advance(
+        &intent,
+        deferred.clone(),
+        retirement_event(&intent, &deferred, Decision::Automatic),
+    );
+    assert_eq!(state_of(&deciding).deferred, None);
+    assert!(!awaits_retry(&deciding));
+    assert!(transition(&intent, &deciding, defer("read-only")).is_err());
+}

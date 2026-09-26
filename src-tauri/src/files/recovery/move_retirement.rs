@@ -295,12 +295,30 @@ impl MoveRetirement {
         if let Err(error) = result {
             if self.operation.state().move_state()?.retirement.is_none() {
                 // A read-only preflight failure did not consume the inverse.
+                if self.eligibility == Eligibility::Automatic {
+                    self.defer(&error.to_string());
+                }
                 return Err(error);
             }
             self.report(&error.to_string());
             return Err(error);
         }
         self.operation.retire_record()
+    }
+
+    /// Record why an automatic discard could not be journaled, and its size,
+    /// so enforcement leaves it for an explicit retry instead of claiming it
+    /// again on every pass (ADR 0023). Nothing was removed and Undo is kept.
+    fn defer(&mut self, reason: &str) {
+        if let Err(persistence) = self.operation.advance_move(MoveTransition::DeferRetirement(
+            super::model::bounded_error(reason.to_owned()),
+        )) {
+            log::warn!("Could not persist a deferred move cleanup: {persistence}");
+            return;
+        }
+        if let Err(error) = self.measure() {
+            log::debug!("Deferred move cleanup could not be measured: {error}");
+        }
     }
 
     /// Record why a journaled retirement stopped. A reported failure waits

@@ -553,6 +553,11 @@ fn relocation(
             .ok()
             .filter(|state| state.retirement.is_some())
             .and_then(|state| state.error.clone());
+        let deferred = retirement
+            .state()
+            .move_state()
+            .ok()
+            .and_then(|state| state.deferred.clone());
         let (status, message, actions) = match (retirement.eligibility(), interrupted) {
             (Eligibility::Preserved(reason), _) if forgettable => (
                 "attention",
@@ -575,9 +580,21 @@ fn relocation(
                     actions.push(RecoveryChoice::Restore);
                 }
                 actions.push(RecoveryChoice::Discard);
-                ("retained", if restorable {
-                    "Restore this move or discard its recovery data. Discard permanently removes its Undo history and any retained originals."
-                } else { "The move no longer needs restoration; its retained recovery data can be discarded." }.to_owned(), actions)
+                let message = match deferred {
+                    // Nothing was removed; only the automatic attempt stopped.
+                    Some(reason) => format!(
+                        "Automatic cleanup of this move's retained recovery data could not \
+                         start and will not be retried automatically: {reason}. Discard \
+                         retries it."
+                    ),
+                    None if restorable => "Restore this move or discard its recovery data. \
+                         Discard permanently removes its Undo history and any retained originals."
+                        .to_owned(),
+                    None => "The move no longer needs restoration; its retained recovery data \
+                         can be discarded."
+                        .to_owned(),
+                };
+                ("retained", message, actions)
             }
         };
         return reply(

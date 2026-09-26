@@ -102,9 +102,11 @@ pub(crate) struct MoveState {
     pub phase: MovePhase,
     /// Only a cross-filesystem move stages an independent copied payload.
     pub staged: Option<super::durable_model::StagedPayload>,
-    #[serde(default)]
+    /// Both retirement-era fields are omitted while absent: strict decoders in
+    /// builds that predate them must still read a record that does not use them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_bytes: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retirement: Option<super::move_retention::RetirementState>,
     pub error: Option<String>,
 }

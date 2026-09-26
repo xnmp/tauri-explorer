@@ -279,7 +279,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
-- `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`).
+- `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`), and owns the confirmation copy for irreversible choices, including Forget for a stranded move discard (`tests/file-recovery-confirmation.test.ts`).
 
 - `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
@@ -552,13 +552,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/model.rs` — portable recovery IPC/history contracts and lossless decimal counters; platform-tagged native paths remain available to adapter tests.
 - `src-tauri/src/files/recovery/durable_model.rs` — Unix executor authority, catalog-digest checkpoints, typed operation state and replacement phase/manifest validation.
 - `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation and typed move state. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
-- `src-tauri/src/files/recovery/move_capability_model.rs` — pure per-volume probe checkpoints, retained cleanup authority and mandatory version-2 capability validation.
+- `src-tauri/src/files/recovery/move_capability_model.rs` — pure per-volume probe checkpoints, retained cleanup authority and mandatory version-2 capability validation; also classifies every platform's errno spelling of an unsupported exclusive rename.
+- `src-tauri/test_support/recovery_move_capability_model.rs` — unsupported-rename errno classification contract (ENOTSUP and EOPNOTSUPP are distinct on Darwin).
 - `src-tauri/src/files/recovery/move_capability.rs` — journaled real exclusive-rename qualification before move effects; exact interrupted-probe inspection and explicit cleanup.
 - `src-tauri/test_support/recovery_move_capability.rs` — real rename/error preservation, legacy byte compatibility, cross-volume process-kill and namespace-substitution contracts.
 - `src-tauri/src/files/recovery/move_cleanup.rs` — bounded native descendant snapshot, validated durable deletion plan and identity-checked resumption that refuses newly added/modified children.
 - `src-tauri/src/files/recovery/move_retention.rs` — pure move disposal authority, explicit Undo retirement, ordered two-root cleanup checkpoints and legacy-safe evidence validation.
 - `src-tauri/src/files/recovery/move_retirement.rs` — move endpoint/root observation, journaled measurement, per-root cleanup and durable record retirement; no public path mutations.
-- `src-tauri/test_support/recovery_move_retirement.rs` — native filesystem contracts and subprocess-kill recovery for move discard, restored redundancy, endpoint changes, foreign entries and accounting.
+- `src-tauri/test_support/recovery_move_retirement.rs` — native filesystem contracts and subprocess-kill recovery for move discard, restored redundancy, endpoint changes, foreign entries and accounting; also post-decision withdrawal, enforcement without churn, journal headroom, Forget, restrictive umask, plan-budget admission and (ignored, namespace-only) bind-mount refusal.
 - `src-tauri/src/files/recovery/move_transition.rs` — pure legal-transition function for durable move recovery checkpoints; encodes the crash ordering where publication precedes parking and parking precedes source removal, so no boundary can leave both endpoints absent. State-only transition contracts in `src-tauri/test_support/recovery_move_transition.rs`.
 - `src-tauri/src/files/recovery/move_execution.rs` — concrete durable move executor: creates/reopens private artifact roots, stages a cross-filesystem copy, displaces an overwritten destination, publishes, parks the source, removes a parked source and restores as the record's exact inverse. Real process-kill boundary contracts in `src-tauri/test_support/recovery_move_execution.rs`.
 - `src-tauri/src/files/recovery/forward_move.rs` — production durable-move orchestration: admission, binding a `MoveSpec` from admitted paths, promotion and execution; produces the `FileMutationReceipt` carrying a `MoveRecoveryReceipt`. Real-filesystem contracts in `src-tauri/test_support/recovery_forward_move.rs`.

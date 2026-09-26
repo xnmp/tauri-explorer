@@ -167,6 +167,15 @@ artifact in place, and leaves the record in the inventory in a **retained
 evidence** state with the reason shown to the user. It is reported, not retried
 automatically, and never silently converted into a completed retirement.
 
+Enforcement therefore resumes only a *crash-interrupted* retirement, one with no
+recorded failure (#760). A journaled retirement carrying an error waits for the
+user's explicit retry; one whose artifact parents cannot be opened with their
+recorded identities (checked read-only, before any claim) is left unclaimed and
+counted unavailable; and one that is claimed but cannot proceed records its
+reason, so later passes skip it. None of these is claimed on every pass, which
+would otherwise advance its generation each time and invalidate the one the user
+is inspecting.
+
 `ENOSPC` cannot lose records. The intent write precedes every effect, so a
 disk-full journal write aborts retirement before anything is removed. A
 disk-full write of the *completion* checkpoint leaves `DiscardIntent` with the
@@ -214,6 +223,33 @@ invent a decision to discard an original. Beginning retirement prevents both
 history claims and forward/inverse execution, and retains full mutation claims
 until record retirement releases them.
 
+The decision is not allowed to consume Undo for nothing (#760). Public endpoints
+are verified once more immediately before `BeginRetirement` is journaled. If
+verification after the decision refuses while no root is `Removed` and every
+root still strictly matches its captured plan, manifest and exact payload
+version, `WithdrawRetirement` returns the record to its settled phase with its
+effect revision unchanged. The native history entry, which survives a refused
+claim, therefore claims it again. An interrupted decision that removed nothing
+withdraws itself the same way when it is resumed. Once any root is retired the
+decision can only be completed or forgotten.
+
+A decision holds its cleanup plans in the journal until it completes, so
+`BeginRetirement` must leave a quarter of the 64 MiB journal free
+(`Journal::replace_leaving`). At most three maximal decisions can be pending
+while ordinary operations keep that headroom. A declined decision journals
+nothing and keeps Undo.
+
+**Forget** (`RecoveryChoice::Release`) is the escape hatch for a committed
+move discard that cannot finish: a persistent native error such as `EROFS`, a
+reused endpoint, or a volume that changed identity. It is offered only for such
+a stopped decision and is decided from durable evidence alone, because the
+stranded volume may be exactly what cannot be observed. It removes the journal
+row and catalog evidence under exact ownership and touches nothing on disk. The
+record's locks are released, and any private folder it still names stays at its
+listed location, owned by the user. Undo was already consumed by the decision,
+so no recovery authority is lost. If the process dies between the two commits,
+the catalog-only residue is retired automatically once those folders are gone.
+
 Observation verifies both recorded public parents, the expected source and
 target versions, exact private root identities and manifests, and the allowed
 child set. Missing volumes, unplanned children and changed endpoints preserve
@@ -229,7 +265,13 @@ Directory size/mtime may differ after the application's own child removals;
 its native identity, ownership, mode and complete remaining child set must still
 match the recorded plan. Every leaf is rechecked before unlink and each parent
 is synced. Plans have depth, entry-count and conservative 8 MiB per-root encoded-byte
-bounds (16 MiB aggregate, below the 32 MiB checkpoint limit). Each completed
+bounds (16 MiB aggregate, below the 32 MiB checkpoint limit). With long paths
+the byte bound admits far fewer entries than the 65,536-entry bound (roughly
+12,000 when each entry costs 2·path+512 bytes). Forward moves therefore apply the same walk and budgets
+to every payload they would retain *before* any record exists, and refuse a
+payload that could never be discarded (#760). A tree that grows after admission
+(for example, edited after an Undo) can still exceed them; its discard then
+refuses before the decision and keeps Undo. Each completed
 root releases its descendant plan; all later pending plans remain durable. This does not claim protection from an external same-user writer
 swapping a leaf in the final check-to-unlink syscall interval.
 
@@ -240,7 +282,11 @@ bytes remain explicitly unmeasured rather than becoming zero. A rootless complet
 rename measures zero bytes but still consumes a record and retains Undo.
 Repeated enforcement of measured, explicit-only records does not claim them or
 advance their generations. Both new move fields default when decoding older
-journals; absence never grants cleanup authority. Catalog-only residue requires
+journals; absence never grants cleanup authority. Both are also omitted from the
+encoding while absent (as is `ReplacementState.retained_bytes`), so a
+pre-retirement build, whose `MoveState` rejects unknown fields, still reads
+every record that does not use them (#760). A measured or retiring record stays
+unreadable to such a build and fails closed. Catalog-only residue requires
 verified absence of every planned root, not just the first one.
 
 Rust acceptance includes real same-volume/cross-volume files and directories,
@@ -275,5 +321,9 @@ is the same class ADR 0020 already creates for a changed restoration target; it
 consumes the record bound until the user acts. Enforcement never stops early on
 such a record, so one unverifiable record does not hide the rest.
 Process-kill acceptance covers the checkpoints in this document with the kernel
-alive; power-loss durability is not claimed. Windows/macOS retirement and a
+alive; power-loss durability is not claimed. Replacement discards journal
+`DiscardIntent` before their final endpoint check, so an endpoint change in that
+window still consumes their Undo without removing anything; restoration remains
+legal from that phase, but a withdrawal equivalent to the move one is follow-up
+work. Windows/macOS retirement and a
 retention view of native history remain outstanding.

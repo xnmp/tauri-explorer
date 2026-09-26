@@ -20,10 +20,17 @@ use crate::{
 };
 use std::{io, path::Path};
 
+/// Journal bytes a new discard decision must leave free. Each decision can
+/// hold two cleanup plans of up to 8 MiB until it completes, so at most three
+/// maximal decisions fit while ordinary operations keep a quarter of the
+/// journal (ADR 0023).
+const RETIREMENT_HEADROOM: usize = super::journal::MAX_TOTAL_BYTES / 4;
+
 pub(super) struct MoveRetirement {
     pub(super) operation: DurableOperation,
     roots: Vec<(RootSide, Option<Root>)>,
     eligibility: Eligibility,
+    headroom: usize,
 }
 
 impl MoveRetirement {
@@ -35,6 +42,7 @@ impl MoveRetirement {
             return Ok(Self {
                 operation,
                 roots: vec![],
+                headroom: RETIREMENT_HEADROOM,
                 eligibility: Eligibility::Preserved(
                     "This move still needs recovery; all evidence is preserved".into(),
                 ),
@@ -72,8 +80,14 @@ impl MoveRetirement {
             operation,
             roots,
             eligibility,
+            headroom: RETIREMENT_HEADROOM,
         };
         if let Err(error) = result.verify() {
+            // An interrupted decision that removed nothing resumes only to
+            // withdraw itself on its post-intent verification (below).
+            if result.untouched() {
+                return Ok(result);
+            }
             result.eligibility = Eligibility::Preserved(if result.retiring() {
                 format!(
                     "Discard stopped before finishing; its Undo history is gone and the \
@@ -86,6 +100,13 @@ impl MoveRetirement {
         Ok(result)
     }
 
+    /// Test seam: the journal headroom a new decision must leave free.
+    #[cfg(test)]
+    fn leaving(mut self, headroom: usize) -> Self {
+        self.headroom = headroom;
+        self
+    }
+
     pub(super) fn eligibility(&self) -> &Eligibility {
         &self.eligibility
     }
@@ -95,6 +116,54 @@ impl MoveRetirement {
             .state()
             .move_state()
             .is_ok_and(|state| state.retirement.is_some())
+    }
+
+    /// Observation that a journaled decision has removed nothing yet: no root
+    /// is retired and every root still strictly matches its captured plan,
+    /// manifest and exact payload version.
+    fn untouched(&self) -> bool {
+        let Ok(state) = self.operation.state().move_state() else {
+            return false;
+        };
+        let Some(retirement) = state.retirement.as_ref() else {
+            return false;
+        };
+        !retirement.completed
+            && self.roots.iter().all(|(side, root)| {
+                retirement.step(*side) != Some(Step::Removed)
+                    && root.as_ref().is_some_and(|root| {
+                        self.expected(*side).is_ok_and(|expected| {
+                            root.verify_move_retirement(
+                                self.operation.intent(),
+                                expected.as_ref(),
+                                retirement.plan(*side),
+                                false,
+                            )
+                            .is_ok()
+                        })
+                    })
+            })
+    }
+
+    /// A verification refusal after the decision is journaled but before any
+    /// unlink withdraws that decision rather than consuming Undo for nothing.
+    fn refuse(&mut self, error: AppError) -> AppError {
+        if !self.untouched() {
+            return error;
+        }
+        match self
+            .operation
+            .advance_move(MoveTransition::WithdrawRetirement)
+        {
+            Ok(()) => invalid(&format!(
+                "{error}. Discard was withdrawn before removing anything; Undo and every \
+                 recovery file are kept"
+            )),
+            Err(persistence) => {
+                log::warn!("Could not withdraw move retirement: {persistence}");
+                error
+            }
+        }
     }
 
     fn step(&self, side: RootSide) -> Option<Step> {
@@ -228,21 +297,23 @@ impl MoveRetirement {
                 // A read-only preflight failure did not consume the inverse.
                 return Err(error);
             }
-            let mut message = error.to_string();
-            let mut end = message.len().min(super::model::MAX_ERROR_BYTES);
-            while !message.is_char_boundary(end) {
-                end -= 1;
-            }
-            message.truncate(end);
-            if let Err(persistence) = self
-                .operation
-                .advance_move(MoveTransition::ReportError(message))
-            {
-                log::warn!("Could not persist move retirement failure: {persistence}");
-            }
+            self.report(&error.to_string());
             return Err(error);
         }
         self.operation.retire_record()
+    }
+
+    /// Record why a journaled retirement stopped. A reported failure waits
+    /// for an explicit retry; enforcement never claims it again (ADR 0023).
+    pub(super) fn report(&mut self, reason: &str) {
+        if let Err(persistence) =
+            self.operation
+                .advance_move(MoveTransition::ReportError(super::model::bounded_error(
+                    reason.to_owned(),
+                )))
+        {
+            log::warn!("Could not persist move retirement failure: {persistence}");
+        }
     }
 
     fn remove(
@@ -250,6 +321,7 @@ impl MoveRetirement {
         checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
     ) -> Result<(), AppError> {
         let state = self.operation.state().move_state()?;
+        let fresh = state.retirement.is_none();
         let decision = state
             .retirement
             .as_ref()
@@ -293,20 +365,36 @@ impl MoveRetirement {
                 root.preflight_move_retirement(plan)?;
             }
         }
+        // The last read-only proof immediately before the decision consumes
+        // Undo: planning a large tree takes time the endpoints can change in.
+        if fresh {
+            self.verify()?;
+        }
         let planned = |side| {
             self.roots
                 .iter()
                 .position(|(candidate, _)| *candidate == side)
                 .and_then(|index| plans[index].clone())
         };
-        self.operation
-            .advance_move(MoveTransition::BeginRetirement(
+        // A decision holds its plans in the journal until it completes; one
+        // that could never finish must not starve every later operation.
+        if !self.operation.advance_move_leaving(
+            MoveTransition::BeginRetirement(
                 decision,
                 planned(RootSide::Source),
                 planned(RootSide::Target),
-            ))?;
+            ),
+            self.headroom,
+        )? {
+            return Err(invalid(
+                "File Recovery is holding too many unfinished discards to record another. \
+                 Finish or forget one of them first; nothing was removed and Undo is kept",
+            ));
+        }
         checkpoint("intent")?;
-        self.verify()?;
+        if let Err(error) = self.verify() {
+            return Err(self.refuse(error));
+        }
         for (index, planned) in plans.iter().enumerate() {
             let side = self.roots[index].0;
             if self.step(side) == Some(Step::Removed) {
@@ -323,7 +411,9 @@ impl MoveRetirement {
             })?;
             // Re-observe every public endpoint after journaling, before touching this root.
             if self.roots[index].1.is_some() {
-                self.verify_public()?;
+                if let Err(error) = self.verify_public() {
+                    return Err(self.refuse(error));
+                }
             }
             if let Some(root) = self.roots[index].1.take() {
                 root.retire_move_artifacts(

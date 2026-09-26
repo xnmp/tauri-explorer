@@ -131,6 +131,15 @@ impl RetirementState {
     }
 }
 
+/// A committed discard that has not completed. Its Undo is already gone, so
+/// forgetting it loses no recovery authority, only the record and its locks.
+pub(super) fn forgettable(state: &MoveState) -> bool {
+    state
+        .retirement
+        .as_ref()
+        .is_some_and(|retirement| !retirement.completed)
+}
+
 /// The one expected child of a settled root, shared by journal validation and observation.
 pub(super) fn expected_payload(
     spec: &MoveSpec,

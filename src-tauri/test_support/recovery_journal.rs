@@ -962,3 +962,55 @@ fn unknown_ids_and_exhausted_revision_do_not_mutate_storage() {
     assert_eq!(journal.revision().unwrap(), i64::MAX as u64);
     assert!(journal.records().unwrap().is_empty());
 }
+
+#[test]
+fn a_growing_replacement_must_leave_the_requested_headroom_free() {
+    let (_directory, path) = database_path();
+    let mut journal = Journal::open(&path).unwrap();
+    const HEADROOM: usize = 1024 * 1024;
+    journal
+        .insert(
+            "filler",
+            RecordKind::Reservation,
+            &vec![1; MAX_RECORD_BYTES],
+        )
+        .unwrap();
+    journal
+        .insert(
+            "filler-2",
+            RecordKind::Reservation,
+            &vec![2; MAX_TOTAL_BYTES - MAX_RECORD_BYTES - HEADROOM - 10],
+        )
+        .unwrap();
+    let target = journal
+        .insert("target", RecordKind::Reservation, &[3; 10])
+        .unwrap();
+    // Exactly `HEADROOM` bytes are free: growing by one byte is declined
+    // without changing anything, not an error.
+    let before = journal.records().unwrap();
+    let revision = journal.revision().unwrap();
+    assert_eq!(
+        journal
+            .replace_leaving("target", target.generation, &[4; 11], HEADROOM)
+            .unwrap(),
+        None
+    );
+    assert_eq!(journal.records().unwrap(), before);
+    assert_eq!(journal.revision().unwrap(), revision);
+    // Writes that do not grow the record are never declined by the headroom.
+    let same = journal
+        .replace_leaving("target", target.generation, &[5; 10], HEADROOM)
+        .unwrap()
+        .unwrap();
+    let shrunk = journal
+        .replace_leaving("target", same.generation, &[6; 4], HEADROOM)
+        .unwrap()
+        .unwrap();
+    // Without headroom a record may still grow to the full storage limit.
+    let full = journal
+        .replace("target", shrunk.generation, &vec![7; HEADROOM + 10])
+        .unwrap();
+    assert!(journal
+        .replace("target", full.generation, &vec![8; HEADROOM + 11])
+        .is_err());
+}

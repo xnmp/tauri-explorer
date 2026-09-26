@@ -1,5 +1,7 @@
-/** Native recovery records are capabilities by ID, never renderer-owned paths. */
-export type FileRecoveryChoice = "restore" | "discard";
+/** Native recovery records are capabilities by ID, never renderer-owned paths.
+ *  `release` forgets a move whose committed discard stopped before finishing:
+ *  it removes only the record and its locks, never a file. */
+export type FileRecoveryChoice = "restore" | "discard" | "release";
 
 /** Canonical SQLite counters cross IPC as decimal strings, without rounding. */
 export function isRecoveryCounter(value: unknown): value is string {
@@ -57,6 +59,40 @@ export interface FileRecoveryPort {
   /// Optional: a port that predates retention accounting, or a restricted
   /// source, simply cannot reclaim. Callers must guard rather than assume.
   retireEligible?(): Promise<FileRecoverySnapshot>;
+}
+
+export interface RecoveryConfirmation {
+  title: string;
+  body: string;
+  confirm: string;
+}
+
+/** Irreversible choices are confirmed with copy stating exactly what is lost
+ *  and what is kept. Restoring loses nothing, so it needs none. */
+export function recoveryConfirmation(
+  choice: FileRecoveryChoice,
+  item: Pick<FileRecoveryItem, "retainedPath">,
+): RecoveryConfirmation | null {
+  switch (choice) {
+    case "restore":
+      return null;
+    case "discard":
+      return {
+        title: "Discard this recovery record?",
+        body: "This permanently deletes any retained files and removes recovery and Undo for this operation. It cannot be undone.",
+        confirm: "Discard recovery data",
+      };
+    case "release": {
+      const kept = item.retainedPath
+        ? `Any remaining recovery files stay in ${item.retainedPath} for you to review or delete.`
+        : "Any remaining recovery files stay where they are for you to review or delete.";
+      return {
+        title: "Forget this recovery record?",
+        body: `Nothing is deleted. File Recovery stops tracking this move and releases its locks; its Undo is already gone. ${kept}`,
+        confirm: "Forget record",
+      };
+    }
+  }
 }
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;

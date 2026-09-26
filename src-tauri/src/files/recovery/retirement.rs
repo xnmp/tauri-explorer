@@ -10,7 +10,7 @@ use super::{
     model::{OperationState, StagedPayload},
     replacement_artifact::{Anchor, RetirementStep, Root},
     replacement_transition::ReplacementTransition,
-    retention::{measured_bytes, retention, Disposal, Retained, Retention, Usage},
+    retention::{awaits_retry, measured_bytes, retention, Disposal, Retained, Retention, Usage},
 };
 use crate::error::AppError;
 use std::sync::Arc;
@@ -79,6 +79,16 @@ impl Retirement {
         match self {
             Self::Replacement(r) => r.measure(),
             Self::Move(r) => r.measure(),
+        }
+    }
+    /// Persist why a journaled retirement cannot proceed, so later passes
+    /// leave it for an explicit retry instead of claiming it again.
+    fn report(&mut self, reason: &str) {
+        match self {
+            Self::Replacement(r) => {
+                r.retain_failure(AppError::Other(reason.to_owned()));
+            }
+            Self::Move(r) => r.report(reason),
         }
     }
     pub(super) fn retire(self) -> Result<(), AppError> {
@@ -236,18 +246,9 @@ impl ReplacementRetirement {
 
     /// A cleanup failure is reportable inventory, never a completed retirement.
     fn retain_failure(&mut self, error: AppError) -> AppError {
-        let mut message = error.to_string();
-        if message.len() > super::model::MAX_ERROR_BYTES {
-            let mut end = super::model::MAX_ERROR_BYTES;
-            while !message.is_char_boundary(end) {
-                end -= 1;
-            }
-            message.truncate(end);
-        }
-        if let Err(persistence) = self
-            .operation
-            .advance(ReplacementTransition::ReportError(message))
-        {
+        if let Err(persistence) = self.operation.advance(ReplacementTransition::ReportError(
+            super::model::bounded_error(error.to_string()),
+        )) {
             log::warn!("Could not persist recovery retirement failure: {persistence}");
         }
         error
@@ -359,6 +360,24 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
             usage.add(position, bytes, true);
             continue;
         }
+        // Only a crash-interrupted retirement resumes automatically. A
+        // reported failure waits for the user's explicit retry, and one whose
+        // volume is away cannot progress; claiming either would accomplish
+        // nothing but a new generation for the record the user is inspecting.
+        if position == Retention::Retiring {
+            if awaits_retry(&state) {
+                usage.add(position, bytes, true);
+                continue;
+            }
+            if let Err(error) = anchors_observable(&entry.intent) {
+                log::debug!(
+                    "Recovery retirement could not observe {}: {error}",
+                    entry.intent.id
+                );
+                usage.add(position, bytes, false);
+                continue;
+            }
+        }
         // A settled record is claimed only when ownership can actually
         // accomplish something: journal a first measurement, or reclaim a
         // redundant artifact. Claiming advances the generation, which
@@ -437,6 +456,12 @@ fn settle(coordinator: &Arc<Coordinator>, id: &str, generation: u64) -> Result<S
             retirement.retire()?;
             Ok(Settled::Retired)
         }
+        Eligibility::Preserved(reason) if retirement.position() == Retention::Retiring => {
+            let reason = reason.clone();
+            retirement.report(&reason);
+            let bytes = retirement.measure()?;
+            Ok(Settled::Counted(retirement.position(), bytes, true))
+        }
         _ => {
             let bytes = retirement.measure()?;
             Ok(Settled::Counted(retirement.position(), bytes, true))
@@ -459,6 +484,20 @@ fn artifact_present(
         return Ok(false);
     };
     Ok(Anchor::open(intent)?.open_optional(identity)?.is_some())
+}
+
+/// Read-only observation outside admission and without ownership: can every
+/// artifact parent this record names be opened with its recorded identity?
+fn anchors_observable(intent: &super::model::DurableIntent) -> Result<(), AppError> {
+    match &intent.operation {
+        super::model::OperationSpec::CopyReplacement(_) => Anchor::open(intent).map(drop),
+        super::model::OperationSpec::Move(spec) => {
+            for (_, plan) in super::move_execution::MoveExecution::plans(spec) {
+                Anchor::open_plan(intent, plan)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Read-only observation outside admission: does the recorded artifact root

@@ -115,6 +115,7 @@ pub(super) fn resolve(
     match choice {
         RecoveryChoice::Restore => operate(coordinator, id, Request::Restore(generation)),
         RecoveryChoice::Discard => operate(coordinator, id, Request::Discard(generation)),
+        RecoveryChoice::Release => operate(coordinator, id, Request::Release(generation)),
     }
 }
 
@@ -122,13 +123,16 @@ enum Request {
     Inspect,
     Restore(u64),
     Discard(u64),
+    Release(u64),
 }
 
 impl Request {
     fn expected(&self) -> Option<u64> {
         match self {
             Self::Inspect => None,
-            Self::Restore(generation) | Self::Discard(generation) => Some(*generation),
+            Self::Restore(generation) | Self::Discard(generation) | Self::Release(generation) => {
+                Some(*generation)
+            }
         }
     }
 }
@@ -182,6 +186,13 @@ fn operate(
     let claimed_generation = operation.generation();
     if operation.intent().operation.move_spec().is_ok() {
         return relocation(coordinator, operation, request);
+    }
+    if let Request::Release(_) = request {
+        return reply(
+            coordinator,
+            None,
+            Some("Only a move whose discard stopped before finishing can be forgotten".into()),
+        );
     }
     if let Request::Discard(_) = request {
         return discard(coordinator, operation, &entry.intent, claimed_generation);
@@ -265,7 +276,9 @@ fn operate(
                     vec![],
                 ))
             }
-            Request::Discard(_) => unreachable!("discard is dispatched before reopening"),
+            Request::Discard(_) | Request::Release(_) => {
+                unreachable!("discard and release are dispatched before reopening")
+            }
         }
     })();
     let (view, error) = match result {
@@ -439,6 +452,9 @@ fn relocation(
             (Request::Restore(_), _) => {
                 Some("This move never started and has no restoration to apply".to_owned())
             }
+            (Request::Release(_), _) => {
+                Some("This move never started; discard its capability data instead".to_owned())
+            }
             (Request::Discard(_), Err(error)) => {
                 Some(diagnostic(AppError::Other(error.to_string())))
             }
@@ -473,6 +489,14 @@ fn relocation(
         let intent = operation.intent().clone();
         return discard(coordinator, operation, &intent, generation);
     }
+    if let Request::Release(_) = request {
+        // Decided from durable evidence alone: a stranded record's volume may
+        // be the very thing that can no longer be observed.
+        return match operation.forget_retirement() {
+            Ok(()) => reply(coordinator, None, None),
+            Err(error) => reply(coordinator, None, Some(diagnostic(error))),
+        };
+    }
     let restorable = move_transition(
         operation.intent(),
         operation.state(),
@@ -483,8 +507,29 @@ fn relocation(
         && retention::retention(&operation.intent().operation, operation.state()).retirable()
     {
         let intent = operation.intent().clone();
+        let forgettable = operation
+            .state()
+            .move_state()
+            .is_ok_and(super::move_retention::forgettable);
         let retirement = match Retirement::open(operation) {
             Ok(retirement) => retirement,
+            Err(error) if forgettable => {
+                return reply(
+                    coordinator,
+                    Some(item(
+                        &intent,
+                        generation,
+                        None,
+                        "attention",
+                        &format!(
+                            "Discard stopped before finishing and its recovery files can no \
+                             longer be verified: {error}. {FORGET_HINT}"
+                        ),
+                        vec![RecoveryChoice::Release],
+                    )),
+                    None,
+                )
+            }
             Err(error) => {
                 return reply(
                     coordinator,
@@ -509,15 +554,20 @@ fn relocation(
             .filter(|state| state.retirement.is_some())
             .and_then(|state| state.error.clone());
         let (status, message, actions) = match (retirement.eligibility(), interrupted) {
+            (Eligibility::Preserved(reason), _) if forgettable => (
+                "attention",
+                format!("{reason}. {FORGET_HINT}"),
+                vec![RecoveryChoice::Release],
+            ),
             (Eligibility::Preserved(reason), _) => ("attention", reason.clone(), vec![]),
             (_, Some(error)) => (
                 "attention",
                 format!(
                     "Discard stopped before finishing; its Undo history is gone and the \
                      remaining recovery files are preserved. Retry Discard once this is \
-                     resolved: {error}"
+                     resolved: {error}. {FORGET_HINT}"
                 ),
-                vec![RecoveryChoice::Discard],
+                vec![RecoveryChoice::Discard, RecoveryChoice::Release],
             ),
             _ => {
                 let mut actions = Vec::new();
@@ -613,7 +663,9 @@ fn relocation(
             )
         }),
         // Discard is dispatched to the move retirement observer before reopening.
-        Request::Discard(_) => unreachable!("discard never reaches move reconciliation"),
+        Request::Discard(_) | Request::Release(_) => {
+            unreachable!("discard and release never reach move reconciliation")
+        }
     };
     let (view, error) = match result {
         Ok(view) => (view, None),
@@ -631,6 +683,10 @@ fn relocation(
     };
     reply(coordinator, Some(view), error)
 }
+
+/// Shown wherever a stopped discard can be forgotten instead of retried.
+const FORGET_HINT: &str = "If it cannot be resolved, Forget releases this record and its locks \
+     without deleting anything; its remaining files stay in the listed folder";
 
 fn reply(
     coordinator: &Coordinator,

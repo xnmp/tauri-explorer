@@ -134,10 +134,11 @@ impl Directory {
             )
         };
         if descriptor < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(unsafe { File::from_raw_fd(descriptor) })
+            return Err(io::Error::last_os_error());
         }
+        let file = unsafe { File::from_raw_fd(descriptor) };
+        restore_owner_access(&file, 0o600)?;
+        Ok(file)
     }
 
     pub(crate) fn open_file(&self, name: &OsStr) -> io::Result<File> {
@@ -219,7 +220,9 @@ impl Directory {
 
     /// Exclusive creation only. Existing directories require separate admission.
     pub(crate) fn create_directory(&self, name: &OsStr) -> io::Result<Self> {
-        self.mkdir(name, 0o700)
+        let directory = self.mkdir(name, 0o700)?;
+        restore_owner_access(&directory.file, 0o700)?;
+        Ok(directory)
     }
 
     /// Create ordinary user directories with the requested mode subject to umask.
@@ -480,6 +483,26 @@ impl Drop for Entries {
         // SAFETY: fdopendir transferred this uniquely owned stream to Entries.
         unsafe { libc::closedir(self.stream) };
     }
+}
+
+/// Creation modes are filtered by the process umask. Private storage requires
+/// the owner access it requested, so restore only owner bits a umask removed
+/// (for example umask 0277). Filesystems that synthesize modes, such as FAT or
+/// CIFS, already report owner access and are never chmod-ed here.
+#[allow(clippy::unnecessary_cast)] // Darwin mode_t is u16.
+fn restore_owner_access(file: &File, requested: u32) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let owner = requested & 0o700;
+    let mode = file.metadata()?.mode();
+    if mode & owner == owner {
+        return Ok(());
+    }
+    let restored = (mode & 0o7777) | owner;
+    // SAFETY: the descriptor is owned by `file` for the duration of the call.
+    if unsafe { libc::fchmod(file.as_raw_fd(), restored as libc::mode_t) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 pub(crate) fn native_name(name: &OsStr) -> io::Result<CString> {

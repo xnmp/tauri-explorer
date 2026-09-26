@@ -794,3 +794,64 @@ fn retirement_event(
         plan(RootSide::Target, spec.target_root.is_some()),
     )
 }
+
+#[test]
+fn an_untouched_discard_decision_withdraws_to_the_exact_prior_history_position() {
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let settled = advance(&intent, state, MoveTransition::ParkCompleted);
+    let deciding = advance(
+        &intent,
+        settled.clone(),
+        retirement_event(&intent, &settled, Decision::Explicit),
+    );
+    // Both a pure decision and one whose first root intent is journaled
+    // return to the same stable position, revision and Undo eligibility.
+    let removing = advance(
+        &intent,
+        deciding.clone(),
+        MoveTransition::BeginRootRetirement(RootSide::Source),
+    );
+    for retiring in [deciding, removing.clone()] {
+        let errored = advance(
+            &intent,
+            retiring,
+            MoveTransition::ReportError("endpoint changed".into()),
+        );
+        let withdrawn = advance(&intent, errored, MoveTransition::WithdrawRetirement);
+        let (before, after) = (state_of(&settled), state_of(&withdrawn));
+        assert_eq!(after.retirement, None);
+        assert_eq!(after.error, None);
+        assert_eq!(after.phase, before.phase);
+        assert_eq!(after.effect_revision, before.effect_revision);
+        // History-eligible again: the same decision can be journaled anew.
+        advance(
+            &intent,
+            withdrawn.clone(),
+            retirement_event(&intent, &withdrawn, Decision::Explicit),
+        );
+        assert!(transition(&intent, &withdrawn, MoveTransition::BeginRestoration).is_ok());
+    }
+    // Once any root is retired the decision can only be completed.
+    let retired = advance(
+        &intent,
+        removing,
+        MoveTransition::RootRetired(RootSide::Source),
+    );
+    assert!(transition(&intent, &retired, MoveTransition::WithdrawRetirement).is_err());
+    let retired = advance(
+        &intent,
+        retired,
+        MoveTransition::BeginRootRetirement(RootSide::Target),
+    );
+    let retired = advance(
+        &intent,
+        retired,
+        MoveTransition::RootRetired(RootSide::Target),
+    );
+    let completed = advance(&intent, retired, MoveTransition::RetirementCompleted);
+    assert!(transition(&intent, &completed, MoveTransition::WithdrawRetirement).is_err());
+    // Without a decision there is nothing to withdraw.
+    assert!(transition(&intent, &settled, MoveTransition::WithdrawRetirement).is_err());
+}

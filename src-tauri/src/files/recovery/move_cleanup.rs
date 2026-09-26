@@ -112,18 +112,44 @@ impl Plan {
         payload: Option<&str>,
     ) -> Result<Self, AppError> {
         let mut plan = Self::default();
-        let mut bytes = MAX_PLAN_BYTES;
         if let Some(name) = payload {
-            capture(
+            let top = root.join(name);
+            let mut budget = Budget::new(1);
+            walk(
                 directory,
                 OsStr::new(name),
-                &root.join(name),
+                Path::new(""),
                 1,
-                &mut plan.entries,
-                &mut bytes,
+                &mut |relative, version| {
+                    let path = located(&top, relative);
+                    budget.spend(std::slice::from_ref(&path))?;
+                    plan.entries.push(Entry {
+                        path: NativePath(path),
+                        version: version.clone(),
+                    });
+                    Ok(())
+                },
             )?;
         }
         Ok(plan)
+    }
+
+    /// Forward-move admission. Walk a live payload under exactly the bounds
+    /// `capture` applies, charging each entry at every private path it may
+    /// later occupy, so an admitted payload always has a retirement plan (#760).
+    pub(super) fn admit(
+        parent: &Directory,
+        name: &OsStr,
+        destinations: &[std::path::PathBuf],
+    ) -> Result<(), AppError> {
+        let mut budget = Budget::new(destinations.len());
+        walk(parent, name, Path::new(""), 1, &mut |relative, _| {
+            let paths: Vec<_> = destinations
+                .iter()
+                .map(|top| located(top, relative))
+                .collect();
+            budget.spend(&paths)
+        })
     }
 
     pub(super) fn verify(
@@ -230,36 +256,68 @@ impl Plan {
     }
 }
 
-fn capture(
+/// The per-plan bounds shared by capture, admission and validation: entry
+/// count and encoded bytes, charged independently for every destination root.
+struct Budget {
+    entries: usize,
+    bytes: Vec<usize>,
+}
+
+impl Budget {
+    fn new(destinations: usize) -> Self {
+        Self {
+            entries: MAX_ENTRIES,
+            bytes: vec![MAX_PLAN_BYTES; destinations],
+        }
+    }
+
+    fn spend(&mut self, paths: &[std::path::PathBuf]) -> Result<(), AppError> {
+        self.entries = self
+            .entries
+            .checked_sub(1)
+            .ok_or_else(|| invalid("Move cleanup exceeds its entry budget"))?;
+        for (path, bytes) in paths.iter().zip(&mut self.bytes) {
+            spend_bytes(path, bytes)?;
+        }
+        Ok(())
+    }
+}
+
+/// `relative` is empty for the payload itself; joining it would add a separator.
+fn located(top: &Path, relative: &Path) -> std::path::PathBuf {
+    if relative.as_os_str().is_empty() {
+        top.to_owned()
+    } else {
+        top.join(relative)
+    }
+}
+
+/// Bounded, no-follow preorder walk. The visitor sees each entry's path
+/// relative to the payload before its children, as a plan records them.
+fn walk(
     parent: &Directory,
     name: &OsStr,
-    path: &Path,
+    relative: &Path,
     depth: usize,
-    entries: &mut Vec<Entry>,
-    bytes: &mut usize,
+    visit: &mut impl FnMut(&Path, &EntryVersion) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
-    if depth > MAX_DEPTH || entries.len() >= MAX_ENTRIES {
-        return Err(invalid("Move cleanup exceeds its walk budget").into());
+    if depth > MAX_DEPTH {
+        return Err(invalid("Move cleanup exceeds its depth budget").into());
     }
-    spend_bytes(path, bytes)?;
     let version = version_at(parent, name)?;
-    entries.push(Entry {
-        path: NativePath(path.to_owned()),
-        version: version.clone(),
-    });
+    visit(relative, &version)?;
     if version.directory {
         let directory = parent.open_existing(name)?;
         if of_file(&directory.file)? != version.object {
             return Err(invalid("Move cleanup directory changed during capture").into());
         }
         for child in directory.names(MAX_ENTRIES)? {
-            capture(
+            walk(
                 &directory,
                 &child,
-                &path.join(&child),
+                &located(relative, Path::new(&child)),
                 depth + 1,
-                entries,
-                bytes,
+                visit,
             )?;
         }
     }

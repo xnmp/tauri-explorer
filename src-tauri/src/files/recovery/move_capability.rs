@@ -214,10 +214,9 @@ fn qualify_with(
 }
 
 fn unsupported(error: &io::Error) -> bool {
-    matches!(
-        error.raw_os_error(),
-        Some(libc::ENOSYS | libc::EOPNOTSUPP | libc::EINVAL)
-    )
+    error
+        .raw_os_error()
+        .is_some_and(super::move_capability_model::unsupported_exclusive_rename)
 }
 
 /// Read-only evidence check for explicit preflight cleanup. Unknown creation

@@ -28,9 +28,9 @@ use std::{ffi::OsStr, io, os::unix::fs::PermissionsExt, path::Path};
 /// Private names inside an artifact root. `publication` matches the copy
 /// executor's spelling; `original` is a displaced destination; `parked` is a
 /// cross-filesystem source hidden after its destination was published.
-const PUBLICATION: &str = "publication";
-const ORIGINAL: &str = "original";
-const PARKED: &str = "parked";
+pub(super) const PUBLICATION: &str = "publication";
+pub(super) const ORIGINAL: &str = "original";
+pub(super) const PARKED: &str = "parked";
 
 pub(super) struct MoveExecution {
     pub(super) operation: DurableOperation,

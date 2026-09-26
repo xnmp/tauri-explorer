@@ -1005,10 +1005,26 @@ executes the actual no-replace primitive to an absent name, verifies its identit
 and removes its file and root with journaled intent and directory barriers.
 Later move transitions require every probe's successful terminal checkpoint.
 There is no filesystem allowlist or cache; this adds per-move I/O to the opt-in
-recovery path and is not presented as a performance improvement.
+recovery path and is not presented as a performance improvement. Per moved
+entry and volume that is roughly five journal commits and six directory or file
+syncs, and the probe root's creation and removal are visible to directory
+watchers. Caching a proven capability per (device, mount) would change what an
+intent proves and is left to an owner decision (#760).
 
-Only ENOSYS, EOPNOTSUPP or EINVAL with an exactly unchanged probe namespace means
-unsupported capability. The move is rejected after its owned probes are cleaned
+A probe renames inside one directory, so it cannot observe a cross-mount
+`EXDEV`. Bind mounts share `st_dev`, so a move between two mounts of one device
+would choose `Rename` and fail at publication. Binding compares `STATX_MNT_ID`
+when devices match and refuses differing mounts before any record exists;
+kernels without it keep the device comparison. Supporting such moves through the
+cross-volume layout needs a recorded mount identity in `MoveSpec`.
+
+Probe files and directories are private storage, so they are created owner-only
+and their owner access is restored explicitly when a restrictive umask (for
+example `0277`) strips it at creation; user-visible directories keep honoring
+the umask.
+
+Only ENOSYS, EOPNOTSUPP (on Darwin also its distinct ENOTSUP spelling) or EINVAL
+with an exactly unchanged probe namespace means unsupported capability. The move is rejected after its owned probes are cleaned
 and the record durably aborted. Permission, space and I/O failures, ambiguous
 rename outcomes, foreign entries and substituted identities preserve evidence.
 An interrupted probe can be inspected and explicitly discarded through File

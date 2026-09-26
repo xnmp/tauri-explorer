@@ -55,3 +55,15 @@ path-only action first, which lesson 685 warns can relocate the last copy of
 the data. Treat any native-owned inverse (`replacement` or `relocation`) as
 the history entry. `cross-device-move-history.spec.ts` found it by checking
 that Undo leaves neither an Undo nor a Redo in a durable build.
+
+## `aria-busy='false'` does not mean the dialog is idle
+
+The recovery dialog's `aria-busy` covers loading and resolution, not
+inspection. `move-retirement` clicked Reclaim right after Inspect. A retention
+pass reads the inventory, then settles each record at the generation it read.
+An inspection still holding the claim has already advanced that generation, so
+the pass skipped the record, and nothing ever measured it. The first CI run
+won the race and the second lost it: its generation advanced once (Inspect)
+instead of twice (Inspect, then Reclaim's claim). Wait for the inspection's own
+outcome, `.inspection` or `.inspection-error` on that record, before the next
+action.

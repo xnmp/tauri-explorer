@@ -34,6 +34,13 @@ async function openRecovery(id: string): Promise<void> {
   await $(".recovery-notice").click();
   await $(".recovery-dialog").waitForDisplayed();
   await $(`[data-recovery-inspect="${id}"]`).click();
+  // aria-busy tracks loading and resolution, not inspection. Reclaim skips a
+  // record whose inspection still holds its claim, so wait for the inspection
+  // itself to settle before any later action reaches the backend.
+  await browser.waitUntil(async () => browser.execute(target => Boolean(document
+    .querySelector(`[data-recovery-inspect="${target}"]`)?.closest(".recovery-item")
+    ?.querySelector(".inspection, .inspection-error")), id),
+  { timeoutMsg: `inspection of ${id} did not settle` });
   await $(".recovery-dialog[aria-busy='false']").waitForExist();
 }
 

@@ -41,7 +41,7 @@ test("a failing plugin action reports its error while another plugin still works
   const failure = page.locator(".toast.error");
   await expect(failure).toHaveText("Theme from Image: palette service unavailable");
   // Finish the toast's entrance animation so the capture shows it.
-  await page.screenshot({ path: "screenshots/test/plugin-failure-isolation/failure-beside-working-plugin.png", animations: "disabled" });
+  await page.screenshot({ path: "screenshots/test/plugin-failure-isolation/failure-toast-names-plugin.png", animations: "disabled" });
   expect(await page.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe(themeBefore);
 
   // Another plugin's action on the same file is unaffected.
@@ -50,6 +50,7 @@ test("a failing plugin action reports its error while another plugin still works
   const dialog = page.locator('[aria-labelledby="upscale-title"]');
   await expect(dialog).toBeVisible();
   await expect(dialog.locator(".file-name")).toContainText("image.png");
+  await page.screenshot({ path: "screenshots/test/plugin-failure-isolation/other-plugin-works-after-failure.png", animations: "disabled" });
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 

@@ -49,5 +49,5 @@ It now rejects with the same `{ kind, message }` shape.
 
 Error toasts dismiss after 3 s. On WebKit CI, opening a second plugin's
 dialog took longer than that, so asserting the toast afterwards failed on every
-attempt. Assert the toast right after the failure, and wait for its opacity to
-reach 1 before a screenshot: the entrance animation starts at zero.
+attempt. Assert the toast right after the failure, and capture it with
+`animations: "disabled"`: the entrance animation starts at zero opacity.

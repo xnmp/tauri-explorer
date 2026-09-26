@@ -14,6 +14,10 @@ vi.mock("$lib/api/crash", async (original) => ({
   ...(await original<typeof import("$lib/api/crash")>()),
   logFrontendError: vi.fn(async () => {}),
 }));
+vi.mock("$lib/api/config", async (original) => {
+  const actual = await original<typeof import("$lib/api/config")>();
+  return { ...actual, readConfigFile: vi.fn(actual.readConfigFile) };
+});
 
 import { createPluginRegistry } from "$lib/plugins/registry.svelte";
 import type { Plugin, PluginContext } from "$lib/plugins/api";
@@ -23,6 +27,9 @@ import { toastStore } from "$lib/state/toast.svelte";
 import { createPluginJobsController } from "$lib/state/plugin-jobs";
 import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
 import { logFrontendError } from "$lib/api/crash";
+import { readConfigFile } from "$lib/api/config";
+import { upscalePlugin } from "$lib/plugins/upscale";
+import type { FileEntry } from "$lib/domain/file";
 
 const jobs = { dispose: vi.fn(async () => {}) };
 
@@ -154,6 +161,25 @@ describe("plugin failure isolation", () => {
       expect(await executeCommand("plugin.bystander.cmd")).toBe(true);
       expect(healthy.runs).toEqual(["bystander"]);
       expect(registry.isActive("quota")).toBe(true);
+    } finally {
+      await registry.dispose();
+    }
+  });
+
+  it("reports a built-in plugin's asynchronous handler failure under its name", async () => {
+    // A handler that starts work and drops the promise hides every later
+    // failure from the context that reports it.
+    const registry = createPluginRegistry([upscalePlugin], jobs);
+    const image: FileEntry = { name: "photo.png", path: "/home/user/photo.png", kind: "file", size: 1, modified: "2026-01-01T00:00:00Z" };
+    try {
+      await registry.initPlugins();
+      // The handler reads the API key before it opens the dialog.
+      vi.mocked(readConfigFile).mockRejectedValueOnce(backendError("config directory unreadable"));
+
+      const item = contextMenuItems.items.find((candidate) => candidate.id === "upscale.run");
+      await item!.handler([image]);
+
+      expect(errorToasts()).toEqual(["Upscale: config directory unreadable"]);
     } finally {
       await registry.dispose();
     }

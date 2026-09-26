@@ -185,8 +185,52 @@ impl PendingMove {
             target_root,
         };
         reservation.validate_operation(OperationSpec::Move(spec.clone()))?;
+        admit_retirement(&spec, &source_parent, &target_parent)?;
         Ok(spec)
     }
+}
+
+/// Every payload this move would retain must already fit a retirement plan.
+/// Otherwise its record could never be discarded (#760). Refusing here, before
+/// promotion, leaves no record, no artifact root and no moved entry.
+fn admit_retirement(
+    spec: &MoveSpec,
+    source_parent: &Directory,
+    target_parent: &Directory,
+) -> Result<(), AppError> {
+    use super::move_execution::{ORIGINAL, PARKED, PUBLICATION};
+    let inside =
+        |root: &Option<ArtifactPlan>, name: &str| root.as_ref().map(|root| root.path.0.join(name));
+    let refuse = |what: &str, path: &Path, error: AppError| {
+        AppError::Other(format!(
+            "File Recovery cannot retain {what} '{}' for a recoverable move, so it could never \
+             be discarded ({error}). Nothing was moved.",
+            path.display()
+        ))
+    };
+    let name = |path: &Path| {
+        path.file_name()
+            .ok_or_else(|| AppError::InvalidPath("Move endpoint has no name".into()))
+            .map(std::ffi::OsStr::to_owned)
+    };
+    if spec.strategy == Strategy::CopyParked {
+        // Parked in the source root; after Undo, retained as the publication.
+        let destinations: Vec<_> = [
+            inside(&spec.source_root, PARKED),
+            inside(&spec.target_root, PUBLICATION),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        super::move_cleanup::Plan::admit(source_parent, &name(&spec.source.0)?, &destinations)
+            .map_err(|error| refuse("the moved entry", &spec.source.0, error))?;
+    }
+    if spec.target_original.is_some() {
+        let destinations: Vec<_> = inside(&spec.target_root, ORIGINAL).into_iter().collect();
+        super::move_cleanup::Plan::admit(target_parent, &name(&spec.target.0)?, &destinations)
+            .map_err(|error| refuse("the replaced destination", &spec.target.0, error))?;
+    }
+    Ok(())
 }
 
 fn same_volume(left: &Path, right: &Path) -> Result<bool, AppError> {

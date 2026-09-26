@@ -1053,3 +1053,73 @@ fn restrictive_umask_cannot_break_probes_roots_or_retirement() {
         assert!(residue.is_empty(), "{residue:?}");
     }
 }
+
+/// A tree whose retirement plan cannot fit the per-root byte budget: long
+/// nested names make each recorded path several KiB, so ~2k entries suffice.
+fn unplannable_tree(root: &std::path::Path) {
+    let mut deepest = root.to_owned();
+    for level in 0..8 {
+        deepest.push(format!("{level}{}", "d".repeat(200)));
+    }
+    fs::create_dir_all(&deepest).unwrap();
+    for index in 0..2_100 {
+        fs::write(deepest.join(format!("{index:05}{}", "f".repeat(200))), b"x").unwrap();
+    }
+}
+
+fn private_residue(parent: &std::path::Path) -> Vec<std::ffi::OsString> {
+    fs::read_dir(parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| {
+            name.to_string_lossy()
+                .starts_with(".tauri-explorer-recovery-")
+        })
+        .collect()
+}
+
+#[test]
+fn a_payload_that_could_never_be_discarded_is_refused_before_any_record_or_effect() {
+    for overwrite_only in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let shared = tempfile::tempdir_in("/dev/shm").unwrap();
+        let base_path = fs::canonicalize(base.path()).unwrap();
+        // Cross volume: the source would be parked. Same volume with an
+        // overwrite: the displaced destination would be retained.
+        let (source, target) = if overwrite_only {
+            fs::write(base_path.join("source"), MOVED).unwrap();
+            unplannable_tree(&base_path.join("target"));
+            (base_path.join("source"), base_path.join("target"))
+        } else {
+            let shared_path = fs::canonicalize(shared.path()).unwrap();
+            unplannable_tree(&shared_path.join("source"));
+            (shared_path.join("source"), base_path.join("target"))
+        };
+        let coordinator = Coordinator::open(&base_path.join("recovery")).unwrap();
+        let mut progress =
+            crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+        let result = PreparedMove::prepare(&coordinator, &source, &target)
+            .and_then(|prepared| prepared.execute(&mut progress));
+        let error = match result {
+            Ok(_) => {
+                // Admitted: it must then be discardable, or it is stuck forever.
+                let entry = coordinator.inventory().unwrap().entries.remove(0);
+                let operation = coordinator
+                    .try_claim(&entry.intent.id, entry.generation.unwrap())
+                    .unwrap()
+                    .unwrap();
+                let discard = MoveRetirement::open(operation)
+                    .unwrap()
+                    .retire_with(|_| Ok(()));
+                panic!("an unplannable payload was admitted; its discard returned {discard:?}");
+            }
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("Nothing was moved"), "{error}");
+        assert!(coordinator.inventory().unwrap().entries.is_empty());
+        assert!(source.exists());
+        assert_eq!(overwrite_only, target.exists());
+        assert!(private_residue(source.parent().unwrap()).is_empty());
+        assert!(private_residue(target.parent().unwrap()).is_empty());
+    }
+}

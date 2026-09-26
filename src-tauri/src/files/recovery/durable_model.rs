@@ -185,8 +185,9 @@ pub(crate) struct ReplacementState {
     /// Measured size of the currently retained private artifact, in bytes.
     /// Legacy checkpoints and every confirmed content transition are
     /// unmeasured: the retained artifact changes identity, so a previous
-    /// measurement is evidence about a different payload (ADR 0023).
-    #[serde(default)]
+    /// measurement is evidence about a different payload (ADR 0023). Omitted
+    /// while absent so builds that predate the field can still decode it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_bytes: Option<u64>,
     pub root: Option<ObjectId>,
     pub phase: Phase,

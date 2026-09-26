@@ -303,3 +303,55 @@ fn unknown_serialized_fields_are_rejected() {
         .insert("futureAuthority".into(), true.into());
     assert!(serde_json::from_value::<MoveSpec>(value).is_err());
 }
+
+/// The strict checkpoint decoder of durable-move builds that predate retention
+/// accounting and retirement (#744). Those builds cannot be changed, so a newer
+/// build must not emit fields they reject unless the record really needs them.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct PreRetirementMoveState {
+    #[serde(default)]
+    effect_revision: u64,
+    source_root: Option<ObjectId>,
+    target_root: Option<ObjectId>,
+    phase: MovePhase,
+    staged: Option<crate::files::recovery::model::StagedPayload>,
+    error: Option<String>,
+}
+
+#[test]
+fn records_without_new_move_state_stay_readable_by_pre_retirement_builds() {
+    // A checkpoint exactly as a pre-retirement build wrote it.
+    let legacy = r#"{"effect_revision":2,"source_root":null,"target_root":null,"phase":"published","staged":null,"error":null}"#;
+    let decoded: MoveState = serde_json::from_str(legacy).unwrap();
+    assert_eq!(decoded.retained_bytes, None);
+    assert!(decoded.retirement.is_none());
+    // Rewriting it without measuring or discarding keeps the legacy bytes.
+    assert_eq!(serde_json::to_string(&decoded).unwrap(), legacy);
+    for phase in [
+        MovePhase::Planned,
+        MovePhase::PublishIntent,
+        MovePhase::Published,
+        MovePhase::Restored,
+    ] {
+        let state = MoveState {
+            phase,
+            error: Some("interrupted".into()),
+            ..MoveState::default()
+        };
+        let encoded = serde_json::to_value(&state).unwrap();
+        serde_json::from_value::<PreRetirementMoveState>(encoded.clone())
+            .unwrap_or_else(|error| panic!("{phase:?}: {error}: {encoded}"));
+    }
+    // Genuinely new state is not representable there and still fails closed.
+    let measured = MoveState {
+        phase: MovePhase::Published,
+        retained_bytes: Some(0),
+        ..MoveState::default()
+    };
+    assert!(serde_json::from_value::<PreRetirementMoveState>(
+        serde_json::to_value(measured).unwrap()
+    )
+    .is_err());
+}

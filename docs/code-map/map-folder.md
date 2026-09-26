@@ -358,8 +358,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/plugins/ — plugin system + built-in plugins.
 
-- `api.ts` — plugin API surface exposed to plugins.
-- `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown.
+- `api.ts` — plugin API surface exposed to plugins; the context reports a command or menu action failure under the plugin's name and logs it (#782).
+- `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown. Startup activations run together so one hung plugin blocks no other; contributions are placed by list position, not completion order (#782).
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.

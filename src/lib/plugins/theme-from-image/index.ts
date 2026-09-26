@@ -23,24 +23,22 @@ import { writeThemeFile } from "$lib/api/config";
 import { themeStore } from "$lib/state/theme.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 
+/** A failure escapes to the plugin context, which reports it under this
+ *  plugin's name. */
 async function createThemeFrom(ctx: PluginContext, imagePath: string): Promise<void> {
   const name = basename(imagePath);
-  try {
-    const colors = await extractPalette(imagePath, 6);
-    const id = themeIdFromName(name);
-    const theme = buildTheme(colors, id, name.replace(/\.[^.]+$/, ""));
-    if (!theme) {
-      ctx.toast.error("Could not derive a palette from this image");
-      return;
-    }
-    await writeThemeFile(`${id}.css`, theme.css);
-    // Re-inject user theme styles and rediscover, then switch to it.
-    await themeStore.initTheme();
-    themeStore.setTheme(id);
-    ctx.toast.show(`Theme "${theme.name}" created and applied`);
-  } catch (err) {
-    ctx.toast.error(`Theme generation failed: ${err}`);
+  const colors = await extractPalette(imagePath, 6);
+  const id = themeIdFromName(name);
+  const theme = buildTheme(colors, id, name.replace(/\.[^.]+$/, ""));
+  if (!theme) {
+    ctx.toast.error("Could not derive a palette from this image");
+    return;
   }
+  await writeThemeFile(`${id}.css`, theme.css);
+  // Re-inject user theme styles and rediscover, then switch to it.
+  await themeStore.initTheme();
+  themeStore.setTheme(id);
+  ctx.toast.show(`Theme "${theme.name}" created and applied`);
 }
 
 export const themeFromImagePlugin: Plugin = {

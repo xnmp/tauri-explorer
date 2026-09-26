@@ -122,7 +122,7 @@ export const nanoBananaPlugin: Plugin = {
       when: (entries) => selectedImage(entries) !== null,
       handler: (entries) => {
         const image = selectedImage(entries);
-        if (image) void openEditor(image.path);
+        if (image) return openEditor(image.path);
       },
     });
 
@@ -136,7 +136,7 @@ export const nanoBananaPlugin: Plugin = {
       category: "plugins",
       handler: () => {
         const image = selectedImage(ctx.workspace.getSelection());
-        if (image) void openEditor(image.path);
+        if (image) return openEditor(image.path);
         else ctx.toast.show("Select an image first", "info");
       },
     });

@@ -1071,6 +1071,59 @@ import { openFile } from "$lib/api/open";
     border-left: none;
   }
 
+  /* A vertical dock is wide and short: its name, type and metadata share one
+     row, as in a bottom details pane, so the content keeps the dock's height.
+     Stacked, that chrome alone exceeded the 120px minimum height and left no
+     room for content (#792). */
+  .preview-pane.vertical:not(.fullscreen) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      "header info"
+      "actions actions"
+      "content content";
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-header {
+    grid-area: header;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px 12px;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {
+    align-self: center;
+    flex-shrink: 0;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .diff-actions {
+    grid-area: actions;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-content {
+    grid-area: content;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info {
+    grid-area: info;
+    flex-direction: row;
+    border-top: none;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
+    padding: 8px 12px;
+    border-bottom: none;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-empty {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+  }
+
   .preview-pane.dock-bottom {
     border-top: 1px solid var(--divider);
   }
@@ -1427,6 +1480,7 @@ import { openFile } from "$lib/api/open";
     color: var(--text-secondary);
     flex: 1;
     overflow-wrap: break-word;
+    container: preview-markdown / inline-size;
   }
 
   .preview-markdown :global(h1),
@@ -1473,6 +1527,15 @@ import { openFile } from "$lib/api/open";
     grid-template-columns: minmax(76px, 0.38fr) minmax(0, 1fr);
     gap: 8px;
     padding: 3px 0;
+  }
+
+  /* In a narrow pane the key column would squeeze each value to a few
+     characters per line; stack the key above its value instead (#792). */
+  @container preview-markdown (max-width: 260px) {
+    .preview-markdown :global(.md-property) {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
   }
 
   .preview-markdown :global(.md-property + .md-property) {

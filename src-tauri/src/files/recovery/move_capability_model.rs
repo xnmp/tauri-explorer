@@ -153,6 +153,13 @@ impl Progress {
     }
 }
 
+/// Errnos that, from an exactly unchanged probe namespace, mean the volume lacks
+/// exclusive rename. macOS `renameatx_np(RENAME_EXCL)` reports `ENOTSUP` (45);
+/// its distinct `EOPNOTSUPP` (102) is the socket error. Linux defines both as 95.
+pub(super) fn unsupported_exclusive_rename(errno: i32) -> bool {
+    [libc::ENOSYS, libc::ENOTSUP, libc::EOPNOTSUPP, libc::EINVAL].contains(&errno)
+}
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
@@ -248,3 +255,7 @@ pub(super) fn validate(
     }
     Ok(())
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../../test_support/recovery_move_capability_model.rs"]
+mod tests;

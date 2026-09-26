@@ -1639,6 +1639,9 @@ mod tests {
             cfg.set_str("user.name", "Test User").unwrap();
             cfg.set_str("user.email", "test@example.com").unwrap();
             cfg.set_str("commit.gpgsign", "false").unwrap();
+            // Contents are asserted byte for byte; a machine-wide
+            // core.autocrlf=true (the Windows runner default) must not apply.
+            cfg.set_bool("core.autocrlf", false).unwrap();
         }
         dir
     }

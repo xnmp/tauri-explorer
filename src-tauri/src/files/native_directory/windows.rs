@@ -610,6 +610,68 @@ mod tests {
 
     const HEADER_BYTES: usize = offset_of!(FILE_NAMES_INFORMATION, FileName);
 
+    /// TEMPORARY (#772): `names` fails with ERROR_ACCESS_DENIED on the Windows
+    /// runner. Record which reopen inputs Windows accepts before changing it.
+    #[test]
+    fn reopen_access_diagnostics() {
+        let root = tempfile::tempdir().unwrap();
+        let walked = Directory::open(root.path()).unwrap();
+        let by_path = OpenOptions::new()
+            .read(true)
+            .access_mode(DIRECTORY_ACCESS.0)
+            .share_mode(SHARE_ALL.0)
+            .custom_flags((FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT).0)
+            .open(root.path())
+            .unwrap();
+        let listing = (FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE).0;
+        let variants = [
+            (
+                "current",
+                listing,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            ),
+            ("no-reparse-flag", listing, FILE_FLAG_BACKUP_SEMANTICS),
+            (
+                "list-only",
+                FILE_LIST_DIRECTORY.0,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            ),
+            (
+                "attributes-only",
+                FILE_READ_ATTRIBUTES.0,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            ),
+            (
+                "generic-read",
+                FILE_GENERIC_READ.0,
+                FILE_FLAG_BACKUP_SEMANTICS,
+            ),
+            (
+                "same-as-open",
+                DIRECTORY_ACCESS.0,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            ),
+        ];
+        for (label, file) in [("walked", &walked.file), ("by-path", &by_path)] {
+            for (name, access, flags) in variants {
+                // SAFETY: the source handle outlives the call; a returned
+                // handle is transferred to a File that closes it.
+                let result = unsafe { ReOpenFile(file_handle(file), access, SHARE_ALL, flags) }
+                    .map(|handle| drop(unsafe { File::from_raw_handle(handle.0) }));
+                eprintln!(
+                    "REOPEN-DIAG {label} {name}: {:?}",
+                    result.map_err(|e| e.code())
+                );
+            }
+        }
+        let by_path_directory = Directory { file: by_path };
+        eprintln!(
+            "REOPEN-DIAG names walked={:?} by-path={:?}",
+            walked.names(4).map_err(|e| e.raw_os_error()),
+            by_path_directory.names(4).map_err(|e| e.raw_os_error()),
+        );
+    }
+
     #[test]
     fn parser_preserves_wtf16_names() {
         let record = record(0, &[0xd800, b'x' as u16]);

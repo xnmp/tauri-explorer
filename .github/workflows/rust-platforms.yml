@@ -39,6 +39,20 @@ jobs:
         shell: bash
         run: mkdir -p build
 
+      # Handle walks (`Directory::open`) require a canonical path, and
+      # production callers canonicalize first. Watchers also report canonical
+      # paths. The default temp directories are not canonical: macOS's lives
+      # under the /var -> /private/var symlink, and the Windows runner's uses
+      # the 8.3 short name RUNNER~1. Give tests a canonical root instead.
+      - name: Use a canonical temporary directory
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            printf 'TMP=%s\nTEMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          else
+            printf 'TMPDIR=%s\n' "$(cd "$RUNNER_TEMP" && pwd -P)" >> "$GITHUB_ENV"
+          fi
+
       - name: Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 

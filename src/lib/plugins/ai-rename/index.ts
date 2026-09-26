@@ -183,7 +183,7 @@ export const aiRenamePlugin: Plugin = {
       when: (entries) => selectedFile(entries) !== null,
       handler: (entries) => {
         const file = selectedFile(entries);
-        if (file) void openPicker(file);
+        if (file) return openPicker(file);
       },
     });
 
@@ -197,7 +197,7 @@ export const aiRenamePlugin: Plugin = {
       category: "plugins",
       handler: () => {
         const file = selectedFile(ctx.workspace.getSelection());
-        if (file) void openPicker(file);
+        if (file) return openPicker(file);
         else ctx.toast.show("Select a single file first", "info");
       },
     });

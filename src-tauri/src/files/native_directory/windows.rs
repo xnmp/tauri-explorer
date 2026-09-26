@@ -199,9 +199,10 @@ impl Directory {
 
     /// Renames the exact opened source; the destination can never replace an entry.
     /// `FILE_RENAME_INFORMATION::RootDirectory` keeps destination lookup
-    /// handle-relative. This goes to the native call directly: the Win32
-    /// `SetFileInformationByHandle(FileRenameInfo)` wrapper rejects a relative
-    /// name with a root directory as `ERROR_INVALID_PARAMETER`.
+    /// handle-relative. This goes to the native call directly: on the
+    /// windows-latest runner, the Win32 `SetFileInformationByHandle(FileRenameInfo)`
+    /// wrapper failed a relative name with a root directory as
+    /// `ERROR_INVALID_PARAMETER` (#772).
     /// https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
     pub(crate) fn rename_to(
         &self,
@@ -225,25 +226,24 @@ impl Directory {
             .checked_add(name_bytes)
             .ok_or_else(|| invalid_input("Filesystem name is too long"))?;
         let storage_bytes = information_bytes.max(size_of::<FILE_RENAME_INFORMATION>());
+        let name_length =
+            u32::try_from(name_bytes).map_err(|_| invalid_input("Filesystem name is too long"))?;
+        let storage_length = u32::try_from(storage_bytes)
+            .map_err(|_| invalid_input("Filesystem name is too long"))?;
         let mut storage = aligned_storage(storage_bytes);
         let information = storage.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
         let mut status_block = IO_STATUS_BLOCK::default();
-        // SAFETY: storage is aligned, zeroed, and large enough for the fixed fields
-        // plus the complete UTF-16 name passed to NtSetInformationFile. The source
-        // handle is synchronous, so the stack status block outlives the call.
+        // SAFETY: storage is aligned, zero-initialized, and large enough for the
+        // fixed fields plus the complete UTF-16 name. Each field is written in
+        // place, so the union's unused bytes and the padding stay zero. The
+        // source handle is synchronous, so the stack status block outlives the
+        // call.
         let status = unsafe {
-            ptr::write(
-                information,
-                FILE_RENAME_INFORMATION {
-                    Anonymous: FILE_RENAME_INFORMATION_0 {
-                        ReplaceIfExists: false,
-                    },
-                    RootDirectory: file_handle(&target_directory.file),
-                    FileNameLength: u32::try_from(name_bytes)
-                        .map_err(|_| invalid_input("Filesystem name is too long"))?,
-                    FileName: [0],
-                },
-            );
+            ptr::addr_of_mut!((*information).Anonymous)
+                .write(FILE_RENAME_INFORMATION_0 { Flags: 0 });
+            ptr::addr_of_mut!((*information).RootDirectory)
+                .write(file_handle(&target_directory.file));
+            ptr::addr_of_mut!((*information).FileNameLength).write(name_length);
             ptr::copy_nonoverlapping(
                 target.as_ptr(),
                 ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
@@ -253,8 +253,7 @@ impl Directory {
                 file_handle(&source),
                 &mut status_block,
                 information.cast(),
-                u32::try_from(storage_bytes)
-                    .map_err(|_| invalid_input("Filesystem name is too long"))?,
+                storage_length,
                 FileRenameInformation,
             )
         };

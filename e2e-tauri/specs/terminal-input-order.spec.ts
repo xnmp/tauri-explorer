@@ -74,17 +74,30 @@ async function catReceives(
 
 function expectInOrder(written: string, expected: string): void {
   if (written === expected) return;
-  const index = [...expected].findIndex((character, position) => written[position] !== character);
+  // The first differing offset; a prefix match means one side ran long.
+  const length = Math.min(written.length, expected.length);
+  const found = Array.from({ length }, (_, position) => position).find(
+    (position) => written[position] !== expected[position],
+  );
+  const index = found ?? length;
   throw new Error(
-    `typed input reached the PTY out of order at offset ${index}: ` +
+    `typed input reached the PTY out of order at offset ${index} ` +
+      `(wrote ${written.length} of ${expected.length} characters): ` +
       `expected ${JSON.stringify(expected.slice(Math.max(0, index - 8), index + 8))}, ` +
       `got ${JSON.stringify(written.slice(Math.max(0, index - 8), index + 8))}`,
   );
 }
 
 (process.platform !== "win32" ? describe : describe.skip)("terminal input order (#709)", () => {
+  let input: TerminalInput;
+
+  // Shell startup gets its own mocha budget: on CI it regularly takes most of
+  // a minute, and must not be charged to the ordering cases.
+  it("opens a ready shell", async () => {
+    input = await openTerminal();
+  });
+
   it("delivers a WebDriver keystroke burst to the shell in order", async () => {
-    const input = await openTerminal();
     const payload = burstPayload(40, 72);
     // One Send Keys payload: the driver emits keys faster than a write round
     // trip, which is the burst a fast typist, key repeat or an input method
@@ -94,7 +107,6 @@ function expectInOrder(written: string, expected: string): void {
   });
 
   it("delivers xterm data emitted in a single task in order", async () => {
-    const input = await openTerminal();
     const payload = burstPayload(40, 72);
     // Every chunk is emitted before the first write can complete, so each one
     // is in flight at once. This is the ordering contract without depending

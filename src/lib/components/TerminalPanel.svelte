@@ -38,6 +38,7 @@
   import { createTerminalSession } from "$lib/state/terminal-session";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { logFrontendError } from "$lib/api/crash";
 
   let panelEl: HTMLDivElement | undefined = $state();
   let termEl: HTMLDivElement | undefined = $state();
@@ -165,7 +166,12 @@
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== path) explorer.navigateTo(path);
       },
-      writeError: (err) => console.error("[terminal] input write failed:", err),
+      // Mirrored into the backend log: a release build has no console, and
+      // an I/O failure writing to the PTY must leave a trace.
+      writeError: (err) => {
+        console.error("[terminal] input write failed:", err);
+        void logFrontendError(`terminal input write failed: ${String(err)}`).catch(() => {});
+      },
     },
   );
 

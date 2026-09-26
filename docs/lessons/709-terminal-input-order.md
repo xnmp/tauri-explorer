@@ -22,8 +22,9 @@ input never reaches a restarted shell. A stalled PTY now buffers in the page
 instead of occupying one backend thread per keystroke.
 
 **Evidence.**
-- `e2e-tauri/specs/terminal-input-order.spec.ts` types 2,920 distinct
-  characters into `cat` and compares the written file exactly. Its
+- `e2e-tauri/specs/terminal-input-order.spec.ts` types a 40×72 burst into
+  `cat` and compares the written file exactly. Each line is the 36-symbol
+  alphabet at a different rotation, so any adjacent transposition shows. Its
   single-task case dispatches every xterm input event before the first write
   can finish. Before the fix it failed 3 of 3 runs with adjacent transpositions
   (`bacdefgh`, `acb`). The WebDriver-paced case showed one clear local transposition (`0123` → `0132`) in 13 runs; CI load makes it common.

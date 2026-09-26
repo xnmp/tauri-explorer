@@ -520,8 +520,11 @@ fn ensure_zsh_shim(cache_root: &std::path::Path) -> std::io::Result<std::path::P
         if std::fs::read(&target).is_ok_and(|current| current == body.as_bytes()) {
             continue;
         }
+        // tempfile creates 0600 files; startup files stay world-readable like
+        // the ones they replace, for a shell that inherits ZDOTDIR via `su`.
         let mut staged = tempfile::Builder::new()
             .prefix(".staged-")
+            .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o644))
             .tempfile_in(&shim)?;
         staged.write_all(body.as_bytes())?;
         staged.persist(&target).map_err(|error| error.error)?;
@@ -1590,11 +1593,22 @@ mod tests {
             })
         };
 
+        // Read until this reader has overlapped many repairs of the edited
+        // file, not for a fixed count: with few CPUs a fixed pass count can
+        // finish before any installer has repaired anything.
+        const REPAIRS: usize = 100;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         let mut unreadable = Vec::new();
-        for _ in 0..2_000 {
+        let (mut repairs, mut saw_edit) = (0, false);
+        while repairs < REPAIRS && std::time::Instant::now() < deadline {
             for (name, body) in zsh_shim_files() {
                 match std::fs::read_to_string(shim.join(name)) {
-                    Ok(read) if read == body || (name == ".zshrc" && read == EDITED) => {}
+                    Ok(read) if read == body => {
+                        if name == ".zshrc" && std::mem::take(&mut saw_edit) {
+                            repairs += 1;
+                        }
+                    }
+                    Ok(read) if name == ".zshrc" && read == EDITED => saw_edit = true,
                     Ok(read) => {
                         unreadable.push(format!("{name}: {} of {} bytes", read.len(), body.len()))
                     }
@@ -1610,6 +1624,10 @@ mod tests {
             .collect();
 
         assert!(
+            repairs >= REPAIRS,
+            "the reader overlapped only {repairs} repairs"
+        );
+        assert!(
             unreadable.is_empty(),
             "{} startup-file reads failed, e.g. {:?}",
             unreadable.len(),
@@ -1622,11 +1640,24 @@ mod tests {
             &install_errors[..install_errors.len().min(5)]
         );
         assert_eq!(ensure_zsh_shim(root.path()).unwrap(), shim);
+        let mode = |path: &std::path::Path| {
+            std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(path).unwrap().permissions())
+        };
+        let plain = root.path().join("plain");
+        std::fs::write(&plain, "").unwrap();
+        let reference = mode(&plain);
         for (name, body) in zsh_shim_files() {
             assert_eq!(
                 std::fs::read_to_string(shim.join(name)).unwrap(),
                 body,
                 "{name}"
+            );
+            // Readable by group and others exactly as a plain `fs::write`
+            // file is under this umask.
+            assert_eq!(
+                mode(&shim.join(name)) & 0o044,
+                reference & 0o044,
+                "{name} mode"
             );
         }
         let mut names: Vec<_> = std::fs::read_dir(&shim)

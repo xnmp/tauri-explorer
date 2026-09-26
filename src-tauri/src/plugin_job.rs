@@ -301,7 +301,13 @@ mod tests {
                 tokio::task::spawn_blocking(move || {
                     let mut staging = StagedOutput::new(&worker_final)?;
                     std::io::Write::write_all(staging.file_mut(), b"late").unwrap();
-                    std::thread::sleep(std::time::Duration::from_millis(40));
+                    // Finish only after the timeout has cancelled the job. A fixed
+                    // sleep raced the timer on loaded runners: when the runtime
+                    // polled late, the finished job won and the test saw Ok.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                    while worker_control.check().is_ok() && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
                     staging.commit(&worker_final, &worker_control)?;
                     Ok(worker_final.to_string_lossy().into_owned())
                 })

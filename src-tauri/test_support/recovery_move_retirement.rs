@@ -967,3 +967,89 @@ fn restored_rootless_move_is_reclaimed_after_the_restored_entry_is_edited() {
     assert_eq!(fs::read(&f.source).unwrap(), b"edited after undo");
     assert!(!f.target.exists());
 }
+
+/// Runs one real move and its discard after the parent prepared every fixture
+/// directory, so only recovery-owned creation sees the restrictive umask.
+#[test]
+#[ignore = "spawned by the restrictive umask test"]
+fn subprocess_restrictive_umask() {
+    let Ok(base) = std::env::var("EXPLORER_MOVE_UMASK_BASE") else {
+        return;
+    };
+    let base = PathBuf::from(base);
+    let shared = PathBuf::from(std::env::var("EXPLORER_MOVE_UMASK_SHARED").unwrap());
+    let run =
+        |coordinator: &Arc<Coordinator>, source: &std::path::Path, target: &std::path::Path| {
+            let mut progress =
+                crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+            PreparedMove::prepare(coordinator, source, target)
+                .unwrap()
+                .execute(&mut progress)
+                .unwrap();
+            let entry = coordinator.inventory().unwrap().entries.remove(0);
+            let snapshot = service::inspect(coordinator, &entry.intent.id).unwrap();
+            let reply = service::resolve(
+                coordinator,
+                &entry.intent.id,
+                snapshot.items[0].generation,
+                RecoveryChoice::Discard,
+            )
+            .unwrap();
+            assert!(reply.error.is_none(), "{:?}", reply.error);
+            assert!(coordinator.inventory().unwrap().entries.is_empty());
+        };
+    // Existing storage first: probes, move roots, manifests and copies are
+    // created on the user volumes while the umask removes owner access.
+    let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+    // SAFETY: umask only replaces this child's creation mask.
+    unsafe { libc::umask(0o277) };
+    run(&coordinator, &shared.join("source"), &base.join("target"));
+    run(
+        &coordinator,
+        &base.join("renamed"),
+        &base.join("rename-target"),
+    );
+    // New recovery storage is itself created under the same mask.
+    let fresh = Coordinator::open(&base.join("fresh-recovery")).unwrap();
+    run(&fresh, &shared.join("second"), &base.join("second-target"));
+}
+
+#[test]
+fn restrictive_umask_cannot_break_probes_roots_or_retirement() {
+    use std::process::Command;
+    let base = tempfile::tempdir().unwrap();
+    let shared = tempfile::tempdir_in("/dev/shm").unwrap();
+    let base_path = fs::canonicalize(base.path()).unwrap();
+    let shared_path = fs::canonicalize(shared.path()).unwrap();
+    fs::create_dir(shared_path.join("source")).unwrap();
+    fs::write(shared_path.join("source/entry"), MOVED).unwrap();
+    fs::write(base_path.join("target"), OLD).unwrap();
+    fs::write(base_path.join("renamed"), MOVED).unwrap();
+    fs::write(shared_path.join("second"), MOVED).unwrap();
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "files::recovery::move_retirement::tests::subprocess_restrictive_umask",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("EXPLORER_MOVE_UMASK_BASE", &base_path)
+        .env("EXPLORER_MOVE_UMASK_SHARED", &shared_path)
+        .status()
+        .unwrap();
+    assert!(status.success(), "restrictive umask move failed: {status}");
+    assert_eq!(fs::read(base_path.join("target/entry")).unwrap(), MOVED);
+    assert_eq!(fs::read(base_path.join("rename-target")).unwrap(), MOVED);
+    assert_eq!(fs::read(base_path.join("second-target")).unwrap(), MOVED);
+    for parent in [&base_path, &shared_path] {
+        let residue: Vec<_> = fs::read_dir(parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| {
+                name.to_string_lossy()
+                    .starts_with(".tauri-explorer-recovery-")
+            })
+            .collect();
+        assert!(residue.is_empty(), "{residue:?}");
+    }
+}

@@ -491,6 +491,44 @@ fn zsh_shim_files() -> [(&'static str, String); 4] {
     ]
 }
 
+/// Installs the zsh shim under `cache_root` and returns its directory.
+///
+/// Spawns overlap, and a zsh can be reading these files while another spawn
+/// installs them, so the directory is never removed (#779). Its name carries
+/// a digest of the contents, so builds with different shims never share one.
+/// A missing or edited file is replaced by renaming a complete staged file
+/// over it: a reader sees the old file or the new one, never a partial one.
+#[cfg(unix)]
+fn ensure_zsh_shim(cache_root: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    use sha2::{Digest, Sha256};
+
+    let files = zsh_shim_files();
+    let mut hasher = Sha256::new();
+    for (name, body) in &files {
+        hasher.update(name.as_bytes());
+        hasher.update([0]);
+        hasher.update(body.as_bytes());
+        hasher.update([0]);
+    }
+    let digest = hex::encode(hasher.finalize());
+    let shim = cache_root
+        .join("tauri-explorer")
+        .join(format!("zsh-shim-{}", &digest[..16]));
+    std::fs::create_dir_all(&shim)?;
+    for (name, body) in files {
+        let target = shim.join(name);
+        if std::fs::read(&target).is_ok_and(|current| current == body.as_bytes()) {
+            continue;
+        }
+        let mut staged = tempfile::Builder::new()
+            .prefix(".staged-")
+            .tempfile_in(&shim)?;
+        staged.write_all(body.as_bytes())?;
+        staged.persist(&target).map_err(|error| error.error)?;
+    }
+    Ok(shim)
+}
+
 /// Best-effort: install the zsh OSC 7 shim and point the shell at it. Any
 /// failure degrades gracefully to spawning without cwd reporting.
 #[cfg(unix)]
@@ -498,19 +536,13 @@ fn install_zsh_shim(cmd: &mut CommandBuilder) {
     let Some(cache) = dirs::cache_dir() else {
         return;
     };
-    let shim = cache.join("tauri-explorer").join("zsh-shim");
-    // Recreate fresh each spawn so a stale/edited shim can't linger.
-    let _ = std::fs::remove_dir_all(&shim);
-    if let Err(e) = std::fs::create_dir_all(&shim) {
-        log::warn!("zsh OSC 7 shim: create_dir_all failed: {e}");
-        return;
-    }
-    for (name, body) in zsh_shim_files() {
-        if let Err(e) = std::fs::write(shim.join(name), body) {
-            log::warn!("zsh OSC 7 shim: write {name} failed: {e}");
+    let shim = match ensure_zsh_shim(&cache) {
+        Ok(shim) => shim,
+        Err(e) => {
+            log::warn!("zsh OSC 7 shim: install failed: {e}");
             return;
         }
-    }
+    };
     if let Ok(orig) = std::env::var("ZDOTDIR") {
         cmd.env("_TE_ORIG_ZDOTDIR", orig);
     }
@@ -1514,6 +1546,99 @@ mod tests {
         let chunk = format!("\x1b]7;file://host/{big}{}", osc7("/after", "\x07"));
         assert_eq!(s.push(&chunk), vec!["/after"]);
         assert!(s.carry.is_empty());
+    }
+
+    /// Terminal spawns overlap (several panels, restored sessions, a second
+    /// window, or this test suite beside the installed app). A zsh starting
+    /// during another spawn's install must still find every startup file
+    /// whole (#779). An editor keeps replacing `.zshrc` so the installers
+    /// also repair it concurrently.
+    #[test]
+    #[cfg(unix)]
+    fn concurrent_shim_installs_never_hide_a_startup_file() {
+        const EDITED: &str = "# edited outside the app\n";
+        let root = tempfile::tempdir().unwrap();
+        let shim = ensure_zsh_shim(root.path()).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let installers: Vec<_> = (0..4)
+            .map(|_| {
+                let root = root.path().to_path_buf();
+                let stop = Arc::clone(&stop);
+                let expected = shim.clone();
+                std::thread::spawn(move || {
+                    let mut errors = Vec::new();
+                    while !stop.load(Ordering::Relaxed) {
+                        match ensure_zsh_shim(&root) {
+                            Ok(installed) if installed == expected => {}
+                            Ok(other) => errors.push(format!("installed at {other:?}")),
+                            Err(error) => errors.push(error.to_string()),
+                        }
+                    }
+                    errors
+                })
+            })
+            .collect();
+        let editor = {
+            let shim = shim.clone();
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let staged = shim.parent().unwrap().join("edited-zshrc");
+                while !stop.load(Ordering::Relaxed) {
+                    std::fs::write(&staged, EDITED).unwrap();
+                    std::fs::rename(&staged, shim.join(".zshrc")).unwrap();
+                }
+            })
+        };
+
+        let mut unreadable = Vec::new();
+        for _ in 0..2_000 {
+            for (name, body) in zsh_shim_files() {
+                match std::fs::read_to_string(shim.join(name)) {
+                    Ok(read) if read == body || (name == ".zshrc" && read == EDITED) => {}
+                    Ok(read) => {
+                        unreadable.push(format!("{name}: {} of {} bytes", read.len(), body.len()))
+                    }
+                    Err(error) => unreadable.push(format!("{name}: {error}")),
+                }
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        editor.join().unwrap();
+        let install_errors: Vec<String> = installers
+            .into_iter()
+            .flat_map(|installer| installer.join().unwrap())
+            .collect();
+
+        assert!(
+            unreadable.is_empty(),
+            "{} startup-file reads failed, e.g. {:?}",
+            unreadable.len(),
+            &unreadable[..unreadable.len().min(5)]
+        );
+        assert!(
+            install_errors.is_empty(),
+            "{} installs failed, e.g. {:?}",
+            install_errors.len(),
+            &install_errors[..install_errors.len().min(5)]
+        );
+        assert_eq!(ensure_zsh_shim(root.path()).unwrap(), shim);
+        for (name, body) in zsh_shim_files() {
+            assert_eq!(
+                std::fs::read_to_string(shim.join(name)).unwrap(),
+                body,
+                "{name}"
+            );
+        }
+        let mut names: Vec<_> = std::fs::read_dir(&shim)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [".zlogin", ".zprofile", ".zshenv", ".zshrc"],
+            "the shim holds only its startup files"
+        );
     }
 
     // ─── zsh shim contents ───────────────────────────────────────────────────

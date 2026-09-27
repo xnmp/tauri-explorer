@@ -7,9 +7,9 @@
  */
 import { browser, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 interface FileOperationResult {
   token: string;
@@ -100,7 +100,10 @@ linuxDescribe(
         throw new Error("cross-device cleanup acceptance requires /dev/shm");
       }
 
-      sourceParent = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-move-source-"));
+      sourceParent = createNativeFixtureDirectory("tauri-explorer-move-source-");
+      // native-fixture-lifetime-allow: must live on tmpfs (/dev/shm), a
+      // different device from sourceParent, to exercise cross-device move
+      // recovery; the shared cleanup root cannot guarantee that placement.
       destinationParent = fs.mkdtempSync("/dev/shm/tauri-explorer-move-destination-");
       sourceTree = path.join(sourceParent, treeName);
       destinationTree = path.join(destinationParent, treeName);
@@ -121,12 +124,18 @@ linuxDescribe(
     });
 
     after(() => {
-      // Restore traversal/write permission before deleting only these fixtures,
-      // including when an assertion or native operation failed.
+      // Restore traversal/write permission before touching these fixtures,
+      // including when an assertion or native operation failed: sourceTree was
+      // deliberately chmod'd 0o555, and a later recursive removal (of either
+      // destinationParent here or the shared cleanup root, for sourceParent)
+      // cannot unlink its children without write permission restored first.
       for (const root of [sourceParent, destinationParent]) {
         if (root) makeFixtureRemovable(root);
       }
-      if (sourceParent) fs.rmSync(sourceParent, { recursive: true, force: true });
+      // native-fixture-lifetime-allow: destinationParent must live on tmpfs
+      // (/dev/shm), so it falls outside the shared cleanup root and is removed
+      // directly. This whole describe is Linux-only, so this never races a
+      // live Windows process (#761).
       if (destinationParent) fs.rmSync(destinationParent, { recursive: true, force: true });
     });
 
@@ -193,7 +202,7 @@ linuxDescribe(
 
     it("moves a multi-item selection in one session and undoes the whole prefix", async function () {
       this.timeout(90_000);
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-ordered-move-"));
+      const root = createNativeFixtureDirectory("explorer-ordered-move-");
       const origin = path.join(root, "origin");
       const destination = path.join(root, "destination");
       const files = {
@@ -206,43 +215,39 @@ linuxDescribe(
       for (const [name, value] of Object.entries(files)) {
         fs.writeFileSync(path.join(origin, name), value);
       }
-      try {
-        await navigateTo(origin);
-        for (const name of Object.keys(files)) await waitForListed(name, true);
+      await navigateTo(origin);
+      for (const name of Object.keys(files)) await waitForListed(name, true);
 
-        const cut = await dispatchOperation({
-          op: "cut",
-          paths: Object.keys(files).map((name) => path.join(origin, name)),
-          token: crypto.randomUUID(),
-        });
-        expect(cut.error).toBeNull();
+      const cut = await dispatchOperation({
+        op: "cut",
+        paths: Object.keys(files).map((name) => path.join(origin, name)),
+        token: crypto.randomUUID(),
+      });
+      expect(cut.error).toBeNull();
 
-        await navigateTo(destination);
-        expect((await dispatchOperation({ op: "paste", token: crypto.randomUUID() })).error).toBeNull();
+      await navigateTo(destination);
+      expect((await dispatchOperation({ op: "paste", token: crypto.randomUUID() })).error).toBeNull();
 
-        // Every item arrived and every source name was vacated: a move, not a copy.
-        assertTree(destination, files);
-        expect(fs.readdirSync(origin)).toEqual([]);
-        for (const name of Object.keys(files)) await waitForListed(name, true);
+      // Every item arrived and every source name was vacated: a move, not a copy.
+      assertTree(destination, files);
+      expect(fs.readdirSync(origin)).toEqual([]);
+      for (const name of Object.keys(files)) await waitForListed(name, true);
 
-        await browser.saveScreenshot(
-          path.join(process.cwd(), "screenshots/feat/685-durable-move-recovery/ordered-move-session.png"),
-        );
+      await browser.saveScreenshot(
+        path.join(process.cwd(), "screenshots/feat/685-durable-move-recovery/ordered-move-session.png"),
+      );
 
-        // The whole session is one native history entry, so a single Undo
-        // returns the complete prefix rather than one item at a time.
-        expect((await dispatchOperation({ op: "undo", token: crypto.randomUUID() })).error).toBeNull();
-        assertTree(origin, files);
-        expect(fs.readdirSync(destination)).toEqual([]);
-        for (const name of Object.keys(files)) await waitForListed(name, false);
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
-      }
+      // The whole session is one native history entry, so a single Undo
+      // returns the complete prefix rather than one item at a time.
+      expect((await dispatchOperation({ op: "undo", token: crypto.randomUUID() })).error).toBeNull();
+      assertTree(origin, files);
+      expect(fs.readdirSync(destination)).toEqual([]);
+      for (const name of Object.keys(files)) await waitForListed(name, false);
     });
 
     it("moves a tree through admitted cut/paste and repeats native Undo/Redo", async function () {
       this.timeout(60_000);
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-admitted-move-"));
+      const root = createNativeFixtureDirectory("explorer-admitted-move-");
       const origin = path.join(root, "origin");
       const destination = path.join(root, "destination");
       const name = "moved-tree";
@@ -252,29 +257,25 @@ linuxDescribe(
       fs.mkdirSync(source, { recursive: true });
       fs.mkdirSync(destination);
       for (const [file, contents] of Object.entries(files)) fs.writeFileSync(path.join(source, file), contents);
-      try {
-        await navigateTo(origin);
-        await waitForListed(name, true);
-        expect((await dispatchOperation({ op: "cut", path: source, token: crypto.randomUUID() })).error).toBeNull();
-        await navigateTo(destination);
-        expect((await dispatchOperation({ op: "paste", token: crypto.randomUUID() })).error).toBeNull();
+      await navigateTo(origin);
+      await waitForListed(name, true);
+      expect((await dispatchOperation({ op: "cut", path: source, token: crypto.randomUUID() })).error).toBeNull();
+      await navigateTo(destination);
+      expect((await dispatchOperation({ op: "paste", token: crypto.randomUUID() })).error).toBeNull();
+      assertTree(target, files);
+      expect(fs.existsSync(source)).toBe(false);
+      await waitForListed(name, true);
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect((await dispatchOperation({ op: "undo", token: crypto.randomUUID() })).error).toBeNull();
+        assertTree(source, files);
+        expect(fs.existsSync(target)).toBe(false);
+        await waitForListed(name, false);
+        expect((await dispatchOperation({ op: "redo", token: crypto.randomUUID() })).error).toBeNull();
         assertTree(target, files);
         expect(fs.existsSync(source)).toBe(false);
         await waitForListed(name, true);
-        for (let cycle = 0; cycle < 2; cycle++) {
-          expect((await dispatchOperation({ op: "undo", token: crypto.randomUUID() })).error).toBeNull();
-          assertTree(source, files);
-          expect(fs.existsSync(target)).toBe(false);
-          await waitForListed(name, false);
-          expect((await dispatchOperation({ op: "redo", token: crypto.randomUUID() })).error).toBeNull();
-          assertTree(target, files);
-          expect(fs.existsSync(source)).toBe(false);
-          await waitForListed(name, true);
-        }
-        await browser.saveScreenshot(path.join(process.cwd(), "screenshots/refactor/repo-health-cleanup/native-admitted-move-redone.png"));
-      } finally {
-        fs.rmSync(root, { recursive: true, force: true });
       }
+      await browser.saveScreenshot(path.join(process.cwd(), "screenshots/refactor/repo-health-cleanup/native-admitted-move-redone.png"));
     });
   },
 );

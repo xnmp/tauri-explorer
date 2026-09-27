@@ -10,8 +10,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { domTexts, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-config-"));
+const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-config-");
 const configDir = process.platform === "win32"
   ? path.join(process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming"), "tauri-explorer")
   : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"), "tauri-explorer");
@@ -59,7 +60,6 @@ describe("live external config edits", () => {
   after(() => {
     restore(bookmarksPath, savedBookmarks);
     restore(folderViewsPath, savedFolderViews);
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("shows a bookmark written outside the running app without a restart", async () => {

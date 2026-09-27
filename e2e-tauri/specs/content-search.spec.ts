@@ -8,11 +8,11 @@
  */
 import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domText } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-search-"));
+const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-search-");
 
 describe("content search against the real backend", () => {
   before(() => {
@@ -26,10 +26,6 @@ describe("content search against the real backend", () => {
       path.join(scratchDir, "many.txt"),
       Array.from({ length: 8 }, (_, i) => `needle number ${i}`).join("\n") + "\n",
     );
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("streams real matches from disk, recursing subdirectories", async () => {

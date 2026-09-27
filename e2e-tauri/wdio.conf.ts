@@ -122,6 +122,13 @@ const processCleanupHooks = createNativeProcessCleanupHooks({
   environment: process.env,
   stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
   stop: stopProcesses,
+  // Several specs need their fixtures on the real home-directory filesystem
+  // (e.g. Linux trash requires the source and its Trash directory share a
+  // device; os.tmpdir() is frequently a separate tmpfs). Rooting the shared
+  // cleanup directory under the home directory lets createNativeFixtureDirectory
+  // serve those specs too, instead of forcing them to hand-roll their own
+  // mkdtemp + immediate rmSync (#761).
+  temporaryRoot: os.homedir(),
 });
 
 export const config: WebdriverIO.Config = {

@@ -1,10 +1,10 @@
 /** Native forward mutations admit and settle history before renderer-side UI work. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
 import { entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 interface HistorySummary {
   revision: number;
@@ -334,7 +334,7 @@ const gatedDescribe = process.platform === "linux" && gateDirectory ? describe :
 gatedDescribe("native forward mutation history ownership", () => {
   before(async () => {
     fs.accessSync(gateDirectory, fs.constants.R_OK | fs.constants.W_OK);
-    scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-forward-history-"));
+    scratch = createNativeFixtureDirectory("tauri-explorer-forward-history-");
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
     applicationPid = exactApplicationPid();
@@ -360,7 +360,6 @@ gatedDescribe("native forward mutation history ownership", () => {
       }
       if ((await browser.getWindowHandles()).includes(mainHandle)) await browser.switchToWindow(mainHandle);
     }
-    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("exposes one native Undo while renderer publication of the rename is held", async function () {

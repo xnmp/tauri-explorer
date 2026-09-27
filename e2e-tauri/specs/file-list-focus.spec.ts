@@ -1,9 +1,9 @@
 /** Real WebKitGTK file-list focus, selection, and keyboard ownership. */
 import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domText, entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 let scratch = "";
 let root = "";
@@ -70,7 +70,7 @@ const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
 
 linuxDescribe("native file-list composite focus", () => {
   before(() => {
-    scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-file-list-focus-"));
+    scratch = createNativeFixtureDirectory("explorer-file-list-focus-");
     root = path.join(scratch, "root");
     fs.mkdirSync(root, { recursive: true });
     for (const name of folderNames) {
@@ -79,10 +79,6 @@ linuxDescribe("native file-list composite focus", () => {
       fs.writeFileSync(path.join(directory, `marker-${name}.txt`), name);
     }
     for (const name of fileNames) fs.writeFileSync(path.join(root, name), name);
-  });
-
-  after(() => {
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("returns Tab focus to the same cursor and opens its real folder in every view", async () => {

@@ -68,7 +68,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W2.1 | #709: terminal keystrokes transposed, so the Ctrl+Q probe is never received. Reproduce under the CI wrapper, then fix delivery ordering at its source (driver key actions against terminal input), not by retrying | 20 consecutive local runs of `terminal-key-ownership` under the CI wrapper, plus green required smoke | **Done ([#775](https://github.com/xnmp/tauri-explorer/pull/775))** |
 | W2.2 | #764: `git_status` rev-parse cancellation flake under the parallel suite. Decide whether it is a test race or a product race using instrumentation before changing logic | `--test-threads=64` loop, 0 failures in 30 runs | **Done ([#777](https://github.com/xnmp/tauri-explorer/pull/777))** |
-| W2.3 | #761: migrate every spec that `rmSync`s a fixture while the app is alive onto `createNativeFixtureDirectory` | grep guard in the native contract tests, full native suite green | **Open**. Local #816 head `69777b6e` migrates the fixture roots and preserves them when worker termination is unconfirmed, including skipped `afterSession`; 25 focused contracts, typecheck and independent review pass. The updated full native suite and merge to `dev` remain required |
+| W2.3 | #761: migrate every spec that `rmSync`s a fixture while the app is alive onto `createNativeFixtureDirectory` | grep guard in the native contract tests, full native suite green | **Open pending dev merge**. Local #816 head `69777b6e` migrates the fixture roots and preserves them when worker termination is unconfirmed, including skipped `afterSession`; 25 focused contracts, typecheck and independent review pass. Its rebuilt final-head Linux native suite passed **94 executed, 17 feature-gated skips** across 43 spec files on 2026-09-27 (`/tmp/overhaul-resume/816-full-native-final.log`). This local run does not replace final-dev and platform acceptance |
 | W2.4 | #710 (`window-transfer-lifetime`) and #715 (`context-clipboard`) Windows flakes. Retain diagnostics, find the missing wait or race, and fix it | Windows smoke green on 5 consecutive dev runs | Implementation merged in [#811](https://github.com/xnmp/tauri-explorer/pull/811); five consecutive smoke runs on `dev` remain open |
 | W2.5 | Fresh-window lookup renderer loss. #703 added a `/proc` sampler, but classification still requires that sampler to capture the failing fresh label. PR #804 run 36289184005 timed out waiting for fresh-window readiness and then lost the WebDriver session; its retained sampler covered earlier successful labels, not the failing label, so it cannot distinguish renderer loss from driver-session loss. The unchanged rerun passed. Open [#781](https://github.com/xnmp/tauri-explorer/issues/781) also tracks session loss while an abandoned warm claim expires; do not open a duplicate issue | Retained sampler output for the failing label, including the process timeline around session loss | **Open observation (#781); sampler criterion unmet**. Local `test/warm-window-session-loss` head `614a814a` captures process timelines before fresh selection and warm-claim source close, with bounded renderer first-seen/first-missing summaries. Unit 2679 passed/3 skipped, perf 29/29, type/architecture/maps and independent adversarial review pass. A real failing-label native artifact and merge to `dev` remain required |
 
@@ -79,7 +79,7 @@ for anything else.
 | W3.1 | Converge ordinary copy onto the ordered copy session, as ADR 0024 prescribes. Route `performFileTransfer`'s `isCopy` branch through `copy_session`, move the recovery probe's overwrite coverage onto the session path, and remove the unadmitted `copy_entry` family | Vitest caller tests, Rust session tests, and the native recovery suite, including the overwrite probe | **Done ([#813](https://github.com/xnmp/tauri-explorer/pull/813))**; the legacy copy IPC and plugin copy entry point were retired |
 | W3.2 | #760 durable-move retirement follow-ups: a plan byte budget consistent with `MAX_ENTRIES`, endpoint changes after intent, resumption of stuck `Retiring` records, probe cost, macOS `ENOTSUP` and probe-mode umask, a downgrade story for `deny_unknown_fields` records, and a documented escape hatch | Rust temp-tree tests for each, run under the W1.3 job | **Done ([#790](https://github.com/xnmp/tauri-explorer/pull/790))**. Durable move remains Linux-only and opt-in; bind-mount moves fail admission, and the probe cost remains an owner decision documented in ADR 0020 |
 | W3.3 | Run the gated native recovery suites in CI. `file-recovery`, `file-forward-history`, `file-history-lifetime`, `file-move-recovery` and `move-retirement` need a binary built with `e2e-renderer-recovery`, `durable-copy-recovery` and `durable-move-recovery`, and they need the `TAURI_E2E_FILE_RECOVERY_DIR`, `TAURI_E2E_HISTORY_GATE_DIR` and `TAURI_E2E_MOVE_SOURCE_DIR`/`TAURI_E2E_MOVE_TARGET_DIR` variables. No workflow sets these, so the suites skip in CI, and they skipped in the local 2026-09-26 run as well. Add a Linux job that builds that binary and points source and target at `/dev/shm` and the runner disk, so they are two real mounts. Then add the missing real cross-device forward, Undo and Redo cases: the existing Undo/Redo cycles use a single `os.tmpdir()` | New CI job green; each suite reports executed, not skipped, tests | **Done ([#778](https://github.com/xnmp/tauri-explorer/pull/778), issue [#774](https://github.com/xnmp/tauri-explorer/issues/774))**. `file-move-recovery` turned out to be a default-build suite that already runs in smoke; the durable job runs `cross-device-move-history` instead |
-| W3.4 | Broader cancellation qualification. For copy and move sessions, cancel at each phase boundary. Prove that no output is published late, that residue exactly matches the phase table, and that history stays consistent | Rust interleaving tests with deterministic phase gates, plus one native outcome per session | **Open**. Local #815 head `af096190` passes four focused Rust tests under default and durable-move builds, including three-item residue, events and exact inverse paths; independent review passes. Its new native cancelled-prefix copy/move outcomes and merge to `dev` remain required |
+| W3.4 | Broader cancellation qualification. For copy and move sessions, cancel at each phase boundary. Prove that no output is published late, that residue exactly matches the phase table, and that history stays consistent | Rust interleaving tests with deterministic phase gates, plus one native outcome per session | **Open pending dev merge**. Local #815 head `af096190` passes four focused Rust tests under default and durable-move builds, including three-item residue, events and exact inverse paths; independent review passes. Its rebuilt final-head Linux native cancellation suite passed **4/4** executed cases, including cancelled copy and move prefixes (`/tmp/overhaul-resume/815-native-prefix-final.log`). Final-dev and platform acceptance remain required |
 | W3.5 | Git working-tree mutations under admission | — | **Closed by ADR 0024**. The only capturable footprint is a blanket worktree lock, and Git's `index.lock` arbitrates git-vs-git |
 
 ## W4 — Windows platform acceptance (windows-latest runner)
@@ -106,7 +106,7 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W6.1 | A 4-hour Linux native soak (`SOAK_DURATION_MS=14400000`) against a qualification build, with a recorded seed and the report committed to the ledger | `qualification-results/` report | Open |
+| W6.1 | A 4-hour Linux native soak (`SOAK_DURATION_MS=14400000`) against a qualification build, with a recorded seed and the report committed to the ledger | `qualification-results/` report | **Open; first pinned run failed at 166.02 minutes**, after 6,818 passed scenario attempts and one warm-window failure coincident with a WebKitWebProcess JavaScriptCore SIGABRT; the process-to-handle link remains unproved. The app root survived and its WebKitSharedMemory FD count stayed flat; the full-duration resource gate was never reached. A second isolated four-hour run on the same pinned source/binary began ~22:49 Sydney 2026-09-27, seed `linux-four-hour-817-wry-isolated-20260927`; report pending |
 | W6.2 | A bounded Windows soak (`SOAK_MAX_CYCLES=1`) on the runner. Make the runner portable if it is not | Windows job artifact | Open |
 | W6.3 | External jobs (ledger gate 2): list the Rust tests for worker draining, held staging files, serialized cancel and publication, bounded fal requests and Nano child kill/reap, and confirm they run in the default suite on every W1 platform. Add one native outcome that cancels a real long-running external process (a fake executable on `PATH`) and asserts that no output is published late | Per-platform CI, plus the native outcome | **Done ([#814](https://github.com/xnmp/tauri-explorer/pull/814))** for the existing timeout cancellation path; no user Cancel control was added |
 
@@ -123,7 +123,7 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W8.1 | Re-run the full gate set on the final dev tip: svelte-check, Vitest, perf contracts, Rust (default and feature-gated), Clippy, native suite (including the W3.3 gated suites), and `ALL_VIEW_MODES=1` Playwright. Record the exact numbers against that commit. For native specs, count executed tests, not spec files: a file whose `describe` skips still counts as "passed" in the WDIO summary | Ledger section with its commit SHA | Open |
+| W8.1 | Re-run the full gate set on the final dev tip: svelte-check, Vitest, perf contracts, Rust (default and feature-gated), Clippy, native suite (including the W3.3 gated suites), and `ALL_VIEW_MODES=1` Playwright. Record the exact numbers against that commit. For native specs, count executed tests, not spec files: a file whose `describe` skips still counts as "passed" in the WDIO summary | Ledger section with its commit SHA | **Open**. Combined local integration scratch `43bf2e1f` passed 2,692 unit cases and 29 perf cases, Svelte/native TS/arch/maps; its test-only descendant `e4eafac4` passed 192/192 theme-accessibility browser cases and 7/7 load cases. The prior all-view run had 2 browser setup timeouts, 2,370 passes and 36 skips; its video-preview timeout passed alone. These are rehearsals on unmerged scratch commits, not the exact final-dev gate |
 | W8.2 | Correct the 2026-09-26 ledger claim that "all 38 native specs pass": the gated recovery suites were skipped in that run. Update each ledger acceptance row and the ADR 0020 and 0024 status lines to match the evidence. Mark the "existing ownership overhaul" and "external jobs" rows accepted only if W8.1 covers them | Adversarial fact-check of the ledger against PRs and CI runs | Open |
 | W8.3 | Cut the next minor release: bump the versions, write the CHANGELOG entry, open a Release PR from dev to main with `--merge` (the owner merges it; never tag manually), then verify the release assets | GitHub release with every platform asset | Open |
 
@@ -180,12 +180,22 @@ its four-cycle real Tauri/WebDriver warm/fresh preflight passed. A full
 14,400,000 ms all-scenario Linux soak on that exact binary started at about
 19:31 Sydney on 2026-09-27 (seed `linux-four-hour-817-wry-weak-20260927`).
 The local #817 report gate now samples the app root's WebKit shared-memory
-descriptors and requires timestamp-spanning early/late median bounds. W6.1
-remains open until the full report passes and its artifact is inspected and
-committed. W2.5 also remains an unclassified
-observation until the sampler captures the label that actually loses its
-session. W8.1 must record executed test counts and list skips separately on the
-final selected `dev` SHA.
+descriptors and requires timestamp-spanning early/late median bounds. That
+first pinned four-hour attempt failed at 166.02 minutes, with 1,704 complete
+four-scenario cycles and a failed cycle-1705 warm-window attempt. Its report is
+`qualification-results/linux-linux-four-hour-817-wry-weak-20260927-8ca134a38a99.json`.
+The app root and main renderer survived, and the shared-memory FD count stayed
+near two. `coredumpctl` shows a different `WebKitWebProcess` aborted in a
+JavaScriptCore GC helper before WebDriver deleted the session; independent
+review confirmed that ordering, while exact parked-handle/PID ownership remains
+probable rather than proved. The report has no full-duration RSS/FD verdict.
+An isolated repeat on the exact source and binary, with no concurrent browser
+suite, began ~22:49 Sydney on 2026-09-27; its report is pending. W6.1 remains
+open until a complete report passes and is inspected and committed. W2.5 also
+remains an unclassified failing-label observation: the separate #781 native
+diagnostic passed 3/3 but did not capture this soak's crashed handle/PID.
+W8.1 must record executed test counts and list skips separately on the final
+selected `dev` SHA.
 
 ### W8.3 release checklist (v1.11.0)
 

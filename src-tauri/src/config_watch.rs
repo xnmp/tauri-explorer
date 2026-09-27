@@ -499,7 +499,11 @@ mod tests {
     fn plan(config_dir: &Path, root: Option<&Path>) -> WatchPlan {
         let mut external_files = HashMap::new();
         let external_roots = root.map_or_else(Vec::new, |root| {
-            external_files.insert(root.join(SETTINGS_FILE), SETTINGS_FILE.to_string());
+            // Production keys external files by canonical target, and matching
+            // canonicalizes the changed path (`\\?\` on Windows, /private on macOS).
+            let file = root.join(SETTINGS_FILE);
+            let key = std::fs::canonicalize(&file).unwrap_or(file);
+            external_files.insert(key, SETTINGS_FILE.to_string());
             vec![(root.to_path_buf(), RecursiveMode::NonRecursive)]
         });
         WatchPlan {

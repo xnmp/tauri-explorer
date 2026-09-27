@@ -1125,6 +1125,10 @@ mod tests {
     /// case-only rename must not treat them as one and overwrite the other.
     #[cfg(unix)]
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "default APFS volumes are case-insensitive: case-variant names cannot coexist"
+    )]
     fn case_variant_symlinks_to_one_target_are_not_the_same_entry() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("payload"), b"target").unwrap();
@@ -1160,6 +1164,10 @@ mod tests {
     /// silent no-op, so a case-only rename must report the collision instead.
     #[cfg(unix)]
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "default APFS volumes are case-insensitive: case-variant names cannot coexist"
+    )]
     fn case_variant_hardlinks_are_not_the_same_entry() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("foo"), b"shared").unwrap();

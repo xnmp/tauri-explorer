@@ -289,6 +289,10 @@ fn a_tree_is_removed_without_following_inner_links_or_special_files() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "APFS rejects names that are not valid UTF-8 (EILSEQ)"
+)]
 fn non_unicode_leaves_and_parents_are_deleted_exactly() {
     let root = tempfile::tempdir().unwrap();
     let parent = root

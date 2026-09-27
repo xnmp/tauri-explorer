@@ -150,12 +150,13 @@ linuxDescribe("native file-list composite focus", () => {
       // The Tab stop is the pane's cursor entry, which navigation may restore.
       const reached = await activeEntryPath();
       expect(reached).toBeTruthy();
-      await browser.keys("ArrowDown");
+      const navigationKey = viewMode === "details" ? "ArrowDown" : "ArrowRight";
+      await browser.keys(navigationKey);
       await browser.waitUntil(async () => {
         const current = await activeEntryPath();
         return current !== null && current !== reached;
       }, {
-        timeoutMsg: `${viewMode}: ArrowDown did not move focus from ${reached}`,
+        timeoutMsg: `${viewMode}: ${navigationKey} did not move focus from ${reached}`,
       });
       expect(await browser.execute(() => document.activeElement?.classList.contains("selected") ?? false)).toBe(true);
     }

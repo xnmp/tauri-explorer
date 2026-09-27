@@ -65,4 +65,5 @@ exposed beside an inset outline. At most one ring side may be cut off.
   chord is covered natively by `e2e-tauri/specs/terminal-input-order.spec.ts`.
 - **Native coverage.** `e2e-tauri/specs/file-list-focus.spec.ts` checks the
   real WebKitGTK path: Tab from the address bar into the file list, then
-  arrow selection.
+  arrow selection. It must use the same mode-aware traversal axis as browser
+  coverage; Tiles can also fit its native fixture in one row.

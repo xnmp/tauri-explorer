@@ -358,8 +358,7 @@ mod tests {
         let control = plugin_job::JobControl::new();
         let child_marker = marker.clone();
         let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
+            .enable_all()
             .build()
             .unwrap();
         let (result, pid) = runtime.block_on(async move {

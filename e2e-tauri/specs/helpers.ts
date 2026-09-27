@@ -11,6 +11,13 @@ import {
   type FreshWindowSelectedDiagnostics,
   type NativeProcessSample,
 } from "../fresh-window-diagnostics";
+import {
+  rendererDisappearances,
+  writeWarmClaimFailure,
+  type WarmClaimIdentity,
+  type WarmClaimMilestone,
+  type WarmClaimStage,
+} from "../warm-claim-diagnostics";
 
 const applicationBinary = path.resolve(
   "src-tauri",
@@ -22,6 +29,10 @@ const applicationBinary = path.resolve(
 const diagnosticsDirectory =
   process.env.TAURI_NATIVE_DIAGNOSTICS_DIR
   ?? path.resolve("e2e-tauri", "logs", "fresh-window");
+
+const warmClaimDiagnosticsDirectory =
+  process.env.TAURI_NATIVE_DIAGNOSTICS_DIR
+  ?? path.resolve("e2e-tauri", "logs", "warm-claim");
 
 /**
  * Evidence for the most recent fresh-window selection (#703).
@@ -122,6 +133,43 @@ function beginNativeProcessTimeline(timeout: number) {
   const timer = setInterval(sample, sampleInterval);
   timer.unref();
   return { samples, sample, stop: () => clearInterval(timer) };
+}
+
+/**
+ * Sample all WebKit renderer identities before source close and throughout
+ * abandoned warm-claim expiry. A failed WebDriver session cannot answer a
+ * follow-up command, so failure recording reads only local process state.
+ */
+export async function monitorWarmClaimExpiry<T>(
+  claim: WarmClaimIdentity,
+  action: (mark: (stage: WarmClaimStage) => void) => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const milestones: WarmClaimMilestone[] = [{ stage: "monitor-started", at: startedAt }];
+  const mark = (stage: WarmClaimStage) => milestones.push({ stage, at: Date.now() });
+  // The source-window wait is 10 s and the parked-window wait is 40 s.
+  const timeline = beginNativeProcessTimeline(50_000);
+  try {
+    return await action(mark);
+  } catch (error) {
+    timeline.sample(true);
+    const before = timeline.samples[0];
+    writeWarmClaimFailure({
+      issue: 781,
+      phase: "claim-expiry-failed",
+      ...claim,
+      startedAt,
+      failedAt: Date.now(),
+      failure: String(error),
+      milestones,
+      nativeBeforeClose: before,
+      nativeDuringExpiry: timeline.samples,
+      rendererDisappearances: rendererDisappearances(before, timeline.samples),
+    }, warmClaimDiagnosticsDirectory);
+    throw error;
+  } finally {
+    timeline.stop();
+  }
 }
 
 /**

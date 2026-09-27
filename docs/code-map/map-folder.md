@@ -608,6 +608,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/external-job-fixture.ts` — Linux native-test `PATH` fixture for a deterministic long-running fake Gemini CLI.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/fresh-window-diagnostics.ts` — fresh-child-window evidence: selection/lookup process timelines, renderer snapshot, `/proc` renderer/driver classification and failure artifacts (#703, #781).
+- `e2e-tauri/warm-claim-diagnostics.ts` — abandoned warm-claim expiry artifacts: pre-close renderer identities and first observed disappearance times after session loss (#781).
+- `tests/qualification/warm-claim-process-timeline.test.ts` — contract for native warm-claim failure artifact, bounded late sample and no artifact on success.
 - `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
 - `e2e-tauri/window-transfer-diagnostics.ts` — incrementally persisted native runtime and per-window failure evidence.
 - `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.

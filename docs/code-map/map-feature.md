@@ -116,7 +116,7 @@ backend for E2E/browser).
 - `state/window-title.svelte.ts` — resolves launch-home context and synchronizes the OS window title with the active tab/pane directory
 - `state/window-close.ts` — common titlebar, last-tab and native-close lifecycle; blocks transfer admission until destruction or recovery
 - `state/window-chrome.ts` — native titlebar maximize observation with one in-flight read and owned late subscription cleanup
-- `state/warm-activation.ts`, `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — acknowledged warm-window activation, owned native reservations and expiring abandoned claims
+- `state/warm-activation.ts`, `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — acknowledged warm-window activation, owned native reservations and expiring abandoned claims; `e2e-tauri/specs/warm-window-lifetime.spec.ts` and `e2e-tauri/warm-claim-diagnostics.ts` retain process evidence if native claim expiry loses the WebDriver session (#781)
 - FLOW: each layout leaf identifies one pane session. `PaneLayoutView` keys its `ExplorerPane` by the owned explorer and injects it explicitly; the component captures it for the mount lifetime. Cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage, validated before resource allocation.
 
 ## Workspaces & split panes

@@ -1365,6 +1365,13 @@ mod tests {
     #[cfg(unix)]
     fn pty_round_trips_input_resizes_and_reaps_the_shell() {
         const OWNER: &str = "pty-lifecycle";
+        struct Cleanup;
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                on_window_destroyed(OWNER);
+            }
+        }
+        let _cleanup = Cleanup;
         let (output_tx, output_rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
         let (id, token) = reserve_started(OWNER);

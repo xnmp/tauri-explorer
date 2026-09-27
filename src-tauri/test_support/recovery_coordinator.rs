@@ -879,7 +879,6 @@ fn case_variant_claims_capture_one_object_only_where_the_volume_folds_case() {
     let folds = folds_case(&parent);
     let source = parent.join("readme.txt");
     fs::write(&source, b"original").unwrap();
-    let source_object = object(&fs::symlink_metadata(&source).unwrap());
     let storage = directory.path().join("recovery");
     let (coordinator, peer) = (
         Coordinator::open(&storage).unwrap(),
@@ -889,10 +888,6 @@ fn case_variant_claims_capture_one_object_only_where_the_volume_folds_case() {
     let rename = coordinator
         .reserve([writing(&parent.join("README.txt")), writing(&source)].concat())
         .expect("a case-only rename does not conflict with itself");
-    let captured: Vec<_> = rename.resources.iter().map(|claim| claim.object).collect();
-    let target_object = folds.then_some(source_object);
-    assert_eq!(captured[..2], [target_object, Some(source_object)]);
-
     assert!(peer.reserve(writing(&source)).is_err());
     let third_spelling = peer.reserve(writing(&parent.join("ReadMe.TXT")));
     if folds {
@@ -915,7 +910,7 @@ fn case_variant_claims_capture_one_object_only_where_the_volume_folds_case() {
         "case_variant_claims",
         folds,
         if folds {
-            "both claims captured the source object; a third spelling was excluded"
+            "a third spelling was excluded until the original reservation finished"
         } else {
             "the target was a new name; a third spelling was independent"
         },

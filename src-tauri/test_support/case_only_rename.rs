@@ -10,8 +10,7 @@ use super::{
     copy_session::{self, Choice, Conflict, Control, Decision, Event, ItemOutcome, Request},
     entry_execution,
     entry_plan::EntryPlan,
-    file_identity,
-    move_execution,
+    file_identity, move_execution,
     move_plan::MovePlan,
     move_session::MoveWork,
     object_id::ObjectId,
@@ -361,7 +360,11 @@ fn single_move_into_a_case_variant_of_its_own_parent_never_displaces_it() {
         assert!(!names(&parent).contains(&"readme.txt".to_owned()));
         assert_eq!(identity(&variant.join("readme.txt")), object);
     }
-    let current = if folds { source } else { variant.join("readme.txt") };
+    let current = if folds {
+        source
+    } else {
+        variant.join("readme.txt")
+    };
     assert_eq!(fs::read(current).unwrap(), PAYLOAD);
     report(
         "single_move_into_case_variant_parent",
@@ -468,69 +471,4 @@ fn a_move_session_prompts_for_a_case_variant_of_another_entry() {
             "moved beside a distinct name"
         },
     );
-}
-
-// TEMPORARY (#798 CI discovery, removed before review): record each native
-// primitive's case-only behaviour on every platform runner without failing.
-#[test]
-fn zz_probe_platform_case_semantics() {
-    use super::native_directory::Directory;
-    use std::fmt::Debug;
-    let (_root, fixture) = fixture();
-    let folds = folds_case(&fixture);
-    let line = |what: &str, value: &dyn Debug| {
-        report("zz_probe", folds, &format!("{what}: {value:?}"));
-    };
-    let fresh = |name: &str, directory: bool| {
-        let path = fixture.join(name);
-        if directory {
-            fs::create_dir(&path).unwrap();
-        } else {
-            fs::write(&path, b"probe").unwrap();
-        }
-        path
-    };
-    let docs = fresh("Docs", true);
-    line(
-        "canonicalize(fixture/docs)",
-        &fs::canonicalize(fixture.join("docs")),
-    );
-    line("canonicalize(fixture/Docs)", &fs::canonicalize(&docs));
-    fs::remove_dir(&docs).unwrap();
-
-    let a = fresh("a.txt", false);
-    line(
-        "publication::rename_noreplace(a.txt -> A.txt)",
-        &super::publication::rename_noreplace(&a, &fixture.join("A.txt")),
-    );
-    line("names after path no-replace", &names(&fixture));
-    for name in names(&fixture) {
-        fs::remove_file(fixture.join(name)).unwrap();
-    }
-
-    let directory = Directory::open(&fixture).unwrap();
-    fresh("b.txt", false);
-    line(
-        "Directory::rename_to(b.txt -> B.txt)",
-        &directory.rename_to(OsStr::new("b.txt"), &directory, OsStr::new("B.txt")),
-    );
-    line("names after handle rename (file)", &names(&fixture));
-    for name in names(&fixture) {
-        fs::remove_file(fixture.join(name)).unwrap();
-    }
-    fresh("Dir", true);
-    line(
-        "Directory::rename_to(Dir -> dir)",
-        &directory.rename_to(OsStr::new("Dir"), &directory, OsStr::new("dir")),
-    );
-    line("names after handle rename (dir)", &names(&fixture));
-    for name in names(&fixture) {
-        fs::remove_dir(fixture.join(name)).unwrap();
-    }
-    let e = fresh("E", true);
-    line(
-        "fs::rename(E -> e) directory",
-        &fs::rename(&e, fixture.join("e")),
-    );
-    line("names after fs::rename (dir)", &names(&fixture));
 }

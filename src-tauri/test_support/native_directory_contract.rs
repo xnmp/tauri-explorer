@@ -173,7 +173,11 @@ fn case_only_rename_keeps_the_object_and_never_replaces_another_entry() {
     }
 
     directory
-        .rename_to(OsStr::new("readme.txt"), &directory, OsStr::new("README.txt"))
+        .rename_to(
+            OsStr::new("readme.txt"),
+            &directory,
+            OsStr::new("README.txt"),
+        )
         .expect("a case-only rename is not an occupied destination");
     assert_eq!(names(), [OsStr::new("README.txt"), OsStr::new("notes.txt")]);
     assert_eq!(
@@ -181,8 +185,11 @@ fn case_only_rename_keeps_the_object_and_never_replaces_another_entry() {
         object
     );
 
-    let collision =
-        directory.rename_to(OsStr::new("notes.txt"), &directory, OsStr::new("readme.TXT"));
+    let collision = directory.rename_to(
+        OsStr::new("notes.txt"),
+        &directory,
+        OsStr::new("readme.TXT"),
+    );
     if folds {
         assert_eq!(
             collision.unwrap_err().kind(),
@@ -192,7 +199,10 @@ fn case_only_rename_keeps_the_object_and_never_replaces_another_entry() {
         assert_eq!(names(), [OsStr::new("README.txt"), OsStr::new("notes.txt")]);
     } else {
         collision.unwrap();
-        assert_eq!(names(), [OsStr::new("README.txt"), OsStr::new("readme.TXT")]);
+        assert_eq!(
+            names(),
+            [OsStr::new("README.txt"), OsStr::new("readme.TXT")]
+        );
     }
     assert_eq!(fs::read(root.path().join("README.txt")).unwrap(), b"source");
     report(

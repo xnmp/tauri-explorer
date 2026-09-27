@@ -57,7 +57,6 @@ pub(super) struct Root {
     path: PathBuf,
     name: OsString,
     identity: ObjectId,
-    excluded: Vec<ObjectId>,
     intent_digest: [u8; 32],
 }
 
@@ -208,7 +207,6 @@ impl Anchor {
             path: self.root_path,
             name: self.root_name,
             identity,
-            excluded: self.excluded,
             intent_digest: self.intent_digest,
         })
     }
@@ -411,15 +409,30 @@ impl Root {
             OperationSpec::CopyReplacement(spec) => vec![spec.root.0.clone()],
             OperationSpec::Move(spec) => spec.roots().map(|root| root.path.0.clone()).collect(),
         };
+        // Re-derive the operation's subjects directly from the persisted
+        // intent, independent of the caller-supplied `excluded` set that
+        // `finish` already checks: source and displaced-original identities,
+        // never other intent resources. Parent-alias entries admitted for
+        // traversed symlinks are not kept alive, so a fresh root can reuse a
+        // freed inode number from any of them; comparing against those would
+        // reintroduce the #788 false positive.
+        let subjects: Vec<ObjectId> = match &intent.operation {
+            OperationSpec::CopyReplacement(spec) => {
+                vec![spec.source_version.object, spec.original.object]
+            }
+            OperationSpec::Move(spec) => std::iter::once(spec.source_version.object)
+                .chain(
+                    spec.target_original
+                        .as_ref()
+                        .map(|original| original.object),
+                )
+                .collect(),
+        };
         if !planned.contains(&self.path)
             || self.path.parent() != Some(self.parent_path.as_path())
             || !self.identity.same_volume(self.parent_identity)
             || self.identity == self.parent_identity
-            // Compare only with the intent's subjects, which `excluded` names.
-            // Other resources, such as the parent-alias entries admission
-            // records for traversed symlinks, are not kept alive: a fresh root
-            // can reuse a freed inode number from any of them (#788).
-            || self.excluded.contains(&self.identity)
+            || subjects.contains(&self.identity)
         {
             return Err(invalid(
                 "Recovery manifest does not belong to this artifact root",

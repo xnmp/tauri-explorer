@@ -253,6 +253,65 @@ fn manifest_for_another_planned_root_is_rejected_without_publication() {
     other.assert_user_data();
 }
 
+/// The independent check `manifest_payload` performs must catch a subject
+/// alias even when the caller-supplied `excluded` set (which `finish` already
+/// checks at creation time) does not name it, proving the two checks are
+/// genuinely independent rather than the second merely restating the first
+/// (#788).
+#[test]
+fn manifest_payload_rejects_a_subject_alias_even_when_excluded_is_empty() {
+    let fixture = Fixture::new("subject-alias");
+    let (parent, token) = {
+        let OperationSpec::CopyReplacement(spec) = &fixture.intent.operation else {
+            panic!("expected copy replacement fixture");
+        };
+        (spec.parent, spec.artifact_token.clone())
+    };
+
+    let plan = RootPlan {
+        parent_path: fixture.base.clone(),
+        parent,
+        root: fixture.root.clone(),
+        token: token.clone(),
+        excluded: vec![],
+    };
+    let root = Anchor::open_plan(&fixture.intent, plan)
+        .unwrap()
+        .create()
+        .unwrap();
+    let identity = root.identity();
+    drop(root);
+
+    // Craft an intent whose source subject is exactly the artifact root's own
+    // real identity, keeping its captured resource claim consistent so the
+    // intent still validates. Nothing here touches `excluded`.
+    let mut crafted = fixture.intent.clone();
+    {
+        let OperationSpec::CopyReplacement(spec) = &mut crafted.operation else {
+            panic!("expected copy replacement fixture");
+        };
+        spec.source_version.object = identity;
+    }
+    crafted.resources[0].object = Some(identity);
+    crafted.validate().unwrap();
+
+    let plan = RootPlan {
+        parent_path: fixture.base.clone(),
+        parent,
+        root: fixture.root.clone(),
+        token,
+        excluded: vec![],
+    };
+    let reopened = Anchor::open_plan(&crafted, plan)
+        .unwrap()
+        .open_existing(identity)
+        .unwrap();
+
+    assert!(reopened.publish_manifest(&crafted).is_err());
+    assert!(!fixture.root.join("manifest.intent").exists());
+    fixture.assert_user_data();
+}
+
 #[test]
 fn same_spec_with_a_different_valid_owner_cannot_use_the_root() {
     let fixture = Fixture::new("owner-bound");

@@ -372,17 +372,11 @@ impl ReplacementSpec {
         Ok(())
     }
 
-    fn validate_root(
-        &self,
-        resources: &[super::resources::Resource],
-        root: ObjectId,
-    ) -> std::io::Result<()> {
+    fn validate_root(&self, root: ObjectId) -> std::io::Result<()> {
         if !root.same_volume(self.parent)
             || root == self.parent
             || root == self.original.object
-            || resources
-                .iter()
-                .any(|resource| resource.path == self.source && resource.object == Some(root))
+            || root == self.source_version.object
         {
             return Err(invalid(
                 "Recovery artifact root aliases a user object or lies on another device",
@@ -418,7 +412,7 @@ impl OperationState {
     pub(super) fn validate(&self, intent: &DurableIntent) -> std::io::Result<()> {
         match (&intent.operation, self) {
             (OperationSpec::CopyReplacement(spec), Self::Replacement(state)) => {
-                state.validate(spec, &intent.resources)
+                state.validate(spec)
             }
             (OperationSpec::Move(spec), Self::Move(state)) => state.validate(spec),
             _ => Err(invalid(
@@ -430,11 +424,7 @@ impl OperationState {
 
 #[cfg(unix)]
 impl ReplacementState {
-    fn validate(
-        &self,
-        spec: &ReplacementSpec,
-        resources: &[super::resources::Resource],
-    ) -> std::io::Result<()> {
+    fn validate(&self, spec: &ReplacementSpec) -> std::io::Result<()> {
         let root_required = !matches!(self.phase, Phase::Planned | Phase::RootIntent);
         let publication_required = matches!(
             self.phase,
@@ -469,7 +459,7 @@ impl ReplacementState {
             ));
         }
         if let Some(root) = self.root {
-            spec.validate_root(resources, root)?;
+            spec.validate_root(root)?;
         }
         if let Some(published) = &self.published {
             published.validate()?;
@@ -495,9 +485,7 @@ impl LocalManifest {
     pub(super) fn validate(&self, opened_root: ObjectId) -> std::io::Result<()> {
         self.intent.validate()?;
         match &self.intent.operation {
-            OperationSpec::CopyReplacement(spec) => {
-                spec.validate_root(&self.intent.resources, self.root)?
-            }
+            OperationSpec::CopyReplacement(spec) => spec.validate_root(self.root)?,
             OperationSpec::Move(_) => {
                 return Err(invalid(
                     "Move artifact manifests require their root-specific native owner",

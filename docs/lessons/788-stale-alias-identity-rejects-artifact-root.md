@@ -19,7 +19,8 @@ the same comparison.
 
 ## Fix
 
-A fresh root is a new directory, so it can equal only a freed inode number.
+A fresh root cannot equal any live object; subject checks guard against a
+swapped-in root and can themselves false-positive on a freed subject inode.
 Comparing it with a recorded identity proves something only when that
 identity names an object the operation verifies: its subjects (the source and
 the displaced original) and its parents. Those checks are explicit in

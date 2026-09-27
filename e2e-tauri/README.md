@@ -230,8 +230,8 @@ fresh subscriptions must receive the generation advanced by real inspection.
 This suite does not establish renderer-crash cleanup, interrupted registration,
 power-loss durability or other platforms.
 
-The suite also creates a separate ordinary overwrite through the production
-transfer/API/command path. It selects the newly journaled operation by its returned
+The suite also creates a separate overwrite through the production ordered copy
+session. It selects the newly journaled operation by its returned
 ID, cycles actual Explorer Undo/Redo twice with recovery Inspect between every
 effect, then restores through the dialog. It checks original, source and privately
 retained copied bytes and the native completion toasts. The probe forces overwrite and bypasses clipboard/conflict

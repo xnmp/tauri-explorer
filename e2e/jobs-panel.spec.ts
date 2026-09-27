@@ -15,7 +15,7 @@
  *
  * No mock addition is needed: a multi-file paste drives real progress updates
  * (the paste loop calls `updateProgress` per file), and the existing per-command
- * latency injection (`?mockLatency=copy_entry:MS`) keeps the operation running
+ * latency injection (`?mockLatency=copy_entries:MS`) keeps the operation running
  * long enough (past the 1.5s dialog-delay gate) for the dialog to appear.
  */
 import { test, expect, type Page } from "./fixtures";
@@ -54,7 +54,7 @@ test.describe("File-operation progress dialog", () => {
     page,
   }) => {
     // ~1s per file × 3 files = ~3s, comfortably past the 1.5s dialog gate.
-    await page.goto("/?path=/home/user/Documents&mockLatency=copy_entry:1000");
+    await page.goto("/?path=/home/user/Documents&mockLatency=copy_entries:1000");
     await waitForEntries(page);
 
     await selectThreeDocs(page);
@@ -92,7 +92,7 @@ test.describe("File-operation progress dialog", () => {
   }) => {
     // 2s per file: at the 1.5s dialog gate the first file is still copying, so
     // cancelling then guarantees files #2 and #3 never start.
-    await page.goto("/?path=/home/user/Documents&mockLatency=copy_entry:2000");
+    await page.goto("/?path=/home/user/Documents&mockLatency=copy_entries:2000");
     await waitForEntries(page);
 
     await selectThreeDocs(page);

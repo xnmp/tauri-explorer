@@ -137,6 +137,7 @@ backend for E2E/browser).
 - `composables/use-drop-target.svelte.ts` — dropzone highlight + accept logic
 - `state/drop-operations.ts` — `handleFileDrop`/`handleFileDropMany`, source-path extraction
 - `state/file-transfer.ts` — `performFileTransfer` (move vs copy decision)
+- `src-tauri/test_support/case_only_rename.rs` — real-volume rename/move/session case-variant and identity contracts; reports the volume semantics exercised by each runner.
 - `composables/use-sidebar-drag.svelte.ts` — drag onto sidebar bookmarks
 - `domain/bookmark-drop-feedback.ts` — derives bookmark-drop feedback from the effective local or cross-window source kind.
 - FLOW: pointer-drag sets `dragState` → drop-target computes destination → `performFileTransfer` → `moveEntry`/`copyEntry` (files.ts → file_ops.rs). Branch: `fix/multi-file-drag-ghost-opacity`.

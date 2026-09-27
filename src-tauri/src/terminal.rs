@@ -856,31 +856,57 @@ pub async fn terminal_spawn(
     }
 }
 
+/// Clone what one command needs from a running terminal owned by
+/// `window_label`. The registry lock is released before the caller touches the
+/// PTY, so a blocked writer or resize never stalls unrelated terminals.
+fn running<T>(
+    id: u64,
+    window_label: &str,
+    pick: impl FnOnce(&TerminalHandle) -> T,
+) -> Result<T, AppError> {
+    let map = terminals()
+        .lock()
+        .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
+    let slot = map
+        .get(&id)
+        .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+    slot.check_owner(window_label)?;
+    let TerminalPhase::Running(handle) = &slot.phase else {
+        return Err(AppError::Other(format!("terminal {id} is not running")));
+    };
+    Ok(pick(handle))
+}
+
+/// `terminal_write`'s blocking half: user input reaches the PTY unchanged.
+fn write_terminal(id: u64, window_label: &str, data: &[u8]) -> Result<(), AppError> {
+    let writer = running(id, window_label, |handle| handle.writer.clone())?;
+    let mut writer = writer.lock().unwrap_or_else(|error| error.into_inner());
+    writer
+        .write_all(data)
+        .map_err(|e| AppError::Other(format!("pty write failed: {e}")))
+}
+
+/// `terminal_resize`'s blocking half. The kernel signals the new size to the
+/// PTY's foreground job, which reads it back from the PTY.
+fn resize_terminal(id: u64, window_label: &str, cols: u16, rows: u16) -> Result<(), AppError> {
+    let master = running(id, window_label, |handle| handle.master.clone())?;
+    let master = master.lock().unwrap_or_else(|error| error.into_inner());
+    master
+        .resize(PtySize {
+            rows: rows.max(2),
+            cols: cols.max(2),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| AppError::Other(format!("pty resize failed: {e}")))
+}
+
 /// Write user input (keystrokes) to the terminal.
 #[tauri::command]
 pub async fn terminal_write(window: tauri::Window, id: u64, data: String) -> Result<(), AppError> {
-    tokio::task::spawn_blocking(move || {
-        let map = terminals()
-            .lock()
-            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        let slot = map
-            .get(&id)
-            .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-        slot.check_owner(window.label())?;
-        let TerminalPhase::Running(handle) = &slot.phase else {
-            return Err(AppError::Other(format!("terminal {id} is not running")));
-        };
-        let writer = handle.writer.clone();
-        drop(map);
-        let result = writer
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .write_all(data.as_bytes())
-            .map_err(|e| AppError::Other(format!("pty write failed: {e}")));
-        result
-    })
-    .await
-    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+    tokio::task::spawn_blocking(move || write_terminal(id, window.label(), data.as_bytes()))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
 }
 
 /// Resize the PTY to match the xterm.js grid.
@@ -891,33 +917,9 @@ pub async fn terminal_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), AppError> {
-    tokio::task::spawn_blocking(move || {
-        let map = terminals()
-            .lock()
-            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        let slot = map
-            .get(&id)
-            .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-        slot.check_owner(window.label())?;
-        let TerminalPhase::Running(handle) = &slot.phase else {
-            return Err(AppError::Other(format!("terminal {id} is not running")));
-        };
-        let master = handle.master.clone();
-        drop(map);
-        let result = master
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .resize(PtySize {
-                rows: rows.max(2),
-                cols: cols.max(2),
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| AppError::Other(format!("pty resize failed: {e}")));
-        result
-    })
-    .await
-    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+    tokio::task::spawn_blocking(move || resize_terminal(id, window.label(), cols, rows))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
 }
 
 /// Kill the terminal's shell. Registry cleanup and the exit event happen in
@@ -953,20 +955,9 @@ pub async fn terminal_kill(window: tauri::Window, id: u64) -> Result<(), AppErro
 #[tauri::command]
 pub async fn terminal_status(window: tauri::Window, id: u64) -> Result<TerminalStatus, AppError> {
     tokio::task::spawn_blocking(move || {
-        let map = terminals()
-            .lock()
-            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
-        let slot = map
-            .get(&id)
-            .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-        slot.check_owner(window.label())?;
-        let TerminalPhase::Running(handle) = &slot.phase else {
-            return Err(AppError::Other(format!("terminal {id} is not running")));
-        };
-        let master = handle.master.clone();
-        let pid = handle.pid;
-        let cwd = handle.shell_cwd.clone();
-        drop(map);
+        let (master, pid, cwd) = running(id, window.label(), |handle| {
+            (handle.master.clone(), handle.pid, handle.shell_cwd.clone())
+        })?;
         let master = master.lock().unwrap_or_else(|error| error.into_inner());
         Ok(TerminalStatus {
             busy: is_busy(master.as_ref(), pid),
@@ -1362,6 +1353,95 @@ mod tests {
                 .unwrap_or_else(|e| e.into_inner())
                 .contains_key(&id),
             "registry entry should be removed after exit"
+        );
+    }
+
+    /// W5.1 (#798): one complete lifecycle of the production PTY backend on
+    /// every Unix, macOS included. Input goes through `terminal_write`'s path
+    /// and the resize through `terminal_resize`'s; the shell itself reports
+    /// both. Each marker is printed only when the shell evaluates the command,
+    /// never by the terminal echoing the typed line.
+    #[test]
+    #[cfg(unix)]
+    fn pty_round_trips_input_resizes_and_reaps_the_shell() {
+        const OWNER: &str = "pty-lifecycle";
+        struct Cleanup;
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                on_window_destroyed(OWNER);
+            }
+        }
+        let _cleanup = Cleanup;
+        let (output_tx, output_rx) = mpsc::channel::<String>();
+        let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
+        let (id, token) = reserve_started(OWNER);
+        spawn_shell(
+            id,
+            OWNER.into(),
+            token,
+            None,
+            80,
+            24,
+            move |chunk| {
+                let _ = output_tx.send(chunk);
+            },
+            move |code| {
+                let _ = exit_tx.send(code);
+            },
+            |_| {},
+        )
+        .expect("spawn the user's shell in a PTY");
+        let pid = running(id, OWNER, |handle| handle.pid)
+            .unwrap()
+            .expect("the PTY reports its shell's pid") as libc::pid_t;
+
+        let mut transcript = String::new();
+        let mut expect_output = |marker: &str| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
+            while !transcript.contains(marker) {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "the shell never printed {marker:?}; output so far: {transcript:?}"
+                );
+                if let Ok(chunk) = output_rx.recv_timeout(remaining.min(Duration::from_millis(100)))
+                {
+                    transcript.push_str(&chunk);
+                }
+            }
+        };
+
+        write_terminal(id, OWNER, b"printf 'RT:%s:%s\\n' round trip\n").unwrap();
+        expect_output("RT:round:trip");
+
+        write_terminal(id, OWNER, b"stty size | sed 's/^/SIZE=/'\n").unwrap();
+        expect_output("SIZE=24 80");
+        assert!(
+            resize_terminal(id, "another-window", 100, 30).is_err(),
+            "only the owning window may resize its terminal"
+        );
+        resize_terminal(id, OWNER, 132, 40).unwrap();
+        write_terminal(id, OWNER, b"stty size | sed 's/^/SIZE=/'\n").unwrap();
+        expect_output("SIZE=40 132");
+
+        write_terminal(id, OWNER, b"exit 7\n").unwrap();
+        let status = exit_rx
+            .recv_timeout(Duration::from_secs(15))
+            .expect("the shell's exit is observed");
+        assert_eq!(status, Some(7), "the reaped child's own exit status");
+        assert!(
+            !terminals()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .contains_key(&id),
+            "a reaped terminal leaves the registry"
+        );
+        // A zombie still accepts signal 0; only a waited-for child is gone.
+        let probe = unsafe { libc::kill(pid, 0) };
+        assert_eq!(
+            (probe, std::io::Error::last_os_error().raw_os_error()),
+            (-1, Some(libc::ESRCH)),
+            "the shell {pid} was not reaped"
         );
     }
 

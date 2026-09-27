@@ -30,7 +30,15 @@ async function operation<T>(op: string, args: Record<string, unknown>): Promise<
   return response.result as T;
 }
 
-async function historySummary(): Promise<{ undoId: number | null; redoId: number | null }> {
+interface HistorySummary {
+  revision: number;
+  undoId: number | null;
+  redoId: number | null;
+  stackSize: number;
+  busy: boolean;
+}
+
+async function historySummary(): Promise<HistorySummary> {
   await browser.waitUntil(async () => browser.execute(() =>
     document.documentElement.dataset.e2eHistoryReady === "true"));
   return JSON.parse(await browser.execute(() =>
@@ -77,7 +85,12 @@ async function history(direction: "undo" | "redo"): Promise<void> {
         assert.deepEqual(cancelled.data?.items.map(item => item.status), ["unstarted"]);
         assert.equal(fs.readFileSync(source, "utf8"), incoming);
         assert.equal(fs.readFileSync(target, "utf8"), existing);
-        assert.deepEqual(await historySummary(), before);
+        const afterCancellation = await historySummary();
+        assert.ok(afterCancellation.revision > before.revision, "history did not settle the cancelled reservation");
+        assert.equal(afterCancellation.undoId, before.undoId);
+        assert.equal(afterCancellation.redoId, before.redoId);
+        assert.equal(afterCancellation.stackSize, before.stackSize);
+        assert.equal(afterCancellation.busy, false);
         assert.ok((await entryNames()).includes(path.basename(target)));
 
         fs.rmSync(target);

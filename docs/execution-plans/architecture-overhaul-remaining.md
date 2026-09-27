@@ -162,11 +162,27 @@ XIDs disappeared after Alt+F4. At attempt 400 the main WebKitWebProcess PID
 Ctrl+T produced no new listing while the native app stayed alive. Its source,
 binary and script hashes are embedded in the log; the screenshot is
 `/tmp/overhaul-resume/817-x11-failure-close-proof-450.png`. Independent review
-confirmed those observations, while complete child renderer teardown and the
-WebKitGTK/Tauri/app ownership of the failure remain unproven. These are
+confirmed those observations; at that stage complete child renderer teardown
+and the WebKitGTK/Tauri/app ownership of the failure were unproven. These are
 diagnostic artifacts, not integrated or passing four-hour acceptance. An
 earlier cycle-187 failure came from an invalid window-selector fixture and
-does not count as product evidence. W2.5 also remains an unclassified
+does not count as product evidence.
+
+Subsequent matched GTK controls isolated the retained-descriptor signature:
+a custom-scheme WebView released its descriptor after every close through 450
+cycles, while a signal callback holding the WebView strongly retained one
+per close. Wry 0.55.1's GTK IPC handler has that ownership cycle. A local
+Wry `WeakRef<WebView>` patch in #817 passed 450 direct-X11 native child closes
+with two stable shared-memory descriptors, then Ctrl+T completed another real
+backend listing (901→902). The clean #817 commit `75859d97` produced a
+qualification binary SHA256 `0067945418da5f5b35cf72f50517d6488c592a91923f00c49cee6a9015cb81ce`;
+its four-cycle real Tauri/WebDriver warm/fresh preflight passed. A full
+14,400,000 ms all-scenario Linux soak on that exact binary started at about
+19:31 Sydney on 2026-09-27 (seed `linux-four-hour-817-wry-weak-20260927`).
+The local #817 report gate now samples the app root's WebKit shared-memory
+descriptors and requires timestamp-spanning early/late median bounds. W6.1
+remains open until the full report passes and its artifact is inspected and
+committed. W2.5 also remains an unclassified
 observation until the sampler captures the label that actually loses its
 session. W8.1 must record executed test counts and list skips separately on the
 final selected `dev` SHA.

@@ -137,10 +137,17 @@ physical-Mac startup measurements and non-Linux durable recovery adapters
 remain open. The distinct NTFS 8.3 alias case in W4.5 also remains unqualified
 on the hosted runner. Local #817 corrected-binary diagnostics in the separate
 `linux-retention-soak` worktree lost the WebKitWebDriver session at window cycle
-399 after 398 native closes in mixed, warm-only and fresh-only runs (reports
+399 after 398 native closes in mixed, warm-only, fresh-only and main-window-only
+runs. The last mode avoids child WebDriver handle enumeration, switching and
+DOM/script calls; it still fails at the same boundary. Reports:
 `qualification-results/linux-linux-four-hour-817-df127-20260927-9b1661adf5d4.json`,
 `linux-linux-warm-only-817-fad2656-20260927-b9d68aa3d187.json`, and
-`linux-linux-fresh-only-817-fad2656-20260927-316ad85fd1c4.json`). These are
+`linux-linux-fresh-only-817-fad2656-20260927-316ad85fd1c4.json`, and
+`linux-linux-mainonly-817-74c4873-450-20260927-57900d58aea7.json` in that
+worktree. The root app retained roughly one deleted WebKitSharedMemory FD per
+native close, but RSS stayed bounded and the OS FD limit was far above the
+observed count. WebKitGTK and WebKitWebDriver page-lifecycle causes remain
+unresolved. These are
 diagnostic artifacts, not integrated or passing four-hour acceptance. An
 earlier cycle-187 failure came from an invalid window-selector fixture and
 does not count as product evidence. W2.5 also remains an unclassified

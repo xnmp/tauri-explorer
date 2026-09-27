@@ -351,7 +351,9 @@ test.describe("Keyboard traversal", () => {
       // The file list keeps one roving Tab stop among its entries: the cursor,
       // or the first entry before anything has been selected.
       expect(await tabToEntry(page)).toBe("/home/user/Archive");
-      await page.keyboard.press("ArrowDown");
+      // Tiles can fit every fixture entry in one row, so ArrowDown correctly
+      // has no destination. Use each renderer's guaranteed adjacent axis.
+      await page.keyboard.press(viewMode === "details" ? "ArrowDown" : "ArrowRight");
       const focusedPath = () => page.evaluate(() => {
         const el = document.activeElement as HTMLElement;
         return el.matches(".file-list .entry-item") ? el.dataset.path ?? null : null;

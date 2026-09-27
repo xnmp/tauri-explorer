@@ -56,6 +56,10 @@ exposed beside an inset outline. At most one ring side may be cut off.
   suggestion after every fetch, including the children fetched after applying
   a folder (see #702). A second Enter on a folder with subfolders descends
   instead of confirming.
+- **Grid navigation depends on geometry.** A Tiles fixture can fit every entry
+  in one row, so ArrowDown correctly leaves focus where it is. Use ArrowRight
+  when a traversal contract only needs to prove movement to an adjacent tile;
+  reserve vertical-arrow assertions for fixtures with a measured second row.
 - **The terminal.** The browser mock cannot spawn a terminal session,
   because `listen` needs the Tauri internals. Typed input through the toggle
   chord is covered natively by `e2e-tauri/specs/terminal-input-order.spec.ts`.

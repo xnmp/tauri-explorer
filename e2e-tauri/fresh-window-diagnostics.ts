@@ -128,8 +128,21 @@ export function collectNativeProcessEvidence(
   }
 }
 
-/** The complete evidence bundle written for one fresh-window lookup. */
-export interface FreshWindowDiagnostics {
+/** A selection failure can occur before any child page or renderer is known. */
+export interface FreshWindowSelectionFailure {
+  issue: 703;
+  phase: "selection-failed";
+  requestedLabel: string;
+  selectionStartedAt: number;
+  selectionFailedAt: number;
+  selectionError: string;
+  existingHandles: readonly string[];
+  nativeBeforeSelection: NativeProcessSample;
+  nativeDuringSelection: readonly NativeProcessSample[];
+}
+
+/** The complete evidence bundle written after a fresh window is selected. */
+export interface FreshWindowSelectedDiagnostics {
   issue: 703;
   phase: "selected" | "lookup-failed";
   requestedLabel: string;
@@ -149,6 +162,8 @@ export interface FreshWindowDiagnostics {
   /** First sample where that exact PID/start-time identity was absent. */
   selectedRendererFirstMissingAt?: number | null;
 }
+
+export type FreshWindowDiagnostics = FreshWindowSelectedDiagnostics | FreshWindowSelectionFailure;
 
 function isNativeProcessEvidence(sample: NativeProcessSample | null): sample is NativeProcessEvidence {
   return sample !== null && "sampledAt" in sample;
@@ -194,7 +209,10 @@ export function firstMissingRendererAt(
  */
 export function diagnosticsFileName(record: FreshWindowDiagnostics): string {
   const digest = createHash("sha256").update(record.requestedLabel).digest("hex").slice(0, 12);
-  return `${record.selectedAt}-${digest}-${record.phase}.json`;
+  const timestamp = record.phase === "selection-failed"
+    ? record.selectionStartedAt
+    : record.selectedAt;
+  return `${timestamp}-${digest}-${record.phase}.json`;
 }
 
 /**

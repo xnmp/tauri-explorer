@@ -607,7 +607,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/specs/gated-describe.ts` — `gatedDescribe`, the Mocha adapter over that decision; separate from `specs/helpers.ts` because qualification tests import the helpers without Mocha types.
 - `e2e-tauri/external-job-fixture.ts` — Linux native-test `PATH` fixture for a deterministic long-running fake Gemini CLI.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
-- `e2e-tauri/fresh-window-diagnostics.ts` — always-on fresh-child-window evidence: renderer snapshot, `/proc` renderer/driver classification and failure artifacts for lost native sessions (#703).
+- `e2e-tauri/fresh-window-diagnostics.ts` — fresh-child-window evidence: selection/lookup process timelines, renderer snapshot, `/proc` renderer/driver classification and failure artifacts (#703, #781).
 - `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
 - `e2e-tauri/window-transfer-diagnostics.ts` — incrementally persisted native runtime and per-window failure evidence.
 - `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.

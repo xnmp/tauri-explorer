@@ -7,8 +7,8 @@ import {
   firstMissingRendererAt,
   newestRenderer,
   writeFreshWindowDiagnostics,
-  type FreshWindowDiagnostics,
   type FreshWindowPageSnapshot,
+  type FreshWindowSelectedDiagnostics,
   type NativeProcessSample,
 } from "../fresh-window-diagnostics";
 
@@ -30,7 +30,7 @@ const diagnosticsDirectory =
  * lookup, so this is captured unconditionally at selection and replayed if the
  * lookup fails — by then the session can already be invalid.
  */
-let lastFreshWindow: FreshWindowDiagnostics | null = null;
+let lastFreshWindow: FreshWindowSelectedDiagnostics | null = null;
 
 /** Exact entry selector for native paths, including Windows `\` and quotes. */
 export function entryPathSelector(
@@ -108,6 +108,22 @@ export function recordFreshWindowLookupFailure(
   }, diagnosticsDirectory);
 }
 
+function beginNativeProcessTimeline(timeout: number) {
+  const samples: NativeProcessSample[] = [];
+  const sampleInterval = 500;
+  const maxSamples = Math.ceil(timeout / sampleInterval) + 2;
+  const sample = (final = false) => {
+    if (samples.length >= maxSamples && !final) return;
+    const observation = collectNativeProcessEvidence({ applicationPath: applicationBinary });
+    if (samples.length >= maxSamples) samples[maxSamples - 1] = observation;
+    else samples.push(observation);
+  };
+  sample();
+  const timer = setInterval(sample, sampleInterval);
+  timer.unref();
+  return { samples, sample, stop: () => clearInterval(timer) };
+}
+
 /**
  * Wait for the first element of a freshly opened window, retaining diagnostics
  * when it never resolves. The existence contract is unchanged; only the
@@ -118,31 +134,20 @@ export async function waitForFreshWindowElement(
   timeout: number,
 ): Promise<void> {
   const lookupStartedAt = Date.now();
-  const nativeDuringLookup: NativeProcessSample[] = [];
-  const sampleInterval = 500;
-  const maxSamples = Math.ceil(timeout / sampleInterval) + 2;
-  const sampleProcesses = () => {
-    if (nativeDuringLookup.length >= maxSamples) return;
-    nativeDuringLookup.push(collectNativeProcessEvidence({
-      applicationPath: applicationBinary,
-    }));
-  };
-  sampleProcesses();
-  const sampler = setInterval(sampleProcesses, sampleInterval);
-  sampler.unref();
+  const timeline = beginNativeProcessTimeline(timeout);
   try {
     await $(selector).waitForExist({ timeout });
   } catch (error) {
-    sampleProcesses();
+    timeline.sample(true);
     recordFreshWindowLookupFailure(
       selector,
       error,
       lookupStartedAt,
-      nativeDuringLookup,
+      timeline.samples,
     );
     throw error;
   } finally {
-    clearInterval(sampler);
+    timeline.stop();
   }
 }
 
@@ -151,21 +156,42 @@ export async function switchToFreshWindow(
   label: string,
   existingHandles: readonly string[],
 ): Promise<string> {
+  lastFreshWindow = null;
+  const selectionStartedAt = Date.now();
+  const timeline = beginNativeProcessTimeline(20_000);
   // Existing pages cannot satisfy fresh-open. Avoid probing their renderers:
   // a parked/retiring WebKit page can block script execution indefinitely.
   const existing = new Set(existingHandles);
   let selected = "";
-  await browser.waitUntil(async () => {
-    for (const handle of await browser.getWindowHandles()) {
-      if (existing.has(handle)) continue;
-      await browser.switchToWindow(handle);
-      if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-        selected = handle;
-        return true;
+  try {
+    await browser.waitUntil(async () => {
+      for (const handle of await browser.getWindowHandles()) {
+        if (existing.has(handle)) continue;
+        await browser.switchToWindow(handle);
+        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
+          selected = handle;
+          return true;
+        }
       }
-    }
-    return false;
-  }, { timeout: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
+      return false;
+    }, { timeout: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
+  } catch (error) {
+    timeline.sample(true);
+    writeFreshWindowDiagnostics({
+      issue: 703,
+      phase: "selection-failed",
+      requestedLabel: label,
+      selectionStartedAt,
+      selectionFailedAt: Date.now(),
+      selectionError: String(error),
+      existingHandles: [...existingHandles],
+      nativeBeforeSelection: timeline.samples[0],
+      nativeDuringSelection: timeline.samples,
+    }, diagnosticsDirectory);
+    throw error;
+  } finally {
+    timeline.stop();
+  }
 
   // Always-on: one renderer round trip plus one /proc scan, recorded before the
   // first element lookup can lose the session (#703).

@@ -1,7 +1,12 @@
 /** #703: a blocked fresh-window lookup must retain process timing evidence. */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   FreshWindowDiagnostics,
+  FreshWindowSelectedDiagnostics,
+  FreshWindowSelectionFailure,
   NativeProcessEvidence,
   ProcessObservation,
 } from "../../e2e-tauri/fresh-window-diagnostics";
@@ -16,6 +21,8 @@ const element = vi.hoisted(() => ({ waitForExist: vi.fn() }));
 const diagnostic = vi.hoisted(() => ({
   collect: vi.fn(),
   records: [] as FreshWindowDiagnostics[],
+  outputDirectory: "",
+  writtenPaths: [] as string[],
 }));
 
 vi.mock("@wdio/globals", () => ({
@@ -33,7 +40,9 @@ vi.mock("../../e2e-tauri/fresh-window-diagnostics", async (importOriginal) => {
     collectNativeProcessEvidence: diagnostic.collect,
     writeFreshWindowDiagnostics: vi.fn((record: FreshWindowDiagnostics) => {
       diagnostic.records.push(structuredClone(record));
-      return "/tmp/fresh-window-diagnostic.json";
+      const written = actual.writeFreshWindowDiagnostics(record, diagnostic.outputDirectory);
+      if (written) diagnostic.writtenPaths.push(written);
+      return written;
     }),
   };
 });
@@ -61,6 +70,8 @@ describe("fresh-window blocked lookup process timeline", () => {
     vi.setSystemTime(1_000);
     vi.resetAllMocks();
     diagnostic.records.length = 0;
+    diagnostic.writtenPaths.length = 0;
+    diagnostic.outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "fresh-window-selection-"));
     driver.getWindowHandles.mockResolvedValue(["main", "child"]);
     driver.waitUntil.mockImplementation(async (ready: () => Promise<boolean>) => {
       if (!(await ready())) throw new Error("fresh window was not ready");
@@ -83,10 +94,16 @@ describe("fresh-window blocked lookup process timeline", () => {
     });
   });
 
+  afterEach(() => {
+    fs.rmSync(diagnostic.outputDirectory, { recursive: true, force: true });
+    vi.useRealTimers();
+  });
+
   it("reports when the selected renderer first disappears during the blocked command", async () => {
     const mainRenderer = process(20, "WebKitWebProcess", "200");
     const selectedRenderer = process(21, "WebKitWebProcess", "210");
     diagnostic.collect
+      .mockReturnValueOnce(sample(1_000, [mainRenderer, selectedRenderer]))
       .mockReturnValueOnce(sample(1_000, [mainRenderer, selectedRenderer]))
       .mockReturnValueOnce(sample(1_000, [mainRenderer, selectedRenderer]))
       .mockReturnValueOnce(sample(1_500, [mainRenderer]))
@@ -105,7 +122,8 @@ describe("fresh-window blocked lookup process timeline", () => {
     rejectLookup(sessionLoss);
 
     await expect(lookup).rejects.toBe(sessionLoss);
-    const failure = diagnostic.records.find((record) => record.phase === "lookup-failed");
+    const failure = diagnostic.records.find((record): record is FreshWindowSelectedDiagnostics =>
+      record.phase === "lookup-failed");
     expect(failure?.lookup).toMatchObject({
       selector: ".file-list",
       startedAt: 1_000,
@@ -120,6 +138,74 @@ describe("fresh-window blocked lookup process timeline", () => {
     });
     expect(failure?.selectedRendererFirstMissingAt).toBe(1_500);
     expect(driver.execute).toHaveBeenCalledTimes(webDriverCallsBeforeLookup);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retains the failing label's process timeline when selection never succeeds", async () => {
+    const renderer = process(21, "WebKitWebProcess", "210");
+    diagnostic.collect.mockImplementation(() => sample(Date.now(), [renderer]));
+    driver.waitUntil.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      throw new Error("fresh native window explorer-child did not become ready");
+    });
+
+    const selection = switchToFreshWindow("explorer-child", ["main"]);
+    const rejected = expect(selection).rejects.toThrow("did not become ready");
+    await vi.advanceTimersByTimeAsync(1_100);
+    await rejected;
+
+    const failure = diagnostic.records.find((record): record is FreshWindowSelectionFailure =>
+      record.phase === "selection-failed");
+    expect(failure?.requestedLabel).toBe("explorer-child");
+    expect(failure?.nativeDuringSelection.map((entry) =>
+      "sampledAt" in entry ? entry.sampledAt : null)).toEqual([1_000, 1_500, 2_000, 2_100]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("records a handle-command failure without issuing another WebDriver command", async () => {
+    diagnostic.collect.mockImplementation(() => sample(Date.now(), []));
+    const lostSession = new Error("invalid WebDriver session");
+    driver.getWindowHandles.mockRejectedValue(lostSession);
+
+    await expect(switchToFreshWindow("explorer-child", ["main"])).rejects.toBe(lostSession);
+
+    const failure = diagnostic.records.find((record): record is FreshWindowSelectionFailure =>
+      record.phase === "selection-failed");
+    expect(failure).toMatchObject({
+      requestedLabel: "explorer-child",
+      selectionError: "Error: invalid WebDriver session",
+      existingHandles: ["main"],
+    });
+    expect(failure?.nativeDuringSelection).toHaveLength(2);
+    expect(driver.getWindowHandles).toHaveBeenCalledTimes(1);
+    expect(driver.switchToWindow).not.toHaveBeenCalled();
+    expect(driver.execute).not.toHaveBeenCalled();
+    expect(diagnostic.writtenPaths).toHaveLength(1);
+    const persisted = JSON.parse(fs.readFileSync(
+      diagnostic.writtenPaths[0], "utf8",
+    )) as FreshWindowSelectionFailure;
+    expect(persisted.phase).toBe("selection-failed");
+    expect(persisted.selectionError).toContain("invalid WebDriver session");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("captures the final process state when WebDriver rejects after the nominal selection timeout", async () => {
+    diagnostic.collect.mockImplementation(() => sample(Date.now(), []));
+    driver.waitUntil.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 22_000));
+      throw new Error("fresh native window explorer-child did not become ready");
+    });
+
+    const selection = switchToFreshWindow("explorer-child", ["main"]);
+    const rejected = expect(selection).rejects.toThrow("did not become ready");
+    await vi.advanceTimersByTimeAsync(22_000);
+    await rejected;
+
+    const failure = diagnostic.records.find((record): record is FreshWindowSelectionFailure =>
+      record.phase === "selection-failed");
+    const final = failure?.nativeDuringSelection.at(-1);
+    expect(final && "sampledAt" in final ? final.sampledAt : null).toBe(23_000);
+    expect(failure?.nativeDuringSelection.length).toBeLessThanOrEqual(43);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

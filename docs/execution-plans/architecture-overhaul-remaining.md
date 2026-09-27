@@ -146,8 +146,12 @@ DOM/script calls; it still fails at the same boundary. Reports:
 `linux-linux-mainonly-817-74c4873-450-20260927-57900d58aea7.json` in that
 worktree. The root app retained roughly one deleted WebKitSharedMemory FD per
 native close, but RSS stayed bounded and the OS FD limit was far above the
-observed count. WebKitGTK and WebKitWebDriver page-lifecycle causes remain
-unresolved. These are
+observed count. A separate direct-X11 run of the same native binary, with no
+WebDriver or tauri-driver, completed 399 native opens and closes then failed to
+open child 400 from Ctrl+N; its app retained 401 WebKitSharedMemory memfds at
+cycle 399. This rules out WebDriver as the sole cause but does not isolate
+WebKitGTK from Tauri/renderer lifetime. Logs are
+`/tmp/overhaul-resume/817-x11-450.log` and `817-x11-app.log`. These are
 diagnostic artifacts, not integrated or passing four-hour acceptance. An
 earlier cycle-187 failure came from an invalid window-selector fixture and
 does not count as product evidence. W2.5 also remains an unclassified

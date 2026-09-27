@@ -75,8 +75,9 @@
   --breadcrumb-radius: 12px;
   --breadcrumb-gap: 3px;
 
-  /* Focus indicators */
-  --focus-stroke-outer: #268bd2;
+  /* Focus indicators: solarized blue #268bd2 darkened in OKLCH lightness
+     only, for 3:1 on selected rows and premium crumbs (#797) */
+  --focus-stroke-outer: #1480c6;
   --focus-stroke-inner: #fdf6e3;
 
   /* System status colors - Solarized accents */

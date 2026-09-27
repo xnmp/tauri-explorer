@@ -67,8 +67,9 @@
   --breadcrumb-radius: 12px;
   --breadcrumb-gap: 3px;
 
-  /* Focus indicators */
-  --focus-stroke-outer: #4a7cff;
+  /* Focus indicators: #4a7cff darkened in OKLCH lightness only, for 3:1 on
+     the sidebar and preview surfaces (#797) */
+  --focus-stroke-outer: #4071f3;
   --focus-stroke-inner: #ffffff;
 
   /* System status colors */

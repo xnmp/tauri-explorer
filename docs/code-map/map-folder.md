@@ -145,7 +145,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
-- `file-transfer.ts` — legacy single-entry move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
+- `file-transfer.ts` — plugin-driven single-entry move core: conflict detect, undo, toast, frecency, broadcast.
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
 - `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse.
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
@@ -534,6 +534,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/object_id.rs` — pure native-platform identity codec, full-width Windows IDs and separate volume equality; rejects foreign/untagged authority.
 - `src-tauri/src/files/file_identity.rs` — native object/version capture from supplied handles, Unix metadata and descriptor-relative Linux stat; no-follow leaf semantics.
 - `src-tauri/src/files/file_identity/windows.rs` — FileIdInfo query on the supplied Windows handle, preserving volume serial and all 128 identifier bits without path fallback.
+- `src-tauri/src/files/directory_identity.rs` — one native directory spelling shared by listing and watch admission; Unix folds lexical separators while keeping case distinct, and Windows delegates stored-component spelling.
+- `src-tauri/src/files/directory_identity/windows.rs` — Windows drive/UNC parsing and stored-case component lookup, with literal device namespaces and case-sensitive WSL shares left unrewritten. Contracts live in `src-tauri/test_support/directory_identity.rs`; native listing/watch acceptance is in `e2e-tauri/specs/directory-identity.spec.ts`.
+- `src-tauri/test_support/directory_identity.rs` — pure directory-spelling contracts for Unix case sensitivity and Windows drive, UNC, WSL and literal namespace parsing.
 - `src-tauri/src/files/windows_io.rs` — shared Win32/NT error-code conversion for directory access, recovery identity and locking.
 - `src-tauri/test_support/recovery_object_id.rs` — full-width identity distinction, native/foreign codec contracts and malformed/wire-size bounds.
 - `src-tauri/test_support/recovery_file_identity.rs` — real independent opens/hardlinks, retained-handle identity through path replacement and native leaf/device checks.

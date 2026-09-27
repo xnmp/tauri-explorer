@@ -68,7 +68,7 @@ describe("directory listing Tauri E2E probe", () => {
           acceptWatch = resolve;
         }),
     );
-    const watching = watchDirectory("/watched");
+    const watching = watchDirectory("/WATCHED/");
     await Promise.resolve();
     await Promise.resolve();
 
@@ -79,9 +79,12 @@ describe("directory listing Tauri E2E probe", () => {
     expect(invokeMock).toHaveBeenCalledWith("native_resource_session", {
       historyChannel: expect.any(Function),
     });
-    expect(invokeMock).toHaveBeenCalledWith("watch_directory", { path: "/watched", sessionId: "session" });
+    expect(invokeMock).toHaveBeenCalledWith("watch_directory", { path: "/WATCHED/", sessionId: "session" });
     expect(
       JSON.parse(document.documentElement.dataset.e2eReadyDirectoryWatches ?? "[]"),
     ).toContain("/watched");
+    expect(
+      JSON.parse(document.documentElement.dataset.e2eReadyDirectoryWatches ?? "[]"),
+    ).not.toContain("/WATCHED/");
   });
 });

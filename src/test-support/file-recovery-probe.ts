@@ -26,10 +26,24 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
         signal.throwIfAborted();
         return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {}, broadcastToOtherWindows: event.detail.shared });
       }
-      if (op === "copy" || op === "move") {
+      if (op === "copy") {
+        const { copyEntries } = await import("../lib/api/copy-session");
+        signal.throwIfAborted();
+        const result = await copyEntries([event.detail.source!], event.detail.destination!, {
+          signal,
+          jobId: Number(++next),
+          onConflict: async () => ({ choice: "overwrite", applyToAll: true }),
+        });
+        if (!result.ok) return result;
+        const item = result.data.items[0];
+        return item?.status === "succeeded"
+          ? { ok: true, ...item.receipt }
+          : { ok: false, error: item?.status === "failed" || item?.status === "uncertain" ? item.error : "Copy did not complete" };
+      }
+      if (op === "move") {
         const { performFileTransfer } = await import("../lib/state/file-transfer");
         signal.throwIfAborted();
-        return performFileTransfer(event.detail.source!, event.detail.destination!, op === "copy", {
+        return performFileTransfer(event.detail.source!, event.detail.destination!, {
           overwrite: true, skipConflictCheck: true, onRefresh: () => {},
         });
       }

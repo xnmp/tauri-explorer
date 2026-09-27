@@ -61,6 +61,73 @@ fn a_character_device_cannot_supply_recovery_file_identity() {
     assert!(of_file(&device).is_err());
 }
 
+#[cfg(windows)]
+#[test]
+fn ntfs_case_variants_keep_the_same_physical_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("mixed-case-identity.txt");
+    fs::write(&path, b"identity").unwrap();
+    let variant = std::path::PathBuf::from(path.to_string_lossy().to_uppercase());
+    assert_ne!(variant, path);
+    assert_eq!(
+        of_file(&File::open(&path).unwrap()).unwrap(),
+        of_file(&File::open(&variant).unwrap()).unwrap()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn ntfs_short_name_alias_keeps_physical_identity_when_enabled() {
+    use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::PathBuf};
+    use windows::{core::PCWSTR, Win32::Storage::FileSystem::GetShortPathNameW};
+
+    let root = tempfile::tempdir().unwrap();
+    let long = root.path().join("long physical identity filename.txt");
+    fs::write(&long, b"identity").unwrap();
+    let wide: Vec<u16> = OsStr::new(&long).encode_wide().chain(Some(0)).collect();
+    // SAFETY: `wide` is NUL-terminated and remains live for both synchronous calls.
+    let needed = unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), None) };
+    assert!(
+        needed > 0,
+        "GetShortPathNameW failed: {}",
+        std::io::Error::last_os_error()
+    );
+    let mut output = vec![0u16; needed as usize];
+    // SAFETY: the output buffer has the size requested by the first call.
+    let written = unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(&mut output)) };
+    assert!(written > 0 && written < needed);
+    let short = PathBuf::from(String::from_utf16(&output[..written as usize]).unwrap());
+    if short.file_name() == long.file_name() {
+        eprintln!(
+            "8.3 short-name creation is disabled on {}",
+            root.path().display()
+        );
+        return;
+    }
+    assert_ne!(
+        short, long,
+        "8.3 evidence must use a distinct path spelling"
+    );
+    assert_eq!(
+        of_file(&File::open(&long).unwrap()).unwrap(),
+        of_file(&File::open(&short).unwrap()).unwrap()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn ntfs_hardlink_alias_keeps_physical_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let original = root.path().join("physical-original.txt");
+    let alias = root.path().join("physical-hardlink.txt");
+    fs::write(&original, b"identity").unwrap();
+    fs::hard_link(&original, &alias).unwrap();
+    assert_eq!(
+        of_file(&File::open(&original).unwrap()).unwrap(),
+        of_file(&File::open(&alias).unwrap()).unwrap()
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn descriptor_relative_versions_agree_with_no_follow_metadata() {

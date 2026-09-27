@@ -109,7 +109,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "native-session" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "directory-watch-release" | "native-session" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
@@ -173,6 +173,13 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
         // can distinguish native reclamation from ordinary frontend teardown.
         const { watchDirectory } = await whileActive(import("$lib/api/files"));
         return watchDirectory(target ?? "");
+      }
+      if (op === "directory-watch-release") {
+        // Release one unmanaged lease by the ID its acquisition returned, so
+        // identity acceptance can retire one spelling while others hold on.
+        const { unwatchDirectory } = await whileActive(import("$lib/api/files"));
+        await unwatchDirectory({ id: target ?? "", path: "" });
+        return true;
       }
       if (op === "watch-acquire") {
         const { invoke } = await whileActive(import("@tauri-apps/api/core"));

@@ -45,11 +45,9 @@ fn inverse_admission_fixture() {
     fs::create_dir(root.join("input")).unwrap();
     let source = root.join("input/item.txt");
     fs::write(&source, b"exact original").unwrap();
-    let publication = file_ops::copy_entry_impl(
-        None,
+    let publication = file_ops::ordinary_copy_for_test(
         source.to_str().unwrap().into(),
         root.to_str().unwrap().into(),
-        None,
         None,
     )
     .unwrap()
@@ -124,11 +122,9 @@ async fn native_copy_cycle(root: &std::path::Path, operations: &NativeOperations
     symlink(&physical, &alias).unwrap();
     let source = root.join("native-source");
     fs::write(&source, b"native exact bytes").unwrap();
-    let receipt = file_ops::copy_entry_impl(
-        None,
+    let receipt = file_ops::ordinary_copy_for_test(
         source.to_str().unwrap().into(),
         alias.to_str().unwrap().into(),
-        None,
         None,
     )
     .unwrap();

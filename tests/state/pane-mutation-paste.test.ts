@@ -22,7 +22,6 @@ const mocks = vi.hoisted(() => ({
   copyEntries: vi.fn(),
   moveEntries: vi.fn(),
   estimateSize: vi.fn(async () => ({ ok: true, data: { totalBytes: 1 } })),
-  cancelCopy: vi.fn(),
   clipboardHasImage: vi.fn(),
   clipboardPasteImage: vi.fn(),
   broadcastFileChange: vi.fn(),
@@ -67,7 +66,6 @@ vi.mock("$lib/api/move-session", () => ({
 vi.mock("$lib/api/files", async (importOriginal) => ({
   ...(await importOriginal<typeof import("$lib/api/files")>()),
   estimateSize: mocks.estimateSize,
-  cancelCopy: mocks.cancelCopy,
 }));
 
 vi.mock("$lib/state/file-events", async (importOriginal) => ({

@@ -1,5 +1,9 @@
 use super::Directory;
-use std::{ffi::OsStr, fs, io::Write};
+use std::{
+    ffi::OsStr,
+    fs,
+    io::{self, Write},
+};
 
 #[test]
 fn creates_are_exclusive_and_existence_does_not_replace_type_validation() {
@@ -54,6 +58,30 @@ fn independent_enumerations_retain_the_anchor_after_its_name_is_replaced() {
 }
 
 #[test]
+fn renames_move_directories_between_parents_and_within_one_parent() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = Directory::open(root.path()).unwrap();
+    let held = directory.create_directory(OsStr::new("held")).unwrap();
+    held.create_directory(OsStr::new("nested"))
+        .unwrap()
+        .create_file(OsStr::new("content"))
+        .unwrap()
+        .write_all(b"nested")
+        .unwrap();
+    held.rename_to(OsStr::new("nested"), &directory, OsStr::new("moved"))
+        .unwrap();
+    directory
+        .rename_to(OsStr::new("moved"), &directory, OsStr::new("renamed"))
+        .unwrap();
+    assert_eq!(
+        fs::read(root.path().join("renamed/content")).unwrap(),
+        b"nested"
+    );
+    assert!(!held.entry_exists(OsStr::new("nested")).unwrap());
+    assert!(!directory.entry_exists(OsStr::new("moved")).unwrap());
+}
+
+#[test]
 fn failed_rename_and_wrong_removal_kind_preserve_entries() {
     let root = tempfile::tempdir().unwrap();
     let directory = Directory::open(root.path()).unwrap();
@@ -66,9 +94,14 @@ fn failed_rename_and_wrong_removal_kind_preserve_entries() {
     }
     let child = directory.create_directory(OsStr::new("child")).unwrap();
     child.create_file(OsStr::new("content")).unwrap();
-    assert!(directory
-        .rename_to(OsStr::new("source"), &directory, OsStr::new("target"))
-        .is_err());
+    // Callers distinguish an occupied destination from every other failure.
+    assert_eq!(
+        directory
+            .rename_to(OsStr::new("source"), &directory, OsStr::new("target"))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::AlreadyExists
+    );
     assert!(directory.unlink(OsStr::new("source"), true).is_err());
     assert!(directory.unlink(OsStr::new("child"), false).is_err());
     assert!(directory.unlink(OsStr::new("child"), true).is_err());

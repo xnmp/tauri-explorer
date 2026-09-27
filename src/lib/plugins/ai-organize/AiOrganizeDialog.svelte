@@ -188,7 +188,7 @@
   }
 
   .header-icon {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .dialog-header h2 {
@@ -281,7 +281,7 @@
     background: none;
     border: none;
     padding: 0;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     cursor: pointer;
     font-size: 13px;
     text-decoration: underline;

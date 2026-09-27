@@ -1285,7 +1285,7 @@ import { openFile } from "$lib/api/open";
     align-self: flex-start;
     font-size: 10px;
     line-height: 1;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     padding: 3px 8px;
     border-radius: var(--radius-pill);
@@ -1606,7 +1606,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .preview-markdown :global(a) {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     text-decoration: none;
   }
 
@@ -1697,7 +1697,7 @@ import { openFile } from "$lib/api/open";
      the .hljs-dark/.hljs-light scheme class lives on <html>. */
 
   .preview-error-text {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     font-size: var(--font-size-caption);
   }
 
@@ -1757,7 +1757,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .collapsed-root-icon {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     flex-shrink: 0;
   }
 
@@ -1813,7 +1813,7 @@ import { openFile } from "$lib/api/open";
 
   .preview-type-badge.diff-unstaged {
     background: color-mix(in srgb, var(--accent) 15%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .diff-actions {
@@ -1842,7 +1842,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .diff-action-btn.danger:hover {
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
     border-color: var(--system-critical, #dc2626);
   }
 
@@ -1927,7 +1927,7 @@ import { openFile } from "$lib/api/open";
     white-space: normal;
   }
 
-  .hunk-action.danger { color: var(--system-critical, #dc2626); }
+  .hunk-action.danger { color: var(--system-critical-text, var(--system-critical, #dc2626)); }
 
   /* Vibrancy: own island, no left border needed */
   :global([data-vibrancy]) .preview-pane {

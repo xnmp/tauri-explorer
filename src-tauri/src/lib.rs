@@ -1,5 +1,10 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
+// The Unix recovery, anchored-copy and handle-permission implementations
+// compile and run their unit tests on macOS, but only Linux production paths
+// call them until a macOS adapter is connected (#772). Dead-code lints stay
+// enforced on Linux, where every Unix module has production callers.
+#![cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 
 mod ai_organize;
 mod ai_rename;

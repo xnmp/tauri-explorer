@@ -20,12 +20,12 @@ use windows::Win32::{
         GetSecurityDescriptorControl, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
         GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor, IsValidAcl,
         IsValidSecurityDescriptor, IsValidSid, SetSecurityDescriptorControl,
-        SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TokenUser, WinLocalSystemSid,
-        ACCESS_ALLOWED_ACE, ACE_FLAGS, ACE_HEADER, ACL, ACL_REVISION, ACL_SIZE_INFORMATION,
-        CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, INHERITED_ACE, OBJECT_INHERIT_ACE,
-        OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_DESCRIPTOR,
-        SECURITY_DESCRIPTOR_CONTROL, SE_DACL_DEFAULTED, SE_DACL_PRESENT, SE_DACL_PROTECTED,
-        TOKEN_QUERY, TOKEN_USER,
+        SetSecurityDescriptorDacl, SetSecurityDescriptorOwner, TokenOwner, TokenUser,
+        WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACE_FLAGS, ACE_HEADER, ACL, ACL_REVISION,
+        ACL_SIZE_INFORMATION, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, INHERITED_ACE,
+        OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        SECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_CONTROL, SE_DACL_DEFAULTED, SE_DACL_PRESENT,
+        SE_DACL_PROTECTED, TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER,
     },
     Storage::FileSystem::FILE_ALL_ACCESS,
     System::Threading::{GetCurrentProcess, OpenProcessToken},
@@ -169,7 +169,18 @@ fn validate_descriptor(descriptor: PSECURITY_DESCRIPTOR, ace_policy: AcePolicy) 
 
     let expected_owner = current_user_sid()?;
     let expected_system = well_known_system_sid()?;
-    validate_owner(descriptor, expected_owner.sid())?;
+    // Explicit descriptors name the user as owner. An inherited child is owned
+    // by the token's default owner instead, which is the Administrators group
+    // for an elevated token under the Windows Server default policy (#772).
+    let default_owner = match ace_policy {
+        AcePolicy::InheritedFile => Some(current_default_owner_sid()?),
+        AcePolicy::ExplicitDirectory | AcePolicy::ExplicitFile => None,
+    };
+    validate_owner(
+        descriptor,
+        expected_owner.sid(),
+        default_owner.as_ref().map(AlignedBuffer::sid),
+    )?;
     validate_dacl(
         descriptor,
         expected_owner.sid(),
@@ -178,7 +189,11 @@ fn validate_descriptor(descriptor: PSECURITY_DESCRIPTOR, ace_policy: AcePolicy) 
     )
 }
 
-fn validate_owner(descriptor: PSECURITY_DESCRIPTOR, expected: PSID) -> io::Result<()> {
+fn validate_owner(
+    descriptor: PSECURITY_DESCRIPTOR,
+    expected: PSID,
+    default_owner: Option<PSID>,
+) -> io::Result<()> {
     let mut owner = PSID::default();
     let mut defaulted = windows::core::BOOL::default();
     // SAFETY: output pointers are valid and the descriptor was validated.
@@ -187,7 +202,8 @@ fn validate_owner(descriptor: PSECURITY_DESCRIPTOR, expected: PSID) -> io::Resul
     if owner.0.is_null()
         || defaulted.as_bool()
         || !unsafe { IsValidSid(owner) }.as_bool()
-        || !sid_equal(owner, expected)
+        || !(sid_equal(owner, expected)
+            || default_owner.is_some_and(|default_owner| sid_equal(owner, default_owner)))
     {
         return Err(invalid_security(
             "Windows security descriptor is not owned by the current user",
@@ -319,6 +335,22 @@ fn checked_allowed_ace(raw: *mut c_void) -> io::Result<(ACCESS_ALLOWED_ACE, PSID
 }
 
 fn current_user_sid() -> io::Result<AlignedBuffer> {
+    let token_user = token_information(TokenUser)?;
+    // SAFETY: Windows filled the buffer with a TOKEN_USER record.
+    let user = unsafe { &*(token_user.as_ptr() as *const TOKEN_USER) };
+    copy_sid(user.User.Sid)
+}
+
+/// The owner Windows assigns to objects this process creates without an
+/// explicit owner.
+fn current_default_owner_sid() -> io::Result<AlignedBuffer> {
+    let token_owner = token_information(TokenOwner)?;
+    // SAFETY: Windows filled the buffer with a TOKEN_OWNER record.
+    let owner = unsafe { &*(token_owner.as_ptr() as *const TOKEN_OWNER) };
+    copy_sid(owner.Owner)
+}
+
+fn token_information(class: TOKEN_INFORMATION_CLASS) -> io::Result<AlignedBuffer> {
     let mut token = HANDLE::default();
     // SAFETY: output points to a valid HANDLE and the pseudo process handle is
     // valid for the duration of this call.
@@ -327,7 +359,7 @@ fn current_user_sid() -> io::Result<AlignedBuffer> {
 
     let mut required = 0u32;
     // SAFETY: this is the documented sizing call; no output buffer is supplied.
-    let sizing = unsafe { GetTokenInformation(token.0, TokenUser, None, 0, &mut required) };
+    let sizing = unsafe { GetTokenInformation(token.0, class, None, 0, &mut required) };
     match sizing {
         Err(error) => {
             let error = io_error(error);
@@ -338,7 +370,7 @@ fn current_user_sid() -> io::Result<AlignedBuffer> {
         Ok(()) if required == 0 => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Windows returned an empty token-user record",
+                "Windows returned an empty token record",
             ));
         }
         Ok(()) => {}
@@ -346,24 +378,24 @@ fn current_user_sid() -> io::Result<AlignedBuffer> {
     if required == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Windows did not size the token-user record",
+            "Windows did not size the token record",
         ));
     }
 
-    let mut token_user = AlignedBuffer::new(required as usize)?;
+    let mut information = AlignedBuffer::new(required as usize)?;
     // SAFETY: the aligned buffer has the exact size Windows requested.
     unsafe {
         GetTokenInformation(
             token.0,
-            TokenUser,
-            Some(token_user.as_mut_ptr()),
+            class,
+            Some(information.as_mut_ptr()),
             required,
             &mut required,
         )
     }
     .map_err(io_error)?;
-    let user = unsafe { &*(token_user.as_ptr() as *const TOKEN_USER) };
-    copy_sid(user.User.Sid)
+    // The token handle closes here; callers copy any SID out of the buffer.
+    Ok(information)
 }
 
 fn well_known_system_sid() -> io::Result<AlignedBuffer> {

@@ -855,7 +855,8 @@ import { openFile } from "$lib/api/open";
         <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
       {/if}
     </div>
-    <div class="preview-content">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
+    <div class="preview-content" role="region" aria-label="Diff of {diffPath}" tabindex="0">
       {#if diffLoading}
         <div class="preview-loading"><div class="spinner"></div></div>
       {:else if diffError}
@@ -923,7 +924,8 @@ import { openFile } from "$lib/api/open";
       </div>
     {/if}
 
-    <div class="preview-content">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
+    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}" tabindex="0">
       {#if previewLoading}
         {#if showPreviewSpinner}
           <div class="preview-loading">
@@ -1132,7 +1134,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .resize-handle:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
   }
 

@@ -138,6 +138,44 @@ nativeDescribe("native file-list composite focus", () => {
     }
   });
 
+  it("Tabs from the address bar into every file-list view, where arrows move the selection (#797)", async () => {
+    for (const viewMode of viewModes) {
+      await navigateTo(root);
+      await useView(viewMode);
+      await $(entrySelector(folderNames[0])).waitForDisplayed();
+      await browser.execute(() => {
+        document.querySelector<HTMLElement>(".explorer-pane .navigation-bar .crumb.current")?.focus();
+      });
+      await browser.waitUntil(async () => await browser.execute(() =>
+        document.activeElement?.closest(".navigation-bar") !== null,
+      ), { timeoutMsg: `${viewMode}: the address bar's current crumb did not take focus` });
+
+    // Between the address bar and the first entry, Tab may only pass the file
+    // list's own column controls.
+      const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);
+      for (let step = 0; step < cycleLimit && !(await activeEntryPath()); step += 1) {
+        await browser.keys("Tab");
+        const region = await browser.execute(() => {
+          const active = document.activeElement;
+          return active?.closest(".navigation-bar") ? "address-bar" : active?.closest(".file-list") ? "file-list" : "elsewhere";
+        });
+        expect(region).not.toBe("elsewhere");
+      }
+      // The Tab stop is the pane's cursor entry, which navigation may restore.
+      const reached = await activeEntryPath();
+      expect(reached).toBeTruthy();
+      const navigationKey = viewMode === "details" ? "ArrowDown" : "ArrowRight";
+      await browser.keys(navigationKey);
+      await browser.waitUntil(async () => {
+        const current = await activeEntryPath();
+        return current !== null && current !== reached;
+      }, {
+        timeoutMsg: `${viewMode}: ${navigationKey} did not move focus from ${reached}`,
+      });
+      expect(await browser.execute(() => document.activeElement?.classList.contains("selected") ?? false)).toBe(true);
+    }
+  });
+
   it("extends Shift+Arrow selection to three entries with focus on the endpoint", async () => {
     for (const viewMode of viewModes) {
       await navigateTo(root);

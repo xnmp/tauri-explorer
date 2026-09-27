@@ -11,6 +11,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { navigateTo, entryNames, domTexts } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
+import { captureDiagnostics } from "../window-transfer-diagnostics";
+import {
+  waitForListingEntry,
+  type ListingWaitRequest,
+  type RendererWaitResult,
+} from "../window-transfer-waits";
 
 const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-clip-");
 
@@ -56,10 +62,21 @@ describe("context-menu clipboard round-trip on the real backend", () => {
 
     // The paste lands as a real file (name may be suffixed on collision —
     // here there is none, but assert on disk contents, not just the UI).
-    await browser.waitUntil(
-      async () => (await entryNames()).filter((n) => n.includes("original")).length >= 2,
-      { timeoutMsg: "pasted copy never appeared in the listing" },
-    );
+    const observed = await browser.executeAsync<
+      RendererWaitResult<true>,
+      [ListingWaitRequest]
+    >(waitForListingEntry, {
+      name: "original",
+      match: "contains",
+      minCount: 2,
+      timeoutMs: 15_000,
+    });
+    if (!observed.ok) {
+      const diskEntries = fs.readdirSync(scratchDir);
+      const renderedEntries = await entryNames();
+      await captureDiagnostics("clipboard-paste-listing", { diskEntries, renderedEntries });
+      throw new Error(observed.reason);
+    }
     const copies = fs
       .readdirSync(scratchDir)
       .filter((n) => n.includes("original") && n.endsWith(".txt"));

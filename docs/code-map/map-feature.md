@@ -97,6 +97,7 @@ backend for E2E/browser).
 - `domain/window-launch-plan.ts` — pure query/cwd/home precedence and restoration policy.
 - `state/window-session.ts` — page subscription/delayed-work ownership, rollback, and post-readiness warm priming; borrows window-scoped stores.
 - `src/test-support/window-session-probe.ts` — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; native target, picker, unready and in-flight close fixtures cover rejected handoffs and duplicate-label creation ownership.
+- `e2e-tauri/window-transfer-waits.ts`, `e2e-tauri/specs/window-transfer-lifetime.spec.ts` — renderer-side correlated observation for native window-operation results and listing entries. `e2e-tauri/window-transfer-diagnostics.ts` retains window/runtime evidence for transfer and clipboard failures.
 - `state/window-startup.ts` — owns settings → theme/readiness → plugins initialization; teardown revokes late startup.
 
 - `state/repo-root-cache.svelte.ts` — bounded shared root probes for tab labels and Git warming, invalidated by existing file/Git buses.
@@ -404,6 +405,7 @@ backend for E2E/browser).
 - `state/theme.svelte.ts` — `themeStore` (active theme, apply)
 - `themes/*.css` — theme variable sets (dark, light, ocean-blue, tahoe, …); `themes/index.css` aggregates. Text drawn in a status colour uses `--accent-text` / `--system-caution-text` / `--system-critical-text` (falling back to the fill token), defined only where the fill falls below AA (#785)
 - `e2e/theme-accessibility.spec.ts` — axe WCAG 2.1 AA scan of every built-in theme × premium × view mode, plus the recovery notice's error state; documents each accommodation it makes for axe (#785)
+- Focus rings: one inset `:focus-visible` ring on `--focus-stroke-outer` (`routes/+page.svelte`); components that draw their own also use the focus token, never `--accent` (guarded in `tests/themes/theme-token-contrast.test.ts`). `e2e/keyboard-traversal.spec.ts` walks the default Details-view Tab cycle region by region in every built-in theme, checks exposed adjacent surfaces, and separately verifies each file-list renderer's roving entry and focus indicator (#797)
 - `components/ThemePicker.svelte` — theme selection UI
 - `domain/theme-from-palette.ts`, `src-tauri/src/palette.rs`, `plugins/theme-from-image/` — generate theme from image palette
 - `state/window-backdrop.ts`, `state/window-appearance.ts`, `components/AnimatedBackground.svelte`, `background-animations/` (particles, starfield, registry) — window backdrop + animated bg
@@ -419,7 +421,7 @@ backend for E2E/browser).
 - `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner.
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
 - built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`
-- backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`, `plugin_job.rs` (shared job scaffolding: id alloc, output-path validation, timeout, complete/error events)
+- backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`, `plugin_job.rs` (shared job scaffolding: id alloc, output-path validation, timeout, complete/error events). `src/test-support/external-job-probe.ts` and `e2e-tauri/specs/external-job-timeout.spec.ts` qualify the real Nano child timeout, reap, withheld publication and Jobs-panel error with the fake executable installed by `e2e-tauri/external-job-fixture.ts`.
 - shared UI: `plugins/plugin-dialog.css` (dialog chrome), `domain/available-filename.ts` (collision-free output name)
 - FLOW: plugins register commands/settings/dialogs via PluginContext at startup; AI actions invoke Gemini-backed Rust commands (upscale invokes fal.ai's SeedVR2 queue API via `fal.rs`).
 

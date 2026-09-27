@@ -554,7 +554,7 @@
     z-index: 2;
   }
 
-  .resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .resize-handle:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
 
   .resize-handle:hover, .resizing .resize-handle {
     background: color-mix(in srgb, var(--accent) 40%, transparent);

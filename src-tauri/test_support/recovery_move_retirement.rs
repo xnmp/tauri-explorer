@@ -1861,3 +1861,71 @@ fn forget_names_the_folders_that_still_hold_files() {
         item.message
     );
 }
+
+#[test]
+fn an_unobservable_retiring_record_is_never_claimed_by_enforcement() {
+    let f = partially_retired(true);
+    // The source root's volume directory is replaced by another object, as
+    // when a different filesystem is mounted where the recorded one was.
+    let parent = f.roots[0].parent().unwrap().to_path_buf();
+    let away = parent.with_extension("away");
+    fs::rename(&parent, &away).unwrap();
+    fs::create_dir(&parent).unwrap();
+    let before = generation(&f);
+    for _ in 0..3 {
+        retirement::enforce(&f.coordinator).unwrap();
+    }
+    assert_eq!(
+        generation(&f),
+        before,
+        "enforcement claimed a retirement whose anchors it could not observe"
+    );
+    let parked = away.join(f.roots[0].file_name().unwrap()).join("parked");
+    assert!(parked.is_dir(), "retained bytes were touched while away");
+    // Once the recorded volume is back, the interrupted retirement resumes.
+    fs::remove_dir(&parent).unwrap();
+    fs::rename(&away, &parent).unwrap();
+    assert_eq!(retirement::enforce(&f.coordinator).unwrap().records, 0);
+    f.assert_retired();
+}
+
+#[test]
+fn a_root_that_drifts_from_its_plan_while_planning_keeps_undo() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    let f = Fixture::build(true, false, false, |source| {
+        fs::create_dir_all(source.join("dir/sub")).unwrap();
+        fs::write(source.join("dir/sub/planned"), MOVED).unwrap();
+    });
+    let revision = effect_revision(&f);
+    // Deep inside the retained payload, so the payload's own version, which
+    // proves the endpoint, is unchanged: only the captured plan can see it.
+    let foreign = f.roots[0].join("parked/dir/sub/foreign");
+    let result = f.retirement().retire_with(|label| {
+        if label == "planned" {
+            fs::write(&foreign, b"written while the discard was planned")?;
+        }
+        Ok(())
+    });
+    assert!(result.is_err(), "a drifted root was discarded");
+    assert_eq!(
+        fs::read(&foreign).unwrap(),
+        b"written while the discard was planned"
+    );
+    assert_eq!(
+        fs::read(f.roots[0].join("parked/dir/sub/planned")).unwrap(),
+        MOVED
+    );
+    // No decision was journaled, so Undo returns the whole entry.
+    let operation = f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .unwrap_or_else(|error| panic!("Undo was consumed: {error}"))
+        .unwrap();
+    MoveExecution::reopen(operation)
+        .unwrap()
+        .restore_move()
+        .unwrap();
+    assert_eq!(fs::read(f.source.join("dir/sub/planned")).unwrap(), MOVED);
+    assert!(f.source.join("dir/sub/foreign").is_file());
+    assert!(!f.target.exists());
+}

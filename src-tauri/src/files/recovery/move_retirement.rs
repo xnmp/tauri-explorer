@@ -215,6 +215,17 @@ impl MoveRetirement {
     }
 
     fn verify(&self) -> Result<(), AppError> {
+        let retirement = self.operation.state().move_state()?.retirement.as_ref();
+        self.verify_against(|side| retirement.and_then(|state| state.plan(side)))
+    }
+
+    /// Verify endpoints and roots against the cleanup plan `plan` names for
+    /// each root: the journaled ones, or, before the decision, those just
+    /// captured.
+    fn verify_against<'plan>(
+        &self,
+        plan: impl Fn(RootSide) -> Option<&'plan super::move_cleanup::Plan>,
+    ) -> Result<(), AppError> {
         // A rootless record (a same-volume rename) retains nothing, so there is
         // nothing public-endpoint proof could protect: forgetting it removes no
         // file. Requiring exact endpoints would pin it forever after any edit.
@@ -243,12 +254,7 @@ impl MoveRetirement {
                 (Some(root), _) => root.verify_move_retirement(
                     self.operation.intent(),
                     self.expected(*side)?.as_ref(),
-                    self.operation
-                        .state()
-                        .move_state()?
-                        .retirement
-                        .as_ref()
-                        .and_then(|state| state.plan(*side)),
+                    plan(*side),
                     step == Some(Step::Removing),
                 )?,
             }
@@ -383,24 +389,31 @@ impl MoveRetirement {
                 root.preflight_move_retirement(plan)?;
             }
         }
-        // The last read-only proof immediately before the decision consumes
-        // Undo: planning a large tree takes time the endpoints can change in.
-        if fresh {
-            self.verify()?;
-        }
+        checkpoint("planned")?;
         let planned = |side| {
             self.roots
                 .iter()
                 .position(|(candidate, _)| *candidate == side)
-                .and_then(|index| plans[index].clone())
+                .and_then(|index| plans[index].as_ref())
         };
+        // The last read-only proof before the decision consumes Undo, of
+        // exactly what verification after it repeats: public endpoints, each
+        // root's namespace and manifest, and every captured plan. Planning a
+        // large tree takes time in which any of them can change. The
+        // post-decision withdrawal cannot cover this: it proves the decision
+        // removed nothing by matching each root against its plan, so a root
+        // that drifted from its plan during planning would keep a decision
+        // that can never finish, and with it consume Undo (#760).
+        if fresh {
+            self.verify_against(planned)?;
+        }
         // A decision holds its plans in the journal until it completes; one
         // that could never finish must not starve every later operation.
         if !self.operation.advance_move_leaving(
             MoveTransition::BeginRetirement(
                 decision,
-                planned(RootSide::Source),
-                planned(RootSide::Target),
+                planned(RootSide::Source).cloned(),
+                planned(RootSide::Target).cloned(),
             ),
             self.headroom,
         )? {

@@ -235,8 +235,13 @@ invent a decision to discard an original. Beginning retirement prevents both
 history claims and forward/inverse execution, and retains full mutation claims
 until record retirement releases them.
 
-The decision is not allowed to consume Undo for nothing (#760). Public endpoints
-are verified once more immediately before `BeginRetirement` is journaled. If
+The decision is not allowed to consume Undo for nothing (#760). Immediately
+before `BeginRetirement` is journaled, the same verification that follows it
+runs read-only against the freshly captured plans: public endpoints, each
+root's namespace, manifest and payload version, and every planned entry.
+Planning a large tree takes time, and a root that drifts from its plan in that
+window could not be withdrawn afterwards, because withdrawal proves the root
+untouched by matching that plan. If
 verification after the decision refuses while no root is `Removed` and every
 root still strictly matches its captured plan, manifest and exact payload
 version, `WithdrawRetirement` returns the record to its settled phase with its

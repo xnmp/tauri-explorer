@@ -27,7 +27,11 @@ prove "untouched" by strict observation (manifest, exact payload version, every
 planned entry present), never from the step label. `Removing` does not mean
 anything was removed. Keep the effect revision unchanged so the surviving
 history entry claims the record again. A refused claim leaves the native history
-entry in `remaining`, which is why this works.
+entry in `remaining`, which is why this works. Withdrawal therefore cannot
+cover drift during planning: a root that no longer matches its fresh plan is
+indistinguishable from one the decision partly removed. The last check before
+the decision must verify against the captured plans too, not only the payload's
+top-level version, which a change deep in the tree leaves unchanged.
 
 **Enforcement must only claim what it can progress.** Claiming advances the
 generation and invalidates what the user is inspecting. A reported failure waits

@@ -48,3 +48,37 @@ fn incomplete_or_relative_windows_spellings_are_not_claimed() {
         assert!(WindowsSpelling::parse(path).is_none(), "{path}");
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn case_sensitive_ntfs_parent_never_rewrites_a_missing_case_variant() {
+    use std::{fs, process::Command};
+
+    let root = tempfile::tempdir().unwrap();
+    let sensitive = root.path().join("sensitive");
+    fs::create_dir(&sensitive).unwrap();
+    let enabled = Command::new("fsutil.exe")
+        .args(["file", "setCaseSensitiveInfo"])
+        .arg(&sensitive)
+        .arg("enable")
+        .output()
+        .unwrap();
+    assert!(
+        enabled.status.success(),
+        "Windows runner cannot enable per-directory case sensitivity: status={:?}, stdout={}, stderr={}",
+        enabled.status.code(),
+        String::from_utf8_lossy(&enabled.stdout),
+        String::from_utf8_lossy(&enabled.stderr),
+    );
+
+    let stored = sensitive.join("Docs");
+    fs::create_dir(&stored).unwrap();
+    let missing = sensitive.join("docs");
+    assert!(!missing.exists(), "fixture is not case-sensitive");
+    assert_eq!(
+        resolve(&missing.to_string_lossy()),
+        missing.to_string_lossy(),
+        "a nonexistent case variant changed filesystem semantics"
+    );
+    assert_eq!(resolve(&stored.to_string_lossy()), stored.to_string_lossy(),);
+}

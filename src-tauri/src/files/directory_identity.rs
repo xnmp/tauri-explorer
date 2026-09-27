@@ -11,10 +11,11 @@
 //!
 //! - Unix normalizes lexically: repeated and trailing separators and `.`
 //!   components fold. Case and symlinks name distinct directories.
-//! - Windows also folds `/` into `\`, uppercases the drive letter, and gives
+//! - Windows local-drive paths also fold `/` into `\`, uppercase the drive letter, and give
 //!   each existing component its stored case. An 8.3 alias keeps its stored
-//!   short spelling rather than expanding; UNC server and share names keep the
-//!   requested spelling. Verbatim and device namespaces are literal and stay
+//!   short spelling rather than expanding. UNC server and share names keep the
+//!   requested spelling, so root case variants are outside this convergence
+//!   contract. Verbatim and device namespaces are literal and stay
 //!   unchanged. WSL shares hold Linux filesystems and keep their case, as the
 //!   frontend `directoryKey` does.
 

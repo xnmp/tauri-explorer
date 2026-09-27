@@ -11,9 +11,14 @@ must publish readiness from the returned lease path rather than the requested
 path. This keeps the listing cache, pane state, watch registry and event path on
 one identity without introducing a second lifecycle owner.
 
-Unix resolution is lexical and case-sensitive. Windows drive paths resolve each
-existing component to its stored long-name case. UNC server/share spelling stays
-as requested because it is outside the enumerated directory components; WSL
+Unix resolution is lexical and case-sensitive. Windows local drive paths resolve
+each existing component to its stored long-name case, but only after the
+requested spelling itself resolves: an insensitive `FindFirstFileExW` match can
+otherwise turn a nonexistent name into an existing entry inside a per-directory
+case-sensitive NTFS directory. UNC server/share spelling stays as requested and
+its case variants can therefore retain separate registry keys; this is an
+explicit limitation because those root components cannot be enumerated through
+the same lookup. WSL
 shares also retain component case because their backing filesystem may be
 case-sensitive. Device and verbatim namespaces remain literal.
 

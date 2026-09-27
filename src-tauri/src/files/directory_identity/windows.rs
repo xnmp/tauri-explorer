@@ -54,9 +54,20 @@ fn stored_name(probe: &str, requested: &str) -> Option<String> {
         if find(probe, true).is_some_and(|exact| exact.name == requested) {
             return Some(requested.to_owned());
         }
+        // A case-insensitive search can still return `Docs` for a nonexistent
+        // `docs` inside a per-directory case-sensitive NTFS directory. Verify
+        // that Windows itself resolves the requested spelling before adopting
+        // the insensitive match; symlink_metadata keeps a final reparse point
+        // as the named entry rather than following its target.
+        if std::fs::symlink_metadata(probe).is_err() {
+            return None;
+        }
         return Some(found.name);
     }
-    (!found.short.is_empty() && same_ignoring_case(&found.short, requested)).then_some(found.short)
+    (!found.short.is_empty()
+        && same_ignoring_case(&found.short, requested)
+        && std::fs::symlink_metadata(probe).is_ok())
+    .then_some(found.short)
 }
 
 struct Found {

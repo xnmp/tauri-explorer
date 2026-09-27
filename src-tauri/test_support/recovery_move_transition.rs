@@ -922,3 +922,11 @@ fn only_an_automatically_retirable_move_defers_cleanup_and_a_decision_clears_it(
     assert!(!awaits_retry(&deciding));
     assert!(transition(&intent, &deciding, defer("read-only")).is_err());
 }
+
+#[test]
+fn an_ordinary_move_state_omits_the_upgrade_only_deferral_field() {
+    assert_eq!(
+        serde_json::to_string(&MoveState::default()).unwrap(),
+        r#"{"effect_revision":0,"source_root":null,"target_root":null,"phase":"planned","staged":null,"error":null}"#
+    );
+}

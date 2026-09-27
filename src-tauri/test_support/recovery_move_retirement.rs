@@ -1843,20 +1843,17 @@ fn forget_names_the_folders_that_still_hold_files() {
         "{}",
         item.message
     );
-    // Stopped inside the source root: both folders still hold files.
+    // A root already in Removing is no longer presented as retained. Its
+    // cleanup owns that location; Forget names only roots still awaiting it.
     let f = partially_retired(false);
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     let item = &snapshot.items[0];
     assert!(item.actions.contains(&RecoveryChoice::Release));
-    let roots: Vec<_> = f
-        .roots
-        .iter()
-        .map(|root| root.to_string_lossy().into_owned())
-        .collect();
-    assert_eq!(item.retained_paths, roots);
+    let target_root = f.roots[1].to_string_lossy().into_owned();
+    assert_eq!(item.retained_paths, vec![target_root]);
     assert!(f.roots.iter().all(|root| root.exists()));
     assert!(
-        item.message.contains("each listed folder"),
+        item.message.contains("the listed folder"),
         "{}",
         item.message
     );
@@ -1971,9 +1968,22 @@ fn a_deferral_recorded_before_its_measurement_still_waits_for_a_retry() {
 
 // --- Mount boundaries inside retained payloads (#760, PR #790 review N1) ---
 
+#[test]
+fn cleanup_mount_identity_refuses_same_device_bind_mounts_when_statx_is_available() {
+    use crate::files::recovery::move_cleanup::mount_ids_match;
+    assert!(mount_ids_match(Some(17), Some(17)));
+    assert!(!mount_ids_match(Some(17), Some(23)));
+    // Unsupported statx falls back to the existing device comparison.
+    assert!(mount_ids_match(None, Some(23)));
+    assert!(mount_ids_match(Some(17), None));
+}
+
 /// Discard the only record, as the File Recovery dialog would.
 fn discard_only_record(coordinator: &Arc<Coordinator>) -> Option<String> {
-    let id = coordinator.inventory().unwrap().entries[0].intent.id.clone();
+    let id = coordinator.inventory().unwrap().entries[0]
+        .intent
+        .id
+        .clone();
     let snapshot = service::inspect(coordinator, &id).unwrap();
     service::resolve(
         coordinator,
@@ -2026,7 +2036,11 @@ fn a_bind_mount_inside_a_payload_is_refused_before_any_record() {
             "mount",
             &["--bind".as_ref(), data.as_os_str(), inner.as_os_str()],
         );
-        assert_eq!(device(&inner), device(tree), "a bind mount keeps its device");
+        assert_eq!(
+            device(&inner),
+            device(tree),
+            "a bind mount keeps its device"
+        );
         let coordinator = Coordinator::open(&base_path.join("recovery")).unwrap();
         let mut progress =
             crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);

@@ -846,7 +846,10 @@ fn retained_folders(intent: &DurableIntent, state: Option<&OperationState>) -> V
             .into_iter()
             .filter_map(|(side, root)| Some((side, root.as_ref()?)))
             .filter(|(side, _)| {
-                retirement.and_then(|retirement| retirement.step(*side)) != Some(Step::Removed)
+                !matches!(
+                    retirement.and_then(|retirement| retirement.step(*side)),
+                    Some(Step::Removing | Step::Removed)
+                )
             })
             .map(|(_, root)| shown(&root.path))
             .collect()

@@ -173,7 +173,10 @@ impl Directory {
     /// crosses into a mount, so a mount point reports the mounted root's id.
     #[cfg(target_os = "linux")]
     pub(crate) fn entry_mount_id(&self, name: &OsStr) -> io::Result<Option<u64>> {
-        self.statx_mount_id(&native_name(name)?, libc::AT_SYMLINK_NOFOLLOW)
+        self.statx_mount_id(
+            &native_name(name)?,
+            libc::AT_SYMLINK_NOFOLLOW | libc::AT_NO_AUTOMOUNT,
+        )
     }
 
     /// Whether an entry is the root of a mount other than this directory's.

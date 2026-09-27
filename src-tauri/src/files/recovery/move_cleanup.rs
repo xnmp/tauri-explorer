@@ -111,11 +111,13 @@ impl Plan {
         if let Some(name) = payload {
             let top = root.join(name);
             let mut budget = Budget::new(1);
+            let payload_mount = entry_mount_id(directory, OsStr::new(name))?;
             walk(
                 directory,
                 OsStr::new(name),
                 Path::new(""),
                 1,
+                payload_mount,
                 &mut |relative, version| {
                     let path = located(&top, relative);
                     budget.spend(std::slice::from_ref(&path))?;
@@ -143,15 +145,23 @@ impl Plan {
     ) -> Result<(), AppError> {
         let mut budget = Budget::new(destinations.len());
         let mut payload: Option<EntryVersion> = None;
-        walk(parent, name, Path::new(""), 1, &mut |relative, version| {
-            // Preorder: the first entry visited is the payload itself.
-            on_payload_volume(version, payload.get_or_insert_with(|| version.clone()))?;
-            let paths: Vec<_> = destinations
-                .iter()
-                .map(|top| located(top, relative))
-                .collect();
-            budget.spend(&paths)
-        })
+        let payload_mount = entry_mount_id(parent, name)?;
+        walk(
+            parent,
+            name,
+            Path::new(""),
+            1,
+            payload_mount,
+            &mut |relative, version| {
+                // Preorder: the first entry visited is the payload itself.
+                on_payload_volume(version, payload.get_or_insert_with(|| version.clone()))?;
+                let paths: Vec<_> = destinations
+                    .iter()
+                    .map(|top| located(top, relative))
+                    .collect();
+                budget.spend(&paths)
+            },
+        )
     }
 
     pub(super) fn verify(
@@ -174,6 +184,11 @@ impl Plan {
             .file_name()
             .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
         let mut budget = MAX_ENTRIES;
+        let payload_mount = if removing {
+            existing_entry_mount_id(directory, name)?
+        } else {
+            entry_mount_id(directory, name)?
+        };
         verify_tree(
             directory,
             name,
@@ -182,6 +197,7 @@ impl Plan {
             1,
             &mut budget,
             removing,
+            payload_mount,
         )?;
         if !removing && MAX_ENTRIES - budget != self.entries.len() {
             return Err(
@@ -212,6 +228,7 @@ impl Plan {
             .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
         removable_in(directory, root, root)?;
         let mut budget = MAX_ENTRIES;
+        let payload_mount = existing_entry_mount_id(directory, name)?;
         preflight_tree(
             directory,
             &directory.metadata()?,
@@ -221,6 +238,7 @@ impl Plan {
             &index,
             1,
             &mut budget,
+            payload_mount,
         )
     }
 
@@ -244,6 +262,7 @@ impl Plan {
                 .file_name()
                 .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
             let mut budget = MAX_ENTRIES;
+            let payload_mount = existing_entry_mount_id(directory, name)?;
             remove_tree(
                 directory,
                 name,
@@ -252,6 +271,7 @@ impl Plan {
                 1,
                 &mut budget,
                 checkpoint,
+                payload_mount,
             )?;
         }
         Ok(())
@@ -301,24 +321,56 @@ fn walk(
     name: &OsStr,
     relative: &Path,
     depth: usize,
+    payload_mount: Option<u64>,
     visit: &mut impl FnMut(&Path, &EntryVersion) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     if depth > MAX_DEPTH {
         return Err(invalid("Move cleanup exceeds its depth budget").into());
     }
     let version = version_at(parent, name)?;
+    on_payload_mount(parent, name, relative, payload_mount)?;
     visit(relative, &version)?;
     if version.directory {
-        let directory = parent.open_existing(name)?;
+        let directory = parent.open_existing(name).map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                let shown = if relative.as_os_str().is_empty() {
+                    Path::new(name)
+                } else {
+                    relative
+                };
+                AppError::PermissionDenied(format!(
+                    "'{}' cannot be read ({error})",
+                    shown.display()
+                ))
+            } else {
+                error.into()
+            }
+        })?;
         if of_file(&directory.file)? != version.object {
             return Err(invalid("Move cleanup directory changed during capture").into());
         }
-        for child in directory.names(MAX_ENTRIES)? {
+        let children = directory.names(MAX_ENTRIES).map_err(|error| {
+            if error.kind() == io::ErrorKind::PermissionDenied {
+                let shown = if relative.as_os_str().is_empty() {
+                    Path::new(name)
+                } else {
+                    relative
+                };
+                AppError::PermissionDenied(format!(
+                    "'{}' cannot be read ({error})",
+                    shown.display()
+                ))
+            } else {
+                error.into()
+            }
+        })?;
+        for child in children {
             walk(
                 &directory,
                 &child,
                 &located(relative, Path::new(&child)),
                 depth + 1,
+                payload_mount,
                 visit,
             )?;
         }
@@ -380,11 +432,13 @@ fn verify_tree(
     depth: usize,
     budget: &mut usize,
     removing: bool,
+    payload_mount: Option<u64>,
 ) -> Result<(), AppError> {
     walk_budget(depth, budget)?;
     let Some(actual) = observed(parent, name, path, index, removing)? else {
         return Ok(());
     };
+    on_payload_mount(parent, name, path, payload_mount)?;
     if actual.directory {
         let directory = parent.open_existing(name)?;
         if of_file(&directory.file)? != actual.object {
@@ -399,6 +453,7 @@ fn verify_tree(
                 depth + 1,
                 budget,
                 removing,
+                payload_mount,
             )?;
         }
     }
@@ -416,11 +471,13 @@ fn preflight_tree(
     index: &HashMap<&Path, &EntryVersion>,
     depth: usize,
     budget: &mut usize,
+    payload_mount: Option<u64>,
 ) -> Result<(), AppError> {
     walk_budget(depth, budget)?;
     let Some(actual) = observed(parent, name, path, index, true)? else {
         return Ok(());
     };
+    on_payload_mount(parent, name, path, payload_mount)?;
     // A sticky directory lets only the entry's or directory's owner unlink it.
     // Root is not exempted: without CAP_FOWNER it obeys the same rule, and a
     // refusal here is always safe because nothing has been journaled yet.
@@ -455,6 +512,7 @@ fn preflight_tree(
                     index,
                     depth + 1,
                     budget,
+                    payload_mount,
                 )?;
             }
         }
@@ -490,11 +548,13 @@ fn remove_tree(
     depth: usize,
     budget: &mut usize,
     checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
+    payload_mount: Option<u64>,
 ) -> Result<(), AppError> {
     walk_budget(depth, budget)?;
     let Some(actual) = observed(parent, name, path, index, true)? else {
         return Ok(());
     };
+    on_payload_mount(parent, name, path, payload_mount)?;
     if actual.directory {
         let directory = parent.open_existing(name)?;
         if of_file(&directory.file)? != actual.object {
@@ -509,6 +569,7 @@ fn remove_tree(
                 depth + 1,
                 budget,
                 checkpoint,
+                payload_mount,
             )?;
         }
         directory.sync()?;
@@ -532,6 +593,61 @@ fn on_payload_volume(entry: &EntryVersion, payload: &EntryVersion) -> io::Result
             "Move cleanup cannot traverse another mounted volume",
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn entry_mount_id(parent: &Directory, name: &OsStr) -> io::Result<Option<u64>> {
+    parent.entry_mount_id(name)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn entry_mount_id(_parent: &Directory, _name: &OsStr) -> io::Result<Option<u64>> {
+    Ok(None)
+}
+
+fn existing_entry_mount_id(parent: &Directory, name: &OsStr) -> io::Result<Option<u64>> {
+    match entry_mount_id(parent, name) {
+        Ok(mount) => Ok(mount),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn on_payload_mount(
+    parent: &Directory,
+    name: &OsStr,
+    path: &Path,
+    payload_mount: Option<u64>,
+) -> io::Result<()> {
+    if mount_ids_match(payload_mount, parent.entry_mount_id(name)?) {
+        return Ok(());
+    }
+    let shown = if path.as_os_str().is_empty() {
+        Path::new(name)
+    } else {
+        path
+    };
+    Err(invalid(&format!(
+        "Move cleanup cannot cross mount point '{}'",
+        shown.display()
+    )))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn on_payload_mount(
+    _parent: &Directory,
+    _name: &OsStr,
+    _path: &Path,
+    _payload_mount: Option<u64>,
+) -> io::Result<()> {
+    Ok(())
+}
+
+/// `None` means statx mount identity is unavailable, so device checks remain
+/// the conservative platform fallback. Kept as a pure seam for CI coverage.
+pub(super) fn mount_ids_match(payload: Option<u64>, entry: Option<u64>) -> bool {
+    payload.is_none() || entry.is_none() || payload == entry
 }
 
 fn spend_bytes(path: &Path, budget: &mut usize) -> io::Result<()> {

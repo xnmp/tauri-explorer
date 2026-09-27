@@ -74,7 +74,7 @@ export interface RecoveryConfirmation {
 
 /** Every folder a record may still hold files in, in native order. */
 export function retainedFolders(item: Pick<FileRecoveryItem, "retainedPath" | "retainedPaths">): string[] {
-  return item.retainedPaths ?? (item.retainedPath ? [item.retainedPath] : []);
+  return [...new Set(item.retainedPaths ?? (item.retainedPath ? [item.retainedPath] : []))];
 }
 
 function listFolders(folders: string[]): string {

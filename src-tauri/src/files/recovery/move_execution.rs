@@ -592,10 +592,15 @@ impl MoveExecution {
     pub(super) fn admit_restoration(&self) -> Result<AdmittedRestoration, AppError> {
         if let Some(target) = self.parkable_publication()? {
             self.admit_publication(&target).map_err(|error| {
+                let reason = if error.to_string().contains("budget") {
+                    format!("it has grown too large to be discarded later ({error})")
+                } else {
+                    format!("it cannot be read safely ({error})")
+                };
                 AppError::Other(format!(
-                    "Undo cannot keep '{}' in File Recovery: it has grown too large to be \
-                     discarded later ({error}). Nothing was changed. Remove entries from it and \
-                     Undo again, or discard this move's recovery data to keep it where it is.",
+                    "Undo cannot keep '{}' in File Recovery: {reason}. Nothing was changed. \
+                     Fix the reported entry and Undo again, or discard this move's recovery data \
+                     to keep it where it is.",
                     target.path.display()
                 ))
             })?;

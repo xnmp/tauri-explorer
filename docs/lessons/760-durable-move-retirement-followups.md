@@ -72,12 +72,15 @@ between them is `EXDEV`, and a same-directory probe cannot see that. Compare
 or one sandbox refuses every durable move. An endpoint that is itself a mount
 point fails `rename(2)` with `EBUSY`; compare its mount id with its parent's
 before journaling. Admission must also reject a submount inside a retained
-payload, because the plan validator does, and parity between the two is the
-whole point.
+payload, and capture, verification, preflight and removal must repeat the same
+check because mounts can appear after admission. Query entries with
+`AT_NO_AUTOMOUNT`: validating cleanup must observe mount boundaries without
+causing an automount itself.
 
 **Give stranded records an exit that deletes nothing.** Forget
 (`RecoveryChoice::Release`) removes only the record and its locks. Decide it
 from durable state, because the stranded volume may be what cannot be observed.
 Its confirmation must name where the files actually stay. Deriving the folder
 from the immutable spec's first root named a source folder the discard had
-already removed; list every root whose journaled step is not `Removed`.
+already removed; list only roots that have not entered `Removing` or `Removed`.
+Deduplicate those paths in the presentation domain before keyed rendering.

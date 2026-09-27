@@ -157,6 +157,9 @@ impl RelocateWork {
             Some(self.control.cancelled.cancellation_flag()),
         )
         .report_to(self.progress.as_ref());
+        // The blocking worker may sit queued after the async supervisor's
+        // final cancellation check. Fence the native effect at worker entry.
+        tracker.check_cancelled()?;
         #[cfg(target_os = "linux")]
         if cfg!(feature = "durable-move-recovery") {
             // The durable path decides overwriting from the target it observes,

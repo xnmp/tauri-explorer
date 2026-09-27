@@ -59,7 +59,7 @@ function firstNativeCase(): Promise<void> {
 
 describe("native transfer failure artifacts at the spec call sites", () => {
   it("retains JSON and the source screenshot when an operation times out", async () => {
-    driver.executeAsync.mockResolvedValue({ ok: false, error: "native open-pair did not finish" });
+    driver.executeAsync.mockResolvedValue({ ok: false, reason: "native open-pair did not finish" });
     await expect(firstNativeCase()).rejects.toThrow("native open-pair did not finish");
 
     expect(driver.executeAsync).toHaveBeenCalledExactlyOnceWith(waits.waitForWindowOperation,
@@ -76,7 +76,7 @@ describe("native transfer failure artifacts at the spec call sites", () => {
 
   it("captures the failed listing window before inspecting unrelated windows", async () => {
     driver.executeAsync.mockResolvedValueOnce({ ok: true, value: { result: ["child1", "child2"] } })
-      .mockResolvedValueOnce({ ok: false, error: "native listing did not contain source.txt" });
+      .mockResolvedValueOnce({ ok: false, reason: "native listing did not contain source.txt" });
     await expect(firstNativeCase()).rejects.toThrow("native listing did not contain source.txt");
 
     expect(driver.executeAsync).toHaveBeenNthCalledWith(2, waits.waitForListingEntry,
@@ -88,7 +88,7 @@ describe("native transfer failure artifacts at the spec call sites", () => {
   });
 
   it("retains the original failure and partial diagnostics when the driver loses its session", async () => {
-    driver.executeAsync.mockResolvedValue({ ok: false, error: "native open-pair did not finish" });
+    driver.executeAsync.mockResolvedValue({ ok: false, reason: "native open-pair did not finish" });
     driver.getWindowHandles.mockRejectedValue(new Error("session lost"));
     driver.saveScreenshot.mockRejectedValue(new Error("screenshot session lost"));
 

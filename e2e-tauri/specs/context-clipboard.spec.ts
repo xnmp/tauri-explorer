@@ -79,7 +79,7 @@ describe("context-menu clipboard round-trip on the real backend", () => {
       const diskEntries = fs.readdirSync(scratchDir);
       const renderedEntries = await entryNames();
       await captureDiagnostics("clipboard-paste-listing", { diskEntries, renderedEntries });
-      throw new Error(observed.error);
+      throw new Error(observed.reason);
     }
     const copies = fs
       .readdirSync(scratchDir)

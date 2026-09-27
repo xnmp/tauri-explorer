@@ -147,8 +147,12 @@ describe("native transfer renderer waits", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(completed).toHaveBeenCalledExactlyOnceWith({
       ok: false,
-      error: "native listing did not contain absent.txt",
+      reason: "native listing did not contain absent.txt",
     });
+    // WebDriver treats these top-level keys as protocol failures even on HTTP 200.
+    expect(Object.keys(completed.mock.calls[0][0])).not.toContain("error");
+    expect(Object.keys(completed.mock.calls[0][0])).not.toContain("stackTrace");
+    expect(Object.keys(completed.mock.calls[0][0])).not.toContain("stacktrace");
 
     notifyMutation();
     await vi.advanceTimersByTimeAsync(1_000);

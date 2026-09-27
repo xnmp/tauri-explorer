@@ -20,7 +20,8 @@ export interface ListingWaitRequest {
 
 export type RendererWaitResult<T> =
   | { ok: true; value: T }
-  | { ok: false; error: string };
+  // WDIO interprets a top-level `error` as a WebDriver protocol failure.
+  | { ok: false; reason: string };
 
 export function waitForWindowOperation(
   request: WindowOperationWaitRequest,
@@ -53,7 +54,7 @@ export function waitForWindowOperation(
   });
   timer = setTimeout(() => finish({
     ok: false,
-    error: `native ${request.op} did not finish`,
+    reason: `native ${request.op} did not finish`,
   }), request.timeoutMs);
 
   checkResult();
@@ -65,7 +66,7 @@ export function waitForWindowOperation(
     // A synchronous listener may publish before MutationObserver's microtask.
     checkResult();
   } catch (error) {
-    finish({ ok: false, error: String(error) });
+    finish({ ok: false, reason: String(error) });
   }
 }
 
@@ -100,7 +101,7 @@ export function waitForListingEntry(
   });
   timer = setTimeout(() => finish({
     ok: false,
-    error: request.match === "contains" || (request.minCount ?? 1) !== 1
+    reason: request.match === "contains" || (request.minCount ?? 1) !== 1
       ? `native listing did not contain ${request.minCount ?? 1} match(es) for ${request.name}`
       : `native listing did not contain ${request.name}`,
   }), request.timeoutMs);

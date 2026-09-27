@@ -19,7 +19,7 @@ describe("native transfer diagnostic negative control", () => {
 
     const missing = await browser.executeAsync<RendererWaitResult<true>, [ListingWaitRequest]>(
       waitForListingEntry, { name: "diagnostic-absent.txt", timeoutMs: 100 });
-    expect(missing).toEqual({ ok: false, error: "native listing did not contain diagnostic-absent.txt" });
+    expect(missing).toEqual({ ok: false, reason: "native listing did not contain diagnostic-absent.txt" });
     await captureDiagnostics("listing-diagnostic-absent");
 
     const prefix = path.resolve("e2e-tauri", "logs", "window-transfer-listing-diagnostic-absent");

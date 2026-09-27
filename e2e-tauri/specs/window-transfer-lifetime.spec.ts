@@ -33,7 +33,7 @@ async function operation(op: string, target?: string): Promise<unknown> {
       target,
       timeoutMs: 25_000,
     });
-    if (!observed.ok) throw new Error(observed.error);
+    if (!observed.ok) throw new Error(observed.reason);
     expect(observed.value.error).toBeUndefined();
     return observed.value.result;
   } catch (error) {
@@ -66,7 +66,7 @@ async function listingHas(name: string) {
       name,
       timeoutMs: 20_000,
     });
-    if (!observed.ok) throw new Error(observed.error);
+    if (!observed.ok) throw new Error(observed.reason);
   } catch (error) {
     await captureDiagnostics(`listing-${name}`);
     throw error;

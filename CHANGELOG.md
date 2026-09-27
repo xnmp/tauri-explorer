@@ -2,6 +2,47 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.0 — 2026-09-27
+
+File operations have clearer ownership and recovery behavior, and keyboard and
+preview layouts work more consistently across window sizes and platforms.
+
+### Improved
+
+- **Copy and paste use one ordered copy session.** Per-item conflict decisions,
+  cancellation, progress, and one Undo follow the confirmed completed prefix
+  rather than a second legacy copy path (#776, #802).
+- **File Recovery handles more interrupted moves safely on Linux.** Retirement
+  refuses mount boundaries and retains retryable records when a retained root
+  cannot be inspected or removed (#760).
+- **Keyboard traversal has a visible focus path** through the main regions in
+  Details, List, and Tiles; the selected file row also keeps DOM focus when
+  pointer drag acquisition suppresses native focus (#797, #800).
+- **Previews fit narrow and zoomed layouts** without clipping long paths,
+  metadata, or controls (#792).
+
+### Fixed
+
+- **Windows case and separator variants of a directory share one listing and
+  watcher identity.** A pane continues refreshing after navigation through a
+  variant spelling (#799).
+
+### Qualification
+
+- Native recovery cases run in a dedicated gated Linux CI job. The default
+  Linux native suite, Windows spec parity, macOS PTY and case-only rename
+  contracts, and bounded Windows soak have explicit acceptance coverage
+  (#774, #800, #798, #809).
+
+### Release limits
+
+- Durable copy and move recovery remain opt-in Linux build features. Recovery
+  admission on Windows and macOS is not implemented.
+- macOS native UI and the hardware half-bounce startup target remain
+  unqualified.
+- UNC server/share case folding is outside the qualified Windows directory
+  identity scope.
+
 ## v1.10.0 — 2026-09-26
 
 Faster large folders, removable drives that mount on demand, and file operations

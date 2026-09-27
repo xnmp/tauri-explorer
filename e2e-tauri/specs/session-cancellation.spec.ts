@@ -73,6 +73,10 @@ async function history(direction: "undo" | "redo"): Promise<void> {
         const target = path.join(destination, `${operationName}.txt`);
         const incoming = `${operationName} cancellation payload\n`;
         const existing = `${operationName} existing destination\n`;
+        const assertForwardSource = () => {
+          if (operationName === "move") assert.equal(fs.existsSync(source), false);
+          else assert.equal(fs.readFileSync(source, "utf8"), incoming);
+        };
         fs.writeFileSync(source, incoming);
         fs.writeFileSync(target, existing);
         await navigateTo(destination);
@@ -98,6 +102,7 @@ async function history(direction: "undo" | "redo"): Promise<void> {
         assert.ok(completed.ok, completed.error);
         assert.deepEqual(completed.data?.items.map(item => item.status), ["succeeded"]);
         assert.equal(fs.readFileSync(target, "utf8"), incoming);
+        assertForwardSource();
         await browser.waitUntil(async () => (await entryNames()).includes(path.basename(target)), {
           timeoutMsg: `${operationName} completion did not refresh the rendered listing`,
         });
@@ -105,11 +110,13 @@ async function history(direction: "undo" | "redo"): Promise<void> {
 
         await history("undo");
         assert.ok(!fs.existsSync(target));
+        assert.equal(fs.readFileSync(source, "utf8"), incoming);
         await browser.waitUntil(async () => !(await entryNames()).includes(path.basename(target)), {
           timeoutMsg: `${operationName} Undo did not refresh the rendered listing`,
         });
         await history("redo");
         assert.equal(fs.readFileSync(target, "utf8"), incoming);
+        assertForwardSource();
         await browser.waitUntil(async () => (await entryNames()).includes(path.basename(target)), {
           timeoutMsg: `${operationName} Redo did not refresh the rendered listing`,
         });

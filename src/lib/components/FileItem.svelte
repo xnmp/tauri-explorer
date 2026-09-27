@@ -215,25 +215,23 @@
   }
 
   /* Cut items appear faded */
-  .file-item.hidden-entry {
+  /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
+     their label to --text-secondary. Dimming the whole row pulled the name
+     below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
+     the icon for the same states. */
+  .file-item:is(.hidden-entry, .empty-folder, .cut) {
+    color: var(--text-secondary);
+  }
+
+  .file-item:is(.hidden-entry, .empty-folder) [data-drag-icon] {
     opacity: 0.55;
   }
 
-  .file-item.hidden-entry:hover,
-  .file-item.hidden-entry.selected {
+  .file-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon] {
     opacity: 0.8;
   }
 
-  .file-item.empty-folder {
-    opacity: 0.55;
-  }
-
-  .file-item.empty-folder:hover,
-  .file-item.empty-folder.selected {
-    opacity: 0.8;
-  }
-
-  .file-item.cut {
+  .file-item.cut [data-drag-icon] {
     opacity: 0.5;
   }
 

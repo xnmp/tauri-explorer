@@ -52,7 +52,7 @@ async function listingHas(name: string) {
 }
 
 async function tabCount() {
-  return await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length);
+  return await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length);
 }
 
 async function captureDiagnostics(reason: string): Promise<void> {
@@ -82,7 +82,7 @@ async function captureDiagnostics(reason: string): Promise<void> {
         activeElement: document.activeElement
           ? { tag: document.activeElement.tagName, classes: document.activeElement.className }
           : null,
-        tabCount: document.querySelectorAll(".tab-area > .tab").length,
+        tabCount: document.querySelectorAll(".tab-list > .tab").length,
         storage: Object.keys(localStorage).filter((key) => key.includes("seed") || key.includes("tabs"))
           .map((key) => ({ key, value: localStorage.getItem(key)?.slice(0, 2_000) })),
         operationResult: document.documentElement.dataset.e2eWindowResult ?? null,

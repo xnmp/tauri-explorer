@@ -411,7 +411,7 @@
   }
 
   .shortcut-row.customized .shortcut-action {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .shortcut-action {
@@ -490,7 +490,7 @@
 
   .reset-btn:hover {
     background: var(--subtle-fill-secondary);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .recording-indicator {
@@ -501,7 +501,7 @@
 
   .recording-text {
     font-size: 12px;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     animation: pulse 1s ease-in-out infinite;
   }
 
@@ -530,7 +530,7 @@
     align-items: center;
     gap: 8px;
     font-size: 11px;
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     background: rgba(255, 0, 0, 0.1);
     padding: 4px 8px;
     border-radius: var(--radius-sm);

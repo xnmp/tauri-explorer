@@ -2,13 +2,26 @@
 use super::*;
 
 fn compress(paths: &[&str]) -> Result<CompressRequest, AppError> {
-    CompressRequest::new(paths.iter().map(|path| (*path).to_owned()).collect())
+    CompressRequest::new(paths.iter().map(|path| native(path)).collect())
+}
+
+/// Spell a `/`-rooted fixture as an absolute path on this platform, so the
+/// planning contracts also run on Windows.
+fn native(path: &str) -> String {
+    if cfg!(windows) {
+        match path.strip_prefix('/') {
+            Some(rest) => format!(r"C:\{}", rest.replace('/', r"\")),
+            None => path.replace('/', r"\"),
+        }
+    } else {
+        path.to_owned()
+    }
 }
 
 #[test]
 fn compress_names_its_output_after_a_single_selection() {
     let request = compress(&["/home/u/notes.txt"]).unwrap();
-    assert_eq!(request.parent(), Path::new("/home/u"));
+    assert_eq!(request.parent(), Path::new(&native("/home/u")));
     assert_eq!(request.base_name(), "notes");
 }
 
@@ -32,37 +45,37 @@ fn compress_rejects_malformed_selections() {
 #[test]
 fn a_repeated_selection_claims_its_source_once() {
     let request = compress(&["/home/u/a.txt", "/home/u/a.txt", "/home/u/b.txt"]).unwrap();
-    let plan = request.plan(PathBuf::from("/home/u/Archive.zip"));
+    let plan = request.plan(PathBuf::from(native("/home/u/Archive.zip")));
     let Request::Compress { sources } = plan.request() else {
         panic!("compress plan");
     };
     assert_eq!(
         sources,
         &[
-            PathBuf::from("/home/u/a.txt"),
-            PathBuf::from("/home/u/b.txt")
+            PathBuf::from(native("/home/u/a.txt")),
+            PathBuf::from(native("/home/u/b.txt"))
         ]
     );
 }
 
 #[test]
 fn extract_here_owns_the_containing_directory() {
-    let plan = ExtractRequest::new("/home/u/pack.zip".into())
+    let plan = ExtractRequest::new(native("/home/u/pack.zip"))
         .unwrap()
         .here();
-    assert_eq!(plan.output(), Path::new("/home/u"));
+    assert_eq!(plan.output(), Path::new(&native("/home/u")));
     // The archive's directory is the changed listing, not its parent.
-    assert_eq!(plan.affected_dirs(), vec!["/home/u".to_owned()]);
+    assert_eq!(plan.affected_dirs(), vec![native("/home/u")]);
 }
 
 #[test]
 fn extract_into_a_folder_publishes_both_directories() {
-    let request = ExtractRequest::new("/home/u/pack.zip".into()).unwrap();
+    let request = ExtractRequest::new(native("/home/u/pack.zip")).unwrap();
     assert_eq!(request.folder_name(), "pack");
-    let plan = request.into_folder(PathBuf::from("/home/u/pack"));
+    let plan = request.into_folder(PathBuf::from(native("/home/u/pack")));
     assert_eq!(
         plan.affected_dirs(),
-        vec!["/home/u".to_owned(), "/home/u/pack".to_owned()]
+        vec![native("/home/u"), native("/home/u/pack")]
     );
 }
 
@@ -70,8 +83,8 @@ fn extract_into_a_folder_publishes_both_directories() {
 fn compress_publishes_the_output_directory() {
     let plan = compress(&["/home/u/docs/a.txt"])
         .unwrap()
-        .plan(PathBuf::from("/home/u/docs/a.zip"));
-    assert_eq!(plan.affected_dirs(), vec!["/home/u/docs".to_owned()]);
+        .plan(PathBuf::from(native("/home/u/docs/a.zip")));
+    assert_eq!(plan.affected_dirs(), vec![native("/home/u/docs")]);
 }
 
 #[cfg(target_os = "linux")]

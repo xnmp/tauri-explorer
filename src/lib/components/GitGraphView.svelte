@@ -2573,7 +2573,7 @@
   }
 
   .graph-status.error {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   /* Standing detached-HEAD banner (#524). Deliberately louder than the rest of
@@ -3092,7 +3092,7 @@
 
   .network-operation-banner button:hover:not(:disabled) {
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .network-operation-banner button:active:not(:disabled) {
@@ -3189,7 +3189,7 @@
   }
 
   .branch-filter-btn.filtered {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .bf-count {
@@ -3292,7 +3292,7 @@
     background: none;
     border: none;
     font-size: var(--font-size-caption);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     cursor: pointer;
     padding: 0 2px;
   }
@@ -3432,7 +3432,7 @@
 
   .ref-head {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     border-color: var(--accent);
   }
 
@@ -3494,7 +3494,7 @@
      gets a ci-* class (see prBadgePresentation). Colors come from the theme's
      system tokens so every theme stays coherent. */
   .ref-pr.ci-success {
-    color: var(--system-success);
+    color: var(--system-success-text, var(--system-success));
     background: color-mix(in srgb, var(--system-success) 14%, transparent);
     border-color: color-mix(in srgb, var(--system-success) 32%, transparent);
   }
@@ -3502,7 +3502,7 @@
     background: color-mix(in srgb, var(--system-success) 24%, transparent);
   }
   .ref-pr.ci-failure {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     background: color-mix(in srgb, var(--system-critical) 14%, transparent);
     border-color: color-mix(in srgb, var(--system-critical) 32%, transparent);
   }
@@ -3510,7 +3510,7 @@
     background: color-mix(in srgb, var(--system-critical) 24%, transparent);
   }
   .ref-pr.ci-pending {
-    color: var(--system-caution);
+    color: var(--system-caution-text, var(--system-caution));
     background: color-mix(in srgb, var(--system-caution) 14%, transparent);
     border-color: color-mix(in srgb, var(--system-caution) 32%, transparent);
   }
@@ -3576,7 +3576,7 @@
   }
   .pr-detail-ci-check {
     font: inherit;
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     background: color-mix(in srgb, var(--system-critical) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--system-critical) 35%, transparent);
     border-radius: 5px;
@@ -3606,21 +3606,21 @@
     color: var(--text-secondary);
     background: var(--background-base);
   }
-  .pr-detail-error { color: var(--system-critical); }
+  .pr-detail-error { color: var(--system-critical-text, var(--system-critical)); }
   .pr-detail-label {
     color: var(--text-tertiary);
     margin-right: 2px;
   }
   .pr-detail-ci.ci-success {
-    color: var(--system-success);
+    color: var(--system-success-text, var(--system-success));
     font-weight: 600;
   }
   .pr-detail-ci.ci-failure {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     font-weight: 600;
   }
   .pr-detail-ci.ci-pending {
-    color: var(--system-caution);
+    color: var(--system-caution-text, var(--system-caution));
     font-weight: 600;
   }
   .pr-detail-open {
@@ -3841,7 +3841,7 @@
   .col-check {
     display: inline-block;
     width: 12px;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   /* Suboption modal (#406): stacked option buttons inside the name-prompt
@@ -3862,7 +3862,7 @@
   }
 
   .modal-option.danger .mo-title {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .mo-title {

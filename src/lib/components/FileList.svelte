@@ -526,7 +526,7 @@
   }
 
   .drive-gone-state {
-    color: var(--system-caution, var(--system-critical));
+    color: var(--system-caution-text, var(--system-caution, var(--system-critical)));
   }
 
   @keyframes fadeIn {
@@ -535,7 +535,7 @@
   }
 
   .error-state {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .error-title {

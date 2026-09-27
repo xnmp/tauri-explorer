@@ -522,7 +522,7 @@ fn open_in_terminal_blocking(path: String, terminal: Option<String>) -> Result<(
             .arg(&dir)
             .spawn()
             .map(reap_in_background)
-            .map_err(|e| AppError::Io(e))?;
+            .map_err(AppError::Io)?;
     }
 
     #[cfg(target_os = "windows")]

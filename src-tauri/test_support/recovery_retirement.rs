@@ -918,6 +918,8 @@ fn a_full_record_budget_refuses_a_new_durable_record_through_promotion() {
 }
 
 /// Completed moves retain Undo authority until the user explicitly discards it.
+/// Moves are planned by `forward_move`, which is Linux-only.
+#[cfg(target_os = "linux")]
 mod moves {
     use super::*;
     use crate::files::recovery::{

@@ -900,7 +900,7 @@ import { openFile } from "$lib/api/open";
   .downvote-btn:hover {
     opacity: 1;
     background: var(--subtle-fill-tertiary);
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .result-item.selected .downvote-btn {

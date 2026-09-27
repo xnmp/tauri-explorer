@@ -84,7 +84,7 @@
   }
 
   .toast.clipboard {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .toast.progress {
@@ -111,17 +111,17 @@
   }
 
   .toast.clipboard.cut {
-    color: var(--system-caution);
+    color: var(--system-caution-text, var(--system-caution));
   }
 
   .toast.error {
     border-color: rgba(196, 43, 28, 0.2);
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .toast.success {
     border-color: rgba(15, 123, 15, 0.2);
-    color: var(--system-success);
+    color: var(--system-success-text, var(--system-success));
   }
 
   .toast a {

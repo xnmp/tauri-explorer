@@ -258,7 +258,11 @@ a stopped decision and is decided from durable evidence alone, because the
 stranded volume may be exactly what cannot be observed. It removes the journal
 row and catalog evidence under exact ownership and touches nothing on disk. The
 record's locks are released, and any private folder it still names stays at its
-listed location, owned by the user. Undo was already consumed by the decision,
+listed location, owned by the user. The item lists every artifact folder whose
+removal the journal does not record, source first (`retainedPaths`, with
+`retainedPath` its first entry for older ports). A discard stopped after the
+source root was removed therefore names only the target's folder, and one
+stopped inside the source root names both. Undo was already consumed by the decision,
 so no recovery authority is lost. If the process dies between the two commits,
 the catalog-only residue is retired automatically once those folders are gone.
 

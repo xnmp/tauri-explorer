@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatRecoveryBytes, recoveryConfirmation, summarizeRecoveryStorage } from "$lib/domain/file-recovery";
+  import { formatRecoveryBytes, recoveryConfirmation, retainedFolders, summarizeRecoveryStorage } from "$lib/domain/file-recovery";
   import type { FileRecoveryItem, FileRecoveryChoice } from "$lib/domain/file-recovery";
   import type { FileRecoverySession } from "$lib/state/file-recovery-session.svelte";
   import "./modal.css";
@@ -143,7 +143,9 @@
             {#if details}
               <dl class="inspection">
                 <div><dt>Original</dt><dd>{details.originalPath}</dd></div>
-                {#if details.retainedPath}<div><dt>Artifacts</dt><dd>{details.retainedPath}</dd></div>{/if}
+                {#if retainedFolders(details).length > 0}
+                  <div><dt>Artifacts</dt>{#each retainedFolders(details) as folder (folder)}<dd>{folder}</dd>{/each}</div>
+                {/if}
               </dl>
             {:else if store?.inspectionError
               && store?.inspectionId === item.id

@@ -528,6 +528,24 @@ it("applies a retention enforcement pass and reports its failure without losing 
   await Promise.all([state.dispose(), failing.dispose()]);
 });
 
+it("accepts every retained folder a native item lists and rejects a malformed list", async () => {
+  let receive!: (value: FileRecoverySnapshot) => void;
+  const folders = ["/source/.tauri-explorer-recovery-1", "/target/.tauri-explorer-recovery-2"];
+  const state = createFileRecoveryState(port({ subscribe: async (next) => {
+    receive = next;
+    next(snapshot(1, [{ ...item(), retainedPath: folders[0], retainedPaths: folders }]));
+    return async () => {};
+  }}));
+  await state.start();
+  expect(state.error).toBeNull();
+  expect(state.items[0].retainedPaths).toEqual(folders);
+
+  receive(snapshot(2, [{ ...item(), retainedPaths: [folders[0], 7] } as never]));
+  expect(state.error).toBe("Recovery status update was invalid");
+  expect(state.items[0].retainedPaths).toEqual(folders);
+  await state.dispose();
+});
+
 it("accepts a port that reports no retention accounting and defaults it", async () => {
   // Retention accounting is additive. A port that predates it — including the
   // browser E2E contract fixture — sends items and snapshots without

@@ -17,7 +17,12 @@ export interface FileRecoveryItem {
   id: string;
   generation: string;
   originalPath: string;
+  /** The first of `retainedPaths`; older ports send only this. */
   retainedPath: string | null;
+  /** Every folder the record may still hold files in. A cross-volume move
+   *  keeps one beside each endpoint, and a stopped discard lists only the
+   *  folders it has not removed. Optional: absent from older ports. */
+  retainedPaths?: string[];
   /** Measured size of the retained artifact; null when it is not measured. */
   retainedBytes: string | null;
   status: "pending" | "busy" | "ready" | "attention" | "retained";
@@ -67,11 +72,22 @@ export interface RecoveryConfirmation {
   confirm: string;
 }
 
+/** Every folder a record may still hold files in, in native order. */
+export function retainedFolders(item: Pick<FileRecoveryItem, "retainedPath" | "retainedPaths">): string[] {
+  return item.retainedPaths ?? (item.retainedPath ? [item.retainedPath] : []);
+}
+
+function listFolders(folders: string[]): string {
+  return folders.length > 1
+    ? `${folders.slice(0, -1).join(", ")} and ${folders[folders.length - 1]}`
+    : folders[0];
+}
+
 /** Irreversible choices are confirmed with copy stating exactly what is lost
  *  and what is kept. Restoring loses nothing, so it needs none. */
 export function recoveryConfirmation(
   choice: FileRecoveryChoice,
-  item: Pick<FileRecoveryItem, "retainedPath">,
+  item: Pick<FileRecoveryItem, "retainedPath" | "retainedPaths">,
 ): RecoveryConfirmation | null {
   switch (choice) {
     case "restore":
@@ -83,8 +99,9 @@ export function recoveryConfirmation(
         confirm: "Discard recovery data",
       };
     case "release": {
-      const kept = item.retainedPath
-        ? `Any remaining recovery files stay in ${item.retainedPath} for you to review or delete.`
+      const folders = retainedFolders(item);
+      const kept = folders.length > 0
+        ? `Any remaining recovery files stay in ${listFolders(folders)} for you to review or delete.`
         : "Any remaining recovery files stay where they are for you to review or delete.";
       return {
         title: "Forget this recovery record?",

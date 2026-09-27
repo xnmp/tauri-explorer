@@ -1815,3 +1815,49 @@ fn an_automatic_retirement_that_cannot_start_is_reported_once_and_left_for_a_ret
     f.assert_retired();
     assert_eq!(fs::read(&f.source).unwrap(), MOVED);
 }
+
+#[test]
+fn forget_names_the_folders_that_still_hold_files() {
+    // Stopped between roots: the source root is gone, the target root keeps
+    // the displaced original.
+    let f = Fixture::new(true, true, false);
+    let stopped = f.retirement().retire_with(|label| match label {
+        "source-completed" => Err(invalid("stopped between roots")),
+        _ => Ok(()),
+    });
+    assert!(stopped.is_err());
+    assert!(!f.roots[0].exists(), "the source root was removed");
+    assert_eq!(fs::read(f.roots[1].join("original")).unwrap(), OLD);
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let item = &snapshot.items[0];
+    assert!(item.actions.contains(&RecoveryChoice::Release));
+    let target_root = f.roots[1].to_string_lossy().into_owned();
+    assert_eq!(item.retained_paths, vec![target_root.clone()]);
+    assert_eq!(
+        item.retained_path.as_deref(),
+        Some(target_root.as_str()),
+        "Forget's confirmation names a folder that no longer exists"
+    );
+    assert!(
+        item.message.contains("the listed folder"),
+        "{}",
+        item.message
+    );
+    // Stopped inside the source root: both folders still hold files.
+    let f = partially_retired(false);
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let item = &snapshot.items[0];
+    assert!(item.actions.contains(&RecoveryChoice::Release));
+    let roots: Vec<_> = f
+        .roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(item.retained_paths, roots);
+    assert!(f.roots.iter().all(|root| root.exists()));
+    assert!(
+        item.message.contains("each listed folder"),
+        "{}",
+        item.message
+    );
+}

@@ -65,3 +65,6 @@ whole point.
 **Give stranded records an exit that deletes nothing.** Forget
 (`RecoveryChoice::Release`) removes only the record and its locks. Decide it
 from durable state, because the stranded volume may be what cannot be observed.
+Its confirmation must name where the files actually stay. Deriving the folder
+from the immutable spec's first root named a source folder the discard had
+already removed; list every root whose journaled step is not `Removed`.

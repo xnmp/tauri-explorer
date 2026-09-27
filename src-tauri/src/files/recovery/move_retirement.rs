@@ -100,8 +100,9 @@ impl MoveRetirement {
         Ok(result)
     }
 
-    /// Test seam: the journal headroom a new decision must leave free.
-    #[cfg(test)]
+    /// Test seam: the journal headroom a new decision must leave free. Only
+    /// the Linux-only move retirement tests use it.
+    #[cfg(all(test, target_os = "linux"))]
     fn leaving(mut self, headroom: usize) -> Self {
         self.headroom = headroom;
         self

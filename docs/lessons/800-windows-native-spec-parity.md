@@ -120,3 +120,14 @@ sequence as terminal resizing. It samples actual model and visual geometry
 after the first reflow and still requires the second movement to reach the
 full 60-pixel growth. Neither correction weakens the resulting focus, folder
 opening, resize, or content assertions.
+
+The corrected pointer action then exposed a product focus gap. Windows and
+macOS use pointer-drag acquisition, whose `mousedown` handler prevents the
+browser's default focus action so dragging can own the gesture. A click still
+updated selection, cursor, and the roving `tabindex`, but WebView2 left DOM
+focus on the previous entry. The shared FileList click owner now explicitly
+focuses the clicked gridcell after accepting its selection. Browser coverage
+reproduces the native condition by cancelling `mousedown` default behavior,
+then requires selection, cursor focus, and Enter navigation in Details, List,
+and Tiles. This separates the application contract from each engine's default
+pointer-focus behavior while retaining the existing drag gesture.

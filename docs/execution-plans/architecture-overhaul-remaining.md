@@ -6,13 +6,13 @@ v1.10.0 shipped every follow-up from the 2026-09-25 handover
 ([`docs/handoffs/architecture-review-2026-09-25.md`](../handoffs/architecture-review-2026-09-25.md)).
 It did not close the overhaul. The acceptance table in
 [`docs/review-completion.md`](../review-completion.md) still has open rows, and
-most of them are the same gap:
+the remaining rows still share a platform boundary:
 
 - recovery, admission and native behaviour are verified on Linux only;
-- Windows is verified by a filtered set of Rust contracts and a smoke suite
-  where most file-operation specs skip;
-- macOS runs no Rust tests at all, although every `cfg(unix)` recovery module
-  compiles there.
+- Windows and macOS now run the full Rust library suite, but those jobs do not
+  establish native UI behaviour;
+- Windows native coverage remains incomplete, and macOS native UI automation
+  remains tooling-blocked.
 
 This file lists every remaining step. It gives each one a verification tier
 and an exit condition. When an item lands, update its status here and in the
@@ -52,9 +52,9 @@ on it.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W1.1 | Run `cargo test --lib` and strict Clippy on `macos-latest`. This covers the `cfg(unix)` recovery, move retention and retirement, and `native_directory` (`renameatx_np`) code, and permanent deletion on APFS. Fix each failure at its root cause, or gate the test with a documented platform reason | macOS runner, green on dev | Open |
-| W1.2 | Replace the filtered Windows contract loop in `e2e-tauri.yml` with a full `cargo test --lib`. Keep the per-filter step only if the full run exceeds the job budget | Windows runner, green on dev | Open |
-| W1.3 | Add `durable-move-recovery` to the Linux feature-gated Clippy and test steps. Today only `durable-copy-recovery` runs in CI | ubuntu `rust` job | Open |
+| W1.1 | Run `cargo test --lib` and strict Clippy on `macos-latest`. This covers the `cfg(unix)` recovery, move retention and retirement, and `native_directory` (`renameatx_np`) code, and permanent deletion on APFS. Fix each failure at its root cause, or gate the test with a documented platform reason | macOS runner, green on dev | **Done ([#773](https://github.com/xnmp/tauri-explorer/pull/773))** |
+| W1.2 | Replace the filtered Windows contract loop in `e2e-tauri.yml` with a full `cargo test --lib`. Keep the per-filter step only if the full run exceeds the job budget | Windows runner, green on dev | **Done ([#773](https://github.com/xnmp/tauri-explorer/pull/773))** |
+| W1.3 | Add `durable-move-recovery` to the Linux feature-gated Clippy and test steps. Today only `durable-copy-recovery` runs in CI | ubuntu `rust` job | **Done ([#773](https://github.com/xnmp/tauri-explorer/pull/773))** |
 
 Exit: all three jobs are green on dev. Any test that is skipped per platform
 carries a reason that names the missing capability.
@@ -66,11 +66,11 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W2.1 | #709: terminal keystrokes transposed, so the Ctrl+Q probe is never received. Reproduce under the CI wrapper, then fix delivery ordering at its source (driver key actions against terminal input), not by retrying | 20 consecutive local runs of `terminal-key-ownership` under the CI wrapper, plus green required smoke | Open |
-| W2.2 | #764: `git_status` rev-parse cancellation flake under the parallel suite. Decide whether it is a test race or a product race using instrumentation before changing logic | `--test-threads=64` loop, 0 failures in 30 runs | Open |
+| W2.1 | #709: terminal keystrokes transposed, so the Ctrl+Q probe is never received. Reproduce under the CI wrapper, then fix delivery ordering at its source (driver key actions against terminal input), not by retrying | 20 consecutive local runs of `terminal-key-ownership` under the CI wrapper, plus green required smoke | **Done ([#775](https://github.com/xnmp/tauri-explorer/pull/775))** |
+| W2.2 | #764: `git_status` rev-parse cancellation flake under the parallel suite. Decide whether it is a test race or a product race using instrumentation before changing logic | `--test-threads=64` loop, 0 failures in 30 runs | **Done ([#777](https://github.com/xnmp/tauri-explorer/pull/777))** |
 | W2.3 | #761: migrate every spec that `rmSync`s a fixture while the app is alive onto `createNativeFixtureDirectory` | grep guard in the native contract tests, full native suite green | Open |
 | W2.4 | #710 (`window-transfer-lifetime`) and #715 (`context-clipboard`) Windows flakes. Retain diagnostics, find the missing wait or race, and fix it | Windows smoke green on 5 consecutive dev runs | Open |
-| W2.5 | Fresh-window lookup renderer loss. #703 closed once its `/proc` sampler landed; the renderer-crash vs driver-session question was never decided. Open a new issue only if the sampler records another occurrence | Retained sampler output from a failing run | Done (#703); reopen on recurrence |
+| W2.5 | Fresh-window lookup renderer loss. #703 added a `/proc` sampler, but classification still requires that sampler to capture the failing fresh label. PR #804 run 36289184005 timed out waiting for fresh-window readiness and then lost the WebDriver session; its retained sampler covered earlier successful labels, not the failing label, so it cannot distinguish renderer loss from driver-session loss. The unchanged rerun passed. Open [#781](https://github.com/xnmp/tauri-explorer/issues/781) already tracks this session-loss family and should receive a future classified recurrence; do not open a duplicate issue | Retained sampler output for the failing label, including the process timeline around session loss | **Open observation (#781); sampler criterion unmet** |
 
 ## W3 — File-operation ownership (Linux remainder)
 
@@ -78,7 +78,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W3.1 | Converge ordinary copy onto the ordered copy session, as ADR 0024 prescribes. Route `performFileTransfer`'s `isCopy` branch through `copy_session`, move the recovery probe's overwrite coverage onto the session path, and remove the unadmitted `copy_entry` family | Vitest caller tests, Rust session tests, and the native recovery suite, including the overwrite probe | Open |
 | W3.2 | #760 durable-move retirement follow-ups: a plan byte budget consistent with `MAX_ENTRIES`, endpoint changes after intent, resumption of stuck `Retiring` records, probe cost, macOS `ENOTSUP` and probe-mode umask, a downgrade story for `deny_unknown_fields` records, and a documented escape hatch | Rust temp-tree tests for each, run under the W1.3 job | Open |
-| W3.3 | Run the gated native recovery suites in CI. `file-recovery`, `file-forward-history`, `file-history-lifetime`, `file-move-recovery` and `move-retirement` need a binary built with `e2e-renderer-recovery`, `durable-copy-recovery` and `durable-move-recovery`, and they need the `TAURI_E2E_FILE_RECOVERY_DIR`, `TAURI_E2E_HISTORY_GATE_DIR` and `TAURI_E2E_MOVE_SOURCE_DIR`/`TAURI_E2E_MOVE_TARGET_DIR` variables. No workflow sets these, so the suites skip in CI, and they skipped in the local 2026-09-26 run as well. Add a Linux job that builds that binary and points source and target at `/dev/shm` and the runner disk, so they are two real mounts. Then add the missing real cross-device forward, Undo and Redo cases: the existing Undo/Redo cycles use a single `os.tmpdir()` | New CI job green; each suite reports executed, not skipped, tests | Done (#774). `file-move-recovery` turned out to be a default-build suite that already runs in smoke; the durable job runs `cross-device-move-history` instead |
+| W3.3 | Run the gated native recovery suites in CI. `file-recovery`, `file-forward-history`, `file-history-lifetime`, `file-move-recovery` and `move-retirement` need a binary built with `e2e-renderer-recovery`, `durable-copy-recovery` and `durable-move-recovery`, and they need the `TAURI_E2E_FILE_RECOVERY_DIR`, `TAURI_E2E_HISTORY_GATE_DIR` and `TAURI_E2E_MOVE_SOURCE_DIR`/`TAURI_E2E_MOVE_TARGET_DIR` variables. No workflow sets these, so the suites skip in CI, and they skipped in the local 2026-09-26 run as well. Add a Linux job that builds that binary and points source and target at `/dev/shm` and the runner disk, so they are two real mounts. Then add the missing real cross-device forward, Undo and Redo cases: the existing Undo/Redo cycles use a single `os.tmpdir()` | New CI job green; each suite reports executed, not skipped, tests | **Done ([#778](https://github.com/xnmp/tauri-explorer/pull/778), issue [#774](https://github.com/xnmp/tauri-explorer/issues/774))**. `file-move-recovery` turned out to be a default-build suite that already runs in smoke; the durable job runs `cross-device-move-history` instead |
 | W3.4 | Broader cancellation qualification. For copy and move sessions, cancel at each phase boundary. Prove that no output is published late, that residue exactly matches the phase table, and that history stays consistent | Rust interleaving tests with deterministic phase gates, plus one native outcome per session | Open |
 | W3.5 | Git working-tree mutations under admission | — | **Closed by ADR 0024**. The only capturable footprint is a blanket worktree lock, and Git's `index.lock` arbitrates git-vs-git |
 
@@ -114,10 +114,10 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W7.1 | For every built-in theme, run an automated contrast check (WCAG AA) on text and selection tokens, and an axe accessibility scan of the main surfaces in all three view modes | Browser Playwright, both engines | Open |
+| W7.1 | For every built-in theme, run an automated contrast check (WCAG AA) on text and selection tokens, and an axe accessibility scan of the main surfaces in all three view modes | Browser Playwright, both engines | **Done ([#787](https://github.com/xnmp/tauri-explorer/pull/787))** |
 | W7.2 | Keyboard-only traversal across the main regions: sidebar, address bar, file list, preview and terminal, with visible focus in each theme | Browser Playwright, plus one native outcome | Open |
 | W7.3 | Preview formats × narrow split × zoom (80, 100, 150 %) containment | Browser Playwright | Open |
-| W7.4 | Plugin failure combinations: throw on activate, reject a command, and time out a job, each while another plugin is active | Vitest registry tests, plus one browser outcome | Open |
+| W7.4 | Plugin failure combinations: throw on activate, reject a command, and time out a job, each while another plugin is active | Vitest registry tests, plus one browser outcome | **Done ([#783](https://github.com/xnmp/tauri-explorer/pull/783))** |
 
 ## W8 — Integration and records
 
@@ -126,6 +126,18 @@ for anything else.
 | W8.1 | Re-run the full gate set on the final dev tip: svelte-check, Vitest, perf contracts, Rust (default and feature-gated), Clippy, native suite (including the W3.3 gated suites), and `ALL_VIEW_MODES=1` Playwright. Record the exact numbers against that commit. For native specs, count executed tests, not spec files: a file whose `describe` skips still counts as "passed" in the WDIO summary | Ledger section with its commit SHA | Open |
 | W8.2 | Correct the 2026-09-26 ledger claim that "all 38 native specs pass": the gated recovery suites were skipped in that run. Update each ledger acceptance row and the ADR 0020 and 0024 status lines to match the evidence. Mark the "existing ownership overhaul" and "external jobs" rows accepted only if W8.1 covers them | Adversarial fact-check of the ledger against PRs and CI runs | Open |
 | W8.3 | Cut the next minor release: bump the versions, write the CHANGELOG entry, open a Release PR from dev to main with `--merge` (the owner merges it; never tag manually), then verify the release assets | GitHub release with every platform asset | Open |
+
+## Pending integration acceptance
+
+Work on open PRs and local branches is branch evidence only. It does not close a
+plan row or establish release acceptance until it is merged into `dev` and the
+required platform outcomes execute. In particular, the window-ownership and
+external-job rows remain open, as do the final-tip gate, four-hour Linux soak,
+bounded Windows soak, native macOS UI, physical-Mac startup measurements and
+non-Linux durable recovery adapters. W2.5 also remains an unclassified
+observation until the sampler captures the label that actually loses its
+session. W8.1 must record executed test counts and list skips separately on the
+final selected `dev` SHA.
 
 ## Decisions for the owner
 

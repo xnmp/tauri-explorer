@@ -89,14 +89,28 @@ includes all the PRs above (Arch Linux, isolated Xvfb/Openbox/D-Bus):
   `--all-features`.
 - Rust library tests: 1,374 passed (26 ignored). With `durable-move-recovery`
   and `durable-copy-recovery` enabled: 1,373 passed (26 ignored).
-- All 38 native specs pass against the hooks-enabled debug binary (sha256
+- The default Linux native run reported 38 spec files passing against the
+  hooks-enabled debug binary (sha256
   `cb209eb931713d9e2cd7fa773d03f95a7de5f95f04b426c1665f47ba3bfdfe6a`), with the
-  same display, window-manager and D-Bus wrapper as CI.
+  same display, window-manager and D-Bus wrapper as CI. That file-level summary
+  included gated recovery suites whose test bodies did not execute. It is
+  evidence for the default native suite, not durable recovery.
 - `ALL_VIEW_MODES=1` Playwright: 993 passed, covering the Details, List and
   Tiles projects.
 
 This is Linux evidence for one commit. It is not macOS or Windows native
 qualification, and not release acceptance.
+
+[PR #778](https://github.com/xnmp/tauri-explorer/pull/778), merged as
+`6e12430c`, added a dedicated Linux recovery job. Hosted run
+[36291322523, job 108541845347](https://github.com/xnmp/tauri-explorer/actions/runs/36291322523/job/108541845347)
+tested the pull-request merge checkout `b95eb719` (PR head `8957a2c5` merged
+into then-`dev` `32f83136`) and executed 19 tests across five native specs:
+`file-recovery` (7),
+`file-forward-history` (4), `file-history-lifetime` (3), `move-retirement` (3)
+and `cross-device-move-history` (2). All passed. This is qualification evidence
+for the PR revision, not proof that the squash commit `6e12430c` or a later
+final `dev` tip ran the same job; W8.1 remains required.
 
 Native smoke flakes seen during this integration are tracked separately and are
 not attributed to it:

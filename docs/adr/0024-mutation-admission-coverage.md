@@ -1,7 +1,9 @@
 # ADR 0024: Mutation admission coverage
 
-Status: Accepted for the families migrated below; the deferrals are decisions,
-not omissions.
+Status: Accepted for the enumerated family decisions. Runtime mutation admission
+is implemented only for the Linux families marked migrated below; this ADR does
+not claim full managed-mutation or cross-platform admission coverage. The
+deferrals are decisions, not omissions.
 
 Governs: `src-tauri/src/file_mutation.rs`, `src-tauri/src/archive.rs`,
 `src-tauri/src/files/archive_plan.rs`, `src-tauri/src/git_actions.rs`,

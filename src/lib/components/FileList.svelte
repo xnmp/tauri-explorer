@@ -174,6 +174,10 @@
       ctrlKey: event.ctrlKey || event.metaKey,
       shiftKey: event.shiftKey,
     });
+    // Windows/macOS pointer-drag acquisition prevents mousedown's default
+    // action, so those engines do not focus the clicked gridcell themselves.
+    // Keep DOM focus aligned with the cursor regardless of drag backend.
+    (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {

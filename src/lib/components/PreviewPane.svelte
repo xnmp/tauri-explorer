@@ -1906,18 +1906,23 @@ import { openFile } from "$lib/api/open";
      ellipsizes, and each action's label wraps, so no action is ever clipped
      out of reach (#792). */
   .hunk-content {
-    justify-content: space-between;
     flex-wrap: wrap;
     row-gap: 2px;
   }
 
   .hunk-range {
+    flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .hunk-actions { flex-wrap: wrap; }
+  .hunk-actions {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+  }
 
   .hunk-action {
     padding: 1px 5px;

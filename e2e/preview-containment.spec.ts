@@ -307,7 +307,7 @@ function measure(page: Page): Promise<Containment> {
        * code block, the CSV surface), never by scrolling the whole preview
        * sideways.
        */
-      const reachable = (node: Node, rect: DOMRect, region: Element, axis: "x" | "y"): boolean => {
+      const unreachableThrough = (node: Node, rect: DOMRect, region: Element, axis: "x" | "y"): string | null => {
         for (let element = node.parentElement; element; element = element.parentElement) {
           const box = element.getBoundingClientRect();
           if (element === region) {
@@ -315,15 +315,15 @@ function measure(page: Page): Promise<Containment> {
               within(rect, box, axis) ||
               (axis === "y" && scrolls(region, "y")) ||
               (axis === "x" && truncates(region, node))
-            );
+            ) ? null : `clipped by region ${describe(region, box)} (${axis}: ${overflowOf(region, axis)})`;
           }
           if (within(rect, box, axis) || !clips(element, axis)) continue;
           if (scrolls(element, axis) || (axis === "x" && truncates(element, node))) {
-            return reachable(element, box, region, axis);
+            return unreachableThrough(element, box, region, axis);
           }
-          return false;
+          return `clipped by ${describe(element, box)} (${axis}: ${overflowOf(element, axis)})`;
         }
-        return false;
+        return "outside its preview region";
       };
 
       const preview = document.querySelector(".preview-pane")!;
@@ -357,8 +357,9 @@ function measure(page: Page): Promise<Containment> {
           for (const rect of rects) {
             if (rect.width === 0 || rect.height === 0) continue;
             for (const axis of ["x", "y"] as const) {
-              if (!reachable(node, rect, region, axis)) {
-                unreachable.push(`${axis}: ${describe(node, rect)} escapes its region or a clipping ancestor`);
+              const obstruction = unreachableThrough(node, rect, region, axis);
+              if (obstruction) {
+                unreachable.push(`${axis}: ${describe(node, rect)} is ${obstruction}`);
               }
             }
           }

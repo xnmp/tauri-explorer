@@ -22,6 +22,7 @@ const screenshots: string[] = [];
 beforeEach(async () => {
   vi.resetAllMocks();
   vi.resetModules();
+  vi.stubEnv("TAURI_NATIVE_CLEANUP_STATE_DIRECTORY", "transfer-fixture-owner");
   cases.clear();
   screenshots.length = 0;
   currentWindow = "main";
@@ -46,6 +47,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 

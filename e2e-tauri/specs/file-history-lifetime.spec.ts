@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
+import { gatedDescribe } from "./gated-describe";
 import { entryNames, navigateTo } from "./helpers";
 
 type Direction = "undo" | "redo";
@@ -201,8 +202,10 @@ async function destroyCurrentWindow(handle: string): Promise<void> {
   });
 }
 
-const gatedDescribe = process.platform === "linux" && gateDirectory ? describe : describe.skip;
-gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E_HISTORY_GATE_DIR)", () => {
+gatedDescribe("native shared file-history lifetime", [
+  [process.platform === "linux", "Linux"],
+  [gateDirectory !== "", "TAURI_E2E_HISTORY_GATE_DIR"],
+], () => {
   before(async () => {
     fs.accessSync(gateDirectory, fs.constants.R_OK | fs.constants.W_OK);
     scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-history-lifetime-"));

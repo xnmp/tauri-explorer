@@ -1925,7 +1925,9 @@ import { openFile } from "$lib/api/open";
   }
 
   .hunk-action {
-    padding: 1px 5px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 1px 3px;
     border: 1px solid var(--divider);
     border-radius: var(--radius-sm);
     background: var(--background-card);
@@ -1934,6 +1936,7 @@ import { openFile } from "$lib/api/open";
     font: inherit;
     font-size: 10px;
     white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .hunk-action.danger { color: var(--system-critical-text, var(--system-critical, #dc2626)); }

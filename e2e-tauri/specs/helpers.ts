@@ -208,9 +208,11 @@ export async function entryNames(): Promise<string[]> {
  *
  * Confirmation reads the status bar's full-path title attribute — the
  * breadcrumbs apply p10k-style truncation, so long directory names never
- * appear in them verbatim.
+ * appear in them verbatim. The backend resolves each request to one native
+ * spelling per directory (#799); pass `resolved` when `dir` is another
+ * spelling of it, such as a trailing-separator or Windows case variant.
  */
-export async function navigateTo(dir: string): Promise<void> {
+export async function navigateTo(dir: string, resolved = dir): Promise<void> {
   // Close any commit graph restored from a prior spec's persisted state.
   // localStorage is shared across every tauri-driver
   // session (same origin), so a spec that left the graph open would relaunch
@@ -242,13 +244,19 @@ export async function navigateTo(dir: string): Promise<void> {
     );
   }, dir, token);
 
-  await browser.waitUntil(
-    async () => {
+  let shown: string | null = null;
+  try {
+    await browser.waitUntil(async () => {
       const completedToken = await browser.execute(
         () => document.documentElement.dataset.e2eNavigationComplete,
       );
-      return completedToken === token && (await $(".status-path").getAttribute("title")) === dir;
-    },
-    { timeoutMsg: `status bar never showed ${dir}` },
-  );
+      shown = await $(".status-path").getAttribute("title");
+      return completedToken === token && shown === resolved;
+    });
+  } catch (error) {
+    throw new Error(
+      `status bar never showed ${resolved} for ${dir}; last showed ${shown}`,
+      { cause: error },
+    );
+  }
 }

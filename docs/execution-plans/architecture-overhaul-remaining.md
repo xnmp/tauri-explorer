@@ -147,11 +147,23 @@ DOM/script calls; it still fails at the same boundary. Reports:
 worktree. The root app retained roughly one deleted WebKitSharedMemory FD per
 native close, but RSS stayed bounded and the OS FD limit was far above the
 observed count. A separate direct-X11 run of the same native binary, with no
-WebDriver or tauri-driver, completed 399 native opens and closes then failed to
-open child 400 from Ctrl+N; its app retained 401 WebKitSharedMemory memfds at
-cycle 399. This rules out WebDriver as the sole cause but does not isolate
-WebKitGTK from Tauri/renderer lifetime. Logs are
-`/tmp/overhaul-resume/817-x11-450.log` and `817-x11-app.log`. These are
+WebDriver or tauri-driver, observed 399 distinct focused children with Alt+F4
+returning focus to main, then failed to focus child 400 from Ctrl+N; its app
+retained 401 WebKitSharedMemory memfds at cycle 399. Independent review
+confirmed WebDriver independence and linear descriptor retention, but the X11
+probe does not prove child destruction or loaded/painted state on each cycle.
+It rules out WebDriver as the sole cause of this GUI symptom without isolating
+WebKitGTK from Tauri/renderer lifetime. Its log is
+`/tmp/overhaul-resume/817-x11-450.log`; the first app log was overwritten by
+a later preflight. A strengthened third run
+(`/tmp/overhaul-resume/817-x11-close-proof-450.log`) verified each of 399 child
+XIDs disappeared after Alt+F4. At attempt 400 the main WebKitWebProcess PID
+3412618 disappeared, the mapped main window turned blank white, and a control
+Ctrl+T produced no new listing while the native app stayed alive. Its source,
+binary and script hashes are embedded in the log; the screenshot is
+`/tmp/overhaul-resume/817-x11-failure-close-proof-450.png`. Independent review
+confirmed those observations, while complete child renderer teardown and the
+WebKitGTK/Tauri/app ownership of the failure remain unproven. These are
 diagnostic artifacts, not integrated or passing four-hour acceptance. An
 earlier cycle-187 failure came from an invalid window-selector fixture and
 does not count as product evidence. W2.5 also remains an unclassified

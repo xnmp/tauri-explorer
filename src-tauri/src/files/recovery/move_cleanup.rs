@@ -111,7 +111,7 @@ impl Plan {
         if let Some(name) = payload {
             let top = root.join(name);
             let mut budget = Budget::new(1);
-            let payload_mount = entry_mount_id(directory, OsStr::new(name))?;
+            let payload_mount = payload_mount_id(directory, OsStr::new(name))?;
             walk(
                 directory,
                 OsStr::new(name),
@@ -145,7 +145,7 @@ impl Plan {
     ) -> Result<(), AppError> {
         let mut budget = Budget::new(destinations.len());
         let mut payload: Option<EntryVersion> = None;
-        let payload_mount = entry_mount_id(parent, name)?;
+        let payload_mount = payload_mount_id(parent, name)?;
         walk(
             parent,
             name,
@@ -185,9 +185,9 @@ impl Plan {
             .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
         let mut budget = MAX_ENTRIES;
         let payload_mount = if removing {
-            existing_entry_mount_id(directory, name)?
+            existing_payload_mount_id(directory, name)?
         } else {
-            entry_mount_id(directory, name)?
+            payload_mount_id(directory, name)?
         };
         verify_tree(
             directory,
@@ -228,7 +228,7 @@ impl Plan {
             .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
         removable_in(directory, root, root)?;
         let mut budget = MAX_ENTRIES;
-        let payload_mount = existing_entry_mount_id(directory, name)?;
+        let payload_mount = existing_payload_mount_id(directory, name)?;
         preflight_tree(
             directory,
             &directory.metadata()?,
@@ -262,7 +262,7 @@ impl Plan {
                 .file_name()
                 .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
             let mut budget = MAX_ENTRIES;
-            let payload_mount = existing_entry_mount_id(directory, name)?;
+            let payload_mount = existing_payload_mount_id(directory, name)?;
             remove_tree(
                 directory,
                 name,
@@ -596,21 +596,29 @@ fn on_payload_volume(entry: &EntryVersion, payload: &EntryVersion) -> io::Result
 }
 
 #[cfg(target_os = "linux")]
-fn entry_mount_id(parent: &Directory, name: &OsStr) -> io::Result<Option<u64>> {
-    parent.entry_mount_id(name)
+fn payload_mount_id(parent: &Directory, name: &OsStr) -> io::Result<Option<u64>> {
+    let parent_mount = parent.mount_id()?;
+    let payload_mount = parent.entry_mount_id(name)?;
+    if mount_ids_match(parent_mount, payload_mount) {
+        Ok(payload_mount)
+    } else {
+        Err(invalid(&format!(
+            "Move cleanup payload root '{}' is a mount point or its mount identity is unavailable",
+            Path::new(name).display()
+        )))
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn entry_mount_id(_parent: &Directory, _name: &OsStr) -> io::Result<Option<u64>> {
+fn payload_mount_id(_parent: &Directory, _name: &OsStr) -> io::Result<Option<u64>> {
     Ok(None)
 }
 
-fn existing_entry_mount_id(parent: &Directory, name: &OsStr) -> io::Result<Option<u64>> {
-    match entry_mount_id(parent, name) {
-        Ok(mount) => Ok(mount),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
+fn existing_payload_mount_id(parent: &Directory, name: &OsStr) -> io::Result<Option<u64>> {
+    if !parent.entry_exists(name)? {
+        return Ok(None);
     }
+    payload_mount_id(parent, name)
 }
 
 #[cfg(target_os = "linux")]

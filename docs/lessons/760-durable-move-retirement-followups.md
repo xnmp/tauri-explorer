@@ -77,7 +77,10 @@ mounts. Admission must also reject a submount inside a retained
 payload, and capture, verification, preflight and removal must repeat the same
 check because mounts can appear after admission. Query entries with
 `AT_NO_AUTOMOUNT`: validating cleanup must observe mount boundaries without
-causing an automount itself.
+causing an automount itself. The payload root is checked against its retained
+parent before it becomes the walk baseline; otherwise relocating the recorded
+directory and bind-mounting that same object back would preserve its inode while
+turning an external mount into trusted cleanup authority.
 
 **Give stranded records an exit that deletes nothing.** Forget
 (`RecoveryChoice::Release`) removes only the record and its locks. Decide it

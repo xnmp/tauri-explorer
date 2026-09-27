@@ -2197,6 +2197,50 @@ fn discard_never_removes_files_through_a_mount_inside_a_retained_payload() {
     assert_eq!(fs::read(data.join("precious")).unwrap(), OLD);
 }
 
+/// A same-object bind mount over the payload root must not become the baseline
+/// for a new cleanup walk. The retained parent is the immutable boundary.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn discard_refuses_relocated_payload_bound_over_its_recorded_root() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    use std::os::unix::fs::MetadataExt;
+    let f = Fixture::build(true, false, false, |source| {
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested/precious"), OLD).unwrap();
+    });
+    let parked = f.roots[0].join("parked");
+    let outside = tempfile::tempdir_in(f.source.parent().unwrap()).unwrap();
+    let relocated = outside.path().join("relocated");
+    fs::rename(&parked, &relocated).unwrap();
+    fs::create_dir(&parked).unwrap();
+    isolated_mount(
+        "mount",
+        &["--bind".as_ref(), relocated.as_os_str(), parked.as_os_str()],
+    );
+    assert_eq!(
+        fs::metadata(&parked).unwrap().ino(),
+        fs::metadata(&relocated).unwrap().ino()
+    );
+    let revision = effect_revision(&f);
+    let refused = discard_only_record(&f.coordinator);
+    let survived = relocated.join("nested/precious").exists();
+    isolated_mount("umount", &[parked.as_os_str()]);
+    assert!(
+        survived,
+        "Discard traversed the payload-root bind mount ({refused:?})"
+    );
+    let refused = refused.expect("Discard accepted a bind mount over the retained payload root");
+    assert!(
+        refused.contains("mount point") || refused.contains("changed"),
+        "{refused}"
+    );
+    assert!(f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .unwrap()
+        .is_some());
+}
+
 // --- Enforcement only claims what it can observe (PR #790 review N5) ---
 
 /// Rename an artifact root's parent away, so its recorded identity can no

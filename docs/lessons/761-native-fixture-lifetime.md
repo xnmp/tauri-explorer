@@ -29,3 +29,11 @@ the shared owner extension. The complete fixture guard and process edge-case
 files pass 22 tests afterward, including existing cleanup-failure reporting.
 Native TypeScript checking passes. Full native/platform CI remains the merge
 acceptance gate; local unit tests do not reproduce Windows sharing locks.
+
+The full default Linux native suite passed after integration with the Windows
+spec prerequisites: 88 executed tests passed, 17 gated tests skipped across
+40 spec files. Both owned filesystem roots were absent after launcher completion.
+Run with the documented DBus/Openbox wrapper, and keep an isolated XDG data
+profile on the fixture filesystem: putting XDG_DATA_HOME on a separate tmpfs
+changes Trash selection to mount-level Trash and can invalidate these fixtures.
+This default run does not qualify the skipped durable-recovery suites.

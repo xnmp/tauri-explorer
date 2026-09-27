@@ -153,6 +153,36 @@ jobs:
             done
           done
 
+      - name: Prepare release notes
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from datetime import date
+          from pathlib import Path
+
+          version = os.environ['VERSION']
+          changelog = Path('CHANGELOG.md').read_text()
+          section = re.search(
+              rf'(?ms)^## {re.escape(version)} — ([^\n]+)\n(.*?)(?=^## |\Z)',
+              changelog,
+          )
+          if section is None:
+              raise SystemExit(f'No changelog section for {version}')
+          date_text, body = section.groups()
+          if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_text):
+              raise SystemExit(f'Changelog entry for {version} must be dated')
+          try:
+              date.fromisoformat(date_text)
+          except ValueError:
+              raise SystemExit(f'Changelog entry for {version} must be dated')
+          if not body.strip():
+              raise SystemExit(f'Changelog entry for {version} is empty')
+          Path('release-notes.md').write_text(body.strip() + '\n')
+          PY
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -165,5 +195,5 @@ jobs:
           gh release create "$VERSION" \
             --title "$VERSION" \
             --target "$GITHUB_SHA" \
-            --generate-notes \
+            --notes-file release-notes.md \
             "${assets[@]}"

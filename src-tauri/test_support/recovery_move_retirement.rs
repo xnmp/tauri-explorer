@@ -1929,3 +1929,42 @@ fn a_root_that_drifts_from_its_plan_while_planning_keeps_undo() {
     assert!(f.source.join("dir/sub/foreign").is_file());
     assert!(!f.target.exists());
 }
+
+#[test]
+fn a_deferral_recorded_before_its_measurement_still_waits_for_a_retry() {
+    let f = Fixture::new(true, false, false);
+    f.restore();
+    // Deferral and measurement are separate journal writes; this process
+    // stopped between them, so nothing records the retained size.
+    let mut operation = f.claim();
+    operation
+        .advance_move(MoveTransition::DeferRetirement(
+            "Permission denied (os error 13)".into(),
+        ))
+        .unwrap();
+    drop(operation);
+    let before = generation(&f);
+    for _ in 0..3 {
+        retirement::enforce(&f.coordinator).unwrap();
+    }
+    assert!(
+        !f.coordinator.inventory().unwrap().entries.is_empty(),
+        "enforcement retried a deferred cleanup without being asked"
+    );
+    assert_eq!(
+        generation(&f),
+        before,
+        "enforcement claimed a deferred cleanup"
+    );
+    assert!(f.roots[1].join("publication").exists());
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+}

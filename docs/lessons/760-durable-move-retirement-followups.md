@@ -43,7 +43,11 @@ the failure. A failure *before* the decision is reported too: an automatic move
 discard refused by its preflight, headroom or pre-decision verify journals
 nothing, so without `MoveState.deferred` every pass re-claimed it. The move's
 `error` field could not carry it, because on a settled move `error` means
-"needs recovery" and would have withdrawn Discard.
+"needs recovery" and would have withdrawn Discard. The deferral also records
+the size, and a measured settled record is not claimed either, so a test that
+only fails the preflight cannot tell the two guards apart. They are separate
+journal writes, and a stop between them leaves an unmeasured deferral that only
+`awaits_retry` holds back; test that state directly.
 
 **Strict decoders make optional fields a downgrade hazard.** A field with
 `#[serde(default)]` that still serializes as `null` breaks older builds that use

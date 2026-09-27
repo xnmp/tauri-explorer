@@ -180,6 +180,9 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession: async (_config, capabilities) => {
+    // WDIO may skip afterSession if creation fails; the pending marker then
+    // keeps fixtures alive even when the exit reaper cannot confirm teardown.
+    processCleanupHooks.begin();
     if (!isWindows) {
       // WebKitWebDriver inherits tauri-driver's stdio, so its own diagnostics
       // (including "page crash or hang") land here. Retain them as a run

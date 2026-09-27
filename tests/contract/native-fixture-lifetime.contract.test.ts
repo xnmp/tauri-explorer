@@ -4,6 +4,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const specsDir = fileURLToPath(new URL("../../e2e-tauri/specs/", import.meta.url));
@@ -24,6 +25,43 @@ function isAllowlisted(source: string, index: number): boolean {
   return before.includes(ALLOW_MARKER);
 }
 
+function fixtureRootDeletions(source: string, file: string): Violation[] {
+  const syntax = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const roots = new Set<string>();
+  const containsFixtureAllocation = (node: ts.Node): boolean => {
+    if (ts.isCallExpression(node) &&
+      /^(createNativeFixtureDirectory|createNativeSharedMemoryFixtureDirectory)$/.test(node.expression.getText(syntax))) {
+      return true;
+    }
+    return ts.forEachChild(node, containsFixtureAllocation) ?? false;
+  };
+  const visit = (node: ts.Node, examine: (node: ts.Node) => void): void => {
+    examine(node);
+    ts.forEachChild(node, child => visit(child, examine));
+  };
+  visit(syntax, node => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer &&
+      containsFixtureAllocation(node.initializer)) {
+      roots.add(node.name.text);
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) && containsFixtureAllocation(node.right)) {
+      roots.add(node.left.text);
+    }
+  });
+
+  const violations: Violation[] = [];
+  visit(syntax, node => {
+    if (!ts.isCallExpression(node) || node.arguments.length === 0 ||
+      !/^(rmSync|rmdirSync)$/.test(node.expression.getText(syntax).split(".").at(-1) ?? "")) return;
+    const target = node.arguments[0];
+    if ((ts.isIdentifier(target) && roots.has(target.text)) || containsFixtureAllocation(target)) {
+      violations.push({ file, line: lineOf(source, node.getStart(syntax)) });
+    }
+  });
+  return violations;
+}
+
 function findViolations(): Violation[] {
   const violations: Violation[] = [];
   const files = readdirSync(specsDir).filter((name) => name.endsWith(".spec.ts"));
@@ -34,6 +72,7 @@ function findViolations(): Violation[] {
       if (isAllowlisted(source, index)) continue;
       violations.push({ file, line: lineOf(source, index) });
     }
+    violations.push(...fixtureRootDeletions(source, file));
   }
   return violations;
 }
@@ -45,12 +84,27 @@ describe("native fixture lifetime contract (#761)", () => {
       violations,
       violations.length > 0
         ? `Found ${violations.length} spec(s) allocating a hand-rolled mkdtempSync ` +
-            `fixture root instead of routing through ` +
+            `fixture root or deleting a run-owned fixture root before app teardown instead of routing through ` +
             `createNativeFixtureDirectory (e2e-tauri/native-qualification.ts), or ` +
             `annotating a real exception with a "${ALLOW_MARKER}: <reason>" ` +
             `comment:\n${JSON.stringify(violations, null, 2)}`
         : undefined,
     ).toEqual([]);
+  });
+
+  it("rejects direct deletion of an owned root while allowing deletion of a test subject inside it", () => {
+    expect(fixtureRootDeletions(
+      'const root = fs.realpathSync(createNativeFixtureDirectory("fixture-"));\nfs.rmSync(root);',
+      "example.spec.ts",
+    )).toEqual([{ file: "example.spec.ts", line: 2 }]);
+    expect(fixtureRootDeletions(
+      'const root = createNativeFixtureDirectory("fixture-");\nfs.rmSync(path.join(root, "subject"));',
+      "example.spec.ts",
+    )).toEqual([]);
+    expect(fixtureRootDeletions(
+      'fs.rmSync(createNativeFixtureDirectory("fixture-"), { recursive: true });',
+      "example.spec.ts",
+    )).toEqual([{ file: "example.spec.ts", line: 1 }]);
   });
 
   it("the allowlist marker itself only appears with a reason", () => {

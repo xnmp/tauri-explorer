@@ -1453,6 +1453,7 @@ export function createNativeProcessCleanupHooks(options: {
   additionalFixtureRoots?: readonly { stateEnvironmentKey: string; temporaryRoot: string }[];
 }): {
   prepare: () => void;
+  begin: () => void;
   cleanup: () => Promise<void>;
   complete: () => void;
 } {
@@ -1468,6 +1469,7 @@ export function createNativeProcessCleanupHooks(options: {
     throw new Error("native fixture roots must have distinct environment keys");
   }
   let prepared: { stateEnvironmentKey: string; directory: string }[] = [];
+  let pendingMarker: string | undefined;
   const removePrepared = (): string[] => {
     const failures: string[] = [];
     const owned = prepared;
@@ -1499,7 +1501,22 @@ export function createNativeProcessCleanupHooks(options: {
     return resolved;
   };
 
+  const writePendingMarker = (message: string): void => {
+    const configuredDirectory = options.environment[options.stateEnvironmentKey];
+    if (!configuredDirectory) {
+      throw new Error(`native cleanup state directory unavailable: ${message}`);
+    }
+    const markerDirectory = assertMarkerDirectory(configuredDirectory);
+    const marker = pendingMarker ?? path.join(markerDirectory, `${process.pid}-${randomUUID()}.json`);
+    writeQualificationArtifact(marker, { message });
+    pendingMarker = marker;
+  };
+
   return {
+    begin: () => {
+      if (pendingMarker) throw new Error("native worker cleanup is already pending");
+      writePendingMarker("native worker ended without confirming process exit");
+    },
     prepare: () => {
       if (prepared.length) throw new Error("native fixture roots are already prepared");
       try {
@@ -1519,19 +1536,12 @@ export function createNativeProcessCleanupHooks(options: {
         await options.stop();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const configuredDirectory =
-          options.environment[options.stateEnvironmentKey];
-        if (!configuredDirectory) {
-          throw new Error(
-            `native cleanup state directory unavailable: ${message}`,
-          );
-        }
-        const markerDirectory = assertMarkerDirectory(configuredDirectory);
-        writeQualificationArtifact(
-          path.join(markerDirectory, `${process.pid}-${randomUUID()}.json`),
-          { message },
-        );
+        writePendingMarker(message);
         throw error;
+      }
+      if (pendingMarker) {
+        fs.rmSync(pendingMarker);
+        pendingMarker = undefined;
       }
     },
     complete: () => {
@@ -1556,7 +1566,14 @@ export function createNativeProcessCleanupHooks(options: {
         const message = error instanceof Error ? error.message : String(error);
         failures.push(`failed to read cleanup markers: ${message}`);
       }
-      // Visit every owned volume even when another removal or worker failed.
+      if (failures.length > 0) {
+        throw new Error(
+          `native qualification cleanup failed: ${failures.join("; ")}; ` +
+            `fixture roots preserved: ${prepared.map(({ directory }) => directory).join(", ")}`,
+        );
+      }
+      // Only remove fixtures after every worker confirmed native process exit.
+      // A pending or unreadable marker cannot establish that guarantee.
       failures.push(...removePrepared());
       if (failures.length > 0) {
         throw new Error(

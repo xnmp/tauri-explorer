@@ -418,7 +418,7 @@ backend for E2E/browser).
 - `state/plugin-jobs.ts`, `api/plugin-jobs.ts` — window-owned accepted job/event reconciliation and typed IPC; plugin disable removes contributions while accepted work retains its owner.
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
 - built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`
-- backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`, `plugin_job.rs` (shared job scaffolding: id alloc, output-path validation, timeout, complete/error events)
+- backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`, `plugin_job.rs` (shared job scaffolding: id alloc, output-path validation, timeout, complete/error events). `src/test-support/external-job-probe.ts` and `e2e-tauri/specs/external-job-timeout.spec.ts` qualify the real Nano child timeout, reap, withheld publication and Jobs-panel error with the fake executable installed by `e2e-tauri/external-job-fixture.ts`.
 - shared UI: `plugins/plugin-dialog.css` (dialog chrome), `domain/available-filename.ts` (collision-free output name)
 - FLOW: plugins register commands/settings/dialogs via PluginContext at startup; AI actions invoke Gemini-backed Rust commands (upscale invokes fal.ai's SeedVR2 queue API via `fal.rs`).
 

@@ -1,0 +1,71 @@
+name: Windows bounded native soak
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - '.github/workflows/windows-soak.yml'
+      - 'scripts/*native*'
+      - 'e2e-tauri/**'
+  push:
+    branches: [dev]
+    paths:
+      - '.github/workflows/windows-soak.yml'
+      - 'scripts/*native*'
+      - 'e2e-tauri/**'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-soak-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  bounded-soak:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: windows-native-soak
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+      # This builder requires a clean source tree and records the actual binary
+      # digest, profile, command and commit consumed by the soak runner.
+      - name: Build verified qualification binary
+        run: bun run build:native:qualification
+      - name: Install matching WebView2 driver
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $key).pv
+          $archive = Join-Path $env:RUNNER_TEMP 'soak-edgedriver.zip'
+          $driverDir = Join-Path $env:RUNNER_TEMP 'soak-edgedriver'
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $archive
+          Expand-Archive $archive -DestinationPath $driverDir
+          "TAURI_NATIVE_DRIVER=$driverDir\msedgedriver.exe" >> $env:GITHUB_ENV
+      - name: Run one complete native soak cycle
+        timeout-minutes: 10
+        env:
+          SOAK_MAX_CYCLES: '1'
+          SOAK_DURATION_MS: '600000'
+          SOAK_SEED: windows-bounded-809
+          SOAK_EXPECTED_DISPLAY_SCALE: '1'
+          VITE_E2E_NO_WARM_PRIME: '1'
+          RUST_LOG: debug
+        run: bun run test:e2e:tauri:soak
+      - name: Retain qualification reports and driver evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-soak-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            qualification-results/
+            e2e-tauri/logs/
+            logs/
+          if-no-files-found: warn

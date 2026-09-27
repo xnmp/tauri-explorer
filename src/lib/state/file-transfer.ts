@@ -158,13 +158,15 @@ export async function performFileTransfer(
 
   const recovery = result.data.recovery;
   const replacement = result.data.replacement;
+  // Native history already records these durable records as the inverse.
+  const nativeInverse = replacement ?? result.data.relocation;
   const warning = result.warning;
   if (recovery) {
     // A committed mutation still supersedes the redo branch even when a batch
     // caller owns history publication. Incomplete source cleanup has no safe
     // inverse.
     await undoStore.invalidateRedo(broadcastToOtherWindows);
-  } else if (!replacement && !suppressUndo) {
+  } else if (!nativeInverse && !suppressUndo) {
     const action = isCopy
       ? {
           type: "copy" as const,

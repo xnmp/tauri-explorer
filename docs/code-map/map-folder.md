@@ -511,6 +511,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
 
 - `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
+- `src/test-support/external-job-probe.ts` — page-session native E2E bridge that starts Nano through the production plugin-jobs controller.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
 - `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery inventory/transfer requests and deliberately unmanaged channels for renderer-retirement acceptance; native move cleanup outcomes in `e2e-tauri/specs/move-retirement.spec.ts`.
 - `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
@@ -601,6 +602,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
 - `e2e-tauri/specs/gated-describe.ts` — `gatedDescribe`, the Mocha adapter over that decision; separate from `specs/helpers.ts` because qualification tests import the helpers without Mocha types.
+- `e2e-tauri/external-job-fixture.ts` — Linux native-test `PATH` fixture for a deterministic long-running fake Gemini CLI.
+- `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/fresh-window-diagnostics.ts` — always-on fresh-child-window evidence: renderer snapshot, `/proc` renderer/driver classification and failure artifacts for lost native sessions (#703).
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.

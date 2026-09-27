@@ -11,6 +11,8 @@ const THEMES_DIR = new URL("../../src/lib/themes/", import.meta.url);
 const SOURCE_DIR = new URL("../../src/", import.meta.url);
 const NON_THEME_FILES = new Set(["index.css", "syntax.css"]);
 const AA_TEXT = 4.5;
+/** WCAG 1.4.11 non-text contrast, which a focus indicator must meet. */
+const NON_TEXT = 3;
 
 /** Fill tokens that themes may pair with a darker/lighter `-text` variant. */
 const FILL_TOKENS = ["accent", "system-success", "system-caution", "system-critical"] as const;
@@ -81,6 +83,10 @@ describe("built-in theme text tokens", () => {
       expect(contrastRatio(color(tokens, textToken), surface())).toBeGreaterThanOrEqual(AA_TEXT);
     });
 
+    it("--focus-stroke-outer meets 3:1 against the window surface", () => {
+      expect(contrastRatio(color(tokens, "focus-stroke-outer"), surface())).toBeGreaterThanOrEqual(NON_TEXT);
+    });
+
     it("keeps secondary text distinguishable from tertiary text", () => {
       const ratio = (token: string) => contrastRatio(color(tokens, token), surface());
       expect(ratio("text-primary")).toBeGreaterThan(ratio("text-secondary"));
@@ -102,6 +108,23 @@ describe("component text colours", () => {
           .flatMap((line, index) =>
             direct.test(line) ? [`${file.pathname.split("/src/").pop()}:${index + 1}`] : [],
           ),
+      );
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("component focus rings", () => {
+  it("draw focus outlines with the focus token, not a fill token", () => {
+    // A fill token is tuned for its surface, not for 3:1 against every
+    // background a focused control sits on (#797).
+    const focusRule = /([^{}]*:focus[^{}]*)\{([^{}]*)\}/g;
+    const fillOutline = new RegExp(String.raw`outline[^;]*var\(--(${FILL_TOKENS.join("|")})[,)]`);
+    const offenders = sourceFiles(SOURCE_DIR)
+      .filter((file) => !file.pathname.includes("/lib/themes/"))
+      .flatMap((file) =>
+        [...readFileSync(file, "utf8").matchAll(focusRule)]
+          .filter((rule) => fillOutline.test(rule[2]))
+          .map((rule) => `${file.pathname.split("/src/").pop()}: ${rule[1].trim()}`),
       );
     expect(offenders).toEqual([]);
   });

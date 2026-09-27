@@ -473,8 +473,16 @@
   }
 
   .file-list :global(.entry-item:focus-visible) {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
+    /* Selected rows have a 3px accent edge. The inset outline covers only
+       2px, so make the remaining strip contiguous with the focus indicator. */
+    border-left-color: var(--focus-stroke-outer);
+  }
+
+  .file-list :global(.tile-item:focus-visible) {
+    /* Tiles put the selected indicator on their 3px bottom edge. */
+    border-bottom-color: var(--focus-stroke-outer);
   }
 
   .file-list:focus {

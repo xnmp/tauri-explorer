@@ -404,6 +404,7 @@ backend for E2E/browser).
 - `state/theme.svelte.ts` — `themeStore` (active theme, apply)
 - `themes/*.css` — theme variable sets (dark, light, ocean-blue, tahoe, …); `themes/index.css` aggregates. Text drawn in a status colour uses `--accent-text` / `--system-caution-text` / `--system-critical-text` (falling back to the fill token), defined only where the fill falls below AA (#785)
 - `e2e/theme-accessibility.spec.ts` — axe WCAG 2.1 AA scan of every built-in theme × premium × view mode, plus the recovery notice's error state; documents each accommodation it makes for axe (#785)
+- Focus rings: one inset `:focus-visible` ring on `--focus-stroke-outer` (`routes/+page.svelte`); components that draw their own also use the focus token, never `--accent` (guarded in `tests/themes/theme-token-contrast.test.ts`). `e2e/keyboard-traversal.spec.ts` walks the default Details-view Tab cycle region by region in every built-in theme, checks exposed adjacent surfaces, and separately verifies each file-list renderer's roving entry and focus indicator (#797)
 - `components/ThemePicker.svelte` — theme selection UI
 - `domain/theme-from-palette.ts`, `src-tauri/src/palette.rs`, `plugins/theme-from-image/` — generate theme from image palette
 - `state/window-backdrop.ts`, `state/window-appearance.ts`, `components/AnimatedBackground.svelte`, `background-animations/` (particles, starfield, registry) — window backdrop + animated bg

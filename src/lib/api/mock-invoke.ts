@@ -1361,11 +1361,15 @@ interface MockRecoveryRecord {
   retainedBytes: string | null;
   status: "pending" | "busy" | "ready" | "attention" | "retained";
   message: string;
-  actions: ("restore" | "discard")[];
+  actions: ("restore" | "discard" | "release")[];
   autoEligible: boolean;
   /** Simulates a cleanup that cannot remove its artifacts (EACCES, missing volume). */
   cleanupFails: boolean;
+  /** A move whose committed discard stopped: it can only be retried or forgotten. */
+  stranded?: boolean;
 }
+
+const MOCK_STRANDED_MESSAGE = "Discard stopped before finishing; its Undo history is gone and the remaining recovery files are preserved. Retry Discard once this is resolved: Read-only file system (os error 30). If it cannot be resolved, Forget releases this record and its locks without deleting anything; its remaining files stay in the listed folder";
 
 const mockRecoveryBudgetBytes = 2 * 1024 * 1024 * 1024;
 let mockRecoveryRevision = 4n;
@@ -1394,6 +1398,19 @@ let mockRecoveryRecords: MockRecoveryRecord[] = [
     autoEligible: false,
     cleanupFails: true,
   },
+  {
+    id: "c".repeat(64),
+    generation: 5n,
+    originalPath: "/run/media/user/Backup/site-assets",
+    retainedPath: "/run/media/user/Backup/.tauri-explorer-recovery-9e41",
+    retainedBytes: "18874368",
+    status: "attention",
+    message: MOCK_STRANDED_MESSAGE,
+    actions: [],
+    autoEligible: false,
+    cleanupFails: true,
+    stranded: true,
+  },
 ];
 let mockRecoveryError: string | null = null;
 let mockRecoveryReceive: ((snapshot: unknown) => void) | null = null;
@@ -1403,7 +1420,7 @@ function mockRecoverySnapshot(): unknown {
   const unmeasured = mockRecoveryRecords.filter((record) => record.retainedBytes === null).length;
   return {
     revision: mockRecoveryRevision.toString(),
-    items: mockRecoveryRecords.map(({ autoEligible: _auto, cleanupFails: _fails, generation, ...item }) => ({
+    items: mockRecoveryRecords.map(({ autoEligible: _auto, cleanupFails: _fails, stranded: _stranded, generation, ...item }) => ({
       ...item,
       generation: generation.toString(),
       actions: [...item.actions],
@@ -2297,9 +2314,15 @@ if (typeof window !== "undefined") {
     if (!record) throw new Error("Recovery operation is no longer available");
     record.generation += 1n;
     mockRecoveryRevision += 1n;
-    record.status = "retained";
-    record.message = "Retained recovery files can be discarded";
-    record.actions = ["discard"];
+    if (record.stranded) {
+      record.status = "attention";
+      record.message = MOCK_STRANDED_MESSAGE;
+      record.actions = ["discard", "release"];
+    } else {
+      record.status = "retained";
+      record.message = "Retained recovery files can be discarded";
+      record.actions = ["discard"];
+    }
     record.retainedBytes ??= "1073741824";
     mockRecoveryError = null;
     return mockRecoveryPublish();
@@ -2311,6 +2334,18 @@ if (typeof window !== "undefined") {
     }
     record.generation += 1n;
     mockRecoveryRevision += 1n;
+    if (choice === "release" && !record.stranded) {
+      mockRecoveryError = "Only a move whose discard stopped before finishing can be forgotten";
+      return mockRecoveryPublish();
+    }
+    if (choice === "discard" && record.stranded) {
+      // The committed discard stops again; it can still be retried or forgotten.
+      record.status = "attention";
+      record.actions = ["discard", "release"];
+      record.message = MOCK_STRANDED_MESSAGE;
+      mockRecoveryError = `Could not remove ${record.retainedPath}: Read-only file system (os error 30)`;
+      return mockRecoveryPublish();
+    }
     if (choice === "discard" && record.cleanupFails) {
       // Retained-evidence failure: nothing is removed and the record stays.
       record.status = "attention";

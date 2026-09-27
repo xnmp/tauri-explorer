@@ -52,9 +52,4 @@
     background: var(--subtle-fill-secondary);
     border-color: var(--control-stroke);
   }
-
-  .recovery-notice:focus-visible {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: 1px;
-  }
 </style>

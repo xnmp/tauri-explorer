@@ -5,11 +5,13 @@ import type { FileEntry } from "../lib/domain/file";
 import type { ExplorerInstance } from "../lib/state/explorer.svelte";
 import { startFileHistoryProbe } from "./file-history-probe";
 import { startFileRecoveryProbe } from "./file-recovery-probe";
+import { startExternalJobProbe } from "./external-job-probe";
 
 export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise<boolean>): void {
   if (signal.aborted) return;
   startFileHistoryProbe(signal);
   startFileRecoveryProbe(signal);
+  startExternalJobProbe(signal);
   // Lazy dispatch belongs to this session. Once a domain operation accepts
   // work, its own navigation/transfer/launch lifetime handles completion.
   const whileActive = async <T>(pending: Promise<T>): Promise<T> => {

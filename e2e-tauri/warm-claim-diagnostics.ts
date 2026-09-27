@@ -2,11 +2,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  firstMissingRendererAt,
-  type NativeProcessSample,
-  type ProcessObservation,
-} from "./fresh-window-diagnostics";
+import type { NativeProcessSample, ProcessObservation } from "./fresh-window-diagnostics";
 
 export interface WarmClaimIdentity {
   sourceHandle: string;
@@ -41,21 +37,13 @@ export interface WarmClaimFailureDiagnostics extends WarmClaimIdentity {
     renderer: ProcessObservation;
     firstMissingAt: number | null;
   }[];
-}
-
-export function rendererDisappearances(
-  before: NativeProcessSample,
-  during: readonly NativeProcessSample[],
-): WarmClaimFailureDiagnostics["rendererDisappearances"] {
-  if (!("webkit" in before)) return [];
-  return before.webkit
-    .filter(({ executable, startTime }) =>
-      executable !== null && path.basename(executable) === "WebKitWebProcess" &&
-      startTime !== null)
-    .map((renderer) => ({
-      renderer,
-      firstMissingAt: firstMissingRendererAt(renderer, during),
-    }));
+  /** Records later renderer births and deaths even if their raw samples rolled out. */
+  observedRendererLifetimes: readonly {
+    renderer: ProcessObservation;
+    firstSeenAt: number;
+    firstMissingAt: number | null;
+  }[];
+  untrackedRendererObservations: number;
 }
 
 /** Hash the untrusted label; keep it verbatim only inside the JSON artifact. */

@@ -190,7 +190,13 @@ describe("fresh-window blocked lookup process timeline", () => {
   });
 
   it("captures the final process state when WebDriver rejects after the nominal selection timeout", async () => {
-    diagnostic.collect.mockImplementation(() => sample(Date.now(), []));
+    const initialRenderer = process(21, "WebKitWebProcess", "210");
+    const newRenderer = process(22, "WebKitWebProcess", "220");
+    diagnostic.collect.mockImplementation(() => sample(
+      Date.now(),
+      Date.now() < 1_500 ? [initialRenderer]
+        : Date.now() < 2_000 ? [initialRenderer, newRenderer] : [],
+    ));
     driver.waitUntil.mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 22_000));
       throw new Error("fresh native window explorer-child did not become ready");
@@ -205,7 +211,57 @@ describe("fresh-window blocked lookup process timeline", () => {
       record.phase === "selection-failed");
     const final = failure?.nativeDuringSelection.at(-1);
     expect(final && "sampledAt" in final ? final.sampledAt : null).toBe(23_000);
+    expect(failure?.nativeDuringSelection.some((entry) =>
+      "sampledAt" in entry && entry.sampledAt === 22_000)).toBe(true);
     expect(failure?.nativeDuringSelection.length).toBeLessThanOrEqual(43);
+    expect(failure?.baselineRendererDisappearances).toEqual([
+      { renderer: initialRenderer, firstMissingAt: 2_000 },
+    ]);
+    expect(failure?.observedRendererLifetimes).toEqual([
+      { renderer: initialRenderer, firstSeenAt: 1_000, firstMissingAt: 2_000 },
+      { renderer: newRenderer, firstSeenAt: 1_500, firstMissingAt: 2_000 },
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retains the selected renderer's first disappearance after the lookup sample window rolls", async () => {
+    const selectedRenderer = process(21, "WebKitWebProcess", "210");
+    diagnostic.collect.mockImplementation(() => sample(
+      Date.now(), Date.now() < 2_000 ? [selectedRenderer] : [],
+    ));
+    await switchToFreshWindow("explorer-child", ["main"]);
+    const sessionLoss = new Error("invalid WebDriver session");
+    element.waitForExist.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 22_000));
+      throw sessionLoss;
+    });
+
+    const lookup = waitForFreshWindowElement(".file-list", 20_000);
+    const rejected = expect(lookup).rejects.toBe(sessionLoss);
+    await vi.advanceTimersByTimeAsync(22_000);
+    await rejected;
+
+    const failure = diagnostic.records.find((record): record is FreshWindowSelectedDiagnostics =>
+      record.phase === "lookup-failed");
+    expect(failure?.selectedRendererFirstMissingAt).toBe(2_000);
+    expect(failure?.nativeDuringLookup?.at(-1)).toMatchObject({ sampledAt: 23_000 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds tracked identities and reports omitted observations from an oversized process table", async () => {
+    const renderers = Array.from({ length: 300 }, (_, index) =>
+      process(index + 20, "WebKitWebProcess", String((index + 20) * 10)));
+    diagnostic.collect.mockImplementation(() => sample(Date.now(), renderers));
+    driver.waitUntil.mockRejectedValue(new Error("fresh window timed out"));
+
+    await expect(switchToFreshWindow("explorer-child", ["main"]))
+      .rejects.toThrow("fresh window timed out");
+
+    const failure = diagnostic.records.find((record): record is FreshWindowSelectionFailure =>
+      record.phase === "selection-failed");
+    expect(failure?.observedRendererLifetimes).toHaveLength(256);
+    expect(failure?.untrackedRendererObservations).toBeGreaterThan(0);
+    expect(failure?.nativeDuringSelection.at(-1)).toMatchObject({ sampledAt: 1_000 });
     expect(vi.getTimerCount()).toBe(0);
   });
 });

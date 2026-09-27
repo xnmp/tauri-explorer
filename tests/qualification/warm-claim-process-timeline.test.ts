@@ -90,6 +90,11 @@ describe("warm claim session-loss diagnostics", () => {
         { renderer: surviving, firstMissingAt: null },
         { renderer: vanished, firstMissingAt: 1_500 },
       ],
+      observedRendererLifetimes: [
+        { renderer: surviving, firstSeenAt: 1_000, firstMissingAt: null },
+        { renderer: vanished, firstSeenAt: 1_000, firstMissingAt: 1_500 },
+      ],
+      untrackedRendererObservations: 0,
     });
     expect(record.nativeDuringExpiry.map((entry: NativeProcessEvidence) => entry.sampledAt))
       .toEqual([1_000, 1_500, 1_600]);
@@ -98,7 +103,8 @@ describe("warm claim session-loss diagnostics", () => {
   });
 
   it("keeps the initial and final process states when one command exceeds both waits", async () => {
-    diagnostic.collect.mockImplementation(() => sample([]));
+    const vanished = renderer(21);
+    diagnostic.collect.mockImplementation(() => sample(Date.now() < 2_000 ? [vanished] : []));
     const pending = monitorWarmClaimExpiry({
       sourceHandle: "source",
       survivorHandle: "survivor",
@@ -116,8 +122,13 @@ describe("warm claim session-loss diagnostics", () => {
     expect(files).toHaveLength(1);
     const record = JSON.parse(fs.readFileSync(path.join(output, files[0]), "utf8"));
     expect(record.nativeDuringExpiry[0].sampledAt).toBe(1_000);
+    expect(record.nativeDuringExpiry.some((entry: NativeProcessEvidence) =>
+      entry.sampledAt === 52_000)).toBe(true);
     expect(record.nativeDuringExpiry.at(-1).sampledAt).toBe(53_000);
     expect(record.nativeDuringExpiry.length).toBeLessThanOrEqual(102);
+    expect(record.rendererDisappearances).toEqual([
+      { renderer: vanished, firstMissingAt: 2_000 },
+    ]);
     expect(vi.getTimerCount()).toBe(0);
   });
 

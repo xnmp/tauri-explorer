@@ -16,6 +16,14 @@ attribute a failure to that child. Stop the timer on success or failure and
 keep artifact-writing failure-tolerant. Successful selection and first-element
 lookup retain their existing renderer/page and process evidence.
 
+Keep the initial sample and a rolling bounded window of recent samples if one
+WebDriver command outlives its nominal timeout. Freezing the sampler at the
+time limit loses the process transition before the eventual failure.
+Store each observed renderer's first-seen and first-missing times separately
+from that rolling window: otherwise evicting an early disappearance changes
+its reported time. The artifact reports when its 256-identity tracking bound
+omits additional process observations.
+
 The new record is diagnostic, not proof of a renderer crash by itself: without
 successful selection there is no reliable child-renderer PID to attribute.
 The next real recurrence must include the failing label's process timeline

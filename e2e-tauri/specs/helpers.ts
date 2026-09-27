@@ -10,9 +10,9 @@ import {
   type FreshWindowPageSnapshot,
   type FreshWindowSelectedDiagnostics,
   type NativeProcessSample,
+  type ProcessObservation,
 } from "../fresh-window-diagnostics";
 import {
-  rendererDisappearances,
   writeWarmClaimFailure,
   type WarmClaimIdentity,
   type WarmClaimMilestone,
@@ -94,6 +94,7 @@ export function recordFreshWindowLookupFailure(
   error: unknown,
   lookupStartedAt = Date.now(),
   nativeDuringLookup: NativeProcessSample[] = [],
+  observedFirstMissingAt?: number | null,
 ): string | null {
   const selected = lastFreshWindow;
   if (!selected) return null;
@@ -112,27 +113,85 @@ export function recordFreshWindowLookupFailure(
     nativeAfterFailure,
     nativeDuringLookup,
     selectedRendererAtSelection,
-    selectedRendererFirstMissingAt: firstMissingRendererAt(
-      selectedRendererAtSelection,
-      nativeDuringLookup,
-    ),
+    selectedRendererFirstMissingAt: observedFirstMissingAt === undefined
+      ? firstMissingRendererAt(selectedRendererAtSelection, nativeDuringLookup)
+      : observedFirstMissingAt,
   }, diagnosticsDirectory);
 }
 
-function beginNativeProcessTimeline(timeout: number) {
+function rendererKey(renderer: ProcessObservation): string {
+  return `${renderer.pid}:${renderer.startTime}`;
+}
+
+function beginNativeProcessTimeline(
+  timeout: number,
+  extraRenderers: readonly ProcessObservation[] = [],
+) {
   const samples: NativeProcessSample[] = [];
+  const baselineRenderers: ProcessObservation[] = [];
+  const tracked = new Map<string, {
+    renderer: ProcessObservation;
+    firstSeenAt: number;
+    firstMissingAt: number | null;
+  }>();
+  const maxTrackedRenderers = 256;
+  let untrackedRendererObservations = 0;
+  const track = (renderer: ProcessObservation, firstSeenAt: number): boolean => {
+    if (renderer.startTime === null) return false;
+    const key = rendererKey(renderer);
+    if (tracked.has(key)) return true;
+    if (tracked.size >= maxTrackedRenderers) {
+      untrackedRendererObservations += 1;
+      return false;
+    }
+    tracked.set(key, { renderer, firstSeenAt, firstMissingAt: null });
+    return true;
+  };
+  extraRenderers.forEach((renderer) => track(renderer, Date.now()));
   const sampleInterval = 500;
   const maxSamples = Math.ceil(timeout / sampleInterval) + 2;
-  const sample = (final = false) => {
-    if (samples.length >= maxSamples && !final) return;
+  const sample = () => {
     const observation = collectNativeProcessEvidence({ applicationPath: applicationBinary });
-    if (samples.length >= maxSamples) samples[maxSamples - 1] = observation;
-    else samples.push(observation);
+    if ("webkit" in observation) {
+      for (const renderer of observation.webkit) {
+        if (renderer.executable && path.basename(renderer.executable) === "WebKitWebProcess" &&
+            renderer.startTime !== null) {
+          if (track(renderer, observation.sampledAt) && samples.length === 0) {
+            baselineRenderers.push(renderer);
+          }
+        }
+      }
+      for (const state of tracked.values()) {
+        if (state.firstMissingAt !== null) continue;
+        const present = observation.webkit.some((renderer) =>
+          renderer.pid === state.renderer.pid && renderer.startTime === state.renderer.startTime);
+        if (!present) state.firstMissingAt = observation.sampledAt;
+      }
+    }
+    // Keep the pre-operation baseline and the newest bounded window even if a
+    // WebDriver command outlives its nominal timeout.
+    if (samples.length >= maxSamples) samples.splice(1, 1);
+    samples.push(observation);
   };
   sample();
   const timer = setInterval(sample, sampleInterval);
   timer.unref();
-  return { samples, sample, stop: () => clearInterval(timer) };
+  const firstMissingAt = (renderer: ProcessObservation | null) =>
+    renderer ? tracked.get(rendererKey(renderer))?.firstMissingAt ?? null : null;
+  const baselineRendererDisappearances = () => baselineRenderers.map((renderer) => ({
+    renderer,
+    firstMissingAt: firstMissingAt(renderer),
+  }));
+  const observedRendererLifetimes = () => Array.from(tracked.values());
+  return {
+    samples,
+    sample,
+    firstMissingAt,
+    baselineRendererDisappearances,
+    observedRendererLifetimes,
+    untrackedRendererObservations: () => untrackedRendererObservations,
+    stop: () => clearInterval(timer),
+  };
 }
 
 /**
@@ -152,7 +211,7 @@ export async function monitorWarmClaimExpiry<T>(
   try {
     return await action(mark);
   } catch (error) {
-    timeline.sample(true);
+    timeline.sample();
     const before = timeline.samples[0];
     writeWarmClaimFailure({
       issue: 781,
@@ -164,7 +223,9 @@ export async function monitorWarmClaimExpiry<T>(
       milestones,
       nativeBeforeClose: before,
       nativeDuringExpiry: timeline.samples,
-      rendererDisappearances: rendererDisappearances(before, timeline.samples),
+      rendererDisappearances: timeline.baselineRendererDisappearances(),
+      observedRendererLifetimes: timeline.observedRendererLifetimes(),
+      untrackedRendererObservations: timeline.untrackedRendererObservations(),
     }, warmClaimDiagnosticsDirectory);
     throw error;
   } finally {
@@ -182,16 +243,21 @@ export async function waitForFreshWindowElement(
   timeout: number,
 ): Promise<void> {
   const lookupStartedAt = Date.now();
-  const timeline = beginNativeProcessTimeline(timeout);
+  const selectedRenderer = newestRenderer(lastFreshWindow?.nativeAtSelection ?? null);
+  const timeline = beginNativeProcessTimeline(
+    timeout,
+    selectedRenderer ? [selectedRenderer] : [],
+  );
   try {
     await $(selector).waitForExist({ timeout });
   } catch (error) {
-    timeline.sample(true);
+    timeline.sample();
     recordFreshWindowLookupFailure(
       selector,
       error,
       lookupStartedAt,
       timeline.samples,
+      timeline.firstMissingAt(selectedRenderer),
     );
     throw error;
   } finally {
@@ -224,7 +290,7 @@ export async function switchToFreshWindow(
       return false;
     }, { timeout: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
   } catch (error) {
-    timeline.sample(true);
+    timeline.sample();
     writeFreshWindowDiagnostics({
       issue: 703,
       phase: "selection-failed",
@@ -235,6 +301,9 @@ export async function switchToFreshWindow(
       existingHandles: [...existingHandles],
       nativeBeforeSelection: timeline.samples[0],
       nativeDuringSelection: timeline.samples,
+      baselineRendererDisappearances: timeline.baselineRendererDisappearances(),
+      observedRendererLifetimes: timeline.observedRendererLifetimes(),
+      untrackedRendererObservations: timeline.untrackedRendererObservations(),
     }, diagnosticsDirectory);
     throw error;
   } finally {

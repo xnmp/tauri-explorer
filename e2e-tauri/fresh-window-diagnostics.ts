@@ -139,6 +139,19 @@ export interface FreshWindowSelectionFailure {
   existingHandles: readonly string[];
   nativeBeforeSelection: NativeProcessSample;
   nativeDuringSelection: readonly NativeProcessSample[];
+  /** First missing time is retained even if its sample ages out of the rolling window. */
+  baselineRendererDisappearances: readonly {
+    renderer: ProcessObservation;
+    firstMissingAt: number | null;
+  }[];
+  /** Includes renderers first seen after selection started, even if their samples roll out. */
+  observedRendererLifetimes: readonly {
+    renderer: ProcessObservation;
+    firstSeenAt: number;
+    firstMissingAt: number | null;
+  }[];
+  /** Explicitly shows if the bounded identity tracker could not include every process. */
+  untrackedRendererObservations: number;
 }
 
 /** The complete evidence bundle written after a fresh window is selected. */

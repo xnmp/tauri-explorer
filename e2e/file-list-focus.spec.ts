@@ -70,6 +70,22 @@ for (const viewMode of ALL_VIEW_MODES) {
       await expect(page.locator(".status-path")).toHaveAttribute("title", TARGET_PATH);
     });
 
+    test("pointer selection focuses the cursor when drag acquisition cancels native focus", async ({ page }) => {
+      const selectedDirectory = entry(page, TARGET_PATH);
+      await selectedDirectory.evaluate((row) => {
+        row.addEventListener("mousedown", (event) => event.preventDefault(), { once: true });
+      });
+
+      await selectedDirectory.click();
+
+      await expect(selectedDirectory).toHaveClass(/selected/);
+      await expect(selectedDirectory).toHaveAttribute("tabindex", "0");
+      await expect(selectedDirectory).toBeFocused();
+
+      await page.keyboard.press("Enter");
+      await expect(page.locator(".status-path")).toHaveAttribute("title", TARGET_PATH);
+    });
+
     test("Open focuses the new first row before Arrow moves the visible endpoint", async ({ page }) => {
       const selectedDirectory = entry(page, TARGET_PATH);
       await selectedDirectory.click();

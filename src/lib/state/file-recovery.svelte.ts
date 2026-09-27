@@ -12,7 +12,7 @@ import type {
 const EMPTY_SNAPSHOT: FileRecoverySnapshot = { revision: "0", items: [], storage: emptyRecoveryStorage(), error: null };
 const INVALID_UPDATE = "Recovery status update was invalid";
 const STATUSES = new Set(["pending", "busy", "ready", "attention", "retained"]);
-const CHOICES = new Set<FileRecoveryChoice>(["restore", "discard"]);
+const CHOICES = new Set<FileRecoveryChoice>(["restore", "discard", "release"]);
 
 function validItem(value: unknown): value is FileRecoveryItem {
   if (!value || typeof value !== "object") return false;
@@ -21,6 +21,9 @@ function validItem(value: unknown): value is FileRecoveryItem {
     && isRecoveryCounter(item.generation)
     && typeof item.originalPath === "string"
     && (item.retainedPath === null || typeof item.retainedPath === "string")
+    // Additive like `retainedBytes`: absent means only `retainedPath` is known.
+    && (item.retainedPaths === undefined
+      || (Array.isArray(item.retainedPaths) && item.retainedPaths.every((path) => typeof path === "string")))
     // Retention accounting is additive: a port that does not report a retained
     // size is describing an unknown size, not sending a malformed item. A
     // present value of the wrong shape is still rejected.

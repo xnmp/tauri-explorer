@@ -5,9 +5,13 @@
 mod anchored_copy;
 pub(crate) mod archive_plan;
 pub mod batch;
+#[cfg(test)]
+#[path = "../../test_support/case_only_rename.rs"]
+mod case_only_rename_tests;
 pub(crate) mod copy_session;
 pub mod dir_listing;
 mod directory_cache;
+mod directory_identity;
 mod directory_watches;
 mod directory_wire;
 pub mod drives;

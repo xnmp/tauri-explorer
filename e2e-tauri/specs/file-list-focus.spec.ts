@@ -3,7 +3,7 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domText, entryNames, navigateTo } from "./helpers";
+import { domText, entryNames, entryPathSelector, navigateTo } from "./helpers";
 
 let scratch = "";
 let root = "";
@@ -12,7 +12,7 @@ const fileNames = ["alpha-file.txt", "middle-file.txt", "omega-file.txt"];
 const viewModes = ["details", "list", "tiles"] as const;
 
 function entrySelector(name: string): string {
-  return `.explorer-pane .file-list .entry-item[data-path$="/${name}"]`;
+  return entryPathSelector(path.join(root, name), ".explorer-pane .file-list .entry-item");
 }
 
 async function assertSinglePane(): Promise<void> {
@@ -66,9 +66,14 @@ async function activeFocusIdentity(): Promise<number> {
   });
 }
 
-const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
+// Keyboard focus, selection, and rename-editor ownership are platform-independent:
+// they exercise DOM focus and Svelte state, not any OS-specific filesystem or
+// process capability. Runs on Linux (WebKitGTK) and Windows (WebView2).
+const nativeDescribe = process.platform === "linux" || process.platform === "win32"
+  ? describe
+  : describe.skip;
 
-linuxDescribe("native file-list composite focus", () => {
+nativeDescribe("native file-list composite focus", () => {
   before(() => {
     scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-file-list-focus-"));
     root = path.join(scratch, "root");
@@ -90,12 +95,25 @@ linuxDescribe("native file-list composite focus", () => {
     for (const viewMode of viewModes) {
       await navigateTo(root);
       await useView(viewMode);
-      const middle = $(entrySelector(folderNames[1]));
+      const middle = await $(entrySelector(folderNames[1]));
       await middle.waitForDisplayed();
-      await middle.click();
+      const clickPoint = await browser.execute((element: HTMLElement) => {
+        const rect = element.getBoundingClientRect();
+        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+      }, middle);
+      await browser.performActions([{
+        type: "pointer", id: `file-list-${viewMode}`, parameters: { pointerType: "mouse" },
+        actions: [
+          { type: "pointerMove", duration: 0, origin: "viewport", ...clickPoint },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerUp", button: 0 },
+        ],
+      }]);
+      await browser.releaseActions();
       await expect(middle).toHaveElementClass("selected");
+      await expect(middle).toHaveAttribute("tabindex", "0");
       await browser.waitUntil(async () => (await activeEntryPath()) === middlePath, {
-        timeoutMsg: `${viewMode} click did not focus the middle folder`,
+        timeoutMsg: `${viewMode} pointer click did not focus the middle folder`,
       });
 
       const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);
@@ -121,6 +139,44 @@ linuxDescribe("native file-list composite focus", () => {
         timeoutMsg: `${viewMode} did not list the real child marker`,
       });
       expect(fs.existsSync(path.join(middlePath, marker))).toBe(true);
+    }
+  });
+
+  it("Tabs from the address bar into every file-list view, where arrows move the selection (#797)", async () => {
+    for (const viewMode of viewModes) {
+      await navigateTo(root);
+      await useView(viewMode);
+      await $(entrySelector(folderNames[0])).waitForDisplayed();
+      await browser.execute(() => {
+        document.querySelector<HTMLElement>(".explorer-pane .navigation-bar .crumb.current")?.focus();
+      });
+      await browser.waitUntil(async () => await browser.execute(() =>
+        document.activeElement?.closest(".navigation-bar") !== null,
+      ), { timeoutMsg: `${viewMode}: the address bar's current crumb did not take focus` });
+
+    // Between the address bar and the first entry, Tab may only pass the file
+    // list's own column controls.
+      const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);
+      for (let step = 0; step < cycleLimit && !(await activeEntryPath()); step += 1) {
+        await browser.keys("Tab");
+        const region = await browser.execute(() => {
+          const active = document.activeElement;
+          return active?.closest(".navigation-bar") ? "address-bar" : active?.closest(".file-list") ? "file-list" : "elsewhere";
+        });
+        expect(region).not.toBe("elsewhere");
+      }
+      // The Tab stop is the pane's cursor entry, which navigation may restore.
+      const reached = await activeEntryPath();
+      expect(reached).toBeTruthy();
+      const navigationKey = viewMode === "details" ? "ArrowDown" : "ArrowRight";
+      await browser.keys(navigationKey);
+      await browser.waitUntil(async () => {
+        const current = await activeEntryPath();
+        return current !== null && current !== reached;
+      }, {
+        timeoutMsg: `${viewMode}: ${navigationKey} did not move focus from ${reached}`,
+      });
+      expect(await browser.execute(() => document.activeElement?.classList.contains("selected") ?? false)).toBe(true);
     }
   });
 

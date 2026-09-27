@@ -399,3 +399,15 @@ separate backing mount. Reattaching the same volume restores explicit discard.
 It tests source and destination volume disappearance separately. All mounts live
 only in the new private namespace; it refuses to run in the caller's namespace.
 It does not model physical device failure, power loss or kernel I/O errors.
+
+`bind_mounted_endpoints_on_one_device_are_refused_before_any_record` runs the
+same way. It bind-mounts a directory of one filesystem, proves `rename(2)`
+between the mounts fails with `EXDEV` although both share `st_dev`, and checks
+that a durable move between them is refused before any record, artifact root
+or effect exists (#760).
+`mount_point_endpoints_are_refused_before_any_record` bind-mounts over a source
+and over an existing destination, which keep their parent's device, and checks
+that the move is refused before any record instead of meeting `EBUSY` after
+journaling. `a_payload_that_crosses_into_another_mount_is_refused_before_any_record`
+mounts a tmpfs inside a payload the move would retain, whose discard could never
+traverse it, and checks the same refusal.

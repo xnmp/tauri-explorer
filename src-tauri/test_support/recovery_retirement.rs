@@ -449,9 +449,10 @@ fn a_legacy_checkpoint_without_retention_fields_still_lists_and_retires() {
         )
         .unwrap();
     let mut value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
-    // The schema before ADR 0023 had neither key; both must default.
+    // The schema before ADR 0023 had neither key; both must default. An
+    // unmeasured checkpoint already omits `retained_bytes` on write (#760).
     let state = value["state"]["state"].as_object_mut().unwrap();
-    assert!(state.remove("retained_bytes").is_some());
+    assert!(!state.contains_key("retained_bytes"));
     assert!(state.remove("effect_revision").is_some());
     connection
         .execute(
@@ -763,10 +764,19 @@ fn an_interrupted_retirement_whose_endpoint_changed_is_preserved_and_still_resol
     // The refusal is a classification, not an effect: it journals nothing,
     // and the reason reaches the user through the recovery service instead.
 
-    // Repeated automatic passes must neither remove anything nor lose it.
+    // Repeated automatic passes must neither remove anything nor lose it, and
+    // after the first records the reason none claims the record again.
+    enforce(&fixture.coordinator).unwrap();
+    let reported = fixture.current_generation();
     for _ in 0..3 {
         enforce(&fixture.coordinator).unwrap();
     }
+    assert_eq!(
+        fixture.current_generation(),
+        reported,
+        "an unprogressable retirement is re-claimed every pass"
+    );
+    assert!(fixture.recorded_error().is_some());
     assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
     assert!(fixture.indexed());
     // Restoration remains a legal transition out of an interrupted retirement,

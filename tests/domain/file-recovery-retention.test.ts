@@ -3,6 +3,7 @@ import {
   emptyRecoveryStorage,
   formatRecoveryBytes,
   mergeRecoveryPresentation,
+  retainedFolders,
   summarizeRecoveryStorage,
 } from "$lib/domain/file-recovery";
 import type { FileRecoveryItem, FileRecoveryStorage } from "$lib/domain/file-recovery";
@@ -12,6 +13,11 @@ function storage(overrides: Partial<FileRecoveryStorage> = {}): FileRecoveryStor
 }
 
 describe("retained byte formatting", () => {
+  it("deduplicates retained folder paths before keyed rendering", () => {
+    expect(retainedFolders({ retainedPath: "/recovery/a", retainedPaths: ["/recovery/a", "/recovery/a", "/recovery/b"] }))
+      .toEqual(["/recovery/a", "/recovery/b"]);
+  });
+
   it("scales binary units and keeps one decimal above bytes", () => {
     expect(formatRecoveryBytes("0")).toBe("0 B");
     expect(formatRecoveryBytes("512")).toBe("512 B");

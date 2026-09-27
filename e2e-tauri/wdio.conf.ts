@@ -15,6 +15,7 @@ import {
   resolveNativeApplication,
   stopNativeQualificationProcesses,
 } from "./native-qualification";
+import { installExternalJobFixture } from "./external-job-fixture";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
@@ -163,7 +164,10 @@ export const config: WebdriverIO.Config = {
   framework: "mocha",
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
-  onPrepare: processCleanupHooks.prepare,
+  onPrepare: () => {
+    processCleanupHooks.prepare();
+    installExternalJobFixture(process.env);
+  },
 
   beforeSession: async (_config, capabilities) => {
     if (!isWindows) {

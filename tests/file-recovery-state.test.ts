@@ -528,6 +528,24 @@ it("applies a retention enforcement pass and reports its failure without losing 
   await Promise.all([state.dispose(), failing.dispose()]);
 });
 
+it("accepts every retained folder a native item lists and rejects a malformed list", async () => {
+  let receive!: (value: FileRecoverySnapshot) => void;
+  const folders = ["/source/.tauri-explorer-recovery-1", "/target/.tauri-explorer-recovery-2"];
+  const state = createFileRecoveryState(port({ subscribe: async (next) => {
+    receive = next;
+    next(snapshot(1, [{ ...item(), retainedPath: folders[0], retainedPaths: folders }]));
+    return async () => {};
+  }}));
+  await state.start();
+  expect(state.error).toBeNull();
+  expect(state.items[0].retainedPaths).toEqual(folders);
+
+  receive(snapshot(2, [{ ...item(), retainedPaths: [folders[0], 7] } as never]));
+  expect(state.error).toBe("Recovery status update was invalid");
+  expect(state.items[0].retainedPaths).toEqual(folders);
+  await state.dispose();
+});
+
 it("accepts a port that reports no retention accounting and defaults it", async () => {
   // Retention accounting is additive. A port that predates it — including the
   // browser E2E contract fixture — sends items and snapshots without
@@ -560,4 +578,32 @@ it("reports a clear failure when the port cannot reclaim at all", async () => {
 
   expect(state.error).toMatch(/cannot reclaim/);
   await state.dispose();
+});
+
+describe("forgetting a stranded move discard", () => {
+  it("accepts a native release offer and resolves it at the exact inspected generation", async () => {
+    const stranded: FileRecoveryItem = {
+      ...item("stranded", 4),
+      retainedPath: "/volume/.tauri-explorer-recovery-9e41",
+      actions: ["discard", "release"],
+    };
+    const resolve = vi.fn(async () => snapshot(5, []));
+    const state = createFileRecoveryState(port({
+      subscribe: vi.fn(async (receive) => {
+        receive(snapshot(4, [stranded]));
+        return async () => {};
+      }),
+      resolve,
+    }));
+    await state.start();
+    // An update offering `release` is valid native state, not a malformed one.
+    expect(state.error).toBeNull();
+    expect(state.items[0].actions).toEqual(["discard", "release"]);
+
+    await state.resolve(state.items[0], "release");
+
+    expect(resolve).toHaveBeenCalledWith("stranded", "4", "release");
+    expect(state.items).toEqual([]);
+    await state.dispose();
+  });
 });

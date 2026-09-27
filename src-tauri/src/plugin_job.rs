@@ -19,6 +19,20 @@ static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 pub const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CANCEL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+fn job_timeout() -> std::time::Duration {
+    #[cfg(debug_assertions)]
+    if option_env!("VITE_E2E_HOOKS") == Some("1") {
+        if let Some(milliseconds) = std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+        {
+            return std::time::Duration::from_millis(milliseconds);
+        }
+    }
+    JOB_TIMEOUT
+}
+
 #[derive(Clone)]
 pub struct JobControl {
     state: Arc<Mutex<JobState>>,
@@ -163,7 +177,7 @@ pub async fn run_and_emit(
     control: JobControl,
     job: impl std::future::Future<Output = Result<String, AppError>>,
 ) {
-    run_and_emit_with_timeout(app, event_prefix, job_id, control, JOB_TIMEOUT, job).await;
+    run_and_emit_with_timeout(app, event_prefix, job_id, control, job_timeout(), job).await;
 }
 
 async fn run_and_emit_with_timeout(
@@ -227,6 +241,57 @@ fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancellation_of_a_held_staging_file_removes_it_without_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let final_output = dir.path().join("result.png");
+        let control = JobControl::new();
+        let mut staging = StagedOutput::new(&final_output).unwrap();
+        std::io::Write::write_all(staging.file_mut(), b"complete bytes").unwrap();
+
+        assert!(
+            !final_output.exists(),
+            "staging became visible before commit"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(control.cancel());
+        assert!(staging.commit(&final_output, &control).is_err());
+        assert!(!final_output.exists(), "cancelled staging was published");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cancellation_and_publication_have_one_serialized_winner() {
+        for attempt in 0..64 {
+            let dir = tempfile::tempdir().unwrap();
+            let final_output = dir.path().join("result.png");
+            let control = JobControl::new();
+            let publish_control = control.clone();
+            let publish_output = final_output.clone();
+            let gate = Arc::new(std::sync::Barrier::new(2));
+            let publish_gate = Arc::clone(&gate);
+            let publisher = std::thread::spawn(move || {
+                let mut staging = StagedOutput::new(&publish_output).unwrap();
+                std::io::Write::write_all(staging.file_mut(), b"owned").unwrap();
+                publish_gate.wait();
+                staging.commit(&publish_output, &publish_control)
+            });
+
+            gate.wait();
+            let cancelled = control.cancel();
+            let published = publisher.join().unwrap().is_ok();
+            assert_ne!(
+                cancelled, published,
+                "attempt {attempt} had no unique winner"
+            );
+            assert_eq!(final_output.exists(), published);
+            assert_eq!(
+                std::fs::read_dir(dir.path()).unwrap().count(),
+                usize::from(published)
+            );
+        }
+    }
 
     #[test]
     fn output_filename_cannot_traverse() {

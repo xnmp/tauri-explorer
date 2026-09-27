@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import type { FileRecoverySnapshot } from "../../src/lib/domain/file-recovery";
+import { gatedDescribe } from "./gated-describe";
 import { navigateTo } from "./helpers";
 
 const sourceBase = process.env.TAURI_E2E_MOVE_SOURCE_DIR;
 const targetBase = process.env.TAURI_E2E_MOVE_TARGET_DIR;
-const nativeDescribe = process.platform === "linux" && sourceBase && targetBase ? describe : describe.skip;
 const proof = "screenshots/feat/durable-move-retirement";
 
 async function operation<T>(op: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -34,6 +34,13 @@ async function openRecovery(id: string): Promise<void> {
   await $(".recovery-notice").click();
   await $(".recovery-dialog").waitForDisplayed();
   await $(`[data-recovery-inspect="${id}"]`).click();
+  // aria-busy tracks loading and resolution, not inspection. Reclaim skips a
+  // record whose inspection still holds its claim, so wait for the inspection
+  // itself to settle before any later action reaches the backend.
+  await browser.waitUntil(async () => browser.execute(target => Boolean(document
+    .querySelector(`[data-recovery-inspect="${target}"]`)?.closest(".recovery-item")
+    ?.querySelector(".inspection, .inspection-error")), id),
+  { timeoutMsg: `inspection of ${id} did not settle` });
   await $(".recovery-dialog[aria-busy='false']").waitForExist();
 }
 
@@ -72,7 +79,11 @@ async function moveFixture(name: string, directory: boolean) {
   return { sourceDirectory, destination, source, target, published, original, retained, id: item.id };
 }
 
-nativeDescribe("Durable move retirement", () => {
+gatedDescribe("Durable move retirement", [
+  [process.platform === "linux", "Linux"],
+  [Boolean(sourceBase), "TAURI_E2E_MOVE_SOURCE_DIR"],
+  [Boolean(targetBase), "TAURI_E2E_MOVE_TARGET_DIR"],
+], () => {
   before(async () => {
     fs.mkdirSync(proof, { recursive: true });
     await browser.setWindowSize(1200, 900);

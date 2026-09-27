@@ -58,6 +58,7 @@ fn boundaries() -> [SessionBoundary; 7] {
 }
 
 fn native_move_work(root: &std::path::Path) -> crate::files::move_session::MoveWork {
+    let _ = root;
     crate::files::move_session::MoveWork {
         job_id: 802,
         #[cfg(target_os = "linux")]
@@ -69,6 +70,7 @@ fn native_move_work(root: &std::path::Path) -> crate::files::move_session::MoveW
 }
 
 fn native_copy_work(root: &std::path::Path) -> NativeWork {
+    let _ = root;
     NativeWork {
         app: None,
         job_id: 802,

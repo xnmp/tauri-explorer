@@ -37,7 +37,10 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
           {
             signal: controller.signal,
             jobId: Number(++next),
-            onConflict: async () => ({ choice: "cancel", applyToAll: false }),
+            // The native conflict remains parked until cancel_copy_session
+            // settles it. A conflict decision would let this test pass even
+            // if abort never reached the session registry.
+            onConflict: () => new Promise<never>(() => {}),
             onEvent: (sessionEvent) => {
               if (sessionEvent.type === "conflict") controller.abort();
             },

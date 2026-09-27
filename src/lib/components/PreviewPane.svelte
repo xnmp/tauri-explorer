@@ -874,7 +874,7 @@ import { openFile } from "$lib/api/open";
               {#if line.kind === "hunk"}
                 {@const hunk = diffParsed?.hunks.find((candidate) => candidate.lineIndex === line.index)}
                 <span class="diff-content hunk-content">
-                  <span>{line.text}</span>
+                  <span class="hunk-range">{line.text}</span>
                   {#if activeDiff && hunk}
                     <span class="hunk-actions">
                       {#if activeDiff.staged}
@@ -1074,10 +1074,14 @@ import { openFile } from "$lib/api/open";
   /* A vertical dock is wide and short: its name, type and metadata share one
      row, as in a bottom details pane, so the content keeps the dock's height.
      Stacked, that chrome alone exceeded the 120px minimum height and left no
-     room for content (#792). */
+     room for content (#792).
+     The header column takes what the name and badge need, capped at 65% of
+     the pane or everything but 16rem, whichever is larger. The metadata
+     column takes the rest and ellipsizes. Neither can squeeze the other to
+     nothing, however long the name or a diff's path. */
   .preview-pane.vertical:not(.fullscreen) {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: fit-content(max(65%, 100% - 16rem)) minmax(0, 1fr);
     grid-template-rows: auto auto minmax(0, 1fr);
     grid-template-areas:
       "header info"
@@ -1085,18 +1089,27 @@ import { openFile } from "$lib/api/open";
       "content content";
   }
 
+  /* The name has priority over the type badge: the badge gives up width
+     first, down to its first few letters, before the name truncates. */
   .preview-pane.vertical:not(.fullscreen) > .preview-header {
     grid-area: header;
-    flex-direction: row;
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(3.5rem, 1fr);
     align-items: center;
     gap: 8px;
     min-width: 0;
+    overflow: hidden;
     padding: 8px 12px;
   }
 
   .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {
+    display: block;
     align-self: center;
-    flex-shrink: 0;
+    justify-self: start;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .preview-pane.vertical:not(.fullscreen) > .diff-actions {
@@ -1107,16 +1120,35 @@ import { openFile } from "$lib/api/open";
     grid-area: content;
   }
 
+  /* The metadata is one line of text that ellipsizes at its end, right
+     aligned while it fits. */
   .preview-pane.vertical:not(.fullscreen) > .preview-info {
     grid-area: info;
-    flex-direction: row;
+    display: block;
+    align-content: center;
+    min-width: 0;
+    overflow: hidden;
+    padding: 8px 12px;
+    font-size: var(--font-size-caption);
+    text-align: end;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     border-top: none;
     border-bottom: 1px solid var(--divider);
   }
 
   .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
-    padding: 8px 12px;
+    display: inline;
+    padding: 0;
     border-bottom: none;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row + .info-row {
+    margin-inline-start: 16px;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
+    margin-inline-end: 8px;
   }
 
   .preview-pane.vertical:not(.fullscreen) > .preview-empty {
@@ -1530,8 +1562,10 @@ import { openFile } from "$lib/api/open";
   }
 
   /* In a narrow pane the key column would squeeze each value to a few
-     characters per line; stack the key above its value instead (#792). */
-  @container preview-markdown (max-width: 260px) {
+     characters per line; stack the key above its value instead (#792).
+     Side by side needs the properties box's 22px of padding and border, the
+     76px key column, the 8px gap and a 96px value: 202px. */
+  @container preview-markdown (width < 202px) {
     .preview-markdown :global(.md-property) {
       grid-template-columns: minmax(0, 1fr);
       gap: 0;
@@ -1864,7 +1898,22 @@ import { openFile } from "$lib/api/open";
     gap: 6px;
   }
 
-  .hunk-content { justify-content: space-between; }
+  /* In a narrow pane a hunk's actions wrap below its range, the range
+     ellipsizes, and each action's label wraps, so no action is ever clipped
+     out of reach (#792). */
+  .hunk-content {
+    justify-content: space-between;
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .hunk-range {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .hunk-actions { flex-wrap: wrap; }
 
   .hunk-action {
     padding: 1px 5px;
@@ -1875,6 +1924,7 @@ import { openFile } from "$lib/api/open";
     cursor: pointer;
     font: inherit;
     font-size: 10px;
+    white-space: normal;
   }
 
   .hunk-action.danger { color: var(--system-critical, #dc2626); }

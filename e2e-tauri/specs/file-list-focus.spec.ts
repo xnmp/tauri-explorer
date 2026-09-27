@@ -66,9 +66,14 @@ async function activeFocusIdentity(): Promise<number> {
   });
 }
 
-const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
+// Keyboard focus, selection, and rename-editor ownership are platform-independent:
+// they exercise DOM focus and Svelte state, not any OS-specific filesystem or
+// process capability. Runs on Linux (WebKitGTK) and Windows (WebView2).
+const nativeDescribe = process.platform === "linux" || process.platform === "win32"
+  ? describe
+  : describe.skip;
 
-linuxDescribe("native file-list composite focus", () => {
+nativeDescribe("native file-list composite focus", () => {
   before(() => {
     scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-file-list-focus-"));
     root = path.join(scratch, "root");

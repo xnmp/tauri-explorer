@@ -43,7 +43,14 @@ async function expectContent(): Promise<void> {
   });
 }
 
-(process.platform === "linux" ? describe : describe.skip)("native preview resizing", () => {
+// Zoomed pointer/keyboard dock resizing and fullscreen containment are pure
+// DOM/layout behaviour; they do not depend on any Linux-only OS capability.
+// Runs on Linux (WebKitGTK) and Windows (WebView2).
+const nativeDescribe = process.platform === "linux" || process.platform === "win32"
+  ? describe
+  : describe.skip;
+
+nativeDescribe("native preview resizing", () => {
   before(() => {
     fs.writeFileSync(path.join(scratch, fileName), [
       "# Native preview resize proof",

@@ -7,8 +7,15 @@ import { domText, navigateTo } from "./helpers";
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-terminal-resize-"));
 const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
 
-/** Real WebKitGTK, PTY output/scrollback, and pointer capture under root zoom. */
-(process.platform === "linux" ? describe : describe.skip)("native terminal resizing", () => {
+// The default shell on Windows CI is cmd.exe (`%COMSPEC%`); `seq` does not
+// exist there. `for /l` is cmd's built-in counting loop and, run directly at
+// an interactive prompt (not from a batch file), takes a single `%i`.
+const countTo80 = process.platform === "win32"
+  ? "for /l %i in (1,1,80) do @echo %i"
+  : "seq 1 80";
+
+/** Real WebKitGTK/WebView2, PTY output/scrollback, and pointer capture under root zoom. */
+(process.platform === "linux" || process.platform === "win32" ? describe : describe.skip)("native terminal resizing", () => {
   before(() => fs.writeFileSync(fixtureEntry, "terminal resize fixture"));
   after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
@@ -68,7 +75,7 @@ const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
       for (const character of value) await browser.keys(character);
       await browser.keys("Enter");
     }
-    await command("seq 1 80");
+    await command(countTo80);
     await browser.waitUntil(async () => await browser.execute(() =>
       [...document.querySelectorAll(".terminal-panel .xterm-rows > div")].some(row => row.textContent?.trim() === "79")),
       { timeoutMsg: "real PTY scrollback did not arrive" });

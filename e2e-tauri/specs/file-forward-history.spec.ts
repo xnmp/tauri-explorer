@@ -329,6 +329,10 @@ async function destroyCurrentWindow(handle: string): Promise<void> {
   });
 }
 
+// Linux-only: exercises the durable history-recovery gate directories
+// (`durable-copy-recovery`, `cfg(unix)`/`cfg(target_os = "linux")`, ADR 0020,
+// plan decision D2) and `exactApplicationPid`'s `/proc`-based process
+// identity, neither of which exists on Windows (#800).
 const gatedDescribe = process.platform === "linux" && gateDirectory ? describe : describe.skip;
 
 gatedDescribe("native forward mutation history ownership", () => {

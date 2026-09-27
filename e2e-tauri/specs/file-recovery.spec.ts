@@ -7,6 +7,9 @@ import { exactApplicationPid } from "../native-process";
 import { navigateTo, domTexts, entryNames } from "./helpers";
 
 const directory = process.env.TAURI_E2E_FILE_RECOVERY_DIR;
+// Linux-only: exercises `durable-copy-recovery` (`cfg(unix)`/`cfg(target_os =
+// "linux")`, ADR 0020, plan decision D2) and uses `exactApplicationPid`'s
+// `/proc`-based process identity, neither of which exists on Windows (#800).
 const nativeDescribe = process.platform === "linux" && directory ? describe : describe.skip;
 interface Snapshot { revision: string; items: Array<{ id: string; generation: string; actions: string[] }> }
 interface Lease { sessionId: string; subscriptionId: string; channel: number; snapshot: Snapshot; registration: string }

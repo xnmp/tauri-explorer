@@ -596,6 +596,9 @@ for (const dock of DOCKS) {
           await expectDiffRendered(page, "UserAccountServiceImplementation.java");
           await expect(pane(page).locator(".preview-info .info-value")).toHaveText(LONG_DIFF_PATH);
           await expectContained(page, "long-path diff", { fileLists: false });
+          if (dock === "right" && size === "minimum" && viewport === "medium" && zoom === 150) {
+            await page.screenshot({ path: screenshotPath("diff-long-path-minimum-right-dock-150.png") });
+          }
           if (dock === "bottom" && size === "default" && zoom === 150) {
             await page.screenshot({ path: screenshotPath("diff-long-path-bottom-dock-150.png") });
           }

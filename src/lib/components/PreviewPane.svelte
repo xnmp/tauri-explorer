@@ -1918,7 +1918,7 @@ import { openFile } from "$lib/api/open";
   }
 
   .hunk-actions {
-    flex: 0 1 auto;
+    flex: 1 0 100%;
     flex-wrap: wrap;
     min-width: 0;
     max-width: 100%;

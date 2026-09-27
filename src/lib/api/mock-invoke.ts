@@ -137,6 +137,25 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("many-people.csv", "/home/csv-preview/many-people.csv", 8192),
     file("wide.csv", "/home/csv-preview/wide.csv", 1024),
   ],
+  // Preview containment (#792): every format with content wider or taller
+  // than a narrow preview pane.
+  "/home/preview-containment": [
+    dir("long-names", "/home/preview-containment/long-names", false),
+    file("archive.zip", "/home/preview-containment/archive.zip", 4096),
+    file("blob.bin", "/home/preview-containment/blob.bin", 4096),
+    file("clip.mp4", "/home/preview-containment/clip.mp4", 1048576),
+    file("long-line.ts", "/home/preview-containment/long-line.ts", 4096),
+    file("panorama.png", "/home/preview-containment/panorama.png", 65536),
+    file("tall.png", "/home/preview-containment/tall.png", 65536),
+    file("unbroken.txt", "/home/preview-containment/unbroken.txt", 4096),
+    file("wide.csv", "/home/preview-containment/wide.csv", 4096),
+    file("wide.md", "/home/preview-containment/wide.md", 4096),
+    file("an-exceptionally-long-file-name-that-must-truncate-inside-the-preview-header-instead-of-widening-the-pane.txt", "/home/preview-containment/an-exceptionally-long-file-name-that-must-truncate-inside-the-preview-header-instead-of-widening-the-pane.txt", 64),
+  ],
+  "/home/preview-containment/long-names": [
+    dir("a-folder-child-whose-name-is-long-enough-to-overflow-any-narrow-preview-column-if-it-were-not-truncated", "/home/preview-containment/long-names/a-folder-child-whose-name-is-long-enough-to-overflow-any-narrow-preview-column-if-it-were-not-truncated", true),
+    file("a-folder-child-whose-name-is-long-enough-to-overflow-any-narrow-preview-column-if-it-were-not-truncated.log", "/home/preview-containment/long-names/a-folder-child-whose-name-is-long-enough-to-overflow-any-narrow-preview-column-if-it-were-not-truncated.log", 128),
+  ],
   "/home/user/Archive": [],
   "/home/user/my-project": [
     dir("src", "/home/user/my-project/src", false),
@@ -616,6 +635,33 @@ function sortListing(entries: FileEntry[]): FileEntry[] {
     const bn = b.name.toLowerCase();
     return an < bn ? -1 : an > bn ? 1 : 0;
   });
+}
+
+/** Copy one child for the ordered-session mock. Copy is not a standalone IPC. */
+function copySessionEntry(source: string, destDir: string, overwrite: boolean): FileMutationReceipt {
+  const name = basename(source);
+  const sourceEntry = (mockFiles[parentDir(source)] || []).find((entry) => entry.path === source);
+  if (!sourceEntry) throw new Error("Source not found");
+  if (!mockFiles[destDir]) mockFiles[destDir] = [];
+  const dest = mockFiles[destDir];
+  let finalName = name;
+  if (dest.some((entry) => entry.name === name) && !overwrite) {
+    const dot = sourceEntry.kind === "directory" ? -1 : name.lastIndexOf(".");
+    const base = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : "";
+    finalName = `${base} - Copy${ext}`;
+    for (let n = 2; dest.some((entry) => entry.name === finalName); n++) {
+      finalName = `${base} - Copy (${n})${ext}`;
+    }
+  }
+  const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: `${destDir}/${finalName}` };
+  const existing = dest.findIndex((entry) => entry.name === finalName);
+  if (existing >= 0) dest[existing] = newEntry;
+  else dest.push(newEntry);
+  return {
+    ...mutationReceipt(newEntry),
+    ...(existing >= 0 ? { replacement: { id: crypto.randomUUID().replaceAll("-", "").repeat(2) } } : {}),
+  };
 }
 
 // Mock command handlers
@@ -1279,6 +1325,33 @@ const mockFileContent: Record<string, string> = {
   "/home/csv-preview/broken.csv": 'name,note\nAda,"unterminated',
   "/home/csv-preview/many-people.csv": ["name,note", ...Array.from({ length: 250 }, (_, index) => `Person ${index + 1},record ${index + 1}`)].join("\n"),
   "/home/csv-preview/wide.csv": "first,description,final\nA,This is a deliberately long value that makes the table scroll horizontally,reachable final value\n",
+  "/home/preview-containment/long-line.ts": `export const unbroken = "${"a".repeat(3000)}";\nexport const spaced = "${"word ".repeat(600)}";\n`,
+  "/home/preview-containment/unbroken.txt": `${"x".repeat(3000)}\n${"y ".repeat(1500)}\n`,
+  "/home/preview-containment/wide.csv": [
+    Array.from({ length: 16 }, (_, column) => `column-heading-${column + 1}`).join(","),
+    ...Array.from({ length: 5 }, (_, row) =>
+      Array.from({ length: 16 }, (_, column) => `row ${row + 1} value ${column + 1} with some extra width`).join(",")),
+  ].join("\n"),
+  "/home/preview-containment/wide.md": [
+    "---",
+    `title: ${"frontmatter-value-without-any-breaks-".repeat(8)}`,
+    "tags: [containment, preview, zoom]",
+    "---",
+    "",
+    `# Heading${"Unbroken".repeat(30)}`,
+    "",
+    `A link to https://example.com/${"segment/".repeat(60)} and ${"inline".repeat(40)} text.`,
+    "",
+    "| " + Array.from({ length: 12 }, (_, column) => `Column heading ${column + 1}`).join(" | ") + " |",
+    "| " + Array.from({ length: 12 }, () => "---").join(" | ") + " |",
+    "| " + Array.from({ length: 12 }, (_, column) => `cell value ${column + 1}`).join(" | ") + " |",
+    "",
+    "```ts",
+    `const wide = "${"b".repeat(1500)}";`,
+    "```",
+    "",
+  ].join("\n"),
+  "/home/preview-containment/an-exceptionally-long-file-name-that-must-truncate-inside-the-preview-header-instead-of-widening-the-pane.txt": "short content\n",
   "/home/user/notes.md": [
     "---",
     "title: August notes",
@@ -1673,45 +1746,6 @@ const mockCommands: Record<string, CommandHandler> = {
 
   restore_from_trash: (args) => mockBatch(args.paths as string[], restoreMockEntry),
 
-  copy_entry: (args) => {
-    const source = args.source as string;
-    const destDir = args.destDir as string;
-    const overwrite = (args.overwrite as boolean) ?? false;
-    const name = basename(source);
-    const sourcePath = parentDir(source);
-    const sourceEntries = mockFiles[sourcePath] || [];
-    const sourceEntry = sourceEntries.find((e) => e.path === source);
-    if (!sourceEntry) throw new Error("Source not found");
-
-    if (!mockFiles[destDir]) mockFiles[destDir] = [];
-    const dest = mockFiles[destDir];
-
-    // Mirror the Rust backend: when the target name already exists and we're not
-    // overwriting (e.g. pasting into the same folder), generate a "X - Copy"
-    // name instead of clobbering. Used by the same-folder paste-copy behavior.
-    let finalName = name;
-    if (dest.some((e) => e.name === name) && !overwrite) {
-      const isDir = sourceEntry.kind === "directory";
-      const dot = isDir ? -1 : name.lastIndexOf(".");
-      const base = dot > 0 ? name.slice(0, dot) : name;
-      const ext = dot > 0 ? name.slice(dot) : "";
-      finalName = `${base} - Copy${ext}`;
-      for (let n = 2; dest.some((e) => e.name === finalName); n++) {
-        finalName = `${base} - Copy (${n})${ext}`;
-      }
-    }
-
-    const newPath = `${destDir}/${finalName}`;
-    const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: newPath };
-    const existingIdx = dest.findIndex((e) => e.name === finalName);
-    if (existingIdx >= 0) dest[existingIdx] = newEntry;
-    else dest.push(newEntry);
-    return {
-      ...mutationReceipt(newEntry),
-      ...(existingIdx >= 0 ? { replacement: { id: crypto.randomUUID().replaceAll("-", "").repeat(2) } } : {}),
-    };
-  },
-
   move_entry: (args) => {
     const source = args.source as string;
     const destDir = args.destDir as string;
@@ -1835,7 +1869,6 @@ const mockCommands: Record<string, CommandHandler> = {
   cancel_search: () => {},
 
 
-  cancel_copy: () => {},
 
   // Browser mode has no Tauri event system to stream results through, so the
   // mock searches the virtual filesystem synchronously and returns the
@@ -3234,10 +3267,13 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
         if (decision?.choice === "skip") { items.push({ status: "skipped" }); continue; }
         send({ type: "started", item, total: sources.length });
         try {
-          const receipt = await invokeMockCommand<FileMutationReceipt>(
-            relocating ? "move_entry" : "copy_entry",
-            { source, destDir, overwrite: decision?.choice === "overwrite" },
-          );
+          if (!relocating) {
+            await waitForMockLatency("copy_entries");
+            if (control.cancelled) break;
+          }
+          const receipt = relocating
+            ? await invokeMockCommand<FileMutationReceipt>("move_entry", { source, destDir, overwrite: decision?.choice === "overwrite" })
+            : copySessionEntry(source, destDir, decision?.choice === "overwrite");
           items.push({ status: "succeeded", receipt });
           send({ type: "completed", item, total: sources.length, entry: receipt.entry });
         } catch (error) {
@@ -3285,7 +3321,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     // history with no undoable action (which discards the redo stack).
     return { result, history: mockFileHistory.push(null).summary } as T;
   }
-  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "copy_entry", "move_entry"].includes(cmd)) {
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "move_entry"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
       return { result, history: mockFileHistory.summary() } as T;
@@ -3308,7 +3344,24 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
     testWindow.__mockInvokeCounts[cmd] = (testWindow.__mockInvokeCounts[cmd] ?? 0) + 1;
   }
 
-  // Add small delay to simulate async operation
+  await waitForMockLatency(cmd);
+
+  // Reject the way the real backend does: Tauri serializes AppError as
+  // { kind, message } (src-tauri/src/error.rs), not as an Error.
+  const failure = (globalThis as { __MOCK_FAILURES__?: Record<string, string> })
+    .__MOCK_FAILURES__?.[cmd];
+  if (failure) throw { kind: "other", message: failure };
+
+  const handler = mockCommands[cmd];
+  if (!handler) {
+    throw new Error(`Unknown command: ${cmd}`);
+  }
+
+  return handler(args || {}) as T;
+}
+
+async function waitForMockLatency(cmd: string): Promise<void> {
+  // Add small delay to simulate async operation.
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   // Per-command extra latency, settable from E2E tests / the console
@@ -3317,7 +3370,6 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
   // to make transient loading states observable and assertable (#271).
   const g = globalThis as {
     __MOCK_LATENCY__?: Record<string, number>;
-    __MOCK_FAILURES__?: Record<string, string>;
     location?: Location;
   };
   if (!g.__MOCK_LATENCY__ && typeof location !== "undefined") {
@@ -3330,16 +3382,4 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
   }
   const extraLatency = g.__MOCK_LATENCY__?.[cmd];
   if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
-
-  // Reject the way the real backend does: Tauri serializes AppError as
-  // { kind, message } (src-tauri/src/error.rs), not as an Error.
-  const failure = g.__MOCK_FAILURES__?.[cmd];
-  if (failure) throw { kind: "other", message: failure };
-
-  const handler = mockCommands[cmd];
-  if (!handler) {
-    throw new Error(`Unknown command: ${cmd}`);
-  }
-
-  return handler(args || {}) as T;
 }

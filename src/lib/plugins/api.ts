@@ -297,7 +297,7 @@ export function createPluginContext(
         );
       },
       moveFile: (sourcePath, targetDir) =>
-        performFileTransfer(sourcePath, targetDir, false, {
+        performFileTransfer(sourcePath, targetDir, {
           onRefresh: () => {
             for (const exp of windowTabsManager.getAllExplorers()) void exp.refresh({ silent: true });
           },

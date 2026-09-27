@@ -24,7 +24,8 @@ Grepping for any one of them gives the wrong inventory.
 - **Ordinary `copy_entry`** is a real gap in the third mechanism — and has no
   live caller. Its only frontend caller is `performFileTransfer`'s `isCopy`
   branch, which nothing calls now that paste and drop use the ordered session.
-  Hardening unreachable code is not coverage.
+  Hardening unreachable code is not coverage. #776 removed that IPC and branch;
+  recovery acceptance now invokes `copy_entries` with an overwrite decision.
 
 Archive was the one family with a real gap in all three.
 

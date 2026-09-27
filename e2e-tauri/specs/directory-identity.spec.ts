@@ -170,6 +170,12 @@ describe("native directory identity", () => {
     if (application) expect(watchesOn(application, directory)).toBe(1);
     await waitForObservedWrite(directory, "after-release.txt");
     expect(await attributedSpellings(directory)).toEqual([directory]);
+    if (isWindows) {
+      // Keep the visible result from the real WebView2 watcher run for issue acceptance.
+      await browser.saveScreenshot(path.resolve(
+        "e2e-tauri", "logs", "directory-identity-after-release.png",
+      ));
+    }
   });
 
   it("keeps Linux directories that differ only in case distinct", async function () {

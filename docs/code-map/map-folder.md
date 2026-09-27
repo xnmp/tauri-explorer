@@ -605,6 +605,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/external-job-fixture.ts` — Linux native-test `PATH` fixture for a deterministic long-running fake Gemini CLI.
 - `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
 - `e2e-tauri/fresh-window-diagnostics.ts` — always-on fresh-child-window evidence: renderer snapshot, `/proc` renderer/driver classification and failure artifacts for lost native sessions (#703).
+- `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
+- `e2e-tauri/window-transfer-diagnostics.ts` — incrementally persisted native runtime and per-window failure evidence.
+- `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
 - `scripts/build-native-qualification.ts` — clean-worktree debug/release native build and exact binary provenance.
@@ -614,4 +617,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
 - `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual and half-bounce verdicts.
 - `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
+- `tests/e2e-tauri/window-transfer-waits.test.ts` — stale-token, delayed-listing and duplicate-name contracts for renderer observers.
+- `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.
 - `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.

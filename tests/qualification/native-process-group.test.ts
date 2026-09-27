@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   nativeProcessGroup,
@@ -157,6 +158,69 @@ describe("Linux native process-group cleanup", () => {
       process.kill(sibling.pid!, 0);
     } finally {
       await Promise.all([forceCleanup(ownedGroup), forceCleanup(siblingGroup)]);
+    }
+  });
+
+  linuxIt("reaps a still-owned group when its owner exits without stopping it", async () => {
+    // The owner stands in for a WDIO worker whose session never started. It
+    // owns a detached group with a grandchild, registers the reaper, and
+    // exits without ordinary cleanup. Bun runs it so the TypeScript module
+    // imports directly, whatever Node version runs Vitest.
+    const module = path.resolve("e2e-tauri/native-process-group.ts");
+    const owner = spawn("bun", ["-e", `
+      const { spawn } = require("node:child_process");
+      const { nativeProcessGroup, reapNativeProcessGroupOnExit } = require(${JSON.stringify(module)});
+      const idle = "setInterval(() => {}, 1000)";
+      const leader = spawn(process.execPath, ["-e",
+        "require('node:child_process').spawn(process.execPath, ['-e', '" + idle + "'], { stdio: 'ignore' }); " + idle,
+      ], { detached: true, stdio: "ignore" });
+      const group = nativeProcessGroup(leader);
+      reapNativeProcessGroupOnExit(() => group, "test driver");
+      console.log(group.pid);
+      setTimeout(() => process.exit(1), 300);
+    `], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    owner.stderr!.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    const exited = new Promise<void>((resolve) => owner.once("exit", () => resolve()));
+    const group = { pid: Number(await waitForLine(owner, 5_000)) };
+    try {
+      expect(groupExists(group), "the owner's group must be running before it exits").toBe(true);
+      await exited;
+      for (let attempt = 0; attempt < 200 && groupExists(group); attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(groupExists(group), "an owner's exit must not leave its group running").toBe(false);
+      expect(stderr).toContain(`reaped test driver process group ${group.pid}`);
+    } finally {
+      await forceCleanup(group);
+    }
+  });
+
+  linuxIt("reads ownership when the owner exits, not when it registers", async () => {
+    // Ordinary cleanup releases the group (here: without stopping it, so a
+    // wrong kill is observable). The reaper must see that release at exit.
+    const module = path.resolve("e2e-tauri/native-process-group.ts");
+    const owner = spawn("bun", ["-e", `
+      const { spawn } = require("node:child_process");
+      const { nativeProcessGroup, reapNativeProcessGroupOnExit } = require(${JSON.stringify(module)});
+      const leader = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+      let owned = nativeProcessGroup(leader);
+      reapNativeProcessGroupOnExit(() => owned, "released driver");
+      console.log(owned.pid);
+      owned = undefined;
+      setTimeout(() => process.exit(0), 300);
+    `], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    owner.stderr!.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    const exited = new Promise<number | null>((resolve) => owner.once("exit", resolve));
+    const group = { pid: Number(await waitForLine(owner, 5_000)) };
+    try {
+      expect(await exited).toBe(0);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(groupExists(group), "a released group must outlive its former owner").toBe(true);
+      expect(stderr).not.toContain("released driver");
+    } finally {
+      await forceCleanup(group);
     }
   });
 });

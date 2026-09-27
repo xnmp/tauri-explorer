@@ -3,12 +3,10 @@
 use crate::{
     error::AppError,
     file_history::{self, Action, ForwardEffect, MutationOutcome, MutationReply, Recovery},
-    files::{
-        batch::FileBatchOutcome, entry_plan::EntryPlan, file_ops, mutation::FileMutationReceipt,
-    },
+    files::{batch::FileBatchOutcome, entry_plan::EntryPlan, mutation::FileMutationReceipt},
     renderer_owner,
 };
-use std::{future::Future, path::Path};
+use std::path::Path;
 use tauri::Manager;
 
 fn delete_effect(outcome: &FileBatchOutcome, permanent: bool) -> ForwardEffect {
@@ -140,94 +138,6 @@ fn parent(path: &str) -> Vec<String> {
         .collect()
 }
 
-struct CopyWork {
-    app: tauri::AppHandle,
-    source: String,
-    destination: String,
-    overwrite: Option<bool>,
-    job_id: Option<u64>,
-    #[cfg(target_os = "linux")]
-    recovery: (crate::files::recovery::Runtime, std::path::PathBuf),
-}
-
-impl CopyWork {
-    fn execute(&mut self) -> Result<FileMutationReceipt, AppError> {
-        let source = std::mem::take(&mut self.source);
-        let destination = std::mem::take(&mut self.destination);
-        #[cfg(target_os = "linux")]
-        {
-            file_ops::copy_entry_with(
-                Some(&self.app),
-                source,
-                destination,
-                self.overwrite,
-                self.job_id,
-                |source, _, target, progress| {
-                    self.recovery.0.copy_overwriting(
-                        self.recovery.1.clone(),
-                        source,
-                        target,
-                        None,
-                        progress,
-                    )
-                },
-            )
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            file_ops::copy_entry_impl(
-                Some(&self.app),
-                source,
-                destination,
-                self.overwrite,
-                self.job_id,
-            )
-        }
-    }
-}
-
-async fn copy_outcome(
-    directories: Vec<String>,
-    completion: crate::files::WorkerCompletion<FileMutationReceipt>,
-) -> MutationOutcome<FileMutationReceipt> {
-    let mut settled = outcome(
-        directories,
-        std::future::ready(completion.result),
-        |receipt| {
-            // Ordinary grouping is still renderer-owned until the batch command is
-            // migrated. Replacements already use this native inverse projection.
-            ForwardEffect::Changed(
-                receipt
-                    .replacement
-                    .as_ref()
-                    .and_then(|_| copy_inverse(receipt)),
-            )
-        },
-    )
-    .await;
-    let mut warnings: crate::diagnostics::Warnings = completion.warning.into_iter().collect();
-    if let Some(warning) = settled
-        .result
-        .as_ref()
-        .ok()
-        .and_then(|receipt| receipt.warning.as_ref())
-    {
-        warnings.push(warning);
-    }
-    if let Some(warning) = settled
-        .result
-        .as_ref()
-        .ok()
-        .and_then(|receipt| receipt.replacement.as_ref())
-        .and_then(|replacement| replacement.warning.as_ref())
-    {
-        warnings.push(warning);
-    }
-    let warnings = warnings.into_vec();
-    settled.warning = (!warnings.is_empty()).then(|| warnings.join("\n"));
-    settled
-}
-
 /// Derive inverse authority only from the native effect receipt. Ordinary copy
 /// keys use its resolved publication path, so alias spellings cannot disagree
 /// with the real trash outcome's key during subsequent settlement.
@@ -249,43 +159,6 @@ pub(crate) fn copy_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
         recovery: Recovery::Capture,
         publication: Some(publication.clone()),
     })
-}
-
-/// Copy ownership and settlement outlive the requesting renderer. Ordinary copy
-/// grouping still belongs to the existing batch caller; durable replacements
-/// must never be recorded as ordinary path-only Copy inverses.
-#[tauri::command]
-pub(crate) async fn copy_entry(
-    window: tauri::Window,
-    session_id: String,
-    source: String,
-    dest_dir: String,
-    overwrite: Option<bool>,
-    job_id: Option<u64>,
-) -> Result<MutationReply<FileMutationReceipt>, AppError> {
-    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
-    let directories = vec![dest_dir.clone()];
-    let app = window.app_handle().clone();
-    #[cfg(target_os = "linux")]
-    let recovery = crate::files::recovery::commands::owner(&window)?;
-    let refresh = directories.clone();
-    file_history::run_forward(owner, false, directories, async move {
-        let completion = crate::files::run_blocking_context(
-            CopyWork {
-                app,
-                source,
-                destination: dest_dir,
-                overwrite,
-                job_id,
-                #[cfg(target_os = "linux")]
-                recovery,
-            },
-            CopyWork::execute,
-        )
-        .await;
-        copy_outcome(refresh, completion).await
-    })
-    .await
 }
 
 /// One native history reservation covers the complete ordered selection,
@@ -528,32 +401,6 @@ pub(crate) async fn cancel_copy_session(
 ) -> Result<(), AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     crate::files::copy_session::lookup(&request_id, &owner)?.cancel(&owner)
-}
-
-async fn outcome(
-    directories: Vec<String>,
-    work: impl Future<Output = Result<FileMutationReceipt, AppError>>,
-    classify: impl FnOnce(&FileMutationReceipt) -> ForwardEffect,
-) -> MutationOutcome<FileMutationReceipt> {
-    let result = work.await;
-    let effect = match &result {
-        Ok(receipt) => classify(receipt),
-        Err(AppError::WorkerFailed(_) | AppError::MutationUncertain(_)) => {
-            ForwardEffect::Changed(None)
-        }
-        Err(_) => ForwardEffect::Unchanged,
-    };
-    let affected = if matches!(effect, ForwardEffect::Unchanged) {
-        Vec::new()
-    } else {
-        directories
-    };
-    MutationOutcome {
-        result,
-        warning: None,
-        effect,
-        affected,
-    }
 }
 
 /// Native lifetime and recovery admission precede the filesystem worker. The

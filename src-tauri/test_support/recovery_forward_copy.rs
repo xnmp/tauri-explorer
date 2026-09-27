@@ -35,12 +35,10 @@ impl Fixture {
         }
     }
     fn copy(&self, overwrite: bool) -> Result<FileMutationReceipt, AppError> {
-        file_ops::copy_entry_with(
-            None,
+        file_ops::copy_entry_for_test(
             self.source.to_string_lossy().into_owned(),
             self.target.parent().unwrap().to_string_lossy().into_owned(),
             Some(overwrite),
-            None,
             |source, _, target, progress| {
                 self.runtime
                     .replace_copy(self.storage.clone(), source, target, progress)

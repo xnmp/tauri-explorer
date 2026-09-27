@@ -14,12 +14,7 @@ use super::{
 };
 use crate::error::AppError;
 use crate::progress::ProgressTracker;
-use crate::task_registry::TaskRegistry;
 use log;
-
-/// Cancellable copy jobs, keyed by client-generated job id so the frontend can
-/// cancel a large copy mid-file while the `copy_entry` invoke is still pending.
-static COPY_TASKS: TaskRegistry = TaskRegistry::new();
 
 /// Chunk size for streaming file copies. 1 MiB balances syscall overhead
 /// against how promptly a cancellation is observed mid-file.
@@ -407,38 +402,13 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
     unreachable!("exhausted copy name candidates")
 }
 
-/// Cancel a running copy job. The pending `copy_entry` call fails with
-/// "Copy cancelled" before durable work; interrupted replacements retain their
-/// artifacts and report recovery instead of promising a path-based rollback.
-#[tauri::command]
-pub async fn cancel_copy(job_id: u64) {
-    COPY_TASKS.cancel(job_id);
-}
-
-#[cfg(any(test, not(target_os = "linux")))]
-pub(crate) fn copy_entry_impl(
-    app: Option<&tauri::AppHandle>,
+/// Test fixture for copy primitives. Production supplies the ordered session's
+/// tracker and cancellation scope directly to `copy_entry_tracked`.
+#[cfg(test)]
+pub(crate) fn copy_entry_for_test(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
-    job_id: Option<u64>,
-) -> Result<FileMutationReceipt, AppError> {
-    copy_entry_with(
-        app,
-        source,
-        dest_dir,
-        overwrite,
-        job_id,
-        copy_entry_overwriting,
-    )
-}
-
-pub(crate) fn copy_entry_with(
-    app: Option<&tauri::AppHandle>,
-    source: String,
-    dest_dir: String,
-    overwrite: Option<bool>,
-    job_id: Option<u64>,
     replace: impl FnOnce(
         &Path,
         &Path,
@@ -446,21 +416,17 @@ pub(crate) fn copy_entry_with(
         &mut ProgressTracker,
     ) -> Result<FileMutationReceipt, AppError>,
 ) -> Result<FileMutationReceipt, AppError> {
-    // A session supplies its own tracker; standalone calls own their task here.
-    // Never walk a tree just to size progress before copying its first byte.
-    let registration = job_id.map(|id| COPY_TASKS.register(id)).transpose()?;
-    let cancelled = registration.as_ref().map(|job| job.cancelled());
     let total_bytes = fs::symlink_metadata(&source)
         .ok()
         .filter(|meta| !meta.is_dir())
         .map_or(0, |meta| meta.len());
     let mut tracker = ProgressTracker::new(
-        if job_id.is_some() { app } else { None },
+        None,
         "copy-progress",
         "Copy cancelled",
-        job_id.unwrap_or(0),
+        0,
         total_bytes,
-        cancelled,
+        None,
     );
     copy_entry_tracked(
         Path::new(&source),
@@ -470,6 +436,15 @@ pub(crate) fn copy_entry_with(
         None,
         replace,
     )
+}
+
+#[cfg(test)]
+pub(crate) fn ordinary_copy_for_test(
+    source: String,
+    dest_dir: String,
+    overwrite: Option<bool>,
+) -> Result<FileMutationReceipt, AppError> {
+    copy_entry_for_test(source, dest_dir, overwrite, copy_entry_overwriting)
 }
 
 /// Execute one child using its session's cancellation/progress identity.
@@ -1419,11 +1394,9 @@ mod tests {
         let dest_dir = dir.path().join("dest");
         fs::create_dir(&dest_dir).unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             source_dir.to_string_lossy().to_string(),
             dest_dir.to_string_lossy().to_string(),
-            None,
             None,
         );
 
@@ -1451,11 +1424,9 @@ mod tests {
         fs::create_dir(&source_dir).unwrap();
         fs::write(source_dir.join("file1.txt"), "hello").unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             source_dir.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
-            None,
             None,
         );
 
@@ -1479,12 +1450,10 @@ mod tests {
         fs::write(&file_path, "do not destroy").unwrap();
 
         // Copy into the file's own parent with overwrite=true: target == source.
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             file_path.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
             Some(true),
-            None,
         );
 
         assert!(result.is_err(), "expected same-path copy to error");
@@ -1514,11 +1483,9 @@ mod tests {
         let inner = source_dir.join("inner");
         fs::create_dir_all(&inner).unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             source_dir.to_string_lossy().to_string(),
             inner.to_string_lossy().to_string(),
-            None,
             None,
         );
 
@@ -1536,12 +1503,10 @@ mod tests {
         fs::write(src_dir.join("a.txt"), "new content").unwrap();
         fs::write(dst_dir.join("a.txt"), "old content").unwrap();
 
-        let result = copy_entry_impl(
-            None,
+        let result = ordinary_copy_for_test(
             src_dir.join("a.txt").to_string_lossy().to_string(),
             dst_dir.to_string_lossy().to_string(),
             Some(true),
-            None,
         );
 
         assert!(result.is_ok(), "overwrite copy failed: {:?}", result.err());
@@ -1670,7 +1635,7 @@ mod tests {
 
     // ---- Large / streaming copy hardening (issue #174) ----
 
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
 
     /// Streaming copy of a multi-chunk file reproduces content byte-for-byte.
     #[test]
@@ -1737,35 +1702,6 @@ mod tests {
         );
     }
 
-    /// cancel_copy through the registry aborts a copy_entry_impl job.
-    #[test]
-    fn test_cancel_copy_registry_aborts_job() {
-        let dir = tempdir().unwrap();
-        let src = dir.path().join("big.bin");
-        fs::write(&src, vec![2u8; 6 * 1024 * 1024]).unwrap();
-        let dest_dir = dir.path().join("dest");
-        fs::create_dir(&dest_dir).unwrap();
-
-        // Pre-register + cancel the job id, then bypass the impl's duplicate
-        // registration by driving copy_recursively with the registry's flag
-        // directly — the same pattern the archive tests use.
-        let job_id = 424_242;
-        let flag = COPY_TASKS.start_with_id(job_id).unwrap();
-        flag.store(true, Ordering::Relaxed);
-        let mut tracker = ProgressTracker::new(
-            None,
-            "copy-progress",
-            "Copy cancelled",
-            job_id,
-            0,
-            Some(&flag),
-        );
-        let err = copy_recursively(&src, &dest_dir.join("big.bin"), &mut tracker)
-            .expect_err("cancelled copy must fail");
-        assert!(err.to_string().contains("cancelled"));
-        COPY_TASKS.cleanup(job_id);
-    }
-
     /// A moderately large directory tree copies completely without recursing
     /// unboundedly or losing entries.
     #[test]
@@ -1784,11 +1720,9 @@ mod tests {
         let dest = dir.path().join("dest");
         fs::create_dir(&dest).unwrap();
 
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest.to_string_lossy().to_string(),
-            None,
             None,
         )
         .unwrap();
@@ -1814,11 +1748,9 @@ mod tests {
 
         let dest = dir.path().join("dest");
         fs::create_dir(&dest).unwrap();
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest.to_string_lossy().to_string(),
-            None,
             None,
         )
         .expect("copy with symlink cycle must terminate");
@@ -1850,11 +1782,9 @@ mod tests {
         fs::create_dir(&dest_dir).unwrap();
 
         let start = std::time::Instant::now();
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest_dir.to_string_lossy().to_string(),
-            None,
             None,
         )
         .unwrap();
@@ -1878,11 +1808,9 @@ mod tests {
         let dest = dir.path().join("dest");
         fs::create_dir(&dest).unwrap();
         let start = std::time::Instant::now();
-        copy_entry_impl(
-            None,
+        ordinary_copy_for_test(
             src.to_string_lossy().to_string(),
             dest.to_string_lossy().to_string(),
-            None,
             None,
         )
         .unwrap();

@@ -2,11 +2,11 @@
  * Shared file transfer logic used by both drag-drop and paste operations.
  * Issue: #107
  *
- * Consolidates conflict detection, conflict resolution, move/copy dispatch,
+ * Consolidates conflict detection, conflict resolution, move dispatch,
  * undo recording, toast notifications, broadcastFileChange, and frecency cleanup.
  */
 
-import { moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
+import { moveEntry, fetchDirectory } from "$lib/api/files";
 import type { ApiResult } from "$lib/api/common";
 import { conflictResolver } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
@@ -35,9 +35,6 @@ export interface FileTransferOptions {
   suppressRefresh?: boolean;
   /** Broadcast undo action and toast to other windows (for cross-window DnD). */
   broadcastToOtherWindows?: boolean;
-  /** Client-generated id keying `copy-progress` events and copy cancellation.
-   *  Only meaningful for copies; ignored for moves. */
-  jobId?: number;
 }
 
 export type FileTransferResult =
@@ -56,7 +53,7 @@ export type FileTransferResult =
   | { ok: false; reason: "failed"; error: string };
 
 /**
- * Transfer a single file: detect conflicts, resolve them, execute move/copy,
+ * Move a single file: detect conflicts, resolve them, execute it,
  * and optionally record undo, show toast, broadcast changes, and refresh.
  *
  * Callers that manage batches (paste) use suppress flags to handle those
@@ -66,7 +63,6 @@ export type FileTransferResult =
 export async function performFileTransfer(
   sourcePath: string,
   targetDir: string,
-  isCopy: boolean,
   options: FileTransferOptions,
 ): Promise<FileTransferResult> {
   const {
@@ -80,7 +76,6 @@ export async function performFileTransfer(
     suppressBroadcast = false,
     suppressRefresh = false,
     broadcastToOtherWindows = false,
-    jobId,
   } = options;
 
   const fileName = basename(sourcePath);
@@ -91,17 +86,13 @@ export async function performFileTransfer(
   // MOVE into the entry's own parent is a no-op: skip instead of prompting a
   // bogus self-conflict (overwriting a file with itself is a data-loss path;
   // the backend also rejects source == target).
-  if (isSameParent && !isCopy) {
+  if (isSameParent) {
     return { ok: false, reason: "skipped" };
   }
-  // COPY into the same parent never overwrites: force overwrite off so the
-  // backend generates a "name - Copy" style name, exactly like paste does.
-  let overwrite = isSameParent ? false : forceOverwrite;
+  let overwrite = forceOverwrite;
 
   // --- Conflict detection & resolution ---
-  // Same-parent copies skip the conflict dialog: the only "conflict" is the
-  // source itself, and copy-name generation already avoids it.
-  if (!skipConflictCheck && !overwrite && !isSameParent) {
+  if (!skipConflictCheck && !overwrite) {
     let conflictDetected = false;
     let destEntry: FileEntry | undefined;
 
@@ -139,14 +130,10 @@ export async function performFileTransfer(
     }
   }
 
-  // --- Execute move or copy ---
-  const result: ApiResult<FileMutationReceipt> = isCopy
-    ? await copyEntry(sourcePath, targetDir, overwrite, jobId)
-    : await moveEntry(sourcePath, targetDir, overwrite);
+  const result: ApiResult<FileMutationReceipt> = await moveEntry(sourcePath, targetDir, overwrite);
 
   if (!result.ok) {
-    const verb = isCopy ? "copy" : "move";
-    console.error(`Failed to ${verb}:`, result.error);
+    console.error("Failed to move:", result.error);
     if (!suppressToast) {
       toastStore.error(result.error);
     }
@@ -167,18 +154,12 @@ export async function performFileTransfer(
     // inverse.
     await undoStore.invalidateRedo(broadcastToOtherWindows);
   } else if (!nativeInverse && !suppressUndo) {
-    const action = isCopy
-      ? {
-          type: "copy" as const,
-          copiedPath: result.data.path,
-          parentDir: targetDir,
-        }
-      : {
-          type: "move" as const,
-          sourcePath,
-          destPath: result.data.path,
-          originalDir: sourceDir,
-        };
+    const action = {
+      type: "move" as const,
+      sourcePath,
+      destPath: result.data.path,
+      originalDir: sourceDir,
+    };
     if (broadcastToOtherWindows) {
       await undoStore.pushAndBroadcast(action);
     } else {
@@ -198,8 +179,7 @@ export async function performFileTransfer(
       toastStore.broadcast(warning, "error");
     }
   } else if (!suppressToast) {
-    const verb = isCopy ? "Copied" : "Moved";
-    const message = `${verb} ${fileName} to ${targetName}`;
+    const message = `Moved ${fileName} to ${targetName}`;
     toastStore.show(message, "info");
     if (broadcastToOtherWindows) {
       toastStore.broadcast(message, "info");

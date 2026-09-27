@@ -27,6 +27,9 @@ preview layouts work more consistently across window sizes and platforms.
 
 ### Fixed
 
+- Closing many child windows on Linux releases their WebKit views instead of
+  retaining shared-memory descriptors until the main window stops responding
+  (#817).
 - **Windows case and separator variants of a directory share one listing and
   watcher identity.** A pane continues refreshing after navigation through a
   variant spelling (#799).

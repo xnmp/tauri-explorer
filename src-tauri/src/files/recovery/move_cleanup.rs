@@ -189,15 +189,18 @@ impl Plan {
         } else {
             payload_mount_id(directory, name)?
         };
+        let identity = PayloadIdentity {
+            entries: &index,
+            mount: payload_mount,
+        };
         verify_tree(
             directory,
             name,
             &root.join(name),
-            &index,
+            &identity,
             1,
             &mut budget,
             removing,
-            payload_mount,
         )?;
         if !removing && MAX_ENTRIES - budget != self.entries.len() {
             return Err(
@@ -229,16 +232,19 @@ impl Plan {
         removable_in(directory, root, root)?;
         let mut budget = MAX_ENTRIES;
         let payload_mount = existing_payload_mount_id(directory, name)?;
+        let identity = PayloadIdentity {
+            entries: &index,
+            mount: payload_mount,
+        };
         preflight_tree(
             directory,
             &directory.metadata()?,
             name,
             &root.join(name),
             root,
-            &index,
+            &identity,
             1,
             &mut budget,
-            payload_mount,
         )
     }
 
@@ -263,15 +269,18 @@ impl Plan {
                 .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
             let mut budget = MAX_ENTRIES;
             let payload_mount = existing_payload_mount_id(directory, name)?;
+            let identity = PayloadIdentity {
+                entries: &index,
+                mount: payload_mount,
+            };
             remove_tree(
                 directory,
                 name,
                 &root.join(name),
-                &index,
+                &identity,
                 1,
                 &mut budget,
                 checkpoint,
-                payload_mount,
             )?;
         }
         Ok(())
@@ -424,21 +433,25 @@ fn walk_budget(depth: usize, budget: &mut usize) -> Result<(), AppError> {
     Ok(())
 }
 
+struct PayloadIdentity<'a> {
+    entries: &'a HashMap<&'a Path, &'a EntryVersion>,
+    mount: Option<u64>,
+}
+
 fn verify_tree(
     parent: &Directory,
     name: &OsStr,
     path: &Path,
-    index: &HashMap<&Path, &EntryVersion>,
+    identity: &PayloadIdentity<'_>,
     depth: usize,
     budget: &mut usize,
     removing: bool,
-    payload_mount: Option<u64>,
 ) -> Result<(), AppError> {
     walk_budget(depth, budget)?;
-    let Some(actual) = observed(parent, name, path, index, removing)? else {
+    let Some(actual) = observed(parent, name, path, identity.entries, removing)? else {
         return Ok(());
     };
-    on_payload_mount(parent, name, path, payload_mount)?;
+    on_payload_mount(parent, name, path, identity.mount)?;
     if actual.directory {
         let directory = parent.open_existing(name)?;
         if of_file(&directory.file)? != actual.object {
@@ -449,11 +462,10 @@ fn verify_tree(
                 &directory,
                 &child,
                 &path.join(&child),
-                index,
+                identity,
                 depth + 1,
                 budget,
                 removing,
-                payload_mount,
             )?;
         }
     }
@@ -468,16 +480,15 @@ fn preflight_tree(
     name: &OsStr,
     path: &Path,
     root: &Path,
-    index: &HashMap<&Path, &EntryVersion>,
+    identity: &PayloadIdentity<'_>,
     depth: usize,
     budget: &mut usize,
-    payload_mount: Option<u64>,
 ) -> Result<(), AppError> {
     walk_budget(depth, budget)?;
-    let Some(actual) = observed(parent, name, path, index, true)? else {
+    let Some(actual) = observed(parent, name, path, identity.entries, true)? else {
         return Ok(());
     };
-    on_payload_mount(parent, name, path, payload_mount)?;
+    on_payload_mount(parent, name, path, identity.mount)?;
     // A sticky directory lets only the entry's or directory's owner unlink it.
     // Root is not exempted: without CAP_FOWNER it obeys the same rule, and a
     // refusal here is always safe because nothing has been journaled yet.
@@ -509,10 +520,9 @@ fn preflight_tree(
                     &child,
                     &path.join(&child),
                     root,
-                    index,
+                    identity,
                     depth + 1,
                     budget,
-                    payload_mount,
                 )?;
             }
         }
@@ -544,17 +554,16 @@ fn remove_tree(
     parent: &Directory,
     name: &OsStr,
     path: &Path,
-    index: &HashMap<&Path, &EntryVersion>,
+    identity: &PayloadIdentity<'_>,
     depth: usize,
     budget: &mut usize,
     checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
-    payload_mount: Option<u64>,
 ) -> Result<(), AppError> {
     walk_budget(depth, budget)?;
-    let Some(actual) = observed(parent, name, path, index, true)? else {
+    let Some(actual) = observed(parent, name, path, identity.entries, true)? else {
         return Ok(());
     };
-    on_payload_mount(parent, name, path, payload_mount)?;
+    on_payload_mount(parent, name, path, identity.mount)?;
     if actual.directory {
         let directory = parent.open_existing(name)?;
         if of_file(&directory.file)? != actual.object {
@@ -565,18 +574,17 @@ fn remove_tree(
                 &directory,
                 &child,
                 &path.join(&child),
-                index,
+                identity,
                 depth + 1,
                 budget,
                 checkpoint,
-                payload_mount,
             )?;
         }
         directory.sync()?;
     }
     // Recheck the named entry after walking and before unlinking. Directory
     // removal itself refuses any new children that raced the bounded walk.
-    if observed(parent, name, path, index, true)?.is_some() {
+    if observed(parent, name, path, identity.entries, true)?.is_some() {
         parent.unlink(name, actual.directory)?;
         parent.sync()?;
         checkpoint("entry-removed")?;

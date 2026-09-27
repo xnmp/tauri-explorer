@@ -66,7 +66,11 @@ impl WindowsSpelling {
             return None;
         }
         let bytes = normalized.as_bytes();
-        if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\' {
+        if bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\'
+        {
             return Some(Self {
                 root: format!("{}:\\", char::from(bytes[0].to_ascii_uppercase())),
                 components: components(&normalized[3..]),

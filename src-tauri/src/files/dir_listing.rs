@@ -65,6 +65,7 @@ pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bo
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
+    let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
     list_directory_with(path, scan_directory_with_diagnostics).await
 }
 
@@ -296,6 +297,7 @@ fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) 
 /// snapshot directly avoids paced transport batches and partial-success states.
 #[tauri::command]
 pub async fn list_directory_fresh(path: String) -> Result<DirectoryListing, AppError> {
+    let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
     let started_at = Instant::now();
     log::info!("navigation list_directory_fresh requested: path={path:?}");
     let dir_path = PathBuf::from(&path);

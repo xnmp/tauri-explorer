@@ -95,7 +95,10 @@ fn find(path: &str, case_sensitive: bool) -> Option<Found> {
 }
 
 fn terminated(units: &[u16]) -> Option<String> {
-    let end = units.iter().position(|unit| *unit == 0).unwrap_or(units.len());
+    let end = units
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(units.len());
     String::from_utf16(&units[..end]).ok()
 }
 
@@ -104,5 +107,5 @@ fn same_ignoring_case(left: &str, right: &str) -> bool {
     let left: Vec<u16> = left.encode_utf16().collect();
     let right: Vec<u16> = right.encode_utf16().collect();
     // SAFETY: both slices are live for the duration of this synchronous call.
-    unsafe { CompareStringOrdinal(&left, &right, true) } == CSTR_EQUAL
+    (unsafe { CompareStringOrdinal(&left, &right, true) }) == CSTR_EQUAL
 }

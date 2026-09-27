@@ -8,6 +8,7 @@ pub mod batch;
 pub(crate) mod copy_session;
 pub mod dir_listing;
 mod directory_cache;
+mod directory_identity;
 mod directory_watches;
 mod directory_wire;
 pub mod drives;

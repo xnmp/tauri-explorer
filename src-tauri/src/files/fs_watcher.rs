@@ -419,6 +419,7 @@ async fn acquire_pending_directory(
 ) -> Result<PendingLease, AppError> {
     let (send, receive) = tokio::sync::oneshot::channel();
     tauri::async_runtime::spawn_blocking(move || {
+        let path = super::directory_identity::resolve(&path);
         let result = with_watcher(|watcher| {
             if observed {
                 watcher.observe(&owner, path)

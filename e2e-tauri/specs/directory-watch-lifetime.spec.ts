@@ -94,6 +94,11 @@ async function waitForCausalMutation(directory: string, marker: string): Promise
   });
 }
 
+// Linux-only: asserts directly on kernel inotify watch descriptors via
+// `/proc/<pid>/fdinfo` (native-resources.ts). Windows has no documented
+// per-process introspection of ReadDirectoryChangesW watch handles, so the
+// exact-watch-count claims this spec makes (acquired/reclaimed/retired) have
+// no Windows-native equivalent to assert on (#800).
 const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
 
 linuxDescribe("pane directory native window ownership", () => {

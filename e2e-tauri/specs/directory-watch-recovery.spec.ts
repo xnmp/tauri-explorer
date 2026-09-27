@@ -3,7 +3,14 @@ import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
 import path from "node:path";
-import { domText, domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import {
+  domText,
+  domTexts,
+  entryPathSelector,
+  navigateTo,
+  switchToFreshWindow,
+  waitForFreshWindowElement,
+} from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("explorer-directory-recovery-");
@@ -88,9 +95,17 @@ async function saveEvidence(name: string): Promise<void> {
   await browser.saveScreenshot(path.join(directory, name));
 }
 
-const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
+// Watch-root recovery after a directory is replaced (same path, new file
+// identity) is behavioral: it asserts on the app's own receipts and rendered
+// entries, not on any OS-specific watch introspection. `fs.Stats.ino` is
+// populated on Windows NTFS (via GetFileInformationByHandle) as well as on
+// Linux, so the new-identity assertion holds on both. Runs on Linux
+// (WebKitGTK) and Windows (WebView2).
+const nativeDescribe = process.platform === "linux" || process.platform === "win32"
+  ? describe
+  : describe.skip;
 
-linuxDescribe("directory watch root recovery", () => {
+nativeDescribe("directory watch root recovery", () => {
   before(() => {
     fs.mkdirSync(watchedDirectory);
     fs.mkdirSync(independentDirectory);
@@ -179,7 +194,7 @@ linuxDescribe("directory watch root recovery", () => {
     await waitForDirectoryWatch(contentDirectory);
     await waitForEntries([contentFileName]);
 
-    await $(`.entry-item[data-path$="/${contentFileName}"]`).click();
+    await $(entryPathSelector(path.join(contentDirectory, contentFileName))).click();
     if (!(await $(".preview-pane").isExisting())) await browser.keys(" ");
     await $(".preview-markdown").waitForDisplayed({ timeout: 20_000 });
     await browser.waitUntil(async () =>

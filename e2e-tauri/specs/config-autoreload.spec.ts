@@ -32,6 +32,22 @@ function restore(file: string, saved: Backup): void {
   else fs.rmSync(file, { force: true });
 }
 
+/**
+ * Replace `file`'s content the way a real external editor or dotfile manager
+ * does: write to a sibling temp file, then rename it over the target. This is
+ * atomic on every platform (`ReplaceFileW`/`MoveFileExW` semantics through
+ * Node's `fs.renameSync` on Windows, `rename(2)` on POSIX) and never leaves a
+ * truncated file for the watcher to observe mid-write. An in-place
+ * `writeFileSync` would prove the watcher sees ordinary content changes but
+ * not that it survives its watched target's identity (inode/handle) changing
+ * out from under it, which real editors do routinely (#800).
+ */
+function atomicReplace(file: string, content: string): void {
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  fs.writeFileSync(tmp, content);
+  fs.renameSync(tmp, file);
+}
+
 async function runPaletteCommand(query: string): Promise<void> {
   await browser.keys(["Control", "Shift", "p"]);
   const input = $(".command-palette-dialog .search-input");
@@ -64,7 +80,7 @@ describe("live external config edits", () => {
 
   it("shows a bookmark written outside the running app without a restart", async () => {
     await navigateToScratch();
-    fs.writeFileSync(bookmarksPath, JSON.stringify([
+    atomicReplace(bookmarksPath, JSON.stringify([
       { name: "External edit 605", path: scratchDir, icon: "folder" },
     ], null, 2));
 
@@ -82,7 +98,7 @@ describe("live external config edits", () => {
     const tileIcon = $(".tile-icon");
     await tileIcon.waitForExist({ timeout: 10_000 });
 
-    fs.writeFileSync(folderViewsPath, JSON.stringify({
+    atomicReplace(folderViewsPath, JSON.stringify({
       [scratchDir]: { thumbnailSize: "small" },
     }, null, 2));
     await browser.waitUntil(

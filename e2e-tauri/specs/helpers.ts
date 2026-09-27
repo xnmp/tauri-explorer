@@ -32,6 +32,21 @@ const diagnosticsDirectory =
  */
 let lastFreshWindow: FreshWindowDiagnostics | null = null;
 
+/** Exact entry selector for native paths, including Windows `\` and quotes. */
+export function entryPathSelector(
+  entryPath: string,
+  scope = ".entry-item",
+): string {
+  const escaped = Array.from(entryPath, character => {
+    const code = character.charCodeAt(0);
+    if (character === "\\" || character === '"') return `\\${character}`;
+    if (code === 0) return "\uFFFD";
+    if (code <= 0x1f || code === 0x7f) return `\\${code.toString(16)} `;
+    return character;
+  }).join("");
+  return `${scope}[data-path="${escaped}"]`;
+}
+
 /**
  * One atomic renderer sample. WebKitWebDriver may evaluate injected scripts in
  * an isolated world, so read DOM state only — never application globals.

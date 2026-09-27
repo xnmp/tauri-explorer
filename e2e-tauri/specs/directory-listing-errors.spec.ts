@@ -10,6 +10,10 @@ const restrictedDirectory = path.join(scratch, "permission-denied");
 const marker = "permission-restored-marker.txt";
 const restrictedMode = 0o000;
 const restoredMode = 0o700;
+// Linux-only: simulates listing failure with POSIX permission bits
+// (chmod 0o000). Windows uses ACLs; `fs.chmodSync` there only toggles the
+// read-only attribute and cannot deny directory listing, so it has no
+// equivalent way to trigger this failure (#800).
 const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
 
 async function navigateAndWaitForAcknowledgement(target: string): Promise<void> {

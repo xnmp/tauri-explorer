@@ -2,7 +2,7 @@
 import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
 import path from "node:path";
-import { domText, entryNames, navigateTo } from "./helpers";
+import { domText, entryNames, entryPathSelector, navigateTo } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 let scratch = "";
@@ -12,7 +12,7 @@ const fileNames = ["alpha-file.txt", "middle-file.txt", "omega-file.txt"];
 const viewModes = ["details", "list", "tiles"] as const;
 
 function entrySelector(name: string): string {
-  return `.explorer-pane .file-list .entry-item[data-path$="/${name}"]`;
+  return entryPathSelector(path.join(root, name), ".explorer-pane .file-list .entry-item");
 }
 
 async function assertSinglePane(): Promise<void> {
@@ -66,9 +66,14 @@ async function activeFocusIdentity(): Promise<number> {
   });
 }
 
-const linuxDescribe = process.platform === "linux" ? describe : describe.skip;
+// Keyboard focus, selection, and rename-editor ownership are platform-independent:
+// they exercise DOM focus and Svelte state, not any OS-specific filesystem or
+// process capability. Runs on Linux (WebKitGTK) and Windows (WebView2).
+const nativeDescribe = process.platform === "linux" || process.platform === "win32"
+  ? describe
+  : describe.skip;
 
-linuxDescribe("native file-list composite focus", () => {
+nativeDescribe("native file-list composite focus", () => {
   before(() => {
     scratch = createNativeFixtureDirectory("explorer-file-list-focus-");
     root = path.join(scratch, "root");
@@ -86,12 +91,25 @@ linuxDescribe("native file-list composite focus", () => {
     for (const viewMode of viewModes) {
       await navigateTo(root);
       await useView(viewMode);
-      const middle = $(entrySelector(folderNames[1]));
+      const middle = await $(entrySelector(folderNames[1]));
       await middle.waitForDisplayed();
-      await middle.click();
+      const clickPoint = await browser.execute((element: HTMLElement) => {
+        const rect = element.getBoundingClientRect();
+        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+      }, middle);
+      await browser.performActions([{
+        type: "pointer", id: `file-list-${viewMode}`, parameters: { pointerType: "mouse" },
+        actions: [
+          { type: "pointerMove", duration: 0, origin: "viewport", ...clickPoint },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerUp", button: 0 },
+        ],
+      }]);
+      await browser.releaseActions();
       await expect(middle).toHaveElementClass("selected");
+      await expect(middle).toHaveAttribute("tabindex", "0");
       await browser.waitUntil(async () => (await activeEntryPath()) === middlePath, {
-        timeoutMsg: `${viewMode} click did not focus the middle folder`,
+        timeoutMsg: `${viewMode} pointer click did not focus the middle folder`,
       });
 
       const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);

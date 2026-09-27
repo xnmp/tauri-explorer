@@ -71,7 +71,9 @@ between them is `EXDEV`, and a same-directory probe cannot see that. Compare
 `EINVAL`, and `EPERM` from seccomp) as "mount id unavailable", not as a failure,
 or one sandbox refuses every durable move. An endpoint that is itself a mount
 point fails `rename(2)` with `EBUSY`; compare its mount id with its parent's
-before journaling. Admission must also reject a submount inside a retained
+before journaling. Cleanup admission fails closed when either mount ID is
+unavailable: equal devices cannot prove containment in the presence of bind
+mounts. Admission must also reject a submount inside a retained
 payload, and capture, verification, preflight and removal must repeat the same
 check because mounts can appear after admission. Query entries with
 `AT_NO_AUTOMOUNT`: validating cleanup must observe mount boundaries without

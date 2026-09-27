@@ -644,10 +644,11 @@ fn on_payload_mount(
     Ok(())
 }
 
-/// `None` means statx mount identity is unavailable, so device checks remain
-/// the conservative platform fallback. Kept as a pure seam for CI coverage.
+/// Linux cleanup requires positive mount-identity evidence. A device match is
+/// insufficient because bind mounts retain `st_dev`; unavailable `statx`
+/// therefore refuses the operation rather than risking traversal.
 pub(super) fn mount_ids_match(payload: Option<u64>, entry: Option<u64>) -> bool {
-    payload.is_none() || entry.is_none() || payload == entry
+    matches!((payload, entry), (Some(payload), Some(entry)) if payload == entry)
 }
 
 fn spend_bytes(path: &Path, budget: &mut usize) -> io::Result<()> {

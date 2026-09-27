@@ -1969,13 +1969,15 @@ fn a_deferral_recorded_before_its_measurement_still_waits_for_a_retry() {
 // --- Mount boundaries inside retained payloads (#760, PR #790 review N1) ---
 
 #[test]
-fn cleanup_mount_identity_refuses_same_device_bind_mounts_when_statx_is_available() {
+fn cleanup_mount_identity_requires_matching_available_ids() {
     use crate::files::recovery::move_cleanup::mount_ids_match;
     assert!(mount_ids_match(Some(17), Some(17)));
     assert!(!mount_ids_match(Some(17), Some(23)));
-    // Unsupported statx falls back to the existing device comparison.
-    assert!(mount_ids_match(None, Some(23)));
-    assert!(mount_ids_match(Some(17), None));
+    // A device match cannot prove containment when statx is unavailable:
+    // same-device bind mounts are exactly the destructive case.
+    assert!(!mount_ids_match(None, Some(23)));
+    assert!(!mount_ids_match(Some(17), None));
+    assert!(!mount_ids_match(None, None));
 }
 
 /// Discard the only record, as the File Recovery dialog would.

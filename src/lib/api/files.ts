@@ -468,7 +468,7 @@ export async function loadDirectory(
       throw new Error("Invalid native directory watch lease");
     }
     const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
-    if (data.watch_lease) publishReadyDirectoryWatch(path);
+    if (data.watch_lease) publishReadyDirectoryWatch(data.watch_lease.path);
     if (e2eProbe) {
       // Keep the literal build flag at this import: the bundler discovers
       // dynamic chunks before folding imported constants, leaving an orphan
@@ -536,7 +536,7 @@ export interface DirectoryWatchLease { id: string; path: string }
 export async function watchDirectory(path: string): Promise<DirectoryWatchLease> {
   const sessionId = await getNativeResourceSession();
   const lease = await invoke<DirectoryWatchLease>("watch_directory", { path, sessionId });
-  publishReadyDirectoryWatch(path);
+  publishReadyDirectoryWatch(lease.path);
   return lease;
 }
 

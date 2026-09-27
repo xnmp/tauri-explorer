@@ -61,7 +61,7 @@ backend for E2E/browser).
 - `domain/directory-reconciliation.ts` — reconcile external listings with concurrent mutations and selected path identities
 - `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
 - `state/pane-watch.ts` — observed navigation tickets keep the old directory lease until commit, replay pending-target changes and gate refresh during navigation.
-- `state/directory-events.ts` — shared ready-before-scan native event hub with acquisition retry and late-listener retirement.
+- `state/directory-events.ts` — shared ready-before-scan native event hub with acquisition retry and late-listener retirement. Native listing and watch commands resolve through `src-tauri/src/files/directory_identity.rs`, so local Windows drive-path separator/component-case variants share one returned path and registry entry while Unix case variants remain distinct; UNC server/share root spelling remains requested and outside that convergence contract. Real acceptance is in `e2e-tauri/specs/directory-identity.spec.ts`.
 - `composables/use-file-watchers.ts` — subscribes to `directory-changed` + cross-window channel
 - `state/file-events.ts` — BroadcastChannel `explorer-file-changes` between windows
 - `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `fetchDirectory` (cached reads), `loadDirectory` (fresh snapshots for observed navigation or ordinary refresh)

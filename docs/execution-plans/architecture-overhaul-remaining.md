@@ -76,7 +76,7 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W3.1 | Converge ordinary copy onto the ordered copy session, as ADR 0024 prescribes. Route `performFileTransfer`'s `isCopy` branch through `copy_session`, move the recovery probe's overwrite coverage onto the session path, and remove the unadmitted `copy_entry` family | Vitest caller tests, Rust session tests, and the native recovery suite, including the overwrite probe | Open |
+| W3.1 | Converge ordinary copy onto the ordered copy session, as ADR 0024 prescribes. Route `performFileTransfer`'s `isCopy` branch through `copy_session`, move the recovery probe's overwrite coverage onto the session path, and remove the unadmitted `copy_entry` family | Vitest caller tests, Rust session tests, and the native recovery suite, including the overwrite probe | **Done ([#813](https://github.com/xnmp/tauri-explorer/pull/813))**; the legacy copy IPC and plugin copy entry point were retired |
 | W3.2 | #760 durable-move retirement follow-ups: a plan byte budget consistent with `MAX_ENTRIES`, endpoint changes after intent, resumption of stuck `Retiring` records, probe cost, macOS `ENOTSUP` and probe-mode umask, a downgrade story for `deny_unknown_fields` records, and a documented escape hatch | Rust temp-tree tests for each, run under the W1.3 job | **Done ([#790](https://github.com/xnmp/tauri-explorer/pull/790))**. Durable move remains Linux-only and opt-in; bind-mount moves fail admission, and the probe cost remains an owner decision documented in ADR 0020 |
 | W3.3 | Run the gated native recovery suites in CI. `file-recovery`, `file-forward-history`, `file-history-lifetime`, `file-move-recovery` and `move-retirement` need a binary built with `e2e-renderer-recovery`, `durable-copy-recovery` and `durable-move-recovery`, and they need the `TAURI_E2E_FILE_RECOVERY_DIR`, `TAURI_E2E_HISTORY_GATE_DIR` and `TAURI_E2E_MOVE_SOURCE_DIR`/`TAURI_E2E_MOVE_TARGET_DIR` variables. No workflow sets these, so the suites skip in CI, and they skipped in the local 2026-09-26 run as well. Add a Linux job that builds that binary and points source and target at `/dev/shm` and the runner disk, so they are two real mounts. Then add the missing real cross-device forward, Undo and Redo cases: the existing Undo/Redo cycles use a single `os.tmpdir()` | New CI job green; each suite reports executed, not skipped, tests | **Done ([#778](https://github.com/xnmp/tauri-explorer/pull/778), issue [#774](https://github.com/xnmp/tauri-explorer/issues/774))**. `file-move-recovery` turned out to be a default-build suite that already runs in smoke; the durable job runs `cross-device-move-history` instead |
 | W3.4 | Broader cancellation qualification. For copy and move sessions, cancel at each phase boundary. Prove that no output is published late, that residue exactly matches the phase table, and that history stays consistent | Rust interleaving tests with deterministic phase gates, plus one native outcome per session | Open |
@@ -86,11 +86,11 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W4.1 | Native identity (ledger gate 7). Add a native spec in which separator, case and trailing-slash variants of one directory resolve to a single watch and a single listing on Windows, while Linux keeps case-sensitive semantics | New spec green on Windows and Linux smoke | Open |
-| W4.2 | Audit every Linux-only native spec. Enable each spec whose behaviour is platform-independent on Windows, such as file-list focus, preview resize, terminal resize and directory-watch lifetime. Record each spec that stays Linux-only, with the missing Windows capability as the reason | Windows smoke green | Open |
-| W4.3 | ConPTY terminal acceptance. The terminal spec already runs on Windows; add key ownership, which `terminal-key-ownership` skips on `win32`, and resize | Windows smoke | Open |
-| W4.4 | Config replacement and autoreload on Windows, through an atomic-replace writer rather than an in-place write | Windows smoke | Open |
-| W4.5 | Windows runtime physical-identity acceptance for batch spelling validation (`file_identity/windows.rs`), on real NTFS: a case variant, a short name, and a hardlink | Rust tests on the Windows runner (after W1.2) | Open |
+| W4.1 | Native identity (ledger gate 7). Add a native spec in which separator, case and trailing-slash variants of one directory resolve to a single watch and a single listing on Windows, while Linux keeps case-sensitive semantics | New spec green on Windows and Linux smoke | **Done ([#808](https://github.com/xnmp/tauri-explorer/pull/808))**; UNC root-case variants remain explicitly unsupported |
+| W4.2 | Audit every Linux-only native spec. Enable each spec whose behaviour is platform-independent on Windows, such as file-list focus, preview resize, terminal resize and directory-watch lifetime. Record each spec that stays Linux-only, with the missing Windows capability as the reason | Windows smoke green | **Done ([#805](https://github.com/xnmp/tauri-explorer/pull/805))**; the per-spec audit and runner outcomes are recorded in lesson #800 |
+| W4.3 | ConPTY terminal acceptance. The terminal spec already runs on Windows; add key ownership, which `terminal-key-ownership` skips on `win32`, and resize | Windows smoke | **Done ([#805](https://github.com/xnmp/tauri-explorer/pull/805))** |
+| W4.4 | Config replacement and autoreload on Windows, through an atomic-replace writer rather than an in-place write | Windows smoke | **Done ([#805](https://github.com/xnmp/tauri-explorer/pull/805))** |
+| W4.5 | Windows runtime physical-identity acceptance for batch spelling validation (`file_identity/windows.rs`), on real NTFS: a case variant, a short name, and a hardlink | Rust tests on the Windows runner (after W1.2) | **Partial ([#808](https://github.com/xnmp/tauri-explorer/pull/808))**: case and hardlink aliases passed on NTFS; the runner could not create a distinct 8.3 alias, so that case remains unqualified |
 | W4.6 | Window launch and transfer ownership on Windows (ledger gate 6): closing the destination during a real handoff receipt, an unready native target with later app initialization, and a failed asynchronous creation with a duplicate label. Enable or port the Linux specs that cover these on WebView2 | Windows smoke | **Done ([#811](https://github.com/xnmp/tauri-explorer/pull/811))**; the final-head Windows native run executed the seven ownership cases, five rejection cases and the negative control |
 
 ## W5 — macOS platform acceptance
@@ -108,7 +108,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W6.1 | A 4-hour Linux native soak (`SOAK_DURATION_MS=14400000`) against a qualification build, with a recorded seed and the report committed to the ledger | `qualification-results/` report | Open |
 | W6.2 | A bounded Windows soak (`SOAK_MAX_CYCLES=1`) on the runner. Make the runner portable if it is not | Windows job artifact | Open |
-| W6.3 | External jobs (ledger gate 2): list the Rust tests for worker draining, held staging files, serialized cancel and publication, bounded fal requests and Nano child kill/reap, and confirm they run in the default suite on every W1 platform. Add one native outcome that cancels a real long-running external process (a fake executable on `PATH`) and asserts that no output is published late | Per-platform CI, plus the native outcome | Open |
+| W6.3 | External jobs (ledger gate 2): list the Rust tests for worker draining, held staging files, serialized cancel and publication, bounded fal requests and Nano child kill/reap, and confirm they run in the default suite on every W1 platform. Add one native outcome that cancels a real long-running external process (a fake executable on `PATH`) and asserts that no output is published late | Per-platform CI, plus the native outcome | **Done ([#814](https://github.com/xnmp/tauri-explorer/pull/814))** for the existing timeout cancellation path; no user Cancel control was added |
 
 ## W7 — Product acceptance matrix (ledger gates 8 and "Product acceptance")
 
@@ -116,7 +116,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W7.1 | For every built-in theme, run an automated contrast check (WCAG AA) on text and selection tokens, and an axe accessibility scan of the main surfaces in all three view modes | Browser Playwright, both engines | **Done ([#787](https://github.com/xnmp/tauri-explorer/pull/787))** |
 | W7.2 | Keyboard-only traversal across the main regions: sidebar, address bar, file list, preview and terminal, with visible focus in each theme | Browser Playwright, plus one native outcome | **Done ([#804](https://github.com/xnmp/tauri-explorer/pull/804))**; all three view modes and the native keyboard outcome passed |
-| W7.3 | Preview formats × narrow split × zoom (80, 100, 150 %) containment | Browser Playwright | Open |
+| W7.3 | Preview formats × narrow split × zoom (80, 100, 150 %) containment | Browser Playwright | **Done ([#796](https://github.com/xnmp/tauri-explorer/pull/796))**; final-head Chromium and WebKit checks passed |
 | W7.4 | Plugin failure combinations: throw on activate, reject a command, and time out a job, each while another plugin is active | Vitest registry tests, plus one browser outcome | **Done ([#783](https://github.com/xnmp/tauri-explorer/pull/783))** |
 
 ## W8 — Integration and records
@@ -134,12 +134,38 @@ plan row or establish release acceptance until it is merged into `dev` and the
 required platform outcomes execute. The five-run Windows flake criterion,
 final-tip gate, four-hour Linux soak, bounded Windows soak, native macOS UI,
 physical-Mac startup measurements and non-Linux durable recovery adapters
-remain open. The Linux soak has reproducibly lost its WebKitWebDriver session
-at window cycle 399 in mixed and warm-only diagnostic runs; no four-hour pass
-can be claimed. W2.5 also remains an unclassified
+remain open. The distinct NTFS 8.3 alias case in W4.5 also remains unqualified
+on the hosted runner. Local #817 corrected-binary diagnostics in the separate
+`linux-retention-soak` worktree lost the WebKitWebDriver session at window cycle
+399 after 398 native closes in mixed, warm-only and fresh-only runs (reports
+`qualification-results/linux-linux-four-hour-817-df127-20260927-9b1661adf5d4.json`,
+`linux-linux-warm-only-817-fad2656-20260927-b9d68aa3d187.json`, and
+`linux-linux-fresh-only-817-fad2656-20260927-316ad85fd1c4.json`). These are
+diagnostic artifacts, not integrated or passing four-hour acceptance. An
+earlier cycle-187 failure came from an invalid window-selector fixture and
+does not count as product evidence. W2.5 also remains an unclassified
 observation until the sampler captures the label that actually loses its
 session. W8.1 must record executed test counts and list skips separately on the
 final selected `dev` SHA.
+
+### W8.3 release checklist (v1.11.0)
+
+The authoritative version fields still read `1.10.0` at this checkpoint:
+`package.json`, `src-tauri/Cargo.toml`, the root package in
+`src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the `PKGBUILD`
+fallback. Update all five to `1.11.0`, reset `pkgrel=1`, and add a dated
+`CHANGELOG.md` entry that states the platform and opt-in limits.
+
+Before opening the release PR, record the owner's D1/D2 decisions, integrate
+or explicitly defer each remaining branch, and run W8.1 on one exact final
+`dev` SHA. Report executed and skipped native test cases separately. Require a
+passing four-hour Linux report, bounded Windows report and screenshot, five
+consecutive Windows `dev` smoke runs for W2.4, and final hosted Rust/platform
+checks; keep any unmet item open instead of implying release acceptance.
+The release PR is `dev` → `main` with merge strategy `--merge`. Its required
+checks and evidence must pass before the owner merges it. Do not create a tag
+manually; verify the resulting GitHub release and every expected platform
+asset after the merge.
 
 ## Decisions for the owner
 

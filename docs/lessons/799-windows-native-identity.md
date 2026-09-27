@@ -5,8 +5,10 @@ case, or a trailing separator. Keying the native watch registry before resolving
 those spellings creates independent leases over one OS directory; retiring one
 key can then remove observation still owned through another spelling.
 
-Resolve the directory once at each native listing/watch admission boundary and
-return that resolved spelling in both the listing and watch lease. The frontend
+Resolve the directory once at each native listing/watch admission boundary.
+For an observed listing, scan the exact path returned by its pending watch lease;
+do not resolve the request again after awaiting registration. A case-only rename
+between those phases can otherwise split the listing and event identities. The frontend
 must publish readiness from the returned lease path rather than the requested
 path. This keeps the listing cache, pane state, watch registry and event path on
 one identity without introducing a second lifecycle owner.

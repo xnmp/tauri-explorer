@@ -379,6 +379,10 @@ where
 pub(super) struct PendingLease(Option<Lease>);
 
 impl PendingLease {
+    pub fn path(&self) -> &str {
+        &self.0.as_ref().expect("pending directory lease").path
+    }
+
     pub fn take(mut self) -> Lease {
         self.0.take().expect("pending directory lease")
     }

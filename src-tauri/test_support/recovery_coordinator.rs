@@ -864,3 +864,60 @@ fn other_volume(identity: ObjectId) -> ObjectId {
     value["device"] = value["device"].as_u64().unwrap().wrapping_add(1).into();
     serde_json::from_value(value).unwrap()
 }
+
+/// #798: a case-only rename admits its own target and source (the order
+/// `EntryPlan::resources` requests) without conflicting with itself. Where the
+/// volume folds case both claims capture the one existing object, so another
+/// operation naming a third spelling is excluded; where it does not, the target
+/// is a new name and a third spelling is unrelated work.
+#[test]
+fn case_variant_claims_capture_one_object_only_where_the_volume_folds_case() {
+    use crate::files::case_only_rename_tests::{folds_case, report};
+    let directory = tempfile::tempdir().unwrap();
+    let parent = fs::canonicalize(directory.path()).unwrap().join("fixture");
+    fs::create_dir(&parent).unwrap();
+    let folds = folds_case(&parent);
+    let source = parent.join("readme.txt");
+    fs::write(&source, b"original").unwrap();
+    let source_object = object(&fs::symlink_metadata(&source).unwrap());
+    let storage = directory.path().join("recovery");
+    let (coordinator, peer) = (
+        Coordinator::open(&storage).unwrap(),
+        Coordinator::open(&storage).unwrap(),
+    );
+
+    let rename = coordinator
+        .reserve([writing(&parent.join("README.txt")), writing(&source)].concat())
+        .expect("a case-only rename does not conflict with itself");
+    let captured: Vec<_> = rename.resources.iter().map(|claim| claim.object).collect();
+    let target_object = folds.then_some(source_object);
+    assert_eq!(captured[..2], [target_object, Some(source_object)]);
+
+    assert!(peer.reserve(writing(&source)).is_err());
+    let third_spelling = peer.reserve(writing(&parent.join("ReadMe.TXT")));
+    if folds {
+        assert!(
+            third_spelling.is_err(),
+            "another spelling names the object this rename owns"
+        );
+    } else {
+        third_spelling
+            .expect("an unrelated name on a case-sensitive volume")
+            .finish()
+            .unwrap();
+    }
+    rename.finish().unwrap();
+    peer.reserve(writing(&parent.join("ReadMe.TXT")))
+        .unwrap()
+        .finish()
+        .unwrap();
+    report(
+        "case_variant_claims",
+        folds,
+        if folds {
+            "both claims captured the source object; a third spelling was excluded"
+        } else {
+            "the target was a new name; a third spelling was independent"
+        },
+    );
+}

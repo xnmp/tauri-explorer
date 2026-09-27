@@ -4,10 +4,12 @@
 checks it region by region: title bar, sidebar, address bar, file list,
 preview, status bar. Each region must be operable from the keyboard.
 
-For every theme, with and without premium surfaces, it measures each stop's
-indicator. That is the outline or zero-blur box-shadow ring on the focused
-element. The ring must have at least 3:1 contrast against the colour it is
-drawn over, and at most one of its sides may be cut off.
+For every built-in theme, with and without premium surfaces, it measures each
+stop in the default Details-view cycle. It also checks the roving file-entry
+stop in List and Tiles. The indicator is the outline or zero-blur box-shadow
+ring on the focused element. The probe checks its weakest contrast against the
+element fill, the parent surface, and any differently coloured border left
+exposed beside an inset outline. At most one ring side may be cut off.
 
 ## What it found
 
@@ -24,6 +26,12 @@ drawn over, and at most one of its sides may be cut off.
   - The tahoe and solarized-light focus strokes are darker in OKLCH
     lightness only.
   - A unit test rejects `outline: … var(--accent)` in any `:focus` rule.
+- **Selected-row edges beside the focus ring.** Details and List retain a 3px
+  left selection edge, while Tiles retains a 3px bottom edge. A 2px inset
+  outline leaves one pixel exposed; several themes made that accent remnant
+  too close to the focus stroke.
+  - While an entry has keyboard focus, that exposed edge now uses the focus
+    stroke and becomes a contiguous part of the indicator in all three views.
 - **The preview could not be scrolled from the keyboard.** Its scroll
   container is now a labelled `region` with `tabindex="0"` (WCAG 2.1.1).
   The explorer's arrow-key handler ignores it, so the arrow keys scroll the

@@ -9,13 +9,19 @@
  * chord.
  *
  * An indicator is an outline or a box-shadow ring on the focused element. It
- * must have at least 3:1 contrast against the colour it is drawn over (WCAG
- * 1.4.11 / 2.4.11): the element's own background for an inset ring, and the
- * surface behind the element otherwise. The UA's `outline: auto` ring is
- * rejected because its colour and shape are engine-defined, not themed.
+ * must have at least 3:1 contrast against every adjacent surface (WCAG
+ * 1.4.11 / 2.4.11): the element fill, the surface behind it, and any border
+ * crossed by an inset ring. The UA's `outline: auto` ring is rejected because
+ * its colour and shape are engine-defined, not themed.
  */
 import { test, expect, type Page } from "./fixtures";
-import { BUILT_IN_THEMES as THEMES, HOME_URL, waitForEntries } from "./helpers";
+import {
+  ALL_VIEW_MODES,
+  BUILT_IN_THEMES as THEMES,
+  HOME_URL,
+  waitForEntries,
+  type ViewMode,
+} from "./helpers";
 
 /**
  * Main regions in the order Tab must reach them. The status bar holds the
@@ -237,10 +243,53 @@ function focusIndicator(page: Page): Promise<Indicator> {
       }, cs.overflowX !== "visible", cs.overflowY !== "visible");
     }
     const clipped = cut.size >= 2 ? `${cutters.join("; ")} (ring ${box4(edge)})` : null;
-    const backdrop = surface(inset ? el : el.parentElement);
-    const drawn = over(ring, backdrop);
-    return { kind, width, contrast: contrast(drawn, backdrop), clipped, ring: fmt(drawn), backdrop: fmt(backdrop) };
+    const parentSurface = surface(el.parentElement);
+    const elementSurface = surface(el);
+    const adjacent = [parentSurface, elementSurface];
+    if (inset && kind === "outline") {
+      // A negative-offset outline crosses the border edge. Include every
+      // border colour that remains exposed inside it. A border no wider than
+      // the inset depth is fully painted over and is not adjacent to the ring.
+      const coveredBorderDepth = Math.max(0, -(parseFloat(style.outlineOffset) || 0));
+      for (const side of ["top", "right", "bottom", "left"] as const) {
+        const borderWidth = parseFloat(style.getPropertyValue(`border-${side}-width`)) || 0;
+        const borderColor = parse(style.getPropertyValue(`border-${side}-color`));
+        if (borderWidth > coveredBorderDepth && borderColor && borderColor[3] > 0) {
+          const paintedBorder = over(borderColor, parentSurface);
+          // A same-colour exposed strip is a contiguous extension of the
+          // indicator, not a separate adjacent surface.
+          if (contrast(over(ring, paintedBorder), paintedBorder) > 1.01) adjacent.push(paintedBorder);
+        }
+      }
+    }
+    const comparisons = adjacent.map((backdrop) => {
+      const drawn = over(ring!, backdrop);
+      return { contrast: contrast(drawn, backdrop), ring: fmt(drawn), backdrop: fmt(backdrop) };
+    });
+    const weakest = comparisons.reduce((minimum, candidate) => candidate.contrast < minimum.contrast ? candidate : minimum);
+    return { kind, width, contrast: weakest.contrast, clipped, ring: weakest.ring, backdrop: weakest.backdrop };
   });
+}
+
+async function tabToEntry(page: Page): Promise<string | null> {
+  const focusedPath = () => page.evaluate(() => {
+    const el = document.activeElement as HTMLElement;
+    return el.matches(".file-list .entry-item") ? el.dataset.path ?? null : null;
+  });
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  for (let i = 0; i < MAX_STOPS && !(await focusedPath()); i++) await step(page, "Tab");
+  return await focusedPath();
+}
+
+async function reloadInView(page: Page, viewMode: ViewMode): Promise<void> {
+  await page.evaluate((mode) => {
+    const raw = localStorage.getItem("explorer-settings");
+    const settings = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+    localStorage.setItem("explorer-settings", JSON.stringify({ ...settings, viewMode: mode }));
+  }, viewMode);
+  await page.goto(HOME_URL);
+  await waitForEntries(page);
+  await expect(page.getByTestId("file-recovery-notice")).toBeVisible();
 }
 
 test.describe("Keyboard traversal", () => {
@@ -296,23 +345,24 @@ test.describe("Keyboard traversal", () => {
     await expect(page.locator(".explorer-pane .crumb.current")).toHaveText("Videos");
   });
 
-  test("arrow keys move the file-list selection once Tab reaches it", async ({ page }) => {
-    await openWindow(page);
-    // The file list keeps one roving Tab stop among its entries: the cursor,
-    // or the first entry before anything has been selected.
-    const focusedPath = () => page.evaluate(() => {
-      const el = document.activeElement as HTMLElement;
-      return el.matches(".file-list .entry-item") ? el.dataset.path ?? null : null;
+  for (const viewMode of ALL_VIEW_MODES) {
+    test(`arrow keys move the ${viewMode} file-list selection once Tab reaches it`, async ({ page }) => {
+      await openWindow(page, { viewMode });
+      // The file list keeps one roving Tab stop among its entries: the cursor,
+      // or the first entry before anything has been selected.
+      expect(await tabToEntry(page)).toBe("/home/user/Archive");
+      await page.keyboard.press("ArrowDown");
+      const focusedPath = () => page.evaluate(() => {
+        const el = document.activeElement as HTMLElement;
+        return el.matches(".file-list .entry-item") ? el.dataset.path ?? null : null;
+      });
+      await expect.poll(focusedPath).not.toBe("/home/user/Archive");
+      const moved = await focusedPath();
+      expect(moved).toBeTruthy();
+      await expect(page.locator(`.explorer-pane .entry-item[data-path="${moved}"]`))
+        .toHaveAttribute("aria-selected", "true");
     });
-    await step(page, "Tab");
-    for (let i = 0; i < MAX_STOPS && !(await focusedPath()); i++) await step(page, "Tab");
-    const first = await focusedPath();
-    expect(first).toBe("/home/user/Archive");
-    await page.keyboard.press("ArrowDown");
-    await expect.poll(focusedPath).toBe("/home/user/Documents");
-    await expect(page.locator('.explorer-pane .entry-item[data-path="/home/user/Documents"]'))
-      .toHaveAttribute("aria-selected", "true");
-  });
+  }
 
   test("the preview content is a Tab stop that scrolls from the keyboard", async ({ page }) => {
     // A short bottom dock makes the markdown preview overflow its region.
@@ -368,6 +418,7 @@ test.describe("Focus indicators", () => {
         const failures: string[] = [];
         const first = await step(page, "Tab");
         let stop = first;
+        let completedCycle = false;
         for (let i = 0; i < MAX_STOPS; i++) {
           const indicator = await focusIndicator(page);
           if (indicator.kind === "none" || indicator.kind === "auto" || indicator.clipped
@@ -376,7 +427,24 @@ test.describe("Focus indicators", () => {
               + `${indicator.ring} on ${indicator.backdrop} = ${indicator.contrast.toFixed(2)}:1`);
           }
           stop = await step(page, "Tab");
-          if (stop.id === first.id) break;
+          if (stop.id === first.id) {
+            completedCycle = true;
+            break;
+          }
+        }
+        expect(completedCycle, "focus did not complete one Tab cycle").toBe(true);
+
+        // List and Tiles are separate virtualized renderers with their own
+        // focus CSS. Exercise their roving stop in every theme as well.
+        for (const viewMode of ALL_VIEW_MODES.filter((mode): mode is Exclude<ViewMode, "details"> => mode !== "details")) {
+          await reloadInView(page, viewMode);
+          expect(await tabToEntry(page), `${viewMode} did not expose a roving entry Tab stop`).toBeTruthy();
+          const indicator = await focusIndicator(page);
+          if (indicator.kind === "none" || indicator.kind === "auto" || indicator.clipped
+            || indicator.contrast < MIN_INDICATOR_CONTRAST) {
+            failures.push(`${viewMode} entry: ${indicator.kind}${indicator.clipped ? ` clipped by ${indicator.clipped}` : ""} `
+              + `${indicator.ring} on ${indicator.backdrop} = ${indicator.contrast.toFixed(2)}:1`);
+          }
         }
         expect(failures).toEqual([]);
       });

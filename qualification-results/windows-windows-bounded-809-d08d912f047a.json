@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "build": {
+    "commit": "cc2ad6199588e5c6ed7c09c2bf1c7ebd6d0c8127",
+    "profile": "debug-custom-protocol-e2e-hooks-webview2-attach",
+    "binary": "D:\\a\\tauri-explorer\\tauri-explorer\\src-tauri\\target\\debug\\tauri-explorer.exe",
+    "binarySha256": "038fc30c52fded3c00c35ab550e9b854673b7b6e142016d4ffe272721b84e77d",
+    "binaryBytes": 39748096,
+    "binaryModifiedAt": "2026-09-27T05:50:59.218Z"
+  },
+  "platform": {
+    "os": "windows",
+    "release": "10.0.26100",
+    "arch": "x64",
+    "webview": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36 Edg/153.0.0.0",
+    "displayScale": 1
+  },
+  "configuration": {
+    "durationMs": 600000,
+    "seed": "windows-bounded-809",
+    "scenarios": [
+      "window-workspace",
+      "plugin-churn",
+      "theme-accessibility-zoom",
+      "preview-native-input"
+    ],
+    "expectedDisplayScale": 1,
+    "maxCycles": 1
+  },
+  "startedAt": "2026-09-27T05:51:07.814Z",
+  "finishedAt": "2026-09-27T05:51:22.538Z",
+  "resources": {
+    "sampleCount": 6,
+    "baselineRssBytes": 583606272,
+    "finalRssBytes": 879058944,
+    "peakRssBytes": 1086414848
+  },
+  "timings": {
+    "sampleCount": 4,
+    "p50Ms": 1568,
+    "p95Ms": 1948
+  },
+  "scenarios": [
+    {
+      "id": "plugin-churn",
+      "cycle": 1,
+      "durationMs": 1844,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "theme-accessibility-zoom",
+      "cycle": 1,
+      "durationMs": 1568,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "preview-native-input",
+      "cycle": 1,
+      "durationMs": 921,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "window-workspace",
+      "cycle": 1,
+      "durationMs": 1948,
+      "outcome": "passed",
+      "failureArtifacts": []
+    }
+  ],
+  "failureArtifacts": [],
+  "runErrors": [],
+  "passed": true
+}

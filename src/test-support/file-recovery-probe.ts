@@ -8,7 +8,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
   let next = 9_000_000_000_000_000n;
   window.addEventListener("e2e-recovery-operation", ((event: CustomEvent<{
     token: string;
-    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many" | "cancel-copy" | "cancel-move";
+    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many" | "cancel-copy" | "cancel-move" | "complete-copy" | "complete-move";
     sessionId?: string;
     subscriptionId?: string;
     id?: string;
@@ -44,6 +44,19 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
             onEvent: (sessionEvent) => {
               if (sessionEvent.type === "conflict") controller.abort();
             },
+          },
+        );
+      }
+      if (op === "complete-copy" || op === "complete-move") {
+        const { runOrderedSession } = await import("../lib/api/copy-session");
+        return runOrderedSession(
+          op === "complete-copy" ? "copy_entries" : "move_entries",
+          [event.detail.source!],
+          event.detail.destination!,
+          {
+            signal,
+            jobId: Number(++next),
+            onConflict: async () => ({ choice: "overwrite", applyToAll: false }),
           },
         );
       }

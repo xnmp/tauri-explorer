@@ -272,12 +272,15 @@ and removes that prefix with one Undo. Both assert real filesystem bytes, with
 visible results. These cases qualify Linux session/UI integration; browser tests
 separately cover clipboard selection across Details, List and Tiles.
 
-The same suite cancels one production copy session and one production move
-session while each backend is paused on a real destination conflict. Both must
-settle as cancelled with an unstarted item, retain the source and byte-exact
-existing destination, and leave the native Undo/Redo summary unchanged. The
-Rust phase matrix separately parks every shared orchestration boundary; these
-binary cases qualify the real IPC cancellation path on Linux.
+The ungated `session-cancellation.spec.ts` cancels one production copy session
+and one production move session while each backend is paused on a real
+destination conflict. Both must settle as cancelled with an unstarted item,
+retain the source and byte-exact existing destination, and leave the native
+Undo/Redo summary unchanged. Each case then removes the conflict and completes
+the same overlapping request, proving admission was released through rendered
+listing plus native Undo/Redo outcomes. The Rust phase matrix separately parks
+every shared orchestration boundary. Smoke executes these binary cases on Linux
+and Windows.
 
 
 `file-move-recovery.spec.ts` additionally checks Linux native move admission through

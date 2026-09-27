@@ -8,7 +8,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
   let next = 9_000_000_000_000_000n;
   window.addEventListener("e2e-recovery-operation", ((event: CustomEvent<{
     token: string;
-    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many";
+    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many" | "cancel-copy" | "cancel-move";
     sessionId?: string;
     subscriptionId?: string;
     id?: string;
@@ -25,6 +25,24 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
         const { copyFiles } = await import("../lib/state/copy-operations");
         signal.throwIfAborted();
         return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {}, broadcastToOtherWindows: event.detail.shared });
+      }
+      if (op === "cancel-copy" || op === "cancel-move") {
+        const { runOrderedSession } = await import("../lib/api/copy-session");
+        const controller = new AbortController();
+        signal.addEventListener("abort", () => controller.abort(), { once: true });
+        return runOrderedSession(
+          op === "cancel-copy" ? "copy_entries" : "move_entries",
+          [event.detail.source!],
+          event.detail.destination!,
+          {
+            signal: controller.signal,
+            jobId: Number(++next),
+            onConflict: async () => ({ choice: "cancel", applyToAll: false }),
+            onEvent: (sessionEvent) => {
+              if (sessionEvent.type === "ready") controller.abort();
+            },
+          },
+        );
       }
       if (op === "copy") {
         const { copyEntries } = await import("../lib/api/copy-session");

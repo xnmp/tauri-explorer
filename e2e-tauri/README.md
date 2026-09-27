@@ -272,6 +272,13 @@ and removes that prefix with one Undo. Both assert real filesystem bytes, with
 visible results. These cases qualify Linux session/UI integration; browser tests
 separately cover clipboard selection across Details, List and Tiles.
 
+The same suite cancels one production copy session and one production move
+session immediately after each native Ready event. Both must settle as
+cancelled with an unstarted item, retain the source, publish no destination and
+leave the native Undo/Redo summary unchanged. The Rust phase matrix separately
+parks every shared orchestration boundary; these binary cases qualify the real
+IPC cancellation path on Linux.
+
 
 `file-move-recovery.spec.ts` additionally checks Linux native move admission through
 in-app cut/paste and two actual Undo/Redo cycles, asserting both source disappearance

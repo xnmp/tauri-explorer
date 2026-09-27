@@ -286,6 +286,37 @@ gatedDescribe("File recovery native acceptance", [
     await $(".recovery-dialog").waitForDisplayed({ reverse: true });
   });
 
+  for (const operationName of ["copy", "move"] as const) {
+    it(`settles a cancelled native ${operationName} session without publishing its destination`, async () => {
+      const base = path.dirname(fixture.target);
+      const sourceDirectory = path.join(base, `cancel-${operationName}-source`);
+      const destination = path.join(base, `cancel-${operationName}-destination`);
+      fs.mkdirSync(sourceDirectory);
+      fs.mkdirSync(destination);
+      const source = path.join(sourceDirectory, `${operationName}.txt`);
+      const target = path.join(destination, `${operationName}.txt`);
+      fs.writeFileSync(source, `${operationName} cancellation payload\n`);
+      const historyBefore = JSON.parse(await browser.execute(() =>
+        document.documentElement.dataset.e2eHistorySummary ?? "{}"));
+
+      const result = await operation<{
+        ok: boolean;
+        data?: { cancelled: boolean; items: Array<{ status: string }> };
+        error?: string;
+      }>("recovery", `cancel-${operationName}`, { source, destination });
+
+      assert.ok(result.ok, result.error);
+      assert.equal(result.data?.cancelled, true);
+      assert.deepEqual(result.data?.items.map(item => item.status), ["unstarted"]);
+      assert.equal(fs.readFileSync(source, "utf8"), `${operationName} cancellation payload\n`);
+      assert.ok(!fs.existsSync(target), "cancelled native session published its destination");
+      const historyAfter = JSON.parse(await browser.execute(() =>
+        document.documentElement.dataset.e2eHistorySummary ?? "{}"));
+      assert.equal(historyAfter.undoId, historyBefore.undoId, "cancelled session created Undo history");
+      assert.equal(historyAfter.redoId, historyBefore.redoId, "cancelled session changed Redo history");
+    });
+  }
+
   (process.env.TAURI_E2E_HISTORY_GATE_DIR || requireGatedFromEnvironment() ? it : it.skip)("settles admitted replacement Undo after its window is destroyed without leaking local history", async () => {
     const gateDirectory = process.env.TAURI_E2E_HISTORY_GATE_DIR;
     assert.ok(gateDirectory, "TAURI_E2E_HISTORY_GATE_DIR is required");

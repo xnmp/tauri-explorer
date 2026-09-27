@@ -3,7 +3,7 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domText, entryNames, navigateTo } from "./helpers";
+import { domText, entryNames, entryPathSelector, navigateTo } from "./helpers";
 
 let scratch = "";
 let root = "";
@@ -12,7 +12,7 @@ const fileNames = ["alpha-file.txt", "middle-file.txt", "omega-file.txt"];
 const viewModes = ["details", "list", "tiles"] as const;
 
 function entrySelector(name: string): string {
-  return `.explorer-pane .file-list .entry-item[data-path$="/${name}"]`;
+  return entryPathSelector(path.join(root, name), ".explorer-pane .file-list .entry-item");
 }
 
 async function assertSinglePane(): Promise<void> {

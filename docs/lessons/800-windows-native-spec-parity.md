@@ -9,6 +9,17 @@ These specs exercised only DOM/app-state behavior or app-observable receipts,
 not a Linux-specific OS capability, so they now run on both `linux` and
 `win32`:
 
+The first Windows run did execute these describes rather than silently skip
+them, and exposed four fixture defects before the advertised outcomes: three
+file-list tests used POSIX-only path suffixes, preview resize used the same
+suffix assumption, terminal resize embedded unescaped backslashes in a CSS
+attribute selector, and the existing-file watcher case also used a POSIX-only
+suffix. Native entry lookup now goes through the shared exact-path
+`entryPathSelector`, whose contract covers Windows backslashes and quotes.
+That initial run still provided valid passing evidence for both config reload
+cases, ConPTY Ctrl+Q ownership, and watch-root replacement; it did not provide
+resize, composite-focus, or existing-file preview-refresh evidence.
+
 - `file-list-focus.spec.ts` — Tab/Shift+Arrow/F2 keyboard focus ownership.
 - `preview-resize.spec.ts` — zoomed pointer/keyboard dock resize and
   fullscreen containment.

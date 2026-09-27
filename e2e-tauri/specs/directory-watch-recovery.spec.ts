@@ -4,7 +4,14 @@ import { expect } from "expect-webdriverio";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domText, domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import {
+  domText,
+  domTexts,
+  entryPathSelector,
+  navigateTo,
+  switchToFreshWindow,
+  waitForFreshWindowElement,
+} from "./helpers";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-directory-recovery-"));
 const watchedDirectory = path.join(scratch, "watched");
@@ -190,7 +197,7 @@ nativeDescribe("directory watch root recovery", () => {
     await waitForDirectoryWatch(contentDirectory);
     await waitForEntries([contentFileName]);
 
-    await $(`.entry-item[data-path$="/${contentFileName}"]`).click();
+    await $(entryPathSelector(path.join(contentDirectory, contentFileName))).click();
     if (!(await $(".preview-pane").isExisting())) await browser.keys(" ");
     await $(".preview-markdown").waitForDisplayed({ timeout: 20_000 });
     await browser.waitUntil(async () =>

@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domText, navigateTo } from "./helpers";
+import { domText, entryPathSelector, navigateTo } from "./helpers";
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-terminal-resize-"));
 const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
@@ -38,7 +38,7 @@ const countTo80 = process.platform === "win32"
       await browser.keys("Enter");
     }
     await $(".preview-pane").waitForDisplayed({ reverse: true });
-    const entry = await $(`.entry-item[data-path="${fixtureEntry}"]`);
+    const entry = await $(entryPathSelector(fixtureEntry));
     await entry.waitForDisplayed();
     try {
       await entry.click();

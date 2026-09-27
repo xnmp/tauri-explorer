@@ -2,7 +2,7 @@ import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domText, navigateTo } from "./helpers";
+import { domText, entryPathSelector, navigateTo } from "./helpers";
 
 const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "explorer-preview-resize-")));
 const fileName = "native-preview-proof.md";
@@ -66,7 +66,7 @@ nativeDescribe("native preview resizing", () => {
   it("keeps real markdown usable through zoomed pointer, dock, fullscreen, and keyboard resizing", async () => {
     await browser.setWindowSize(1280, 900);
     await navigateTo(scratch);
-    await $( `.entry-item[data-path$="/${fileName}"]` ).click();
+    await $(entryPathSelector(path.join(scratch, fileName))).click();
     await browser.keys(" ");
     await expectContent();
 

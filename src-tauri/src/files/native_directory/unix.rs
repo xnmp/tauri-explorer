@@ -265,12 +265,22 @@ impl Directory {
     }
 
     /// Exclusive private creation without opening, for callers that must
-    /// distinguish "not created" from "created but not opened".
+    /// distinguish "not created" from "created but not opened". An error
+    /// always means nothing was created.
     pub(crate) fn make_directory(&self, name: &OsStr) -> io::Result<()> {
         let native = native_name(name)?;
         // SAFETY: the descriptor and terminated name remain valid during mkdirat.
         if unsafe { libc::mkdirat(self.file.as_raw_fd(), native.as_ptr(), 0o700) } != 0 {
             return Err(io::Error::last_os_error());
+        }
+        // Created: a failure to restore owner access cannot be returned as an
+        // error, which would claim nothing exists. The caller opens and
+        // verifies the directory, and reports it as residue if that fails.
+        if let Err(error) = self
+            .open_existing(name)
+            .and_then(|directory| restore_owner_access(&directory.file, 0o700))
+        {
+            log::debug!("Could not restore owner access to a new private directory: {error}");
         }
         Ok(())
     }

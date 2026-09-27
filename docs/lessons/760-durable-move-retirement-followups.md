@@ -53,7 +53,12 @@ byte for byte.
 **Private storage must not trust the umask.** Under `umask 0277` the probe's
 owner-only file lost write access and every probe failed with `EACCES`. Restore
 owner bits with `fchmod` on the created handle. User-visible directories keep
-honoring the umask.
+honoring the umask. Audit every private creation path, including ones that do
+not return a handle: `Directory::make_directory` (the permanent-delete staging
+folder) still created `0o500`, so the payload could not be renamed into it and
+every permanent delete failed with `EACCES`. It now opens what it created to
+restore owner access, and still returns `Ok` if that fails, because its error
+means "nothing was created"; the caller's open and verification report residue.
 
 **One device is not one mount.** Bind mounts share `st_dev`, yet `rename(2)`
 between them is `EXDEV`, and a same-directory probe cannot see that. Compare

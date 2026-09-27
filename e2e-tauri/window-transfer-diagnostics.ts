@@ -59,7 +59,7 @@ export async function captureDiagnostics(
         activeElement: document.activeElement
           ? { tag: document.activeElement.tagName, classes: document.activeElement.className }
           : null,
-        tabCount: document.querySelectorAll(".tab-area > .tab").length,
+        tabCount: document.querySelectorAll(".tab-list > .tab").length,
         storage: Object.keys(localStorage).filter((key) => key.includes("seed") || key.includes("tabs"))
           .map((key) => ({ key, value: localStorage.getItem(key)?.slice(0, 2_000) })),
         operationResult: document.documentElement.dataset.e2eWindowResult ?? null,

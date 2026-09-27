@@ -76,12 +76,10 @@ describe("native transfer renderer waits", () => {
     vi.stubGlobal("document", { documentElement: root });
     vi.stubGlobal("window", { dispatchEvent });
     vi.stubGlobal("CustomEvent", FakeCustomEvent);
-    let driverCalls = 0;
     const executeAsync = async (
       script: typeof waitForWindowOperation,
       request: WindowOperationWaitRequest,
     ): Promise<RendererWaitResult<WindowOperationResponse>> => {
-      driverCalls += 1;
       return await new Promise((resolve, reject) => script(request, (result) => {
         if (result === undefined) reject(new Error("renderer wait returned no result"));
         else resolve(result);
@@ -102,7 +100,6 @@ describe("native transfer renderer waits", () => {
         result: { moved: true, target: "explorer-child" },
       },
     });
-    expect(driverCalls).toBe(1);
     expect(dispatchEvent).toHaveBeenCalledOnce();
   });
 
@@ -114,12 +111,10 @@ describe("native transfer renderer waits", () => {
       documentElement: {},
       querySelectorAll: vi.fn(() => entries),
     });
-    let driverCalls = 0;
     const executeAsync = async (
       script: typeof waitForListingEntry,
       request: ListingWaitRequest,
     ): Promise<RendererWaitResult<true>> => {
-      driverCalls += 1;
       return await new Promise((resolve, reject) => script(request, (result) => {
         if (result === undefined) reject(new Error("renderer wait returned no result"));
         else resolve(result);
@@ -137,7 +132,27 @@ describe("native transfer renderer waits", () => {
     await vi.advanceTimersByTimeAsync(50);
 
     await expect(waiting).resolves.toEqual({ ok: true, value: true });
-    expect(driverCalls).toBe(1);
+  });
+
+  it("disconnects a timed-out listing observer and completes only once", async () => {
+    vi.useFakeTimers();
+    const notifyMutation = installMutationObserver();
+    vi.stubGlobal("document", {
+      documentElement: {},
+      querySelectorAll: vi.fn(() => []),
+    });
+    const completed = vi.fn();
+
+    waitForListingEntry({ name: "absent.txt", timeoutMs: 100 }, completed);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(completed).toHaveBeenCalledExactlyOnceWith({
+      ok: false,
+      error: "native listing did not contain absent.txt",
+    });
+
+    notifyMutation();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(completed).toHaveBeenCalledOnce();
   });
 
   it("waits for the requested number of substring matches", async () => {

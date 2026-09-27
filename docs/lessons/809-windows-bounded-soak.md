@@ -7,6 +7,8 @@ The runner verifies that manifest before launching the application.
 
 A fixed seed and `SOAK_MAX_CYCLES=1` exercise one complete cycle of window churn,
 plugin enable/disable, theme and zoom interaction, and native preview input.
+Clean qualification profiles start with the preview closed, so the preview
+scenario must open it after keyboard selection before asserting native content.
 This is platform acceptance, not evidence of four-hour retention. The separate
 Linux long-session run still needs its full duration and recorded report.
 

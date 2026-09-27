@@ -317,6 +317,8 @@ async function runPreviewNativeInput(cycle: number): Promise<void> {
       timeoutMsg: `native Ctrl+Home did not visibly select ${filename}`,
     },
   );
+  if (!(await $(".preview-pane").isExisting())) await browser.keys(" ");
+  await $(".preview-pane").waitForDisplayed();
   if (filename.endsWith(".md")) {
     await browser.waitUntil(async () =>
       (await domText(".preview-markdown")).includes("Native qualification"),

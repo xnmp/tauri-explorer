@@ -18,26 +18,36 @@ preview layouts work more consistently across window sizes and platforms.
 - **Keyboard traversal has a visible focus path** through the main regions in
   Details, List, and Tiles; the selected file row also keeps DOM focus when
   pointer drag acquisition suppresses native focus (#797, #800).
-- **Previews fit narrow and zoomed layouts** without clipping long paths,
-  metadata, or controls (#792).
+- **Tested preview layouts contain long filenames, metadata, and controls**
+  across narrow docks, zoom levels, and fullscreen states (#792).
+- **Terminal input reaches terminal-hosted applications in order**, including
+  the core navigation chords that Explorer owns (#709).
+- **Focus and theme contrast are clearer** in the tested light and dark
+  themes (#785).
 
 ### Fixed
 
 - **Windows case and separator variants of a directory share one listing and
   watcher identity.** A pane continues refreshing after navigation through a
   variant spelling (#799).
+- Atomic installation of the zsh integration shim avoids concurrent startup
+  races (#780).
+- A failing plugin command reports its own error without disabling an unrelated
+  active plugin (#782).
+- Symlinked recovery artifact roots are rejected before they can claim an
+  unrelated destination (#788).
 
 ### Qualification
 
-- Native recovery cases run in a dedicated gated Linux CI job. The default
-  Linux native suite, Windows spec parity, macOS PTY and case-only rename
-  contracts, and bounded Windows soak have explicit acceptance coverage
-  (#774, #800, #798, #809).
+- Native recovery cases run in a dedicated gated Linux CI job. macOS runner
+  contracts cover real PTY lifecycle and case-only filesystem rename (#774,
+  #798). Windows qualification covers one deterministic cycle; four-hour
+  retention evidence is Linux-only (#809, #817).
 
 ### Release limits
 
-- Durable copy and move recovery remain opt-in Linux build features. Recovery
-  admission on Windows and macOS is not implemented.
+- Durable copy and move recovery remain opt-in Linux build features. Durable
+  recovery admission adapters on Windows and macOS are not implemented.
 - macOS native UI and the hardware half-bounce startup target remain
   unqualified.
 - UNC server/share case folding is outside the qualified Windows directory

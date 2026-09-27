@@ -1,3 +1,5 @@
+import { createOrderedWriter, type OrderedWriter } from "$lib/domain/ordered-writer";
+
 export type TerminalSessionUnlisten = () => void;
 
 export interface TerminalSessionSpawnInfo {
@@ -12,12 +14,14 @@ export interface TerminalSessionDependencies {
   listenCwd(id: number, handler: (payload: string) => void): Promise<TerminalSessionUnlisten>;
   spawn(id: number, cwd: string | undefined, cols: number, rows: number): Promise<TerminalSessionSpawnInfo>;
   kill(id: number): Promise<void>;
+  write(id: number, data: string): Promise<void>;
 }
 
 export interface TerminalSessionCallbacks {
   output(payload: string): void;
   cwd(payload: string): void;
   exit(): void;
+  writeError(error: unknown): void;
 }
 
 interface Acquisition {
@@ -25,6 +29,8 @@ interface Acquisition {
   id: number | null;
   unlisteners: TerminalSessionUnlisten[];
   spawned: boolean;
+  /** The only path to this PTY's input; created once the PTY runs (#709). */
+  writer: OrderedWriter | null;
 }
 
 const cancelled = Symbol("terminal-session-cancelled");
@@ -48,6 +54,8 @@ export function createTerminalSession(
   };
 
   async function release(acquisition: Acquisition, kill: boolean): Promise<void> {
+    acquisition.writer?.close();
+    acquisition.writer = null;
     for (const unlisten of acquisition.unlisteners.splice(0).reverse()) {
       try {
         unlisten();
@@ -81,6 +89,7 @@ export function createTerminalSession(
       id: null,
       unlisteners: [],
       spawned: false,
+      writer: null,
     };
     current = acquisition;
     const operation = (async () => {
@@ -106,6 +115,10 @@ export function createTerminalSession(
         const info = await dependencies.spawn(id, cwd, cols, rows);
         acquisition.spawned = true;
         requireCurrent(acquisition);
+        acquisition.writer = createOrderedWriter(
+          (data) => dependencies.write(id, data),
+          callbacks.writeError,
+        );
         return info;
       } catch (error) {
         await release(acquisition, acquisition.id !== null);
@@ -142,12 +155,24 @@ export function createTerminalSession(
     await stop();
   }
 
+  /**
+   * Queue input for the running PTY in call order. Returns false, sending
+   * nothing, when no PTY is running.
+   */
+  function write(data: string): boolean {
+    const writer = current?.writer;
+    if (!writer) return false;
+    writer.write(data);
+    return true;
+  }
+
   return {
     get id(): number | null { return current?.spawned ? current.id : null; },
     get isDisposed(): boolean { return disposed; },
     start,
     stop,
     dispose,
+    write,
   };
 }
 

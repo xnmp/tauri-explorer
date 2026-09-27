@@ -332,7 +332,7 @@
   .column-menu-check {
     width: 16px;
     text-align: center;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     font-size: 12px;
   }
 

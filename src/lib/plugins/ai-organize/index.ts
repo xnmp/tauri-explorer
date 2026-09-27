@@ -165,7 +165,7 @@ export const aiOrganizePlugin: Plugin = {
       when: (entries) => selectedFile(entries) !== null,
       handler: (entries) => {
         const file = selectedFile(entries);
-        if (file) void openPicker(file);
+        if (file) return openPicker(file);
       },
     });
 
@@ -179,7 +179,7 @@ export const aiOrganizePlugin: Plugin = {
       category: "file",
       handler: () => {
         const file = selectedFile(ctx.workspace.getSelection());
-        if (file) void openPicker(file);
+        if (file) return openPicker(file);
       },
       when: () => selectedFile(ctx.workspace.getSelection()) !== null,
     });

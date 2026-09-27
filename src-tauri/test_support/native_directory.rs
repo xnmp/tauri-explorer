@@ -17,6 +17,10 @@ fn mount_identity_uses_the_retained_directory_instead_of_its_proc_symlink() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "APFS rejects names that are not valid UTF-8 (EILSEQ)"
+)]
 fn enumeration_is_repeatable_bounded_and_lossless() {
     let temporary = tempfile::tempdir().unwrap();
     let name = OsString::from_vec(b"native-\xff".to_vec());

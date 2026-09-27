@@ -3,7 +3,7 @@ use crate::files::{
     file_identity::{of_file, version_from_metadata},
     recovery::{
         model::{LockIdentity, NativePath, ReplacementSpec},
-        resources::{capture_requests, Access, Request, Scope},
+        resources::{capture_requests, Access, Request, Resource, Scope},
     },
 };
 use std::{fs, os::unix::fs::PermissionsExt};
@@ -253,6 +253,65 @@ fn manifest_for_another_planned_root_is_rejected_without_publication() {
     other.assert_user_data();
 }
 
+/// The independent check `manifest_payload` performs must catch a subject
+/// alias even when the caller-supplied `excluded` set (which `finish` already
+/// checks at creation time) does not name it, proving the two checks are
+/// genuinely independent rather than the second merely restating the first
+/// (#788).
+#[test]
+fn manifest_payload_rejects_a_subject_alias_even_when_excluded_is_empty() {
+    let fixture = Fixture::new("subject-alias");
+    let (parent, token) = {
+        let OperationSpec::CopyReplacement(spec) = &fixture.intent.operation else {
+            panic!("expected copy replacement fixture");
+        };
+        (spec.parent, spec.artifact_token.clone())
+    };
+
+    let plan = RootPlan {
+        parent_path: fixture.base.clone(),
+        parent,
+        root: fixture.root.clone(),
+        token: token.clone(),
+        excluded: vec![],
+    };
+    let root = Anchor::open_plan(&fixture.intent, plan)
+        .unwrap()
+        .create()
+        .unwrap();
+    let identity = root.identity();
+    drop(root);
+
+    // Craft an intent whose source subject is exactly the artifact root's own
+    // real identity, keeping its captured resource claim consistent so the
+    // intent still validates. Nothing here touches `excluded`.
+    let mut crafted = fixture.intent.clone();
+    {
+        let OperationSpec::CopyReplacement(spec) = &mut crafted.operation else {
+            panic!("expected copy replacement fixture");
+        };
+        spec.source_version.object = identity;
+    }
+    crafted.resources[0].object = Some(identity);
+    crafted.validate().unwrap();
+
+    let plan = RootPlan {
+        parent_path: fixture.base.clone(),
+        parent,
+        root: fixture.root.clone(),
+        token,
+        excluded: vec![],
+    };
+    let reopened = Anchor::open_plan(&crafted, plan)
+        .unwrap()
+        .open_existing(identity)
+        .unwrap();
+
+    assert!(reopened.publish_manifest(&crafted).is_err());
+    assert!(!fixture.root.join("manifest.intent").exists());
+    fixture.assert_user_data();
+}
+
 #[test]
 fn same_spec_with_a_different_valid_owner_cannot_use_the_root() {
     let fixture = Fixture::new("owner-bound");
@@ -331,6 +390,43 @@ fn a_valid_target_alias_cannot_rebind_an_existing_root() {
     assert!(root.verify_manifest(&aliased).is_err());
     assert_eq!(fs::read(&manifest).unwrap(), before);
     assert_eq!(fs::read(alias).unwrap(), b"original bytes");
+    fixture.assert_user_data();
+}
+
+/// Admission records each symlink the admitted paths traverse, with its inode,
+/// but the operation neither keeps that link alive nor forbids retargeting it.
+/// Once a retargeted link's inode is freed, ext4 and XFS can give the same
+/// number to the new artifact root (#788). The reused number in that
+/// admission-only entry must not disown the root. Only the intent's subjects,
+/// the source and the displaced original, may disqualify a root identity.
+#[test]
+fn a_reused_parent_alias_identity_does_not_disown_a_fresh_root() {
+    let fixture = Fixture::new("reused-alias");
+    Anchor::open(&fixture.intent).unwrap().create().unwrap();
+    let identity = of_file(&Directory::open(&fixture.root).unwrap().file).unwrap();
+    let target = fixture
+        .intent
+        .resources
+        .iter()
+        .find(|resource| resource.path.0 == fixture.target)
+        .unwrap()
+        .clone();
+    let mut alias = fixture.intent.clone();
+    alias.resources.push(Resource {
+        path: NativePath(fixture.base.join("retargeted-link")),
+        object: Some(identity),
+        access: Access::Read,
+        scope: Scope::Entry,
+        ..target
+    });
+    alias.validate().unwrap();
+
+    let root = Anchor::open(&alias)
+        .unwrap()
+        .open_existing(identity)
+        .unwrap();
+    root.publish_manifest(&alias).unwrap();
+    root.verify_manifest(&alias).unwrap();
     fixture.assert_user_data();
 }
 

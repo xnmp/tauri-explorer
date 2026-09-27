@@ -23,7 +23,7 @@
   /* Text colors — foreground #ffffff, wheat #f5deb3 for secondary */
   --text-primary: #ffffff;
   --text-secondary: #f5deb3;
-  --text-tertiary: #626262;
+  --text-tertiary: #c1c1c1;
   --text-on-accent: #000000;
 
   /* Background colors — Ghostty bg #333333 */
@@ -70,6 +70,8 @@
 
   /* System status colors — from the desert palette */
   --system-critical: #ff5555;
+  /* Critical as text: the fill colour falls below AA on this theme's surfaces (#785). */
+  --system-critical-text: #ff807b;
   --system-success: #98fb98;
   --system-caution: #f0e68c;
 

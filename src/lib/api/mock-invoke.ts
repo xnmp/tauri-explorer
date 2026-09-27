@@ -3296,8 +3296,10 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
   const extraLatency = g.__MOCK_LATENCY__?.[cmd];
   if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
 
+  // Reject the way the real backend does: Tauri serializes AppError as
+  // { kind, message } (src-tauri/src/error.rs), not as an Error.
   const failure = g.__MOCK_FAILURES__?.[cmd];
-  if (failure) throw new Error(failure);
+  if (failure) throw { kind: "other", message: failure };
 
   const handler = mockCommands[cmd];
   if (!handler) {

@@ -17,9 +17,10 @@ function harness(overrides: Partial<TerminalSessionDependencies> = {}) {
     listenCwd: vi.fn().mockResolvedValue(unlisten),
     spawn: vi.fn().mockResolvedValue({ shellKind: "posix", wslDistro: null }),
     kill: vi.fn().mockResolvedValue(undefined),
+    write: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
-  const callbacks = { output: vi.fn(), cwd: vi.fn(), exit: vi.fn() };
+  const callbacks = { output: vi.fn(), cwd: vi.fn(), exit: vi.fn(), writeError: vi.fn() };
   return { dependencies, callbacks, session: createTerminalSession(dependencies, callbacks), unlisten };
 }
 
@@ -96,5 +97,80 @@ describe("terminal session lifetime", () => {
     expect(h.dependencies.spawn).toHaveBeenCalledTimes(2);
     expect(h.dependencies.kill).toHaveBeenCalledTimes(1);
     await h.session.dispose();
+  });
+});
+
+describe("terminal session input", () => {
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+
+  it("refuses input until the PTY is running, then delivers it to that PTY", async () => {
+    const h = harness();
+    expect(h.session.write("early")).toBe(false);
+    await h.session.start("/work", 80, 24);
+    expect(h.session.write("ls\r")).toBe(true);
+    expect(h.dependencies.write).toHaveBeenCalledWith(41, "ls\r");
+    expect(h.dependencies.write).not.toHaveBeenCalledWith(41, "early");
+  });
+
+  it("keeps keystrokes in order while an earlier write is still in flight (#709)", async () => {
+    const sends: { data: string; resolve(): void }[] = [];
+    const write = vi.fn((_id: number, data: string) =>
+      new Promise<void>((resolve) => sends.push({ data, resolve })));
+    const h = harness({ write });
+    await h.session.start("/work", 80, 24);
+    for (const character of "print") h.session.write(character);
+    expect(sends.map((send) => send.data)).toEqual(["p"]);
+    sends[0].resolve();
+    await settle();
+    expect(sends.map((send) => send.data)).toEqual(["p", "rint"]);
+  });
+
+  it("drops unsent input from a stopped PTY instead of sending it to its successor", async () => {
+    const sends: { id: number; data: string; resolve(): void }[] = [];
+    const write = vi.fn((id: number, data: string) =>
+      new Promise<void>((resolve) => sends.push({ id, data, resolve })));
+    let nextId = 41;
+    const h = harness({ write, reserveId: vi.fn(async () => nextId++) });
+    await h.session.start("/work", 80, 24);
+    h.session.write("a");
+    h.session.write("stale");
+    await h.session.stop();
+    expect(h.session.write("dead")).toBe(false);
+    await h.session.start("/work", 80, 24);
+    h.session.write("fresh");
+    sends[0].resolve();
+    await settle();
+    expect(sends.map(({ id, data }) => [id, data])).toEqual([[41, "a"], [42, "fresh"]]);
+  });
+
+  it("reports a failed write and keeps accepting input", async () => {
+    const failure = new Error("pty write failed");
+    const write = vi.fn()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(undefined);
+    const h = harness({ write });
+    await h.session.start("/work", 80, 24);
+    h.session.write("x");
+    await settle();
+    h.session.write("y");
+    await settle();
+    expect(h.callbacks.writeError).toHaveBeenCalledWith(failure);
+    expect(write).toHaveBeenLastCalledWith(41, "y");
+  });
+
+  it("closes input when the shell exits", async () => {
+    let exitHandler: (() => void) | undefined;
+    const h = harness({
+      listenExit: vi.fn(async (_id: number, handler: () => void) => {
+        exitHandler = handler;
+        return vi.fn();
+      }),
+    });
+    await h.session.start("/work", 80, 24);
+    exitHandler?.();
+    expect(h.session.write("after-exit")).toBe(false);
+    expect(h.dependencies.write).not.toHaveBeenCalled();
   });
 });

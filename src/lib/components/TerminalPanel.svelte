@@ -38,6 +38,7 @@
   import { createTerminalSession } from "$lib/state/terminal-session";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { logFrontendError } from "$lib/api/crash";
 
   let panelEl: HTMLDivElement | undefined = $state();
   let termEl: HTMLDivElement | undefined = $state();
@@ -98,10 +99,9 @@
       if (info === null) return;
       shellProfile = { kind: info.shellKind, wslDistro: info.wslDistro };
       // Path insertions requested while the shell was still spawning (#265).
-      const id = terminalSession.id;
-      if (id === null) return;
+      if (terminalSession.id === null) return;
       for (const data of pendingInsertions.splice(0)) {
-        terminalWrite(id, data);
+        terminalSession.write(data);
       }
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
@@ -134,9 +134,7 @@
    * Opening focus belongs to the store, including queued cold insertions. */
   function insertPaths(paths: string[]): void {
     const data = buildPathsInsertion(paths, shellProfile);
-    const id = terminalSession.id;
-    if (id !== null) terminalWrite(id, data);
-    else pendingInsertions.push(data);
+    if (!terminalSession.write(data)) pendingInsertions.push(data);
   }
 
   // Targets of cds we injected whose OSC 7 echo hasn't arrived yet
@@ -152,6 +150,7 @@
       listenCwd: async (id, handler) => listen<string>(`terminal-cwd-${id}`, (event) => handler(event.payload)),
       spawn: terminalSpawn,
       kill: terminalKill,
+      write: terminalWrite,
     },
     {
       output: (payload) => term?.write(payload),
@@ -167,16 +166,21 @@
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== path) explorer.navigateTo(path);
       },
+      // Mirrored into the backend log: a release build has no console, and
+      // an I/O failure writing to the PTY must leave a trace.
+      writeError: (err) => {
+        console.error("[terminal] input write failed:", err);
+        void logFrontendError(`terminal input write failed: ${String(err)}`).catch(() => {});
+      },
     },
   );
 
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
-    const id = terminalSession.id;
-    if (id === null || path == null) return;
+    if (terminalSession.id === null || path == null) return;
     injectedCds.add(path);
-    terminalWrite(id, buildCdSyncSequence(path, shellProfile));
+    terminalSession.write(buildCdSyncSequence(path, shellProfile));
   }
 
   /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
@@ -326,8 +330,7 @@
         effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac),
       );
       if (sequence !== null) {
-        const id = terminalSession.id;
-        if (id !== null) terminalWrite(id, sequence);
+        terminalSession.write(sequence);
         event.preventDefault();
         return false;
       }
@@ -350,8 +353,7 @@
     fitAddon.fit();
 
     term.onData((data) => {
-      const id = terminalSession.id;
-      if (id !== null) terminalWrite(id, data);
+      terminalSession.write(data);
     });
     term.onResize(({ cols, rows }) => {
       const id = terminalSession.id;

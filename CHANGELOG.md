@@ -2,7 +2,7 @@
 
 All notable changes to Tauri Explorer.
 
-## v1.11.0 — 2026-09-27
+## v1.11.0 — Unreleased
 
 File operations have clearer ownership and recovery behavior, and keyboard and
 preview layouts work more consistently across window sizes and platforms.
@@ -44,8 +44,8 @@ preview layouts work more consistently across window sizes and platforms.
 
 - Native recovery cases run in a dedicated gated Linux CI job. macOS runner
   contracts cover real PTY lifecycle and case-only filesystem rename (#774,
-  #798). Windows qualification covers one deterministic cycle; four-hour
-  retention evidence is Linux-only (#809, #817).
+  #798). Windows qualification covers one deterministic cycle; the Linux
+  four-hour retention gate remains under evaluation (#809, #817).
 
 ### Release limits
 

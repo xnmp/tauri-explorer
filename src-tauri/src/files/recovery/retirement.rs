@@ -10,7 +10,7 @@ use super::{
     model::{OperationState, StagedPayload},
     replacement_artifact::{Anchor, RetirementStep, Root},
     replacement_transition::ReplacementTransition,
-    retention::{measured_bytes, retention, Disposal, Retained, Retention, Usage},
+    retention::{awaits_retry, measured_bytes, retention, Disposal, Retained, Retention, Usage},
 };
 use crate::error::AppError;
 use std::sync::Arc;
@@ -79,6 +79,16 @@ impl Retirement {
         match self {
             Self::Replacement(r) => r.measure(),
             Self::Move(r) => r.measure(),
+        }
+    }
+    /// Persist why a journaled retirement cannot proceed, so later passes
+    /// leave it for an explicit retry instead of claiming it again.
+    fn report(&mut self, reason: &str) {
+        match self {
+            Self::Replacement(r) => {
+                r.retain_failure(AppError::Other(reason.to_owned()));
+            }
+            Self::Move(r) => r.report(reason),
         }
     }
     pub(super) fn retire(self) -> Result<(), AppError> {
@@ -236,18 +246,9 @@ impl ReplacementRetirement {
 
     /// A cleanup failure is reportable inventory, never a completed retirement.
     fn retain_failure(&mut self, error: AppError) -> AppError {
-        let mut message = error.to_string();
-        if message.len() > super::model::MAX_ERROR_BYTES {
-            let mut end = super::model::MAX_ERROR_BYTES;
-            while !message.is_char_boundary(end) {
-                end -= 1;
-            }
-            message.truncate(end);
-        }
-        if let Err(persistence) = self
-            .operation
-            .advance(ReplacementTransition::ReportError(message))
-        {
+        if let Err(persistence) = self.operation.advance(ReplacementTransition::ReportError(
+            super::model::bounded_error(error.to_string()),
+        )) {
             log::warn!("Could not persist recovery retirement failure: {persistence}");
         }
         error
@@ -359,6 +360,26 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
             usage.add(position, bytes, true);
             continue;
         }
+        // Only a crash-interrupted retirement resumes automatically. A
+        // reported failure waits for the user's explicit retry, whether its
+        // decision was journaled or an automatic one could not start; and one
+        // whose volume is away cannot progress. Claiming either would
+        // accomplish nothing but a new generation for the record the user is
+        // inspecting.
+        if awaits_retry(&state) {
+            usage.add(position, bytes, true);
+            continue;
+        }
+        if position == Retention::Retiring {
+            if let Err(error) = anchors_observable(&entry.intent) {
+                log::debug!(
+                    "Recovery retirement could not observe {}: {error}",
+                    entry.intent.id
+                );
+                usage.add(position, bytes, false);
+                continue;
+            }
+        }
         // A settled record is claimed only when ownership can actually
         // accomplish something: journal a first measurement, or reclaim a
         // redundant artifact. Claiming advances the generation, which
@@ -408,7 +429,7 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
 }
 
 /// The outcome of examining one claimed record during an enforcement pass.
-enum Settled {
+pub(super) enum Settled {
     /// Reclaimed: the record and its artifacts are gone.
     Retired,
     /// Owned by another worker right now.
@@ -418,10 +439,43 @@ enum Settled {
 
 /// Claim one record, measure it, and finish any retirement it is already
 /// committed to. Returns the settled accounting for that record.
-fn settle(coordinator: &Arc<Coordinator>, id: &str, generation: u64) -> Result<Settled, AppError> {
-    let Some(operation) = coordinator.try_claim(id, generation)? else {
+pub(super) fn settle(
+    coordinator: &Arc<Coordinator>,
+    id: &str,
+    generation: u64,
+) -> Result<Settled, AppError> {
+    // Keep the read-only availability check inside this primitive as well as
+    // the enforcement loop. Direct callers that already selected a record may
+    // claim it, but must persist an unavailable automatic cleanup as deferred
+    // rather than re-claiming it on every later pass (#760).
+    let mut unavailable_move: Option<(Retention, String)> = None;
+    if let Some(entry) = coordinator
+        .inventory()?
+        .entries
+        .into_iter()
+        .find(|entry| entry.intent.id == id && entry.generation == Some(generation))
+    {
+        if let Some(state) = entry.state {
+            let position = retention(&entry.intent.operation, &state);
+            let bytes = measured_bytes(&state);
+            if matches!(position, Retention::MoveSettled { .. }) && bytes.is_none() {
+                match artifact_present(&entry.intent, &state) {
+                    Ok(true) => {}
+                    Ok(false) => return Ok(Settled::Counted(position, None, true)),
+                    Err(error) => unavailable_move = Some((position, error.to_string())),
+                }
+            }
+        }
+    }
+    let Some(mut operation) = coordinator.try_claim(id, generation)? else {
         return Ok(Settled::Busy);
     };
+    if let Some((position, reason)) = unavailable_move {
+        operation.advance_move(super::move_transition::MoveTransition::DeferRetirement(
+            super::model::bounded_error(reason),
+        ))?;
+        return Ok(Settled::Counted(position, None, false));
+    }
     let mut retirement = match Retirement::open(operation) {
         Ok(retirement) => retirement,
         // A missing volume or unreadable parent is unavailable, not disposable.
@@ -437,6 +491,12 @@ fn settle(coordinator: &Arc<Coordinator>, id: &str, generation: u64) -> Result<S
             retirement.retire()?;
             Ok(Settled::Retired)
         }
+        Eligibility::Preserved(reason) if retirement.position() == Retention::Retiring => {
+            let reason = reason.clone();
+            retirement.report(&reason);
+            let bytes = retirement.measure()?;
+            Ok(Settled::Counted(retirement.position(), bytes, true))
+        }
         _ => {
             let bytes = retirement.measure()?;
             Ok(Settled::Counted(retirement.position(), bytes, true))
@@ -451,14 +511,44 @@ fn artifact_present(
     intent: &super::model::DurableIntent,
     state: &OperationState,
 ) -> Result<bool, AppError> {
-    if matches!(state, OperationState::Move(_)) {
-        // Even a rootless move retains Undo authority and needs its first zero-byte measurement.
-        return Ok(true);
+    if let OperationState::Move(move_state) = state {
+        let spec = intent.operation.move_spec()?;
+        let mut named_root = false;
+        let mut present = false;
+        for (source, plan) in super::move_execution::MoveExecution::plans(spec) {
+            named_root = true;
+            let identity = if source {
+                move_state.source_root
+            } else {
+                move_state.target_root
+            }
+            .ok_or_else(|| AppError::Other("Move artifact identity is missing".into()))?;
+            present |= Anchor::open_plan(intent, plan)?
+                .open_optional(identity)?
+                .is_some();
+        }
+        // A rootless move still retains Undo authority and needs its first
+        // zero-byte measurement.
+        return Ok(!named_root || present);
     }
     let Some(identity) = root_identity(state) else {
         return Ok(false);
     };
     Ok(Anchor::open(intent)?.open_optional(identity)?.is_some())
+}
+
+/// Read-only observation outside admission and without ownership: can every
+/// artifact parent this record names be opened with its recorded identity?
+fn anchors_observable(intent: &super::model::DurableIntent) -> Result<(), AppError> {
+    match &intent.operation {
+        super::model::OperationSpec::CopyReplacement(_) => Anchor::open(intent).map(drop),
+        super::model::OperationSpec::Move(spec) => {
+            for (_, plan) in super::move_execution::MoveExecution::plans(spec) {
+                Anchor::open_plan(intent, plan)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Read-only observation outside admission: does the recorded artifact root

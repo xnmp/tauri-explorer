@@ -42,6 +42,9 @@ fn invalid(message: &str) -> std::io::Error {
 pub(crate) enum RecoveryChoice {
     Restore,
     Discard,
+    /// Forget a move whose committed discard stopped before finishing. It
+    /// removes only the record, releasing its locks; files stay on disk.
+    Release,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -51,7 +54,12 @@ pub(crate) struct RecoveryItem {
     #[serde(serialize_with = "serialize_counter")]
     pub generation: u64,
     pub original_path: String,
+    /// The first of `retained_paths`, kept for ports that predate the list.
     pub retained_path: Option<String>,
+    /// Every artifact folder this record may still hold. A cross-volume move
+    /// has one beside each endpoint, and a stopped discard lists only those
+    /// its journal does not record as removed.
+    pub retained_paths: Vec<String>,
     /// Measured size of the retained artifact. `None` means not measured yet
     /// or not measurable; it is never reported as zero (ADR 0023).
     #[serde(serialize_with = "serialize_optional_counter")]

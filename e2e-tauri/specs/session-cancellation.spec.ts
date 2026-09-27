@@ -121,6 +121,54 @@ async function history(direction: "undo" | "redo"): Promise<void> {
           timeoutMsg: `${operationName} Redo did not refresh the rendered listing`,
         });
       });
+
+      it(`retains only the completed ${operationName} prefix when cancelling a later conflict`, async () => {
+        const root = path.join(scratch, `${operationName}-prefix`);
+        const sourceDirectory = path.join(root, "source");
+        const destination = path.join(root, "destination");
+        fs.mkdirSync(sourceDirectory, { recursive: true });
+        fs.mkdirSync(destination, { recursive: true });
+        const names = ["prefix.txt", "conflict.txt", "suffix.txt"];
+        const sources = names.map(name => path.join(sourceDirectory, name));
+        const targets = names.map(name => path.join(destination, name));
+        for (const [index, source] of sources.entries()) {
+          fs.writeFileSync(source, `${operationName} payload ${index}\n`);
+        }
+        fs.writeFileSync(targets[1], "existing destination\n");
+        await navigateTo(destination);
+        await browser.waitUntil(async () => (await entryNames()).includes(names[1]));
+        const before = await historySummary();
+
+        const cancelled = await operation<SessionResult>(`cancel-${operationName}`, { sources, destination });
+        assert.ok(cancelled.ok, cancelled.error);
+        assert.equal(cancelled.data?.cancelled, true);
+        assert.deepEqual(cancelled.data?.items.map(item => item.status), ["succeeded", "unstarted", "unstarted"]);
+        assert.equal(fs.readFileSync(targets[0], "utf8"), `${operationName} payload 0\n`);
+        assert.equal(fs.readFileSync(targets[1], "utf8"), "existing destination\n");
+        assert.equal(fs.existsSync(targets[2]), false);
+        assert.equal(fs.existsSync(sources[0]), operationName === "copy");
+        for (const index of [1, 2]) {
+          assert.equal(fs.readFileSync(sources[index], "utf8"), `${operationName} payload ${index}\n`);
+        }
+        const afterCancellation = await historySummary();
+        assert.notEqual(afterCancellation.undoId, before.undoId);
+        assert.equal(afterCancellation.busy, false);
+        await browser.waitUntil(async () => (await entryNames()).includes(names[0]));
+
+        await history("undo");
+        assert.equal(fs.existsSync(targets[0]), false);
+        assert.equal(fs.readFileSync(sources[0], "utf8"), `${operationName} payload 0\n`);
+        assert.equal(fs.readFileSync(targets[1], "utf8"), "existing destination\n");
+        assert.equal(fs.existsSync(targets[2]), false);
+        await browser.waitUntil(async () => !(await entryNames()).includes(names[0]));
+
+        await history("redo");
+        assert.equal(fs.readFileSync(targets[0], "utf8"), `${operationName} payload 0\n`);
+        assert.equal(fs.existsSync(sources[0]), operationName === "copy");
+        assert.equal(fs.readFileSync(targets[1], "utf8"), "existing destination\n");
+        assert.equal(fs.existsSync(targets[2]), false);
+        await browser.waitUntil(async () => (await entryNames()).includes(names[0]));
+      });
     }
   },
 );

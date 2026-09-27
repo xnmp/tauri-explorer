@@ -32,7 +32,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
         signal.addEventListener("abort", () => controller.abort(), { once: true });
         return runOrderedSession(
           op === "cancel-copy" ? "copy_entries" : "move_entries",
-          [event.detail.source!],
+          event.detail.sources ?? [event.detail.source!],
           event.detail.destination!,
           {
             signal: controller.signal,

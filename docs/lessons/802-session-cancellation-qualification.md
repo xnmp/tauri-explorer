@@ -19,6 +19,15 @@ the engine, await full settlement, and compare source/destination residue with
 the projected history. Cancellation after apply completion is allowed to leave
 a committed destination only when the retained receipt records that effect.
 
+For each copy and move boundary, test both the first item and the second item
+of a three-item request. The latter must keep the completed prefix, leave the
+suffix untouched, publish no suffix events, and preserve exact source/target
+bytes. The native conflict-cancel probe also covers a committed prefix and
+checks that Undo and Redo affect only that prefix. The worker-entry test covers
+an already-cancelled native move; it does not claim to park a queued blocking
+worker after enqueue. The extended native spec still requires execution against
+the final qualified binary before its outcome is counted.
+
 The qualification table is:
 
 | Boundary | Gate | Expected residue/history after settlement |

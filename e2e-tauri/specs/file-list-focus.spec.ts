@@ -97,10 +97,23 @@ nativeDescribe("native file-list composite focus", () => {
       await useView(viewMode);
       const middle = $(entrySelector(folderNames[1]));
       await middle.waitForDisplayed();
-      await middle.click();
+      const clickPoint = await browser.execute((element: HTMLElement) => {
+        const rect = element.getBoundingClientRect();
+        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+      }, middle);
+      await browser.performActions([{
+        type: "pointer", id: `file-list-${viewMode}`, parameters: { pointerType: "mouse" },
+        actions: [
+          { type: "pointerMove", duration: 0, origin: "viewport", ...clickPoint },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerUp", button: 0 },
+        ],
+      }]);
+      await browser.releaseActions();
       await expect(middle).toHaveElementClass("selected");
+      await expect(middle).toHaveAttribute("tabindex", "0");
       await browser.waitUntil(async () => (await activeEntryPath()) === middlePath, {
-        timeoutMsg: `${viewMode} click did not focus the middle folder`,
+        timeoutMsg: `${viewMode} pointer click did not focus the middle folder`,
       });
 
       const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);

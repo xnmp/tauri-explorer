@@ -20,6 +20,20 @@ That initial run still provided valid passing evidence for both config reload
 cases, ConPTY Ctrl+Q ownership, and watch-root replacement; it did not provide
 resize, composite-focus, or existing-file preview-refresh evidence.
 
+A later Windows run reached the repaired selectors and exposed three more
+runner assumptions. WebDriver's element-click request selected a composite row
+without moving DOM focus; because that alone does not establish how a real
+pointer behaves, the Tab-cycle test now sends pointer down/up at the row and
+still requires both its roving tab stop and DOM focus to advance. The shared
+native profile had retained an open preview, so Space closed an already
+populated preview; the resize test now establishes a closed baseline first.
+Splitting one drag across two `performActions` requests stopped at the first
+move on the observed runner, without proving why. The test now represents the
+physical drag as one W3C action sequence, with a pause that lets the first
+resize and terminal reflow settle before its second move. Terminal fixtures use
+the runner-owned cleanup root because Windows cannot remove the shell's current
+working directory until the native process exits.
+
 - `file-list-focus.spec.ts` — Tab/Shift+Arrow/F2 keyboard focus ownership.
 - `preview-resize.spec.ts` — zoomed pointer/keyboard dock resize and
   fullscreen containment.

@@ -66,6 +66,13 @@ nativeDescribe("native preview resizing", () => {
   it("keeps real markdown usable through zoomed pointer, dock, fullscreen, and keyboard resizing", async () => {
     await browser.setWindowSize(1280, 900);
     await navigateTo(scratch);
+    // Native specs share persisted settings across driver sessions. A visible
+    // preview can already have loaded the sole fixture entry; Space would then
+    // close it instead of establishing the state this test intends to resize.
+    if (await $(".preview-pane").isDisplayed()) {
+      await command("Toggle Preview Pane");
+      await $(".preview-pane").waitForDisplayed({ reverse: true });
+    }
     await $(entryPathSelector(path.join(scratch, fileName))).click();
     await browser.keys(" ");
     await expectContent();

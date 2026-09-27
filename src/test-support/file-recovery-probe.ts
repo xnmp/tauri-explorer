@@ -39,7 +39,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
             jobId: Number(++next),
             onConflict: async () => ({ choice: "cancel", applyToAll: false }),
             onEvent: (sessionEvent) => {
-              if (sessionEvent.type === "ready") controller.abort();
+              if (sessionEvent.type === "conflict") controller.abort();
             },
           },
         );

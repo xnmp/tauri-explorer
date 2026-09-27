@@ -287,7 +287,7 @@ gatedDescribe("File recovery native acceptance", [
   });
 
   for (const operationName of ["copy", "move"] as const) {
-    it(`settles a cancelled native ${operationName} session without publishing its destination`, async () => {
+    it(`settles a cancelled native ${operationName} conflict without replacing its destination`, async () => {
       const base = path.dirname(fixture.target);
       const sourceDirectory = path.join(base, `cancel-${operationName}-source`);
       const destination = path.join(base, `cancel-${operationName}-destination`);
@@ -296,6 +296,7 @@ gatedDescribe("File recovery native acceptance", [
       const source = path.join(sourceDirectory, `${operationName}.txt`);
       const target = path.join(destination, `${operationName}.txt`);
       fs.writeFileSync(source, `${operationName} cancellation payload\n`);
+      fs.writeFileSync(target, `${operationName} existing destination\n`);
       const historyBefore = JSON.parse(await browser.execute(() =>
         document.documentElement.dataset.e2eHistorySummary ?? "{}"));
 
@@ -309,7 +310,7 @@ gatedDescribe("File recovery native acceptance", [
       assert.equal(result.data?.cancelled, true);
       assert.deepEqual(result.data?.items.map(item => item.status), ["unstarted"]);
       assert.equal(fs.readFileSync(source, "utf8"), `${operationName} cancellation payload\n`);
-      assert.ok(!fs.existsSync(target), "cancelled native session published its destination");
+      assert.equal(fs.readFileSync(target, "utf8"), `${operationName} existing destination\n`);
       const historyAfter = JSON.parse(await browser.execute(() =>
         document.documentElement.dataset.e2eHistorySummary ?? "{}"));
       assert.equal(historyAfter.undoId, historyBefore.undoId, "cancelled session created Undo history");

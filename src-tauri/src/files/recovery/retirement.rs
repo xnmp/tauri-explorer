@@ -429,7 +429,7 @@ pub(super) fn enforce(coordinator: &Arc<Coordinator>) -> Result<Usage, AppError>
 }
 
 /// The outcome of examining one claimed record during an enforcement pass.
-enum Settled {
+pub(super) enum Settled {
     /// Reclaimed: the record and its artifacts are gone.
     Retired,
     /// Owned by another worker right now.
@@ -439,7 +439,11 @@ enum Settled {
 
 /// Claim one record, measure it, and finish any retirement it is already
 /// committed to. Returns the settled accounting for that record.
-fn settle(coordinator: &Arc<Coordinator>, id: &str, generation: u64) -> Result<Settled, AppError> {
+pub(super) fn settle(
+    coordinator: &Arc<Coordinator>,
+    id: &str,
+    generation: u64,
+) -> Result<Settled, AppError> {
     let Some(operation) = coordinator.try_claim(id, generation)? else {
         return Ok(Settled::Busy);
     };

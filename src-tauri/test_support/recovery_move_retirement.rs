@@ -1968,3 +1968,366 @@ fn a_deferral_recorded_before_its_measurement_still_waits_for_a_retry() {
     assert!(reply.error.is_none(), "{:?}", reply.error);
     f.assert_retired();
 }
+
+// --- Mount boundaries inside retained payloads (#760, PR #790 review N1) ---
+
+/// Discard the only record, as the File Recovery dialog would.
+fn discard_only_record(coordinator: &Arc<Coordinator>) -> Option<String> {
+    let id = coordinator.inventory().unwrap().entries[0].intent.id.clone();
+    let snapshot = service::inspect(coordinator, &id).unwrap();
+    service::resolve(
+        coordinator,
+        &id,
+        snapshot.items[0].generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap()
+    .error
+}
+
+fn device(path: &std::path::Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata(path).unwrap().dev()
+}
+
+/// A bind mount of the payload's own filesystem keeps its device, so only its
+/// mount id shows that a walk would leave the payload. Admission once walked
+/// into it, and Discard then unlinked the bind source's files, outside the
+/// payload, before the final rmdir failed with EBUSY. Requires the isolated
+/// namespace documented in e2e-tauri/README.md.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn a_bind_mount_inside_a_payload_is_refused_before_any_record() {
+    for overwrite_only in [false, true] {
+        let base = tempfile::tempdir().unwrap();
+        let shared = tempfile::tempdir_in("/dev/shm").unwrap();
+        let base_path = fs::canonicalize(base.path()).unwrap();
+        let shared_path = fs::canonicalize(shared.path()).unwrap();
+        // Cross volume: the source tree would be parked. Same volume with an
+        // overwrite: the displaced destination tree would be retained. The
+        // bind source always lives on the retained tree's own filesystem.
+        let home = if overwrite_only {
+            &base_path
+        } else {
+            &shared_path
+        };
+        let data = home.join("data");
+        fs::create_dir(&data).unwrap();
+        fs::write(data.join("precious"), OLD).unwrap();
+        let (source, target) = (home.join("source"), base_path.join("target"));
+        let tree = if overwrite_only { &target } else { &source };
+        if overwrite_only {
+            fs::write(&source, MOVED).unwrap();
+        }
+        fs::create_dir_all(tree.join("inner")).unwrap();
+        fs::write(tree.join("entry"), OLD).unwrap();
+        let inner = tree.join("inner");
+        isolated_mount(
+            "mount",
+            &["--bind".as_ref(), data.as_os_str(), inner.as_os_str()],
+        );
+        assert_eq!(device(&inner), device(tree), "a bind mount keeps its device");
+        let coordinator = Coordinator::open(&base_path.join("recovery")).unwrap();
+        let mut progress =
+            crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+        match PreparedMove::prepare(&coordinator, &source, &target)
+            .and_then(|prepared| prepared.execute(&mut progress))
+        {
+            Ok(_) => {
+                let discard = discard_only_record(&coordinator);
+                panic!(
+                    "overwrite_only={overwrite_only}: a payload holding a bind mount was \
+                     admitted; after Discard ({discard:?}) the bind source still holds its \
+                     file: {}",
+                    data.join("precious").exists()
+                );
+            }
+            Err(error) => {
+                let error = error.to_string();
+                assert!(error.contains("Nothing was moved"), "{error}");
+                assert!(error.contains("'inner'"), "{error}");
+                assert!(error.contains("mount point"), "{error}");
+            }
+        }
+        assert!(coordinator.inventory().unwrap().entries.is_empty());
+        assert_eq!(fs::read(data.join("precious")).unwrap(), OLD);
+        assert_eq!(fs::read(inner.join("precious")).unwrap(), OLD);
+        assert_eq!(fs::read(tree.join("entry")).unwrap(), OLD);
+        assert!(private_residue(source.parent().unwrap()).is_empty());
+        assert!(private_residue(target.parent().unwrap()).is_empty());
+        isolated_mount("umount", &[inner.as_os_str()]);
+    }
+}
+
+/// A cross-volume move whose destination is bind-mounted into after the move.
+/// Undo would park the destination, bind mount and all, as `publication`.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn undo_refuses_a_destination_that_holds_a_bind_mount() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    let f = Fixture::build(true, false, false, |source| {
+        fs::create_dir_all(source.join("inner")).unwrap();
+        fs::write(source.join("entry"), MOVED).unwrap();
+    });
+    let data = f.target.parent().unwrap().join("data");
+    fs::create_dir(&data).unwrap();
+    fs::write(data.join("precious"), OLD).unwrap();
+    let inner = f.target.join("inner");
+    isolated_mount(
+        "mount",
+        &["--bind".as_ref(), data.as_os_str(), inner.as_os_str()],
+    );
+    assert_eq!(device(&inner), device(&f.target));
+    let revision = effect_revision(&f);
+    match history_undo(&f, revision) {
+        Ok(()) => {
+            let discard = discard_only_record(&f.coordinator);
+            panic!(
+                "Undo parked a destination holding a bind mount; after Discard \
+                 ({discard:?}) the bind source still holds its file: {}",
+                data.join("precious").exists()
+            );
+        }
+        Err(error) => {
+            assert!(!matches!(error, AppError::MutationUncertain(_)), "{error}");
+            let error = error.to_string();
+            assert!(error.contains("Nothing was changed"), "{error}");
+            assert!(error.contains("'inner'"), "{error}");
+            assert!(error.contains("mount point"), "{error}");
+            assert!(!error.contains("too large"), "{error}");
+        }
+    }
+    assert_eq!(fs::read(data.join("precious")).unwrap(), OLD);
+    assert_eq!(fs::read(inner.join("precious")).unwrap(), OLD);
+    assert_eq!(fs::read(f.target.join("entry")).unwrap(), MOVED);
+    assert!(!f.source.exists(), "the source stayed parked");
+    assert!(f
+        .coordinator
+        .try_claim_history(&f.id, revision, HistoryPosition::Published)
+        .unwrap()
+        .is_some());
+    // Unmounted, the same Undo succeeds.
+    isolated_mount("umount", &[inner.as_os_str()]);
+    history_undo(&f, revision).unwrap();
+    assert_eq!(fs::read(f.source.join("entry")).unwrap(), MOVED);
+    assert!(!f.target.exists());
+    assert_eq!(fs::read(data.join("precious")).unwrap(), OLD);
+}
+
+/// A mount inside a payload already retained in a private root: at Discard,
+/// planning must refuse it; once the decision is journaled, removal must stop
+/// before deleting anything beneath it.
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn discard_never_removes_files_through_a_mount_inside_a_retained_payload() {
+    use crate::files::recovery::coordinator::HistoryPosition;
+    let f = Fixture::build(true, false, false, |source| {
+        fs::create_dir_all(source.join("inner")).unwrap();
+        fs::write(source.join("inner/planned"), MOVED).unwrap();
+    });
+    let parked = f.roots[0].join("parked");
+    let inner = parked.join("inner");
+    // The bind source shares the parked payload's filesystem.
+    let data = f.source.parent().unwrap().join("data");
+    fs::create_dir(&data).unwrap();
+    fs::write(data.join("precious"), OLD).unwrap();
+    isolated_mount(
+        "mount",
+        &["--bind".as_ref(), data.as_os_str(), inner.as_os_str()],
+    );
+    assert_eq!(device(&inner), device(&parked));
+    let revision = effect_revision(&f);
+    let refused = discard_only_record(&f.coordinator);
+    let survived = data.join("precious").exists();
+    isolated_mount("umount", &[inner.as_os_str()]);
+    assert!(
+        survived,
+        "Discard deleted the bind source's file ({refused:?})"
+    );
+    let refused = refused.expect("a payload holding a mount was discarded");
+    assert!(refused.contains("mount point"), "{refused}");
+    assert_eq!(fs::read(data.join("precious")).unwrap(), OLD);
+    assert_eq!(fs::read(inner.join("planned")).unwrap(), MOVED);
+    assert!(
+        f.coordinator
+            .try_claim_history(&f.id, revision, HistoryPosition::Published)
+            .unwrap()
+            .is_some(),
+        "Discard consumed Undo although it removed nothing"
+    );
+    // A mount that appears after the decision, before this root's removal:
+    // here the planned directory bound onto itself, so every recorded
+    // identity still matches and only its mount shows the crossing.
+    let result = f.retirement().retire_with(|label| {
+        if label == "source-intent" {
+            isolated_mount(
+                "mount",
+                &["--bind".as_ref(), inner.as_os_str(), inner.as_os_str()],
+            );
+        }
+        Ok(())
+    });
+    let beneath = fs::read(inner.join("planned")).ok();
+    isolated_mount("umount", &[inner.as_os_str()]);
+    assert!(result.is_err(), "removal crossed a mount");
+    assert_eq!(
+        beneath.as_deref(),
+        Some(MOVED),
+        "removal deleted files beneath a mount point"
+    );
+    // Unmounted, the reported discard can be retried to completion.
+    assert_eq!(discard_only_record(&f.coordinator), None);
+    f.assert_retired();
+    assert_eq!(fs::read(data.join("precious")).unwrap(), OLD);
+}
+
+// --- Enforcement only claims what it can observe (PR #790 review N5) ---
+
+/// Rename an artifact root's parent away, so its recorded identity can no
+/// longer be opened. Returns the path to rename it back from.
+fn hide_parent(root: &std::path::Path) -> PathBuf {
+    let parent = root.parent().unwrap().to_path_buf();
+    let away = parent.with_extension("away");
+    fs::rename(&parent, &away).unwrap();
+    fs::create_dir(&parent).unwrap();
+    away
+}
+
+fn restore_parent(root: &std::path::Path, away: &std::path::Path) {
+    let parent = root.parent().unwrap();
+    fs::remove_dir(parent).unwrap();
+    fs::rename(away, parent).unwrap();
+}
+
+#[test]
+fn enforcement_claims_an_unmeasured_settled_move_only_once_it_can_observe_it() {
+    if running_as_root() {
+        return;
+    }
+    for restored in [false, true] {
+        let f = Fixture::new(true, false, false);
+        if restored {
+            f.restore();
+        }
+        let unmeasured = || {
+            f.coordinator.inventory().unwrap().entries[0]
+                .state
+                .as_ref()
+                .unwrap()
+                .move_state()
+                .unwrap()
+                .retained_bytes
+                .is_none()
+        };
+        assert!(unmeasured());
+        let before = generation(&f);
+        // An artifact root this user cannot open: nothing can be measured or
+        // removed, so claiming it would only advance its generation.
+        let root = f.roots[1].clone();
+        set_mode(&root, 0o000);
+        for _ in 0..3 {
+            retirement::enforce(&f.coordinator).unwrap();
+        }
+        let after_unreadable = generation(&f);
+        set_mode(&root, 0o700);
+        // An artifact parent whose recorded identity is away.
+        let away = hide_parent(&f.roots[0]);
+        for _ in 0..3 {
+            retirement::enforce(&f.coordinator).unwrap();
+        }
+        let after_away = generation(&f);
+        restore_parent(&f.roots[0], &away);
+        assert_eq!(
+            (after_unreadable, after_away),
+            (before, before),
+            "restored={restored}: enforcement claimed a record it could not observe"
+        );
+        assert!(unmeasured());
+        // Observable again, it is claimed once: an automatic discard reclaims
+        // it, and an explicit-only record is measured and then left alone.
+        retirement::enforce(&f.coordinator).unwrap();
+        if restored {
+            f.assert_retired();
+            assert_eq!(fs::read(&f.source).unwrap(), MOVED);
+        } else {
+            assert!(!unmeasured());
+            let measured = generation(&f);
+            for _ in 0..3 {
+                retirement::enforce(&f.coordinator).unwrap();
+            }
+            assert_eq!(generation(&f), measured);
+        }
+    }
+}
+
+#[test]
+fn a_claimed_automatic_discard_whose_root_cannot_be_opened_waits_for_a_retry() {
+    if running_as_root() {
+        return;
+    }
+    let f = Fixture::new(true, false, false);
+    f.restore();
+    let root = f.roots[1].clone();
+    assert!(root.join("publication").exists());
+    // The root became unopenable after enforcement chose to claim it.
+    set_mode(&root, 0o000);
+    let _ = retirement::settle(&f.coordinator, &f.id, generation(&f));
+    set_mode(&root, 0o700);
+    let claimed = generation(&f);
+    for _ in 0..3 {
+        retirement::enforce(&f.coordinator).unwrap();
+    }
+    assert!(
+        !f.coordinator.inventory().unwrap().entries.is_empty(),
+        "a discard that could not start was retried without being asked"
+    );
+    assert_eq!(generation(&f), claimed, "enforcement claimed it again");
+    let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
+    let item = &snapshot.items[0];
+    assert!(item.message.contains("could not start"), "{}", item.message);
+    assert!(
+        item.message.contains("Permission denied"),
+        "{}",
+        item.message
+    );
+    assert_eq!(item.actions, vec![RecoveryChoice::Discard]);
+    let reply = service::resolve(
+        &f.coordinator,
+        &f.id,
+        item.generation,
+        RecoveryChoice::Discard,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    f.assert_retired();
+}
+
+// --- Undo names why it cannot keep a destination (PR #790 review N6) ---
+
+#[test]
+fn undo_says_why_it_cannot_keep_the_destination() {
+    if running_as_root() {
+        return;
+    }
+    // Unreadable: a directory inside the destination this user cannot list.
+    let f = Fixture::build(true, false, false, |source| {
+        fs::create_dir_all(source.join("locked")).unwrap();
+        fs::write(source.join("locked/entry"), MOVED).unwrap();
+    });
+    let revision = effect_revision(&f);
+    set_mode(&f.target.join("locked"), 0o000);
+    let unreadable = history_undo(&f, revision).unwrap_err().to_string();
+    set_mode(&f.target.join("locked"), 0o700);
+    assert!(unreadable.contains("'locked'"), "{unreadable}");
+    assert!(unreadable.contains("cannot be read"), "{unreadable}");
+    assert!(unreadable.contains("Permission denied"), "{unreadable}");
+    assert!(unreadable.contains("Nothing was changed"), "{unreadable}");
+    assert!(!unreadable.contains("too large"), "{unreadable}");
+    // Grown past any retirement plan.
+    let f = plannable_deep_move();
+    let revision = effect_revision(&f);
+    populate_deep(&deep(&f.target), 1_200..2_600);
+    let grown = history_undo(&f, revision).unwrap_err().to_string();
+    assert!(grown.contains("grown too large"), "{grown}");
+    assert!(grown.contains("Nothing was changed"), "{grown}");
+}

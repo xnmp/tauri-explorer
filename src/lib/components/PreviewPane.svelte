@@ -875,7 +875,7 @@ import { openFile } from "$lib/api/open";
               {#if line.kind === "hunk"}
                 {@const hunk = diffParsed?.hunks.find((candidate) => candidate.lineIndex === line.index)}
                 <span class="diff-content hunk-content">
-                  <span>{line.text}</span>
+                  <span class="hunk-range">{line.text}</span>
                   {#if activeDiff && hunk}
                     <span class="hunk-actions">
                       {#if activeDiff.staged}
@@ -1071,6 +1071,95 @@ import { openFile } from "$lib/api/open";
     min-height: 0;
     flex-shrink: 1;
     border-left: none;
+  }
+
+  /* A vertical dock is wide and short: its name, type and metadata share one
+     row, as in a bottom details pane, so the content keeps the dock's height.
+     Stacked, that chrome alone exceeded the 120px minimum height and left no
+     room for content (#792).
+     The header column takes what the name and badge need, capped at 65% of
+     the pane or everything but 16rem, whichever is larger. The metadata
+     column takes the rest and ellipsizes. Neither can squeeze the other to
+     nothing, however long the name or a diff's path. */
+  .preview-pane.vertical:not(.fullscreen) {
+    display: grid;
+    grid-template-columns: fit-content(max(65%, 100% - 16rem)) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      "header info"
+      "actions actions"
+      "content content";
+  }
+
+  /* The name has priority over the type badge: the badge gives up width
+     first, down to its first few letters, before the name truncates. */
+  .preview-pane.vertical:not(.fullscreen) > .preview-header {
+    grid-area: header;
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(3.5rem, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 8px 12px;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {
+    display: block;
+    align-self: center;
+    justify-self: start;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .diff-actions {
+    grid-area: actions;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-content {
+    grid-area: content;
+  }
+
+  /* Each metadata field keeps its own row beside the header. A shared
+     ellipsis can hide the entire Modified field in a narrow window. */
+  .preview-pane.vertical:not(.fullscreen) > .preview-info {
+    grid-area: info;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 8px 12px;
+    font-size: var(--font-size-caption);
+    white-space: nowrap;
+    border-top: none;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
+    flex-shrink: 0;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-empty {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
   }
 
   .preview-pane.dock-bottom {
@@ -1429,6 +1518,7 @@ import { openFile } from "$lib/api/open";
     color: var(--text-secondary);
     flex: 1;
     overflow-wrap: break-word;
+    container: preview-markdown / inline-size;
   }
 
   .preview-markdown :global(h1),
@@ -1475,6 +1565,17 @@ import { openFile } from "$lib/api/open";
     grid-template-columns: minmax(76px, 0.38fr) minmax(0, 1fr);
     gap: 8px;
     padding: 3px 0;
+  }
+
+  /* In a narrow pane the key column would squeeze each value to a few
+     characters per line; stack the key above its value instead (#792).
+     Side by side needs the properties box's 22px of padding and border, the
+     76px key column, the 8px gap and a 96px value: 202px. */
+  @container preview-markdown (width < 202px) {
+    .preview-markdown :global(.md-property) {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
   }
 
   .preview-markdown :global(.md-property + .md-property) {
@@ -1803,10 +1904,32 @@ import { openFile } from "$lib/api/open";
     gap: 6px;
   }
 
-  .hunk-content { justify-content: space-between; }
+  /* In a narrow pane a hunk's actions wrap below its range, the range
+     ellipsizes, and each action's label wraps, so no action is ever clipped
+     out of reach (#792). */
+  .hunk-content {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .hunk-range {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .hunk-actions {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+  }
 
   .hunk-action {
-    padding: 1px 5px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 1px 3px;
     border: 1px solid var(--divider);
     border-radius: var(--radius-sm);
     background: var(--background-card);
@@ -1814,6 +1937,8 @@ import { openFile } from "$lib/api/open";
     cursor: pointer;
     font: inherit;
     font-size: 10px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .hunk-action.danger { color: var(--system-critical-text, var(--system-critical, #dc2626)); }

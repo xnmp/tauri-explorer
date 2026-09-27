@@ -2,8 +2,8 @@
 
 The real streaming-search integration test shares one watched parent between
 several roots. The observed macOS-only extra scan is consistent with a
-filesystem event from
-that shared parent being delivered after a later sibling root is registered.
+filesystem event from that shared parent being delivered after a later sibling
+root is registered.
 The watcher must conservatively invalidate the recursive search cache when a
 delivered path is inside a currently registered root. The CI trace did not
 record event identity or delivery time, so this delayed-event mechanism remains

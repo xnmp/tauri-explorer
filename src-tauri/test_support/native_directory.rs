@@ -58,6 +58,10 @@ fn mount_points_are_observed_without_following_links() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "APFS rejects names that are not valid UTF-8 (EILSEQ)"
+)]
 fn enumeration_is_repeatable_bounded_and_lossless() {
     let temporary = tempfile::tempdir().unwrap();
     let name = OsString::from_vec(b"native-\xff".to_vec());

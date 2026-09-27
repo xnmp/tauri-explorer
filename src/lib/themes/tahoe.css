@@ -17,11 +17,15 @@
   --accent: #4a7cff;
   --accent-light: #7da8ff;
   --accent-dark: #2e5cd9;
+  /* Accent, caution and critical as text (--*-text): the fill colours fall
+     below AA on this theme's surfaces, so text uses darker shades of the same
+     hues (#785). */
+  --accent-text: #2e5bdb;
 
   /* Text colors */
   --text-primary: #1a1a2e;
   --text-secondary: #4a4a6a;
-  --text-tertiary: #8e8ea8;
+  --text-tertiary: #63637c;
   --text-on-accent: #ffffff;
 
   /* Background colors - lavender-blue gradient glass */
@@ -73,8 +77,11 @@
 
   /* System status colors */
   --system-critical: #ff3b30;
+  --system-critical-text: #cf0000;
   --system-success: #34c759;
+  --system-success-text: #1b7431;
   --system-caution: #ff9500;
+  --system-caution-text: #ab4700;
 
   /* Shadows - blue-violet tinted */
   --shadow-flyout: 0 8px 24px rgba(60, 60, 120, 0.12), 0 2px 8px rgba(60, 60, 120, 0.06), 0 0 12px rgba(74, 124, 255, 0.03);

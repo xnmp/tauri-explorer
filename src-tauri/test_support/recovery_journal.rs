@@ -148,6 +148,10 @@ fn open_existing_rejects_a_symbolic_link_database_path() {
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "APFS rejects names that are not valid UTF-8 (EILSEQ)"
+)]
 fn open_existing_preserves_a_non_utf8_native_database_path() {
     use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 

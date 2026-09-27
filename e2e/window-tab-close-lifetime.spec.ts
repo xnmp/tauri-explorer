@@ -25,7 +25,7 @@ test.describe("Window tab close ownership", () => {
     const stateAfterClick = await page.locator(".tab.active .tab-close").evaluate(async (button) => {
       const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");
       const { windowTabsManager: manager } = await load();
-      (button as HTMLButtonElement).click();
+      (button as HTMLElement).click();
       return {
         tabCount: manager.tabs.length,
         activePath: manager.getTabPath(manager.activeTabId),
@@ -59,7 +59,7 @@ test.describe("Window tab close ownership", () => {
     // Schedule the component's visual close, then replace the manager state
     // with a valid persisted workspace containing the same stable tab ID.
     await page.locator(".tab.active .tab-close").evaluate((button) =>
-      (button as HTMLButtonElement).click(),
+      (button as HTMLElement).click(),
     );
     await page.evaluate(async ({ id, state }) => {
       const load = new Function("return import('/src/lib/state/window-tabs.svelte.ts')");

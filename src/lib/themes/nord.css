@@ -23,7 +23,7 @@
   /* Text colors - snow storm over polar night */
   --text-primary: #eceff4;
   --text-secondary: #d8dee9;
-  --text-tertiary: #7b88a1;
+  --text-tertiary: #b4c2dc;
   --text-on-accent: #2e3440;
 
   /* Background colors - polar night ladder */
@@ -78,6 +78,8 @@
 
   /* System status colors - aurora */
   --system-critical: #bf616a;
+  /* Critical as text: the fill colour falls below AA on this theme's surfaces (#785). */
+  --system-critical-text: #ed8a92;
   --system-success: #a3be8c;
   --system-caution: #ebcb8b;
 

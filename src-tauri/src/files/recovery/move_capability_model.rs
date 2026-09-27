@@ -167,7 +167,6 @@ fn invalid(message: &str) -> io::Error {
 pub(super) fn validate(
     spec: &super::move_model::MoveSpec,
     state: &super::move_model::MoveState,
-    resources: &[super::resources::Resource],
 ) -> io::Result<()> {
     use super::move_model::MovePhase;
     if state.phase == MovePhase::Aborted && spec.rename_probes.is_none() {
@@ -211,7 +210,7 @@ pub(super) fn validate(
     // Removed probe identities may be reused by later artifact creation; they
     // cannot be compared against newly created move-root identities.
     let mut prior_removed = true;
-    for ((plan, _, parent), step) in spec.probe_plans().zip(&progress.steps) {
+    for ((_, _, parent), step) in spec.probe_plans().zip(&progress.steps) {
         if !prior_removed && !matches!(step, Step::Planned) {
             return Err(invalid("Rename probes must execute in order"));
         }
@@ -238,7 +237,7 @@ pub(super) fn validate(
                 (*root, file.as_ref())
             }
         };
-        spec.validate_root(resources, plan, parent, root)?;
+        spec.validate_root(parent, root)?;
         if !objects.insert(root) {
             return Err(invalid("Probe root aliases other evidence"));
         }

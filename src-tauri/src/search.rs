@@ -1101,12 +1101,14 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn find_walk_passes_matches_jwalk_semantics() {
-        if std::process::Command::new("find")
+        // The walk uses GNU `-printf`; production runs it only through WSL's
+        // Linux find. BSD find (macOS) spawns but rejects `--version`.
+        if !std::process::Command::new("find")
             .arg("--version")
             .output()
-            .is_err()
+            .is_ok_and(|output| output.status.success())
         {
-            eprintln!("skipping: no `find` on this machine");
+            eprintln!("skipping: no GNU `find` on this machine");
             return;
         }
         let dir = tempdir().unwrap();

@@ -1,107 +1,12 @@
-use super::{delete_outcome, entry_outcome, outcome, AppError, EntryPlan, ForwardEffect};
+use super::{delete_outcome, entry_outcome, AppError, EntryPlan, ForwardEffect};
 use crate::{
     file_history::Action,
-    files::{batch, file_ops, mutation::FileMutationReceipt, run_blocking},
+    files::{batch, file_ops},
 };
 use std::fs;
 
 fn native(path: &std::path::Path) -> String {
     path.to_string_lossy().into_owned()
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn real_replacement_cleanup_warning_retains_the_exact_forward_inverse_and_refresh() {
-    struct CopyContext {
-        runtime: crate::files::recovery::Runtime,
-        storage: std::path::PathBuf,
-        source: std::path::PathBuf,
-        target: std::path::PathBuf,
-    }
-    impl CopyContext {
-        fn execute(&mut self) -> Result<FileMutationReceipt, AppError> {
-            let mut progress = crate::progress::ProgressTracker::new(
-                None,
-                "copy-progress",
-                "Copy cancelled",
-                0,
-                0,
-                None,
-            );
-            self.runtime.replace_copy(
-                self.storage.clone(),
-                &self.source,
-                &self.target,
-                &mut progress,
-            )
-        }
-    }
-    impl Drop for CopyContext {
-        fn drop(&mut self) {
-            panic!("post-result copy context cleanup failed");
-        }
-    }
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("source");
-    let target = directory.path().join("target");
-    fs::write(&source, "new bytes").unwrap();
-    fs::write(&target, "old bytes").unwrap();
-    let storage = directory.path().join("recovery");
-    let runtime = crate::files::recovery::Runtime::default();
-    let directories = vec![native(directory.path())];
-    let settled = tauri::async_runtime::block_on(async {
-        let completion = crate::files::run_blocking_context(
-            CopyContext {
-                runtime: runtime.clone(),
-                storage: storage.clone(),
-                source,
-                target: target.clone(),
-            },
-            CopyContext::execute,
-        )
-        .await;
-        super::copy_outcome(directories.clone(), completion).await
-    });
-    assert!(settled
-        .warning
-        .unwrap()
-        .contains("post-result copy context cleanup failed"));
-    assert_eq!(settled.affected, directories);
-    let receipt = settled.result.unwrap();
-    let ForwardEffect::Changed(Some(Action::Replacement {
-        path,
-        recovery: Some(inverse),
-    })) = settled.effect
-    else {
-        panic!("cleanup warning lost the native inverse")
-    };
-    assert_eq!(path, receipt.path);
-    assert_eq!(inverse, receipt.replacement.unwrap().history);
-    assert_eq!(fs::read(&target).unwrap(), b"new bytes");
-    tauri::async_runtime::block_on(runtime.execute_history(
-        storage,
-        inverse,
-        crate::files::recovery::ReplacementDirection::Restore,
-    ))
-    .unwrap();
-    assert_eq!(fs::read(target).unwrap(), b"old bytes");
-}
-
-#[test]
-fn ordinary_copy_cleanup_warning_is_visible_without_replacement_metadata() {
-    let directory = tempfile::tempdir().unwrap();
-    let target = directory.path().join("copied");
-    fs::write(&target, "copied bytes").unwrap();
-    let outcome = tauri::async_runtime::block_on(super::copy_outcome(
-        vec![native(directory.path())],
-        crate::files::WorkerCompletion {
-            result: Ok(FileMutationReceipt::committed(&target)),
-            warning: Some("worker cleanup warning".into()),
-        },
-    ));
-    assert_eq!(outcome.warning.as_deref(), Some("worker cleanup warning"));
-    assert!(outcome.result.is_ok());
-    assert!(matches!(outcome.effect, ForwardEffect::Changed(None)));
 }
 
 #[test]
@@ -149,29 +54,6 @@ fn same_name_rename_still_rejects_a_missing_source() {
     assert!(matches!(result.result, Err(AppError::NotFound(_))));
     assert!(matches!(result.effect, ForwardEffect::Unchanged));
     assert!(result.affected.is_empty());
-}
-
-#[test]
-fn blocking_worker_panic_after_a_write_requires_history_invalidation_and_reconciliation() {
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("committed.txt");
-    let worker_path = path.clone();
-    let directories = vec![root.path().to_string_lossy().into_owned()];
-    let result = tauri::async_runtime::block_on(outcome(
-        directories.clone(),
-        run_blocking(move || -> Result<FileMutationReceipt, AppError> {
-            fs::write(worker_path, "committed before worker failure")?;
-            panic!("injected post-effect worker panic");
-        }),
-        |_| ForwardEffect::Changed(None),
-    ));
-    assert!(result.result.is_err());
-    assert_eq!(
-        fs::read_to_string(path).unwrap(),
-        "committed before worker failure"
-    );
-    assert!(matches!(result.effect, ForwardEffect::Changed(None)));
-    assert_eq!(result.affected, directories);
 }
 
 #[test]

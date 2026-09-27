@@ -9,6 +9,9 @@ import { gatedDescribe } from "./gated-describe";
 import { navigateTo, domTexts, entryNames } from "./helpers";
 
 const directory = process.env.TAURI_E2E_FILE_RECOVERY_DIR;
+// Linux-only: exercises `durable-copy-recovery` (`cfg(unix)`/`cfg(target_os =
+// "linux")`, ADR 0020, plan decision D2) and uses `exactApplicationPid`'s
+// `/proc`-based process identity, neither of which exists on Windows (#800).
 interface Snapshot { revision: string; items: Array<{ id: string; generation: string; actions: string[] }> }
 interface Lease { sessionId: string; subscriptionId: string; channel: number; snapshot: Snapshot; registration: string }
 interface Receipt { event: string; pid: number; registration?: string; channel?: number; label?: string; session?: string; token?: string; revision?: string }
@@ -255,7 +258,7 @@ gatedDescribe("File recovery native acceptance", [
     await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-production-copy-redone.png");
     await $(".recovery-notice").click();
     await $(".recovery-dialog").waitForDisplayed();
-    // This record was created by copy_entry, not by the launch fixture. Its
+    // This record was created by the ordered copy session, not by the launch fixture. Its
     // appearance also proves worker-side inventory publication reached the UI.
     const inspect = $(`[data-recovery-inspect="${result.replacement!.id}"]`);
     await inspect.waitForDisplayed();

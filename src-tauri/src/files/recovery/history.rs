@@ -28,7 +28,10 @@ pub(super) fn execute(
             ));
         }
         let mut execution = super::move_execution::MoveExecution::reopen(operation)?;
-        execution.restore_move().map_err(|error| {
+        // A refusal here precedes every durable effect, so it is reported as
+        // unchanged and this same Undo stays available.
+        let admitted = execution.admit_restoration()?;
+        execution.restore_admitted(admitted).map_err(|error| {
             AppError::MutationUncertain(format!(
                 "Move history could not complete; inspect File Recovery before continuing. {error}"
             ))

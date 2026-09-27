@@ -33,6 +33,10 @@ function readLogs(directory: string): string {
     .map(name => fs.readFileSync(path.join(directory, name), "utf8")).join("\n");
 }
 
+// Linux-only: crashes the renderer via a real signal to its descendant
+// processes (`terminateRendererDescendants`) and confirms lease reclamation
+// via `/proc`-based inotify introspection (native-process.ts /
+// native-resources.ts), neither of which has a Windows implementation (#800).
 (process.platform === "linux" ? describe : describe.skip)("Git observation renderer crash ownership", () => {
   before(() => {
     execFileSync("git", ["init", "--quiet", repository]);

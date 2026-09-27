@@ -102,10 +102,18 @@ pub(crate) struct MoveState {
     pub phase: MovePhase,
     /// Only a cross-filesystem move stages an independent copied payload.
     pub staged: Option<super::durable_model::StagedPayload>,
-    #[serde(default)]
+    /// Both retirement-era fields are omitted while absent: strict decoders in
+    /// builds that predate them must still read a record that does not use them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_bytes: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retirement: Option<super::move_retention::RetirementState>,
+    /// Why an automatic discard could not even be journaled: a removal
+    /// preflight, journal headroom or a changed endpoint. Enforcement leaves
+    /// the record for the user's explicit Discard rather than claiming it on
+    /// every pass (#760). Omitted while absent, like the fields above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred: Option<String>,
     pub error: Option<String>,
 }
 
@@ -120,6 +128,7 @@ impl Default for MoveState {
             staged: None,
             retained_bytes: None,
             retirement: None,
+            deferred: None,
             error: None,
         }
     }
@@ -131,6 +140,16 @@ impl MoveState {
         super::move_capability_model::validate(spec, self)?;
         if let Some(retirement) = &self.retirement {
             retirement.validate(spec, self)?;
+        }
+        if self.deferred.as_ref().is_some_and(|reason| {
+            reason.len() > super::durable_model::MAX_ERROR_BYTES
+                || self.retirement.is_some()
+                || super::move_retention::disposal(spec, self.phase)
+                    != Some(super::retention::Disposal::AutomaticWhenSourceIntact)
+        }) {
+            return Err(invalid(
+                "Only a settled, automatically retirable move can defer its cleanup",
+            ));
         }
         let observed = self.phase.roots_observed();
         if self.source_root.is_some() != (observed && spec.source_root.is_some())

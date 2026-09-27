@@ -3156,7 +3156,7 @@
     width: 2px;
   }
 
-  .col-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .col-handle:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
 
   /* Author/date handles sit on the cell's left edge, in the flex gap. */
   .handle-in-cell {

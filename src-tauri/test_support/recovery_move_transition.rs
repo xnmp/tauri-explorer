@@ -831,3 +831,102 @@ fn retirement_event(
         plan(RootSide::Target, spec.target_root.is_some()),
     )
 }
+
+#[test]
+fn an_untouched_discard_decision_withdraws_to_the_exact_prior_history_position() {
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let settled = advance(&intent, state, MoveTransition::ParkCompleted);
+    let deciding = advance(
+        &intent,
+        settled.clone(),
+        retirement_event(&intent, &settled, Decision::Explicit),
+    );
+    // Both a pure decision and one whose first root intent is journaled
+    // return to the same stable position, revision and Undo eligibility.
+    let removing = advance(
+        &intent,
+        deciding.clone(),
+        MoveTransition::BeginRootRetirement(RootSide::Source),
+    );
+    for retiring in [deciding, removing.clone()] {
+        let errored = advance(
+            &intent,
+            retiring,
+            MoveTransition::ReportError("endpoint changed".into()),
+        );
+        let withdrawn = advance(&intent, errored, MoveTransition::WithdrawRetirement);
+        let (before, after) = (state_of(&settled), state_of(&withdrawn));
+        assert_eq!(after.retirement, None);
+        assert_eq!(after.error, None);
+        assert_eq!(after.phase, before.phase);
+        assert_eq!(after.effect_revision, before.effect_revision);
+        // History-eligible again: the same decision can be journaled anew.
+        advance(
+            &intent,
+            withdrawn.clone(),
+            retirement_event(&intent, &withdrawn, Decision::Explicit),
+        );
+        assert!(transition(&intent, &withdrawn, MoveTransition::BeginRestoration).is_ok());
+    }
+    // Once any root is retired the decision can only be completed.
+    let retired = advance(
+        &intent,
+        removing,
+        MoveTransition::RootRetired(RootSide::Source),
+    );
+    assert!(transition(&intent, &retired, MoveTransition::WithdrawRetirement).is_err());
+    let retired = advance(
+        &intent,
+        retired,
+        MoveTransition::BeginRootRetirement(RootSide::Target),
+    );
+    let retired = advance(
+        &intent,
+        retired,
+        MoveTransition::RootRetired(RootSide::Target),
+    );
+    let completed = advance(&intent, retired, MoveTransition::RetirementCompleted);
+    assert!(transition(&intent, &completed, MoveTransition::WithdrawRetirement).is_err());
+    // Without a decision there is nothing to withdraw.
+    assert!(transition(&intent, &settled, MoveTransition::WithdrawRetirement).is_err());
+}
+
+#[test]
+fn only_an_automatically_retirable_move_defers_cleanup_and_a_decision_clears_it() {
+    use crate::files::recovery::{durable_model::MAX_ERROR_BYTES, retention::awaits_retry};
+    let defer = |reason: &str| MoveTransition::DeferRetirement(reason.into());
+    let (intent, state) = cross_volume();
+    let state = to_published(&intent, state);
+    let state = advance(&intent, state, MoveTransition::BeginPark);
+    let parked = advance(&intent, state, MoveTransition::ParkCompleted);
+    // Nothing discards an explicit-only record automatically, so it has
+    // nothing to defer; neither has a restoration still under way.
+    assert!(transition(&intent, &parked, defer("read-only")).is_err());
+    let restoring = advance(&intent, parked, MoveTransition::BeginRestoration);
+    assert!(transition(&intent, &restoring, defer("read-only")).is_err());
+    let restored = advance(&intent, restoring, MoveTransition::RestorationCompleted);
+    assert!(!awaits_retry(&restored));
+    assert!(transition(&intent, &restored, defer(&"x".repeat(MAX_ERROR_BYTES + 1))).is_err());
+    let deferred = advance(&intent, restored, defer("read-only"));
+    assert_eq!(state_of(&deferred).deferred.as_deref(), Some("read-only"));
+    assert!(awaits_retry(&deferred), "enforcement would claim it again");
+    // The user's retry journals a decision, which supersedes the deferral.
+    let deciding = advance(
+        &intent,
+        deferred.clone(),
+        retirement_event(&intent, &deferred, Decision::Automatic),
+    );
+    assert_eq!(state_of(&deciding).deferred, None);
+    assert!(!awaits_retry(&deciding));
+    assert!(transition(&intent, &deciding, defer("read-only")).is_err());
+}
+
+#[test]
+fn an_ordinary_move_state_omits_the_upgrade_only_deferral_field() {
+    assert_eq!(
+        serde_json::to_string(&MoveState::default()).unwrap(),
+        r#"{"effect_revision":0,"source_root":null,"target_root":null,"phase":"planned","staged":null,"error":null}"#
+    );
+}

@@ -175,6 +175,22 @@ pub(super) fn retention(operation: &OperationSpec, state: &OperationState) -> Re
     }
 }
 
+/// A retirement that reported a failure waits for an explicit retry (ADR
+/// 0023): a journaled one that stopped, or an automatic move discard that
+/// could not be journaled at all. Only a crash-interrupted retirement resumes
+/// automatically.
+pub(super) fn awaits_retry(state: &OperationState) -> bool {
+    match state {
+        OperationState::Replacement(state) => {
+            state.phase == Phase::DiscardIntent && state.error.is_some()
+        }
+        OperationState::Move(state) => match &state.retirement {
+            Some(retirement) => state.error.is_some() && !retirement.completed,
+            None => state.deferred.is_some(),
+        },
+    }
+}
+
 /// The measured size a record contributes, or `None` when it has not been
 /// measured yet. An unmeasured record is never reported as empty.
 pub(super) fn measured_bytes(state: &OperationState) -> Option<u64> {

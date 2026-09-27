@@ -318,6 +318,15 @@
     -webkit-appearance: none;
   }
 
+  /* One themed focus ring for every keyboard-focused control (#797), in
+     place of the engine's `outline: auto`. It is inset so a clipping scroller
+     or tab strip cannot hide it. Components that draw their own ring override
+     it with a more specific selector. */
+  :global(:focus-visible) {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
+  }
+
   @font-face {
     font-family: "NerdFontsSymbols";
     src: url("/fonts/SymbolsNerdFont-Regular.ttf") format("truetype");

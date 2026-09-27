@@ -12,9 +12,15 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::Duration;
 
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn http_agent() -> ureq::Agent {
+    http_agent_with_timeout(HTTP_TIMEOUT)
+}
+
+fn http_agent_with_timeout(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(30)))
+        .timeout_global(Some(timeout))
         .build()
         .into()
 }
@@ -202,6 +208,45 @@ pub fn download_to(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_fal_request_has_a_global_time_bound() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        assert_eq!(HTTP_TIMEOUT, Duration::from_secs(30));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request);
+            accepted_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        });
+        let (result_tx, result_rx) = mpsc::channel();
+        let client = std::thread::spawn(move || {
+            result_tx
+                .send(
+                    http_agent_with_timeout(Duration::from_millis(20))
+                        .get(&format!("http://{address}/held"))
+                        .call(),
+                )
+                .unwrap();
+        });
+        accepted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the configured request bound did not fire");
+        assert!(matches!(result, Err(ureq::Error::Timeout(_))), "{result:?}");
+        release_tx.send(()).unwrap();
+        client.join().unwrap();
+        server.join().unwrap();
+    }
 
     #[test]
     fn provided_key_wins() {

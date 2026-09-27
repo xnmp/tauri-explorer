@@ -44,8 +44,10 @@ preview layouts work more consistently across window sizes and platforms.
 
 - Native recovery cases run in a dedicated gated Linux CI job. macOS runner
   contracts cover real PTY lifecycle and case-only filesystem rename (#774,
-  #798). Windows qualification covers one deterministic cycle; the Linux
-  four-hour retention gate remains under evaluation (#809, #817).
+  #798). A hosted Windows bounded soak completed one deterministic cycle on a
+  provisional checkout (#809). A pinned Linux qualification build completed a
+  four-hour native soak with 2,510 cycles and bounded late resource growth
+  (#817). Final-dev integration acceptance remains pending.
 
 ### Release limits
 

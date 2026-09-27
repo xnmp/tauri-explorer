@@ -28,7 +28,9 @@ them with its CSS-pixel limits.
   such as a table, a code block or the CSV surface. An SVG counts as one box.
 - **Usable space.** The content region keeps at least 40 CSS px of height.
   The file name and the metadata each keep the smaller of their natural width
-  and 96 CSS px. In the split cases every file list keeps 96 CSS px.
+  and 96 CSS px. Every metadata label and value also keeps the smaller of its
+  text width and 24 CSS px visible through all clipping ancestors. In the
+  split cases every file list keeps 96 CSS px.
 - **The page.** It never scrolls horizontally. WebKit reports a 1 px root
   `scrollWidth` excess at 150 % with nothing scrollable, so the spec allows
   1 px.
@@ -43,6 +45,7 @@ Each of these checks has failed on a deliberate regression:
 | dev's pre-#792 layout at the minimum vertical dock | content height, reachability |
 | the first vertical-dock grid, `minmax(0, 1fr) auto` | name width, reachability |
 | hunk actions without wrapping | reachability |
+| all metadata fields inside one shared ellipsis | per-field visible width |
 
 ## What it found
 
@@ -55,8 +58,14 @@ Each of these checks has failed on a deliberate regression:
   An `auto` badge did the same to the file name: at 150 % in an 800 px
   window the name was 0 px wide. The header column now takes what it needs,
   up to 65 % of the pane or all but 16rem, whichever is larger. The metadata
-  column takes the rest as one ellipsized line. Within the header, the name
+  column takes the rest. Within the header, the name
   comes first, and the badge ellipsizes down to a 3.5rem floor.
+- **A shared metadata ellipsis hid the entire Modified field.** Checking only
+  the metadata container's width missed that its later inline field lay
+  outside the clipping edge. The test now measures the visible intersection
+  of each label and value. Metadata fields occupy separate compact rows
+  beside the header, and only an individual value can ellipsize. Both fields
+  remain visible without taking a second grid row away from the content.
 - **Hunk actions were clipped in the default right dock.** `.diff-content`
   clips, and the hunk header is a flex row, so "Discard hunk" fell off its
   end with no way to reach it. The actions now wrap below the range, and the

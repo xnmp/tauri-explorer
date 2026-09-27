@@ -1120,35 +1120,39 @@ import { openFile } from "$lib/api/open";
     grid-area: content;
   }
 
-  /* The metadata is one line of text that ellipsizes at its end, right
-     aligned while it fits. */
+  /* Each metadata field keeps its own row beside the header. A shared
+     ellipsis can hide the entire Modified field in a narrow window. */
   .preview-pane.vertical:not(.fullscreen) > .preview-info {
     grid-area: info;
-    display: block;
-    align-content: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
     min-width: 0;
     overflow: hidden;
     padding: 8px 12px;
     font-size: var(--font-size-caption);
-    text-align: end;
-    text-overflow: ellipsis;
     white-space: nowrap;
     border-top: none;
     border-bottom: 1px solid var(--divider);
   }
 
   .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
-    display: inline;
+    display: flex;
+    gap: 8px;
+    min-width: 0;
     padding: 0;
     border-bottom: none;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row + .info-row {
-    margin-inline-start: 16px;
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
+    flex-shrink: 0;
   }
 
-  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
-    margin-inline-end: 8px;
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .preview-pane.vertical:not(.fullscreen) > .preview-empty {

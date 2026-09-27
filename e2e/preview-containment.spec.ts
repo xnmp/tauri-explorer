@@ -377,6 +377,33 @@ function measure(page: Page): Promise<Containment> {
           : [];
       });
 
+      // A shared ellipsis must not hide a whole later metadata field. Check
+      // each label/value's visible intersection, not just the footer box.
+      for (const field of preview.querySelectorAll(".preview-info .info-label, .preview-info .info-value")) {
+        const range = document.createRange();
+        range.selectNodeContents(field);
+        const text = range.getBoundingClientRect();
+        if (text.width <= 0 || text.height <= 0 || getComputedStyle(field).visibility !== "visible") {
+          cramped.push(`metadata ${field.textContent}: has no visible text box`);
+          continue;
+        }
+        let left = text.left;
+        let right = text.right;
+        for (let ancestor: Element | null = field; ancestor; ancestor = ancestor.parentElement) {
+          if (clips(ancestor, "x")) {
+            const bounds = ancestor.getBoundingClientRect();
+            left = Math.max(left, bounds.left);
+            right = Math.min(right, bounds.right);
+          }
+          if (ancestor === preview) break;
+        }
+        const visible = Math.max(0, right - left) / zoom;
+        const required = Math.min(24, text.width / zoom);
+        if (visible + 1 < required) {
+          cramped.push(`metadata ${field.textContent}: shows ${Math.round(visible)} of ${Math.round(required)} required CSS px`);
+        }
+      }
+
       const content = preview.querySelector(":scope > .preview-content");
       const root = document.scrollingElement ?? document.documentElement;
       return {
@@ -485,6 +512,9 @@ for (const layout of CASES) {
       await test.step(format.name, async () => {
         await selectEntry(page, format.name);
         await format.rendered(page);
+        await expect(pane(page).locator(".preview-info .info-label")).toHaveText(
+          showPreviewInfo === false ? [] : format.name === "long-names" ? ["Modified"] : ["Size", "Modified"],
+        );
         await expectContained(page, format.name);
       });
     }
@@ -535,6 +565,7 @@ async function openScm(page: Page, layout: Layout): Promise<void> {
 
 async function expectDiffRendered(page: Page, name: string): Promise<void> {
   await expect(pane(page).locator(".preview-filename")).toHaveText(name);
+  await expect(pane(page).locator(".preview-info .info-label")).toHaveText(["Path"]);
   await expect(pane(page).locator('.diff-line[data-line-kind="add"]').first()).toBeVisible();
 }
 

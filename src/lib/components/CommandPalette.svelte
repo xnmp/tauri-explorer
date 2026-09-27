@@ -250,7 +250,7 @@
   }
 
   .search-prefix {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     font-size: 18px;
     font-weight: 600;
     flex-shrink: 0;
@@ -338,7 +338,7 @@
 
   .toggle-badge.on {
     background: color-mix(in srgb, var(--accent) 22%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 

@@ -225,35 +225,6 @@ export const deleteMultipleEntries = (paths: string[]): Promise<ApiResult<FileBa
 
 
 /**
- * Copy a file or directory to a destination.
- *
- * @param source - Full path to source file/directory
- * @param destDir - Destination directory path
- * @returns Result with the committed path and optional entry metadata
- */
-export async function copyEntry(
-  source: string,
-  destDir: string,
-  overwrite = false,
-  jobId?: number,
-): Promise<ApiResult<FileMutationReceipt>> {
-  const guard = virtualPathGuard(source, destDir);
-  if (guard) return guard;
-  return invokeFileMutation<FileMutationReceipt>("copy_entry", { source, destDir, overwrite, jobId });
-}
-
-/** Cancel a running copy job. The pending copyEntry call fails with
- *  "Copy cancelled" before durable work starts. Interrupted replacements retain
- *  recovery evidence; accepted publication may finish before cancellation. */
-export async function cancelCopy(jobId: number): Promise<void> {
-  try {
-    await invoke("cancel_copy", { jobId });
-  } catch {
-    // Cancellation is best-effort; the job may already have finished.
-  }
-}
-
-/**
  * Move a file or directory to a destination.
  *
  * @param source - Full path to source file/directory

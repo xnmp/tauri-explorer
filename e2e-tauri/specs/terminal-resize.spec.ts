@@ -1,16 +1,22 @@
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { domText, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
+import { domText, entryPathSelector, navigateTo } from "./helpers";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-terminal-resize-"));
+const scratch = createNativeFixtureDirectory("terminal-resize");
 const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
 
-/** Real WebKitGTK, PTY output/scrollback, and pointer capture under root zoom. */
-(process.platform === "linux" ? describe : describe.skip)("native terminal resizing", () => {
+// The default shell on Windows CI is cmd.exe (`%COMSPEC%`); `seq` does not
+// exist there. `for /l` is cmd's built-in counting loop and, run directly at
+// an interactive prompt (not from a batch file), takes a single `%i`.
+const countTo80 = process.platform === "win32"
+  ? "for /l %i in (1,1,80) do @echo %i"
+  : "seq 1 80";
+
+/** Real WebKitGTK/WebView2, PTY output/scrollback, and pointer capture under root zoom. */
+(process.platform === "linux" || process.platform === "win32" ? describe : describe.skip)("native terminal resizing", () => {
   before(() => fs.writeFileSync(fixtureEntry, "terminal resize fixture"));
-  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
   it("keeps a zoomed drag continuous with scrollback and the shell usable after keyboard resize", async () => {
     await browser.setWindowSize(1280, 900);
@@ -31,7 +37,7 @@ const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
       await browser.keys("Enter");
     }
     await $(".preview-pane").waitForDisplayed({ reverse: true });
-    const entry = await $(`.entry-item[data-path="${fixtureEntry}"]`);
+    const entry = await $(entryPathSelector(fixtureEntry));
     await entry.waitForDisplayed();
     try {
       await entry.click();
@@ -68,7 +74,7 @@ const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
       for (const character of value) await browser.keys(character);
       await browser.keys("Enter");
     }
-    await command("seq 1 80");
+    await command(countTo80);
     await browser.waitUntil(async () => await browser.execute(() =>
       [...document.querySelectorAll(".terminal-panel .xterm-rows > div")].some(row => row.textContent?.trim() === "79")),
       { timeoutMsg: "real PTY scrollback did not arrive" });
@@ -90,16 +96,28 @@ const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
       return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
     });
     type PointerAction = { type: "pointerMove"; duration: number; origin: "viewport"; x: number; y: number }
-      | { type: "pointerDown" | "pointerUp"; button: number };
+      | { type: "pointerDown" | "pointerUp"; button: number }
+      | { type: "pause"; duration: number };
     const pointer = (actions: PointerAction[]) => browser.performActions([{ type: "pointer", id: "resize-mouse",
       parameters: { pointerType: "mouse" }, actions }]);
+    await browser.execute((element: HTMLElement) => {
+      element.dataset.e2eResizeValues = "[]";
+      element.addEventListener("pointermove", () => requestAnimationFrame(() => {
+        const values = JSON.parse(element.dataset.e2eResizeValues ?? "[]") as number[];
+        values.push(Number(element.getAttribute("aria-valuenow")));
+        element.dataset.e2eResizeValues = JSON.stringify(values);
+      }));
+    }, handle);
     await pointer([{ type: "pointerMove", duration: 0, origin: "viewport", ...rect }, { type: "pointerDown", button: 0 },
-      { type: "pointerMove", duration: 150, origin: "viewport", x: rect.x, y: rect.y - 30 }]);
-    await browser.waitUntil(async () => Number(await handle.getAttribute("aria-valuenow")) === before + 20,
-      { timeoutMsg: "first native resize step was not 30 visual pixels" });
-    await pointer([{ type: "pointerMove", duration: 150, origin: "viewport", x: rect.x, y: rect.y - 60 },
+      { type: "pointerMove", duration: 150, origin: "viewport", x: rect.x, y: rect.y - 30 },
+      // One W3C action sequence models one physical drag. The dwell lets the
+      // terminal process its first resize/reflow before the second move.
+      { type: "pause", duration: 150 },
+      { type: "pointerMove", duration: 150, origin: "viewport", x: rect.x, y: rect.y - 60 },
       { type: "pointerUp", button: 0 }]);
     await browser.releaseActions();
+    const resizeValues = JSON.parse(await handle.getAttribute("data-e2e-resize-values") ?? "[]") as number[];
+    expect(resizeValues).toContain(before + 20);
     await browser.waitUntil(async () => Number(await handle.getAttribute("aria-valuenow")) === before + 40,
       { timeoutMsg: "native drag stopped after the terminal reflowed its scrollback" });
     await browser.waitUntil(async () => Math.abs(await height() - beforeHeight - 60) < 1,

@@ -43,6 +43,13 @@ pub(super) enum MoveTransition {
     BeginRootRetirement(RootSide),
     RootRetired(RootSide),
     RetirementCompleted,
+    /// Return a journaled discard that has not removed anything to the settled
+    /// record it came from, so a refusal after the decision keeps Undo. The
+    /// executor proves by observation that every planned entry is intact.
+    WithdrawRetirement,
+    /// Record why an automatic discard could not be journaled at all, so
+    /// enforcement stops claiming the record until an explicit retry.
+    DeferRetirement(String),
     ReportError(String),
 }
 
@@ -69,6 +76,7 @@ pub(super) fn transition(
                 | MoveTransition::BeginRootRetirement(_)
                 | MoveTransition::RootRetired(_)
                 | MoveTransition::RetirementCompleted
+                | MoveTransition::WithdrawRetirement
                 | MoveTransition::ReportError(_)
         )
     {
@@ -236,6 +244,7 @@ pub(super) fn transition(
                     target_plan,
                 ));
                 state.retained_bytes = None;
+                state.deferred = None;
             }
         }
         MoveTransition::BeginRootRetirement(side) => {
@@ -278,11 +287,36 @@ pub(super) fn transition(
             state.retained_bytes = Some(0);
             state.error = None;
         }
+        MoveTransition::WithdrawRetirement => {
+            let retirement = state
+                .retirement
+                .as_ref()
+                .ok_or_else(|| invalid("Move has no disposal decision"))?;
+            if retirement.completed
+                || [retirement.source, retirement.target].contains(&Some(Step::Removed))
+            {
+                return Err(invalid(
+                    "A discard that removed a root can only be completed",
+                ));
+            }
+            // The effect revision is untouched: the history entry that named
+            // this record before the decision names it again afterwards.
+            state.retirement = None;
+            state.retained_bytes = None;
+            state.error = None;
+        }
+        MoveTransition::DeferRetirement(reason)
+            if super::move_retention::disposal(&spec, state.phase)
+                == Some(super::retention::Disposal::AutomaticWhenSourceIntact) =>
+        {
+            state.deferred = Some(reason);
+        }
         MoveTransition::ReportError(error) => state.error = Some(error),
         _ => return Err(invalid("Illegal recovery move phase transition")),
     }
     if state.phase != current.move_state()?.phase {
         state.retained_bytes = None;
+        state.deferred = None;
     }
     next.validate(intent)?;
     Ok(next)

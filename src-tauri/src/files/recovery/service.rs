@@ -4,8 +4,8 @@
 use super::{
     coordinator::{Coordinator, InventoryEntry},
     model::{
-        DurableIntent, OperationSpec, Phase, RecoveryChoice, RecoveryItem, RecoverySnapshot,
-        RecoveryStorage,
+        DurableIntent, OperationSpec, OperationState, Phase, RecoveryChoice, RecoveryItem,
+        RecoverySnapshot, RecoveryStorage,
     },
     replacement_execution::ReplacementExecution,
     replacement_restoration::RestorationStep,
@@ -115,6 +115,7 @@ pub(super) fn resolve(
     match choice {
         RecoveryChoice::Restore => operate(coordinator, id, Request::Restore(generation)),
         RecoveryChoice::Discard => operate(coordinator, id, Request::Discard(generation)),
+        RecoveryChoice::Release => operate(coordinator, id, Request::Release(generation)),
     }
 }
 
@@ -122,13 +123,16 @@ enum Request {
     Inspect,
     Restore(u64),
     Discard(u64),
+    Release(u64),
 }
 
 impl Request {
     fn expected(&self) -> Option<u64> {
         match self {
             Self::Inspect => None,
-            Self::Restore(generation) | Self::Discard(generation) => Some(*generation),
+            Self::Restore(generation) | Self::Discard(generation) | Self::Release(generation) => {
+                Some(*generation)
+            }
         }
     }
 }
@@ -168,6 +172,7 @@ fn operate(
                 coordinator,
                 Some(item(
                     &entry.intent,
+                    entry.state.as_ref(),
                     generation,
                     None,
                     "busy",
@@ -182,6 +187,13 @@ fn operate(
     let claimed_generation = operation.generation();
     if operation.intent().operation.move_spec().is_ok() {
         return relocation(coordinator, operation, request);
+    }
+    if let Request::Release(_) = request {
+        return reply(
+            coordinator,
+            None,
+            Some("Only a move whose discard stopped before finishing can be forgotten".into()),
+        );
     }
     if let Request::Discard(_) = request {
         return discard(coordinator, operation, &entry.intent, claimed_generation);
@@ -213,6 +225,7 @@ fn operate(
                 coordinator,
                 Some(item(
                     &entry.intent,
+                    None,
                     claimed_generation,
                     None,
                     "attention",
@@ -247,6 +260,7 @@ fn operate(
                 }
                 Ok(item(
                     execution.operation.intent(),
+                    Some(execution.operation.state()),
                     execution.operation.generation(),
                     retention::measured_bytes(execution.operation.state()),
                     "ready",
@@ -258,6 +272,7 @@ fn operate(
                 execution.restore_copy()?;
                 Ok(item(
                     execution.operation.intent(),
+                    Some(execution.operation.state()),
                     execution.operation.generation(),
                     None,
                     "retained",
@@ -265,7 +280,9 @@ fn operate(
                     vec![],
                 ))
             }
-            Request::Discard(_) => unreachable!("discard is dispatched before reopening"),
+            Request::Discard(_) | Request::Release(_) => {
+                unreachable!("discard and release are dispatched before reopening")
+            }
         }
     })();
     let (view, error) = match result {
@@ -273,6 +290,7 @@ fn operate(
         Err(error) => (
             item(
                 execution.operation.intent(),
+                Some(execution.operation.state()),
                 execution.operation.generation(),
                 None,
                 "attention",
@@ -330,6 +348,7 @@ fn retention_only(
                 coordinator,
                 Some(item(
                     intent,
+                    None,
                     generation,
                     None,
                     "attention",
@@ -357,7 +376,15 @@ fn retention_only(
     let generation = retirement.generation();
     reply(
         coordinator,
-        Some(item(intent, generation, bytes, status, &message, actions)),
+        Some(item(
+            intent,
+            Some(retirement.state()),
+            generation,
+            bytes,
+            status,
+            &message,
+            actions,
+        )),
         None,
     )
 }
@@ -372,13 +399,15 @@ fn discard(
     intent: &DurableIntent,
     generation: u64,
 ) -> Result<RecoverySnapshot, AppError> {
+    let folders = retained_folders(intent, Some(operation.state()));
     let retirement = match Retirement::open(operation) {
         Ok(retirement) => retirement,
         Err(error) => {
             return reply(
                 coordinator,
-                Some(item(
+                Some(item_in(
                     intent,
+                    folders,
                     generation,
                     None,
                     "attention",
@@ -394,7 +423,15 @@ fn discard(
         let generation = retirement.generation();
         return reply(
             coordinator,
-            Some(item(intent, generation, None, "attention", &reason, vec![])),
+            Some(item(
+                intent,
+                Some(retirement.state()),
+                generation,
+                None,
+                "attention",
+                &reason,
+                vec![],
+            )),
             Some(reason.clone()),
         );
     }
@@ -439,6 +476,9 @@ fn relocation(
             (Request::Restore(_), _) => {
                 Some("This move never started and has no restoration to apply".to_owned())
             }
+            (Request::Release(_), _) => {
+                Some("This move never started; discard its capability data instead".to_owned())
+            }
             (Request::Discard(_), Err(error)) => {
                 Some(diagnostic(AppError::Other(error.to_string())))
             }
@@ -448,7 +488,15 @@ fn relocation(
             Ok(()) => ("The move never started. Its verified capability-check data can be discarded.".to_owned(), vec![RecoveryChoice::Discard]),
             Err(error) => (format!("The move never started; unverified capability-check evidence is preserved: {error}"), vec![]),
         };
-        let mut view = item(&intent, generation, None, "attention", &message, actions);
+        let mut view = item(
+            &intent,
+            Some(operation.state()),
+            generation,
+            None,
+            "attention",
+            &message,
+            actions,
+        );
         // Probe evidence is separate from the not-yet-created move artifacts.
         view.retained_path = operation
             .state()
@@ -467,11 +515,20 @@ fn relocation(
             })
             .and_then(|index| intent.operation.move_spec().ok()?.probe_plans().nth(index))
             .map(|(plan, _, _)| plan.path.0.to_string_lossy().into_owned());
+        view.retained_paths = view.retained_path.iter().cloned().collect();
         return reply(coordinator, Some(view), error);
     }
     if let Request::Discard(_) = request {
         let intent = operation.intent().clone();
         return discard(coordinator, operation, &intent, generation);
+    }
+    if let Request::Release(_) = request {
+        // Decided from durable evidence alone: a stranded record's volume may
+        // be the very thing that can no longer be observed.
+        return match operation.forget_retirement() {
+            Ok(()) => reply(coordinator, None, None),
+            Err(error) => reply(coordinator, None, Some(diagnostic(error))),
+        };
     }
     let restorable = move_transition(
         operation.intent(),
@@ -483,13 +540,38 @@ fn relocation(
         && retention::retention(&operation.intent().operation, operation.state()).retirable()
     {
         let intent = operation.intent().clone();
+        let forgettable = operation
+            .state()
+            .move_state()
+            .is_ok_and(super::move_retention::forgettable);
+        let folders = retained_folders(&intent, Some(operation.state()));
+        let hint = forget_hint(&folders);
         let retirement = match Retirement::open(operation) {
             Ok(retirement) => retirement,
+            Err(error) if forgettable => {
+                return reply(
+                    coordinator,
+                    Some(item_in(
+                        &intent,
+                        folders,
+                        generation,
+                        None,
+                        "attention",
+                        &format!(
+                            "Discard stopped before finishing and its recovery files can no \
+                             longer be verified: {error}. {hint}"
+                        ),
+                        vec![RecoveryChoice::Release],
+                    )),
+                    None,
+                )
+            }
             Err(error) => {
                 return reply(
                     coordinator,
-                    Some(item(
+                    Some(item_in(
                         &intent,
+                        folders,
                         generation,
                         None,
                         "attention",
@@ -508,16 +590,26 @@ fn relocation(
             .ok()
             .filter(|state| state.retirement.is_some())
             .and_then(|state| state.error.clone());
+        let deferred = retirement
+            .state()
+            .move_state()
+            .ok()
+            .and_then(|state| state.deferred.clone());
         let (status, message, actions) = match (retirement.eligibility(), interrupted) {
+            (Eligibility::Preserved(reason), _) if forgettable => (
+                "attention",
+                format!("{reason}. {hint}"),
+                vec![RecoveryChoice::Release],
+            ),
             (Eligibility::Preserved(reason), _) => ("attention", reason.clone(), vec![]),
             (_, Some(error)) => (
                 "attention",
                 format!(
                     "Discard stopped before finishing; its Undo history is gone and the \
                      remaining recovery files are preserved. Retry Discard once this is \
-                     resolved: {error}"
+                     resolved: {error}. {hint}"
                 ),
-                vec![RecoveryChoice::Discard],
+                vec![RecoveryChoice::Discard, RecoveryChoice::Release],
             ),
             _ => {
                 let mut actions = Vec::new();
@@ -525,15 +617,28 @@ fn relocation(
                     actions.push(RecoveryChoice::Restore);
                 }
                 actions.push(RecoveryChoice::Discard);
-                ("retained", if restorable {
-                    "Restore this move or discard its recovery data. Discard permanently removes its Undo history and any retained originals."
-                } else { "The move no longer needs restoration; its retained recovery data can be discarded." }.to_owned(), actions)
+                let message = match deferred {
+                    // Nothing was removed; only the automatic attempt stopped.
+                    Some(reason) => format!(
+                        "Automatic cleanup of this move's retained recovery data could not \
+                         start and will not be retried automatically: {reason}. Discard \
+                         retries it."
+                    ),
+                    None if restorable => "Restore this move or discard its recovery data. \
+                         Discard permanently removes its Undo history and any retained originals."
+                        .to_owned(),
+                    None => "The move no longer needs restoration; its retained recovery data \
+                         can be discarded."
+                        .to_owned(),
+                };
+                ("retained", message, actions)
             }
         };
         return reply(
             coordinator,
             Some(item(
                 &intent,
+                Some(retirement.state()),
                 retirement.generation(),
                 retention::measured_bytes(retirement.state()),
                 status,
@@ -560,6 +665,7 @@ fn relocation(
             coordinator,
             Some(item(
                 operation.intent(),
+                Some(operation.state()),
                 generation,
                 None,
                 "attention",
@@ -571,13 +677,15 @@ fn relocation(
     }
     let phase = operation.state().move_state()?.phase;
     let intent = operation.intent().clone();
+    let folders = retained_folders(&intent, Some(operation.state()));
     let mut execution = match super::move_execution::MoveExecution::reopen(operation) {
         Ok(execution) => execution,
         Err(error) => {
             return reply(
                 coordinator,
-                Some(item(
+                Some(item_in(
                     &intent,
+                    folders,
                     generation,
                     None,
                     "attention",
@@ -596,6 +704,7 @@ fn relocation(
     let result = match request {
         Request::Inspect => Ok(item(
             execution.operation.intent(),
+            Some(execution.operation.state()),
             execution.operation.generation(),
             None,
             "ready",
@@ -605,6 +714,7 @@ fn relocation(
         Request::Restore(_) => execution.restore_move().map(|()| {
             item(
                 execution.operation.intent(),
+                Some(execution.operation.state()),
                 execution.operation.generation(),
                 None,
                 "attention",
@@ -613,13 +723,16 @@ fn relocation(
             )
         }),
         // Discard is dispatched to the move retirement observer before reopening.
-        Request::Discard(_) => unreachable!("discard never reaches move reconciliation"),
+        Request::Discard(_) | Request::Release(_) => {
+            unreachable!("discard and release never reach move reconciliation")
+        }
     };
     let (view, error) = match result {
         Ok(view) => (view, None),
         Err(error) => (
             item(
                 execution.operation.intent(),
+                Some(execution.operation.state()),
                 execution.operation.generation(),
                 None,
                 "attention",
@@ -630,6 +743,21 @@ fn relocation(
         ),
     };
     reply(coordinator, Some(view), error)
+}
+
+/// Shown wherever a stopped discard can be forgotten instead of retried. It
+/// names how many folders stay behind, because a cross-volume move can leave
+/// files in a recovery folder beside each endpoint.
+fn forget_hint(folders: &[String]) -> String {
+    let kept = match folders {
+        [] => "",
+        [_] => "; its remaining files stay in the listed folder",
+        _ => "; its remaining files stay in each listed folder",
+    };
+    format!(
+        "If it cannot be resolved, Forget releases this record and its locks without \
+         deleting anything{kept}"
+    )
 }
 
 fn reply(
@@ -668,6 +796,7 @@ fn pending(entry: &InventoryEntry) -> RecoveryItem {
     };
     item(
         &entry.intent,
+        entry.state.as_ref(),
         entry.generation.unwrap_or(0),
         bytes,
         status,
@@ -678,24 +807,77 @@ fn pending(entry: &InventoryEntry) -> RecoveryItem {
 
 fn item(
     intent: &DurableIntent,
+    state: Option<&OperationState>,
     generation: u64,
     retained_bytes: Option<u64>,
     status: &'static str,
     message: &str,
     actions: Vec<RecoveryChoice>,
 ) -> RecoveryItem {
-    let (original, retained) = match &intent.operation {
-        OperationSpec::CopyReplacement(spec) => (&spec.target, Some(&spec.root)),
-        OperationSpec::Move(spec) => (&spec.source, spec.roots().next().map(|root| &root.path)),
+    let folders = retained_folders(intent, state);
+    item_in(
+        intent,
+        folders,
+        generation,
+        retained_bytes,
+        status,
+        message,
+        actions,
+    )
+}
+
+/// The artifact folders a record may still hold, from durable evidence alone:
+/// inventory never probes them or grants renderer-owned authority. A move lists
+/// its source root first; a root its journaled discard already removed is
+/// omitted, so a stopped discard names exactly the folders it left behind.
+fn retained_folders(intent: &DurableIntent, state: Option<&OperationState>) -> Vec<String> {
+    use super::move_retention::{RootSide, Step};
+    let shown = |path: &super::model::NativePath| path.0.to_string_lossy().into_owned();
+    match &intent.operation {
+        OperationSpec::CopyReplacement(spec) => vec![shown(&spec.root)],
+        OperationSpec::Move(spec) => {
+            let retirement = state
+                .and_then(|state| state.move_state().ok())
+                .and_then(|state| state.retirement.as_ref());
+            [
+                (RootSide::Source, &spec.source_root),
+                (RootSide::Target, &spec.target_root),
+            ]
+            .into_iter()
+            .filter_map(|(side, root)| Some((side, root.as_ref()?)))
+            .filter(|(side, _)| {
+                !matches!(
+                    retirement.and_then(|retirement| retirement.step(*side)),
+                    Some(Step::Removing | Step::Removed)
+                )
+            })
+            .map(|(_, root)| shown(&root.path))
+            .collect()
+        }
+    }
+}
+
+fn item_in(
+    intent: &DurableIntent,
+    folders: Vec<String>,
+    generation: u64,
+    retained_bytes: Option<u64>,
+    status: &'static str,
+    message: &str,
+    actions: Vec<RecoveryChoice>,
+) -> RecoveryItem {
+    let original = match &intent.operation {
+        OperationSpec::CopyReplacement(spec) => &spec.target,
+        OperationSpec::Move(spec) => &spec.source,
     };
     RecoveryItem {
         id: intent.id.clone(),
         generation,
         original_path: original.0.to_string_lossy().into_owned(),
         // The artifact container stays meaningful after restoration moves the
-        // original home and retains the copy as `publication`. Inventory does
-        // not probe this recorded location or grant renderer-owned authority.
-        retained_path: retained.map(|path| path.0.to_string_lossy().into_owned()),
+        // original home and retains the copy as `publication`.
+        retained_path: folders.first().cloned(),
+        retained_paths: folders,
         retained_bytes,
         status,
         message: message.into(),

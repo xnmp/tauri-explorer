@@ -4,10 +4,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
+import { requireGatedFromEnvironment } from "../gated-suites";
+import { gatedDescribe } from "./gated-describe";
 import { navigateTo, domTexts, entryNames } from "./helpers";
 
 const directory = process.env.TAURI_E2E_FILE_RECOVERY_DIR;
-const nativeDescribe = process.platform === "linux" && directory ? describe : describe.skip;
 interface Snapshot { revision: string; items: Array<{ id: string; generation: string; actions: string[] }> }
 interface Lease { sessionId: string; subscriptionId: string; channel: number; snapshot: Snapshot; registration: string }
 interface Receipt { event: string; pid: number; registration?: string; channel?: number; label?: string; session?: string; token?: string; revision?: string }
@@ -118,7 +119,10 @@ async function renameThroughExplorer(source: string, name: string): Promise<stri
   return target;
 }
 
-nativeDescribe("File recovery native acceptance", () => {
+gatedDescribe("File recovery native acceptance", [
+  [process.platform === "linux", "Linux"],
+  [Boolean(directory), "TAURI_E2E_FILE_RECOVERY_DIR"],
+], () => {
   before(async () => {
     await browser.waitUntil(() => fs.existsSync(path.join(directory!, "fixture.json")));
     fixture = JSON.parse(fs.readFileSync(path.join(directory!, "fixture.json"), "utf8"));
@@ -161,58 +165,6 @@ nativeDescribe("File recovery native acceptance", () => {
     await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-recovery-restored-editable.png");
     await renameThroughExplorer(renamed, path.basename(fixture.target));
     assert.equal(fs.readFileSync(path.join(fixture.root, "publication"), "utf8"), "native copied payload\n");
-  });
-
-  it("journals an overwrite, cycles native Undo/Redo, then restores through the recovery dialog", async () => {
-    const base = path.dirname(fixture.target);
-    const sourceDirectory = path.join(base, "forward-source");
-    const destination = path.join(base, "forward-target");
-    fs.mkdirSync(sourceDirectory);
-    fs.mkdirSync(destination);
-    const source = path.join(sourceDirectory, "live-copy.txt");
-    const target = path.join(destination, "live-copy.txt");
-    fs.writeFileSync(source, "production copied bytes\n");
-    fs.writeFileSync(target, "production original bytes\n");
-    await navigateTo(destination);
-    const result = await operation<{ ok: boolean; replacement?: { id: string }; warning?: string; error?: string }>(
-      "recovery", "copy", { source, destination });
-    assert.ok(result.ok, result.error);
-    assert.ok(result.replacement?.id);
-    assert.equal(result.warning, undefined, "successful native history no longer warns that overwrite Undo is unavailable");
-    assert.equal(fs.readFileSync(target, "utf8"), "production copied bytes\n");
-    assert.equal(fs.readFileSync(source, "utf8"), "production copied bytes\n");
-    for (let cycle = 0; cycle < 2; cycle++) {
-      // A real recovery inspection changes ownership generation between history
-      // effects; native semantic history must remain valid.
-      await operation("recovery", "inspect", { id: result.replacement!.id });
-      assert.equal(await historyThroughExplorer("undo"), null);
-      assert.equal(fs.readFileSync(target, "utf8"), "production original bytes\n");
-      await browser.waitUntil(async () => (await domTexts(".toast")).some(text => text.includes("Undo: Replaced live-copy.txt")));
-      await operation("recovery", "inspect", { id: result.replacement!.id });
-      assert.equal(await historyThroughExplorer("redo"), null);
-      assert.equal(fs.readFileSync(target, "utf8"), "production copied bytes\n");
-      await browser.waitUntil(async () => (await domTexts(".toast")).some(text => text.includes("Redo: Replaced live-copy.txt")));
-    }
-    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-production-copy-redone.png");
-    await $(".recovery-notice").click();
-    await $(".recovery-dialog").waitForDisplayed();
-    // This record was created by copy_entry, not by the launch fixture. Its
-    // appearance also proves worker-side inventory publication reached the UI.
-    const inspect = $(`[data-recovery-inspect="${result.replacement!.id}"]`);
-    await inspect.waitForDisplayed();
-    await inspect.click();
-    const restore = $(".item-actions .primary");
-    await restore.waitForEnabled();
-    await restore.click();
-    await browser.waitUntil(() => fs.readFileSync(target, "utf8") === "production original bytes\n");
-    const root = fs.readdirSync(destination).find(name => name.startsWith(".tauri-explorer-recovery-"));
-    assert.ok(root);
-    assert.equal(fs.readFileSync(path.join(destination, root, "publication"), "utf8"), "production copied bytes\n");
-    assert.equal(fs.readFileSync(source, "utf8"), "production copied bytes\n");
-    await browser.waitUntil(async () => (await domTexts(".recovery-item > p")).filter(text => text.includes("original has been restored")).length === 2);
-    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-production-copy-restored.png");
-    await $('[aria-label="Close file recovery"]').click();
-    await $(".recovery-dialog").waitForDisplayed({ reverse: true });
   });
 
   it("drops raw channels on reload and fences the previous renderer across two generations", async () => {
@@ -265,8 +217,78 @@ nativeDescribe("File recovery native acceptance", () => {
     assert.equal(fs.readFileSync(fixture.target, "utf8"), "native original payload\n");
   });
 
-  (process.env.TAURI_E2E_HISTORY_GATE_DIR ? it : it.skip)("settles admitted replacement Undo after its window is destroyed without leaking local history", async () => {
-    const gateDirectory = process.env.TAURI_E2E_HISTORY_GATE_DIR!;
+  it("journals an overwrite, cycles native Undo/Redo, then restores through the recovery dialog", async () => {
+    const base = path.dirname(fixture.target);
+    const sourceDirectory = path.join(base, "forward-source");
+    const destination = path.join(base, "forward-target");
+    fs.mkdirSync(sourceDirectory);
+    fs.mkdirSync(destination);
+    const source = path.join(sourceDirectory, "live-copy.txt");
+    const target = path.join(destination, "live-copy.txt");
+    fs.writeFileSync(source, "production copied bytes\n");
+    fs.writeFileSync(target, "production original bytes\n");
+    // The channel tests above subscribed raw probe leases, and a renderer keeps
+    // only its latest recovery channel, so the dialog's own subscription no
+    // longer receives updates. A fresh realm gives it the channel back.
+    await browser.refresh();
+    await $(".recovery-notice").waitForDisplayed();
+    await navigateTo(destination);
+    const result = await operation<{ ok: boolean; replacement?: { id: string }; warning?: string; error?: string }>(
+      "recovery", "copy", { source, destination });
+    assert.ok(result.ok, result.error);
+    assert.ok(result.replacement?.id);
+    assert.equal(result.warning, undefined, "successful native history no longer warns that overwrite Undo is unavailable");
+    assert.equal(fs.readFileSync(target, "utf8"), "production copied bytes\n");
+    assert.equal(fs.readFileSync(source, "utf8"), "production copied bytes\n");
+    for (let cycle = 0; cycle < 2; cycle++) {
+      // A real recovery inspection changes ownership generation between history
+      // effects; native semantic history must remain valid.
+      await operation("recovery", "inspect", { id: result.replacement!.id });
+      assert.equal(await historyThroughExplorer("undo"), null);
+      assert.equal(fs.readFileSync(target, "utf8"), "production original bytes\n");
+      await browser.waitUntil(async () => (await domTexts(".toast")).some(text => text.includes("Undo: Replaced live-copy.txt")));
+      await operation("recovery", "inspect", { id: result.replacement!.id });
+      assert.equal(await historyThroughExplorer("redo"), null);
+      assert.equal(fs.readFileSync(target, "utf8"), "production copied bytes\n");
+      await browser.waitUntil(async () => (await domTexts(".toast")).some(text => text.includes("Redo: Replaced live-copy.txt")));
+    }
+    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-production-copy-redone.png");
+    await $(".recovery-notice").click();
+    await $(".recovery-dialog").waitForDisplayed();
+    // This record was created by copy_entry, not by the launch fixture. Its
+    // appearance also proves worker-side inventory publication reached the UI.
+    const inspect = $(`[data-recovery-inspect="${result.replacement!.id}"]`);
+    await inspect.waitForDisplayed();
+    await inspect.click();
+    const restore = $(".item-actions .primary");
+    await restore.waitForEnabled();
+    await restore.click();
+    await browser.waitUntil(() => fs.readFileSync(target, "utf8") === "production original bytes\n");
+    const root = fs.readdirSync(destination).find(name => name.startsWith(".tauri-explorer-recovery-"));
+    assert.ok(root);
+    assert.equal(fs.readFileSync(path.join(destination, root, "publication"), "utf8"), "production copied bytes\n");
+    assert.equal(fs.readFileSync(source, "utf8"), "production copied bytes\n");
+    // Creating this record ran retention (ADR 0023), which retired the launch
+    // fixture's restored record: its retained publication is a regular file
+    // whose bytes are still published at the recorded source.
+    const inventoryAfter = await operation<Snapshot>("recovery", "list");
+    assert.ok(!inventoryAfter.items.some(item => item.id === fixture.id), "the redundant restored fixture record was not retired");
+    assert.ok(!fs.existsSync(fixture.root), "retirement left the fixture's retained root behind");
+    assert.equal(fs.readFileSync(fixture.source, "utf8"), "native copied payload\n",
+      "retirement is only redundant while the recorded source still holds the payload");
+    await browser.waitUntil(async () => (await browser.execute((id: string) =>
+      document.querySelector(`[data-recovery-inspect="${id}"]`)?.closest(".recovery-item")?.textContent ?? "",
+    result.replacement!.id)).includes("original has been restored"), {
+      timeoutMsg: "the restored overwrite record never showed as restored",
+    });
+    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-production-copy-restored.png");
+    await $('[aria-label="Close file recovery"]').click();
+    await $(".recovery-dialog").waitForDisplayed({ reverse: true });
+  });
+
+  (process.env.TAURI_E2E_HISTORY_GATE_DIR || requireGatedFromEnvironment() ? it : it.skip)("settles admitted replacement Undo after its window is destroyed without leaking local history", async () => {
+    const gateDirectory = process.env.TAURI_E2E_HISTORY_GATE_DIR;
+    assert.ok(gateDirectory, "TAURI_E2E_HISTORY_GATE_DIR is required");
     const base = path.dirname(fixture.target);
     const sourceDirectory = path.join(base, "detached-source");
     const destination = path.join(base, "detached-target");

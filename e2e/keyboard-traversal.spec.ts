@@ -15,15 +15,12 @@
  * rejected because its colour and shape are engine-defined, not themed.
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { BUILT_IN_THEMES as THEMES, HOME_URL, waitForEntries } from "./helpers";
 
-const THEMES = [
-  "aurora", "catppuccin", "dark", "desert", "gruvbox", "hacker",
-  "horizon", "light", "nord", "ocean-blue", "solarized-light", "tahoe",
-] as const;
-
-/** Main regions in the order Tab must reach them. */
-// The status bar holds the file-recovery notice, which the mock always shows.
+/**
+ * Main regions in the order Tab must reach them. The status bar holds the
+ * file-recovery notice, which the mock always shows.
+ */
 const REGIONS = ["tabs", "sidebar", "address-bar", "file-list", "preview", "status"] as const;
 type Region = (typeof REGIONS)[number] | "pane" | "terminal" | "other";
 
@@ -288,14 +285,15 @@ test.describe("Keyboard traversal", () => {
     await input.fill("/home/user/Do");
     const suggestions = page.locator(".explorer-pane .suggestion-item");
     await expect(suggestions).toHaveText([/Documents/, /Downloads/]);
-    await input.fill("/home/user/Dow");
-    await expect(suggestions).toHaveText([/Downloads/]);
-    // Enter first applies the highlighted suggestion, then confirms the path.
-    await page.keyboard.press("ArrowDown");
+    await input.fill("/home/user/Vi");
+    await expect(suggestions).toHaveText([/Videos/]);
+    // Enter first applies the pre-selected suggestion, then confirms the path.
+    // Videos has no subfolders, so no new suggestion is pre-selected between
+    // the two presses (a folder with subfolders would descend instead).
     await page.keyboard.press("Enter");
-    await expect(input).toHaveValue(/\/home\/user\/Downloads\/?$/);
+    await expect(input).toHaveValue("/home/user/Videos/");
     await page.keyboard.press("Enter");
-    await expect(page.locator(".explorer-pane .crumb.current")).toHaveText("Downloads");
+    await expect(page.locator(".explorer-pane .crumb.current")).toHaveText("Videos");
   });
 
   test("arrow keys move the file-list selection once Tab reaches it", async ({ page }) => {
@@ -359,6 +357,8 @@ test.describe("Keyboard traversal", () => {
 });
 
 test.describe("Focus indicators", () => {
+  // Each case measures every stop of a full Tab cycle.
+  test.describe.configure({ timeout: 60_000 });
   for (const premium of [false, true]) {
     for (const theme of THEMES) {
       test(`every Tab stop shows a visible ring in ${theme}${premium ? " (premium)" : ""}`, async ({ page }) => {

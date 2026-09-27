@@ -124,6 +124,44 @@ linuxDescribe("native file-list composite focus", () => {
     }
   });
 
+  it("Tabs from the address bar into the file list, where arrows move the selection (#797)", async () => {
+    await navigateTo(root);
+    await useView("details");
+    await $(entrySelector(folderNames[0])).waitForDisplayed();
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>(".explorer-pane .navigation-bar .crumb.current")?.focus();
+    });
+    await browser.waitUntil(async () => await browser.execute(() =>
+      document.activeElement?.closest(".navigation-bar") !== null,
+    ), { timeoutMsg: "the address bar's current crumb did not take focus" });
+
+    // Between the address bar and the first entry, Tab may only pass the file
+    // list's own column controls.
+    const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);
+    for (let step = 0; step < cycleLimit && !(await activeEntryPath()); step += 1) {
+      await browser.keys("Tab");
+      const region = await browser.execute(() => {
+        const active = document.activeElement;
+        return active?.closest(".navigation-bar") ? "address-bar" : active?.closest(".file-list") ? "file-list" : "elsewhere";
+      });
+      expect(region).not.toBe("elsewhere");
+    }
+    // The Tab stop is the pane's cursor entry, which navigation may restore.
+    const reached = await activeEntryPath();
+    expect(reached).toBeTruthy();
+    const order = await browser.execute(() =>
+      [...document.querySelectorAll<HTMLElement>(".explorer-pane .file-list .entry-item")].map((entry) => entry.dataset.path ?? ""),
+    );
+    const index = order.indexOf(reached!);
+    const [key, next] = index + 1 < order.length ? ["ArrowDown", order[index + 1]] : ["ArrowUp", order[index - 1]];
+
+    await browser.keys(key);
+    await browser.waitUntil(async () => (await activeEntryPath()) === next, {
+      timeoutMsg: `${key} did not move focus from ${reached} to ${next}`,
+    });
+    await expect($(`.explorer-pane .file-list .entry-item[data-path="${next}"]`)).toHaveElementClass("selected");
+  });
+
   it("extends Shift+Arrow selection to three entries with focus on the endpoint", async () => {
     for (const viewMode of viewModes) {
       await navigateTo(root);

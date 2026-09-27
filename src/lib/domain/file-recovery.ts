@@ -1,5 +1,7 @@
-/** Native recovery records are capabilities by ID, never renderer-owned paths. */
-export type FileRecoveryChoice = "restore" | "discard";
+/** Native recovery records are capabilities by ID, never renderer-owned paths.
+ *  `release` forgets a move whose committed discard stopped before finishing:
+ *  it removes only the record and its locks, never a file. */
+export type FileRecoveryChoice = "restore" | "discard" | "release";
 
 /** Canonical SQLite counters cross IPC as decimal strings, without rounding. */
 export function isRecoveryCounter(value: unknown): value is string {
@@ -15,7 +17,12 @@ export interface FileRecoveryItem {
   id: string;
   generation: string;
   originalPath: string;
+  /** The first of `retainedPaths`; older ports send only this. */
   retainedPath: string | null;
+  /** Every folder the record may still hold files in. A cross-volume move
+   *  keeps one beside each endpoint, and a stopped discard lists only the
+   *  folders it has not removed. Optional: absent from older ports. */
+  retainedPaths?: string[];
   /** Measured size of the retained artifact; null when it is not measured. */
   retainedBytes: string | null;
   status: "pending" | "busy" | "ready" | "attention" | "retained";
@@ -57,6 +64,52 @@ export interface FileRecoveryPort {
   /// Optional: a port that predates retention accounting, or a restricted
   /// source, simply cannot reclaim. Callers must guard rather than assume.
   retireEligible?(): Promise<FileRecoverySnapshot>;
+}
+
+export interface RecoveryConfirmation {
+  title: string;
+  body: string;
+  confirm: string;
+}
+
+/** Every folder a record may still hold files in, in native order. */
+export function retainedFolders(item: Pick<FileRecoveryItem, "retainedPath" | "retainedPaths">): string[] {
+  return [...new Set(item.retainedPaths ?? (item.retainedPath ? [item.retainedPath] : []))];
+}
+
+function listFolders(folders: string[]): string {
+  return folders.length > 1
+    ? `${folders.slice(0, -1).join(", ")} and ${folders[folders.length - 1]}`
+    : folders[0];
+}
+
+/** Irreversible choices are confirmed with copy stating exactly what is lost
+ *  and what is kept. Restoring loses nothing, so it needs none. */
+export function recoveryConfirmation(
+  choice: FileRecoveryChoice,
+  item: Pick<FileRecoveryItem, "retainedPath" | "retainedPaths">,
+): RecoveryConfirmation | null {
+  switch (choice) {
+    case "restore":
+      return null;
+    case "discard":
+      return {
+        title: "Discard this recovery record?",
+        body: "This permanently deletes any retained files and removes recovery and Undo for this operation. It cannot be undone.",
+        confirm: "Discard recovery data",
+      };
+    case "release": {
+      const folders = retainedFolders(item);
+      const kept = folders.length > 0
+        ? `Any remaining recovery files stay in ${listFolders(folders)} for you to review or delete.`
+        : "Any remaining recovery files stay where they are for you to review or delete.";
+      return {
+        title: "Forget this recovery record?",
+        body: `Nothing is deleted. File Recovery stops tracking this move and releases its locks; its Undo is already gone. ${kept}`,
+        confirm: "Forget record",
+      };
+    }
+  }
 }
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"] as const;

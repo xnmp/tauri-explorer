@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { renameEntry, deleteEntry, deleteEntryPermanent, copyEntry, moveEntry, readTextFile, createDirectory, createSymlink } from "$lib/api/files";
+import { renameEntry, deleteEntry, deleteEntryPermanent, moveEntry, readTextFile, createDirectory, createSymlink } from "$lib/api/files";
 import { openFile, openFileWith } from "$lib/api/open";
 import { compressToZip, extractArchive } from "$lib/api/archive";
 import { getThumbnailData } from "$lib/api/thumbnails";
@@ -31,8 +31,6 @@ describe("virtual path guards", () => {
   });
 
   it("rejects transfers when either side is virtual", async () => {
-    await expectRejected(copyEntry(V, "/tmp"));
-    await expectRejected(copyEntry("/tmp/a.txt", "demo://"));
     await expectRejected(moveEntry(V, "/tmp"));
     await expectRejected(moveEntry("/tmp/a.txt", "demo://"));
   });

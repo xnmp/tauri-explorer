@@ -1,5 +1,5 @@
 /**
- * Tests for performFileTransfer: the shared move/copy logic
+ * Tests for performFileTransfer: shared single-entry move logic
  * used by both drag-drop and paste operations.
  * Issue: #107
  */
@@ -9,12 +9,10 @@ import type { FileEntry } from "$lib/domain/file";
 // --- Mocks for all dependencies ---
 
 const moveEntryMock = vi.fn();
-const copyEntryMock = vi.fn();
 const fetchDirectoryMock = vi.fn();
 
 vi.mock("$lib/api/files", () => ({
   moveEntry: (...args: unknown[]) => moveEntryMock(...args),
-  copyEntry: (...args: unknown[]) => copyEntryMock(...args),
   fetchDirectory: (...args: unknown[]) => fetchDirectoryMock(...args),
 }));
 
@@ -71,16 +69,15 @@ const noop = () => {};
 beforeEach(() => {
   vi.clearAllMocks();
   moveEntryMock.mockResolvedValue({ ok: true, data: { path: resultEntry.path, entry: resultEntry } });
-  copyEntryMock.mockResolvedValue({ ok: true, data: { path: resultEntry.path, entry: resultEntry } });
   fetchDirectoryMock.mockResolvedValue({ ok: true, data: { entries: [] } });
 });
 
 describe("performFileTransfer", () => {
-  // --- Basic move/copy dispatch ---
+  // --- Basic move dispatch ---
 
-  it("moves a file when isCopy is false", async () => {
+  it("moves a file", async () => {
     const refreshMock = vi.fn();
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: refreshMock,
     });
 
@@ -89,25 +86,15 @@ describe("performFileTransfer", () => {
     expect(result.path).toBe(resultEntry.path);
     expect(result.entry).toEqual(resultEntry);
     expect(moveEntryMock).toHaveBeenCalledWith("/src/file.txt", "/dest", false);
-    expect(copyEntryMock).not.toHaveBeenCalled();
   });
 
-  it("copies a file when isCopy is true", async () => {
-    const result = await performFileTransfer("/src/file.txt", "/dest", true, {
-      onRefresh: noop,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(copyEntryMock).toHaveBeenCalledWith("/src/file.txt", "/dest", false, undefined);
-    expect(moveEntryMock).not.toHaveBeenCalled();
-  });
 
   // --- Error handling ---
 
   it("returns error when move fails", async () => {
     moveEntryMock.mockResolvedValue({ ok: false, error: "permission denied" });
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -121,7 +108,7 @@ describe("performFileTransfer", () => {
   it("shows toast on failure by default", async () => {
     moveEntryMock.mockResolvedValue({ ok: false, error: "disk full" });
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -131,7 +118,7 @@ describe("performFileTransfer", () => {
   it("suppresses toast on failure when suppressToast is set", async () => {
     moveEntryMock.mockResolvedValue({ ok: false, error: "disk full" });
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       suppressToast: true,
     });
@@ -149,7 +136,7 @@ describe("performFileTransfer", () => {
     });
     conflictPromptMock.mockResolvedValue({ choice: "overwrite", applyToAll: false });
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -166,7 +153,7 @@ describe("performFileTransfer", () => {
     });
     conflictPromptMock.mockResolvedValue({ choice: "skip", applyToAll: false });
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -183,7 +170,7 @@ describe("performFileTransfer", () => {
     });
     conflictPromptMock.mockResolvedValue({ choice: "cancel", applyToAll: false });
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -199,7 +186,7 @@ describe("performFileTransfer", () => {
     const existing = makeEntry("file.txt", "/dest/file.txt");
     conflictPromptMock.mockResolvedValue({ choice: "overwrite", applyToAll: false });
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       existingEntries: [existing],
     });
@@ -213,7 +200,7 @@ describe("performFileTransfer", () => {
   it("skips conflict check when no name match in existingEntries", async () => {
     const other = makeEntry("other.txt", "/dest/other.txt");
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       existingEntries: [other],
     });
@@ -225,7 +212,7 @@ describe("performFileTransfer", () => {
   // --- skipConflictCheck ---
 
   it("skips conflict detection entirely when skipConflictCheck is true", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       skipConflictCheck: true,
     });
@@ -238,7 +225,7 @@ describe("performFileTransfer", () => {
   // --- overwrite flag ---
 
   it("passes overwrite through and skips conflict check when overwrite is true", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       overwrite: true,
     });
@@ -250,7 +237,7 @@ describe("performFileTransfer", () => {
   // --- Side effects: undo, toast, broadcast, refresh ---
 
   it("records undo for move operations", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -262,43 +249,7 @@ describe("performFileTransfer", () => {
     });
   });
 
-  it("records undo for copy operations (mirrors paste)", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", true, {
-      onRefresh: noop,
-    });
 
-    expect(undoPushMock).toHaveBeenCalledWith({
-      type: "copy",
-      copiedPath: "/dest/file.txt",
-      parentDir: "/dest",
-    });
-  });
-
-  it("returns a durable replacement warning without publishing ordinary copy Undo", async () => {
-    const warning = "Previous destination retained in File Recovery. Overwrite Undo is not available yet.";
-    copyEntryMock.mockResolvedValue({
-      ok: true,
-      data: { path: "/dest/file.txt", entry: resultEntry, replacement: { id: "replacement-1" } },
-      warning,
-    });
-
-    const result = await performFileTransfer("/src/file.txt", "/dest", true, {
-      onRefresh: noop,
-      overwrite: true,
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      path: "/dest/file.txt",
-      entry: resultEntry,
-      replacement: { id: "replacement-1" },
-      warning,
-    });
-    expect(undoPushMock).not.toHaveBeenCalled();
-    expect(invalidateRedoMock).not.toHaveBeenCalled();
-    expect(toastErrorMock).toHaveBeenCalledWith(warning);
-    expect(toastShowMock).not.toHaveBeenCalled();
-  });
 
   it("leaves a durable relocation's Undo to its native record", async () => {
     // Native history already holds the durable record as this move's inverse
@@ -309,7 +260,7 @@ describe("performFileTransfer", () => {
       data: { path: "/dest/file.txt", entry: resultEntry, relocation: { id: "relocation-1" } },
     });
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, { onRefresh: noop });
+    const result = await performFileTransfer("/src/file.txt", "/dest", { onRefresh: noop });
 
     expect(result).toMatchObject({ ok: true, path: "/dest/file.txt" });
     expect(undoPushMock).not.toHaveBeenCalled();
@@ -324,7 +275,7 @@ describe("performFileTransfer", () => {
     });
     const refreshMock = vi.fn();
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: refreshMock,
     });
 
@@ -352,7 +303,7 @@ describe("performFileTransfer", () => {
     });
     const refreshMock = vi.fn();
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: refreshMock,
       suppressUndo: true,
       broadcastToOtherWindows: true,
@@ -374,7 +325,7 @@ describe("performFileTransfer", () => {
   // --- Same-parent guard ---
 
   it("treats a move into the source's own parent as a no-op skip", async () => {
-    const result = await performFileTransfer("/dest/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/dest/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -385,44 +336,20 @@ describe("performFileTransfer", () => {
     expect(conflictPromptMock).not.toHaveBeenCalled();
   });
 
-  it("same-parent copy skips the self-conflict dialog and never overwrites", async () => {
-    // Even with the source present in the target dir and overwrite forced,
-    // a same-parent copy must route through copy-name generation.
-    fetchDirectoryMock.mockResolvedValue({
-      ok: true,
-      data: { entries: [makeEntry("file.txt", "/dest/file.txt")] },
-    });
-
-    const result = await performFileTransfer("/dest/file.txt", "/dest", true, {
-      onRefresh: noop,
-      overwrite: true,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(conflictPromptMock).not.toHaveBeenCalled();
-    expect(copyEntryMock).toHaveBeenCalledWith("/dest/file.txt", "/dest", false, undefined);
-  });
 
   it("shows toast on success", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
     expect(toastShowMock).toHaveBeenCalledWith("Moved file.txt to dest", "info");
   });
 
-  it("shows copy toast for copy operations", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", true, {
-      onRefresh: noop,
-    });
-
-    expect(toastShowMock).toHaveBeenCalledWith("Copied file.txt to dest", "info");
-  });
 
   it("calls onRefresh on success", async () => {
     const refreshMock = vi.fn();
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: refreshMock,
     });
 
@@ -430,7 +357,7 @@ describe("performFileTransfer", () => {
   });
 
   it("broadcasts file change on success", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -441,7 +368,7 @@ describe("performFileTransfer", () => {
   // --- Suppress flags ---
 
   it("suppressUndo prevents undo recording", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       suppressUndo: true,
     });
@@ -450,7 +377,7 @@ describe("performFileTransfer", () => {
   });
 
   it("suppressToast prevents success toast", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       suppressToast: true,
     });
@@ -459,7 +386,7 @@ describe("performFileTransfer", () => {
   });
 
   it("suppressBroadcast prevents broadcast and frecency prune", async () => {
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
       suppressBroadcast: true,
     });
@@ -471,7 +398,7 @@ describe("performFileTransfer", () => {
   it("suppressRefresh prevents onRefresh call", async () => {
     const refreshMock = vi.fn();
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: refreshMock,
       suppressRefresh: true,
     });
@@ -479,10 +406,10 @@ describe("performFileTransfer", () => {
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
-  it("all suppress flags together: only move/copy is called", async () => {
+  it("all suppress flags together: only move is called", async () => {
     const refreshMock = vi.fn();
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: refreshMock,
       skipConflictCheck: true,
       suppressToast: true,
@@ -505,7 +432,7 @@ describe("performFileTransfer", () => {
   it("does not record undo or broadcast on failure", async () => {
     moveEntryMock.mockResolvedValue({ ok: false, error: "not found" });
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 
@@ -518,7 +445,7 @@ describe("performFileTransfer", () => {
     moveEntryMock.mockResolvedValue({ ok: false, error: "not found" });
     const refreshMock = vi.fn();
 
-    await performFileTransfer("/src/file.txt", "/dest", false, {
+    await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: refreshMock,
     });
 
@@ -530,7 +457,7 @@ describe("performFileTransfer", () => {
   it("proceeds without conflict prompt when fetchDirectory fails", async () => {
     fetchDirectoryMock.mockResolvedValue({ ok: false, error: "access denied" });
 
-    const result = await performFileTransfer("/src/file.txt", "/dest", false, {
+    const result = await performFileTransfer("/src/file.txt", "/dest", {
       onRefresh: noop,
     });
 

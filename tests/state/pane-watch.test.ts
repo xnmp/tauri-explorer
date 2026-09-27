@@ -145,6 +145,51 @@ describe("createPaneWatch", () => {
     expect(harness.release).toHaveBeenLastCalledWith(leaseB);
   });
 
+  it("commits the resolved lease path when navigation used another spelling", async () => {
+    const harness = createHarness();
+    const ticket = harness.watch.begin("c:/users/example/dir/");
+    await ticket.ready;
+    const observedAt = Date.now() + 1;
+    harness.notify({ path: "C:\\Unrelated", observedAt });
+    harness.notify({ path: "C:\\Users\\Example\\Dir", observedAt });
+    expect(ticket.accept(lease("resolved", "C:\\Users\\Example\\Dir"))).toBe(true);
+    expect(ticket.commit()).toBe(true);
+
+    expect(harness.scheduled).toHaveLength(1);
+    expect(harness.scheduled[0]).toMatchObject({ path: "C:\\Users\\Example\\Dir", observedAt });
+    await harness.scheduled[0].callback({ silent: true });
+    expect(harness.refresh).toHaveBeenCalledOnce();
+
+    harness.notify({ path: "C:\\Users\\Example\\Dir", observedAt: observedAt + 1 });
+    expect(harness.scheduled).toHaveLength(2);
+    await harness.scheduled[1].callback({ silent: true });
+    expect(harness.refresh).toHaveBeenCalledTimes(2);
+
+    await harness.watch.destroy();
+  });
+
+  it("bounds unresolved events and fails conservatively for the accepted identity", async () => {
+    const harness = createHarness();
+    const stale = harness.watch.begin("c:/stale/");
+    await stale.ready;
+    harness.notify({ path: "C:\\Stale", observedAt: Date.now() + 1 });
+
+    const ticket = harness.watch.begin("c:/target/");
+    await ticket.ready;
+    for (let index = 0; index <= 256; index += 1) {
+      harness.notify({ path: `C:\\Unrelated\\${index}`, observedAt: Date.now() + 1 });
+    }
+    expect(ticket.accept(lease("target", "C:\\Target"))).toBe(true);
+    expect(ticket.commit()).toBe(true);
+    stale.close();
+
+    expect(harness.scheduled).toHaveLength(1);
+    expect(harness.scheduled[0]).toMatchObject({ path: "C:\\Target" });
+    await harness.scheduled[0].callback({ silent: true });
+    expect(harness.refresh).toHaveBeenCalledOnce();
+    await harness.watch.destroy();
+  });
+
   it("keeps the committed lease across failed and cancelled navigation", async () => {
     const harness = createHarness();
     const leaseA = lease("a", "/a");

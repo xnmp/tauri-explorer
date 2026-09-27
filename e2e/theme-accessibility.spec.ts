@@ -39,12 +39,7 @@
  */
 import AxeBuilder from "@axe-core/playwright";
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, HOME_URL, switchViewMode, waitForEntries } from "./helpers";
-
-const THEMES = [
-  "aurora", "catppuccin", "dark", "desert", "gruvbox", "hacker",
-  "horizon", "light", "nord", "ocean-blue", "solarized-light", "tahoe",
-] as const;
+import { BUILT_IN_THEMES as THEMES, VIEW_MODES, HOME_URL, switchViewMode, waitForEntries } from "./helpers";
 
 async function prepareForContrast(page: Page) {
   await page.addStyleTag({

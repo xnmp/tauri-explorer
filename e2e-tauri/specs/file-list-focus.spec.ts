@@ -95,7 +95,7 @@ nativeDescribe("native file-list composite focus", () => {
     for (const viewMode of viewModes) {
       await navigateTo(root);
       await useView(viewMode);
-      const middle = $(entrySelector(folderNames[1]));
+      const middle = await $(entrySelector(folderNames[1]));
       await middle.waitForDisplayed();
       const clickPoint = await browser.execute((element: HTMLElement) => {
         const rect = element.getBoundingClientRect();

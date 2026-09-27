@@ -112,3 +112,11 @@ already-documented symlink-retargeting gap in
 `docs/lessons/604-config-autoreload-symlinks.md`, which is about the watch
 *target* moving outside the watched root, not the *replacement mechanism* for
 a file that stays in place.
+
+The next Windows run executed 39 spec files; 37 passed. The remaining focus
+setup passed an unresolved WDIO element to `browser.execute`; resolve it before
+reading its rectangle. Preview resizing now uses the same single W3C pointer
+sequence as terminal resizing. It samples actual model and visual geometry
+after the first reflow and still requires the second movement to reach the
+full 60-pixel growth. Neither correction weakens the resulting focus, folder
+opening, resize, or content assertions.

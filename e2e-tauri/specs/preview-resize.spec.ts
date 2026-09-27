@@ -22,7 +22,8 @@ async function command(label: string): Promise<void> {
 
 type PointerAction =
   | { type: "pointerMove"; duration: number; origin: "viewport"; x: number; y: number }
-  | { type: "pointerDown" | "pointerUp"; button: number };
+  | { type: "pointerDown" | "pointerUp"; button: number }
+  | { type: "pause"; duration: number };
 
 const pointer = (actions: PointerAction[]) => browser.performActions([{
   type: "pointer",
@@ -91,23 +92,31 @@ nativeDescribe("native preview resizing", () => {
       const rect = handle.getBoundingClientRect();
       return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
     }, rightHandle);
+    await browser.execute((handle: HTMLElement) => {
+      handle.dataset.e2eResizeSamples = "[]";
+      handle.addEventListener("pointermove", () => requestAnimationFrame(() => {
+        const pane = document.querySelector(".preview-pane")!.getBoundingClientRect();
+        const samples = JSON.parse(handle.dataset.e2eResizeSamples ?? "[]");
+        samples.push({ value: Number(handle.getAttribute("aria-valuenow")), width: pane.width, height: pane.height });
+        handle.dataset.e2eResizeSamples = JSON.stringify(samples);
+      }));
+    }, rightHandle);
     await pointer([
       { type: "pointerMove", duration: 0, origin: "viewport", ...rightPoint },
       { type: "pointerDown", button: 0 },
       { type: "pointerMove", duration: 150, origin: "viewport", x: rightPoint.x - 30, y: rightPoint.y },
-    ]);
-    await browser.waitUntil(async () => Number(await rightHandle.getAttribute("aria-valuenow")) === 300,
-      { timeoutMsg: "first preview resize step did not scale 30 visual pixels to 20 model pixels" });
-    await browser.waitUntil(async () => {
-      const rect = await paneRect();
-      return Math.abs(rect.width - rightBefore.width - 30) < 1 && Math.abs(rect.height - rightBefore.height) < 1;
-    },
-      { timeoutMsg: "first preview resize step did not move 30 visual pixels" });
-    await pointer([
+      // Keep one physical drag in one W3C action sequence, with a dwell to
+      // observe the first layout update before continuing across that reflow.
+      { type: "pause", duration: 150 },
       { type: "pointerMove", duration: 150, origin: "viewport", x: rightPoint.x - 60, y: rightPoint.y },
       { type: "pointerUp", button: 0 },
     ]);
     await browser.releaseActions();
+    const samples = JSON.parse(await rightHandle.getAttribute("data-e2e-resize-samples") ?? "[]") as
+      { value: number; width: number; height: number }[];
+    expect(samples.some(sample => sample.value === 300
+      && Math.abs(sample.width - rightBefore.width - 30) < 1
+      && Math.abs(sample.height - rightBefore.height) < 1)).toBe(true);
     await browser.waitUntil(async () => Number(await rightHandle.getAttribute("aria-valuenow")) === 320,
       { timeoutMsg: "continuous preview drag stopped after its first reflow" });
     await browser.waitUntil(async () => {

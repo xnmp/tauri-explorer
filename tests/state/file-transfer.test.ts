@@ -300,6 +300,23 @@ describe("performFileTransfer", () => {
     expect(toastShowMock).not.toHaveBeenCalled();
   });
 
+  it("leaves a durable relocation's Undo to its native record", async () => {
+    // Native history already holds the durable record as this move's inverse
+    // (ADR 0020). A second, path-only Move action would run first on Undo and
+    // can relocate the last copy of the data.
+    moveEntryMock.mockResolvedValue({
+      ok: true,
+      data: { path: "/dest/file.txt", entry: resultEntry, relocation: { id: "relocation-1" } },
+    });
+
+    const result = await performFileTransfer("/src/file.txt", "/dest", false, { onRefresh: noop });
+
+    expect(result).toMatchObject({ ok: true, path: "/dest/file.txt" });
+    expect(undoPushMock).not.toHaveBeenCalled();
+    expect(undoBroadcastMock).not.toHaveBeenCalled();
+    expect(toastShowMock).toHaveBeenCalled();
+  });
+
   it("records and publishes a committed move when entry metadata is unavailable", async () => {
     moveEntryMock.mockResolvedValue({
       ok: true,

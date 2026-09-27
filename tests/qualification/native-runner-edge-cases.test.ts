@@ -298,6 +298,84 @@ describe("native qualification process boundaries", () => {
     }
   });
 
+  it("retains fixtures on both filesystems until one worker teardown completes", async () => {
+    const environment: NodeJS.ProcessEnv = {};
+    let stops = 0;
+    const hooks = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
+      additionalFixtureRoots: [{ stateEnvironmentKey: "SECOND_FIXTURE_ROOT", temporaryRoot: os.tmpdir() }],
+      stop: async () => {
+        stops++;
+        expect(fs.readFileSync(path.join(first, "proof"), "utf8")).toBe("first");
+        expect(fs.readFileSync(path.join(second, "proof"), "utf8")).toBe("second");
+      },
+    });
+    hooks.prepare();
+    const first = environment.TAURI_NATIVE_CLEANUP_STATE_DIRECTORY!;
+    const second = environment.SECOND_FIXTURE_ROOT!;
+    try {
+      expect(second).toBeTruthy();
+      expect(second).not.toBe(first);
+      fs.writeFileSync(path.join(first, "proof"), "first");
+      fs.writeFileSync(path.join(second, "proof"), "second");
+      await hooks.cleanup();
+      expect(stops).toBe(1);
+      expect(fs.existsSync(first) && fs.existsSync(second)).toBe(true);
+      hooks.complete();
+      expect(fs.existsSync(first) || fs.existsSync(second)).toBe(false);
+      expect(environment.SECOND_FIXTURE_ROOT).toBeUndefined();
+    } finally {
+      hooks.complete();
+    }
+  });
+
+  it("rolls back prepared roots when another fixture volume cannot be prepared", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "native-prepare-rollback-"));
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment, temporaryRoot: parent, stateEnvironmentKey: "PRIMARY",
+      additionalFixtureRoots: [{ stateEnvironmentKey: "SECONDARY", temporaryRoot: path.join(parent, "missing") }],
+      stop: async () => {},
+    });
+    try {
+      expect(() => hooks.prepare()).toThrow();
+      expect(fs.readdirSync(parent)).toEqual([]);
+      expect(environment.PRIMARY).toBeUndefined();
+      expect(environment.SECONDARY).toBeUndefined();
+    } finally {
+      hooks.complete();
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the second fixture volume even when primary removal fails", () => {
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment, stateEnvironmentKey: "PRIMARY",
+      additionalFixtureRoots: [{ stateEnvironmentKey: "SECONDARY", temporaryRoot: os.tmpdir() }],
+      stop: async () => {},
+    });
+    hooks.prepare();
+    const first = environment.PRIMARY!;
+    const second = environment.SECONDARY!;
+    const remove = fs.rmSync;
+    const spy = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (target === first) throw new Error("primary locked");
+      return remove(target, options);
+    });
+    try {
+      expect(second).toBeTruthy();
+      expect(() => hooks.complete()).toThrow("primary locked");
+      expect(fs.existsSync(second)).toBe(false);
+      expect(environment.SECONDARY).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+      fs.rmSync(first, { recursive: true, force: true });
+      if (second) fs.rmSync(second, { recursive: true, force: true });
+    }
+  });
+
   it("refuses unowned native fixtures and nested fixture prefixes", () => {
     expect(() => createNativeFixtureDirectory("fixture-", {})).toThrow("ownership is unavailable");
     expect(() => createNativeFixtureDirectory("../escape-", {

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
@@ -134,6 +134,9 @@ const processCleanupHooks = createNativeProcessCleanupHooks({
   // serve those specs too, instead of forcing them to hand-roll their own
   // mkdtemp + immediate rmSync (#761).
   temporaryRoot: os.homedir(),
+  additionalFixtureRoots: process.platform === "linux" && existsSync("/dev/shm")
+    ? [{ stateEnvironmentKey: "TAURI_NATIVE_SHM_CLEANUP_STATE_DIRECTORY", temporaryRoot: "/dev/shm" }]
+    : [],
 });
 
 export const config: WebdriverIO.Config = {

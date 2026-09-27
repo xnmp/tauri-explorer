@@ -9,7 +9,7 @@ import { browser, expect } from "@wdio/globals";
 import fs from "node:fs";
 import path from "node:path";
 import { entryNames, navigateTo } from "./helpers";
-import { createNativeFixtureDirectory } from "../native-qualification";
+import { createNativeFixtureDirectory, createNativeSharedMemoryFixtureDirectory } from "../native-qualification";
 
 interface FileOperationResult {
   token: string;
@@ -101,10 +101,7 @@ linuxDescribe(
       }
 
       sourceParent = createNativeFixtureDirectory("tauri-explorer-move-source-");
-      // native-fixture-lifetime-allow: must live on tmpfs (/dev/shm), a
-      // different device from sourceParent, to exercise cross-device move
-      // recovery; the shared cleanup root cannot guarantee that placement.
-      destinationParent = fs.mkdtempSync("/dev/shm/tauri-explorer-move-destination-");
+      destinationParent = createNativeSharedMemoryFixtureDirectory("tauri-explorer-move-destination-");
       sourceTree = path.join(sourceParent, treeName);
       destinationTree = path.join(destinationParent, treeName);
       fs.mkdirSync(sourceTree);
@@ -124,19 +121,10 @@ linuxDescribe(
     });
 
     after(() => {
-      // Restore traversal/write permission before touching these fixtures,
-      // including when an assertion or native operation failed: sourceTree was
-      // deliberately chmod'd 0o555, and a later recursive removal (of either
-      // destinationParent here or the shared cleanup root, for sourceParent)
-      // cannot unlink its children without write permission restored first.
+      // Restore permissions for the launcher's post-process fixture cleanup.
       for (const root of [sourceParent, destinationParent]) {
         if (root) makeFixtureRemovable(root);
       }
-      // native-fixture-lifetime-allow: destinationParent must live on tmpfs
-      // (/dev/shm), so it falls outside the shared cleanup root and is removed
-      // directly. This whole describe is Linux-only, so this never races a
-      // live Windows process (#761).
-      if (destinationParent) fs.rmSync(destinationParent, { recursive: true, force: true });
     });
 
     it("keeps both truthful copies and rejects undo after source cleanup fails", async function () {

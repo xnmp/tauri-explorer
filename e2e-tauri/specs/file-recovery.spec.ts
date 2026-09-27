@@ -416,6 +416,7 @@ gatedDescribe("File recovery native acceptance", [
   });
 
   it("copies ordinary and replacement items as one native Undo/Redo operation", async () => {
+    // native-fixture-lifetime-allow: external recovery harness owns this configured parent through app exit.
     const base = fs.mkdtempSync(path.join(directory!, "ordered-copy-"));
     const sources = path.join(base, "sources");
     const destination = path.join(base, "destination");
@@ -452,6 +453,7 @@ gatedDescribe("File recovery native acceptance", [
   });
 
   it("conflict Cancel leaves the copied prefix undoable and never starts the suffix", async () => {
+    // native-fixture-lifetime-allow: external recovery harness owns this configured parent through app exit.
     const base = fs.mkdtempSync(path.join(directory!, "cancel-copy-"));
     const sources = path.join(base, "sources");
     const destination = path.join(base, "destination");

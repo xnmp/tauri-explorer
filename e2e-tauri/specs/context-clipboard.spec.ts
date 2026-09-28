@@ -53,12 +53,16 @@ describe("context-menu clipboard round-trip on the real backend", () => {
   });
 
   it("copy + background paste duplicates the file on disk", async () => {
+    console.info(`[clipboard-smoke] copy click ${new Date().toISOString()}`);
     await clickMenuItem("Copy");
+    console.info(`[clipboard-smoke] copy click returned ${new Date().toISOString()}`);
 
     // Background right-click (below the single entry row) → Paste.
     const content = $(".file-list .content");
     await content.click({ button: "right", x: 40, y: 200 });
+    console.info(`[clipboard-smoke] paste click ${new Date().toISOString()}`);
     await clickMenuItem("Paste");
+    console.info(`[clipboard-smoke] paste click returned ${new Date().toISOString()}`);
 
     // The paste lands as a real file (name may be suffixed on collision —
     // here there is none, but assert on disk contents, not just the UI).
@@ -74,6 +78,7 @@ describe("context-menu clipboard round-trip on the real backend", () => {
     if (!observed.ok) {
       const diskEntries = fs.readdirSync(scratchDir);
       const renderedEntries = await entryNames();
+      console.info(`[clipboard-smoke] listing timeout ${new Date().toISOString()}`);
       await captureDiagnostics("clipboard-paste-listing", { diskEntries, renderedEntries });
       throw new Error(observed.reason);
     }

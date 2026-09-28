@@ -210,22 +210,22 @@ selected `dev` SHA.
 
 ### W8.3 release checklist (v1.11.0)
 
-The five authoritative version fields on published `dev` still read
+The five authoritative version fields on accepted `dev` before the release branch read
 `1.10.0`: `package.json`, `src-tauri/Cargo.toml`, the root package in
 `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the `PKGBUILD`
-fallback. Draft PR #838 updates all five to `1.11.0`, resets `pkgrel=1`, and
+fallback. PR #838 updates all five to `1.11.0`, resets `pkgrel=1`, and
 adds a dated `CHANGELOG.md` entry with the qualified platform and opt-in limits.
 Its release-workflow asset matrix now validates all six expected bundles before
 creating the release. The six-name, missing, duplicate and wrong-version
-preflights pass locally. A macOS Rust rerun on the earlier `af9db6f8` head exposed two distinct test-synchronization assumptions; PR #838 now includes deterministic test changes at `711da177`, locally verified in both Rust library variants. Correlated transfer diagnostics are now on `a51efb7f`; all 18 final-head PR checks passed, including Windows/Linux native smoke and both WebKit shards.
+preflights pass locally. A macOS Rust rerun on the earlier `af9db6f8` head exposed two distinct test-synchronization assumptions; PR #838 now includes deterministic test changes at `711da177`, locally verified in both Rust library variants. Correlated transfer diagnostics are on prior head `a51efb7f`; all 18 checks passed on that head, including Windows/Linux native smoke and both WebKit shards. The updated branch incorporates the accepted docs merge and awaits its own final-head checks.
 
 W8.1 passed on exact `dev` `de35c97b`: the four-hour Linux report, bounded
 Windows report and screenshot, five consecutive post-fix Windows `dev` smokes,
 executed native recovery cases and final hosted Rust/platform checks are
 recorded in the ledger. D1/D2 retain the documented defaults until the owner
-chooses otherwise. First publish and merge the audited docs-only #832 update,
-then prove it changed no qualified product, build, dependency, test or workflow
-inputs. Bring #838 onto that `dev` tip, require its final-head checks, and merge
+chooses otherwise. Audited docs-only PR #832 merged as `e582d7d9`; its exact 20-path diff changed
+no qualified product, build, dependency, test or workflow inputs. That `dev`
+tip is incorporated into #838; require its new final-head checks and merge
 it under the standing approval. The release PR is `dev` → `main` with merge
 strategy `--merge`; require its checks before merging. Do not create a tag
 manually. Verify the resulting GitHub release tag and each of the six expected

@@ -2,6 +2,72 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.0 — 2026-09-29
+
+File operations have clearer ownership and recovery behavior, and keyboard and
+preview layouts work more consistently across window sizes and platforms.
+
+### Improved
+
+- **Copy and paste use one ordered copy session.** Per-item conflict decisions,
+  cancellation, progress, and one Undo follow the confirmed completed prefix
+  rather than a second legacy copy path (#776, #802).
+- **File Recovery handles more interrupted moves safely on Linux.** Retirement
+  refuses mount boundaries and retains retryable records when a retained root
+  cannot be inspected or removed (#760).
+- **Keyboard traversal has a visible focus path** through the main regions in
+  Details, List, and Tiles; the selected file row also keeps DOM focus when
+  pointer drag acquisition suppresses native focus (#797, #800).
+- **Tested preview layouts contain long filenames, metadata, and controls**
+  across narrow docks, zoom levels, and fullscreen states (#792).
+- **Terminal input reaches terminal-hosted applications in order**, including
+  the core navigation chords that Explorer owns (#709).
+- **Focus and theme contrast are clearer** in the tested light and dark
+  themes (#785).
+
+### Fixed
+
+- Copy followed immediately by Paste in the same Windows window no longer
+  waits for the operating-system clipboard mirror to finish (#715).
+- Closing many child windows on Linux releases their WebKit views instead of
+  retaining shared-memory descriptors until the main window stops responding
+  (#817).
+- **Windows case and separator variants of a directory share one listing and
+  watcher identity.** A pane continues refreshing after navigation through a
+  variant spelling (#799).
+- Atomic installation of the zsh integration shim avoids concurrent startup
+  races (#780).
+- A failing plugin command reports its own error without disabling an unrelated
+  active plugin (#782).
+- Symlinked recovery artifact roots are rejected before they can claim an
+  unrelated destination (#788).
+
+### Qualification
+
+- Native recovery cases run in a dedicated gated Linux CI job. macOS runner
+  contracts cover real PTY lifecycle and case-only filesystem rename (#774,
+  #798). A hosted Windows bounded soak completed one deterministic cycle, and
+  the Mac2 native UI pilot exercised child listing and parent navigation on
+  merged changes (#809, #825). A pinned Linux qualification build completed a
+  four-hour native soak with 2,510 cycles and bounded late resource growth
+  (#817).
+- The final `dev` product source at `de35c97b` passed type, unit, performance,
+  Rust, load, and all-view browser gates (2,372 browser cases passed, 36
+  skipped). Exact-commit hosted recovery passed 19 gated cases; full native
+  smoke passed 76 Windows cases with 36 skips and 97 Linux cases with 18 skips.
+  Mac2 UI, platform Rust, and CI passed, following five consecutive full
+  post-fix Windows `dev` smoke runs. Virtual-Mac startup measurements do not
+  qualify the physical-Mac half-bounce target.
+
+### Release limits
+
+- Durable copy and move recovery remain opt-in Linux build features. Durable
+  recovery admission adapters on Windows and macOS are not implemented.
+- Physical-Mac startup against the hardware half-bounce target remains
+  unqualified.
+- UNC server/share case folding is outside the qualified Windows directory
+  identity scope.
+
 ## v1.10.0 — 2026-09-26
 
 Faster large folders, removable drives that mount on demand, and file operations

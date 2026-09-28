@@ -5,7 +5,7 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
-  # Scoped dispatches diagnose #715; only the default full run counts toward
+  # Scoped dispatches diagnose #715 and #710; only the default full run counts toward
   # the W2.4 five-run Windows smoke gate.
   workflow_dispatch:
     inputs:
@@ -17,6 +17,7 @@ on:
         options:
           - all
           - clipboard
+          - transfer
       clipboard_runs:
         description: Fresh clipboard-spec sessions (1-10; clipboard scope only)
         type: number
@@ -35,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.native_scope == 'clipboard' && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+        os: ${{ fromJSON((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the
@@ -308,6 +309,8 @@ jobs:
               echo "::error::$failures clipboard diagnostic session(s) failed"
               exit 1
             fi
+          elif [[ "$NATIVE_SCOPE" == 'transfer' ]]; then
+            bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/window-transfer-lifetime.spec.ts
           elif [[ "$NATIVE_SCOPE" == 'all' ]]; then
             bun run test:e2e:tauri
           else

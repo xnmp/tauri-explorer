@@ -726,25 +726,42 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let fake_git = dir.path().join("blocking-git");
-        write_fake_git(&fake_git, "sleep 30\n");
+        let started = dir.path().join("blocking-git.started");
+        let completion = dir.path().join("blocking-git.done");
+        write_fake_git(
+            &fake_git,
+            "printf started > \"$0.started\"\nsleep 30\nprintf completed > \"$0.done\"\n",
+        );
 
         let cancelled = Arc::new(AtomicBool::new(false));
-        let trigger = cancelled.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
-            trigger.store(true, Ordering::Relaxed);
+        let worker_cancelled = Arc::clone(&cancelled);
+        let path = dir.path().to_string_lossy().into_owned();
+        let pending = std::thread::spawn(move || {
+            get_git_status_sync_with_program(&path, &worker_cancelled, fake_git.as_os_str())
         });
-
-        let start = Instant::now();
-        let error = get_git_status_sync_with_program(
-            dir.path().to_str().unwrap(),
-            &cancelled,
-            fake_git.as_os_str(),
-        )
-        .expect_err("active cancellation must not publish a repository classification");
+        // Cancel only after rev-parse is running; a fixed sleep races startup
+        // under the parallel macOS suite.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !started.exists() {
+            assert!(Instant::now() < deadline, "fake Git did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let canceled_at = Instant::now();
+        cancelled.store(true, Ordering::Relaxed);
+        let error = pending
+            .join()
+            .unwrap()
+            .expect_err("active cancellation must not publish a repository classification");
 
         assert!(error.to_string().contains("cancelled"));
-        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(
+            canceled_at.elapsed() < Duration::from_secs(20),
+            "cancellation waited for the fake Git child to finish"
+        );
+        assert!(
+            !completion.exists(),
+            "the fake Git child completed instead of being cancelled"
+        );
     }
 
     /// Manual diagnostic for #424: run the badge-status path directly against

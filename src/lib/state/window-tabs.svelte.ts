@@ -41,7 +41,8 @@ import {
   removePersisted,
 } from "./persisted";
 import { parentDir } from "$lib/domain/path";
-import { acknowledgeWindowHandoff } from "./window-handoff";
+import { acknowledgeWindowHandoff, normalizeWindowHandoff } from "./window-handoff";
+import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 import { isFreshSeed, isRecord, normalizeDirectorySeed, windowSeedFitsBudget, WINDOW_SEED_MAX_CHARS, type ExplorerSeed } from "$lib/domain/window-input";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
@@ -663,13 +664,30 @@ function createWindowTabsManager(options: {
       WINDOW_SEED_MAX_CHARS,
     );
     removePersisted(tabSeedKey(WINDOW_LABEL));
-    if (isRecord(tabSeed) && isFreshSeed(tabSeed.ts, Date.now(), 10_000)) {
-      const snapshot = normalizeSnapshot(tabSeed.snapshot);
-      if (snapshot) {
-        const adopted = adoptTab(snapshot);
-        void acknowledgeWindowHandoff(tabSeed.handoff, WINDOW_LABEL).catch(() => {});
-        return adopted;
+    const freshTabSeed = isRecord(tabSeed) && isFreshSeed(tabSeed.ts, Date.now(), 10_000);
+    const snapshot = freshTabSeed ? normalizeSnapshot(tabSeed.snapshot) : null;
+    const handoff = isRecord(tabSeed) ? normalizeWindowHandoff(tabSeed.handoff) : null;
+    const traceTabSeed = (phase: string, error?: unknown) => {
+      if (import.meta.env.VITE_E2E_HOOKS !== "1") return;
+      logFrontendDiagnostic("window tab seed", {
+        label: WINDOW_LABEL, requestId: handoff?.requestId ?? null, phase,
+        seedPresent: tabSeed !== null, fresh: freshTabSeed,
+        snapshotValid: snapshot !== null, handoffValid: handoff !== null,
+        error: error === undefined ? null : String(error).slice(0, 240),
+      });
+    };
+    traceTabSeed("read");
+    if (snapshot) {
+      const adopted = adoptTab(snapshot);
+      traceTabSeed("adopted");
+      if (handoff) {
+        void acknowledgeWindowHandoff(handoff, WINDOW_LABEL)
+          .then(() => traceTabSeed("acknowledged"))
+          .catch((error) => traceTabSeed("acknowledgement-error", error));
+      } else {
+        traceTabSeed("acknowledgement-skipped");
       }
+      return adopted;
     }
 
     // Check for parent-window seed (child windows get entries pre-loaded)

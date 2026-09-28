@@ -91,5 +91,10 @@ describe("context-menu clipboard round-trip on the real backend", () => {
     for (const name of copies) {
       expect(fs.readFileSync(path.join(scratchDir, name), "utf8")).toBe("clipboard payload\n");
     }
+    if (process.platform === "win32") {
+      fs.mkdirSync("e2e-tauri/logs", { recursive: true });
+      await browser.saveScreenshot("e2e-tauri/logs/context-clipboard-paste-success.png")
+        .catch((error) => console.warn(`[clipboard-smoke] success screenshot unavailable: ${error}`));
+    }
   });
 });

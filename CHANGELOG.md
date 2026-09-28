@@ -27,6 +27,8 @@ preview layouts work more consistently across window sizes and platforms.
 
 ### Fixed
 
+- Copy followed immediately by Paste in the same Windows window no longer
+  waits for the operating-system clipboard mirror to finish (#715).
 - Closing many child windows on Linux releases their WebKit views instead of
   retaining shared-memory descriptors until the main window stops responding
   (#817).

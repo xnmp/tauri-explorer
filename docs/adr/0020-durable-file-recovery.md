@@ -1,19 +1,18 @@
 # ADR 0020: Durable file recovery
 
-Status: Proposed — implementation and crash/platform acceptance outstanding.
+Status: Proposed for default enablement and cross-platform support. Durable
+copy and move recovery are implemented on Linux behind independent opt-in
+features; Windows/macOS recovery adapters and final platform acceptance remain
+outstanding.
 
-Release policy (2026-09-09): creation of new durable replacement-copy records is
-opt-in through Cargo's `durable-copy-recovery` feature; retirement now exists
-(#687, [ADR 0023](0023-recovery-artifact-retention.md)), and the remaining gate on
-default enablement is native acceptance rather than unbounded retention. Default
-builds keep transient admission and staged overwrites. Existing recovery
-discovery, restore and history remain available. Executable durable moves are
-implemented (#685) behind the independent `durable-move-recovery` feature, opt-in
-for the same reason plus its own outstanding retirement plan: ADR 0023 lists a
-Move record, measures its roots and never retires it automatically, but the
-retirement plan naming which of a move's artifacts may be removed is not written
-yet, so a parked cross-filesystem source and a displaced overwrite target remain
-retained bytes only an explicit user decision can reclaim.
+Release policy (2026-09-09): creation of durable copy and move records remains
+opt-in through `durable-copy-recovery` and `durable-move-recovery`. Default builds
+keep transient admission and staged overwrites. Existing recovery discovery,
+restore and history remain available. [ADR 0023](0023-recovery-artifact-retention.md)
+defines bounded retention and journaled retirement for replacement and move
+records. Linux implementation and targeted native acceptance exist; default
+enablement is a release-owner decision (plan D1), and non-Linux adapters remain
+outside the implemented scope (plan D2).
 The frozen release scope in `docs/review-completion.md` supersedes broader
 implementation prerequisites below.
 

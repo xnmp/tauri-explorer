@@ -15,7 +15,7 @@ case marked as native acceptance.
 | Preview                  | Linux + Windows          | real Markdown and text files across alternating directories                                           | Markdown heading and exact text content appear in the preview                      | native WebDriver / required    |
 | DPI + zoom               | Linux + Windows          | required runner display scale (`SOAK_EXPECTED_DISPLAY_SCALE`) at 80%, 100%, and 150% application zoom | explorer and palette stay inside the viewport and usable                           | native WebDriver / required    |
 | Native input             | Linux + Windows          | Escape/F5 interruption plus native keyboard selection                                                 | a real file row receives visible selection and shortcuts remain responsive         | native WebDriver / required    |
-| Native UI                | macOS / WKWebView        | unique child fixture → Up via Appium Mac2/XCTest                                                       | child-only file gives way to parent-only file in native AX tree                    | hosted pilot / pending         |
+| Native UI                | macOS / WKWebView        | unique child fixture → Up via Appium Mac2/XCTest                                                       | child-only file gives way to parent-only file in native AX tree                    | #827 hosted pilot passed; final-tip W8.1 open |
 | Startup timing           | real macOS runner        | 30 embedded-binary cold launches plus `WARM_MEASURE=1` activation samples                             | every process reaches both markers, survives settling, and emits cold/warm p50/p95 | real process logs / required   |
 | Expanded combinations    | browser projects         | extra themes, reduced motion, previews, and viewport sizes                                            | selected labels, previews, focus, and containment render                           | browser only / non-native      |
 | Recovery adapters        | per implemented platform | added one capability at a time after implementation                                                   | recovery restores a usable explorer                                                | not implemented / not required |
@@ -52,9 +52,9 @@ components and root-containment checks keep every seed-derived artifact under
 
 Browser Playwright remains useful for broader visual combinations but cannot
 qualify native timing, resource, cache, watcher, or race claims. `tauri-driver`
-has no WKWebView route; the separate Appium Mac2/XCTest pilot exercises one
-native listing/navigation outcome, but remains unqualified until its hosted
-run passes and its screenshot is inspected. The macOS workflow's 30 real-process
+has no WKWebView route; the separate Appium Mac2/XCTest hosted pilot passed one
+native listing/navigation outcome with an inspected screenshot in #827. Broader
+native and final-tip release acceptance remain open. The macOS workflow's 30 real-process
 samples measure app-run-to-foreground-readiness and warm-show phases; they do not claim
 Dock bounce or first-input latency unless a separate real-machine capture
 records that seam.

@@ -1,0 +1,2142 @@
+{
+  "issue": 703,
+  "phase": "selection-failed",
+  "requestedLabel": "explorer-d705d00e-abc8-4a78-b92a-f71e8048eaeb",
+  "selectionStartedAt": 1790594153041,
+  "selectionFailedAt": 1790594173156,
+  "selectionError": "Error: waitUntil condition failed with the following reason: WebDriverError: invalid session id when running \"window/handles\" with method \"GET\"",
+  "existingHandles": [
+    "page-2EDC1849-3F9C-4E44-A586-A2F4926BFE92"
+  ],
+  "nativeBeforeSelection": {
+    "sampledAt": 1790594153052,
+    "application": [
+      {
+        "pid": 21538,
+        "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "127903",
+        "parentPid": 21529
+      }
+    ],
+    "webkit": [
+      {
+        "pid": 21614,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "128094",
+        "parentPid": 21538
+      },
+      {
+        "pid": 21563,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "127912",
+        "parentPid": 21538
+      },
+      {
+        "pid": 21558,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+        "startTime": "127910",
+        "parentPid": 21538
+      }
+    ],
+    "driver": [
+      {
+        "pid": 21528,
+        "executable": "/home/runner/.cargo/bin/tauri-driver",
+        "startTime": "127889",
+        "parentPid": 21515
+      },
+      {
+        "pid": 21529,
+        "executable": "/usr/bin/WebKitWebDriver",
+        "startTime": "127889",
+        "parentPid": 21528
+      }
+    ]
+  },
+  "nativeDuringSelection": [
+    {
+      "sampledAt": 1790594153052,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594153567,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594154068,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594154569,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594155070,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594155571,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594156066,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594156570,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594157066,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594157566,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594158069,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594158570,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594159066,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594159567,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594160066,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594160570,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594161070,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594161570,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594162068,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594162568,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594163069,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594163569,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594164070,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594164571,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594165072,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594165572,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594166080,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594166580,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594167076,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594167578,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594168076,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594168577,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21614,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128094",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594169077,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594169577,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594170078,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594170587,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594171078,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594171580,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594172078,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594172580,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    },
+    {
+      "sampledAt": 1790594173156,
+      "application": [
+        {
+          "pid": 21538,
+          "executable": "/home/runner/work/tauri-explorer/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+          "startTime": "127903",
+          "parentPid": 21529
+        }
+      ],
+      "webkit": [
+        {
+          "pid": 21633,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "128167",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21563,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+          "startTime": "127912",
+          "parentPid": 21538
+        },
+        {
+          "pid": 21558,
+          "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess",
+          "startTime": "127910",
+          "parentPid": 21538
+        }
+      ],
+      "driver": [
+        {
+          "pid": 21528,
+          "executable": "/home/runner/.cargo/bin/tauri-driver",
+          "startTime": "127889",
+          "parentPid": 21515
+        },
+        {
+          "pid": 21529,
+          "executable": "/usr/bin/WebKitWebDriver",
+          "startTime": "127889",
+          "parentPid": 21528
+        }
+      ]
+    }
+  ],
+  "baselineRendererDisappearances": [
+    {
+      "renderer": {
+        "pid": 21563,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "127912",
+        "parentPid": 21538
+      },
+      "firstMissingAt": null
+    },
+    {
+      "renderer": {
+        "pid": 21614,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "128094",
+        "parentPid": 21538
+      },
+      "firstMissingAt": 1790594169077
+    }
+  ],
+  "observedRendererLifetimes": [
+    {
+      "renderer": {
+        "pid": 21563,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "127912",
+        "parentPid": 21538
+      },
+      "firstSeenAt": 1790594153052,
+      "firstMissingAt": null
+    },
+    {
+      "renderer": {
+        "pid": 21614,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "128094",
+        "parentPid": 21538
+      },
+      "firstSeenAt": 1790594153052,
+      "firstMissingAt": 1790594169077
+    },
+    {
+      "renderer": {
+        "pid": 21633,
+        "executable": "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess",
+        "startTime": "128167",
+        "parentPid": 21538
+      },
+      "firstSeenAt": 1790594153567,
+      "firstMissingAt": null
+    }
+  ],
+  "untrackedRendererObservations": 0
+}

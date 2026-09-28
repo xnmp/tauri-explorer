@@ -21,13 +21,26 @@ WebDriver command outlives its nominal timeout. Freezing the sampler at the
 time limit loses the process transition before the eventual failure.
 Store each observed renderer's first-seen and first-missing times separately
 from that rolling window: otherwise evicting an early disappearance changes
-its reported time. The artifact reports when its 256-identity tracking bound
-omits additional process observations.
+its reported time. Cap each stored process group at 256 observations and report
+omission counts, while using the complete process scan for liveness tracking.
+A truncated artifact sample cannot prove that a missing renderer died. The
+artifact also reports when its 256-identity tracking bound omits observations.
 
 The new record is diagnostic, not proof of a renderer crash by itself: without
 successful selection there is no reliable child-renderer PID to attribute.
 The next real recurrence must include the failing label's process timeline
 and driver log before #781 can be classified.
+
+The launch can also lose its WebDriver session before it returns a label. In
+the native directory-watch specs, derive the child label from the operation
+token before dispatch, then sample processes across the operation result wait.
+The E2E launch probe uses that token as the window UUID, so the planned label
+is the actual native label. A mismatch or malformed result is recorded as an
+open failure. After selection, write the requested label and native state
+before requesting the page snapshot; keep sampling until that request settles
+and update the artifact with its result. A snapshot command that never settles
+still leaves the initial selected artifact. Renderer ownership remains an
+inference from process timing, not a proven PID-to-window mapping.
 
 The original #781 report lost its WebDriver session while the warm lifetime
 spec waited for an abandoned claim to expire after its source window closed.

@@ -5,10 +5,16 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   FreshWindowDiagnostics,
+  FreshWindowOpenFailure,
   FreshWindowSelectedDiagnostics,
   FreshWindowSelectionFailure,
   NativeProcessEvidence,
   ProcessObservation,
+} from "../../e2e-tauri/fresh-window-diagnostics";
+import {
+  boundNativeProcessSample,
+  firstMissingRendererAt,
+  MAX_STORED_PROCESSES_PER_GROUP,
 } from "../../e2e-tauri/fresh-window-diagnostics";
 
 const driver = vi.hoisted(() => ({
@@ -47,7 +53,7 @@ vi.mock("../../e2e-tauri/fresh-window-diagnostics", async (importOriginal) => {
   };
 });
 
-const { switchToFreshWindow, waitForFreshWindowElement } = await import(
+const { monitorFreshWindowOpen, switchToFreshWindow, waitForFreshWindowElement } = await import(
   "../../e2e-tauri/specs/helpers"
 );
 
@@ -65,6 +71,24 @@ function sample(sampledAt: number, webkit: ProcessObservation[]): NativeProcessE
 }
 
 describe("fresh-window blocked lookup process timeline", () => {
+  it("caps stored process groups and treats a truncated absence as unknown", () => {
+    const renderers = Array.from({ length: 300 }, (_, index) =>
+      process(index + 1, "WebKitWebProcess", String(index + 1)));
+    const stored = boundNativeProcessSample({
+      sampledAt: 42, application: renderers, webkit: renderers, driver: renderers,
+    });
+    expect(stored).toMatchObject({
+      omitted: { application: 44, webkit: 44, driver: 44 },
+    });
+    if (!("sampledAt" in stored)) throw new Error("expected a process sample");
+    expect(stored.webkit).toHaveLength(MAX_STORED_PROCESSES_PER_GROUP);
+    expect(stored.webkit[0].pid).toBe(300);
+    expect(firstMissingRendererAt(renderers[0], [stored])).toBeNull();
+    expect(firstMissingRendererAt(renderers[299], [stored, {
+      sampledAt: 43, application: [], webkit: [], driver: [],
+    }])).toBe(43);
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
@@ -99,10 +123,125 @@ describe("fresh-window blocked lookup process timeline", () => {
     vi.useRealTimers();
   });
 
+  it("retains the planned label and process timeline if launch loses its session before returning", async () => {
+    const renderer = process(21, "WebKitWebProcess", "210");
+    diagnostic.collect.mockImplementation(() => sample(Date.now(),
+      Date.now() < 1_500 ? [] : [renderer]));
+    const lostSession = new Error("session deleted during fresh-open");
+    const opening = monitorFreshWindowOpen("explorer-planned", async () => {
+      await new Promise((_, reject) => setTimeout(() => reject(lostSession), 1_100));
+    }, diagnostic.outputDirectory);
+    const rejected = expect(opening).rejects.toBe(lostSession);
+    await vi.advanceTimersByTimeAsync(1_100);
+    await rejected;
+
+    const failure = diagnostic.records.find((record): record is FreshWindowOpenFailure =>
+      record.phase === "open-failed");
+    expect(failure?.requestedLabel).toBe("explorer-planned");
+    expect(failure?.nativeDuringOpen.map((entry) =>
+      "sampledAt" in entry ? entry.sampledAt : null)).toEqual([1_000, 1_500, 2_000, 2_100]);
+    expect(failure?.observedRendererLifetimes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ renderer, firstSeenAt: 1_500 }),
+    ]));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([null, { kind: "fresh", label: "explorer-other" }])(
+    "records an invalid native launch result %j under the planned label",
+    async (opened) => {
+      diagnostic.collect.mockImplementation(() => sample(Date.now(), []));
+      await expect(monitorFreshWindowOpen("explorer-planned", async () => opened,
+        diagnostic.outputDirectory)).rejects.toThrow("instead of explorer-planned");
+      const failure = diagnostic.records.find((record): record is FreshWindowOpenFailure =>
+        record.phase === "open-failed");
+      expect(failure).toMatchObject({
+        requestedLabel: "explorer-planned",
+        nativeBeforeOpen: { sampledAt: 1_000 },
+      });
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("returns a matching native child without writing a failure artifact", async () => {
+    diagnostic.collect.mockImplementation(() => sample(Date.now(), []));
+    await expect(monitorFreshWindowOpen("explorer-planned", async () => ({
+      kind: "fresh", label: "explorer-planned",
+    }), diagnostic.outputDirectory)).resolves.toEqual({
+      kind: "fresh", label: "explorer-planned",
+    });
+    expect(diagnostic.records).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps sampling until the selected page snapshot returns a session error", async () => {
+    const renderer = process(21, "WebKitWebProcess", "210");
+    diagnostic.collect.mockImplementation(() => sample(Date.now(),
+      Date.now() < 1_500 ? [renderer] : []));
+    let reads = 0;
+    driver.execute.mockImplementation(async () => {
+      reads += 1;
+      if (reads === 1) return "explorer-child";
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      throw new Error("session deleted during page snapshot");
+    });
+    const selection = switchToFreshWindow("explorer-child", ["main"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(diagnostic.records.find((record) => record.phase === "selected"))
+      .toMatchObject({ requestedLabel: "explorer-child", pageAtSelection: null });
+    const initialArtifact = diagnostic.writtenPaths.at(-1);
+    expect(initialArtifact).toBeDefined();
+    expect(JSON.parse(fs.readFileSync(initialArtifact!, "utf8"))).toMatchObject({
+      requestedLabel: "explorer-child", pageAtSelection: null,
+    });
+    await vi.advanceTimersByTimeAsync(1_100);
+    await selection;
+
+    const selected = diagnostic.records.findLast((record): record is FreshWindowSelectedDiagnostics =>
+      record.phase === "selected");
+    expect(selected?.pageAtSelection).toEqual({
+      error: expect.stringContaining("session deleted during page snapshot"),
+    });
+    expect(selected?.nativeDuringPageSnapshot?.map((entry) =>
+      "sampledAt" in entry ? entry.sampledAt : null)).toEqual([1_000, 1_500, 2_000, 2_100]);
+    expect(selected?.pageSnapshotRendererFirstMissingAt).toBe(1_500);
+    expect(JSON.parse(fs.readFileSync(initialArtifact!, "utf8"))).toMatchObject({
+      pageAtSelection: { error: expect.stringContaining("session deleted during page snapshot") },
+      pageSnapshotRendererFirstMissingAt: 1_500,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("tracks the selected renderer through full scans when stored samples omit other processes", async () => {
+    const otherRenderers = Array.from({ length: 300 }, (_, index) =>
+      process(index + 20, "WebKitWebProcess", String(index + 20)));
+    const selectedRenderer = process(400, "WebKitWebProcess", "400");
+    diagnostic.collect.mockImplementation(() => sample(Date.now(),
+      Date.now() < 1_500
+        ? [...otherRenderers, selectedRenderer]
+        : otherRenderers));
+    let reads = 0;
+    driver.execute.mockImplementation(async () => {
+      reads += 1;
+      if (reads === 1) return "explorer-child";
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      throw new Error("session lost");
+    });
+
+    const selection = switchToFreshWindow("explorer-child", ["main"]);
+    await vi.advanceTimersByTimeAsync(1_100);
+    await selection;
+    const selected = diagnostic.records.findLast((record): record is FreshWindowSelectedDiagnostics =>
+      record.phase === "selected");
+    expect(selected?.nativeAtSelection).toMatchObject({ omitted: { webkit: 45 } });
+    expect(selected?.pageSnapshotRendererFirstMissingAt).toBe(1_500);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("reports when the selected renderer first disappears during the blocked command", async () => {
     const mainRenderer = process(20, "WebKitWebProcess", "200");
     const selectedRenderer = process(21, "WebKitWebProcess", "210");
     diagnostic.collect
+      .mockReturnValueOnce(sample(1_000, [mainRenderer, selectedRenderer]))
       .mockReturnValueOnce(sample(1_000, [mainRenderer, selectedRenderer]))
       .mockReturnValueOnce(sample(1_000, [mainRenderer, selectedRenderer]))
       .mockReturnValueOnce(sample(1_000, [mainRenderer, selectedRenderer]))

@@ -3,6 +3,7 @@ import { browser, $, $$ } from "@wdio/globals";
 import type {} from "webdriverio";
 import path from "node:path";
 import {
+  boundNativeProcessSample,
   collectNativeProcessEvidence,
   firstMissingRendererAt,
   newestRenderer,
@@ -99,7 +100,7 @@ export function recordFreshWindowLookupFailure(
   const selected = lastFreshWindow;
   if (!selected) return null;
   const nativeAfterFailure = nativeDuringLookup.at(-1)
-    ?? collectNativeProcessEvidence({ applicationPath: applicationBinary });
+    ?? boundNativeProcessSample(collectNativeProcessEvidence({ applicationPath: applicationBinary }));
   const selectedRendererAtSelection = newestRenderer(selected.nativeAtSelection);
   return writeFreshWindowDiagnostics({
     ...selected,
@@ -134,6 +135,11 @@ function beginNativeProcessTimeline(
     firstSeenAt: number;
     firstMissingAt: number | null;
   }>();
+  let focusedRenderer: {
+    renderer: ProcessObservation;
+    firstSeenAt: number;
+    firstMissingAt: number | null;
+  } | null = null;
   const maxTrackedRenderers = 256;
   let untrackedRendererObservations = 0;
   const track = (renderer: ProcessObservation, firstSeenAt: number): boolean => {
@@ -146,6 +152,10 @@ function beginNativeProcessTimeline(
     }
     tracked.set(key, { renderer, firstSeenAt, firstMissingAt: null });
     return true;
+  };
+  const focusRenderer = (renderer: ProcessObservation | null, firstSeenAt: number) => {
+    if (!renderer || renderer.startTime === null || tracked.has(rendererKey(renderer))) return;
+    focusedRenderer = { renderer, firstSeenAt, firstMissingAt: null };
   };
   extraRenderers.forEach((renderer) => track(renderer, Date.now()));
   const sampleInterval = 500;
@@ -167,26 +177,42 @@ function beginNativeProcessTimeline(
           renderer.pid === state.renderer.pid && renderer.startTime === state.renderer.startTime);
         if (!present) state.firstMissingAt = observation.sampledAt;
       }
+      const focused = focusedRenderer;
+      if (focused && focused.firstMissingAt === null) {
+        const present = observation.webkit.some((renderer) =>
+          renderer.pid === focused.renderer.pid &&
+          renderer.startTime === focused.renderer.startTime);
+        if (!present) focused.firstMissingAt = observation.sampledAt;
+      }
     }
     // Keep the pre-operation baseline and the newest bounded window even if a
     // WebDriver command outlives its nominal timeout.
     if (samples.length >= maxSamples) samples.splice(1, 1);
-    samples.push(observation);
+    samples.push(boundNativeProcessSample(observation));
   };
   sample();
   const timer = setInterval(sample, sampleInterval);
   timer.unref();
-  const firstMissingAt = (renderer: ProcessObservation | null) =>
-    renderer ? tracked.get(rendererKey(renderer))?.firstMissingAt ?? null : null;
+  const firstMissingAt = (renderer: ProcessObservation | null): number | null => {
+    if (!renderer) return null;
+    const trackedMissingAt = tracked.get(rendererKey(renderer))?.firstMissingAt;
+    if (trackedMissingAt !== undefined) return trackedMissingAt;
+    return focusedRenderer && rendererKey(focusedRenderer.renderer) === rendererKey(renderer)
+      ? focusedRenderer.firstMissingAt : null;
+  };
   const baselineRendererDisappearances = () => baselineRenderers.map((renderer) => ({
     renderer,
     firstMissingAt: firstMissingAt(renderer),
   }));
-  const observedRendererLifetimes = () => Array.from(tracked.values());
+  const observedRendererLifetimes = () => [
+    ...tracked.values(),
+    ...(focusedRenderer ? [focusedRenderer] : []),
+  ];
   return {
     samples,
     sample,
     firstMissingAt,
+    focusRenderer,
     baselineRendererDisappearances,
     observedRendererLifetimes,
     untrackedRendererObservations: () => untrackedRendererObservations,
@@ -265,6 +291,43 @@ export async function waitForFreshWindowElement(
   }
 }
 
+/** Retain the planned child label if launch fails before returning it. */
+export async function monitorFreshWindowOpen(
+  requestedLabel: string,
+  action: () => Promise<unknown>,
+  outputDirectory = diagnosticsDirectory,
+): Promise<{ kind: "fresh"; label: string }> {
+  const openStartedAt = Date.now();
+  const timeline = beginNativeProcessTimeline(20_000);
+  try {
+    const opened = await action();
+    if (!opened || typeof opened !== "object" ||
+        !("kind" in opened) || opened.kind !== "fresh" ||
+        !("label" in opened) || opened.label !== requestedLabel) {
+      throw new Error(`fresh-open returned ${JSON.stringify(opened)} instead of ${requestedLabel}`);
+    }
+    return { kind: "fresh", label: requestedLabel };
+  } catch (error) {
+    timeline.sample();
+    writeFreshWindowDiagnostics({
+      issue: 703,
+      phase: "open-failed",
+      requestedLabel,
+      openStartedAt,
+      openFailedAt: Date.now(),
+      openError: String(error),
+      nativeBeforeOpen: timeline.samples[0],
+      nativeDuringOpen: timeline.samples,
+      baselineRendererDisappearances: timeline.baselineRendererDisappearances(),
+      observedRendererLifetimes: timeline.observedRendererLifetimes(),
+      untrackedRendererObservations: timeline.untrackedRendererObservations(),
+    }, outputDirectory);
+    throw error;
+  } finally {
+    timeline.stop();
+  }
+}
+
 /** A fresh launch must introduce a new handle and expose its requested label. */
 export async function switchToFreshWindow(
   label: string,
@@ -305,24 +368,41 @@ export async function switchToFreshWindow(
       observedRendererLifetimes: timeline.observedRendererLifetimes(),
       untrackedRendererObservations: timeline.untrackedRendererObservations(),
     }, diagnosticsDirectory);
-    throw error;
-  } finally {
     timeline.stop();
+    throw error;
   }
 
-  // Always-on: one renderer round trip plus one /proc scan, recorded before the
-  // first element lookup can lose the session (#703).
+  // Persist the label and native state before another WebDriver command: the
+  // page snapshot itself can hang or lose the session.
+  const selectedAt = Date.now();
+  const nativeAtSelection = boundNativeProcessSample(
+    collectNativeProcessEvidence({ applicationPath: applicationBinary }));
+  const selectedRenderer = newestRenderer(nativeAtSelection);
+  timeline.focusRenderer(selectedRenderer, selectedAt);
   lastFreshWindow = {
     issue: 703,
     phase: "selected",
     requestedLabel: label,
     handle: selected,
-    selectedAt: Date.now(),
-    pageAtSelection: await captureFreshWindowPage(),
-    nativeAtSelection: collectNativeProcessEvidence({ applicationPath: applicationBinary }),
+    selectedAt,
+    pageAtSelection: null,
+    nativeAtSelection,
   };
   writeFreshWindowDiagnostics(lastFreshWindow, diagnosticsDirectory);
-  return selected;
+  try {
+    const pageAtSelection = await captureFreshWindowPage();
+    timeline.sample();
+    lastFreshWindow = {
+      ...lastFreshWindow,
+      pageAtSelection,
+      nativeDuringPageSnapshot: timeline.samples,
+      pageSnapshotRendererFirstMissingAt: timeline.firstMissingAt(selectedRenderer),
+    };
+    writeFreshWindowDiagnostics(lastFreshWindow, diagnosticsDirectory);
+    return selected;
+  } finally {
+    timeline.stop();
+  }
 }
 
 /**

@@ -157,7 +157,7 @@ pub struct ConfigWatchHarness {
     stop: Arc<(Mutex<bool>, Condvar)>,
     worker: Option<JoinHandle<()>>,
     _watcher: Arc<Mutex<RecommendedWatcher>>,
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     watch_state: Arc<Mutex<WatchState>>,
 }
 
@@ -252,7 +252,7 @@ where
     let stop = Arc::new((Mutex::new(false), Condvar::new()));
     let refresh_stop = Arc::clone(&stop);
     let refresh_watcher = Arc::clone(&watcher);
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     let test_watch_state = Arc::clone(&watch_state);
     let worker = std::thread::spawn(move || loop {
         let (lock, wake) = &*refresh_stop;
@@ -274,7 +274,7 @@ where
         stop,
         worker: Some(worker),
         _watcher: watcher,
-        #[cfg(test)]
+        #[cfg(all(test, unix))]
         watch_state: test_watch_state,
     })
 }

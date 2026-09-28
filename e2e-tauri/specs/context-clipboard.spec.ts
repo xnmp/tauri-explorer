@@ -50,6 +50,8 @@ describe("context-menu clipboard round-trip on the real backend", () => {
     await $(".context-menu").waitForDisplayed({ timeout: 5000 });
     const labels = await domTexts(".context-menu .menu-item");
     expect(labels.join(" ")).toContain("Copy");
+    const selected = await domTexts('.entry-item[aria-selected="true"] .entry-name');
+    expect(selected).toContain("original.txt");
   });
 
   it("copy + background paste duplicates the file on disk", async () => {

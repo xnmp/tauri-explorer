@@ -105,14 +105,15 @@
           <h2 id="items-title">Plan items</h2>
           <div class="board-grid">
             <section class="lane" aria-labelledby="todo-title">
-              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">0 items</span></div>
-              <p class="empty">No unstarted items.</p>
+              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">1 item</span></div>
+              <ul class="items">
+                <li><strong>W8.2</strong> Acceptance records <small>The final-tip ledger audit passed; publication of the broader docs PR awaits approval after automatic review rejected its push.</small></li>
+              </ul>
             </section>
             <section class="lane" aria-labelledby="doing-title">
-              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">2 items</span></div>
+              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">1 item</span></div>
               <ul class="items">
-                <li><strong>W8.2</strong> Acceptance records <small>Final-tip ledger audit passed; the docs-only dev merge awaits approval to publish the broader PR after automatic review rejected its push.</small></li>
-                <li><strong>W8.3</strong> v1.11.0 release <small><a href="https://github.com/xnmp/tauri-explorer/pull/838">Draft PR #838</a> has aligned versions, dated notes and a six-bundle publication guard. The prior macOS Rust run exposed two test timing assumptions; the revised tests passed local repeat and full-suite checks. New-head Windows native smoke failed one large-layout transfer; diagnostics are under review. WebKit checks, dev-to-main merge and release assets remain.</small></li>
+                <li><strong>W8.3</strong> v1.11.0 release <small><a href="https://github.com/xnmp/tauri-explorer/pull/838">Draft PR #838</a> has aligned versions, dated notes and a six-bundle publication guard. The prior macOS Rust run exposed two test timing assumptions; the revised tests passed local repeat and full-suite checks. The prior Windows native smoke failed one large-layout transfer; correlated sender/native/receiver diagnostics are now on head <code>a51efb7f</code> and its hosted checks are running. The docs merge, dev-to-main merge and release assets remain.</small></li>
               </ul>
             </section>
             <section class="lane" aria-labelledby="done-title">
@@ -155,7 +156,7 @@
         <section class="inner" aria-labelledby="next-title">
           <h2 id="next-title">Remaining gates</h2>
           <ul class="gates">
-            <li><strong>Reconcile acceptance records</strong><p>Fact-check the updated ledger and ADRs against the final hosted logs, publish the docs PR after approval, and prove a docs-only merge leaves qualified product inputs unchanged.</p></li>
+            <li><strong>Publish acceptance records</strong><p>The ledger and ADR fact-check passed. Publish the broader docs PR after approval, merge it, and prove the docs-only merge leaves qualified product inputs unchanged.</p></li>
             <li><strong>Cut v1.11.0</strong><p>Finish draft PR #838 checks on the docs-merged dev tip, merge it, then merge the dev-to-main release PR after its checks and verify all six published assets.</p></li>
           </ul>
         </section>
@@ -174,6 +175,7 @@
       <section id="history-panel" class="panel" role="tabpanel" aria-labelledby="history-tab" hidden>
         <h2>History</h2>
         <ol class="history">
+          <li><time datetime="2026-09-29T06:07:00+10:00">29 September 2026, 06:07 AEST</time><p>The <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36472926377">Windows native smoke failure</a> returned a correlated <code>moved: false</code> after about 11 seconds, but the retained trace could not identify native creation versus handoff timeout. On <a href="https://github.com/xnmp/tauri-explorer/pull/838">PR #838</a> head <code>a51efb7f</code>, E2E-only diagnostics now correlate the sender, native-created event, child seed adoption and acknowledgement. Type checking and 42 focused tests pass; the <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36476638800">final-head native smoke</a> is running. W8.2 moved to To do while docs publication approval is pending; W8.3 stays Doing. <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-29T05:50:00+10:00">29 September 2026, 05:50 AEST</time><p>On <a href="https://github.com/xnmp/tauri-explorer/pull/838">release PR #838</a> head <code>711da177</code>, macOS and Windows Rust, gated recovery, Mac2 native UI, Linux native smoke, macOS startup and both Chromium shards passed. <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36472926377">Windows native smoke</a> failed one large-layout transfer case: the operation returned <code>moved: false</code>. An independent Sol is reviewing the retained runner diagnostics before cause is assigned; WebKit remains active. W8.3 stays Doing and the board remains <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Exact-head hosted gate monitoring and Windows transfer failure triage.</p></li>
           <li><time datetime="2026-09-29T05:32:00+10:00">29 September 2026, 05:32 AEST</time><p>The first macOS Rust job on <a href="https://github.com/xnmp/tauri-explorer/pull/838">release PR #838</a> failed a rev-parse cancellation test&#39;s five-second wall-clock check. Its rerun passed that test but failed a Git-watch test whose first poll could race a successful worker reply. Commit <code>711da177</code> makes both tests synchronize on observable starts; each passed 100/100 local repeats, and the full default and opt-in Rust library suites passed with normal OS access. An independent Sol review confirmed the observer wait is bounded and the cancellation test still rejects a 30-second delay. New-head hosted checks are required. W8.3 remains Doing; <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Mac runner failure analysis, deterministic test synchronization, local Rust verification and updated release PR.</p></li>
           <li><time datetime="2026-09-29T05:08:00+10:00">29 September 2026, 05:08 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/838">Draft release PR #838</a> published aligned v1.11.0 versions, dated notes and a release-workflow guard requiring one correctly named bundle for each of six platform types. The exact workflow shell step accepted the expected six assets and rejected missing, duplicate and wrong-version cases; an independent Sol review found the duplicate gap and verified its fix. Hosted PR checks are running. W8.3 moved to Doing; W8.2 remains Doing until the audited docs-only PR is approved, published and merged. <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Release workflow review, focused preflight and public draft PR preparation.</p></li>

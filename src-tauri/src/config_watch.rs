@@ -157,6 +157,8 @@ pub struct ConfigWatchHarness {
     stop: Arc<(Mutex<bool>, Condvar)>,
     worker: Option<JoinHandle<()>>,
     _watcher: Arc<Mutex<RecommendedWatcher>>,
+    #[cfg(test)]
+    watch_state: Arc<Mutex<WatchState>>,
 }
 
 impl Drop for ConfigWatchHarness {
@@ -181,6 +183,16 @@ pub fn watch_config_changes<F>(
 where
     F: Fn(String) + Send + Sync + 'static,
 {
+    watch_config_changes_with_source(config_dir, move |name, _source| on_change(name))
+}
+
+fn watch_config_changes_with_source<F>(
+    config_dir: PathBuf,
+    on_change: F,
+) -> notify::Result<ConfigWatchHarness>
+where
+    F: Fn(String, PathBuf) + Send + Sync + 'static,
+{
     let initial_plan = config_watch_plan(&config_dir);
     let watch_state = Arc::new(Mutex::new(WatchState {
         plan: initial_plan.clone(),
@@ -204,18 +216,23 @@ where
         if matches!(event.kind, EventKind::Access(_)) {
             return;
         }
-        let names = {
+        let changes = {
             let Ok(state) = callback_state.lock() else {
                 return;
             };
             event
                 .paths
                 .iter()
-                .filter_map(|path| state.plan.watched_config_name(path))
+                .filter_map(|path| {
+                    state
+                        .plan
+                        .watched_config_name(path)
+                        .map(|name| (name, path.clone()))
+                })
                 .collect::<Vec<_>>()
         };
-        for name in names {
-            callback(name);
+        for (name, source) in changes {
+            callback(name, source);
         }
     })?;
     let watcher = Arc::new(Mutex::new(watcher));
@@ -235,6 +252,8 @@ where
     let stop = Arc::new((Mutex::new(false), Condvar::new()));
     let refresh_stop = Arc::clone(&stop);
     let refresh_watcher = Arc::clone(&watcher);
+    #[cfg(test)]
+    let test_watch_state = Arc::clone(&watch_state);
     let worker = std::thread::spawn(move || loop {
         let (lock, wake) = &*refresh_stop;
         let Ok(stopped) = lock.lock() else {
@@ -255,6 +274,8 @@ where
         stop,
         worker: Some(worker),
         _watcher: watcher,
+        #[cfg(test)]
+        watch_state: test_watch_state,
     })
 }
 
@@ -458,12 +479,12 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::THEMES_DIR;
     use super::{
         pending, reconcile_watch_plan, settings_path, watched_config_name, WatchPlan,
         WatchRegistration, WatchState, BOOKMARKS_FILE, FOLDER_VIEWS_FILE, SETTINGS_FILE,
     };
-    #[cfg(unix)]
-    use super::{THEMES_DIR, WATCH_PLAN_REFRESH_INTERVAL};
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
@@ -735,48 +756,106 @@ mod tests {
         let new_file = new_dir.join(SETTINGS_FILE);
         std::fs::write(&old_file, "old-0").expect("old target");
         std::fs::write(&new_file, "new-0").expect("new target");
+        let old_root = std::fs::canonicalize(&old_dir).expect("canonical old target dir");
+        let new_root = std::fs::canonicalize(&new_dir).expect("canonical new target dir");
+        let old_source = old_root.join(SETTINGS_FILE);
+        let new_source = new_root.join(SETTINGS_FILE);
         let configured = config.join(SETTINGS_FILE);
         symlink(&old_file, &configured).expect("initial settings symlink");
 
         let (sent, received) = mpsc::channel();
-        let harness = super::watch_config_changes(config, move |name| {
-            let _ = sent.send(name);
+        let harness = super::watch_config_changes_with_source(config, move |name, source| {
+            // Normalize only the parent: canonicalizing the symlink leaf
+            // would mistake a config-entry event for a target-file event.
+            let source = source
+                .parent()
+                .and_then(|parent| std::fs::canonicalize(parent).ok())
+                .and_then(|parent| source.file_name().map(|file| parent.join(file)))
+                .unwrap_or(source);
+            let _ = sent.send((name, source));
         })
         .expect("config watcher");
+        let receive_from = |expected: &Path, timeout: Duration| -> Option<String> {
+            let deadline = Instant::now() + timeout;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return None;
+                }
+                match received.recv_timeout(remaining) {
+                    Ok((name, source)) if source == expected => return Some(name),
+                    Ok(_) => continue,
+                    Err(mpsc::RecvTimeoutError::Timeout) => return None,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        panic!("config watcher stopped before the handover test completed")
+                    }
+                }
+            }
+        };
 
         std::fs::write(&old_file, "old-1").expect("initial target write");
         assert_eq!(
-            received
-                .recv_timeout(Duration::from_secs(3))
-                .ok()
-                .as_deref(),
+            receive_from(&old_source, Duration::from_secs(3)).as_deref(),
             Some(SETTINGS_FILE)
         );
 
         std::fs::remove_file(&configured).expect("remove old symlink");
         symlink(&new_file, &configured).expect("retarget settings symlink");
-        std::thread::sleep(WATCH_PLAN_REFRESH_INTERVAL + Duration::from_millis(300));
-        while received.try_recv().is_ok() {}
-
-        // The old native registration has been removed after new coverage was
-        // established, while writes through the new target remain observable.
-        std::fs::write(&old_file, "old-2").expect("retired target write");
-        assert!(received.recv_timeout(Duration::from_millis(400)).is_err());
-        std::fs::write(&new_file, "new-1").expect("replacement target write");
+        // Observe an event from the actual new target instead of assuming the
+        // polling worker finished within a fixed sleep under parallel CI load.
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut new_target_observed = false;
+        let mut attempt = 0;
+        while Instant::now() < deadline {
+            std::fs::write(&new_file, format!("new-{attempt}")).expect("replacement target probe");
+            if receive_from(&new_source, Duration::from_millis(100)).as_deref()
+                == Some(SETTINGS_FILE)
+            {
+                new_target_observed = true;
+                break;
+            }
+            attempt += 1;
+        }
+        assert!(new_target_observed, "replacement target was not observed");
+        // The real watcher has completed both the new registration and the
+        // old unregistration. Delayed config-entry events cannot substitute
+        // for the sourced new-file receipt above.
+        let state = harness.watch_state.lock().expect("watch state");
         assert_eq!(
-            received
-                .recv_timeout(Duration::from_secs(3))
-                .ok()
-                .as_deref(),
-            Some(SETTINGS_FILE)
+            state.registered_external_roots.len(),
+            1,
+            "handover retained an unexpected external registration"
         );
+        assert!(state.registered_external_roots.contains_key(&new_root));
+        assert!(!state.registered_external_roots.contains_key(&old_root));
+        assert_eq!(state.plan.watched_config_name(&old_source), None);
+        drop(state);
 
         let drop_started = Instant::now();
         drop(harness);
         assert!(drop_started.elapsed() < Duration::from_secs(1));
-        while received.try_recv().is_ok() {}
+        // Draining the channel until its sender disconnects proves teardown;
+        // a short silence window could miss a delayed callback.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "watcher callback stayed alive after teardown"
+            );
+            match received.recv_timeout(remaining) {
+                Ok(_) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("watcher callback stayed alive after teardown")
+                }
+            }
+        }
         std::fs::write(&new_file, "new-2").expect("write after teardown");
-        assert!(received.recv_timeout(Duration::from_millis(400)).is_err());
+        assert!(matches!(
+            received.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
     }
 
     #[cfg(unix)]

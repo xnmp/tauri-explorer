@@ -109,14 +109,16 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     const { native_scope: scope, clipboard_runs: runs } = workflow.on.workflow_dispatch.inputs;
     const windowsGui = stepNamed(workflow.jobs.smoke.steps, "Run smoke suite (Windows)");
 
-    expect(scope).toMatchObject({ default: "all", options: ["all", "clipboard"] });
+    expect(scope).toMatchObject({ default: "all", options: ["all", "clipboard", "transfer"] });
     expect(runs.default).toBe(1);
     expect(workflow.jobs.smoke.strategy.matrix.os).toContain("inputs.native_scope == 'clipboard'");
+    expect(workflow.jobs.smoke.strategy.matrix.os).toContain("inputs.native_scope == 'transfer'");
     expect(workflow.jobs.smoke.strategy.matrix.os).toContain(
       '["ubuntu-latest","windows-latest"]',
     );
     expect(windowsGui.run).toContain("^([1-9]|10)$");
     expect(windowsGui.run).toContain("--spec e2e-tauri/specs/context-clipboard.spec.ts");
+    expect(windowsGui.run).toContain("--spec e2e-tauri/specs/window-transfer-lifetime.spec.ts");
     expect(windowsGui.run).toContain("bun run test:e2e:tauri");
   });
 

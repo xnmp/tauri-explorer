@@ -99,7 +99,7 @@ unqualified until the hosted test demonstrates the app outcome.
 `.file-list` count, status path, URL, ready/visibility state) plus a `/proc` scan
 of the application, its WebKit auxiliary processes and the drivers, every time a
 fresh child window is selected. `waitForFreshWindowElement` replays that record
-with a bounded, timestamped `/proc` timeline while the first element lookup is
+with a bounded, rolling, timestamped `/proc` timeline while the first element lookup is
 pending — by the time it fails, the WebDriver session may already be invalid,
 so the sampler never issues another driver command. The newest selection-time
 `WebKitWebProcess` is retained as the fresh child's inferred renderer identity
@@ -109,11 +109,24 @@ sample where that identity is absent. Records land in
 `TAURI_NATIVE_DIAGNOSTICS_DIR`), and `tauri-driver`'s output — which
 `WebKitWebDriver` inherits — is teed to `e2e-tauri/logs/tauri-driver.log`. CI
 uploads both with the WDIO logs.
+First-seen and first-missing renderer times remain in bounded identity summaries
+even when old raw samples roll out; the artifact reports omitted observations
+if its 256-identity cap is reached.
 
 A renderer that first disappears before the driver timeout supports renderer
 death; one that survives until session deletion points at the driver/session
 path instead. See
 `docs/lessons/703-native-webdriver-session-loss.md`.
+
+`warm-window-lifetime.spec.ts` also starts a process-only timeline immediately
+before closing the source of an abandoned warm claim. If claim expiry or a
+WebDriver handle poll fails, `e2e-tauri/logs/warm-claim/` retains the exact
+claimed label and handles, all pre-close `WebKitWebProcess` PID/start-time
+identities, source-close and handle-retirement milestones, their first observed
+disappearance times, and the final process
+sample. It does not issue another WebDriver command after failure. Compare it
+with `tauri-driver.log`; a disappearing process is not by itself proof that it
+belonged to the claimed WebView (#781).
 
 
 ## Adding specs

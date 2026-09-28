@@ -254,7 +254,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
       }
       if (op === "fresh-open") {
         const { createWindowLauncher } = await whileActive(import("$lib/state/window-launch"));
-        const opened = await createWindowLauncher({ warmEnabled: () => false })(
+        const opened = await createWindowLauncher({ warmEnabled: () => false, uuid: () => token })(
           target ?? windowTabsManager.getActiveExplorer()!.currentPath,
         );
         return opened ? { kind: opened.kind, label: opened.label } : null;

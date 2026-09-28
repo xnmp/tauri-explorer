@@ -49,9 +49,34 @@ export interface NativeProcessEvidence {
   webkit: ProcessObservation[];
   /** `tauri-driver` and the native driver it proxies to. */
   driver: ProcessObservation[];
+  /** Counts excluded from a bounded artifact sample, if any. */
+  omitted?: { application: number; webkit: number; driver: number };
 }
 
 export type NativeProcessSample = NativeProcessEvidence | { error: string };
+
+/** Store at most this many observations per process group in each timeline sample. */
+export const MAX_STORED_PROCESSES_PER_GROUP = 256;
+
+/** Bound artifact size without changing the full process scan used for liveness tracking. */
+export function boundNativeProcessSample(sample: NativeProcessSample): NativeProcessSample {
+  if (!("sampledAt" in sample)) return sample;
+  const limit = MAX_STORED_PROCESSES_PER_GROUP;
+  const webkit = [...sample.webkit].sort((a, b) =>
+    Number(b.startTime ?? -1) - Number(a.startTime ?? -1));
+  const omitted = {
+    application: Math.max(0, sample.application.length - limit),
+    webkit: Math.max(0, webkit.length - limit),
+    driver: Math.max(0, sample.driver.length - limit),
+  };
+  return {
+    ...sample,
+    application: sample.application.slice(0, limit),
+    webkit: webkit.slice(0, limit),
+    driver: sample.driver.slice(0, limit),
+    ...(Object.values(omitted).some((count) => count > 0) ? { omitted } : {}),
+  };
+}
 
 /** WebKitGTK's multi-process names. A missing `WebKitWebProcess` after a lost
  * lookup is renderer death; a surviving one points at the driver instead. */
@@ -128,8 +153,49 @@ export function collectNativeProcessEvidence(
   }
 }
 
-/** The complete evidence bundle written for one fresh-window lookup. */
-export interface FreshWindowDiagnostics {
+/** A selection failure can occur before any child page or renderer is known. */
+export interface FreshWindowSelectionFailure {
+  issue: 703;
+  phase: "selection-failed";
+  requestedLabel: string;
+  selectionStartedAt: number;
+  selectionFailedAt: number;
+  selectionError: string;
+  existingHandles: readonly string[];
+  nativeBeforeSelection: NativeProcessSample;
+  nativeDuringSelection: readonly NativeProcessSample[];
+  /** First missing time is retained even if its sample ages out of the rolling window. */
+  baselineRendererDisappearances: readonly {
+    renderer: ProcessObservation;
+    firstMissingAt: number | null;
+  }[];
+  /** Includes renderers first seen after selection started, even if their samples roll out. */
+  observedRendererLifetimes: readonly {
+    renderer: ProcessObservation;
+    firstSeenAt: number;
+    firstMissingAt: number | null;
+  }[];
+  /** Explicitly shows if the bounded identity tracker could not include every process. */
+  untrackedRendererObservations: number;
+}
+
+/** A launch can lose the driver session before returning the child label. */
+export interface FreshWindowOpenFailure {
+  issue: 703;
+  phase: "open-failed";
+  requestedLabel: string;
+  openStartedAt: number;
+  openFailedAt: number;
+  openError: string;
+  nativeBeforeOpen: NativeProcessSample;
+  nativeDuringOpen: readonly NativeProcessSample[];
+  baselineRendererDisappearances: FreshWindowSelectionFailure["baselineRendererDisappearances"];
+  observedRendererLifetimes: FreshWindowSelectionFailure["observedRendererLifetimes"];
+  untrackedRendererObservations: number;
+}
+
+/** The complete evidence bundle written after a fresh window is selected. */
+export interface FreshWindowSelectedDiagnostics {
   issue: 703;
   phase: "selected" | "lookup-failed";
   requestedLabel: string;
@@ -138,6 +204,9 @@ export interface FreshWindowDiagnostics {
   /** Renderer sample taken at successful fresh-handle selection. */
   pageAtSelection: FreshWindowPageSnapshot | { error: string } | null;
   nativeAtSelection: NativeProcessEvidence | { error: string } | null;
+  /** Selection is persisted before the page snapshot, then updated when it settles. */
+  nativeDuringPageSnapshot?: NativeProcessSample[];
+  pageSnapshotRendererFirstMissingAt?: number | null;
   /** Only present on a failed lookup; the session may already be invalid, so
    * this is process evidence only. */
   lookup?: { selector: string; startedAt?: number; failedAt: number; error: string };
@@ -149,6 +218,8 @@ export interface FreshWindowDiagnostics {
   /** First sample where that exact PID/start-time identity was absent. */
   selectedRendererFirstMissingAt?: number | null;
 }
+
+export type FreshWindowDiagnostics = FreshWindowSelectedDiagnostics | FreshWindowSelectionFailure | FreshWindowOpenFailure;
 
 function isNativeProcessEvidence(sample: NativeProcessSample | null): sample is NativeProcessEvidence {
   return sample !== null && "sampledAt" in sample;
@@ -181,7 +252,8 @@ export function firstMissingRendererAt(
     if (!isNativeProcessEvidence(sample)) continue;
     const present = sample.webkit.some((entry) =>
       entry.pid === renderer.pid && entry.startTime === renderer.startTime);
-    if (!present) return sample.sampledAt;
+    // A truncated sample cannot prove absence; the renderer may be omitted.
+    if (!present && !sample.omitted?.webkit) return sample.sampledAt;
   }
   return null;
 }
@@ -194,7 +266,10 @@ export function firstMissingRendererAt(
  */
 export function diagnosticsFileName(record: FreshWindowDiagnostics): string {
   const digest = createHash("sha256").update(record.requestedLabel).digest("hex").slice(0, 12);
-  return `${record.selectedAt}-${digest}-${record.phase}.json`;
+  const timestamp = record.phase === "selection-failed"
+    ? record.selectionStartedAt
+    : record.phase === "open-failed" ? record.openStartedAt : record.selectedAt;
+  return `${timestamp}-${digest}-${record.phase}.json`;
 }
 
 /**

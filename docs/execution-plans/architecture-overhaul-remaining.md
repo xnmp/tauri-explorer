@@ -11,8 +11,9 @@ the remaining rows still share a platform boundary:
 - durable recovery and admission adapters remain Linux-only;
 - Windows and macOS now run the full Rust library suite and selected native
   outcomes, but these do not establish comprehensive native UI behaviour;
-- Windows native coverage remains incomplete, and the local macOS Mac2/XCTest
-  pilot still needs a hosted native UI outcome.
+- Windows native coverage remains incomplete. The macOS Mac2/XCTest hosted
+  child-listing/Up pilot passed in #827; broader native acceptance and the
+  final-tip integration gate remain open.
 
 This file lists every remaining step. It gives each one a verification tier
 and an exit condition. When an item lands, update its status here and in the

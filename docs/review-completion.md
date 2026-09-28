@@ -1192,6 +1192,10 @@ All remaining review and release gates below remain required.
 
 ## Production Linux copy replacements — preceding checkpoint
 
+This records the pre-#813 command shape. PR #813 later removed the standalone
+`copy_entry` IPC and routed ordinary copies through the ordered `copy_entries`
+session; the current acceptance row below uses that later shape.
+
 The production `copy_entry` command now acquires acknowledged renderer ownership
 and settles native forward effects in an independently owned task. Linux existing
 destinations use the durable executor: captured source/target/root resources,

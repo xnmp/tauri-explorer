@@ -15,6 +15,7 @@
 
 use crate::error::AppError;
 use std::process::Command;
+use std::time::Instant;
 
 /// Detect whether the session is Wayland or X11.
 #[cfg(not(windows))]
@@ -570,16 +571,43 @@ pub async fn clipboard_has_files() -> bool {
 
 #[tauri::command]
 pub async fn clipboard_read_files() -> Result<Vec<String>, AppError> {
-    tokio::task::spawn_blocking(read_clipboard_file_paths)
+    let started = Instant::now();
+    log::info!("clipboard file read started");
+    let result = tokio::task::spawn_blocking(read_clipboard_file_paths)
         .await
-        .map_err(|e| AppError::Other(format!("Clipboard task failed: {}", e)))?
+        .unwrap_or_else(|e| Err(AppError::Other(format!("Clipboard task failed: {}", e))));
+    match &result {
+        Ok(paths) => log::info!(
+            "clipboard file read finished elapsed_ms={} path_count={}",
+            started.elapsed().as_millis(),
+            paths.len()
+        ),
+        Err(error) => log::warn!(
+            "clipboard file read failed elapsed_ms={} error={error}",
+            started.elapsed().as_millis()
+        ),
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn clipboard_write_files(paths: Vec<String>) -> Result<(), AppError> {
-    tokio::task::spawn_blocking(move || write_clipboard_file_paths(&paths))
+    let started = Instant::now();
+    log::info!("clipboard file write started path_count={}", paths.len());
+    let result = tokio::task::spawn_blocking(move || write_clipboard_file_paths(&paths))
         .await
-        .map_err(|e| AppError::Other(format!("Clipboard task failed: {}", e)))?
+        .unwrap_or_else(|e| Err(AppError::Other(format!("Clipboard task failed: {}", e))));
+    match &result {
+        Ok(()) => log::info!(
+            "clipboard file write finished elapsed_ms={}",
+            started.elapsed().as_millis()
+        ),
+        Err(error) => log::warn!(
+            "clipboard file write failed elapsed_ms={} error={error}",
+            started.elapsed().as_millis()
+        ),
+    }
+    result
 }
 
 #[cfg(test)]

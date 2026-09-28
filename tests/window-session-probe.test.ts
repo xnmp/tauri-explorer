@@ -3,6 +3,7 @@ import { startWindowSessionProbe } from "../src/test-support/window-session-prob
 const navigate = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
 vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: {
   windowLabel: "test-window", getActiveExplorer: () => ({ navigateTo: navigate }),
+  whenNativeCloseObserved: () => Promise.resolve(false),
 } }));
 vi.mock("$lib/state/warm-window", () => ({ spawnWarmWindow: async () => {} }));
 const launch = vi.hoisted(() => ({ create: vi.fn() }));

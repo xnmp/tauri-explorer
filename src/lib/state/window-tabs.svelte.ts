@@ -1233,6 +1233,7 @@ function createWindowTabsManager(options: {
     get acceptsTransfers() { return !closing && !disposal; },
     requestWindowClose: windowClose.request,
     observeNativeClose: windowClose.observe,
+    whenNativeCloseObserved: windowClose.whenObserved,
     closeActiveTab,
     closeSurface,
     exportTab,

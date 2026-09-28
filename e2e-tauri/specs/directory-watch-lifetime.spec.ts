@@ -10,7 +10,7 @@ import {
   type InotifyWatch,
   type NativeProcessIdentity,
 } from "../native-resources";
-import { domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { domTexts, monitorFreshWindowOpen, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("tauri-explorer-e2e-directory-owner-");
@@ -21,14 +21,12 @@ const childDirectories = Array.from(
   (_, index) => path.join(scratch, `child-${index + 1}`),
 );
 
-type WindowOperationResult = { kind: string; label: string } | null;
 type DirectoryWatchLease = { id: string; path: string };
 
 let mainHandle = "";
 let application: NativeProcessIdentity;
 
-async function operation(op: string, target?: string): Promise<unknown> {
-  const token = crypto.randomUUID();
+async function operation(op: string, target?: string, token = crypto.randomUUID()): Promise<unknown> {
   await browser.execute((detail) => {
     window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail }));
   }, { token, op, target });
@@ -136,10 +134,11 @@ linuxDescribe("pane directory native window ownership", () => {
     for (const [index, directory] of childDirectories.entries()) {
       await browser.switchToWindow(mainHandle);
       const existingHandles = await browser.getWindowHandles();
-      const opened = await operation("fresh-open", directory) as WindowOperationResult;
-      expect(opened).not.toBeNull();
-      expect(opened?.kind).toBe("fresh");
-      const childHandle = await switchToFreshWindow(opened!.label, existingHandles);
+      const openToken = crypto.randomUUID();
+      const label = `explorer-${openToken}`;
+      const opened = await monitorFreshWindowOpen(label,
+        () => operation("fresh-open", directory, openToken));
+      const childHandle = await switchToFreshWindow(opened.label, existingHandles);
       await waitForFreshWindowElement(".file-list", 20_000);
       await browser.waitUntil(async () =>
         (await $(".status-path").getAttribute("title")) === directory,

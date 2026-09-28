@@ -6,6 +6,7 @@ import {
   buildNativeQualificationReport,
   executeLoggedQualificationProcess,
   readVerifiedNativeBuildManifest,
+  resetSoakWorkerLogDirectory,
   resolveSoakArtifactPaths,
   resolveSoakConfiguration,
   writeQualificationArtifact,
@@ -47,6 +48,9 @@ const artifactPaths = resolveSoakArtifactPaths(
   nativePlatform(),
   configuration.seed,
 );
+resetSoakWorkerLogDirectory(
+  path.resolve("qualification-results"), artifactPaths.workerLogDirectory,
+);
 const reportPath = artifactPaths.report;
 const driverLogPath = artifactPaths.driverLog;
 fs.rmSync(reportPath, { force: true });
@@ -71,10 +75,12 @@ const { exitCode, report } = await executeLoggedQualificationProcess({
   command: ["bunx", "wdio", "run", "e2e-tauri/wdio.soak.conf.ts"],
   env: {
     ...process.env,
+    SOAK_SEED: configuration.seed,
     NATIVE_BUILD_MANIFEST: manifestPath,
   },
   reportPath,
   driverLogPath,
+  additionalFailureArtifacts: [artifactPaths.workerLogDirectory],
   createFallbackReport: (code) =>
     buildNativeQualificationReport({
       build,

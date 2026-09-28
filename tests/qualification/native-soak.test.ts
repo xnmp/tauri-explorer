@@ -8,16 +8,184 @@ import {
   NATIVE_QUALIFICATION_MATRIX,
   SOAK_SCENARIOS,
   buildNativeQualificationReport,
+  nativeWindowsCleanAfterClose,
   executeQualificationRun,
   parseAttributedMacStartupLog,
   readVerifiedNativeBuildManifest,
   resolveNativeApplication,
   resolveSoakConfiguration,
+  selectFreshWindowHandle,
+  type NativeQualificationReportInput,
   type QualificationRisk,
   writeNativeQualificationReport,
 } from "../../e2e-tauri/native-qualification";
 
 describe("native product qualification contract", () => {
+  it("selects only a new handle for a forced fresh launch", () => {
+    expect(selectFreshWindowHandle(["main", "parked"], ["parked", "fresh", "main"]))
+      .toBe("fresh");
+    expect(selectFreshWindowHandle(["main", "parked"], ["main", "parked"]))
+      .toBeNull();
+    expect(selectFreshWindowHandle(["main"], ["main", "first", "second"]))
+      .toBeNull();
+  });
+
+  it("rejects a visible replacement spare or retained child after native close", () => {
+    expect(nativeWindowsCleanAfterClose([
+      { label: "main", visible: true },
+      { label: "explorer-warm-spare", visible: false },
+    ], "main", "explorer-closed")).toBe(true);
+    expect(nativeWindowsCleanAfterClose([
+      { label: "main", visible: true },
+      { label: "explorer-warm-spare", visible: true },
+    ], "main", "explorer-closed")).toBe(false);
+    expect(nativeWindowsCleanAfterClose([
+      { label: "main", visible: true },
+      { label: "explorer-closed", visible: false },
+    ], "main", "explorer-closed")).toBe(false);
+    expect(nativeWindowsCleanAfterClose([{ label: "main", visible: false }], "main", "explorer-closed"))
+      .toBe(false);
+  });
+
+  it("requires elapsed time, both window paths and bounded RSS and WebKit descriptors for a full soak", () => {
+    const base: NativeQualificationReportInput = {
+      build: {
+        commit: "exact-build", profile: "debug-custom-protocol-e2e-hooks",
+        binary: "/tmp/native", binarySha256: "abc", binaryBytes: 1,
+        binaryModifiedAt: "2026-09-27T00:00:00.000Z",
+      },
+      platform: { os: "linux", release: "test", arch: "x64", webview: "WebKitGTK", displayScale: 1 },
+      configuration: {
+        durationMs: 14_400_000, seed: "four-hour-contract", scenarios: SOAK_SCENARIOS,
+        expectedDisplayScale: 1,
+      },
+      startedAt: "2026-09-27T00:00:00.000Z",
+      finishedAt: "2026-09-27T04:00:00.000Z",
+      resources: Array.from({ length: 80 }, (_, index) => ({
+        rssBytes: index < 60 ? 1_000_000_000 : 1_200_000_000,
+        sampledAtMs: Math.round(index * 14_400_000 / 79),
+        webKitSharedMemoryFds: 2,
+      })),
+      scenarios: [
+        { id: "window-workspace", cycle: 1, durationMs: 100, outcome: "passed", failureArtifacts: [], windowMode: "warm" },
+        { id: "window-workspace", cycle: 2, durationMs: 100, outcome: "passed", failureArtifacts: [], windowMode: "fresh" },
+        ...SOAK_SCENARIOS.filter((id) => id !== "window-workspace").map((id) => ({
+          id, cycle: 1, durationMs: 100, outcome: "passed" as const, failureArtifacts: [],
+        })),
+      ],
+    };
+    const passing = buildNativeQualificationReport(base);
+    expect(passing.passed).toBe(true);
+    expect(passing.resources.samples).toEqual(base.resources);
+    expect(passing.resources.lateMedianGrowthBytes).toBe(200_000_000);
+
+    const growing = buildNativeQualificationReport({
+      ...base,
+      resources: base.resources.map((sample, index) => index < 60 ? sample : {
+        ...sample, rssBytes: 2_200_000_000,
+      }),
+    });
+    expect(growing.passed).toBe(false);
+    expect(growing.runErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining("late median process-tree RSS grew"),
+    ]));
+
+    const leakingDescriptors = buildNativeQualificationReport({
+      ...base,
+      resources: base.resources.map((sample, index) => ({
+        ...sample, webKitSharedMemoryFds: 2 + index,
+      })),
+    });
+    expect(leakingDescriptors.passed).toBe(false);
+    expect(leakingDescriptors.runErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining("WebKit shared-memory descriptors grew"),
+    ]));
+
+    const maskedByColdStart = buildNativeQualificationReport({
+      ...base,
+      resources: base.resources.map((sample, index) => ({
+        ...sample,
+        webKitSharedMemoryFds: index === 0 ? 30 : index < 60 ? 2 : 25,
+      })),
+    });
+    expect(maskedByColdStart.passed).toBe(false);
+    expect(maskedByColdStart.runErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining("WebKit shared-memory descriptors grew"),
+    ]));
+
+    const transientTeardown = buildNativeQualificationReport({
+      ...base,
+      resources: base.resources.map((sample, index) => ({
+        ...sample, webKitSharedMemoryFds: index === 20 ? 25 : 2,
+      })),
+    });
+    expect(transientTeardown.passed).toBe(true);
+
+    const samplesClusteredAtStart = buildNativeQualificationReport({
+      ...base,
+      resources: base.resources.map((sample, index) => ({ ...sample, sampledAtMs: index * 500 })),
+    });
+    expect(samplesClusteredAtStart.passed).toBe(false);
+    expect(samplesClusteredAtStart.runErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining("do not span the required duration"),
+    ]));
+
+    const missingEnd = buildNativeQualificationReport({
+      ...base,
+      resources: base.resources.map((sample) => ({
+        ...sample, sampledAtMs: Math.round(sample.sampledAtMs * 0.875),
+      })),
+    });
+    expect(missingEnd.passed).toBe(false);
+    expect(missingEnd.runErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining("do not span the required duration"),
+    ]));
+
+    const sparseLateLeak = buildNativeQualificationReport({
+      ...base,
+      resources: [
+        ...Array.from({ length: 995 }, (_, index) => ({
+          rssBytes: 1_000_000_000, sampledAtMs: index * 3_000, webKitSharedMemoryFds: 2,
+        })),
+        ...Array.from({ length: 5 }, (_, index) => ({
+          rssBytes: 1_000_000_000,
+          sampledAtMs: 14_340_000 + index * 15_000,
+          webKitSharedMemoryFds: 40,
+        })),
+      ],
+    });
+    expect(sparseLateLeak.passed).toBe(false);
+    expect(sparseLateLeak.runErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining("WebKit shared-memory descriptors grew"),
+    ]));
+
+    const missingDescriptors = buildNativeQualificationReport({
+      ...base,
+      resources: base.resources.map(({ webKitSharedMemoryFds: _ignored, ...sample }) => sample),
+    });
+    expect(missingDescriptors.passed).toBe(false);
+    expect(missingDescriptors.runErrors).toContain("full Linux native soak lacks WebKit shared-memory descriptor samples");
+
+    const incomplete = buildNativeQualificationReport({
+      ...base,
+      finishedAt: "2026-09-27T03:59:59.000Z",
+      scenarios: base.scenarios.filter(({ windowMode }) => windowMode !== "fresh"),
+    });
+    expect(incomplete.passed).toBe(false);
+    expect(incomplete.runErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining("ended before"),
+      expect.stringContaining("both warm and fresh"),
+    ]));
+
+    const subset = buildNativeQualificationReport({
+      ...base,
+      configuration: { ...base.configuration, scenarios: ["window-workspace"] },
+      scenarios: base.scenarios.filter(({ id }) => id === "window-workspace"),
+    });
+    expect(subset.passed).toBe(false);
+    expect(subset.runErrors).toContain("full native soak must execute every qualification scenario");
+  });
+
   it("defines a finite risk matrix with observable and honestly classified proof", () => {
     const expectedRisks: QualificationRisk[] = [
       "window-workspace-churn",
@@ -202,6 +370,57 @@ describe("native product qualification contract", () => {
         SOAK_EXPECTED_DISPLAY_SCALE: "1",
       }),
     ).toThrow("SOAK_MAX_CYCLES");
+    expect(resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "window-workspace",
+      SOAK_MAX_CYCLES: "450",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    }).scenarios).toEqual(["window-workspace"]);
+    expect(() => resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "window-workspace",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    })).toThrow("SOAK_MAX_CYCLES");
+    expect(() => resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "unknown",
+      SOAK_MAX_CYCLES: "1",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    })).toThrow("SOAK_DIAGNOSTIC_SCENARIO");
+    expect(resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "window-workspace",
+      SOAK_DIAGNOSTIC_WINDOW_MODE: "warm",
+      SOAK_MAX_CYCLES: "220",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    }).diagnosticWindowMode).toBe("warm");
+    expect(() => resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_WINDOW_MODE: "fresh",
+      SOAK_MAX_CYCLES: "1",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    })).toThrow("SOAK_DIAGNOSTIC_WINDOW_MODE");
+    expect(() => resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "window-workspace",
+      SOAK_DIAGNOSTIC_WINDOW_MODE: "other",
+      SOAK_MAX_CYCLES: "1",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    })).toThrow("SOAK_DIAGNOSTIC_WINDOW_MODE");
+    expect(resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "window-workspace",
+      SOAK_DIAGNOSTIC_WINDOW_MODE: "fresh",
+      SOAK_DIAGNOSTIC_MAIN_ONLY: "1",
+      SOAK_MAX_CYCLES: "450",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    }).diagnosticMainOnly).toBe(true);
+    expect(() => resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "window-workspace",
+      SOAK_DIAGNOSTIC_MAIN_ONLY: "1",
+      SOAK_MAX_CYCLES: "1",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    })).toThrow("SOAK_DIAGNOSTIC_MAIN_ONLY");
+    expect(() => resolveSoakConfiguration({
+      SOAK_DIAGNOSTIC_SCENARIO: "window-workspace",
+      SOAK_DIAGNOSTIC_WINDOW_MODE: "fresh",
+      SOAK_DIAGNOSTIC_MAIN_ONLY: "yes",
+      SOAK_MAX_CYCLES: "1",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+    })).toThrow("SOAK_DIAGNOSTIC_MAIN_ONLY");
   });
 
   it("writes a readable failure report even when native sampling is unavailable", () => {

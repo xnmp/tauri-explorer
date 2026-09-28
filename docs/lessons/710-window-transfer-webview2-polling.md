@@ -39,3 +39,15 @@ For native WebView tests, a short polling interval is not necessarily passive:
 every `browser.execute` is transport work competing with application processing.
 Prefer a single `executeAsync` call whose renderer-side observer waits for the
 actual DOM or correlated protocol change.
+
+The later Windows smoke in run `36394140150` exposed a separate harness limit.
+`open-pair` returned two child labels and both webviews logged app readiness,
+but `switchToLabel` searched main, parked warm, and child handles sequentially
+inside one 20-second `waitUntil`. On that loaded runner, the WebDriver command
+for the requested child began at the deadline; its label result arrived a few
+seconds later and diagnostics showed its listing was functional. A complete
+scan must have a chance to finish before the deadline decides that the label
+is missing. Keep the timeout between scans, still fail if a completed scan
+finds no target after the deadline, and preserve the listing assertion after
+selection. A focused contract covers a slow scan that reaches a ready target
+after the nominal deadline, plus missing and late-appearing handles.

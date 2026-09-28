@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "harnessCommit": "c4696e8e0016bcd547358d49bb6b6a3d52118aeb",
+  "build": {
+    "commit": "c4696e8e0016bcd547358d49bb6b6a3d52118aeb",
+    "profile": "debug-custom-protocol-e2e-hooks",
+    "binary": "/tmp/overhaul-817-extract-current/src-tauri/target/debug/tauri-explorer",
+    "binarySha256": "3dd64cfce6fb8ff749243a0eb4bcba6a7c5a188b1c8c1d7fc9639e4aef5b6a1c",
+    "binaryBytes": 646902960,
+    "binaryModifiedAt": "2026-09-28T12:16:18.008Z"
+  },
+  "platform": {
+    "os": "linux",
+    "release": "7.1.5-arch1-2",
+    "arch": "x64",
+    "webview": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15",
+    "displayScale": 1
+  },
+  "configuration": {
+    "durationMs": 600000,
+    "seed": "extracted-c4696e8e-dual-private",
+    "scenarios": [
+      "window-workspace",
+      "plugin-churn",
+      "theme-accessibility-zoom",
+      "preview-native-input"
+    ],
+    "expectedDisplayScale": 1,
+    "maxCycles": 2
+  },
+  "startedAt": "2026-09-28T12:19:00.711Z",
+  "finishedAt": "2026-09-28T12:19:12.826Z",
+  "resources": {
+    "sampleCount": 10,
+    "baselineRssBytes": 876261376,
+    "finalRssBytes": 1521143808,
+    "peakRssBytes": 1522921472,
+    "samples": [
+      {
+        "rssBytes": 876261376,
+        "sampledAtMs": 779,
+        "webKitSharedMemoryFds": 1
+      },
+      {
+        "rssBytes": 1403580416,
+        "sampledAtMs": 3000,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1431621632,
+        "sampledAtMs": 3709,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1442795520,
+        "sampledAtMs": 5327,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1472491520,
+        "sampledAtMs": 6617,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1470504960,
+        "sampledAtMs": 6957,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1460011008,
+        "sampledAtMs": 8145,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1480126464,
+        "sampledAtMs": 10329,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1522921472,
+        "sampledAtMs": 12075,
+        "webKitSharedMemoryFds": 2
+      },
+      {
+        "rssBytes": 1521143808,
+        "sampledAtMs": 12096,
+        "webKitSharedMemoryFds": 2
+      }
+    ],
+    "lateMedianGrowthBytes": null,
+    "maxAllowedLateGrowthBytes": 1073741824,
+    "baselineWebKitSharedMemoryFds": 1,
+    "peakWebKitSharedMemoryFds": 2,
+    "lateMedianWebKitSharedMemoryFdGrowth": null,
+    "maxAllowedWebKitSharedMemoryFdGrowth": 16
+  },
+  "timings": {
+    "sampleCount": 8,
+    "p50Ms": 1290,
+    "p95Ms": 2195
+  },
+  "scenarios": [
+    {
+      "id": "theme-accessibility-zoom",
+      "cycle": 1,
+      "durationMs": 2195,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "preview-native-input",
+      "cycle": 1,
+      "durationMs": 708,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "window-workspace",
+      "cycle": 1,
+      "durationMs": 1620,
+      "outcome": "passed",
+      "failureArtifacts": [],
+      "windowMode": "warm"
+    },
+    {
+      "id": "plugin-churn",
+      "cycle": 1,
+      "durationMs": 1290,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "preview-native-input",
+      "cycle": 2,
+      "durationMs": 338,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "window-workspace",
+      "cycle": 2,
+      "durationMs": 1189,
+      "outcome": "passed",
+      "failureArtifacts": [],
+      "windowMode": "fresh"
+    },
+    {
+      "id": "plugin-churn",
+      "cycle": 2,
+      "durationMs": 2183,
+      "outcome": "passed",
+      "failureArtifacts": []
+    },
+    {
+      "id": "theme-accessibility-zoom",
+      "cycle": 2,
+      "durationMs": 1746,
+      "outcome": "passed",
+      "failureArtifacts": []
+    }
+  ],
+  "failureArtifacts": [],
+  "runErrors": [],
+  "passed": true
+}

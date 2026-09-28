@@ -79,7 +79,7 @@
       <header>
         <p class="eyebrow">Release preparation · final-dev qualification</p>
         <h1>Architecture overhaul progress</h1>
-        <p class="lead">The clipboard fix, five-run Windows smoke streak and final-tip gate set are accepted. The acceptance records and v1.11.0 release remain.</p>
+        <p class="lead">The clipboard fix, five-run Windows smoke streak and final-tip gate set are accepted. The audited records await publication, and v1.11.0 release preparation is underway.</p>
         <p class="meta">Updated 29 September 2026 · final <code>dev</code> source tree <code>b4ab8655</code> · merged commit <code>de35c97b</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
       </header>
 
@@ -93,7 +93,7 @@
           <div class="progress-topline"><strong>29 / 31 accepted</strong><span>94% by item count</span></div>
           <progress value="29" max="31" aria-label="29 of 31 in-scope plan items accepted"></progress>
           <p class="scope-note">Release scope excludes W3.5 (closed by ADR) and W5.4 (physical-Mac startup follow-up). Item count is not a time estimate.</p>
-          <p class="scope-note">Two rows remain: publish the audited acceptance records and cut v1.11.0. Five consecutive full post-fix <code>dev</code> Windows smokes passed.</p>
+          <p class="scope-note">Two rows remain: publish the audited acceptance records and complete the active v1.11.0 release preparation. Five consecutive full post-fix <code>dev</code> Windows smokes passed.</p>
         </div>
 
         <div class="notice" role="status">
@@ -105,15 +105,14 @@
           <h2 id="items-title">Plan items</h2>
           <div class="board-grid">
             <section class="lane" aria-labelledby="todo-title">
-              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">1 item</span></div>
-              <ul class="items">
-                <li><strong>W8.3</strong> v1.11.0 release <small>Final gates passed; release preparation, dev-to-main merge and assets remain.</small></li>
-              </ul>
+              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">0 items</span></div>
+              <p class="empty">No unstarted items.</p>
             </section>
             <section class="lane" aria-labelledby="doing-title">
-              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">1 item</span></div>
+              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">2 items</span></div>
               <ul class="items">
-                <li><strong>W8.2</strong> Acceptance records <small>Final-tip ledger audit and dev merge are in progress; publishing the broader docs PR needs separate approval after automatic review rejected its push.</small></li>
+                <li><strong>W8.2</strong> Acceptance records <small>Final-tip ledger audit passed; the docs-only dev merge awaits approval to publish the broader PR after automatic review rejected its push.</small></li>
+                <li><strong>W8.3</strong> v1.11.0 release <small><a href="https://github.com/xnmp/tauri-explorer/pull/838">Draft PR #838</a> has aligned versions, dated notes and a six-bundle publication guard. Final-head hosted checks are running; dev-to-main merge and release assets remain.</small></li>
               </ul>
             </section>
             <section class="lane" aria-labelledby="done-title">
@@ -157,7 +156,7 @@
           <h2 id="next-title">Remaining gates</h2>
           <ul class="gates">
             <li><strong>Reconcile acceptance records</strong><p>Fact-check the updated ledger and ADRs against the final hosted logs, publish the docs PR after approval, and prove a docs-only merge leaves qualified product inputs unchanged.</p></li>
-            <li><strong>Cut v1.11.0</strong><p>Refresh the drafted versions and changelog on final dev, merge the dev-to-main release PR after its checks, and verify published assets.</p></li>
+            <li><strong>Cut v1.11.0</strong><p>Finish draft PR #838 checks on the docs-merged dev tip, merge it, then merge the dev-to-main release PR after its checks and verify all six published assets.</p></li>
           </ul>
         </section>
 
@@ -175,6 +174,7 @@
       <section id="history-panel" class="panel" role="tabpanel" aria-labelledby="history-tab" hidden>
         <h2>History</h2>
         <ol class="history">
+          <li><time datetime="2026-09-29T05:08:00+10:00">29 September 2026, 05:08 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/838">Draft release PR #838</a> published aligned v1.11.0 versions, dated notes and a release-workflow guard requiring one correctly named bundle for each of six platform types. The exact workflow shell step accepted the expected six assets and rejected missing, duplicate and wrong-version cases; an independent Sol review found the duplicate gap and verified its fix. Hosted PR checks are running. W8.3 moved to Doing; W8.2 remains Doing until the audited docs-only PR is approved, published and merged. <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Release workflow review, focused preflight and public draft PR preparation.</p></li>
           <li><time datetime="2026-09-29T04:42:43+10:00">29 September 2026, 04:42 AEST</time><p>All six exact-commit <code>de35c97b</code> hosted workflows completed successfully: recovery passed 19 gated cases; full native smoke passed 76 Windows cases with 36 skips and 97 Linux cases with 18 skips; Mac2 listing/navigation, platform Rust, virtual-Mac startup and CI passed. The all-view browser run on the identical Git tree passed 2,372/2,408 cases with 36 skips. An independent Sol audit confirmed executed-body counts and default/gated scope. W8.1 moved to Done; W8.2 is Doing. <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Exact-tip hosted qualification, ledger reconciliation and independent evidence review.</p></li>
           <li><time datetime="2026-09-29T04:16:00+10:00">29 September 2026, 04:16 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/837">PR #837</a> merged on <code>dev</code> as <code>de35c97b</code> after all 16 final-head hosted checks passed. Its final 2,408-case all-view browser run passed 2,372 cases with 36 skips and exit 0; the squash merge retained the exact tested Git tree <code>b4ab8655</code>. On the merged commit, Svelte/type, 2,715 unit tests, 29 perf contracts, native TypeScript, code maps 514/514, bundle, default and all-feature Rust (1,431 passed/35 ignored each), strict Clippy and all 7 load cases passed. Exact-dev hosted recovery, native smoke, Mac2 UI, platform Rust, macOS startup and CI are active. W8.1 remains Doing. <strong>28 / 31 done.</strong></p><p class="small">Active work since previous entry: Browser full-suite qualification, approved test PR merge and exact-dev local gate reruns.</p></li>
           <li><time datetime="2026-09-29T03:56:00+10:00">29 September 2026, 03:56 AEST</time><p>The fifth full post-fix <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36459640570">dev native smoke</a> completed green on Windows and Linux. Runs <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36448987378">1</a>, <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36453954923">2</a>, <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36455775474">3</a>, <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36457624490">4</a> and 5 were sequential, full, post-fix Windows <code>dev</code> passes. W2.4 moved to Done. Board: 28 Done, 1 Doing, 2 To do. <strong>28 / 31 done.</strong></p><p class="small">Active work since previous entry: Fifth native smoke and W2.4 acceptance review.</p></li>

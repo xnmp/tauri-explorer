@@ -129,7 +129,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W8.1 | Re-run the full gate set on the final product-source `dev` tip: svelte-check, Vitest, perf contracts, Rust (default and feature-gated), Clippy, native suite (including the W3.3 gated suites), and `ALL_VIEW_MODES=1` Playwright. Record the exact numbers against that commit. A later documentation-only merge may carry those results only after an exact path diff proves that all product, build, dependency, test and workflow inputs are unchanged; do not claim a suite was re-executed at the docs commit. For native specs, count executed tests, not spec files: a file whose `describe` skips still counts as "passed" in the WDIO summary | Ledger section with tested commit SHA and any docs-only equivalence proof | **Done on published `dev` `de35c97b38a4f90c10df5ee46174344d9ceb52ca` (tree `b4ab8655`).** Local Svelte/type, 2,715 unit cases with 3 skips, 29 perf contracts, native TypeScript, maps 514/514, bundle, default and all-feature Rust library suites (1,431 passed/35 ignored each), strict all-target/all-feature Clippy and 7/7 load cases passed. The identical #837 final-head tree passed the all-view browser suite: 2,372/2,408 passed, 36 skipped, exit 0. Six exact-SHA hosted workflows completed success: gated recovery (19 executed cases), Windows/Linux native smoke (76 passed/36 skipped; 97 passed/18 skipped), Mac2 native UI, Windows/macOS platform Rust (Windows default 777/11 plus NTFS 8.3 1/1; macOS default and durable 1,091/25 each), virtual-Mac startup (30 foreground plus 30 warm-probe samples; half-bounce unqualified), and CI (Rust/Chromium/WebKit/frontend/maps); CI Chromium had one retry-classified flaky marquee test before passing. [Ledger](../review-completion.md#w81-exact-tip-product-source-acceptance-2026-09-29) records direct workflow links, default/gated distinctions, and limits. Later docs-only `dev` commits inherit this evidence only after an exact input-equivalence diff, not by claiming test re-execution |
 | W8.2 | Correct the 2026-09-26 ledger claim that "all 38 native specs pass": the gated recovery suites were skipped in that run. Update each ledger acceptance row and the ADR 0020 and 0024 status lines to match the evidence. Mark the "existing ownership overhaul" and "external jobs" rows accepted only if W8.1 covers them | Adversarial fact-check of the ledger against PRs and CI runs | **Doing: final-tip ledger audit and dev merge**. Draft [PR #832](https://github.com/xnmp/tauri-explorer/pull/832) has a stale remote head; its local final ledger/dashboard update awaits separate publication approval. The active ledger now distinguishes executed native cases from skipped specs and records the bounded #812 Windows soak, #826 NTFS 8.3 and #827 Mac2 pilots separately from their later final-tip integration; it also reconciles #815/#816 and the newer pinned W6.1 evidence. ADR 0020 remains proposed for default/cross-platform recovery with Linux opt-in implementation, and ADR 0024 remains accepted only for enumerated family decisions. An independent Sol fact-check found no remaining material ledger/ADR contradiction against retained local evidence; its GitHub access failed, so the coordinator separately verified current PR checks and `origin/dev`. W8.1 passed on exact published `dev` `de35c97b`; the final independent audit and docs-only dev merge remain |
-| W8.3 | Cut the next minor release: bump the versions, write the CHANGELOG entry, open a Release PR from dev to main with `--merge` after the authorized approval and passing checks; never tag manually, then verify the release assets | GitHub release with every platform asset | **Open pending release preparation, merge and assets.** Local release rehearsal `13b7213a` aligns all five v1.11.0 version fields and dates the changelog; the exact release-workflow notes step now passes (it rejected the prior `Unreleased` heading). The asset-matrix step accepted the six actual v1.10.0 asset names and rejected an extra wrong-version bundle. The date and qualification prose must be refreshed against the actual release day and final-dev results before the Release PR merges; the final PR, approved merge, and v1.11.0 assets are still outstanding |
+| W8.3 | Cut the next minor release: bump the versions, write the CHANGELOG entry, open a Release PR from dev to main with `--merge` after the authorized approval and passing checks; never tag manually, then verify the release assets | GitHub release with every platform asset | **Doing; release preparation is [draft PR #838](https://github.com/xnmp/tauri-explorer/pull/838).** Branch `chore/release-v1.11.0` at `af9db6f8` aligns all five 1.11.0 version fields, dates the changelog to 2026-09-29 and records qualified behavior and limits. The release workflow requires exactly one correctly named bundle of each of six platform types before publishing. Its extracted shell step accepted the expected six assets and rejected missing, duplicate and wrong-version bundles; an independent Sol review found and verified the duplicate guard. Hosted final-head checks are running. After the docs-only #832 merge, update this branch from `dev`, recheck its final head, merge #838 under the standing authorization, open and merge `dev` → `main` with `--merge`, then verify the tag and all six published assets |
 
 ## Pending integration acceptance
 
@@ -210,23 +210,26 @@ selected `dev` SHA.
 
 ### W8.3 release checklist (v1.11.0)
 
-The authoritative version fields on published `dev` still read `1.10.0`:
-`package.json`, `src-tauri/Cargo.toml`, the root package in
+The five authoritative version fields on published `dev` still read
+`1.10.0`: `package.json`, `src-tauri/Cargo.toml`, the root package in
 `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the `PKGBUILD`
-fallback. The local release rehearsal updates all five to `1.11.0` and resets
-`pkgrel=1`; the changelog still says `Unreleased`. After the final gates, add a dated
-`CHANGELOG.md` entry that states the platform and opt-in limits.
+fallback. Draft PR #838 updates all five to `1.11.0`, resets `pkgrel=1`, and
+adds a dated `CHANGELOG.md` entry with the qualified platform and opt-in limits.
+Its release-workflow asset matrix now validates all six expected bundles before
+creating the release. The six-name, missing, duplicate and wrong-version
+preflights pass locally; final-head hosted checks remain in progress.
 
-Before opening the release PR, record the owner's D1/D2 decisions, integrate
-or explicitly defer each remaining branch, and run W8.1 on one exact final
-`dev` SHA. Report executed and skipped native test cases separately. Require a
-passing four-hour Linux report, bounded Windows report and screenshot, five
-consecutive Windows `dev` smoke runs for W2.4, and final hosted Rust/platform
-checks; keep any unmet item open instead of implying release acceptance.
-The release PR is `dev` → `main` with merge strategy `--merge`. Its required
-checks and evidence must pass before the authorized merge. Do not create a tag
-manually; verify the resulting GitHub release and every expected platform
-asset after the merge.
+W8.1 passed on exact `dev` `de35c97b`: the four-hour Linux report, bounded
+Windows report and screenshot, five consecutive post-fix Windows `dev` smokes,
+executed native recovery cases and final hosted Rust/platform checks are
+recorded in the ledger. D1/D2 retain the documented defaults until the owner
+chooses otherwise. First publish and merge the audited docs-only #832 update,
+then prove it changed no qualified product, build, dependency, test or workflow
+inputs. Bring #838 onto that `dev` tip, require its final-head checks, and merge
+it under the standing approval. The release PR is `dev` → `main` with merge
+strategy `--merge`; require its checks before merging. Do not create a tag
+manually. Verify the resulting GitHub release tag and each of the six expected
+platform assets after the merge.
 
 ## Decisions for the owner
 

@@ -9,7 +9,7 @@ failure artifact. This is a bounded diagnostic, not the four-hour W6.1 run.
 The harness checkout was `6ef62cd1`, whose changes after the native build are
 documentation only. The verified debug/custom-protocol/E2E-hooks binary came
 from source `4eb9b97e28c22a7b01369b75fa2d9d79d160061d`, at
-`/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer`.
+`src-tauri/target/debug/tauri-explorer` in the repository checkout.
 The manifest, report, and current binary agree on SHA-256
 `294d2c2aa7bdf7f82edb7bcf26936d5177a7f96e999ced225ba0fe3fd798ad53`.
 The run used an isolated XDG profile under `qualification-results/`, display

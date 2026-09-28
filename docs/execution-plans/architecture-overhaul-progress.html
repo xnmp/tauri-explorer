@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Architecture overhaul progress · 28 September 2026</title>
+    <title>Architecture overhaul progress · 29 September 2026</title>
     <style>
       :root {
         color-scheme: light;
@@ -79,8 +79,8 @@
       <header>
         <p class="eyebrow">Release preparation · final-dev qualification</p>
         <h1>Architecture overhaul progress</h1>
-        <p class="lead">The clipboard fix and five-run Windows smoke streak are accepted. Final-tip gates continue. Version 1.11.0 is drafted but has not been released.</p>
-        <p class="meta">Updated 29 September 2026 · final <code>dev</code> source tree <code>a2095a0d</code> · merged commit <code>1404dd22</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
+        <p class="lead">The clipboard fix, five-run Windows smoke streak and final-tip gate set are accepted. The acceptance records and v1.11.0 release remain.</p>
+        <p class="meta">Updated 29 September 2026 · final <code>dev</code> source tree <code>b4ab8655</code> · merged commit <code>de35c97b</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
       </header>
 
       <div class="tabs" role="tablist" aria-label="Progress views">
@@ -90,35 +90,34 @@
 
       <div id="board-panel" class="panel" role="tabpanel" aria-labelledby="board-tab">
         <div class="progress-panel">
-          <div class="progress-topline"><strong>28 / 31 accepted</strong><span>90% by item count</span></div>
-          <progress value="28" max="31" aria-label="28 of 31 in-scope plan items accepted"></progress>
+          <div class="progress-topline"><strong>29 / 31 accepted</strong><span>94% by item count</span></div>
+          <progress value="29" max="31" aria-label="29 of 31 in-scope plan items accepted"></progress>
           <p class="scope-note">Release scope excludes W3.5 (closed by ADR) and W5.4 (physical-Mac startup follow-up). Item count is not a time estimate.</p>
-          <p class="scope-note">Three rows remain. PR #834 fixed the Windows Copy → Paste race; five consecutive full post-fix <code>dev</code> Windows smokes passed.</p>
+          <p class="scope-note">Two rows remain: publish the audited acceptance records and cut v1.11.0. Five consecutive full post-fix <code>dev</code> Windows smokes passed.</p>
         </div>
 
         <div class="notice" role="status">
-          <strong>Release gate remains open</strong>
-          <p>Final-tip Rust and hosted native gates passed on <code>dev</code> <code>1404dd22</code>. The first two all-view browser runs exposed three test synchronization failures; the corrected third full rerun is active. Release acceptance remains open.</p>
+          <strong>Final-dev qualification accepted</strong>
+          <p>Exact-tip local, browser, native recovery, Windows/Linux smoke, Mac2 UI, macOS startup, platform Rust and CI gates passed on <code>dev</code> <code>de35c97b</code>. Documentation publication and release assets remain open.</p>
         </div>
 
         <section class="inner" aria-labelledby="items-title">
           <h2 id="items-title">Plan items</h2>
           <div class="board-grid">
             <section class="lane" aria-labelledby="todo-title">
-              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">2 items</span></div>
+              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">1 item</span></div>
               <ul class="items">
-                                <li><strong>W8.2</strong> Acceptance records <small>Complete final-tip audit and dev merge.</small></li>
-                <li><strong>W8.3</strong> v1.11.0 release <small>Dated notes pass release preflight; final gates, release merge and assets remain.</small></li>
+                <li><strong>W8.3</strong> v1.11.0 release <small>Final gates passed; release preparation, dev-to-main merge and assets remain.</small></li>
               </ul>
             </section>
             <section class="lane" aria-labelledby="doing-title">
               <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">1 item</span></div>
               <ul class="items">
-                <li><strong>W8.1</strong> Final-tip qualification <small>Rust and hosted native gates passed; a third <a href="https://github.com/xnmp/tauri-explorer/pull/837">all-view browser run</a> is active after three focused test fixes.</small></li>
+                <li><strong>W8.2</strong> Acceptance records <small>Final-tip ledger audit and dev merge are in progress; publishing the broader docs PR needs separate approval after automatic review rejected its push.</small></li>
               </ul>
             </section>
             <section class="lane" aria-labelledby="done-title">
-              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">28 items</span></div>
+              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">29 items</span></div>
               <ul class="items">
                 <li><strong>W1.1</strong> macOS Rust suite</li>
                 <li><strong>W1.2</strong> Windows Rust suite</li>
@@ -143,11 +142,12 @@
                 <li><strong>W5.3</strong> Mac2 native UI <small>PR #827 merged; hosted pilot passed.</small></li>
                 <li><strong>W6.1</strong> Linux four-hour retention <small><a href="https://github.com/xnmp/tauri-explorer/pull/833">PR #833 merged</a>; pinned 240.09-minute report accepted for Linux only.</small></li>
                 <li><strong>W6.2</strong> Windows bounded retention <small>PR #812 merged; hosted soak passed.</small></li>
-                <li><strong>W6.3</strong> External job cancellation</li>
+                <li><strong>W6.3</strong> External job timeout cleanup</li>
                 <li><strong>W7.1</strong> Theme accessibility</li>
                 <li><strong>W7.2</strong> Keyboard traversal</li>
                 <li><strong>W7.3</strong> Preview containment</li>
                 <li><strong>W7.4</strong> Plugin failure isolation</li>
+                <li><strong>W8.1</strong> Final-tip qualification <small>Exact <code>dev</code> <code>de35c97b</code> local, browser and six hosted workflow gates passed. Windows native: 76 passed/36 skipped; Linux: 97 passed/18 skipped; gated recovery: 19 passed.</small></li>
               </ul>
             </section>
           </div>
@@ -156,27 +156,18 @@
         <section class="inner" aria-labelledby="next-title">
           <h2 id="next-title">Remaining gates</h2>
           <ul class="gates">
-            <li><strong>Qualify the final dev tip</strong><p>Svelte/type, 2,715 unit cases, 29 perf contracts, maps and bundle passed on <code>1404dd22</code>. Rust and hosted native gates passed. The first all-view browser run failed two test synchronization assertions; a corrected full rerun is active. Count executed native cases separately from skipped specs.</p></li>
-            <li><strong>Reconcile acceptance records</strong><p>Record the final tested dev commit, executed native cases and skipped cases, then complete the independent ledger/ADR audit and merge the records.</p></li>
+            <li><strong>Reconcile acceptance records</strong><p>Fact-check the updated ledger and ADRs against the final hosted logs, publish the docs PR after approval, and prove a docs-only merge leaves qualified product inputs unchanged.</p></li>
             <li><strong>Cut v1.11.0</strong><p>Refresh the drafted versions and changelog on final dev, merge the dev-to-main release PR after its checks, and verify published assets.</p></li>
           </ul>
         </section>
 
         <section class="inner" aria-labelledby="evidence-title">
-          <h2 id="evidence-title">Latest local evidence</h2>
+          <h2 id="evidence-title">Latest evidence</h2>
           <ul class="evidence">
-            <li>Published <code>dev</code> <code>1404dd22</code> passes Svelte/type, 2,715 unit tests with 3 skips, 29 perf contracts, native TypeScript, map coverage 514/514 and the bundle budget. Both local Rust library variants pass 1,431 tests with 35 ignored; strict Clippy passes. Hosted platform, recovery, bounded Windows soak, Mac2 UI and all five full native smokes passed. The first two browser runs exposed three test synchronization failures, with the second ending 2,371 passed and 36 skipped. All three focused fixes passed repeats; a third full rerun is active, so W8.1 remains open.</li>
-            <li>Local integration <code>47830d4e</code> has the same product source as tested commit <code>a4f8cf32</code>; the later commit changes only two native assertions. Unit tests: 2,694 passed, 3 skipped; 29 performance contracts passed; Svelte check clean; code-map coverage 514/514. Bundle check passed: main chunk 91,041 bytes gzip against a 239,791-byte budget. Default and opt-in Rust library suites each passed 1,431 cases with 35 ignored using normal local socket and mount access; strict all-target Clippy passed.</li>
-            <li>Default native binary: 98 executed cases passed and 17 gated cases skipped across 44 spec files. The separate opt-in recovery binary passed 7 executed file-recovery cases and 12 executed history and move cases; the renderer-recovery harness passed. Both builds used the same product source; the final published dev gate remains open.</li>
-            <li>High-load Playwright suite: 7/7 passed, including the 256 MiB heap-cap case. The Vite server could not serve the worktree-linked Inter font asset, so this local load pass used the available font fallback.</li>
-            <li>A separate unpublished v1.11.0 release rehearsal at <code>4c6a2800</code> has coherent version fields, a still-Unreleased changelog, clean type and map checks, 2,694 unit passes with 3 skips, and 29 perf passes. Later commits only reconcile documentation; the owner merge and release assets remain pending.</li>
-            <li>PR #831's prior head <code>614a814a</code> passed a manually dispatched hosted native smoke on both Linux and Windows, without reproducing a session loss. Follow-up head <code>52adf4f1</code> is published with pre-open and page-snapshot diagnostics; its full local Vitest run passed 2,687 with 3 skips and 29/29 perf contracts. Exact-head Windows native smoke passed; Linux smoke and other hosted checks are running. A failing-label timeline is still missing.</li>
-            <li>An independent <a href="architecture-overhaul-publication-audit-2026-09-28.md">publication-object audit</a> examined 133 blobs across the local #812/#815/#816 push ranges, including intermediate commits, and found no apparent credential or private user data. It does not override the automatic rejection of the #812 push or authorize GitHub writes.</li>
-            <li><a href="architecture-overhaul-812-hosted-check-triage-2026-09-28.md">PR #812 check triage</a>: its earlier recovery and Windows smoke failures occurred on a head before current dev. The updated head passed its hosted checks and bounded Windows soak; dev merge and final-tip integration remain.</li>
-            <li>Clean detached #817 candidate <code>0d1b8d1a</code> is based on current dev plus local #812/#816 prerequisites; its final commit only documents native-soak profile isolation. Its <code>3b63cdad</code> binary passed a bounded two-cycle Linux native run with 8/8 scenarios, including warm and fresh launches. Focused tests passed 54/54, full unit suite 2,684 passed with 3 skips, Svelte and code-map checks passed, default and feature-gated Rust library suites each passed 1,427 cases with 35 ignored, and strict all-target Clippy passed. Independent review confirmed the isolated #817 delta, pinned Wry source and report/binary hash; the prerequisites must land before #817 is published as a narrow change. Independent sampler figures are excluded from acceptance because the raw trace was not retained.</li>
-            <li>Corrected local all-view browser run: 2,408 cases, 2,372 passed and 36 skipped, exit 0 in 45.2 minutes with system libsoup 3.6.6 preloaded. The prior run failed two WebKit report-form cases; the focused fix also passed 300/300 minimal probes and 100/100 repeats of those cases. Independent review found 16 WebKit page-process exit/graphics cores during the passing run and no network-process cores; the passing assertions do not establish crash-free engine stability. Final-dev CI acceptance remains open.</li>
-            <li>Pinned Linux soak: 2,510 cycles over 240.09 minutes, four scenarios, exit 0. This is evidence for the pinned source, not yet the final dev tip.</li>
-            <li>Updated-head Windows bounded soak: hosted artifact 10957692938 records one complete four-scenario cycle, six resource samples and no run errors. Its screenshot shows the real Windows listing and Markdown preview. The final dev integration gate remains separate.</li>
+            <li>Published <code>dev</code> <code>de35c97b</code> passes Svelte/type, 2,715 unit cases with 3 skips, 29 perf contracts, native TypeScript, maps 514/514, bundle budget, both Rust library variants (1,431 passed/35 ignored), strict Clippy and 7/7 load cases. The identical Git tree on <a href="https://github.com/xnmp/tauri-explorer/pull/837">PR #837</a> passed the all-view browser suite: 2,372 passed, 36 skipped, exit 0.</li>
+            <li>Exact-dev hosted <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462869987">recovery</a> passed all 19 gated cases; <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462870071">native smoke</a> passed 76 Windows cases with 36 skips and 97 Linux cases with 18 skips. <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462870005">Mac2 native UI</a> confirmed child listing and parent navigation. <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462869939">macOS startup</a> retained 30 foreground and 30 warm-probe samples on a virtual Mac. Platform Rust and CI passed; CI Chromium retried one flaky marquee-positioning test before passing.</li>
+            <li>The pinned <a href="../../qualification-results/linux-linux-four-hour-817-wry-isolated-20260927-ccc3a09cb1be.json">Linux four-hour report</a> records 2,510 cycles over 240.09 minutes and 10,040 passing outcomes; the <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36393848199/artifacts/10957692938">Windows bounded soak</a> records one complete four-scenario cycle and a screenshot. Five consecutive full post-fix Windows <code>dev</code> smokes passed, accepting W2.4.</li>
+            <li>Passing browser assertions do not prove a crash-free WebKit engine: 16 page-process cores were observed during an earlier passing all-view run. The virtual-Mac startup reports explicitly leave the physical-Mac half-bounce target unqualified. Durable recovery remains opt-in and Linux-only under the draft v1.11.0 release scope.</li>
           </ul>
         </section>
       </div>
@@ -184,6 +175,8 @@
       <section id="history-panel" class="panel" role="tabpanel" aria-labelledby="history-tab" hidden>
         <h2>History</h2>
         <ol class="history">
+          <li><time datetime="2026-09-29T04:42:43+10:00">29 September 2026, 04:42 AEST</time><p>All six exact-commit <code>de35c97b</code> hosted workflows completed successfully: recovery passed 19 gated cases; full native smoke passed 76 Windows cases with 36 skips and 97 Linux cases with 18 skips; Mac2 listing/navigation, platform Rust, virtual-Mac startup and CI passed. The all-view browser run on the identical Git tree passed 2,372/2,408 cases with 36 skips. An independent Sol audit confirmed executed-body counts and default/gated scope. W8.1 moved to Done; W8.2 is Doing. <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Exact-tip hosted qualification, ledger reconciliation and independent evidence review.</p></li>
+          <li><time datetime="2026-09-29T04:16:00+10:00">29 September 2026, 04:16 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/837">PR #837</a> merged on <code>dev</code> as <code>de35c97b</code> after all 16 final-head hosted checks passed. Its final 2,408-case all-view browser run passed 2,372 cases with 36 skips and exit 0; the squash merge retained the exact tested Git tree <code>b4ab8655</code>. On the merged commit, Svelte/type, 2,715 unit tests, 29 perf contracts, native TypeScript, code maps 514/514, bundle, default and all-feature Rust (1,431 passed/35 ignored each), strict Clippy and all 7 load cases passed. Exact-dev hosted recovery, native smoke, Mac2 UI, platform Rust, macOS startup and CI are active. W8.1 remains Doing. <strong>28 / 31 done.</strong></p><p class="small">Active work since previous entry: Browser full-suite qualification, approved test PR merge and exact-dev local gate reruns.</p></li>
           <li><time datetime="2026-09-29T03:56:00+10:00">29 September 2026, 03:56 AEST</time><p>The fifth full post-fix <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36459640570">dev native smoke</a> completed green on Windows and Linux. Runs <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36448987378">1</a>, <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36453954923">2</a>, <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36455775474">3</a>, <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36457624490">4</a> and 5 were sequential, full, post-fix Windows <code>dev</code> passes. W2.4 moved to Done. Board: 28 Done, 1 Doing, 2 To do. <strong>28 / 31 done.</strong></p><p class="small">Active work since previous entry: Fifth native smoke and W2.4 acceptance review.</p></li>
           <li><time datetime="2026-09-29T03:40:00+10:00">29 September 2026, 03:40 AEST</time><p>The fourth full post-fix <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36457624490">dev native smoke</a> completed green on Windows and Linux, advancing W2.4 to 4/5. The fifth full <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36459640570">run</a> was dispatched after completion on the same <code>1404dd22</code> commit. The corrected <a href="https://github.com/xnmp/tauri-explorer/pull/837">browser PR</a> is still running its final all-view suite; W8.1 remains Doing. <strong>27 / 31 done.</strong></p><p class="small">Active work since previous entry: Fourth sequential native smoke and launch of fifth.</p></li>
           <li><time datetime="2026-09-29T03:26:00+10:00">29 September 2026, 03:26 AEST</time><p>The third full post-fix <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36455775474">dev native smoke</a> passed both platforms, bringing W2.4 to 3/5; the fourth full <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36457624490">run</a> is active. The second all-view browser run ended 2,371 passed, 36 skipped and one WebKit thumbnail-count failure: three micro thumbnails became six image layers as full-resolution thumbnails loaded. The corrected test passed 60/60 focused WebKit repeats; a third full run is active on <a href="https://github.com/xnmp/tauri-explorer/pull/837">PR #837</a>. W8.1 remains Doing. <strong>27 / 31 done.</strong></p><p class="small">Active work since previous entry: Sequential native smoke, independent browser-failure diagnosis and corrected full-suite launch.</p></li>

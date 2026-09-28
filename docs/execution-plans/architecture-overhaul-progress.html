@@ -77,10 +77,10 @@
   <body>
     <main>
       <header>
-        <p class="eyebrow">Release preparation · local checkpoint</p>
+        <p class="eyebrow">Release preparation · final-dev qualification</p>
         <h1>Architecture overhaul progress</h1>
-        <p class="lead">Local integration passed its available gates. Hosted platform and final-tip checks remain open. Version 1.11.0 is drafted but has not been released.</p>
-        <p class="meta">Updated 29 September 2026 · full local gate <code>47830d4e</code> · combined preflight <code>5ff25971</code> · remote <code>dev</code> <code>10eaea07</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
+        <p class="lead">The clipboard fix is merged on dev. Final-tip gates and the five-run Windows smoke streak are underway. Version 1.11.0 is drafted but has not been released.</p>
+        <p class="meta">Updated 29 September 2026 · final <code>dev</code> source tree <code>a2095a0d</code> · merged commit <code>1404dd22</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
       </header>
 
       <div class="tabs" role="tablist" aria-label="Progress views">
@@ -93,29 +93,30 @@
           <div class="progress-topline"><strong>27 / 31 accepted</strong><span>87% by item count</span></div>
           <progress value="27" max="31" aria-label="27 of 31 in-scope plan items accepted"></progress>
           <p class="scope-note">Release scope excludes W3.5 (closed by ADR) and W5.4 (physical-Mac startup follow-up). Item count is not a time estimate.</p>
-          <p class="scope-note">Four rows remain. PRs #831 and #833 merged after green exact-head checks. The Windows smoke streak reset after a #715 failure, and final-tip gates remain open.</p>
+          <p class="scope-note">Four rows remain. PR #834 fixed the Windows Copy → Paste race and merged after 17 green checks; five consecutive full <code>dev</code> Windows smokes are still required.</p>
         </div>
 
         <div class="notice" role="status">
           <strong>Release gate remains open</strong>
-          <p>The local rehearsal is not the final <code>dev</code> tip. Hosted platform outcomes, a clean final-tip qualification, and the owner-led release merge still remain.</p>
+          <p>Final-tip Rust, browser and hosted native qualification are running on merged <code>dev</code> <code>1404dd22</code>. Release acceptance remains open.</p>
         </div>
 
         <section class="inner" aria-labelledby="items-title">
           <h2 id="items-title">Plan items</h2>
           <div class="board-grid">
             <section class="lane" aria-labelledby="todo-title">
-              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">4 items</span></div>
+              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">3 items</span></div>
               <ul class="items">
-                <li><strong>W2.4</strong> Windows smoke reliability <small>Fourth dev run reproduced #715; streak reset to 0/5. <a href="https://github.com/xnmp/tauri-explorer/pull/834">Draft PR #834</a> adds clipboard phase diagnostics.</small></li>
-                                                <li><strong>W8.1</strong> Final-tip qualification <small>Run full gates after the pending changes reach dev.</small></li>
+                <li><strong>W2.4</strong> Windows smoke reliability <small><a href="https://github.com/xnmp/tauri-explorer/pull/834">Fix #834</a> merged; first post-fix full <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36448987378">dev smoke</a> is running. Streak: 0/5 accepted.</small></li>
                 <li><strong>W8.2</strong> Acceptance records <small>Complete final-tip audit and dev merge.</small></li>
-                <li><strong>W8.3</strong> v1.11.0 release <small>Dated notes pass release preflight; final dev, owner merge and assets remain.</small></li>
+                <li><strong>W8.3</strong> v1.11.0 release <small>Dated notes pass release preflight; final gates, release merge and assets remain.</small></li>
               </ul>
             </section>
             <section class="lane" aria-labelledby="doing-title">
-              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">0 items</span></div>
-              <p class="empty">No plan item is assigned to this lane; hosted checks and Windows diagnostics continue.</p>
+              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">1 item</span></div>
+              <ul class="items">
+                <li><strong>W8.1</strong> Final-tip qualification <small>Rust, all-view browser and hosted native gates are running on the merged source tree.</small></li>
+              </ul>
             </section>
             <section class="lane" aria-labelledby="done-title">
               <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">27 items</span></div>
@@ -155,16 +156,17 @@
         <section class="inner" aria-labelledby="next-title">
           <h2 id="next-title">Remaining gates</h2>
           <ul class="gates">
-            <li><strong>Diagnose the Windows paste failure</strong><p>PRs #831 and #833 landed on <code>dev</code>. The fourth Windows smoke run reproduced #715 with no duplicate on disk; <a href="https://github.com/xnmp/tauri-explorer/pull/834">draft PR #834</a> is collecting clipboard phase timings before a behavior fix. The separate <a href="architecture-overhaul-w25-failing-label-2026-09-28.md">WebDriver session-loss observations</a> remain open under #703/#781.</p></li>
-            <li><strong>Run hosted platform checks</strong><p>Both platform pilots have passed. Complete the remaining Windows dev smoke streak after the native test fix merges. Physical-Mac startup stays a follow-up.</p></li>
-            <li><strong>Qualify the final dev tip</strong><p>Run the exact combined Rust, native, browser, accessibility, performance and bundle gates. Count executed native cases separately from skipped specs.</p></li>
-            <li><strong>Cut v1.11.0</strong><p>Refresh the drafted versions and changelog on final dev, open the dev-to-main release PR for the owner, and verify assets after the release.</p></li>
+            <li><strong>Prove Windows smoke reliability</strong><p><a href="https://github.com/xnmp/tauri-explorer/pull/834">PR #834</a> fixed immediate same-window Copy → Paste and passed the full Windows native smoke on its final head. Five consecutive full post-fix <code>dev</code> Windows runs remain; the first is active. Separate <a href="architecture-overhaul-w25-failing-label-2026-09-28.md">WebDriver session-loss observations</a> remain open under #703/#781.</p></li>
+            <li><strong>Run hosted platform checks</strong><p>Both platform pilots have passed. Complete the five-run Windows <code>dev</code> streak and final-tip hosted gates. Physical-Mac startup stays a follow-up.</p></li>
+            <li><strong>Qualify the final dev tip</strong><p>Svelte/type, 2,715 unit cases, 29 perf contracts, maps and bundle passed on <code>1404dd22</code>. Rust, hosted native and all-view browser remain active; count executed native cases separately from skipped specs.</p></li>
+            <li><strong>Cut v1.11.0</strong><p>Refresh the drafted versions and changelog on final dev, merge the dev-to-main release PR after its checks, and verify published assets.</p></li>
           </ul>
         </section>
 
         <section class="inner" aria-labelledby="evidence-title">
           <h2 id="evidence-title">Latest local evidence</h2>
           <ul class="evidence">
+            <li>Published <code>dev</code> <code>1404dd22</code> passes Svelte/type, 2,715 unit tests with 3 skips, 29 perf contracts, native TypeScript, map coverage 514/514 and the bundle budget. Its hosted native and recovery runs, local Rust suites, and 2,408-case all-view browser qualification are active; these partial results do not yet accept W8.1.</li>
             <li>Local integration <code>47830d4e</code> has the same product source as tested commit <code>a4f8cf32</code>; the later commit changes only two native assertions. Unit tests: 2,694 passed, 3 skipped; 29 performance contracts passed; Svelte check clean; code-map coverage 514/514. Bundle check passed: main chunk 91,041 bytes gzip against a 239,791-byte budget. Default and opt-in Rust library suites each passed 1,431 cases with 35 ignored using normal local socket and mount access; strict all-target Clippy passed.</li>
             <li>Default native binary: 98 executed cases passed and 17 gated cases skipped across 44 spec files. The separate opt-in recovery binary passed 7 executed file-recovery cases and 12 executed history and move cases; the renderer-recovery harness passed. Both builds used the same product source; the final published dev gate remains open.</li>
             <li>High-load Playwright suite: 7/7 passed, including the 256 MiB heap-cap case. The Vite server could not serve the worktree-linked Inter font asset, so this local load pass used the available font fallback.</li>
@@ -183,6 +185,7 @@
       <section id="history-panel" class="panel" role="tabpanel" aria-labelledby="history-tab" hidden>
         <h2>History</h2>
         <ol class="history">
+          <li><time datetime="2026-09-29T02:15:00+10:00">29 September 2026, 02:15 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/834">PR #834</a> merged into <code>dev</code> as <code>1404dd22</code> after 17 green exact-head checks, including full Windows and Linux native smoke; issue #715 closed with a verified Windows screenshot. The first eligible full <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36448987378">dev smoke</a> is running, so W2.4 remains 0/5. Exact-tip Svelte/type, 2,715 unit tests, 29 perf contracts, native TypeScript, maps 514/514 and bundle passed. Rust, hosted native and all-view browser remain active; W8.1 moved to Doing. Board: 27 Done, 1 Doing, 3 To do. <strong>27 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded; this interval included the clipboard fix merge, screenshot verification, documentation and final-tip gate setup.</p></li>
           <li><time datetime="2026-09-29T00:09:00+10:00">29 September 2026, 00:09 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/833">PR #833</a> merged on <code>dev</code> as <code>10eaea07</code> after all 19 exact-head checks passed, including both WebKit shards. The pinned Linux four-hour report and the exact-head private-display 8/8 warm/fresh preflight are retained with distinct scopes; issue #817 closed. W6.1 moved to Done. Board: 27 Done, 0 Doing, 4 To do. <strong>27 / 31 done.</strong></p><p class="small">Active work since previous entry: W6.1 exact-head review, authorized merge and issue closure.</p></li>
           <li><time datetime="2026-09-28T23:51:00+10:00">28 September 2026, 23:51 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/831">PR #831</a> merged on <code>dev</code> as <code>40f8b2d4</code> after its unchanged-head Linux rerun and all 17 checks passed. W2.5 moved to Done; the separate WebDriver session-loss root cause remains open. The fourth sequential <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36427823976">Windows dev smoke run</a> failed the tracked #715 paste case, with no duplicate on disk, resetting W2.4 to 0/5; a second terminal evidence-screenshot write failed. <a href="https://github.com/xnmp/tauri-explorer/pull/834">Draft PR #834</a> now captures clipboard phase timing without changing behavior. The exact-head <code>ea3a7932</code> Linux private-display preflight passed 8/8 warm/fresh outcomes across two cycles, separate from its pinned four-hour report. Board: 26 Done, 0 Doing, 5 To do. <strong>26 / 31 done.</strong></p><p class="small">Active work since previous entry: Windows failure triage, native diagnostics and exact-head PR verification.</p></li>
           <li><time datetime="2026-09-28T23:14:00+10:00">28 September 2026, 23:14 AEST</time><p>The Windows smoke test body on <code>dev</code> <code>c90f0d4d</code> <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36423371292">run 36423371292</a> completed successfully. W2.4 advanced from 2/5 to 3/5 qualifying executed Windows bodies; two more are required. The hosted job is completing cleanup before the next sequential dispatch. Board: 25 Done, 0 Doing, 6 To do. <strong>25 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>

@@ -80,7 +80,7 @@
         <p class="eyebrow">Release preparation · local checkpoint</p>
         <h1>Architecture overhaul progress</h1>
         <p class="lead">Local integration passed its available gates. Hosted platform and final-tip checks remain open. Version 1.11.0 is drafted but has not been released.</p>
-        <p class="meta">Updated 28 September 2026 · full local gate <code>47830d4e</code> · combined preflight <code>5ff25971</code> · remote <code>dev</code> <code>40f8b2d4</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
+        <p class="meta">Updated 29 September 2026 · full local gate <code>47830d4e</code> · combined preflight <code>5ff25971</code> · remote <code>dev</code> <code>10eaea07</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
       </header>
 
       <div class="tabs" role="tablist" aria-label="Progress views">
@@ -90,10 +90,10 @@
 
       <div id="board-panel" class="panel" role="tabpanel" aria-labelledby="board-tab">
         <div class="progress-panel">
-          <div class="progress-topline"><strong>26 / 31 accepted</strong><span>84% by item count</span></div>
-          <progress value="26" max="31" aria-label="26 of 31 in-scope plan items accepted"></progress>
+          <div class="progress-topline"><strong>27 / 31 accepted</strong><span>87% by item count</span></div>
+          <progress value="27" max="31" aria-label="27 of 31 in-scope plan items accepted"></progress>
           <p class="scope-note">Release scope excludes W3.5 (closed by ADR) and W5.4 (physical-Mac startup follow-up). Item count is not a time estimate.</p>
-          <p class="scope-note">Five rows remain. PR #831 merged after 17 green checks; draft PR #833 is in hosted CI. The Windows smoke streak reset after a #715 failure, and final-tip gates remain open.</p>
+          <p class="scope-note">Four rows remain. PRs #831 and #833 merged after green exact-head checks. The Windows smoke streak reset after a #715 failure, and final-tip gates remain open.</p>
         </div>
 
         <div class="notice" role="status">
@@ -105,11 +105,10 @@
           <h2 id="items-title">Plan items</h2>
           <div class="board-grid">
             <section class="lane" aria-labelledby="todo-title">
-              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">5 items</span></div>
+              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">4 items</span></div>
               <ul class="items">
                 <li><strong>W2.4</strong> Windows smoke reliability <small>Fourth dev run reproduced #715; streak reset to 0/5. <a href="https://github.com/xnmp/tauri-explorer/pull/834">Draft PR #834</a> adds clipboard phase diagnostics.</small></li>
-                                <li><strong>W6.1</strong> Linux four-hour retention <small><a href="https://github.com/xnmp/tauri-explorer/pull/833">Draft PR #833</a> in hosted CI; bounded extracted-source pass, review and dev merge pending.</small></li>
-                <li><strong>W8.1</strong> Final-tip qualification <small>Run full gates after the pending changes reach dev.</small></li>
+                                                <li><strong>W8.1</strong> Final-tip qualification <small>Run full gates after the pending changes reach dev.</small></li>
                 <li><strong>W8.2</strong> Acceptance records <small>Complete final-tip audit and dev merge.</small></li>
                 <li><strong>W8.3</strong> v1.11.0 release <small>Dated notes pass release preflight; final dev, owner merge and assets remain.</small></li>
               </ul>
@@ -119,7 +118,7 @@
               <p class="empty">No plan item is assigned to this lane; hosted checks and Windows diagnostics continue.</p>
             </section>
             <section class="lane" aria-labelledby="done-title">
-              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">26 items</span></div>
+              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">27 items</span></div>
               <ul class="items">
                 <li><strong>W1.1</strong> macOS Rust suite</li>
                 <li><strong>W1.2</strong> Windows Rust suite</li>
@@ -141,6 +140,7 @@
                 <li><strong>W5.1</strong> macOS PTY</li>
                 <li><strong>W5.2</strong> APFS contracts</li>
                 <li><strong>W5.3</strong> Mac2 native UI <small>PR #827 merged; hosted pilot passed.</small></li>
+                <li><strong>W6.1</strong> Linux four-hour retention <small><a href="https://github.com/xnmp/tauri-explorer/pull/833">PR #833 merged</a>; pinned 240.09-minute report accepted for Linux only.</small></li>
                 <li><strong>W6.2</strong> Windows bounded retention <small>PR #812 merged; hosted soak passed.</small></li>
                 <li><strong>W6.3</strong> External job cancellation</li>
                 <li><strong>W7.1</strong> Theme accessibility</li>
@@ -155,7 +155,7 @@
         <section class="inner" aria-labelledby="next-title">
           <h2 id="next-title">Remaining gates</h2>
           <ul class="gates">
-            <li><strong>Finish active PR checks and merges</strong><p>PRs #812, #815, #816, #826, #827, #829 and #830 landed on <code>dev</code>. PR #831's new conflict-resolution head is in hosted CI; its earlier Linux smoke failure retained the <a href="architecture-overhaul-w25-failing-label-2026-09-28.md">failing-label timeline</a> and remains unexplained. Draft PR #833 needs hosted qualification.</p></li>
+            <li><strong>Diagnose the Windows paste failure</strong><p>PRs #831 and #833 landed on <code>dev</code>. The fourth Windows smoke run reproduced #715 with no duplicate on disk; <a href="https://github.com/xnmp/tauri-explorer/pull/834">draft PR #834</a> is collecting clipboard phase timings before a behavior fix. The separate <a href="architecture-overhaul-w25-failing-label-2026-09-28.md">WebDriver session-loss observations</a> remain open under #703/#781.</p></li>
             <li><strong>Run hosted platform checks</strong><p>Both platform pilots have passed. Complete the remaining Windows dev smoke streak after the native test fix merges. Physical-Mac startup stays a follow-up.</p></li>
             <li><strong>Qualify the final dev tip</strong><p>Run the exact combined Rust, native, browser, accessibility, performance and bundle gates. Count executed native cases separately from skipped specs.</p></li>
             <li><strong>Cut v1.11.0</strong><p>Refresh the drafted versions and changelog on final dev, open the dev-to-main release PR for the owner, and verify assets after the release.</p></li>
@@ -183,6 +183,7 @@
       <section id="history-panel" class="panel" role="tabpanel" aria-labelledby="history-tab" hidden>
         <h2>History</h2>
         <ol class="history">
+          <li><time datetime="2026-09-29T00:09:00+10:00">29 September 2026, 00:09 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/833">PR #833</a> merged on <code>dev</code> as <code>10eaea07</code> after all 19 exact-head checks passed, including both WebKit shards. The pinned Linux four-hour report and the exact-head private-display 8/8 warm/fresh preflight are retained with distinct scopes; issue #817 closed. W6.1 moved to Done. Board: 27 Done, 0 Doing, 4 To do. <strong>27 / 31 done.</strong></p><p class="small">Active work since previous entry: W6.1 exact-head review, authorized merge and issue closure.</p></li>
           <li><time datetime="2026-09-28T23:51:00+10:00">28 September 2026, 23:51 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/831">PR #831</a> merged on <code>dev</code> as <code>40f8b2d4</code> after its unchanged-head Linux rerun and all 17 checks passed. W2.5 moved to Done; the separate WebDriver session-loss root cause remains open. The fourth sequential <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36427823976">Windows dev smoke run</a> failed the tracked #715 paste case, with no duplicate on disk, resetting W2.4 to 0/5; a second terminal evidence-screenshot write failed. <a href="https://github.com/xnmp/tauri-explorer/pull/834">Draft PR #834</a> now captures clipboard phase timing without changing behavior. The exact-head <code>ea3a7932</code> Linux private-display preflight passed 8/8 warm/fresh outcomes across two cycles, separate from its pinned four-hour report. Board: 26 Done, 0 Doing, 5 To do. <strong>26 / 31 done.</strong></p><p class="small">Active work since previous entry: Windows failure triage, native diagnostics and exact-head PR verification.</p></li>
           <li><time datetime="2026-09-28T23:14:00+10:00">28 September 2026, 23:14 AEST</time><p>The Windows smoke test body on <code>dev</code> <code>c90f0d4d</code> <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36423371292">run 36423371292</a> completed successfully. W2.4 advanced from 2/5 to 3/5 qualifying executed Windows bodies; two more are required. The hosted job is completing cleanup before the next sequential dispatch. Board: 25 Done, 0 Doing, 6 To do. <strong>25 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-28T23:13:00+10:00">28 September 2026, 23:13 AEST</time><p>PR #833's repaired exact head passed hosted Ubuntu native smoke. PR #831's merged-base Ubuntu smoke failed after selecting the requested child label when the immediate page snapshot lost its WebDriver session; 43 other spec files passed. A <a href="architecture-overhaul-w25-failing-label-2026-09-28.md">second 57,386-byte labeled timeline</a> is archived with its hash. Independent Sol triage found no failed directory-watch assertion and no proof which window owned the disappeared renderer; one unchanged-head rerun is the bounded next check. The current <code>dev</code> Windows smoke body is executing. Board: 25 Done, 0 Doing, 6 To do. <strong>25 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>

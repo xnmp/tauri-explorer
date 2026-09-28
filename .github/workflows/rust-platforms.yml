@@ -59,6 +59,39 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # GitHub-hosted Windows jobs own a fresh administrator VM. Temporarily
+      # enable 8.3 creation only for this dedicated test; restore the runner's
+      # original setting even when the assertion or Cargo fails (#799).
+      - name: NTFS 8.3 physical identity
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tempProbe = [System.IO.Path]::GetTempFileName()
+          try {
+            $tempVolume = Get-Volume -FilePath $tempProbe -ErrorAction Stop
+            if ($tempVolume.FileSystem -ne 'NTFS') {
+              throw "8.3 identity acceptance requires NTFS; TEMP uses $($tempVolume.FileSystem)"
+            }
+            Write-Host "Fixture TEMP volume: $($tempVolume.FileSystem) ($tempProbe)"
+          } finally {
+            Remove-Item -LiteralPath $tempProbe -Force
+          }
+          $policy = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem').NtfsDisable8dot3NameCreation
+          try {
+            & fsutil.exe 8dot3name set 0
+            if ($LASTEXITCODE -ne 0) { throw "Could not enable NTFS 8.3 creation" }
+            $result = & cargo.exe test --manifest-path src-tauri/Cargo.toml --lib ntfs_short_name_alias_keeps_physical_identity -- --ignored --nocapture 2>&1
+            $testExit = $LASTEXITCODE
+            $result | Out-Host
+            if ($testExit -ne 0) { throw "NTFS 8.3 physical identity test failed" }
+            if (($result | Out-String) -notmatch 'test result: ok\. 1 passed; 0 failed;') {
+              throw "NTFS 8.3 physical identity test did not execute exactly once"
+            }
+          } finally {
+            & fsutil.exe 8dot3name set $policy
+            if ($LASTEXITCODE -ne 0) { throw "Could not restore original NTFS 8.3 policy $policy" }
+          }
+
       # The opt-in durable policies are `cfg(unix)` code; macOS is the only
       # non-Linux platform where they compile to anything.
       - name: Opt-in recovery Clippy

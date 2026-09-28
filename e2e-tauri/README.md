@@ -8,7 +8,7 @@ A smoke suite that launches the built Tauri binary and drives it via WebDriver. 
 | ------- | --------- | ------------------------------------------------------------------ |
 | Linux   | yes       | Uses `tauri-driver` + WebKitGTK                                    |
 | Windows | yes       | Attaches `msedgedriver` to WebView2 through an E2E-only CDP port   |
-| macOS   | **no**    | `tauri-driver` has no WKWebView driver. See project issue tracker. |
+| macOS   | separate  | Appium Mac2/XCTest pilot below; `tauri-driver` has no WKWebView driver. |
 
 ## One-time setup
 
@@ -79,6 +79,19 @@ See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to
 `dev`/`main` against both `ubuntu-latest` and `windows-latest`.
 `docs/lessons/457-windows-tauri-smoke-hang.md` records why the Windows harness
 must use the programmatic CDP attach path.
+
+The separate `.github/workflows/macos-native-ui.yml` pilots native WKWebView
+outcome testing through Appium Mac2 and XCTest on a hosted Mac. It builds a
+production `.app`, launches it into a unique fixture directory, verifies that
+the child listing appears in the native accessibility tree, clicks the app's
+Up control, and verifies the parent listing replaces it. It retains source
+snapshots, a screenshot and a provenance report in
+`qualification-results/macos-native-ui/`. This route requires Xcode Helper
+Accessibility permission; CI grants it only on its disposable runner. To run
+locally, grant that permission in System Settings, install Appium 3 with the
+Mac2 4.2 driver, build with `bun run tauri build --bundles app`, start Appium
+on port 4723, then run `bun run e2e-tauri/macos-ui-smoke.ts`. The pilot remains
+unqualified until the hosted test demonstrates the app outcome.
 
 ## Fresh-window failure evidence
 
@@ -284,6 +297,16 @@ and removes that prefix with one Undo. Both assert real filesystem bytes, with
 `native-ordered-copy-redone.png` and `native-ordered-copy-cancelled.png` recording the
 visible results. These cases qualify Linux session/UI integration; browser tests
 separately cover clipboard selection across Details, List and Tiles.
+
+The ungated `session-cancellation.spec.ts` cancels one production copy session
+and one production move session while each backend is paused on a real
+destination conflict. Both must settle as cancelled with an unstarted item,
+retain the source and byte-exact existing destination, and leave the native
+Undo/Redo summary unchanged. Each case then removes the conflict and completes
+the same overlapping request, proving admission was released through rendered
+listing plus native Undo/Redo outcomes. The Rust phase matrix separately parks
+every shared orchestration boundary. Smoke executes these binary cases on Linux
+and Windows.
 
 
 `file-move-recovery.spec.ts` additionally checks Linux native move admission through

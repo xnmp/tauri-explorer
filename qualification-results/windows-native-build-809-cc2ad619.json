@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "cc2ad6199588e5c6ed7c09c2bf1c7ebd6d0c8127",
+  "profile": "debug-custom-protocol-e2e-hooks-webview2-attach",
+  "buildCommand": [
+    "bun",
+    "run",
+    "tauri",
+    "build",
+    "--no-bundle",
+    "--debug",
+    "--features",
+    "e2e-webview2-attach"
+  ],
+  "startedAt": "2026-09-27T05:37:04.778Z",
+  "completedAt": "2026-09-27T05:50:59.776Z",
+  "binary": "D:\\a\\tauri-explorer\\tauri-explorer\\src-tauri\\target\\debug\\tauri-explorer.exe",
+  "binarySha256": "038fc30c52fded3c00c35ab550e9b854673b7b6e142016d4ffe272721b84e77d",
+  "binaryBytes": 39748096,
+  "binaryModifiedAt": "2026-09-27T05:50:59.218Z"
+}

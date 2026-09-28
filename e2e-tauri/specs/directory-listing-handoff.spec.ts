@@ -1,11 +1,11 @@
 /** Initial listing and pane observation must form one lossless handoff. */
 import { browser, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { entryNames } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-listing-handoff-"));
+const scratch = createNativeFixtureDirectory("explorer-listing-handoff-");
 const observedDirectory = path.join(scratch, "first-observed");
 const quietDirectory = path.join(scratch, "quiet-first-load");
 
@@ -138,9 +138,6 @@ describe("initial directory listing observation handoff", () => {
     });
   });
 
-  after(() => {
-    fs.rmSync(scratch, { recursive: true, force: true });
-  });
 
   it("observes writes made after the first scan but before its result is published", async () => {
     await waitForHooks();

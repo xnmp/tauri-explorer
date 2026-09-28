@@ -2,7 +2,6 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
 import {
@@ -12,10 +11,9 @@ import {
   type NativeProcessIdentity,
 } from "../native-resources";
 import { domTexts, monitorFreshWindowOpen, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(
-  path.join(os.homedir(), ".tauri-explorer-e2e-directory-owner-"),
-);
+const scratch = createNativeFixtureDirectory("tauri-explorer-e2e-directory-owner-");
 const mainDirectory = path.join(scratch, "main");
 const reloadDirectory = path.join(scratch, "reload-raw-watch");
 const childDirectories = Array.from(
@@ -127,9 +125,9 @@ linuxDescribe("pane directory native window ownership", () => {
       }
       await browser.switchToWindow(mainHandle);
     }
-    // Retain watched directories until all resource assertions finish. Removing
-    // them earlier lets the kernel discard leaked watches and masks the defect.
-    fs.rmSync(scratch, { recursive: true, force: true });
+    // The fixture directory outlives this process (createNativeFixtureDirectory);
+    // removing it earlier would let the kernel discard leaked watches and mask
+    // the defect this suite exists to catch.
   });
 
   it("reclaims each unique child watch while the main window keeps observing", async () => {

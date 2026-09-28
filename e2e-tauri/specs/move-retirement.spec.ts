@@ -53,7 +53,9 @@ async function closeRecovery(): Promise<void> {
 }
 
 async function moveFixture(name: string, directory: boolean) {
+  // native-fixture-lifetime-allow: external recovery harness owns this configured parent through app exit.
   const sourceDirectory = fs.mkdtempSync(path.join(sourceBase!, `${name}-`));
+  // native-fixture-lifetime-allow: external recovery harness owns this configured parent through app exit.
   const destination = fs.mkdtempSync(path.join(targetBase!, `${name}-`));
   const source = path.join(sourceDirectory, directory ? "album" : "photo.txt");
   const target = path.join(destination, path.basename(source));

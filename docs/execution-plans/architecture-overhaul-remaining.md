@@ -24,7 +24,6 @@ ledger in the same PR.
 | --- | --- |
 | **Open** | Can be implemented and verified in this repository, on Linux or on the GitHub-hosted Windows/macOS runners |
 | **Blocked: hardware** | Needs a physical Mac or an interactive desktop session that CI cannot supply. It stays open, and no claim is made |
-| **Blocked: tooling** | No driver exists for the platform: tauri-driver does not support WKWebView, so there is no macOS native UI automation |
 | **Decision** | A product decision for the owner, not an implementation task |
 | **Closed by ADR** | Out of scope by a recorded decision. Reopening it needs a new ADR |
 | **Done** | Merged to dev with the stated evidence |
@@ -99,7 +98,7 @@ for anything else.
 | --- | --- | --- | --- |
 | W5.1 | macOS PTY: a Rust test that spawns the production PTY backend, round-trips input, resizes, and reaps the child | macOS runner (after W1.1) | Open |
 | W5.2 | Case-insensitive APFS rename, identity and recovery semantics, covered by the W1.1 suite on the runner's default volume | macOS runner | Open |
-| W5.3 | macOS native UI E2E | — | **Blocked: tooling**. There is no WKWebView WebDriver. Browser WebKit Playwright is the proxy, and makes no native claim |
+| W5.3 | macOS native UI E2E: child listing and Up navigation through XCTest | Hosted Mac Appium Mac2 pilot | Open. Local pilot prepared; hosted outcome and accessibility evidence are pending. `tauri-driver` still lacks WKWebView support |
 | W5.4 | Mac half-bounce, first presented frame, and usable-input startup qualification (#696, ledger gate 1) | — | **Blocked: hardware**. `launch-smoke` keeps recording 30 cold and warm process samples |
 
 ## W6 — Long-session retention (ledger gate 3)

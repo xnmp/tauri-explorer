@@ -74,6 +74,91 @@ describe("committed clipboard renames", () => {
 });
 
 describe("clipboard OS-bridge failures (#279)", () => {
+  it("a paste immediately after Copy reads the new files, not the previous OS clipboard", async () => {
+    let finishWrite!: () => void;
+    let osPaths = ["/previous.txt"];
+    writeFilesMock.mockImplementation((paths: string[]) => new Promise((resolve) => {
+      finishWrite = () => {
+        osPaths = paths;
+        resolve({ ok: true, data: undefined });
+      };
+    }));
+    readFilesMock.mockImplementation(async () => ({ ok: true, data: [...osPaths] }));
+    const store = await freshStore();
+
+    const copying = store.copy([entry("new.txt")]);
+    const pasting = store.readOsFiles();
+    await vi.waitFor(() => expect(writeFilesMock).toHaveBeenCalled());
+    expect(emit).not.toHaveBeenCalled();
+    finishWrite();
+
+    expect(await pasting).toEqual({
+      content: { paths: ["/new.txt"], operation: "copy" },
+      error: null,
+    });
+    await copying;
+    expect(emit).toHaveBeenCalledWith("app://clipboard-sync", store.content);
+    store.destroy();
+  });
+
+  it("rapid successive copies leave the newest files in the OS clipboard", async () => {
+    const writes: Array<() => void> = [];
+    let osPaths: string[] = [];
+    writeFilesMock.mockImplementation((paths: string[]) => new Promise((resolve) => {
+      writes.push(() => {
+        osPaths = paths;
+        resolve({ ok: true, data: undefined });
+      });
+    }));
+    readFilesMock.mockImplementation(async () => ({ ok: true, data: [...osPaths] }));
+    const store = await freshStore();
+
+    const first = store.copy([entry("first.txt")]);
+    const second = store.copy([entry("second.txt")]);
+    const pasting = store.readOsFiles();
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    writes[0]();
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    writes[1]();
+
+    expect(await pasting).toEqual({
+      content: { paths: ["/second.txt"], operation: "copy" },
+      error: null,
+    });
+    await Promise.all([first, second]);
+    expect(emit).toHaveBeenLastCalledWith("app://clipboard-sync", store.content);
+    store.destroy();
+  });
+
+  it("an OS read waits for a newer copy queued while it awaited an earlier write", async () => {
+    const writes: Array<() => void> = [];
+    let osPaths: string[] = [];
+    writeFilesMock.mockImplementation((paths: string[]) => new Promise((resolve) => {
+      writes.push(() => {
+        osPaths = paths;
+        resolve({ ok: true, data: undefined });
+      });
+    }));
+    readFilesMock.mockImplementation(async () => ({ ok: true, data: [...osPaths] }));
+    const store = await freshStore();
+
+    const first = store.copy([entry("first.txt")]);
+    const pasting = store.readOsFiles();
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    const second = store.cut([entry("second.txt")]);
+    writes[0]();
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    expect(readFilesMock).not.toHaveBeenCalled();
+    writes[1]();
+
+    expect(await pasting).toEqual({
+      content: { paths: ["/second.txt"], operation: "copy" },
+      error: null,
+    });
+    await Promise.all([first, second]);
+    store.destroy();
+  });
+
   it("copy keeps the in-app clipboard and toasts when the OS write fails", async () => {
     writeFilesMock.mockResolvedValue({ ok: false, error: "wl-copy is not installed" });
     const store = await freshStore();

@@ -47,6 +47,9 @@ const CLIPBOARD_EVENT = "app://clipboard-sync";
 function createClipboardStore() {
   let content = $state<ClipboardContent | null>(null);
   let unlisten: UnlistenFn | null = null;
+  // Native clipboard writes can outlive the click that started them. Serialize
+  // our writes and let an immediate paste observe the completed latest write.
+  let osWriteTail: Promise<void> = Promise.resolve();
 
   // Per-row membership checks (isInClipboard) run for every visible row on
   // every render — a Set makes them O(1) instead of scanning the entries
@@ -78,6 +81,18 @@ function createClipboardStore() {
   // Start listening immediately
   startListening();
 
+  async function setContent(entries: FileEntry[], operation: ClipboardOperation): Promise<void> {
+    if (entries.length === 0) return;
+    const next: ClipboardContent = { entries, operation };
+    content = next;
+    const published = content;
+    const write = osWriteTail.then(() => mirrorToOsClipboard(entries.map((e) => e.path)));
+    osWriteTail = write;
+    await write;
+    // A later local copy/cut supersedes this event while its OS write queues.
+    if (content === published) await broadcast(published);
+  }
+
   return {
     get content() {
       return content;
@@ -97,24 +112,14 @@ function createClipboardStore() {
      * Copy files to clipboard (internal + OS clipboard + broadcast).
      */
     async copy(entries: FileEntry[]): Promise<void> {
-      if (entries.length === 0) return;
-      content = { entries, operation: "copy" };
-      await Promise.all([
-        mirrorToOsClipboard(entries.map((e) => e.path)),
-        broadcast(content),
-      ]);
+      await setContent(entries, "copy");
     },
 
     /**
      * Cut files (internal + OS clipboard + broadcast).
      */
     async cut(entries: FileEntry[]): Promise<void> {
-      if (entries.length === 0) return;
-      content = { entries, operation: "cut" };
-      await Promise.all([
-        mirrorToOsClipboard(entries.map((e) => e.path)),
-        broadcast(content),
-      ]);
+      await setContent(entries, "cut");
     },
 
     clear(): void {
@@ -158,6 +163,14 @@ function createClipboardStore() {
      * and should only surface the error when the whole paste comes up empty.
      */
     async readOsFiles(): Promise<{ content: OsClipboardContent | null; error: string | null }> {
+      // A second copy can start while an earlier write is settling. Read only
+      // after the queue has stopped advancing so the OS and in-app snapshots
+      // refer to the same most recent local operation.
+      let observedTail: Promise<void>;
+      do {
+        observedTail = osWriteTail;
+        await observedTail;
+      } while (observedTail !== osWriteTail);
       const result = await osClipboardReadFiles();
       if (!result.ok) {
         return { content: null, error: result.error };

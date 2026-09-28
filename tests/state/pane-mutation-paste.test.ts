@@ -195,6 +195,23 @@ afterEach(async () => {
 });
 
 describe("paste and undo publication ownership", () => {
+  it("preserves a newer Cut operation when clipboard content changes during the OS read", async () => {
+    const explorer = explorerAtA();
+    await clipboardStore.copy([entry("old.txt", "/source")]);
+    const osRead = deferred<{ ok: true; data: string[] }>();
+    mocks.osReadFiles.mockReturnValueOnce(osRead.promise);
+
+    const pasting = explorer.paste();
+    await waitForCall(mocks.osReadFiles);
+    const cut = entry("new.txt", "/source");
+    await clipboardStore.cut([cut]);
+    osRead.resolve({ ok: true, data: [cut.path] });
+
+    expect(await pasting).toBeNull();
+    expect(mocks.moveEntries).toHaveBeenCalledWith([cut.path], "/a", expect.anything());
+    expect(mocks.copyEntries).not.toHaveBeenCalled();
+  });
+
   it("publishes and selects every file from a healthy same-pane batch paste", async () => {
     const explorer = explorerAtA();
     const sources = [entry("one.txt", "/source"), entry("two.txt", "/source")];

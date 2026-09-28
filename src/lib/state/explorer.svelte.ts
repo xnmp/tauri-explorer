@@ -621,8 +621,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     // still matches the OS clipboard. If the user copied something in another
     // app since, the OS clipboard differs and must win — otherwise pasting a
     // file copied in Explorer silently pastes our stale internal selection.
-    const internal = clipboardStore.content;
     const { content: osContent, error: osReadError } = await clipboardStore.readOsFiles();
+    const internal = clipboardStore.content;
 
     const internalPaths = internal ? internal.entries.map((e) => e.path) : null;
     const osMatchesInternal =

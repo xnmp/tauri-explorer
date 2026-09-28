@@ -2,7 +2,7 @@
 
 All notable changes to Tauri Explorer.
 
-## v1.11.0 — Unreleased
+## v1.11.0 — 2026-09-29
 
 File operations have clearer ownership and recovery behavior, and keyboard and
 preview layouts work more consistently across window sizes and platforms.
@@ -50,7 +50,14 @@ preview layouts work more consistently across window sizes and platforms.
   the Mac2 native UI pilot exercised child listing and parent navigation on
   merged changes (#809, #825). A pinned Linux qualification build completed a
   four-hour native soak with 2,510 cycles and bounded late resource growth
-  (#817). Final-dev integration acceptance remains pending.
+  (#817).
+- The final `dev` product source at `de35c97b` passed type, unit, performance,
+  Rust, load, and all-view browser gates (2,372 browser cases passed, 36
+  skipped). Exact-commit hosted recovery passed 19 gated cases; full native
+  smoke passed 76 Windows cases with 36 skips and 97 Linux cases with 18 skips.
+  Mac2 UI, platform Rust, and CI passed, following five consecutive full
+  post-fix Windows `dev` smoke runs. Virtual-Mac startup measurements do not
+  qualify the physical-Mac half-bounce target.
 
 ### Release limits
 

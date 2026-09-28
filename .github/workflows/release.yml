@@ -129,8 +129,8 @@ jobs:
           # Check every selected file, including duplicates, before publishing.
           for pattern in '*.deb' '*.rpm' '*.AppImage' '*.dmg' '*.msi' '*-setup.exe'; do
             mapfile -d '' -t matches < <(find artifacts -type f -name "$pattern" -print0)
-            if (( ${#matches[@]} == 0 )); then
-              echo "::error::Missing release bundle matching $pattern"
+            if (( ${#matches[@]} != 1 )); then
+              echo "::error::Expected exactly one release bundle matching $pattern; found ${#matches[@]}"
               exit 1
             fi
             for asset in "${matches[@]}"; do

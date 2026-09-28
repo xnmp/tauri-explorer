@@ -20,9 +20,11 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
     return value;
   };
   const listen = (name: string, handler: EventListener) => window.addEventListener(name, handler, { signal });
+  const readyKey = `e2e-child-ready:${windowTabsManager.windowLabel}`;
   let capturedDelete: { token: string; explorer: ExplorerInstance; entries: FileEntry[] } | null = null;
   signal.addEventListener("abort", () => {
     capturedDelete = null;
+    if (windowTabsManager.windowLabel !== "main") localStorage.removeItem(readyKey);
     for (const key of ["e2eHooksReady", "e2eWarmReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eWindowResult", "e2eFileOperationResult"]) {
       delete document.documentElement.dataset[key];
     }
@@ -109,7 +111,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "directory-watch-release" | "native-session" | "native-destroy" | "target-state" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "directory-watch-release" | "native-session" | "native-destroy" | "target-state" | "window-states" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
@@ -166,7 +168,18 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
       if (op === "target-state") {
         const { Window } = await whileActive(import("@tauri-apps/api/window"));
         const destination = target ? await Window.getByLabel(target) : null;
-        return { exists: destination !== null, visible: destination ? await destination.isVisible() : false };
+        return {
+          exists: destination !== null,
+          visible: destination ? await destination.isVisible() : false,
+          readyPath: target ? localStorage.getItem(`e2e-child-ready:${target}`) : null,
+        };
+      }
+      if (op === "window-states") {
+        const { Window } = await whileActive(import("@tauri-apps/api/window"));
+        return Promise.all((await Window.getAll()).map(async (win) => ({
+          label: win.label,
+          visible: await win.isVisible(),
+        })));
       }
       if (op === "directory-watch-acquire") {
         // Intentionally leave the lease unmanaged by JS so reload acceptance
@@ -260,8 +273,11 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
         return opened ? { kind: opened.kind, label: opened.label } : null;
       }
       if (op === "native-close") {
-        const { getCurrentWindow } = await whileActive(import("@tauri-apps/api/window"));
-        await getCurrentWindow().close();
+        const { getCurrentWindow, Window } = await whileActive(import("@tauri-apps/api/window"));
+        const closing = target ? await Window.getByLabel(target) : getCurrentWindow();
+        if (!closing) throw new Error(`native close target not found: ${target}`);
+        await closing.close();
+        if (target) localStorage.removeItem(`e2e-child-ready:${target}`);
         return true;
       }
       const { openNewWindow } = await whileActive(import("$lib/state/window-launch"));
@@ -317,4 +333,30 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // and wait for its matching completion token. Repeated polling dispatches
   // queue duplicate real listings and contaminate watcher timing probes.
   document.documentElement.dataset.e2eHooksReady = "true";
+  if (windowTabsManager.windowLabel !== "main") {
+    // This test-only receipt is shared with the main page through app-origin
+    // storage. Await the production native close handler, the initial listing,
+    // and a paint before reporting child readiness.
+    const readyPath = () => {
+      const explorer = windowTabsManager.getActiveExplorer();
+      return explorer && !explorer.loading && explorer.displayEntries.length > 0 &&
+        document.querySelector(".file-list") ? explorer.currentPath : null;
+    };
+    const reportReady = () => {
+      if (signal.aborted) return;
+      const path = readyPath();
+      if (!path) {
+        requestAnimationFrame(reportReady);
+        return;
+      }
+      requestAnimationFrame(() => {
+        if (signal.aborted) return;
+        if (readyPath() === path) localStorage.setItem(readyKey, path);
+        else requestAnimationFrame(reportReady);
+      });
+    };
+    void windowTabsManager.whenNativeCloseObserved().then((ready) => {
+      if (ready && !signal.aborted) requestAnimationFrame(reportReady);
+    });
+  }
 }

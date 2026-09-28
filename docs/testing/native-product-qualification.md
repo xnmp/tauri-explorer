@@ -8,8 +8,8 @@ case marked as native acceptance.
 
 | Case                     | Platform/backend         | Selected combination                                                                                  | User-visible outcome                                                               | Proof / release status         |
 | ------------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------ |
-| Window + workspace churn | Linux / WebKitGTK        | repeated native windows, alternating real directories, refresh/palette interruptions                  | surviving window shows the requested path and usable file list                     | native WebDriver / required    |
-| Window + workspace churn | Windows / WebView2       | repeated native windows, alternating real directories, refresh/palette interruptions                  | surviving window shows the requested path and usable file list                     | native WebDriver / required    |
+| Window + workspace churn | Linux / WebKitGTK        | visible warm and fresh windows, alternating real directories, refresh/palette interruptions             | opened window shows the requested path and usable file list, then closes cleanly   | native WebDriver / required    |
+| Window + workspace churn | Windows / WebView2       | visible warm and fresh windows, alternating real directories, refresh/palette interruptions             | opened window shows the requested path and usable file list, then closes cleanly   | native WebDriver / required    |
 | Plugin churn             | Linux + Windows          | demo plugin enable → invoke → disable between interruptions                                           | command appears, its success toast renders, then the command disappears            | native WebDriver / required    |
 | Theme + accessibility    | Linux + Windows          | keyboard-only palette and first-attempt theme toggle                                                  | labelled listbox remains operable and the rendered theme changes                   | native WebDriver / required    |
 | Preview                  | Linux + Windows          | real Markdown and text files across alternating directories                                           | Markdown heading and exact text content appear in the preview                      | native WebDriver / required    |
@@ -26,9 +26,18 @@ artifact directory. For Linux and Windows, use the clean-worktree build wrapper
 and opt-in command documented in `e2e-tauri/README.md`; the runner rejects a
 binary whose hash or size differs from that build manifest (the recorded build
 mtime remains provenance metadata rather than a cross-runtime equality check).
-The report records reproducible input, the platform and
+The report records reproducible input, the harness commit, the platform and
 WebView, asserted display scale, exact binary SHA-256/size/mtime, scenario timing
-p50/p95, RSS baseline/final/peak, and failure screenshot paths. Sampling or
+p50/p95, raw process-tree RSS samples plus baseline/final/peak, and failure screenshot paths. The
+four-hour unbounded Linux run requires elapsed wall time, both warm and fresh
+window launches, all configured scenarios, and at least 40 RSS samples. Its
+settled RSS gate compares the median of samples at 10–20% of the run with the
+final 10%; growth above 1 GiB fails. This allowance excludes WebKit cold-start
+allocation and short window-construction peaks while rejecting sustained drift
+on the scale of the failed 50 GiB fixture run. The 32-cycle corrected preflight
+returned to two native handles after each close and finished at 1.56 GiB RSS
+with a 2.05 GiB transient peak. Bounded one-cycle platform checks retain the
+samples but do not claim four-hour resource stability. Sampling or
 early-run failures still produce a failed report with nullable resource fields
 and explicit run errors. Failed native runs also retain their seed-specific
 WebDriver output and reference it from `failureArtifacts`; macOS startup logs

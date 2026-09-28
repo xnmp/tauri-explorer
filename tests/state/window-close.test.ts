@@ -83,3 +83,27 @@ it("retires late listeners without allowing queued callbacks to auto-destroy", a
   expect(dependencies.begin).toHaveBeenCalledOnce();
   owner.dispose();
 });
+
+it("reports native close readiness only after listener acquisition", async () => {
+  const { owner, source } = setup();
+  const acquired = deferred<() => void>();
+  source.onCloseRequested.mockReturnValueOnce(acquired.promise);
+  const stop = owner.observe();
+  const ready = owner.whenObserved();
+  let settled = false;
+  void ready.then(() => { settled = true; });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  acquired.resolve(() => {});
+  expect(await ready).toBe(true);
+  stop();
+
+  const pending = deferred<() => void>();
+  source.onCloseRequested.mockReturnValueOnce(pending.promise);
+  const stopPending = owner.observe();
+  const retiredReady = owner.whenObserved();
+  stopPending();
+  expect(await retiredReady).toBe(false);
+  pending.resolve(() => {});
+  owner.dispose();
+});

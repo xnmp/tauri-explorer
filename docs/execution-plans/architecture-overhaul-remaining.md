@@ -106,7 +106,7 @@ for anything else.
 
 | ID | Step | Verification | Status |
 | --- | --- | --- | --- |
-| W6.1 | A 4-hour Linux native soak (`SOAK_DURATION_MS=14400000`) against a qualification build, with a recorded seed and the report committed to the ledger | `qualification-results/` report | Open |
+| W6.1 | A 4-hour Linux native soak (`SOAK_DURATION_MS=14400000`) against a qualification build, with a recorded seed and the report committed to the ledger | [2026-09-28 report](../../qualification-results/linux-linux-four-hour-817-wry-isolated-20260927-ccc3a09cb1be.json): 2,510 complete cycles, 4 scenarios, 240.09 minutes, exit 0; independent `/proc` figures are excluded because their raw trace was not retained | Pinned combined Linux source `75859d97` passed; standalone extraction and W8.1 final-dev qualification remain open |
 | W6.2 | A bounded Windows soak (`SOAK_MAX_CYCLES=1`) on the runner. Make the runner portable if it is not | Windows job artifact | Open |
 | W6.3 | External jobs (ledger gate 2): list the Rust tests for worker draining, held staging files, serialized cancel and publication, bounded fal requests and Nano child kill/reap, and confirm they run in the default suite on every W1 platform. Add one native outcome that cancels a real long-running external process (a fake executable on `PATH`) and asserts that no output is published late | Per-platform CI, plus the native outcome | Open |
 

@@ -12,6 +12,7 @@ import {
   executeLoggedQualificationProcess,
   measureProcessTreeRss,
   parseAttributedMacStartupLog,
+  resetSoakWorkerLogDirectory,
   resolveQualificationArtifactPath,
   resolveSoakArtifactPaths,
   resolveSoakConfiguration,
@@ -390,6 +391,7 @@ describe("native qualification process boundaries", () => {
       artifacts.report,
       artifacts.driverLog,
       artifacts.failureDirectory,
+      artifacts.workerLogDirectory,
     ]) {
       expect(path.relative(root, artifact)).not.toMatch(/^\.\.(?:[/\\]|$)/);
     }
@@ -426,6 +428,43 @@ describe("native qualification process boundaries", () => {
     expect(serialized.configuration.seed).toBe(rawSeed);
   });
 
+  it("clears only this seed's old worker logs before a new qualification run", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "soak-worker-logs-"));
+    try {
+      const root = path.join(dir, "qualification-results");
+      const worker = resolveSoakArtifactPaths(root, "linux", "repeat-seed")
+        .workerLogDirectory;
+      const otherSeed = path.join(root, "wdio-other-seed");
+      fs.mkdirSync(worker, { recursive: true });
+      fs.mkdirSync(otherSeed);
+      fs.writeFileSync(path.join(worker, "stale.log"), "old run");
+      fs.writeFileSync(path.join(otherSeed, "keep.log"), "other run");
+
+      resetSoakWorkerLogDirectory(root, worker);
+      expect(fs.readdirSync(worker)).toEqual([]);
+      expect(fs.readFileSync(path.join(otherSeed, "keep.log"), "utf8"))
+        .toBe("other run");
+
+      const external = path.join(dir, "external");
+      fs.mkdirSync(external);
+      fs.writeFileSync(path.join(external, "sentinel"), "untouched");
+      fs.rmSync(worker, { recursive: true });
+      fs.symlinkSync(external, worker, "dir");
+      resetSoakWorkerLogDirectory(root, worker);
+      expect(fs.lstatSync(worker).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(path.join(external, "sentinel"), "utf8"))
+        .toBe("untouched");
+
+      const rootLink = path.join(dir, "root-link");
+      fs.symlinkSync(root, rootLink, "dir");
+      expect(() => resetSoakWorkerLogDirectory(
+        rootLink, path.join(rootLink, "wdio-repeat-seed"),
+      )).toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("attributes RSS to the verified launched binary and its descendants", () => {
     const launchedBinary = path.resolve("/qualified/build/tauri-explorer");
     expect(
@@ -454,6 +493,10 @@ describe("native qualification process boundaries", () => {
         123,
       ),
     ).toEqual({ rssBytes: 140, sampledAtMs: 123 });
+    expect(() => measureProcessTreeRss([
+      { pid: 10, parentPid: 1, rssBytes: 100, executable: launchedBinary },
+      { pid: 20, parentPid: 1, rssBytes: 100, executable: launchedBinary },
+    ], launchedBinary, 123)).toThrow("native process identity is ambiguous");
   });
 
   // Write fixture bytes synchronously before exiting, so these tests verify
@@ -462,6 +505,9 @@ describe("native qualification process boundaries", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-driver-log-"));
     const logPath = path.join(dir, "seed-webdriver.log");
     const reportPath = path.join(dir, "report.json");
+    const workerLogDirectory = path.join(dir, "seed", "wdio");
+    fs.mkdirSync(workerLogDirectory, { recursive: true });
+    fs.writeFileSync(path.join(workerLogDirectory, "soak-0-0.log"), "worker proof\n");
     const result = await executeLoggedQualificationProcess({
       command: [
         process.execPath,
@@ -472,6 +518,7 @@ describe("native qualification process boundaries", () => {
       ],
       reportPath,
       driverLogPath: logPath,
+      additionalFailureArtifacts: [workerLogDirectory, path.join(dir, "absent")],
       mirrorOutput: false,
       createFallbackReport: (exitCode) =>
         buildNativeQualificationReport({
@@ -511,7 +558,7 @@ describe("native qualification process boundaries", () => {
     const persisted = JSON.parse(fs.readFileSync(reportPath, "utf8"));
     expect(persisted).toMatchObject({
       passed: false,
-      failureArtifacts: [logPath],
+      failureArtifacts: [logPath, workerLogDirectory],
     });
     const driverLog = fs.readFileSync(logPath, "utf8");
     expect(driverLog).toContain("driver stdout proof");

@@ -307,16 +307,39 @@ profile are tied to the exact binary hash in `qualification-results/native-build
 ```bash
 bun run build:native:qualification
 SOAK_DURATION_MS=14400000 \
-SOAK_MAX_CYCLES=500 \
-SOAK_SEED=release-1.8.1-linux \
-SOAK_EXPECTED_DISPLAY_SCALE=2 \
+SOAK_SEED=release-linux-four-hour \
+SOAK_EXPECTED_DISPLAY_SCALE=1 \
 bun run test:e2e:tauri:soak
 ```
+
+Set the expected scale to the measured display scale for the runner. A
+committed historical build manifest must use a suffixed filename such as
+`native-build-817-pinned.json`: the unsuffixed path is the runner's live default
+and must be regenerated for each new qualification build.
+
+Run Linux qualification with fresh, isolated `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` directories. The soak
+asserts the status-bar path; a saved `showStatusBar: false` setting in the
+operator's regular profile makes it fail even when navigation succeeds. Keep
+the same isolated profile for the entire run so warm and fresh windows share
+their application state.
 
 Omit `SOAK_MAX_CYCLES` to run for the full duration. A bounded harness check can
 set `SOAK_MAX_CYCLES=1`; that still launches the real application and exercises
 every scenario once. The deterministic seed rotates scenario/interruption order
 and is written into the report so a failing order can be replayed.
+For diagnosis only, `SOAK_DIAGNOSTIC_SCENARIO=window-workspace` with
+`SOAK_MAX_CYCLES` runs one scenario repeatedly. The four-hour release gate always
+requires all scenarios and does not accept this bounded diagnostic mode.
+For the window-workspace diagnostic, `SOAK_DIAGNOSTIC_WINDOW_MODE=warm` or
+`fresh` isolates one creation path; without it, cycles alternate between both.
+`SOAK_DIAGNOSTIC_MAIN_ONLY=1` additionally requires `fresh` and drives native
+creation, visibility and close through the main-page probe without switching
+WebDriver into child pages. It waits for the child's native close-owner
+registration, test-hook, initial listing and paint receipt through shared
+app-origin storage before native close. It is
+only a page-lifecycle discriminator, not
+complete child-window usability evidence or a four-hour qualification pass.
 
 Reports are written under `qualification-results/` and contain the exact commit,
 verified build profile and binary SHA-256/size/mtime, OS/release/architecture,
@@ -324,6 +347,12 @@ WebView user agent, display scale, configuration, RSS baseline/final/peak,
 scenario-duration p50/p95, and every scenario result. A failed assertion takes a
 screenshot named with the seed-derived safe component, cycle, and scenario,
 records it in the JSON report, and fails the command.
+WebDriverIO's per-command worker log is in `qualification-results/wdio-<seed
+component>/`; inspect it alongside the seed's `*-webdriver.log` when diagnosing
+a session failure. Each run clears that worker-log directory before starting,
+and failed reports link it as an artifact. The soak config enables file logging
+because otherwise WebDriverIO retains unique log messages in memory throughout
+a long run.
 The required expected-display-scale value makes a DPI qualification leg fail
 instead of silently running at the wrong native runner scale.
 

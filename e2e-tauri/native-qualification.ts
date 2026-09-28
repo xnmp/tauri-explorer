@@ -1638,19 +1638,56 @@ export function createNativeFixtureDirectory(
   return fs.mkdtempSync(path.join(root, prefix));
 }
 
+/** Cross-device fixtures must stay on their requested mount; never fall back. */
+export function createNativeSharedMemoryFixtureDirectory(
+  prefix: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  return createNativeFixtureDirectory(prefix, {
+    TAURI_NATIVE_CLEANUP_STATE_DIRECTORY: environment.TAURI_NATIVE_SHM_CLEANUP_STATE_DIRECTORY,
+  });
+}
+
 export function createNativeProcessCleanupHooks(options: {
   environment: NodeJS.ProcessEnv;
   stateEnvironmentKey: string;
   stop: () => Promise<void>;
   temporaryRoot?: string;
+  additionalFixtureRoots?: readonly { stateEnvironmentKey: string; temporaryRoot: string }[];
 }): {
   prepare: () => void;
+  begin: () => void;
   cleanup: () => Promise<void>;
   complete: () => void;
 } {
   const temporaryRoot = path.resolve(options.temporaryRoot ?? os.tmpdir());
   const directoryPrefix = "tauri-native-cleanup-";
-  let preparedDirectory: string | undefined;
+  const roots = [
+    { stateEnvironmentKey: options.stateEnvironmentKey, temporaryRoot, prefix: directoryPrefix },
+    ...(options.additionalFixtureRoots ?? []).map((root, index) => ({
+      ...root, temporaryRoot: path.resolve(root.temporaryRoot), prefix: `tauri-native-fixture-${index}-`,
+    })),
+  ];
+  if (new Set(roots.map(root => root.stateEnvironmentKey)).size !== roots.length) {
+    throw new Error("native fixture roots must have distinct environment keys");
+  }
+  let prepared: { stateEnvironmentKey: string; directory: string }[] = [];
+  let pendingMarker: string | undefined;
+  const removePrepared = (): string[] => {
+    const failures: string[] = [];
+    const owned = prepared;
+    prepared = [];
+    for (const { stateEnvironmentKey, directory } of owned) {
+      delete options.environment[stateEnvironmentKey];
+      try {
+        fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(`failed to remove cleanup marker directory: ${message}`);
+      }
+    }
+    return failures;
+  };
 
   const assertMarkerDirectory = (candidate: string): string => {
     const resolved = path.resolve(candidate);
@@ -1667,38 +1704,52 @@ export function createNativeProcessCleanupHooks(options: {
     return resolved;
   };
 
+  const writePendingMarker = (message: string): void => {
+    const configuredDirectory = options.environment[options.stateEnvironmentKey];
+    if (!configuredDirectory) {
+      throw new Error(`native cleanup state directory unavailable: ${message}`);
+    }
+    const markerDirectory = assertMarkerDirectory(configuredDirectory);
+    const marker = pendingMarker ?? path.join(markerDirectory, `${process.pid}-${randomUUID()}.json`);
+    writeQualificationArtifact(marker, { message });
+    pendingMarker = marker;
+  };
+
   return {
+    begin: () => {
+      if (pendingMarker) throw new Error("native worker cleanup is already pending");
+      writePendingMarker("native worker ended without confirming process exit");
+    },
     prepare: () => {
-      preparedDirectory = fs.mkdtempSync(
-        path.join(temporaryRoot, directoryPrefix),
-      );
-      options.environment[options.stateEnvironmentKey] = preparedDirectory;
+      if (prepared.length) throw new Error("native fixture roots are already prepared");
+      try {
+        for (const root of roots) {
+          const directory = fs.mkdtempSync(path.join(root.temporaryRoot, root.prefix));
+          prepared.push({ stateEnvironmentKey: root.stateEnvironmentKey, directory });
+          options.environment[root.stateEnvironmentKey] = directory;
+        }
+      } catch (error) {
+        const failures = removePrepared();
+        if (failures.length) throw new AggregateError([error, ...failures], "native fixture preparation rollback failed");
+        throw error;
+      }
     },
     cleanup: async () => {
       try {
         await options.stop();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const configuredDirectory =
-          options.environment[options.stateEnvironmentKey];
-        if (!configuredDirectory) {
-          throw new Error(
-            `native cleanup state directory unavailable: ${message}`,
-          );
-        }
-        const markerDirectory = assertMarkerDirectory(configuredDirectory);
-        writeQualificationArtifact(
-          path.join(markerDirectory, `${process.pid}-${randomUUID()}.json`),
-          { message },
-        );
+        writePendingMarker(message);
         throw error;
+      }
+      if (pendingMarker) {
+        fs.rmSync(pendingMarker);
+        pendingMarker = undefined;
       }
     },
     complete: () => {
-      delete options.environment[options.stateEnvironmentKey];
-      if (!preparedDirectory) return;
-      const markerDirectory = preparedDirectory;
-      preparedDirectory = undefined;
+      const markerDirectory = prepared[0]?.directory;
+      if (!markerDirectory) return;
       const failures: string[] = [];
       try {
         failures.push(
@@ -1718,22 +1769,15 @@ export function createNativeProcessCleanupHooks(options: {
         const message = error instanceof Error ? error.message : String(error);
         failures.push(`failed to read cleanup markers: ${message}`);
       }
-      try {
-        // Retry transient removal failures (e.g. a watcher briefly holding a
-        // marker file open) rather than surfacing them as cleanup failures.
-        fs.rmSync(markerDirectory, {
-          recursive: true,
-          force: true,
-          maxRetries: 5,
-          retryDelay: 200,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        // Report alongside any already-collected marker failures instead of
-        // discarding them: a `finally` block that itself throws would
-        // otherwise replace the original failure list.
-        failures.push(`failed to remove cleanup marker directory: ${message}`);
+      if (failures.length > 0) {
+        throw new Error(
+          `native qualification cleanup failed: ${failures.join("; ")}; ` +
+            `fixture roots preserved: ${prepared.map(({ directory }) => directory).join(", ")}`,
+        );
       }
+      // Only remove fixtures after every worker confirmed native process exit.
+      // A pending or unreadable marker cannot establish that guarantee.
+      failures.push(...removePrepared());
       if (failures.length > 0) {
         throw new Error(
           `native qualification cleanup failed: ${failures.join("; ")}`,

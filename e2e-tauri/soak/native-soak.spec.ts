@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   buildNativeQualificationReport,
+  createNativeFixtureDirectory,
   executeQualificationRun,
   MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH,
   measureProcessTreeRss,
@@ -37,7 +38,7 @@ let workspaceA = "";
 let workspaceB = "";
 
 function initializeScratchWorkspaces(): void {
-  scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tauri-native-soak-"));
+  scratchRoot = createNativeFixtureDirectory("soak-");
   workspaceA = path.join(scratchRoot, "workspace-a");
   workspaceB = path.join(scratchRoot, "workspace-b");
   fs.mkdirSync(workspaceA);
@@ -261,7 +262,7 @@ async function runWindowWorkspace(cycle: number): Promise<"warm" | "fresh"> {
     if (opened?.kind !== "fresh" || !opened.label) throw new Error("fresh window launch did not complete");
     const childLabel = opened.label;
     await browser.waitUntil(async () => {
-      const state = await windowOperation("target-state", childLabel) as {
+      const state = await windowOperation("target-readiness", childLabel) as {
         exists?: boolean; visible?: boolean; readyPath?: string | null;
       };
       return state.exists === true && state.visible === true && state.readyPath === target;
@@ -609,10 +610,12 @@ describe("extended real-native qualification soak", () => {
               }
             }
           }
+          fs.mkdirSync(artifactPaths.failureDirectory, { recursive: true });
+          await browser.saveScreenshot(path.join(artifactPaths.failureDirectory, "completed-cycle.png"));
         } finally {
           sampleResource("final");
-          if (scratchRoot)
-            fs.rmSync(scratchRoot, { recursive: true, force: true });
+          // The runner removes fixtures after native processes exit. Windows
+          // can retain directory handles while this session remains alive.
         }
       },
       createReport: (runErrors) =>

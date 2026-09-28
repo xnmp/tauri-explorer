@@ -111,7 +111,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   // Native multiwindow acceptance uses DOM requests across WebDriver's
   // isolated JS world, invoking the same launch/adoption owners as dragging.
   listen("e2e-window-operation", ((e: CustomEvent<{
-    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "directory-watch-release" | "native-session" | "native-destroy" | "target-state" | "window-states" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
+    token: string; op: "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "watch-acquire" | "directory-watch-acquire" | "directory-watch-release" | "native-session" | "native-destroy" | "target-state" | "target-readiness" | "window-states" | "open-picker" | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer"; target?: string;
   }>) => {
     const { token, op, target } = e.detail;
     void (async () => {
@@ -165,14 +165,16 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
           appUrl: `${window.location.origin}${window.location.pathname}?${params}`,
         };
       }
-      if (op === "target-state") {
+      if (op === "target-state" || op === "target-readiness") {
         const { Window } = await whileActive(import("@tauri-apps/api/window"));
         const destination = target ? await Window.getByLabel(target) : null;
-        return {
+        const state = {
           exists: destination !== null,
           visible: destination ? await destination.isVisible() : false,
-          readyPath: target ? localStorage.getItem(`e2e-child-ready:${target}`) : null,
         };
+        return op === "target-state"
+          ? state
+          : { ...state, readyPath: target ? localStorage.getItem(`e2e-child-ready:${target}`) : null };
       }
       if (op === "window-states") {
         const { Window } = await whileActive(import("@tauri-apps/api/window"));

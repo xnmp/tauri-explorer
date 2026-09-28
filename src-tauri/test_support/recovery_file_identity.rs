@@ -77,7 +77,8 @@ fn ntfs_case_variants_keep_the_same_physical_identity() {
 
 #[cfg(windows)]
 #[test]
-fn ntfs_short_name_alias_keeps_physical_identity_when_enabled() {
+#[ignore = "dedicated Windows runner enables NTFS 8.3 generation for this case"]
+fn ntfs_short_name_alias_keeps_physical_identity() {
     use std::{ffi::OsStr, os::windows::ffi::OsStrExt, path::PathBuf};
     use windows::{core::PCWSTR, Win32::Storage::FileSystem::GetShortPathNameW};
 
@@ -97,16 +98,11 @@ fn ntfs_short_name_alias_keeps_physical_identity_when_enabled() {
     let written = unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(&mut output)) };
     assert!(written > 0 && written < needed);
     let short = PathBuf::from(String::from_utf16(&output[..written as usize]).unwrap());
-    if short.file_name() == long.file_name() {
-        eprintln!(
-            "8.3 short-name creation is disabled on {}",
-            root.path().display()
-        );
-        return;
-    }
     assert_ne!(
-        short, long,
-        "8.3 evidence must use a distinct path spelling"
+        short.file_name(),
+        long.file_name(),
+        "8.3 evidence must use a distinct fixture filename alias on {}",
+        root.path().display()
     );
     assert_eq!(
         of_file(&File::open(&long).unwrap()).unwrap(),

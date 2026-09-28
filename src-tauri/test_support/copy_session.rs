@@ -798,6 +798,14 @@ fn cancellation_from_first_native_progress_discards_active_copy_and_suffix() {
     assert!(!destination.join("suffix.txt").exists());
     assert_eq!(fs::metadata(first).unwrap().len(), 4 * 1_024 * 1_024);
     assert_eq!(fs::read(suffix).unwrap(), b"suffix");
+    let projected = crate::file_mutation::copy_session_outcome(
+        outcome,
+        destination.to_string_lossy().into_owned(),
+    );
+    assert!(matches!(
+        projected.effect,
+        crate::file_history::ForwardEffect::Unchanged
+    ));
 }
 
 #[test]

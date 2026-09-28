@@ -8,12 +8,12 @@
  */
 import { browser, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, entryNames } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 const isWindows = process.platform === "win32";
-const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-hostile-"));
+const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-hostile-");
 
 /** Adversarial but creatable-on-this-OS names. */
 const HOSTILE_NAMES = [
@@ -40,9 +40,6 @@ describe("hostile filenames on the real backend", () => {
     }
   });
 
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
-  });
 
   it("lists every adversarial name verbatim", async () => {
     await navigateTo(scratchDir);

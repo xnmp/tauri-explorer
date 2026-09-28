@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
@@ -128,6 +128,16 @@ const processCleanupHooks = createNativeProcessCleanupHooks({
   environment: process.env,
   stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
   stop: stopProcesses,
+  // Several specs need their fixtures on the real home-directory filesystem
+  // (e.g. Linux trash requires the source and its Trash directory share a
+  // device; os.tmpdir() is frequently a separate tmpfs). Rooting the shared
+  // cleanup directory under the home directory lets createNativeFixtureDirectory
+  // serve those specs too, instead of forcing them to hand-roll their own
+  // mkdtemp + immediate rmSync (#761).
+  temporaryRoot: os.homedir(),
+  additionalFixtureRoots: process.platform === "linux" && existsSync("/dev/shm")
+    ? [{ stateEnvironmentKey: "TAURI_NATIVE_SHM_CLEANUP_STATE_DIRECTORY", temporaryRoot: "/dev/shm" }]
+    : [],
 });
 
 export const config: WebdriverIO.Config = {
@@ -170,6 +180,9 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession: async (_config, capabilities) => {
+    // WDIO may skip afterSession if creation fails; the pending marker then
+    // keeps fixtures alive even when the exit reaper cannot confirm teardown.
+    processCleanupHooks.begin();
     if (!isWindows) {
       // WebKitWebDriver inherits tauri-driver's stdio, so its own diagnostics
       // (including "page crash or hang") land here. Retain them as a run

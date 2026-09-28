@@ -2,20 +2,21 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 import { captureDiagnostics } from "../window-transfer-diagnostics";
 import {
   waitForListingEntry,
   waitForWindowOperation,
+  selectWindowByLabel,
   type ListingWaitRequest,
   type RendererWaitResult,
   type WindowOperationResponse,
   type WindowOperationWaitRequest,
 } from "../window-transfer-waits";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-window-transfer-"));
+const scratch = createNativeFixtureDirectory("explorer-window-transfer-");
 const sourceDirectory = path.join(scratch, "source");
 const destinationDirectory = path.join(scratch, "destination");
 const largeLayoutDirectories = Array.from({ length: 8 }, (_, index) =>
@@ -44,13 +45,13 @@ async function operation(op: string, target?: string): Promise<unknown> {
 
 async function switchToLabel(label: string): Promise<void> {
   try {
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        await browser.switchToWindow(handle);
-        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) return true;
-      }
-      return false;
-    }, { timeout: 20_000, timeoutMsg: `window ${label} did not become ready` });
+    await selectWindowByLabel({
+      listHandles: () => browser.getWindowHandles(),
+      switchTo: (handle) => browser.switchToWindow(handle),
+      currentLabel: () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel),
+      pause: (ms) => browser.pause(ms),
+      now: () => Date.now(),
+    }, label, 20_000);
   } catch (error) {
     await captureDiagnostics(`switch-${label}`);
     throw error;
@@ -118,7 +119,6 @@ describe("native window transfer ownership", function () {
       }
       await browser.switchToWindow(mainHandle);
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("concurrent same-path children each become functional and keep independent navigation", async () => {

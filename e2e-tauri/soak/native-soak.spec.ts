@@ -329,6 +329,14 @@ async function runWindowWorkspace(cycle: number): Promise<"warm" | "fresh"> {
   // Do not execute scripts in the parked or retiring WebKit pages after a
   // launch: that driver command can delete the entire session (#817).
   await browser.switchToWindow(created);
+  await assertUsable(target);
+  const expectedEntry = target === workspaceA ? "qualification.md" : "interruptions.txt";
+  await browser.waitUntil(async () => browser.execute((entry) =>
+    document.querySelector(".file-list")?.textContent?.includes(entry) === true,
+  expectedEntry), {
+    timeout: 20_000,
+    timeoutMsg: `new native window did not initially list ${expectedEntry}`,
+  });
   await navigateTo(target);
   await assertUsable(target);
   expect(await browser.execute(() => document.documentElement.dataset.e2eWindowLabel)).toBe(expectedLabel);

@@ -116,13 +116,17 @@ test.describe("Overlay positioning under zoom", () => {
 
     const row = page.locator(".commit-row").nth(2);
     const box = (await row.boundingBox())!;
-    const clickX = box.x + box.width / 2;
+    // The graph menu is wide. At 130% zoom the row midpoint can be within
+    // its width of the right edge, where the app correctly clamps the menu.
+    // Click the left quarter so this checks cursor conversion, not clamping.
+    const clickX = box.x + box.width / 4;
     const clickY = box.y + box.height / 2;
     await page.mouse.click(clickX, clickY, { button: "right" });
 
     const menu = page.locator('[data-testid="git-graph-menu"]');
     await expect(menu).toBeVisible();
     const rect = (await viewportRect(page, '[data-testid="git-graph-menu"]'))!;
+    expect(clickX + rect.w, "test click must leave room for the unclamped menu").toBeLessThan(page.viewportSize()!.width - 8);
     expect(Math.abs(rect.x - clickX)).toBeLessThan(TOLERANCE);
     expect(Math.abs(rect.y - clickY)).toBeLessThan(TOLERANCE);
   });

@@ -50,15 +50,21 @@ describe("context-menu clipboard round-trip on the real backend", () => {
     await $(".context-menu").waitForDisplayed({ timeout: 5000 });
     const labels = await domTexts(".context-menu .menu-item");
     expect(labels.join(" ")).toContain("Copy");
+    const selected = await domTexts('.entry-item[aria-selected="true"] .entry-name');
+    expect(selected).toContain("original.txt");
   });
 
   it("copy + background paste duplicates the file on disk", async () => {
+    console.info(`[clipboard-smoke] copy click ${new Date().toISOString()}`);
     await clickMenuItem("Copy");
+    console.info(`[clipboard-smoke] copy click returned ${new Date().toISOString()}`);
 
     // Background right-click (below the single entry row) → Paste.
     const content = $(".file-list .content");
     await content.click({ button: "right", x: 40, y: 200 });
+    console.info(`[clipboard-smoke] paste click ${new Date().toISOString()}`);
     await clickMenuItem("Paste");
+    console.info(`[clipboard-smoke] paste click returned ${new Date().toISOString()}`);
 
     // The paste lands as a real file (name may be suffixed on collision —
     // here there is none, but assert on disk contents, not just the UI).
@@ -74,6 +80,7 @@ describe("context-menu clipboard round-trip on the real backend", () => {
     if (!observed.ok) {
       const diskEntries = fs.readdirSync(scratchDir);
       const renderedEntries = await entryNames();
+      console.info(`[clipboard-smoke] listing timeout ${new Date().toISOString()}`);
       await captureDiagnostics("clipboard-paste-listing", { diskEntries, renderedEntries });
       throw new Error(observed.reason);
     }
@@ -83,6 +90,11 @@ describe("context-menu clipboard round-trip on the real backend", () => {
     expect(copies.length).toBeGreaterThanOrEqual(2);
     for (const name of copies) {
       expect(fs.readFileSync(path.join(scratchDir, name), "utf8")).toBe("clipboard payload\n");
+    }
+    if (process.platform === "win32") {
+      fs.mkdirSync("e2e-tauri/logs", { recursive: true });
+      await browser.saveScreenshot("e2e-tauri/logs/context-clipboard-paste-success.png")
+        .catch((error) => console.warn(`[clipboard-smoke] success screenshot unavailable: ${error}`));
     }
   });
 });

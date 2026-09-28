@@ -615,14 +615,22 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (!origin.path) return "No current directory";
     const context = makePasteContext(origin);
 
-    // The OS clipboard is the single source of truth for what was most
-    // recently copied. We keep an internal clipboard too (it carries cut
-    // semantics and richer metadata), but it's only authoritative while it
-    // still matches the OS clipboard. If the user copied something in another
-    // app since, the OS clipboard differs and must win — otherwise pasting a
-    // file copied in Explorer silently pastes our stale internal selection.
+    // After our OS mirror settles, the OS clipboard is the source of truth for
+    // what was most recently copied. The internal clipboard carries cut
+    // semantics and richer metadata, but is otherwise authoritative only
+    // while it matches the OS clipboard. An external copy then wins instead
+    // of silently pasting our stale internal selection.
+    // A local Copy is already an accepted in-app selection. If its OS mirror
+    // is still writing, avoid blocking paste on PowerShell startup and avoid
+    // mistaking the previous OS file list for a newer external copy. During
+    // that pending write, this local Copy wins; #835 tracks external changes
+    // concurrent with an OS write. Keep Cut on the settled path so its source
+    // cannot move before the mirror finishes.
+    const pendingCopy = clipboardStore.hasPendingLocalCopy;
+    const { content: osContent, error: osReadError } = pendingCopy
+      ? { content: null, error: null }
+      : await clipboardStore.readOsFiles();
     const internal = clipboardStore.content;
-    const { content: osContent, error: osReadError } = await clipboardStore.readOsFiles();
 
     const internalPaths = internal ? internal.entries.map((e) => e.path) : null;
     const osMatchesInternal =

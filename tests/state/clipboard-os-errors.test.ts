@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 
 const writeFilesMock = vi.fn();
 const readFilesMock = vi.fn();
@@ -74,6 +74,112 @@ describe("committed clipboard renames", () => {
 });
 
 describe("clipboard OS-bridge failures (#279)", () => {
+  it("a paste immediately after Copy reads the new files, not the previous OS clipboard", async () => {
+    let finishWrite!: () => void;
+    let osPaths = ["/previous.txt"];
+    writeFilesMock.mockImplementation((paths: string[]) => new Promise((resolve) => {
+      finishWrite = () => {
+        osPaths = paths;
+        resolve({ ok: true, data: undefined });
+      };
+    }));
+    readFilesMock.mockImplementation(async () => ({ ok: true, data: [...osPaths] }));
+    const store = await freshStore();
+
+    const copying = store.copy([entry("new.txt")]);
+    const pasting = store.readOsFiles();
+    await vi.waitFor(() => expect(writeFilesMock).toHaveBeenCalled());
+    expect(emit).not.toHaveBeenCalled();
+    finishWrite();
+
+    expect(await pasting).toEqual({
+      content: { paths: ["/new.txt"], operation: "copy" },
+      error: null,
+    });
+    await copying;
+    expect(emit).toHaveBeenCalledWith("app://clipboard-sync", store.content);
+    store.destroy();
+  });
+
+  it("rapid successive copies leave the newest files in the OS clipboard", async () => {
+    const writes: Array<() => void> = [];
+    let osPaths: string[] = [];
+    writeFilesMock.mockImplementation((paths: string[]) => new Promise((resolve) => {
+      writes.push(() => {
+        osPaths = paths;
+        resolve({ ok: true, data: undefined });
+      });
+    }));
+    readFilesMock.mockImplementation(async () => ({ ok: true, data: [...osPaths] }));
+    const store = await freshStore();
+
+    const first = store.copy([entry("first.txt")]);
+    const second = store.copy([entry("second.txt")]);
+    const pasting = store.readOsFiles();
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    writes[0]();
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    writes[1]();
+
+    expect(await pasting).toEqual({
+      content: { paths: ["/second.txt"], operation: "copy" },
+      error: null,
+    });
+    await Promise.all([first, second]);
+    expect(emit).toHaveBeenLastCalledWith("app://clipboard-sync", store.content);
+    store.destroy();
+  });
+
+  it("an OS read waits for a newer copy queued while it awaited an earlier write", async () => {
+    const writes: Array<() => void> = [];
+    let osPaths: string[] = [];
+    writeFilesMock.mockImplementation((paths: string[]) => new Promise((resolve) => {
+      writes.push(() => {
+        osPaths = paths;
+        resolve({ ok: true, data: undefined });
+      });
+    }));
+    readFilesMock.mockImplementation(async () => ({ ok: true, data: [...osPaths] }));
+    const store = await freshStore();
+
+    const first = store.copy([entry("first.txt")]);
+    const pasting = store.readOsFiles();
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    const second = store.cut([entry("second.txt")]);
+    writes[0]();
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    expect(readFilesMock).not.toHaveBeenCalled();
+    writes[1]();
+
+    expect(await pasting).toEqual({
+      content: { paths: ["/second.txt"], operation: "copy" },
+      error: null,
+    });
+    await Promise.all([first, second]);
+    store.destroy();
+  });
+
+  it("does not treat another window's Copy as this window's pending local Copy", async () => {
+    let finishWrite!: () => void;
+    writeFilesMock.mockImplementation(() => new Promise((resolve) => {
+      finishWrite = () => resolve({ ok: true, data: undefined });
+    }));
+    const store = await freshStore();
+    const copying = store.copy([entry("local.txt")]);
+    await vi.waitFor(() => expect(writeFilesMock).toHaveBeenCalled());
+    expect(store.hasPendingLocalCopy).toBe(true);
+
+    const onClipboardEvent = vi.mocked(listen).mock.calls.at(-1)?.[1];
+    expect(onClipboardEvent).toBeDefined();
+    onClipboardEvent!({ payload: { entries: [entry("remote.txt")], operation: "copy" } } as never);
+
+    expect(store.content?.entries.map((item) => item.name)).toEqual(["remote.txt"]);
+    expect(store.hasPendingLocalCopy).toBe(false);
+    finishWrite();
+    await copying;
+    store.destroy();
+  });
+
   it("copy keeps the in-app clipboard and toasts when the OS write fails", async () => {
     writeFilesMock.mockResolvedValue({ ok: false, error: "wl-copy is not installed" });
     const store = await freshStore();

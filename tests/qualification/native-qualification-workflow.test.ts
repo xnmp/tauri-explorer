@@ -89,6 +89,37 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(workflow).toContain("bun run test:e2e:tauri");
   });
 
+  it("keeps PR smoke complete while bounding manual Windows clipboard diagnosis", async () => {
+    const workflow = parse(await readFile(workflowPath, "utf8")) as {
+      on: {
+        workflow_dispatch: {
+          inputs: {
+            native_scope: { default: string; options: string[] };
+            clipboard_runs: { default: number };
+          };
+        };
+      };
+      jobs: {
+        smoke: {
+          strategy: { matrix: { os: string } };
+          steps: WorkflowStep[];
+        };
+      };
+    };
+    const { native_scope: scope, clipboard_runs: runs } = workflow.on.workflow_dispatch.inputs;
+    const windowsGui = stepNamed(workflow.jobs.smoke.steps, "Run smoke suite (Windows)");
+
+    expect(scope).toMatchObject({ default: "all", options: ["all", "clipboard"] });
+    expect(runs.default).toBe(1);
+    expect(workflow.jobs.smoke.strategy.matrix.os).toContain("inputs.native_scope == 'clipboard'");
+    expect(workflow.jobs.smoke.strategy.matrix.os).toContain(
+      '["ubuntu-latest","windows-latest"]',
+    );
+    expect(windowsGui.run).toContain("^([1-9]|10)$");
+    expect(windowsGui.run).toContain("--spec e2e-tauri/specs/context-clipboard.spec.ts");
+    expect(windowsGui.run).toContain("bun run test:e2e:tauri");
+  });
+
   it("makes a failed native contract fatal after independent checks finish", async () => {
     const steps = await qualificationSteps();
     const fatalGate = stepNamed(steps, "Fail if native contracts failed");

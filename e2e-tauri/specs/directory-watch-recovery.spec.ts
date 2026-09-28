@@ -8,6 +8,7 @@ import {
   domTexts,
   entryPathSelector,
   navigateTo,
+  monitorFreshWindowOpen,
   switchToFreshWindow,
   waitForFreshWindowElement,
 } from "./helpers";
@@ -22,13 +23,11 @@ const contentFileName = "existing.md";
 const initialContentMarker = "Initial existing-file content.";
 const updatedContentMarker = "Updated existing-file content reached the preview.";
 
-type WindowOperationResult = { kind: string; label: string } | null;
 
 let mainHandle = "";
 let watchedHandle = "";
 
-async function operation(op: string, target?: string): Promise<unknown> {
-  const token = crypto.randomUUID();
+async function operation(op: string, target?: string, token = crypto.randomUUID()): Promise<unknown> {
   await browser.execute((detail) => {
     window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail }));
   }, { token, op, target });
@@ -136,10 +135,11 @@ nativeDescribe("directory watch root recovery", () => {
     await waitForCausalMutation(independentDirectory, "independent-before-recovery.txt");
 
     const existingHandles = await browser.getWindowHandles();
-    const opened = await operation("fresh-open", watchedDirectory) as WindowOperationResult;
-    expect(opened).not.toBeNull();
-    expect(opened?.kind).toBe("fresh");
-    watchedHandle = await switchToFreshWindow(opened!.label, existingHandles);
+    const token = crypto.randomUUID();
+    const label = `explorer-${token}`;
+    const opened = await monitorFreshWindowOpen(label,
+      () => operation("fresh-open", watchedDirectory, token));
+    watchedHandle = await switchToFreshWindow(opened.label, existingHandles);
     await waitForFreshWindowElement(".file-list", 20_000);
     await browser.waitUntil(async () =>
       (await $(".status-path").getAttribute("title")) === watchedDirectory,

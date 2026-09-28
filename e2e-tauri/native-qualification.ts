@@ -32,6 +32,38 @@ export const SOAK_SCENARIOS = [
 
 export type SoakScenario = (typeof SOAK_SCENARIOS)[number];
 
+export interface NativeWindowVisibility {
+  handle: string;
+  visible: boolean;
+}
+
+export interface NativeWindowState {
+  label: string;
+  visible: boolean;
+}
+
+/** The closed child is gone; only the visible main window and one hidden spare may remain. */
+export function nativeWindowsCleanAfterClose(
+  states: readonly NativeWindowState[],
+  mainLabel: string,
+  closedLabel: string,
+): boolean {
+  return states.length >= 1 && states.length <= 2 &&
+    states.filter(({ label, visible }) => label === mainLabel && visible).length === 1 &&
+    !states.some(({ label }) => label === closedLabel) &&
+    states.every(({ label, visible }) => label === mainLabel || !visible);
+}
+
+/** A forced fresh launch has exactly one handle absent before the launch. */
+export function selectFreshWindowHandle(
+  before: readonly string[],
+  after: readonly string[],
+): string | null {
+  const existing = new Set(before);
+  const created = after.filter((handle) => !existing.has(handle));
+  return created.length === 1 ? created[0] : null;
+}
+
 export interface QualificationCase {
   id: string;
   risk: QualificationRisk;
@@ -49,6 +81,8 @@ export interface SoakConfiguration {
   seed: string;
   scenarios: readonly SoakScenario[];
   expectedDisplayScale: number;
+  diagnosticWindowMode?: "warm" | "fresh";
+  diagnosticMainOnly?: boolean;
 }
 
 export interface SoakArtifactPaths {
@@ -56,11 +90,13 @@ export interface SoakArtifactPaths {
   report: string;
   driverLog: string;
   failureDirectory: string;
+  workerLogDirectory: string;
 }
 
 export interface ResourceMeasurement {
   rssBytes: number;
   sampledAtMs: number;
+  webKitSharedMemoryFds?: number;
 }
 
 export interface NativeProcessRow {
@@ -76,10 +112,12 @@ export interface ScenarioMeasurement {
   durationMs: number;
   outcome: "passed" | "failed";
   failureArtifacts: readonly string[];
+  windowMode?: "warm" | "fresh";
 }
 
 export interface NativeQualificationReport {
   schemaVersion: 1;
+  harnessCommit?: string;
   build: {
     commit: string;
     profile: string;
@@ -103,6 +141,13 @@ export interface NativeQualificationReport {
     baselineRssBytes: number | null;
     finalRssBytes: number | null;
     peakRssBytes: number | null;
+    samples: readonly ResourceMeasurement[];
+    lateMedianGrowthBytes: number | null;
+    maxAllowedLateGrowthBytes: number;
+    baselineWebKitSharedMemoryFds: number | null;
+    peakWebKitSharedMemoryFds: number | null;
+    lateMedianWebKitSharedMemoryFdGrowth: number | null;
+    maxAllowedWebKitSharedMemoryFdGrowth: number;
   };
   timings: {
     sampleCount: number;
@@ -116,6 +161,7 @@ export interface NativeQualificationReport {
 }
 
 export interface NativeQualificationReportInput {
+  harnessCommit?: string;
   build: NativeQualificationReport["build"];
   platform: NativeQualificationReport["platform"];
   configuration: SoakConfiguration;
@@ -124,6 +170,43 @@ export interface NativeQualificationReportInput {
   resources: readonly ResourceMeasurement[];
   scenarios: readonly ScenarioMeasurement[];
   runErrors?: readonly string[];
+}
+
+// Compare settled process-tree RSS, not the first cold-start sample or a
+// transient peak while a new WebView is being constructed.
+const MAX_LATE_RSS_GROWTH_BYTES = 1024 * 1024 * 1024;
+export const MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH = 16;
+
+// During a run, compare settled sample windows so one teardown spike neither
+// masks a leak nor fails an otherwise healthy session.
+export function rollingWebKitSharedMemoryFdGrowth(samples: readonly ResourceMeasurement[]): number | null {
+  const counts = samples.map(({ webKitSharedMemoryFds }) => webKitSharedMemoryFds)
+    .filter((count): count is number => count !== undefined && Number.isFinite(count));
+  const window = Math.max(5, Math.floor(counts.length / 10));
+  if (counts.length < window * 3) return null;
+  const early = nearestRank(counts.slice(window, window * 2), 0.5);
+  const late = nearestRank(counts.slice(-window), 0.5);
+  return early === null || late === null ? null : late - early;
+}
+
+function lateQuarterGrowth(
+  samples: readonly ResourceMeasurement[],
+  durationMs: number,
+  value: (sample: ResourceMeasurement) => number | undefined,
+): number | null {
+  const numbers = (subset: readonly ResourceMeasurement[]) => subset.map(value)
+    .filter((entry): entry is number => entry !== undefined && Number.isFinite(entry));
+  const early = numbers(samples.filter(({ sampledAtMs }) => sampledAtMs <= durationMs / 4));
+  const late = numbers(samples.filter(({ sampledAtMs }) => sampledAtMs >= durationMs * 3 / 4));
+  if (early.length < 5 || late.length < 5) return null;
+  const earlyMedian = nearestRank(early, 0.5);
+  const lateMedian = nearestRank(late, 0.5);
+  return earlyMedian === null || lateMedian === null ? null : lateMedian - earlyMedian;
+}
+
+function lateRssGrowth(samples: readonly ResourceMeasurement[], durationMs: number): number | null {
+  if (samples.length < 40) return null;
+  return lateQuarterGrowth(samples, durationMs, ({ rssBytes }) => rssBytes);
 }
 
 export interface NativeBuildManifest {
@@ -302,6 +385,26 @@ function positiveNumber(
 export function resolveSoakConfiguration(
   env: Record<string, string | undefined>,
 ): SoakConfiguration {
+  const diagnosticScenario = env.SOAK_DIAGNOSTIC_SCENARIO;
+  if (diagnosticScenario !== undefined &&
+      !SOAK_SCENARIOS.some((scenario) => scenario === diagnosticScenario)) {
+    throw new Error("SOAK_DIAGNOSTIC_SCENARIO must name a soak scenario");
+  }
+  if (diagnosticScenario !== undefined && env.SOAK_MAX_CYCLES === undefined) {
+    throw new Error("SOAK_DIAGNOSTIC_SCENARIO requires SOAK_MAX_CYCLES");
+  }
+  const diagnosticWindowMode = env.SOAK_DIAGNOSTIC_WINDOW_MODE;
+  if (diagnosticWindowMode !== undefined &&
+      (diagnosticScenario !== "window-workspace" ||
+        (diagnosticWindowMode !== "warm" && diagnosticWindowMode !== "fresh"))) {
+    throw new Error("SOAK_DIAGNOSTIC_WINDOW_MODE requires a window-workspace diagnostic and must be warm or fresh");
+  }
+  const diagnosticMainOnly = env.SOAK_DIAGNOSTIC_MAIN_ONLY;
+  if (diagnosticMainOnly !== undefined &&
+      (diagnosticMainOnly !== "1" || diagnosticScenario !== "window-workspace" ||
+        diagnosticWindowMode !== "fresh")) {
+    throw new Error("SOAK_DIAGNOSTIC_MAIN_ONLY=1 requires a fresh window-workspace diagnostic");
+  }
   const resolved: SoakConfiguration = {
     durationMs: positiveNumber(
       "SOAK_DURATION_MS",
@@ -312,11 +415,15 @@ export function resolveSoakConfiguration(
       env.SOAK_SEED !== undefined && env.SOAK_SEED.length > 0
         ? env.SOAK_SEED
         : `native-soak-${new Date().toISOString().slice(0, 10)}`,
-    scenarios: SOAK_SCENARIOS,
+    scenarios: diagnosticScenario
+      ? [diagnosticScenario as SoakScenario]
+      : SOAK_SCENARIOS,
     expectedDisplayScale: positiveNumber(
       "SOAK_EXPECTED_DISPLAY_SCALE",
       env.SOAK_EXPECTED_DISPLAY_SCALE,
     ),
+    ...(diagnosticWindowMode ? { diagnosticWindowMode } : {}),
+    ...(diagnosticMainOnly ? { diagnosticMainOnly: true } : {}),
   };
   if (env.SOAK_MAX_CYCLES !== undefined) {
     resolved.maxCycles = positiveNumber("SOAK_MAX_CYCLES", env.SOAK_MAX_CYCLES);
@@ -370,7 +477,30 @@ export function resolveSoakArtifactPaths(
       root,
       `seed-${seedComponent}`,
     ),
+    workerLogDirectory: resolveQualificationArtifactPath(
+      root,
+      `wdio-${seedComponent}`,
+    ),
   };
+}
+
+export function resetSoakWorkerLogDirectory(
+  root: string,
+  workerLogDirectory: string,
+): void {
+  const resolvedRoot = path.resolve(root);
+  if (path.dirname(workerLogDirectory) !== resolvedRoot) {
+    throw new Error("soak worker logs must be directly under qualification root");
+  }
+  fs.mkdirSync(resolvedRoot, { recursive: true });
+  const rootStat = fs.lstatSync(resolvedRoot);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error("qualification root must be a real directory");
+  }
+  // Same-seed reruns must not attach an earlier run's worker log. rmSync
+  // removes a symlink itself rather than following it to its target.
+  fs.rmSync(workerLogDirectory, { recursive: true, force: true });
+  fs.mkdirSync(workerLogDirectory);
 }
 
 export function buildNativeQualificationReport(
@@ -383,6 +513,61 @@ export function buildNativeQualificationReport(
   }
   const durations = input.scenarios.map(({ durationMs }) => durationMs);
   const runErrors = [...(input.runErrors ?? [])];
+  const fullSoak = input.configuration.maxCycles === undefined &&
+    input.configuration.durationMs >= 14_400_000;
+  const growth = lateRssGrowth(input.resources, input.configuration.durationMs);
+  const webKitFdCounts = input.resources.map(({ webKitSharedMemoryFds }) => webKitSharedMemoryFds)
+    .filter((count): count is number => count !== undefined && Number.isFinite(count));
+  const webKitFdGrowth = lateQuarterGrowth(
+    input.resources, input.configuration.durationMs,
+    ({ webKitSharedMemoryFds }) => webKitSharedMemoryFds,
+  );
+  if (fullSoak) {
+    if (input.configuration.scenarios.length !== SOAK_SCENARIOS.length ||
+        SOAK_SCENARIOS.some((scenario) => !input.configuration.scenarios.includes(scenario))) {
+      runErrors.push("full native soak must execute every qualification scenario");
+    }
+    const elapsed = Date.parse(input.finishedAt) - Date.parse(input.startedAt);
+    if (!Number.isFinite(elapsed) || elapsed < input.configuration.durationMs) {
+      runErrors.push(`native soak ended before ${input.configuration.durationMs} ms elapsed`);
+    }
+    const timestampsValid = input.resources.every(({ sampledAtMs }, index) =>
+      Number.isFinite(sampledAtMs) && sampledAtMs >= 0 &&
+      (index === 0 || sampledAtMs >= input.resources[index - 1].sampledAtMs));
+    const firstQuarter = input.resources.filter(({ sampledAtMs }) =>
+      sampledAtMs <= input.configuration.durationMs / 4).length;
+    const lastQuarter = input.resources.filter(({ sampledAtMs }) =>
+      sampledAtMs >= input.configuration.durationMs * 3 / 4).length;
+    const lastSampleAtMs = input.resources.at(-1)?.sampledAtMs ?? 0;
+    if (!timestampsValid || firstQuarter < 5 || lastQuarter < 5 ||
+        lastSampleAtMs < input.configuration.durationMs - 60_000 ||
+        lastSampleAtMs > elapsed + 60_000) {
+      runErrors.push("native resource samples do not span the required duration");
+    }
+    if (growth === null) runErrors.push("native soak lacks 40 process-tree RSS samples");
+    else if (growth > MAX_LATE_RSS_GROWTH_BYTES) {
+      runErrors.push(`late median process-tree RSS grew ${growth} bytes, above ${MAX_LATE_RSS_GROWTH_BYTES}`);
+    }
+    if (input.platform.os === "linux") {
+      if (webKitFdCounts.length !== input.resources.length || webKitFdCounts.length < 40) {
+        runErrors.push("full Linux native soak lacks WebKit shared-memory descriptor samples");
+      } else if (webKitFdGrowth !== null && webKitFdGrowth > MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH) {
+        runErrors.push(`WebKit shared-memory descriptors grew ${webKitFdGrowth}, above ${MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH}`);
+      }
+    }
+    const modes = new Set(input.scenarios.filter(({ id }) => id === "window-workspace")
+      .map(({ windowMode }) => windowMode));
+    if (!modes.has("warm") || !modes.has("fresh")) {
+      runErrors.push("native soak did not exercise both warm and fresh window creation");
+    }
+  }
+  if (input.scenarios.length > 0) {
+    for (const scenario of input.configuration.scenarios) {
+      if (!input.scenarios.some(({ id }) => id === scenario)) {
+        runErrors.push(`native soak did not execute ${scenario}`);
+      }
+    }
+  }
   const failureArtifacts = [
     ...new Set(
       input.scenarios.flatMap(({ failureArtifacts }) => failureArtifacts),
@@ -391,6 +576,7 @@ export function buildNativeQualificationReport(
 
   return {
     schemaVersion: 1,
+    ...(input.harnessCommit ? { harnessCommit: input.harnessCommit } : {}),
     build: input.build,
     platform: input.platform,
     configuration: input.configuration,
@@ -404,6 +590,13 @@ export function buildNativeQualificationReport(
         input.resources.length > 0
           ? Math.max(...input.resources.map(({ rssBytes }) => rssBytes))
           : null,
+      samples: input.resources,
+      lateMedianGrowthBytes: growth,
+      maxAllowedLateGrowthBytes: MAX_LATE_RSS_GROWTH_BYTES,
+      baselineWebKitSharedMemoryFds: webKitFdCounts[0] ?? null,
+      peakWebKitSharedMemoryFds: webKitFdCounts.length > 0 ? Math.max(...webKitFdCounts) : null,
+      lateMedianWebKitSharedMemoryFdGrowth: webKitFdGrowth,
+      maxAllowedWebKitSharedMemoryFdGrowth: MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH,
     },
     timings: {
       sampleCount: durations.length,
@@ -485,22 +678,26 @@ export function resolveNativeApplication(
     : defaultApplication;
 }
 
+export function selectNativeProcessRoot(
+  rows: readonly NativeProcessRow[],
+  expectedBinary: string,
+): NativeProcessRow {
+  const normalizedBinary = path.resolve(expectedBinary).toLowerCase();
+  const roots = rows.filter(({ executable }) =>
+    path.resolve(executable).toLowerCase() === normalizedBinary);
+  if (roots.length === 0)
+    throw new Error(`native process not found at ${expectedBinary}`);
+  if (roots.length !== 1)
+    throw new Error(`native process identity is ambiguous at ${expectedBinary}: ${roots.length} roots`);
+  return roots[0];
+}
+
 export function measureProcessTreeRss(
   rows: readonly NativeProcessRow[],
   expectedBinary: string,
   sampledAtMs: number,
 ): ResourceMeasurement {
-  const normalizedBinary = path.resolve(expectedBinary).toLowerCase();
-  const processIds = new Set(
-    rows
-      .filter(
-        ({ executable }) =>
-          path.resolve(executable).toLowerCase() === normalizedBinary,
-      )
-      .map(({ pid }) => pid),
-  );
-  if (processIds.size === 0)
-    throw new Error(`native process not found at ${expectedBinary}`);
+  const processIds = new Set([selectNativeProcessRoot(rows, expectedBinary).pid]);
 
   let changed = true;
   while (changed) {
@@ -543,6 +740,7 @@ export async function executeLoggedQualificationProcess<
   env?: NodeJS.ProcessEnv;
   reportPath: string;
   driverLogPath: string;
+  additionalFailureArtifacts?: readonly string[];
   mirrorOutput?: boolean;
   createFallbackReport: (exitCode: number) => T;
 }): Promise<{
@@ -619,6 +817,11 @@ export async function executeLoggedQualificationProcess<
   }
   if (exitCode !== 0 || !report.passed) {
     report = addQualificationFailureArtifact(report, options.driverLogPath);
+    for (const artifact of options.additionalFailureArtifacts ?? []) {
+      if (fs.existsSync(artifact)) {
+        report = addQualificationFailureArtifact(report, artifact);
+      }
+    }
   }
   writeQualificationArtifact(options.reportPath, report);
   return { exitCode, signalCode, report };

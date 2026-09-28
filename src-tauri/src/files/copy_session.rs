@@ -55,6 +55,17 @@ pub(crate) trait Work: Send + 'static {
     ) -> impl Future<Output = WorkerCompletion<FileMutationReceipt>> + Send;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SessionBoundary {
+    ReadyPublished,
+    InspectionCompleted { item: usize },
+    BeforeStart { item: usize },
+    StartedPublished { item: usize },
+    ApplyCompleted { item: usize },
+    ReceiptRetained { item: usize },
+    CompletedPublished { item: usize },
+}
+
 enum Failure {
     Skipped,
     Failed(String),
@@ -73,6 +84,20 @@ pub(crate) async fn run(
     work: impl Work,
     emit: impl Fn(Event) -> bool + Send + Sync + 'static,
 ) -> Outcome {
+    run_with_observer(request, control, work, emit, |_| std::future::ready(())).await
+}
+
+pub(crate) async fn run_with_observer<Observer, Observation>(
+    request: Request,
+    control: Arc<Control>,
+    work: impl Work,
+    emit: impl Fn(Event) -> bool + Send + Sync + 'static,
+    observe: Observer,
+) -> Outcome
+where
+    Observer: Fn(SessionBoundary) -> Observation + Send + Sync + 'static,
+    Observation: Future<Output = ()> + Send,
+{
     let receipts = Receipts::<Success, Failure>::new(request.sources.len());
     let emit = Arc::new(emit);
     let writer = receipts.clone();
@@ -83,6 +108,7 @@ pub(crate) async fn run(
         if !emit(Event::Ready) {
             inner_control.cancelled.retire();
         }
+        observe(SessionBoundary::ReadyPublished).await;
         let mut global_choice = None;
         let mut diagnostic_budget = 64 * 1024;
         for (index, source) in request.sources.iter().enumerate() {
@@ -110,6 +136,7 @@ pub(crate) async fn run(
                     continue;
                 }
             };
+            observe(SessionBoundary::InspectionCompleted { item: index }).await;
             let mut overwrite = false;
             if let Some(conflict) = inspection.conflict.clone() {
                 let decision = match global_choice {
@@ -135,6 +162,7 @@ pub(crate) async fn run(
                     Choice::Overwrite => overwrite = true,
                 }
             }
+            observe(SessionBoundary::BeforeStart { item: index }).await;
             if !inner_control.cancelled.active() || !inner_control.renderer.active() {
                 break;
             }
@@ -143,6 +171,13 @@ pub(crate) async fn run(
                 total: request.sources.len(),
             }) {
                 inner_control.cancelled.retire();
+                break;
+            }
+            observe(SessionBoundary::StartedPublished { item: index }).await;
+            // Cancellation can race the Started event before the worker is
+            // launched. Keep that boundary effect-free; workers still own
+            // cancellation after apply begins.
+            if !inner_control.cancelled.active() || !inner_control.renderer.active() {
                 break;
             }
             physical_effects
@@ -163,6 +198,7 @@ pub(crate) async fn run(
             let completion = work
                 .apply(inspection, overwrite, inner_control.clone(), progress)
                 .await;
+            observe(SessionBoundary::ApplyCompleted { item: index }).await;
             let entry = completion
                 .result
                 .as_ref()
@@ -202,6 +238,7 @@ pub(crate) async fn run(
             };
             let uncertain = matches!(terminal, ItemState::Uncertain(_));
             writer.complete(index, terminal);
+            observe(SessionBoundary::ReceiptRetained { item: index }).await;
             // Report only after retaining the effect. A broken channel or panic
             // cannot erase the successfully completed prefix.
             if !emit(Event::Completed {
@@ -211,6 +248,7 @@ pub(crate) async fn run(
             }) {
                 inner_control.cancelled.retire();
             }
+            observe(SessionBoundary::CompletedPublished { item: index }).await;
             if uncertain {
                 break;
             }
@@ -301,3 +339,7 @@ fn bounded_message(error: String, budget: &mut usize) -> String {
 #[cfg(all(test, target_os = "linux"))]
 #[path = "../../test_support/copy_session.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../test_support/session_cancellation.rs"]
+mod cancellation_tests;

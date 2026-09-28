@@ -6,16 +6,12 @@
  */
 import { browser } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const coalescingDir = fs.mkdtempSync(
-  path.join(os.homedir(), ".tauri-explorer-e2e-watch-coalesce-"),
-);
-const adaptiveDir = fs.mkdtempSync(
-  path.join(os.homedir(), ".tauri-explorer-e2e-watch-adaptive-"),
-);
+const coalescingDir = createNativeFixtureDirectory("tauri-explorer-e2e-watch-coalesce-");
+const adaptiveDir = createNativeFixtureDirectory("tauri-explorer-e2e-watch-adaptive-");
 
 async function listingProbe(): Promise<{ calls: number; completed: number; starts: number[]; finishes: number[] }> {
   return await browser.execute(() => {
@@ -133,10 +129,6 @@ describe("filesystem watcher refresh coalescing", () => {
     });
   });
 
-  after(() => {
-    fs.rmSync(coalescingDir, { recursive: true, force: true });
-    fs.rmSync(adaptiveDir, { recursive: true, force: true });
-  });
 
   it("runs one trailing listing after repeated native mutations during a slow listing", async () => {
     await navigateTo(coalescingDir);

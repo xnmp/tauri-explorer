@@ -1,0 +1,91 @@
+name: macOS Native UI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  native-ui:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Record hosted Mac environment
+        run: |
+          mkdir -p qualification-results/macos-native-ui
+          printf 'runner=%s\narch=%s\nsource=%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "$GITHUB_SHA" > qualification-results/macos-native-ui/host.txt
+          sw_vers >> qualification-results/macos-native-ui/host.txt
+          xcodebuild -version >> qualification-results/macos-native-ui/host.txt
+          xcode-select -p >> qualification-results/macos-native-ui/host.txt
+          csrutil status >> qualification-results/macos-native-ui/host.txt 2>&1 || true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Record Rust compiler identity
+        id: rust-provenance
+        run: |
+          echo "cache-key=$(rustc -Vv | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: macos-native-ui-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-provenance.outputs.cache-key }}-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/tauri.conf.json') }}
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install pinned Appium Mac2 driver
+        run: |
+          npm install --global appium@3.8.0
+          appium driver install mac2@4.2.0
+
+      - name: Grant XCTest Accessibility on this disposable runner
+        run: |
+          helper="$(xcode-select -p)/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/Xcode Helper.app/Contents/MacOS/Xcode Helper"
+          bash scripts/grant-macos-accessibility.sh "$helper"
+          sudo automationmodetool enable-automationmode-without-authentication || echo '::warning::Could not suppress an automation prompt; the native session remains the qualification gate'
+          appium driver doctor mac2
+
+      - name: Build production WKWebView application bundle
+        env:
+          VITE_E2E_HOOKS: '0'
+        run: bun run tauri build --bundles app
+
+      - name: Assert native listing and navigation outcomes
+        run: |
+          mkdir -p qualification-results/macos-native-ui
+          appium --address 127.0.0.1 --port 4723 > qualification-results/macos-native-ui/appium.log 2>&1 &
+          appium_pid=$!
+          trap 'kill "$appium_pid" 2>/dev/null || true; wait "$appium_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:4723/status > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4723/status > /dev/null
+          bun run e2e-tauri/macos-ui-smoke.ts
+
+      - name: Upload macOS native UI evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-native-ui
+          path: qualification-results/macos-native-ui/
+          if-no-files-found: error

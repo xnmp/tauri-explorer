@@ -111,3 +111,38 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
     expect(adr).toContain("contract or build failure");
   });
 });
+
+describe("bounded Windows native soak (#809)", () => {
+  it("runs one reproducible cycle of the verified binary and retains failure evidence", async () => {
+    const workflow = parse(await readFile(new URL(
+      "../../.github/workflows/windows-soak.yml", import.meta.url,
+    ), "utf8"));
+    const job = workflow.jobs["bounded-soak"];
+    expect(job["runs-on"]).toBe("windows-latest");
+    const steps = job.steps as Array<WorkflowStep & {
+      env?: Record<string, string>;
+      with?: { path?: string };
+      "timeout-minutes"?: number;
+    }>;
+    const build = steps.find(step => step.run === "bun run build:native:qualification");
+    const run = steps.find(step => step.run === "bun run test:e2e:tauri:soak");
+    expect(build).toBeDefined();
+    expect(run).toBeDefined();
+    expect(steps.indexOf(build!)).toBeLessThan(steps.indexOf(run!));
+    expect(run!.env).toMatchObject({
+      SOAK_MAX_CYCLES: "1",
+      SOAK_EXPECTED_DISPLAY_SCALE: "1",
+      VITE_E2E_NO_WARM_PRIME: "1",
+    });
+    expect(run!.env!.SOAK_SEED).toMatch(/^[a-z0-9-]+$/);
+    expect(Number(run!.env!.SOAK_DURATION_MS)).toBeGreaterThan(0);
+    expect(run!["timeout-minutes"]).toBeGreaterThan(0);
+    expect(run!["timeout-minutes"]).toBeLessThanOrEqual(10);
+    expect(run!["continue-on-error"]).not.toBe(true);
+    const upload = steps.find(step => step.uses?.startsWith("actions/upload-artifact@"));
+    expect(upload?.if).toBe("always()");
+    expect(upload?.with?.path?.split("\n")).toEqual(expect.arrayContaining([
+      "qualification-results/", "e2e-tauri/logs/", "logs/",
+    ]));
+  });
+});

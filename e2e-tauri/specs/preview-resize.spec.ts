@@ -1,10 +1,10 @@
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domText, entryPathSelector, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "explorer-preview-resize-")));
+const scratch = fs.realpathSync(createNativeFixtureDirectory("explorer-preview-resize-"));
 const fileName = "native-preview-proof.md";
 const marker = "Native preview remains readable after every resize transition.";
 
@@ -62,7 +62,6 @@ nativeDescribe("native preview resizing", () => {
       marker,
     ].join("\n"));
   });
-  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
   it("keeps real markdown usable through zoomed pointer, dock, fullscreen, and keyboard resizing", async () => {
     await browser.setWindowSize(1280, 900);

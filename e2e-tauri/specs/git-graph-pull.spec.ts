@@ -23,13 +23,11 @@
 import { browser, $, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const baseDir = fs.realpathSync(
-  fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-gitgraph-")),
-);
+const baseDir = fs.realpathSync(createNativeFixtureDirectory("tauri-explorer-e2e-gitgraph-"));
 const remoteDir = path.join(baseDir, "remote.git");
 const localDir = path.join(baseDir, "local");
 const otherCloneDir = path.join(baseDir, "other-clone");
@@ -95,7 +93,6 @@ describe("git graph fetch/refresh against real git (#432)", () => {
       window.dispatchEvent(new CustomEvent("e2e-reset-view"));
     });
     await $(".file-list").waitForExist({ timeout: 15_000 });
-    fs.rmSync(baseDir, { recursive: true, force: true });
   });
 
   it("F5 fetches a remote commit and it appears in the graph", async () => {

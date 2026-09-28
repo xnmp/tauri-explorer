@@ -2,7 +2,6 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   domText,
@@ -12,8 +11,9 @@ import {
   switchToFreshWindow,
   waitForFreshWindowElement,
 } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-directory-recovery-"));
+const scratch = createNativeFixtureDirectory("explorer-directory-recovery-");
 const watchedDirectory = path.join(scratch, "watched");
 const displacedDirectory = path.join(scratch, "displaced");
 const independentDirectory = path.join(scratch, "independent");
@@ -127,9 +127,6 @@ nativeDescribe("directory watch root recovery", () => {
       }
       await browser.switchToWindow(mainHandle);
     }
-    // Removing the displaced tree earlier would hide a watch that stayed
-    // attached to the old inode after the original path was recreated.
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("reattaches a mounted pane to a recreated directory without ghosting the displaced tree", async () => {

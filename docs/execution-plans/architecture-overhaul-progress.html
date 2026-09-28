@@ -80,7 +80,7 @@
         <p class="eyebrow">Release preparation · local checkpoint</p>
         <h1>Architecture overhaul progress</h1>
         <p class="lead">Local integration passed its available gates. Hosted platform and final-tip checks remain open. Version 1.11.0 is drafted but has not been released.</p>
-        <p class="meta">Updated 28 September 2026 · full local gate <code>47830d4e</code> · combined preflight <code>5ff25971</code> · remote <code>dev</code> <code>e8050938</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
+        <p class="meta">Updated 28 September 2026 · full local gate <code>47830d4e</code> · combined preflight <code>5ff25971</code> · remote <code>dev</code> <code>f4c81ead</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
       </header>
 
       <div class="tabs" role="tablist" aria-label="Progress views">
@@ -90,10 +90,10 @@
 
       <div id="board-panel" class="panel" role="tabpanel" aria-labelledby="board-tab">
         <div class="progress-panel">
-          <div class="progress-topline"><strong>20 / 31 accepted</strong><span>65% by item count</span></div>
-          <progress value="20" max="31" aria-label="20 of 31 in-scope plan items accepted"></progress>
+          <div class="progress-topline"><strong>21 / 31 accepted</strong><span>68% by item count</span></div>
+          <progress value="21" max="31" aria-label="21 of 31 in-scope plan items accepted"></progress>
           <p class="scope-note">Release scope excludes W3.5 (closed by ADR) and W5.4 (physical-Mac startup follow-up). Item count is not a time estimate.</p>
-          <p class="scope-note">Seven remaining rows have green hosted PR checks but still need review, merge or row-specific follow-up. W6.1 draft PR #833 is in hosted CI. These are delivery milestones, not accepted items.</p>
+          <p class="scope-note">Six remaining rows have green hosted PR checks but still need merge or row-specific follow-up. W6.1 draft PR #833 is in hosted CI. These are delivery milestones, not accepted items.</p>
         </div>
 
         <div class="notice" role="status">
@@ -105,13 +105,12 @@
           <h2 id="items-title">Plan items</h2>
           <div class="board-grid">
             <section class="lane" aria-labelledby="todo-title">
-              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">11 items</span></div>
+              <div class="lane-header"><h3 id="todo-title">To do</h3><span class="lane-count">10 items</span></div>
               <ul class="items">
                 <li><strong>W2.3</strong> Native fixture lifetime <small>All 15 PR #816 checks passed; auto-merge awaits required review.</small></li>
                 <li><strong>W2.4</strong> Windows smoke reliability <small>All 15 PR #830 checks passed; review and three consecutive dev smoke executions remain.</small></li>
                 <li><strong>W2.5</strong> Fresh-window renderer observation <small><a href="architecture-overhaul-w25-failing-label-2026-09-28.md">Failing-label timeline captured</a>; all 15 PR #831 checks passed, review and dev merge pending.</small></li>
                 <li><strong>W3.4</strong> Copy/move cancellation <small>All 15 PR #815 checks passed; auto-merge awaits a required review.</small></li>
-                <li><strong>W4.5</strong> NTFS short-name identity <small>Hosted 8.3 alias test and all 15 PR #826 checks passed; auto-merge awaits required review.</small></li>
                 <li><strong>W5.3</strong> Mac2 native UI <small>Hosted pilot and all 16 PR #827 checks passed; auto-merge awaits required review.</small></li>
                 <li><strong>W6.1</strong> Linux four-hour retention <small><a href="https://github.com/xnmp/tauri-explorer/pull/833">Draft PR #833</a> in hosted CI; bounded extracted-source pass, review and dev merge pending.</small></li>
                 <li><strong>W6.2</strong> Windows bounded retention <small>All 16 PR #812 checks passed; auto-merge awaits required review and final dev integration.</small></li>
@@ -125,7 +124,7 @@
               <p class="empty">No plan item is actively underway; an unchanged-head Linux rerun and required reviews are pending.</p>
             </section>
             <section class="lane" aria-labelledby="done-title">
-              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">20 items</span></div>
+              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">21 items</span></div>
               <ul class="items">
                 <li><strong>W1.1</strong> macOS Rust suite</li>
                 <li><strong>W1.2</strong> Windows Rust suite</li>
@@ -139,6 +138,7 @@
                 <li><strong>W4.2</strong> Native spec audit</li>
                 <li><strong>W4.3</strong> ConPTY acceptance</li>
                 <li><strong>W4.4</strong> Config autoreload</li>
+                <li><strong>W4.5</strong> NTFS short-name identity <small><a href="https://github.com/xnmp/tauri-explorer/pull/826">Merged</a> on <code>dev</code> <code>f4c81ead</code>; Windows 8.3 test passed on the identical PR-head tree.</small></li>
                 <li><strong>W4.6</strong> Launch ownership</li>
                 <li><strong>W5.1</strong> macOS PTY</li>
                 <li><strong>W5.2</strong> APFS contracts</li>
@@ -155,7 +155,7 @@
         <section class="inner" aria-labelledby="next-title">
           <h2 id="next-title">Remaining gates</h2>
           <ul class="gates">
-            <li><strong>Finish active PR checks and reviews</strong><p>PRs #812, #815, #816, #826, #827, #829 and #830 have green check sets and queued auto-merges that await required GitHub review. PR #831 also has all 15 checks green after an unchanged-head Linux smoke rerun; its first failure retained the <a href="architecture-overhaul-w25-failing-label-2026-09-28.md">failing-label timeline</a> and remains unexplained. It awaits required review.</p></li>
+            <li><strong>Finish active PR checks and merges</strong><p>PR #826 merged on <code>dev</code>. PRs #812, #815, #816, #827, #829 and #830 have green check sets and remain unmerged. PR #831 also has all 15 checks green after an unchanged-head Linux smoke rerun; its first failure retained the <a href="architecture-overhaul-w25-failing-label-2026-09-28.md">failing-label timeline</a> and remains unexplained.</p></li>
             <li><strong>Run hosted platform checks</strong><p>Both platform pilots have passed. Complete the remaining Windows dev smoke streak after the native test fix merges. Physical-Mac startup stays a follow-up.</p></li>
             <li><strong>Qualify the final dev tip</strong><p>Run the exact combined Rust, native, browser, accessibility, performance and bundle gates. Count executed native cases separately from skipped specs.</p></li>
             <li><strong>Cut v1.11.0</strong><p>Refresh the drafted versions and changelog on final dev, open the dev-to-main release PR for the owner, and verify assets after the release.</p></li>
@@ -183,6 +183,7 @@
       <section id="history-panel" class="panel" role="tabpanel" aria-labelledby="history-tab" hidden>
         <h2>History</h2>
         <ol class="history">
+          <li><time datetime="2026-09-28T22:34:00+10:00">28 September 2026, 22:34 AEST</time><p>With the owner's explicit administrator-override approval, squash-merged <a href="https://github.com/xnmp/tauri-explorer/pull/826">PR #826</a> into <code>dev</code> at <code>f4c81ead</code>. Its tree <code>e1fa3ecd</code> exactly matches the 15-check green PR head, whose hosted Windows NTFS job executed and passed the distinct 8.3 alias identity test. W4.5 moved to Done; W8.1 final-tip qualification remains open. Board: 21 Done, 0 Doing, 10 To do. <strong>21 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-28T22:29:00+10:00">28 September 2026, 22:29 AEST</time><p>Published <a href="https://github.com/xnmp/tauri-explorer/pull/833">draft PR #833</a> for the isolated Linux retention change. Its exact-source two-cycle private-display native run passed all eight scenario outcomes, including warm and fresh windows; hosted checks are now running. Reverified <a href="https://github.com/xnmp/tauri-explorer/pull/826">PR #826</a>: all 15 checks pass, and the Windows job executed the NTFS 8.3 alias test once and restored the runner policy. GitHub still requires another account’s approval for #826, so W4.5 cannot move to Done. Board: 20 Done, 0 Doing, 11 To do. <strong>20 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-28T22:03:00+10:00">28 September 2026, 22:03 AEST</time><p>Published <a href="https://github.com/xnmp/tauri-explorer/pull/832">draft PR #832</a> for the W8 acceptance ledger, ADR status, dashboard and linked test records. Its evidence links resolve and its claims remain scoped to local or PR-head results; final <code>dev</code> qualification and required reviews are still open. Board: 20 Done, 0 Doing, 11 To do. <strong>20 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-28T21:54:00+10:00">28 September 2026, 21:54 AEST</time><p>Reconciled the <a href="../review-completion.md">active acceptance ledger</a> with hosted #812 Windows soak, #826 NTFS 8.3 and #827 Mac2 UI results, plus current #815/#816 PR checks. An independent Sol fact-check found no remaining material contradiction in the revised ledger or ADR 0020/0024 status lines; the coordinator verified live PR checks after the reviewer’s GitHub access failed. W8.2 still needs the final published-dev audit, so no item moved lanes. Board: 20 Done, 0 Doing, 11 To do. <strong>20 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>

@@ -195,6 +195,57 @@ afterEach(async () => {
 });
 
 describe("paste and undo publication ownership", () => {
+  it("pastes the current in-app copy without waiting for a slow OS clipboard write", async () => {
+    const explorer = explorerAtA();
+    const source = entry("pending.txt", "/source");
+    let finishWrite!: () => void;
+    mocks.osWriteFiles.mockImplementationOnce(() => new Promise((resolve) => {
+      finishWrite = () => resolve({ ok: true, data: null });
+    }));
+    const copying = clipboardStore.copy([source]);
+    const pasting = explorer.paste();
+
+    try {
+      await vi.waitFor(() => expect(mocks.copyEntries).toHaveBeenCalledWith(
+        [source.path], "/a", expect.anything(),
+      ), { timeout: 500 });
+      expect(mocks.osReadFiles).not.toHaveBeenCalled();
+    } finally {
+      finishWrite?.();
+    }
+    expect(await pasting).toBeNull();
+    await copying;
+  });
+
+  it("waits for a Cut mirror before moving its source", async () => {
+    const explorer = explorerAtA();
+    const source = entry("pending-cut.txt", "/source");
+    let finishWrite!: () => void;
+    mocks.osWriteFiles.mockImplementationOnce(() => new Promise((resolve) => {
+      finishWrite = () => resolve({ ok: true, data: null });
+    }));
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [source.path] });
+    const cutting = clipboardStore.cut([source]);
+    const pasting = explorer.paste();
+
+    await waitForCall(mocks.osWriteFiles);
+    expect(mocks.moveEntries).not.toHaveBeenCalled();
+    finishWrite();
+    expect(await pasting).toBeNull();
+    await cutting;
+    expect(mocks.moveEntries).toHaveBeenCalledWith([source.path], "/a", expect.anything());
+  });
+
+  it("uses an external OS copy after the local mirror has settled", async () => {
+    const explorer = explorerAtA();
+    await clipboardStore.copy([entry("old.txt", "/source")]);
+    const external = entry("external.txt", "/elsewhere");
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [external.path] });
+
+    expect(await explorer.paste()).toBeNull();
+    expect(mocks.copyEntries).toHaveBeenCalledWith([external.path], "/a", expect.anything());
+  });
+
   it("preserves a newer Cut operation when clipboard content changes during the OS read", async () => {
     const explorer = explorerAtA();
     await clipboardStore.copy([entry("old.txt", "/source")]);

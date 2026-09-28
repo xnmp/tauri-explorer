@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
-import { emit } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 
 const writeFilesMock = vi.fn();
 const readFilesMock = vi.fn();
@@ -156,6 +156,27 @@ describe("clipboard OS-bridge failures (#279)", () => {
       error: null,
     });
     await Promise.all([first, second]);
+    store.destroy();
+  });
+
+  it("does not treat another window's Copy as this window's pending local Copy", async () => {
+    let finishWrite!: () => void;
+    writeFilesMock.mockImplementation(() => new Promise((resolve) => {
+      finishWrite = () => resolve({ ok: true, data: undefined });
+    }));
+    const store = await freshStore();
+    const copying = store.copy([entry("local.txt")]);
+    await vi.waitFor(() => expect(writeFilesMock).toHaveBeenCalled());
+    expect(store.hasPendingLocalCopy).toBe(true);
+
+    const onClipboardEvent = vi.mocked(listen).mock.calls.at(-1)?.[1];
+    expect(onClipboardEvent).toBeDefined();
+    onClipboardEvent!({ payload: { entries: [entry("remote.txt")], operation: "copy" } } as never);
+
+    expect(store.content?.entries.map((item) => item.name)).toEqual(["remote.txt"]);
+    expect(store.hasPendingLocalCopy).toBe(false);
+    finishWrite();
+    await copying;
     store.destroy();
   });
 

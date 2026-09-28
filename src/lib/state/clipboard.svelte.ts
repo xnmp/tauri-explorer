@@ -48,8 +48,9 @@ function createClipboardStore() {
   let content = $state<ClipboardContent | null>(null);
   let unlisten: UnlistenFn | null = null;
   // Native clipboard writes can outlive the click that started them. Serialize
-  // our writes and let an immediate paste observe the completed latest write.
+  // our writes and expose pending state so in-app Copy can paste immediately.
   let osWriteTail: Promise<void> = Promise.resolve();
+  let pendingLocalCopy: ClipboardContent | null = null;
 
   // Per-row membership checks (isInClipboard) run for every visible row on
   // every render — a Set makes them O(1) instead of scanning the entries
@@ -86,9 +87,14 @@ function createClipboardStore() {
     const next: ClipboardContent = { entries, operation };
     content = next;
     const published = content;
+    pendingLocalCopy = operation === "copy" ? published : null;
     const write = osWriteTail.then(() => mirrorToOsClipboard(entries.map((e) => e.path)));
-    osWriteTail = write;
-    await write;
+    osWriteTail = write.catch(() => {});
+    try {
+      await write;
+    } finally {
+      if (pendingLocalCopy === published) pendingLocalCopy = null;
+    }
     // A later local copy/cut supersedes this event while its OS write queues.
     if (content === published) await broadcast(published);
   }
@@ -102,6 +108,9 @@ function createClipboardStore() {
     },
     get count() {
       return content?.entries.length ?? 0;
+    },
+    get hasPendingLocalCopy() {
+      return pendingLocalCopy !== null && content === pendingLocalCopy;
     },
     /** Paths of all clipboard entries, for O(1) membership checks. */
     get pathSet() {
@@ -163,9 +172,8 @@ function createClipboardStore() {
      * and should only surface the error when the whole paste comes up empty.
      */
     async readOsFiles(): Promise<{ content: OsClipboardContent | null; error: string | null }> {
-      // A second copy can start while an earlier write is settling. Read only
-      // after the queue has stopped advancing so the OS and in-app snapshots
-      // refer to the same most recent local operation.
+      // A second copy can start while an earlier write is settling. Wait for
+      // the local queue to stop advancing before reading the OS clipboard.
       let observedTail: Promise<void>;
       do {
         observedTail = osWriteTail;

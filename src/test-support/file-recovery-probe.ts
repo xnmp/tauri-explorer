@@ -8,7 +8,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
   let next = 9_000_000_000_000_000n;
   window.addEventListener("e2e-recovery-operation", ((event: CustomEvent<{
     token: string;
-    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many";
+    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many" | "cancel-copy" | "cancel-move" | "complete-copy" | "complete-move";
     sessionId?: string;
     subscriptionId?: string;
     id?: string;
@@ -25,6 +25,40 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
         const { copyFiles } = await import("../lib/state/copy-operations");
         signal.throwIfAborted();
         return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {}, broadcastToOtherWindows: event.detail.shared });
+      }
+      if (op === "cancel-copy" || op === "cancel-move") {
+        const { runOrderedSession } = await import("../lib/api/copy-session");
+        const controller = new AbortController();
+        signal.addEventListener("abort", () => controller.abort(), { once: true });
+        return runOrderedSession(
+          op === "cancel-copy" ? "copy_entries" : "move_entries",
+          event.detail.sources ?? [event.detail.source!],
+          event.detail.destination!,
+          {
+            signal: controller.signal,
+            jobId: Number(++next),
+            // The native conflict remains parked until cancel_copy_session
+            // settles it. A conflict decision would let this test pass even
+            // if abort never reached the session registry.
+            onConflict: () => new Promise<never>(() => {}),
+            onEvent: (sessionEvent) => {
+              if (sessionEvent.type === "conflict") controller.abort();
+            },
+          },
+        );
+      }
+      if (op === "complete-copy" || op === "complete-move") {
+        const { runOrderedSession } = await import("../lib/api/copy-session");
+        return runOrderedSession(
+          op === "complete-copy" ? "copy_entries" : "move_entries",
+          [event.detail.source!],
+          event.detail.destination!,
+          {
+            signal,
+            jobId: Number(++next),
+            onConflict: async () => ({ choice: "overwrite", applyToAll: false }),
+          },
+        );
       }
       if (op === "copy") {
         const { copyEntries } = await import("../lib/api/copy-session");

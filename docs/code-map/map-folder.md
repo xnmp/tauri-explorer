@@ -468,11 +468,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `dir_listing.rs` — cached directory reads and fresh complete snapshots with owned observation. Hot.
 - `directory_wire.rs` — versioned column serialization with exact path-prefix factoring; native caches retain ordinary entries.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
-- `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect.
+- `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect; a crate-private observer exposes stable phase boundaries to deterministic cancellation contracts.
 - `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.
 - `src-tauri/src/files/copy_session/model.rs` — bounded ordered session intent, decisions and positional outcomes.
 - `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
 - `src-tauri/src/files/copy_session/worker.rs` — the copy effect: physical path/version inspection and observed native child execution without UI waits or size prewalks.
+- `src-tauri/test_support/session_cancellation.rs` — cross-platform deterministic copy/move cancellation at every shared session boundary, asserting exact filesystem residue and projected history.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
 - `src-tauri/src/files/permanent_delete.rs` — identity-bound permanent deletion (#739): Unix captures the prepared physical entry into a fresh private `.tauri-delete-*` sibling by no-replace rename through a verified parent handle, checks its `EntryVersion` before removal, restores substitutes, and classifies residue; Linux selections supply admission claims. Windows keeps path-based removal.
 - `src-tauri/src/files/permanent_delete/tree.rs` — bounded handle-relative, no-follow removal of a captured payload; constant descriptors via verified `..` ascent, refuses device/mount crossings.
@@ -514,6 +515,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/test-support/external-job-probe.ts` — page-session native E2E bridge that starts Nano through the production plugin-jobs controller.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
 - `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery inventory/transfer requests and deliberately unmanaged channels for renderer-retirement acceptance; native move cleanup outcomes in `e2e-tauri/specs/move-retirement.spec.ts`.
+- `e2e-tauri/specs/session-cancellation.spec.ts` — ungated Linux/Windows smoke outcomes for copy/move cancellation IPC, released admission, rendered listing refresh and native Undo/Redo.
 - `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.

@@ -31,10 +31,10 @@ WebView, asserted display scale, exact binary SHA-256/size/mtime, scenario timin
 p50/p95, raw process-tree RSS samples plus baseline/final/peak, and failure screenshot paths. The
 four-hour unbounded Linux run requires elapsed wall time, both warm and fresh
 window launches, all configured scenarios, and at least 40 RSS samples. Its
-settled RSS gate compares the median of samples at 10–20% of the run with the
-final 10%; growth above 1 GiB fails. This allowance excludes WebKit cold-start
-allocation and short window-construction peaks while rejecting sustained drift
-on the scale of the failed 50 GiB fixture run. The 32-cycle corrected preflight
+settled RSS gate compares the median of samples in the first quarter of the run
+with the median in the last quarter; growth above 1 GiB fails. This measures
+sustained drift across the run rather than short window-construction peaks.
+The 32-cycle corrected preflight
 returned to two native handles after each close and finished at 1.56 GiB RSS
 with a 2.05 GiB transient peak. Bounded one-cycle platform checks retain the
 samples but do not claim four-hour resource stability. Sampling or

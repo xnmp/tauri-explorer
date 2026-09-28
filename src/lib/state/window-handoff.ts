@@ -60,15 +60,16 @@ export function requestWindowAcknowledgement(
       try { void Promise.resolve(stop()).catch(report); }
       catch (error) { report(error); }
     };
-    const finish = (adopted: boolean, phase: string) => {
+    const finish = (adopted: boolean, phase: string, error?: unknown) => {
       if (settled) return;
       settled = true;
       if (import.meta.env.VITE_E2E_HOOKS === "1") {
         logFrontendDiagnostic("window handoff result", {
-          sourceWindow, targetWindow, phase, adopted,
+          sourceWindow, targetWindow, requestId: handoff.requestId, phase, adopted,
           elapsedMs: Date.now() - startedAt,
           listenMs: listeningAt === null ? null : listeningAt - startedAt,
           dispatchMs: dispatchedAt === null || listeningAt === null ? null : dispatchedAt - listeningAt,
+          error: error === undefined ? null : String(error).slice(0, 240),
         });
       }
       clearTimeout(timer);
@@ -90,8 +91,12 @@ export function requestWindowAcknowledgement(
       if (settled) { stopListening(stop); return; }
       unlisten = stop;
       listeningAt = Date.now();
-      await dispatch(handoff);
-      dispatchedAt = Date.now();
-    }).catch(() => finish(false, "listener-or-dispatch-error"));
+      try {
+        await dispatch(handoff);
+        dispatchedAt = Date.now();
+      } catch (error) {
+        finish(false, "dispatch-error", error);
+      }
+    }).catch((error) => finish(false, "listener-error", error));
   });
 }

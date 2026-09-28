@@ -2,11 +2,11 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domTexts, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-warm-lifetime-"));
+const scratch = createNativeFixtureDirectory("explorer-warm-lifetime-");
 const requested = path.join(scratch, "requested");
 const used = new Set<string>();
 let mainHandle: string;
@@ -69,7 +69,6 @@ describe("warm window lifetime", () => {
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
   });
-  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
   it("returns the warm destination after it reveals the requested real directory", async () => {
     await operation("warm-prime");

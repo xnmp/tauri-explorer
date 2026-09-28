@@ -8,9 +8,9 @@
  */
 import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, entryNames, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 import { captureDiagnostics } from "../window-transfer-diagnostics";
 import {
   waitForListingEntry,
@@ -18,7 +18,7 @@ import {
   type RendererWaitResult,
 } from "../window-transfer-waits";
 
-const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-clip-"));
+const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-clip-");
 
 /** Click the context-menu item whose label contains `label`. */
 async function clickMenuItem(label: string): Promise<void> {
@@ -38,10 +38,6 @@ async function clickMenuItem(label: string): Promise<void> {
 describe("context-menu clipboard round-trip on the real backend", () => {
   before(() => {
     fs.writeFileSync(path.join(scratchDir, "original.txt"), "clipboard payload\n");
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("right-click opens the app context menu on an entry", async () => {

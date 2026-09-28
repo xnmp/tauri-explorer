@@ -5,10 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { domText, entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 // Keep trash and restore on the home filesystem. Linux cannot always trash
 // `/tmp` entries when it is a separate tmpfs without its own Trash directory.
-const scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-file-outcome-"));
+// The shared native cleanup root is itself rooted under the home directory
+// (see wdio.conf.ts) so this fixture can go through the normal helper.
+const scratch = createNativeFixtureDirectory("tauri-explorer-file-outcome-");
 const suffix = crypto.randomUUID().slice(0, 8);
 const fileAName = `outcome-a-${suffix}.txt`;
 const fileBName = `outcome-b-${suffix}.txt`;
@@ -100,10 +103,6 @@ describe("native partial file-operation outcomes", () => {
         }));
       }
     }
-  });
-
-  after(() => {
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("undoes and redoes only the item deleted by a partially failed batch", async function () {

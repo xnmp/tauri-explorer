@@ -1,11 +1,11 @@
 /** Native directory-listing failures must reach the visible Explorer state. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domText, entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-listing-error-"));
+const scratch = createNativeFixtureDirectory("explorer-listing-error-");
 const restrictedDirectory = path.join(scratch, "permission-denied");
 const marker = "permission-restored-marker.txt";
 const restrictedMode = 0o000;
@@ -67,12 +67,13 @@ linuxDescribe("directory listing errors against the real backend", () => {
   });
 
   after(() => {
+    // Restore permissions so a later removal of the shared cleanup root can
+    // traverse this fixture; the fixture directory itself outlives the app.
     try {
       fs.chmodSync(restrictedDirectory, restoredMode);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("identifies a missing navigation target while retaining the prior location", async () => {

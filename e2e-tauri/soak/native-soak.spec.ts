@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   SOAK_SCENARIOS,
   buildNativeQualificationReport,
+  createNativeFixtureDirectory,
   executeQualificationRun,
   measureProcessTreeRss,
   readVerifiedNativeBuildManifest,
@@ -29,7 +30,7 @@ let workspaceA = "";
 let workspaceB = "";
 
 function initializeScratchWorkspaces(): void {
-  scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tauri-native-soak-"));
+  scratchRoot = createNativeFixtureDirectory("soak-");
   workspaceA = path.join(scratchRoot, "workspace-a");
   workspaceB = path.join(scratchRoot, "workspace-b");
   fs.mkdirSync(workspaceA);
@@ -316,6 +317,8 @@ async function runPreviewNativeInput(cycle: number): Promise<void> {
       timeoutMsg: `native Ctrl+Home did not visibly select ${filename}`,
     },
   );
+  if (!(await $(".preview-pane").isExisting())) await browser.keys(" ");
+  await $(".preview-pane").waitForDisplayed();
   if (filename.endsWith(".md")) {
     await browser.waitUntil(async () =>
       (await domText(".preview-markdown")).includes("Native qualification"),
@@ -464,10 +467,12 @@ describe("extended real-native qualification soak", () => {
               }
             }
           }
+          fs.mkdirSync(artifactPaths.failureDirectory, { recursive: true });
+          await browser.saveScreenshot(path.join(artifactPaths.failureDirectory, "completed-cycle.png"));
         } finally {
           sampleResource("final");
-          if (scratchRoot)
-            fs.rmSync(scratchRoot, { recursive: true, force: true });
+          // The runner removes fixtures after native processes exit. Windows
+          // can retain directory handles while this session remains alive.
         }
       },
       createReport: (runErrors) =>

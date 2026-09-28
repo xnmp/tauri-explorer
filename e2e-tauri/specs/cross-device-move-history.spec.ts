@@ -15,7 +15,7 @@
 import { browser } from "@wdio/globals";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
+import { createNativeFixtureDirectory, createNativeSharedMemoryFixtureDirectory } from "../native-qualification";
 import path from "node:path";
 import type { FileRecoverySnapshot } from "../../src/lib/domain/file-recovery";
 import { gatedDescribe } from "./gated-describe";
@@ -96,7 +96,7 @@ function expectOnlyAt(present: string, absent: string, expected: Record<string, 
 
 /** Only this test's own fixture roots; a durable build may leave a read-only
  *  private recovery root behind in either one. */
-function removeFixture(root: string): void {
+function makeFixtureRemovable(root: string): void {
   if (!fs.existsSync(root)) return;
   const writable = (directory: string) => {
     fs.chmodSync(directory, 0o700);
@@ -105,7 +105,6 @@ function removeFixture(root: string): void {
     }
   };
   writable(root);
-  fs.rmSync(root, { recursive: true, force: true });
 }
 
 gatedDescribe("native cross-device move history", [
@@ -127,8 +126,8 @@ gatedDescribe("native cross-device move history", [
       await acknowledged("e2e-history-operation", "e2eHistoryResult", { op: "clear" });
       await waitForSummary((s) => !s.busy && s.undoId === null && s.redoId === null, "clear");
 
-      const sourceDirectory = fs.mkdtempSync(`/dev/shm/tauri-explorer-history-${kind}-`);
-      const destination = fs.mkdtempSync(path.join(os.homedir(), `.tauri-explorer-history-${kind}-`));
+      const sourceDirectory = createNativeSharedMemoryFixtureDirectory(`tauri-explorer-history-${kind}-`);
+      const destination = createNativeFixtureDirectory(`tauri-explorer-history-${kind}-`);
       try {
         assert.notEqual(
           fs.statSync(sourceDirectory).dev, fs.statSync(destination).dev,
@@ -192,8 +191,8 @@ gatedDescribe("native cross-device move history", [
           });
         }
       } finally {
-        removeFixture(sourceDirectory);
-        removeFixture(destination);
+        makeFixtureRemovable(sourceDirectory);
+        makeFixtureRemovable(destination);
       }
     });
   }

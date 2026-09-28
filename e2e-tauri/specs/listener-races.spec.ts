@@ -6,24 +6,20 @@
  */
 import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domText } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 describe("dir-listing snapshot: complete and keyboard-usable", () => {
   // Cross the former transport boundary by a non-round count. A snapshot
   // must publish the exact total and make its final virtualized row usable.
   const FILE_COUNT = 10_003;
-  const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-race-dir-"));
+  const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-race-dir-");
 
   before(() => {
     for (let i = 0; i < FILE_COUNT; i++) {
       fs.writeFileSync(path.join(scratchDir, `entry-${String(i).padStart(5, "0")}.txt`), "x\n");
     }
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("renders the full entry count of a large directory", async () => {
@@ -64,7 +60,7 @@ describe("dir-listing snapshot: complete and keyboard-usable", () => {
 });
 
 describe("QuickOpen: first results event of a fast search is not lost", () => {
-  const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-race-qo-"));
+  const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-race-qo-");
 
   before(() => {
     // A tiny corpus makes the backend search complete almost instantly, so
@@ -72,10 +68,6 @@ describe("QuickOpen: first results event of a fast search is not lost", () => {
     // still be in flight — the sharpest form of the race.
     fs.writeFileSync(path.join(scratchDir, "needle-alpha.txt"), "x\n");
     fs.writeFileSync(path.join(scratchDir, "needle-beta.txt"), "x\n");
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("streams the first page of results for an immediate query", async () => {
@@ -108,7 +100,7 @@ describe("QuickOpen: first results event of a fast search is not lost", () => {
 });
 
 describe("content search: single-event search is not lost", () => {
-  const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-race-cs-"));
+  const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-race-cs-");
 
   before(() => {
     // Exactly one match in one file: the whole search fits in ONE
@@ -116,10 +108,6 @@ describe("content search: single-event search is not lost", () => {
     // everything — no later chunk can mask the race.
     fs.writeFileSync(path.join(scratchDir, "only.txt"), "solitary-marker here\n");
     fs.writeFileSync(path.join(scratchDir, "other.txt"), "nothing to see\n");
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("renders the single match from the only streamed event", async () => {

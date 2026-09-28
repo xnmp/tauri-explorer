@@ -3,11 +3,11 @@ import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-watch-owner-"));
+const scratch = createNativeFixtureDirectory("explorer-watch-owner-");
 const repository = path.join(scratch, "repository");
 const reloadRepository = (generation: number) => path.join(scratch, `reload-repository-${generation}`);
 let mainHandle: string;
@@ -72,7 +72,6 @@ describe("Git observation native window ownership", () => {
       }
       await browser.switchToWindow(mainHandle);
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("drops a leaked native observation when its source window is destroyed", async () => {

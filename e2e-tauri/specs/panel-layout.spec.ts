@@ -1,11 +1,11 @@
 /** Real WebKitGTK layout and keyboard input with optional panels and native files. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-panel-layout-"));
+const scratch = createNativeFixtureDirectory("explorer-panel-layout-");
 const directory = path.join(scratch, "current");
 async function command(label: string) {
   await browser.keys(["Control", "Shift", "p"]);
@@ -17,7 +17,6 @@ async function command(label: string) {
 
 describe("native inline panel layout", () => {
   before(() => { fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "panel-proof.txt"), "real file"); });
-  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
   it("keeps real files reachable beside inline panels and reserves separator keys", async () => {
     await browser.setWindowSize(800, 600);

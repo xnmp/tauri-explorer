@@ -2,11 +2,11 @@
 import { browser } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domTexts, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-transfer-rejection-"));
+const scratch = createNativeFixtureDirectory("explorer-transfer-rejection-");
 const leftDirectory = path.join(scratch, "left");
 const rightDirectory = path.join(scratch, "right");
 const warmDirectory = path.join(scratch, "warm");
@@ -171,7 +171,6 @@ describe("native window transfer rejection", () => {
         }
       });
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   async function verifySourceOwnsTab(marker: string): Promise<void> {

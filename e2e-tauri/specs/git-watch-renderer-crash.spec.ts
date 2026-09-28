@@ -3,13 +3,13 @@ import { browser } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo } from "./helpers";
 import { exactApplicationPid, isolatedProcessEnvironment, terminateRendererDescendants } from "../native-process";
 import { inotifyWatchesForPath, nativeProcessIdentity } from "../native-resources";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-renderer-crash-"));
+const scratch = createNativeFixtureDirectory("explorer-renderer-crash-");
 const repository = path.join(scratch, "repository");
 const rawDirectory = path.join(scratch, "raw-directory");
 
@@ -43,7 +43,6 @@ function readLogs(directory: string): string {
     fs.mkdirSync(rawDirectory);
     fs.writeFileSync(path.join(rawDirectory, "retained.txt"), "raw directory watch fixture");
   });
-  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
   it("reclaims an acknowledged lease when the renderer crashes", async () => {
     await navigateTo(scratch);

@@ -1,8 +1,7 @@
 import { browser, $, expect } from "@wdio/globals";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, basename } from "node:path";
+import { basename } from "node:path";
 import { domText, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 /**
  * Embedded terminal against the real binary (issue #139): a genuine PTY
@@ -132,7 +131,7 @@ describe("embedded terminal", () => {
       }
       await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
 
-      const target = mkdtempSync(join(tmpdir(), "te-cwd-"));
+      const target = createNativeFixtureDirectory("te-cwd-");
       await navigateTo(target);
 
       const input = await $(".terminal-panel textarea.xterm-helper-textarea");

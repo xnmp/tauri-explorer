@@ -2,9 +2,9 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 import { captureDiagnostics } from "../window-transfer-diagnostics";
 import {
   waitForListingEntry,
@@ -15,7 +15,7 @@ import {
   type WindowOperationWaitRequest,
 } from "../window-transfer-waits";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-window-transfer-"));
+const scratch = createNativeFixtureDirectory("explorer-window-transfer-");
 const sourceDirectory = path.join(scratch, "source");
 const destinationDirectory = path.join(scratch, "destination");
 const largeLayoutDirectories = Array.from({ length: 8 }, (_, index) =>
@@ -118,7 +118,6 @@ describe("native window transfer ownership", function () {
       }
       await browser.switchToWindow(mainHandle);
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("concurrent same-path children each become functional and keep independent navigation", async () => {

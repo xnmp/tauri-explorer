@@ -9,6 +9,7 @@ import { captureDiagnostics } from "../window-transfer-diagnostics";
 import {
   waitForListingEntry,
   waitForWindowOperation,
+  selectWindowByLabel,
   type ListingWaitRequest,
   type RendererWaitResult,
   type WindowOperationResponse,
@@ -44,13 +45,13 @@ async function operation(op: string, target?: string): Promise<unknown> {
 
 async function switchToLabel(label: string): Promise<void> {
   try {
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        await browser.switchToWindow(handle);
-        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) return true;
-      }
-      return false;
-    }, { timeout: 20_000, timeoutMsg: `window ${label} did not become ready` });
+    await selectWindowByLabel({
+      listHandles: () => browser.getWindowHandles(),
+      switchTo: (handle) => browser.switchToWindow(handle),
+      currentLabel: () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel),
+      pause: (ms) => browser.pause(ms),
+      now: () => Date.now(),
+    }, label, 20_000);
   } catch (error) {
     await captureDiagnostics(`switch-${label}`);
     throw error;

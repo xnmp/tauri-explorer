@@ -23,6 +23,39 @@ export type RendererWaitResult<T> =
   // WDIO interprets a top-level `error` as a WebDriver protocol failure.
   | { ok: false; reason: string };
 
+export interface WindowLabelScanDriver {
+  listHandles(): Promise<string[]>;
+  switchTo(handle: string): Promise<void>;
+  currentLabel(): Promise<string | undefined>;
+  pause(ms: number): Promise<void>;
+  now(): number;
+}
+
+/** Let each complete handle scan finish before testing the overall deadline. */
+export async function selectWindowByLabel(
+  driver: WindowLabelScanDriver,
+  label: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = driver.now() + timeoutMs;
+  for (;;) {
+    for (const handle of await driver.listHandles()) {
+      try {
+        await driver.switchTo(handle);
+        if (await driver.currentLabel() === label) return;
+      } catch (error) {
+        // A window can close while the handle list is being scanned. Preserve
+        // real driver failures when that handle still exists.
+        if ((await driver.listHandles()).includes(handle)) throw error;
+      }
+    }
+    if (driver.now() >= deadline) {
+      throw new Error(`window ${label} did not become ready`);
+    }
+    await driver.pause(250);
+  }
+}
+
 export function waitForWindowOperation(
   request: WindowOperationWaitRequest,
   done: (result?: RendererWaitResult<WindowOperationResponse>) => void,

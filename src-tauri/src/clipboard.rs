@@ -806,6 +806,7 @@ mod tests {
 
 // Process-wide file clipboard protocol. Commands enqueue before awaiting, so a
 // cancelled renderer request cannot cancel or overtake an accepted OS write.
+#[cfg(target_os = "linux")]
 const FILE_CLIPBOARD_TOKEN: &str = "application/x-tauri-explorer-file-token";
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -951,7 +952,7 @@ impl FileClipboardCoordinator {
         None
     }
 
-    fn write(&mut self, paths: &[String], token: &str) -> Result<bool, AppError> {
+    fn write(&mut self, paths: &[String], _token: &str) -> Result<bool, AppError> {
         #[cfg(target_os = "linux")]
         if let Some(x11) = &self.x11 {
             use clipboard_rs::{Clipboard, ClipboardContent};
@@ -962,11 +963,11 @@ impl FileClipboardCoordinator {
                     "x-special/gnome-copied-files".into(),
                     format!("copy\n{}", uris.join("\n")).into_bytes(),
                 ),
-                ClipboardContent::Other(FILE_CLIPBOARD_TOKEN.into(), token.as_bytes().to_vec()),
+                ClipboardContent::Other(FILE_CLIPBOARD_TOKEN.into(), _token.as_bytes().to_vec()),
             ];
             x11.set(data)
                 .map_err(|error| AppError::Other(format!("X11 clipboard write failed: {error}")))?;
-            return Ok(self.native_token().as_deref() == Some(token));
+            return Ok(self.native_token().as_deref() == Some(_token));
         }
         write_clipboard_file_paths(paths)?;
         Ok(false)

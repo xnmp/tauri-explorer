@@ -2,11 +2,11 @@
 import { browser } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { domTexts, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-transfer-rejection-"));
+const scratch = createNativeFixtureDirectory("explorer-transfer-rejection-");
 const leftDirectory = path.join(scratch, "left");
 const rightDirectory = path.join(scratch, "right");
 const warmDirectory = path.join(scratch, "warm");
@@ -139,10 +139,10 @@ describe("native window transfer rejection", () => {
     sourceHandle = await browser.getWindowHandle();
     // Native sessions share persisted tabs. Start the transfer fixture in a
     // fresh single-pane tab even if a previous session left a split layout.
-    const previousTabs = await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length);
+    const previousTabs = await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length);
     await browser.keys(["Control", "t"]);
     await browser.waitUntil(async () => await browser.execute((expectedTabs) =>
-      document.querySelectorAll(".tab-area > .tab").length === expectedTabs
+      document.querySelectorAll(".tab-list > .tab").length === expectedTabs
         && document.querySelectorAll(".explorer-pane").length === 1,
     previousTabs + 1), { timeoutMsg: "fresh transfer source did not have exactly one pane" });
     await browser.keys(["Control", "m"]);
@@ -171,7 +171,6 @@ describe("native window transfer rejection", () => {
         }
       });
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   async function verifySourceOwnsTab(marker: string): Promise<void> {
@@ -218,7 +217,7 @@ describe("native window transfer rejection", () => {
     expect(activated).toEqual({ kind: "warm", label: parked.label });
     await switchToLabel(parked.label);
     expect(await browser.execute(() => document.querySelectorAll(".explorer-pane").length)).toBe(1);
-    expect(await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length)).toBe(1);
+    expect(await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length)).toBe(1);
     expect(await domTexts(".explorer-pane .entry-name")).toContain("warm.txt");
     await browser.switchToWindow(sourceHandle);
     await verifySourceOwnsTab("after-warm-activation.txt");
@@ -277,7 +276,7 @@ describe("native window transfer rejection", () => {
     await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes("warm.txt"), {
       timeout: 20_000, timeoutMsg: "formerly unready destination did not list its requested directory",
     });
-    expect(await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length)).toBe(1);
+    expect(await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length)).toBe(1);
     expect(await browser.execute(() => document.querySelectorAll(".explorer-pane").length)).toBe(1);
     expect(await browser.execute(() => document.querySelector(".status-path")?.getAttribute("title")))
       .toBe(warmDirectory);

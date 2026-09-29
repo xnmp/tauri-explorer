@@ -16,7 +16,52 @@ fn mount_identity_uses_the_retained_directory_instead_of_its_proc_symlink() {
     assert_eq!(retained.mount_id().unwrap(), expected);
 }
 
+#[cfg(target_os = "linux")]
 #[test]
+fn a_rejected_mount_id_query_falls_back_instead_of_failing() {
+    // Old kernels, and seccomp profiles that reject statx outright.
+    for errno in [libc::ENOSYS, libc::EINVAL, libc::EPERM] {
+        assert!(mount_id_unavailable(&io::Error::from_raw_os_error(errno)));
+    }
+    // Real observation failures still propagate.
+    for errno in [libc::EACCES, libc::ENOENT, libc::EIO, libc::ENOTDIR] {
+        assert!(!mount_id_unavailable(&io::Error::from_raw_os_error(errno)));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn mount_roots_are_decided_by_mount_id_and_otherwise_by_device() {
+    let at = |device, mount| MountIdentity { device, mount };
+    // A bind mount keeps its device; only its mount id differs.
+    assert!(at(1, Some(8)).is_other_mount(at(1, Some(7))));
+    assert!(!at(1, Some(7)).is_other_mount(at(1, Some(7))));
+    // Without mount ids a device change still reveals an ordinary mount.
+    assert!(at(2, None).is_other_mount(at(1, None)));
+    assert!(at(2, Some(8)).is_other_mount(at(1, None)));
+    assert!(!at(1, None).is_other_mount(at(1, Some(7))));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn mount_points_are_observed_without_following_links() {
+    // The recovery suites already require /dev/shm to be its own tmpfs.
+    let dev = Directory::open(Path::new("/dev")).unwrap();
+    assert!(dev.is_mount_root(OsStr::new("shm")).unwrap());
+    let temporary = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temporary.path().join("plain")).unwrap();
+    symlink("/dev/shm", temporary.path().join("link")).unwrap();
+    let parent = Directory::open(temporary.path()).unwrap();
+    assert!(!parent.is_mount_root(OsStr::new("plain")).unwrap());
+    assert!(!parent.is_mount_root(OsStr::new("link")).unwrap());
+    assert!(parent.is_mount_root(OsStr::new("absent")).is_err());
+}
+
+#[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "APFS rejects names that are not valid UTF-8 (EILSEQ)"
+)]
 fn enumeration_is_repeatable_bounded_and_lossless() {
     let temporary = tempfile::tempdir().unwrap();
     let name = OsString::from_vec(b"native-\xff".to_vec());

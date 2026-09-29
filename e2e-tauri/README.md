@@ -8,7 +8,7 @@ A smoke suite that launches the built Tauri binary and drives it via WebDriver. 
 | ------- | --------- | ------------------------------------------------------------------ |
 | Linux   | yes       | Uses `tauri-driver` + WebKitGTK                                    |
 | Windows | yes       | Attaches `msedgedriver` to WebView2 through an E2E-only CDP port   |
-| macOS   | **no**    | `tauri-driver` has no WKWebView driver. See project issue tracker. |
+| macOS   | separate  | Appium Mac2/XCTest pilot below; `tauri-driver` has no WKWebView driver. |
 
 ## One-time setup
 
@@ -80,13 +80,26 @@ See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to
 `docs/lessons/457-windows-tauri-smoke-hang.md` records why the Windows harness
 must use the programmatic CDP attach path.
 
+The separate `.github/workflows/macos-native-ui.yml` pilots native WKWebView
+outcome testing through Appium Mac2 and XCTest on a hosted Mac. It builds a
+production `.app`, launches it into a unique fixture directory, verifies that
+the child listing appears in the native accessibility tree, clicks the app's
+Up control, and verifies the parent listing replaces it. It retains source
+snapshots, a screenshot and a provenance report in
+`qualification-results/macos-native-ui/`. This route requires Xcode Helper
+Accessibility permission; CI grants it only on its disposable runner. To run
+locally, grant that permission in System Settings, install Appium 3 with the
+Mac2 4.2 driver, build with `bun run tauri build --bundles app`, start Appium
+on port 4723, then run `bun run e2e-tauri/macos-ui-smoke.ts`. The pilot remains
+unqualified until the hosted test demonstrates the app outcome.
+
 ## Fresh-window failure evidence
 
 `switchToFreshWindow` records one atomic renderer sample (label, hook readiness,
 `.file-list` count, status path, URL, ready/visibility state) plus a `/proc` scan
 of the application, its WebKit auxiliary processes and the drivers, every time a
 fresh child window is selected. `waitForFreshWindowElement` replays that record
-with a bounded, timestamped `/proc` timeline while the first element lookup is
+with a bounded, rolling, timestamped `/proc` timeline while the first element lookup is
 pending — by the time it fails, the WebDriver session may already be invalid,
 so the sampler never issues another driver command. The newest selection-time
 `WebKitWebProcess` is retained as the fresh child's inferred renderer identity
@@ -96,11 +109,24 @@ sample where that identity is absent. Records land in
 `TAURI_NATIVE_DIAGNOSTICS_DIR`), and `tauri-driver`'s output — which
 `WebKitWebDriver` inherits — is teed to `e2e-tauri/logs/tauri-driver.log`. CI
 uploads both with the WDIO logs.
+First-seen and first-missing renderer times remain in bounded identity summaries
+even when old raw samples roll out; the artifact reports omitted observations
+if its 256-identity cap is reached.
 
 A renderer that first disappears before the driver timeout supports renderer
 death; one that survives until session deletion points at the driver/session
 path instead. See
 `docs/lessons/703-native-webdriver-session-loss.md`.
+
+`warm-window-lifetime.spec.ts` also starts a process-only timeline immediately
+before closing the source of an abandoned warm claim. If claim expiry or a
+WebDriver handle poll fails, `e2e-tauri/logs/warm-claim/` retains the exact
+claimed label and handles, all pre-close `WebKitWebProcess` PID/start-time
+identities, source-close and handle-retirement milestones, their first observed
+disappearance times, and the final process
+sample. It does not issue another WebDriver command after failure. Compare it
+with `tauri-driver.log`; a disappearing process is not by itself proof that it
+belonged to the claimed WebView (#781).
 
 
 ## Adding specs
@@ -230,8 +256,8 @@ fresh subscriptions must receive the generation advanced by real inspection.
 This suite does not establish renderer-crash cleanup, interrupted registration,
 power-loss durability or other platforms.
 
-The suite also creates a separate ordinary overwrite through the production
-transfer/API/command path. It selects the newly journaled operation by its returned
+The suite also creates a separate overwrite through the production ordered copy
+session. It selects the newly journaled operation by its returned
 ID, cycles actual Explorer Undo/Redo twice with recovery Inspect between every
 effect, then restores through the dialog. It checks original, source and privately
 retained copied bytes and the native completion toasts. The probe forces overwrite and bypasses clipboard/conflict
@@ -272,6 +298,16 @@ and removes that prefix with one Undo. Both assert real filesystem bytes, with
 visible results. These cases qualify Linux session/UI integration; browser tests
 separately cover clipboard selection across Details, List and Tiles.
 
+The ungated `session-cancellation.spec.ts` cancels one production copy session
+and one production move session while each backend is paused on a real
+destination conflict. Both must settle as cancelled with an unstarted item,
+retain the source and byte-exact existing destination, and leave the native
+Undo/Redo summary unchanged. Each case then removes the conflict and completes
+the same overlapping request, proving admission was released through rendered
+listing plus native Undo/Redo outcomes. The Rust phase matrix separately parks
+every shared orchestration boundary. Smoke executes these binary cases on Linux
+and Windows.
+
 
 `file-move-recovery.spec.ts` additionally checks Linux native move admission through
 in-app cut/paste and two actual Undo/Redo cycles, asserting both source disappearance
@@ -307,16 +343,39 @@ profile are tied to the exact binary hash in `qualification-results/native-build
 ```bash
 bun run build:native:qualification
 SOAK_DURATION_MS=14400000 \
-SOAK_MAX_CYCLES=500 \
-SOAK_SEED=release-1.8.1-linux \
-SOAK_EXPECTED_DISPLAY_SCALE=2 \
+SOAK_SEED=release-linux-four-hour \
+SOAK_EXPECTED_DISPLAY_SCALE=1 \
 bun run test:e2e:tauri:soak
 ```
+
+Set the expected scale to the measured display scale for the runner. A
+committed historical build manifest must use a suffixed filename such as
+`native-build-817-pinned.json`: the unsuffixed path is the runner's live default
+and must be regenerated for each new qualification build.
+
+Run Linux qualification with fresh, isolated `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` directories. The soak
+asserts the status-bar path; a saved `showStatusBar: false` setting in the
+operator's regular profile makes it fail even when navigation succeeds. Keep
+the same isolated profile for the entire run so warm and fresh windows share
+their application state.
 
 Omit `SOAK_MAX_CYCLES` to run for the full duration. A bounded harness check can
 set `SOAK_MAX_CYCLES=1`; that still launches the real application and exercises
 every scenario once. The deterministic seed rotates scenario/interruption order
 and is written into the report so a failing order can be replayed.
+For diagnosis only, `SOAK_DIAGNOSTIC_SCENARIO=window-workspace` with
+`SOAK_MAX_CYCLES` runs one scenario repeatedly. The four-hour release gate always
+requires all scenarios and does not accept this bounded diagnostic mode.
+For the window-workspace diagnostic, `SOAK_DIAGNOSTIC_WINDOW_MODE=warm` or
+`fresh` isolates one creation path; without it, cycles alternate between both.
+`SOAK_DIAGNOSTIC_MAIN_ONLY=1` additionally requires `fresh` and drives native
+creation, visibility and close through the main-page probe without switching
+WebDriver into child pages. It waits for the child's native close-owner
+registration, test-hook, initial listing and paint receipt through shared
+app-origin storage before native close. It is
+only a page-lifecycle discriminator, not
+complete child-window usability evidence or a four-hour qualification pass.
 
 Reports are written under `qualification-results/` and contain the exact commit,
 verified build profile and binary SHA-256/size/mtime, OS/release/architecture,
@@ -324,6 +383,12 @@ WebView user agent, display scale, configuration, RSS baseline/final/peak,
 scenario-duration p50/p95, and every scenario result. A failed assertion takes a
 screenshot named with the seed-derived safe component, cycle, and scenario,
 records it in the JSON report, and fails the command.
+WebDriverIO's per-command worker log is in `qualification-results/wdio-<seed
+component>/`; inspect it alongside the seed's `*-webdriver.log` when diagnosing
+a session failure. Each run clears that worker-log directory before starting,
+and failed reports link it as an artifact. The soak config enables file logging
+because otherwise WebDriverIO retains unique log messages in memory throughout
+a long run.
 The required expected-display-scale value makes a DPI qualification leg fail
 instead of silently running at the wrong native runner scale.
 
@@ -389,3 +454,15 @@ separate backing mount. Reattaching the same volume restores explicit discard.
 It tests source and destination volume disappearance separately. All mounts live
 only in the new private namespace; it refuses to run in the caller's namespace.
 It does not model physical device failure, power loss or kernel I/O errors.
+
+`bind_mounted_endpoints_on_one_device_are_refused_before_any_record` runs the
+same way. It bind-mounts a directory of one filesystem, proves `rename(2)`
+between the mounts fails with `EXDEV` although both share `st_dev`, and checks
+that a durable move between them is refused before any record, artifact root
+or effect exists (#760).
+`mount_point_endpoints_are_refused_before_any_record` bind-mounts over a source
+and over an existing destination, which keep their parent's device, and checks
+that the move is refused before any record instead of meeting `EBUSY` after
+journaling. `a_payload_that_crosses_into_another_mount_is_refused_before_any_record`
+mounts a tmpfs inside a payload the move would retain, whose discard could never
+traverse it, and checks the same refusal.

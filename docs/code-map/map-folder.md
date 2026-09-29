@@ -103,7 +103,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
-- `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop.
+- `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path, an ordered writer closed with the PTY (#709).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
@@ -145,7 +145,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `src/lib/state/copy-operations.ts` — the copy session over that shared presentation.
-- `file-transfer.ts` — legacy single-entry move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
+- `file-transfer.ts` — plugin-driven single-entry move core: conflict detect, undo, toast, frecency, broadcast.
 - `src/lib/state/session-operations.ts` — the one presentation shared by both ordered sessions: operation panel, conflict prompts, incremental entries, refresh broadcast and completion reporting.
 - `src/lib/state/move-operations.ts` — the move session over it: deduplicated sources, vacated source directories refreshed, no renderer-owned inverse.
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
@@ -279,7 +279,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 
-- `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`).
+- `src/lib/domain/file-recovery.ts` — recovery snapshot, choice and native-port contracts with bounded lossless decimal-counter validation/ordering; inspection returns an ordered snapshot. Also formats retained sizes and summarizes storage against both retention budgets (`tests/domain/file-recovery-retention.test.ts`), and owns the confirmation copy for irreversible choices, including Forget for a stranded move discard (`tests/file-recovery-confirmation.test.ts`).
 
 - `file-list-navigation.ts` — independent path cursor and pure keyboard movement/selection intents for all file-list views.
 
@@ -346,6 +346,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
+- `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `e2e-hooks.ts` — `E2E_HOOKS_ENABLED` flag gating the `e2e-*` test hooks/probes; folds to `false` and tree-shakes out unless `VITE_E2E_HOOKS=1`, which only the smoke workflow sets (#457).
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
@@ -357,8 +358,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src/lib/plugins/ — plugin system + built-in plugins.
 
-- `api.ts` — plugin API surface exposed to plugins.
-- `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown.
+- `api.ts` — plugin API surface exposed to plugins; the context reports a command or menu action failure under the plugin's name and logs it (#782).
+- `registry.svelte.ts` — built-in plugin lifecycle; published activation/shutdown drains, terminal admission and context-first reentrant teardown. Startup activations run together so one hung plugin blocks no other; contributions are placed by list position, not completion order (#782).
 - `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
 - `settings-registry.svelte.ts` — registry for plugin settings sections.
 - `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
@@ -454,23 +455,25 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ### src-tauri/src/files/ — file operations module.
 
 - `src-tauri/src/files/native_directory.rs` — shared owned directory handle and platform implementation boundary; Unix trash/recovery reuse the same relative-access contract.
-- `src-tauri/src/files/native_directory/unix.rs` — Unix no-follow relative access, exclusive rename, no-follow existence, typed removal and independent bounded enumeration.
+- `src-tauri/src/files/native_directory/unix.rs` — Unix no-follow relative access, exclusive rename, no-follow existence, typed removal and independent bounded enumeration; Linux mount ids (with a device fallback when `statx` is rejected) and mount-point detection.
 - `src-tauri/src/files/native_directory/windows.rs` — Windows handle-relative no-follow traversal, exclusive creation/rename, typed removal and bounded independent enumeration; namespace durability remains unqualified.
 - `src-tauri/src/files/native_directory/windows_security.rs` — creation-time protected current-user/SYSTEM descriptors and handle-based explicit/inherited child ACL validation.
 - `src-tauri/src/files/recovery/private_storage.rs` — shared retained-handle recovery privacy policy; Unix effective-owner, permission, kind and single-link validation.
 - `src-tauri/src/files/recovery/private_storage/windows.rs` — Windows protected ACL, kind/reparse, hardlink and delete-pending evidence checks through retained handles.
 - `src-tauri/test_support/recovery_private_storage.rs` — real filesystem policy outcomes for retained files, hardlinks, retirement and widened permissions.
 - `src-tauri/test_support/native_directory_contract.rs` — cross-platform real filesystem contracts for retained anchors, exclusive creation/rename, removal kinds, existence and invalid-name rejection.
+- `src-tauri/test_support/case_only_rename.rs` — runtime case-sensitivity contracts for rename, move, ordered-session conflicts and physical identity, shared by native-directory and recovery admission tests.
 
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — cached directory reads and fresh complete snapshots with owned observation. Hot.
 - `directory_wire.rs` — versioned column serialization with exact path-prefix factoring; native caches retain ordinary entries.
 - `directory_cache.rs` — bounded shared directory snapshots; request-owned publication permits reject invalidated, evicted and superseded reads.
-- `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect.
+- `src-tauri/src/files/copy_session.rs` — the ordered-session engine: async orchestration with a supervisor-owned per-item receipt ledger, generic over the `Work` effect; a crate-private observer exposes stable phase boundaries to deterministic cancellation contracts.
 - `src-tauri/src/files/move_session.rs` — the move effect for that engine: physical inspection, same-directory no-op, subtree rejection, un-prompted-overwrite refusal, and an incomplete source removal reported as uncertain rather than success.
 - `src-tauri/src/files/copy_session/model.rs` — bounded ordered session intent, decisions and positional outcomes.
 - `src-tauri/src/files/copy_session/control.rs` — renderer-owned session registration, non-reused conflict nonces and cancellation wakeups.
 - `src-tauri/src/files/copy_session/worker.rs` — the copy effect: physical path/version inspection and observed native child execution without UI waits or size prewalks.
+- `src-tauri/test_support/session_cancellation.rs` — cross-platform deterministic copy/move cancellation at every shared session boundary, asserting exact filesystem residue and projected history.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
 - `src-tauri/src/files/permanent_delete.rs` — identity-bound permanent deletion (#739): Unix captures the prepared physical entry into a fresh private `.tauri-delete-*` sibling by no-replace rename through a verified parent handle, checks its `EntryVersion` before removal, restores substitutes, and classifies residue; Linux selections supply admission claims. Windows keeps path-based removal.
 - `src-tauri/src/files/permanent_delete/tree.rs` — bounded handle-relative, no-follow removal of a captured payload; constant descriptors via verified `..` ascent, refuses device/mount crossings.
@@ -509,8 +512,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
 
 - `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
+- `src/test-support/external-job-probe.ts` — page-session native E2E bridge that starts Nano through the production plugin-jobs controller.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
 - `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery inventory/transfer requests and deliberately unmanaged channels for renderer-retirement acceptance; native move cleanup outcomes in `e2e-tauri/specs/move-retirement.spec.ts`.
+- `e2e-tauri/specs/session-cancellation.spec.ts` — ungated Linux/Windows smoke outcomes for copy/move cancellation IPC, released admission, rendered listing refresh and native Undo/Redo.
 - `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
@@ -531,6 +536,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/object_id.rs` — pure native-platform identity codec, full-width Windows IDs and separate volume equality; rejects foreign/untagged authority.
 - `src-tauri/src/files/file_identity.rs` — native object/version capture from supplied handles, Unix metadata and descriptor-relative Linux stat; no-follow leaf semantics.
 - `src-tauri/src/files/file_identity/windows.rs` — FileIdInfo query on the supplied Windows handle, preserving volume serial and all 128 identifier bits without path fallback.
+- `src-tauri/src/files/directory_identity.rs` — one native directory spelling shared by listing and watch admission; Unix folds lexical separators while keeping case distinct, and Windows delegates stored-component spelling.
+- `src-tauri/src/files/directory_identity/windows.rs` — Windows drive/UNC parsing and stored-case component lookup, with literal device namespaces and case-sensitive WSL shares left unrewritten. Contracts live in `src-tauri/test_support/directory_identity.rs`; native listing/watch acceptance is in `e2e-tauri/specs/directory-identity.spec.ts`.
+- `src-tauri/test_support/directory_identity.rs` — pure directory-spelling contracts for Unix case sensitivity and Windows drive, UNC, WSL and literal namespace parsing.
 - `src-tauri/src/files/windows_io.rs` — shared Win32/NT error-code conversion for directory access, recovery identity and locking.
 - `src-tauri/test_support/recovery_object_id.rs` — full-width identity distinction, native/foreign codec contracts and malformed/wire-size bounds.
 - `src-tauri/test_support/recovery_file_identity.rs` — real independent opens/hardlinks, retained-handle identity through path replacement and native leaf/device checks.
@@ -551,13 +559,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/recovery/model.rs` — portable recovery IPC/history contracts and lossless decimal counters; platform-tagged native paths remain available to adapter tests.
 - `src-tauri/src/files/recovery/durable_model.rs` — Unix executor authority, catalog-digest checkpoints, typed operation state and replacement phase/manifest validation.
 - `src-tauri/src/files/recovery/move_model.rs` — immutable planned move authority, native volume/resource/artifact validation and typed move state. Contract tests in `src-tauri/test_support/recovery_move_model.rs` and real catalog/reopen/fencing tests in `src-tauri/test_support/recovery_move_intent.rs`.
-- `src-tauri/src/files/recovery/move_capability_model.rs` — pure per-volume probe checkpoints, retained cleanup authority and mandatory version-2 capability validation.
+- `src-tauri/src/files/recovery/move_capability_model.rs` — pure per-volume probe checkpoints, retained cleanup authority and mandatory version-2 capability validation; also classifies every platform's errno spelling of an unsupported exclusive rename.
+- `src-tauri/test_support/recovery_move_capability_model.rs` — unsupported-rename errno classification contract (ENOTSUP and EOPNOTSUPP are distinct on Darwin).
 - `src-tauri/src/files/recovery/move_capability.rs` — journaled real exclusive-rename qualification before move effects; exact interrupted-probe inspection and explicit cleanup.
 - `src-tauri/test_support/recovery_move_capability.rs` — real rename/error preservation, legacy byte compatibility, cross-volume process-kill and namespace-substitution contracts.
 - `src-tauri/src/files/recovery/move_cleanup.rs` — bounded native descendant snapshot, validated durable deletion plan and identity-checked resumption that refuses newly added/modified children.
 - `src-tauri/src/files/recovery/move_retention.rs` — pure move disposal authority, explicit Undo retirement, ordered two-root cleanup checkpoints and legacy-safe evidence validation.
 - `src-tauri/src/files/recovery/move_retirement.rs` — move endpoint/root observation, journaled measurement, per-root cleanup and durable record retirement; no public path mutations.
-- `src-tauri/test_support/recovery_move_retirement.rs` — native filesystem contracts and subprocess-kill recovery for move discard, restored redundancy, endpoint changes, foreign entries and accounting.
+- `src-tauri/test_support/recovery_move_retirement.rs` — native filesystem contracts and subprocess-kill recovery for move discard, restored redundancy, endpoint changes, foreign entries and accounting; also post-decision withdrawal, enforcement without churn, journal headroom, Forget, restrictive umask, plan-budget admission at move start and on Undo, and (ignored, namespace-only) bind-mount, mount-point endpoint and submounted-payload refusal.
 - `src-tauri/src/files/recovery/move_transition.rs` — pure legal-transition function for durable move recovery checkpoints; encodes the crash ordering where publication precedes parking and parking precedes source removal, so no boundary can leave both endpoints absent. State-only transition contracts in `src-tauri/test_support/recovery_move_transition.rs`.
 - `src-tauri/src/files/recovery/move_execution.rs` — concrete durable move executor: creates/reopens private artifact roots, stages a cross-filesystem copy, displaces an overwritten destination, publishes, parks the source, removes a parked source and restores as the record's exact inverse. Real process-kill boundary contracts in `src-tauri/test_support/recovery_move_execution.rs`.
 - `src-tauri/src/files/recovery/forward_move.rs` — production durable-move orchestration: admission, binding a `MoveSpec` from admitted paths, promotion and execution; produces the `FileMutationReceipt` carrying a `MoveRecoveryReceipt`. Real-filesystem contracts in `src-tauri/test_support/recovery_forward_move.rs`.
@@ -595,15 +604,29 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ### Native qualification tooling
 
 - `e2e-tauri/native-qualification.ts` — native process lifetime, verified build identity, bounded artifacts and foreground-ready/warm startup log parsing.
-- `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group.
-- `e2e-tauri/fresh-window-diagnostics.ts` — always-on fresh-child-window evidence: renderer snapshot, `/proc` renderer/driver classification and failure artifacts for lost native sessions (#703).
+- `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
+- `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
+- `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
+- `e2e-tauri/specs/gated-describe.ts` — `gatedDescribe`, the Mocha adapter over that decision; separate from `specs/helpers.ts` because qualification tests import the helpers without Mocha types.
+- `e2e-tauri/external-job-fixture.ts` — Linux native-test `PATH` fixture for a deterministic long-running fake Gemini CLI.
+- `e2e-tauri/specs/external-job-timeout.spec.ts` — real CLI timeout/reap, withheld output and Jobs-panel error outcome.
+- `e2e-tauri/fresh-window-diagnostics.ts` — fresh-child-window evidence: selection/lookup process timelines, renderer snapshot, `/proc` renderer/driver classification and failure artifacts (#703, #781).
+- `e2e-tauri/warm-claim-diagnostics.ts` — abandoned warm-claim expiry artifacts: pre-close renderer identities and first observed disappearance times after session loss (#781).
+- `tests/qualification/warm-claim-process-timeline.test.ts` — contract for native warm-claim failure artifact, bounded late sample and no artifact on success.
+- `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
+- `e2e-tauri/window-transfer-diagnostics.ts` — incrementally persisted native runtime and per-window failure evidence.
+- `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
 - `scripts/build-native-qualification.ts` — clean-worktree debug/release native build and exact binary provenance.
 - `scripts/qualify-macos-startup.ts` — separate real Mac foreground-only and warm-probe samples with process survival and cleanup.
+- `scripts/grant-macos-accessibility.sh` — CI-only, SIP-guarded Xcode Helper Accessibility grant for the Appium Mac2 pilot.
+- `.github/workflows/macos-native-ui.yml` — hosted macOS production bundle build, Appium Mac2 run and outcome artifact upload.
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
 - `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual and half-bounce verdicts.
 - `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
+- `tests/e2e-tauri/window-transfer-waits.test.ts` — stale-token, delayed-listing and duplicate-name contracts for renderer observers.
+- `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.
 - `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.

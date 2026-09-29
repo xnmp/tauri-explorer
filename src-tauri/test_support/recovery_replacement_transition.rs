@@ -288,6 +288,20 @@ fn transitions_reject_invalid_root_staged_version_and_error_evidence() {
         ReplacementTransition::RootObserved(object(10))
     )
     .is_err());
+    // A fresh root cannot equal either subject the intent names: the source
+    // object(11) or the displaced original target object(12) (#788).
+    assert!(transition(
+        &intent,
+        &root_intent,
+        ReplacementTransition::RootObserved(object(11))
+    )
+    .is_err());
+    assert!(transition(
+        &intent,
+        &root_intent,
+        ReplacementTransition::RootObserved(object(12))
+    )
+    .is_err());
 
     let (intent, prepared) = prepared();
     let staging = advance(&intent, prepared, ReplacementTransition::BeginStaging);

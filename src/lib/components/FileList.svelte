@@ -174,6 +174,10 @@
       ctrlKey: event.ctrlKey || event.metaKey,
       shiftKey: event.shiftKey,
     });
+    // Windows/macOS pointer-drag acquisition prevents mousedown's default
+    // action, so those engines do not focus the clicked gridcell themselves.
+    // Keep DOM focus aligned with the cursor regardless of drag backend.
+    (event.currentTarget as HTMLElement | null)?.focus({ preventScroll: true });
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
@@ -469,8 +473,16 @@
   }
 
   .file-list :global(.entry-item:focus-visible) {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
+    /* Selected rows have a 3px accent edge. The inset outline covers only
+       2px, so make the remaining strip contiguous with the focus indicator. */
+    border-left-color: var(--focus-stroke-outer);
+  }
+
+  .file-list :global(.tile-item:focus-visible) {
+    /* Tiles put the selected indicator on their 3px bottom edge. */
+    border-bottom-color: var(--focus-stroke-outer);
   }
 
   .file-list:focus {
@@ -526,7 +538,7 @@
   }
 
   .drive-gone-state {
-    color: var(--system-caution, var(--system-critical));
+    color: var(--system-caution-text, var(--system-caution, var(--system-critical)));
   }
 
   @keyframes fadeIn {
@@ -535,7 +547,7 @@
   }
 
   .error-state {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .error-title {

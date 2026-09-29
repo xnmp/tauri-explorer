@@ -13,6 +13,8 @@ import type { SettingRowDescriptor, SettingsSectionDescriptor, PluginStorage } f
 export interface RegisteredSettingsSection {
   pluginId: string;
   id: string;
+  /** The contributing plugin's list position; sections are shown in it. */
+  order: number;
   title: string;
   rows: SettingRowDescriptor[];
   /** Current values keyed by row id (reactive). */
@@ -34,7 +36,8 @@ function defaultsFrom(rows: SettingRowDescriptor[]): Record<string, unknown> {
 function createSection(
   pluginId: string,
   desc: SettingsSectionDescriptor,
-  storage: PluginStorage
+  storage: PluginStorage,
+  order: number,
 ): RegisteredSettingsSection {
   const defaults = defaultsFrom(desc.rows);
   let values = $state<Record<string, unknown>>({ ...defaults });
@@ -63,6 +66,7 @@ function createSection(
   return {
     pluginId,
     id: desc.id,
+    order,
     title: desc.title,
     rows: desc.rows,
     get values() {
@@ -91,10 +95,12 @@ function createSettingsRegistry() {
     register(
       pluginId: string,
       desc: SettingsSectionDescriptor,
-      storage: PluginStorage
+      storage: PluginStorage,
+      order = Number.MAX_SAFE_INTEGER,
     ): () => void {
-      const section = createSection(pluginId, desc, storage);
-      sections = [...sections, section];
+      const section = createSection(pluginId, desc, storage, order);
+      // Stable sort: sections with the same order keep registration order.
+      sections = [...sections, section].sort((a, b) => a.order - b.order);
       // Remove by (pluginId, id), not object reference: Svelte's `$state` array
       // deep-proxies elements, so the stored section never `===` this `section`.
       return () => {

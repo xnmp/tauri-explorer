@@ -244,7 +244,7 @@
   }
 
   .column-resize-handle:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
   }
 
@@ -332,7 +332,7 @@
   .column-menu-check {
     width: 16px;
     text-align: center;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     font-size: 12px;
   }
 

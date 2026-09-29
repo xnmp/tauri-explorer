@@ -54,11 +54,9 @@ fn copied(root: &Path, name: &str) -> Action {
     let dest = root.join(format!("dest-{name}"));
     fs::write(&source, "copied bytes").unwrap();
     fs::create_dir(&dest).unwrap();
-    let receipt = file_ops::copy_entry_impl(
-        None,
+    let receipt = file_ops::ordinary_copy_for_test(
         source.to_string_lossy().into_owned(),
         dest.to_string_lossy().into_owned(),
-        None,
         None,
     )
     .unwrap();
@@ -103,11 +101,9 @@ fn publication_history_fixture() {
         std::os::unix::fs::symlink(&physical, &alias).unwrap();
         let source = root.join("alias-source");
         fs::write(&source, "alias bytes").unwrap();
-        let receipt = file_ops::copy_entry_impl(
-            None,
+        let receipt = file_ops::ordinary_copy_for_test(
             source.to_string_lossy().into_owned(),
             alias.to_string_lossy().into_owned(),
-            None,
             None,
         )
         .unwrap();

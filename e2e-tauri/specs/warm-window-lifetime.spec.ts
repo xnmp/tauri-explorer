@@ -2,11 +2,11 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { domTexts, navigateTo } from "./helpers";
+import { domTexts, monitorWarmClaimExpiry, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-warm-lifetime-"));
+const scratch = createNativeFixtureDirectory("explorer-warm-lifetime-");
 const requested = path.join(scratch, "requested");
 const used = new Set<string>();
 let mainHandle: string;
@@ -69,7 +69,6 @@ describe("warm window lifetime", () => {
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
   });
-  after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
   it("returns the warm destination after it reveals the requested real directory", async () => {
     await operation("warm-prime");
@@ -104,11 +103,23 @@ describe("warm window lifetime", () => {
     const parked = await parkedWindow();
     expect(await operation("warm-claim")).toBe(parked.label);
     used.add(parked.label);
-    try { await $("button[aria-label='Close']").click(); }
-    catch (error) { if (!String(error).includes("no such window")) throw error; }
-    await browser.switchToWindow(survivor);
-    await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(mainHandle), { timeout: 10_000 });
-    await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(parked.handle), { timeout: 40_000, timeoutMsg: "abandoned warm claim remained alive" });
+    await monitorWarmClaimExpiry({
+      sourceHandle: mainHandle,
+      survivorHandle: survivor,
+      parkedHandle: parked.handle,
+      parkedLabel: parked.label,
+    }, async (mark) => {
+      mark("source-close-requested");
+      try { await $("button[aria-label='Close']").click(); }
+      catch (error) { if (!String(error).includes("no such window")) throw error; }
+      mark("source-close-command-settled");
+      await browser.switchToWindow(survivor);
+      mark("survivor-selected");
+      await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(mainHandle), { timeout: 10_000 });
+      mark("source-handle-gone");
+      await browser.waitUntil(async () => !(await browser.getWindowHandles()).includes(parked.handle), { timeout: 40_000, timeoutMsg: "abandoned warm claim remained alive" });
+      mark("parked-handle-gone");
+    });
     fs.writeFileSync(path.join(scratch, "survived-claim-expiry.txt"), "watcher");
     await listingHas("survived-claim-expiry.txt");
     fs.mkdirSync("screenshots/refactor/repo-health-cleanup", { recursive: true });

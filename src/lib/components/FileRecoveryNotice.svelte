@@ -38,23 +38,18 @@
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: transparent;
-    color: var(--system-caution);
+    color: var(--system-caution-text, var(--system-caution));
     font: inherit;
     cursor: pointer;
     white-space: nowrap;
   }
 
   .recovery-notice.error {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .recovery-notice:hover {
     background: var(--subtle-fill-secondary);
     border-color: var(--control-stroke);
-  }
-
-  .recovery-notice:focus-visible {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: 1px;
   }
 </style>

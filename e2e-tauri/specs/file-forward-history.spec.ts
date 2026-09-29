@@ -1,10 +1,11 @@
 /** Native forward mutations admit and settle history before renderer-side UI work. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
+import { gatedDescribe } from "./gated-describe";
 import { entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 interface HistorySummary {
   revision: number;
@@ -329,12 +330,17 @@ async function destroyCurrentWindow(handle: string): Promise<void> {
   });
 }
 
-const gatedDescribe = process.platform === "linux" && gateDirectory ? describe : describe.skip;
-
-gatedDescribe("native forward mutation history ownership", () => {
+// Linux-only: exercises the durable history-recovery gate directories
+// (`durable-copy-recovery`, `cfg(unix)`/`cfg(target_os = "linux")`, ADR 0020,
+// plan decision D2) and `exactApplicationPid`'s `/proc`-based process
+// identity, neither of which exists on Windows (#800).
+gatedDescribe("native forward mutation history ownership", [
+  [process.platform === "linux", "Linux"],
+  [gateDirectory !== "", "TAURI_E2E_HISTORY_GATE_DIR"],
+], () => {
   before(async () => {
     fs.accessSync(gateDirectory, fs.constants.R_OK | fs.constants.W_OK);
-    scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-forward-history-"));
+    scratch = createNativeFixtureDirectory("tauri-explorer-forward-history-");
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
     applicationPid = exactApplicationPid();
@@ -360,7 +366,6 @@ gatedDescribe("native forward mutation history ownership", () => {
       }
       if ((await browser.getWindowHandles()).includes(mainHandle)) await browser.switchToWindow(mainHandle);
     }
-    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("exposes one native Undo while renderer publication of the rename is held", async function () {

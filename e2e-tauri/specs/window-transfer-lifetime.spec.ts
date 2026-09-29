@@ -2,39 +2,56 @@
 import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
+import { captureDiagnostics } from "../window-transfer-diagnostics";
+import {
+  waitForListingEntry,
+  waitForWindowOperation,
+  selectWindowByLabel,
+  type ListingWaitRequest,
+  type RendererWaitResult,
+  type WindowOperationResponse,
+  type WindowOperationWaitRequest,
+} from "../window-transfer-waits";
 
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "explorer-window-transfer-"));
+const scratch = createNativeFixtureDirectory("explorer-window-transfer-");
 const sourceDirectory = path.join(scratch, "source");
 const destinationDirectory = path.join(scratch, "destination");
 const largeLayoutDirectories = Array.from({ length: 8 }, (_, index) =>
   path.join(scratch, `large-pane-${index}`));
 
 async function operation(op: string, target?: string): Promise<unknown> {
-  const token = crypto.randomUUID();
-  await browser.execute((detail) => {
-    window.dispatchEvent(new CustomEvent("e2e-window-operation", { detail }));
-  }, { token, op, target });
-  let response: { token?: string; result?: unknown; error?: string } = {};
-  await browser.waitUntil(async () => {
-    response = await browser.execute(() => JSON.parse(document.documentElement.dataset.e2eWindowResult ?? "{}"));
-    return response.token === token;
-  }, { timeout: 25_000, timeoutMsg: `native ${op} did not finish` });
-  expect(response.error).toBeUndefined();
-  return response.result;
+  try {
+    const token = crypto.randomUUID();
+    const observed = await browser.executeAsync<
+      RendererWaitResult<WindowOperationResponse>,
+      [WindowOperationWaitRequest]
+    >(waitForWindowOperation, {
+      token,
+      op,
+      target,
+      timeoutMs: 25_000,
+    });
+    if (!observed.ok) throw new Error(observed.reason);
+    expect(observed.value.error).toBeUndefined();
+    return observed.value.result;
+  } catch (error) {
+    await captureDiagnostics(`operation-${op}`);
+    throw error;
+  }
 }
 
 async function switchToLabel(label: string): Promise<void> {
   try {
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        await browser.switchToWindow(handle);
-        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) return true;
-      }
-      return false;
-    }, { timeout: 20_000, timeoutMsg: `window ${label} did not become ready` });
+    await selectWindowByLabel({
+      listHandles: () => browser.getWindowHandles(),
+      switchTo: (handle) => browser.switchToWindow(handle),
+      currentLabel: () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel),
+      pause: (ms) => browser.pause(ms),
+      now: () => Date.now(),
+    }, label, 20_000);
   } catch (error) {
     await captureDiagnostics(`switch-${label}`);
     throw error;
@@ -43,8 +60,14 @@ async function switchToLabel(label: string): Promise<void> {
 
 async function listingHas(name: string) {
   try {
-    await browser.waitUntil(async () => (await domTexts(".explorer-pane .entry-name")).includes(name),
-      { timeout: 20_000, timeoutMsg: `native listing did not contain ${name}` });
+    const observed = await browser.executeAsync<
+      RendererWaitResult<true>,
+      [ListingWaitRequest]
+    >(waitForListingEntry, {
+      name,
+      timeoutMs: 20_000,
+    });
+    if (!observed.ok) throw new Error(observed.reason);
   } catch (error) {
     await captureDiagnostics(`listing-${name}`);
     throw error;
@@ -52,49 +75,19 @@ async function listingHas(name: string) {
 }
 
 async function tabCount() {
-  return await browser.execute(() => document.querySelectorAll(".tab-area > .tab").length);
+  return await browser.execute(() => document.querySelectorAll(".tab-list > .tab").length);
 }
 
-async function captureDiagnostics(reason: string): Promise<void> {
-  const original = await browser.getWindowHandle().catch(() => null);
-  const diagnostics: unknown[] = [];
-  for (const handle of await browser.getWindowHandles()) {
-    try {
-      await browser.switchToWindow(handle);
-      diagnostics.push(await browser.execute((windowHandle, failureReason) => ({
-        reason: failureReason,
-        handle: windowHandle,
-        label: document.documentElement.dataset.e2eWindowLabel ?? null,
-        url: location.href,
-        title: document.title,
-        bodyText: document.body?.textContent?.slice(0, 4_000) ?? null,
-        statusPaths: [...document.querySelectorAll(".status-path")].map((node) => ({
-          text: node.textContent, title: node.getAttribute("title"),
-        })),
-        panes: [...document.querySelectorAll(".explorer-pane")].map((pane) => ({
-          classes: pane.className,
-          text: pane.textContent?.slice(0, 1_500),
-          html: pane.innerHTML.slice(0, 3_000),
-          entries: [...pane.querySelectorAll(".entry-name")].map((node) => node.textContent),
-          error: pane.querySelector(".error-state")?.textContent ?? null,
-          loading: !!pane.querySelector(".loading"),
-        })),
-        activeElement: document.activeElement
-          ? { tag: document.activeElement.tagName, classes: document.activeElement.className }
-          : null,
-        tabCount: document.querySelectorAll(".tab-area > .tab").length,
-        storage: Object.keys(localStorage).filter((key) => key.includes("seed") || key.includes("tabs"))
-          .map((key) => ({ key, value: localStorage.getItem(key)?.slice(0, 2_000) })),
-        operationResult: document.documentElement.dataset.e2eWindowResult ?? null,
-      }), handle, reason));
-    } catch (captureError) {
-      diagnostics.push({ reason, handle, captureError: String(captureError) });
-    }
-  }
-  console.error(`[window-transfer-diagnostics] ${JSON.stringify(diagnostics, null, 2)}`);
-  await browser.saveScreenshot(`/tmp/window-transfer-${reason.replace(/[^a-z0-9-]/gi, "-")}.png`).catch(() => {});
-  if (original && (await browser.getWindowHandles()).includes(original)) {
-    await browser.switchToWindow(original).catch(() => {});
+
+async function expectTransferMoved(
+  moved: { moved: boolean },
+  reason: string,
+): Promise<void> {
+  try {
+    expect(moved.moved).toBe(true);
+  } catch (error) {
+    await captureDiagnostics(reason);
+    throw error;
   }
 }
 
@@ -126,7 +119,6 @@ describe("native window transfer ownership", function () {
       }
       await browser.switchToWindow(mainHandle);
     }
-    fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("concurrent same-path children each become functional and keep independent navigation", async () => {
@@ -176,6 +168,7 @@ describe("native window transfer ownership", function () {
     expect(await tabCount()).toBe(before + 1);
     fs.writeFileSync(path.join(destinationDirectory, "after-transfer.txt"), "native watcher");
     await listingHas("after-transfer.txt");
+    await browser.saveScreenshot("e2e-tauri/logs/ac-2-last-tab-adopted-watcher.png");
     await switchToLabel(childLabels[1]);
     expect(await tabCount()).toBe(unrelatedBefore);
     await listingHas("source.txt");
@@ -191,7 +184,7 @@ describe("native window transfer ownership", function () {
     await navigateTo(destinationDirectory);
     const before = await tabCount();
     const moved = await operation("tear-off") as { moved: boolean; target: string };
-    expect(moved.moved).toBe(true);
+    await expectTransferMoved(moved, "split-transfer-not-moved");
     await browser.waitUntil(async () => await tabCount() === before - 1,
       { timeoutMsg: "transferred split tab did not leave its source strip" });
     await switchToLabel(moved.target);
@@ -201,6 +194,7 @@ describe("native window transfer ownership", function () {
     }, { timeoutMsg: "the adopted split tab lost a pane or its directory" });
     fs.mkdirSync("screenshots/refactor/repo-health-cleanup", { recursive: true });
     await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-window-transfer.png");
+    await browser.saveScreenshot("e2e-tauri/logs/ac-1-correlated-split-transfer.png");
     await browser.switchToWindow(mainHandle);
     await navigateTo(sourceDirectory);
     await listingHas("source.txt");
@@ -237,7 +231,7 @@ describe("native window transfer ownership", function () {
     console.info("[window-transfer-phase] large-layout transfer started");
     const before = await tabCount();
     const moved = await operation("tear-off") as { moved: boolean; target: string };
-    expect(moved.moved).toBe(true);
+    await expectTransferMoved(moved, "large-layout-transfer-not-moved");
     await browser.waitUntil(async () => await tabCount() === before - 1,
       { timeoutMsg: "transferred large tab did not leave its source strip" });
     largeLayoutLabel = moved.target;
@@ -268,6 +262,7 @@ describe("native window transfer ownership", function () {
 
     fs.writeFileSync(path.join(largeLayoutDirectories[0], "after-large-transfer.txt"), "watcher");
     await listingHas("after-large-transfer.txt");
+    await browser.saveScreenshot("e2e-tauri/logs/ac-3-eight-pane-transfer.png");
     console.info("[window-transfer-phase] large-layout transfer completed");
   });
 
@@ -316,6 +311,7 @@ describe("native window transfer ownership", function () {
       await listingHas("destination.txt");
       if (closeCase.kind === "native") {
         await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-window-close.png");
+        await captureDiagnostics("qualification-complete");
       }
       console.info(`[window-transfer-phase] ${closeCase.kind} close completed`);
     });

@@ -13,7 +13,20 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
   });
 }
 
-(process.platform !== "win32" ? describe : describe.skip)("terminal key ownership (#496)", () => {
+// A minimal raw-mode terminal application reports the numeric byte it
+// receives, proving Ctrl+Q reached terminal (PTY/ConPTY) input rather than an
+// Explorer shortcut handler. Unix uses Python's termios/tty raw mode; Windows
+// has no such modules, but ConPTY delivers the same control byte (17) to a
+// console reader, so PowerShell's Console.ReadKey(true) (bypassing normal
+// line processing) is the Windows-correct equivalent (#800).
+const keyProbe = process.platform === "win32"
+  ? "powershell -NoProfile -Command \""
+    + "Write-Output 'key-probe-ready'; "
+    + "$k=[System.Console]::ReadKey($true); "
+    + "Write-Output ('terminal-key-byte=' + [int]$k.KeyChar)\""
+  : 'python3 -c "import os,sys,termios,tty;fd=sys.stdin.fileno();old=termios.tcgetattr(fd);tty.setraw(fd);print(\'key-\'+\'probe-ready\',flush=True);key=os.read(fd,1);termios.tcsetattr(fd,termios.TCSADRAIN,old);print(\'terminal-key-byte=\'+str(key[0]),flush=True)"';
+
+(process.platform === "linux" || process.platform === "win32" ? describe : describe.skip)("terminal key ownership (#496)", () => {
   it("delivers Ctrl+Q to a terminal-hosted application instead of Explorer", async () => {
     // The native WebView keeps its tab layout between test runs. Start from
     // one tab so the two tab-navigation captures have an unambiguous state.
@@ -37,13 +50,10 @@ async function focusTerminalInput(input: ReturnType<typeof $>): Promise<void> {
       timeoutMsg: "shell never became ready for the terminal key probe",
     });
 
-    // A minimal raw-mode terminal application reports the numeric byte it
-    // receives. ASCII 17 proves Ctrl+Q reached terminal input rather than an
-    // Explorer shortcut handler.
-    // Assemble readiness in the program so echoed command text cannot satisfy
-    // the wait before Python enters raw mode.
-    const keyProbe =
-      'python3 -c "import os,sys,termios,tty;fd=sys.stdin.fileno();old=termios.tcgetattr(fd);tty.setraw(fd);print(\'key-\'+\'probe-ready\',flush=True);key=os.read(fd,1);termios.tcsetattr(fd,termios.TCSADRAIN,old);print(\'terminal-key-byte=\'+str(key[0]),flush=True)"';
+    // ASCII 17 (Ctrl+Q) proves the byte reached terminal input rather than an
+    // Explorer shortcut handler. Readiness is assembled inside the probe
+    // program so echoed command text cannot satisfy the wait before it
+    // switches into raw/intercepted key reading.
     await input.addValue(`${keyProbe}\n`);
     await browser.waitUntil(async () => (await terminalText()).includes("key-probe-ready"), {
       timeout: 15_000,

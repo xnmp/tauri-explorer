@@ -8,7 +8,7 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
   let next = 9_000_000_000_000_000n;
   window.addEventListener("e2e-recovery-operation", ((event: CustomEvent<{
     token: string;
-    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many";
+    op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many" | "cancel-copy" | "cancel-move" | "complete-copy" | "complete-move";
     sessionId?: string;
     subscriptionId?: string;
     id?: string;
@@ -26,10 +26,58 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
         signal.throwIfAborted();
         return copyFiles(event.detail.sources!, event.detail.destination!, { onRefresh: () => {}, broadcastToOtherWindows: event.detail.shared });
       }
-      if (op === "copy" || op === "move") {
+      if (op === "cancel-copy" || op === "cancel-move") {
+        const { runOrderedSession } = await import("../lib/api/copy-session");
+        const controller = new AbortController();
+        signal.addEventListener("abort", () => controller.abort(), { once: true });
+        return runOrderedSession(
+          op === "cancel-copy" ? "copy_entries" : "move_entries",
+          event.detail.sources ?? [event.detail.source!],
+          event.detail.destination!,
+          {
+            signal: controller.signal,
+            jobId: Number(++next),
+            // The native conflict remains parked until cancel_copy_session
+            // settles it. A conflict decision would let this test pass even
+            // if abort never reached the session registry.
+            onConflict: () => new Promise<never>(() => {}),
+            onEvent: (sessionEvent) => {
+              if (sessionEvent.type === "conflict") controller.abort();
+            },
+          },
+        );
+      }
+      if (op === "complete-copy" || op === "complete-move") {
+        const { runOrderedSession } = await import("../lib/api/copy-session");
+        return runOrderedSession(
+          op === "complete-copy" ? "copy_entries" : "move_entries",
+          [event.detail.source!],
+          event.detail.destination!,
+          {
+            signal,
+            jobId: Number(++next),
+            onConflict: async () => ({ choice: "overwrite", applyToAll: false }),
+          },
+        );
+      }
+      if (op === "copy") {
+        const { copyEntries } = await import("../lib/api/copy-session");
+        signal.throwIfAborted();
+        const result = await copyEntries([event.detail.source!], event.detail.destination!, {
+          signal,
+          jobId: Number(++next),
+          onConflict: async () => ({ choice: "overwrite", applyToAll: true }),
+        });
+        if (!result.ok) return result;
+        const item = result.data.items[0];
+        return item?.status === "succeeded"
+          ? { ok: true, ...item.receipt }
+          : { ok: false, error: item?.status === "failed" || item?.status === "uncertain" ? item.error : "Copy did not complete" };
+      }
+      if (op === "move") {
         const { performFileTransfer } = await import("../lib/state/file-transfer");
         signal.throwIfAborted();
-        return performFileTransfer(event.detail.source!, event.detail.destination!, op === "copy", {
+        return performFileTransfer(event.detail.source!, event.detail.destination!, {
           overwrite: true, skipConflictCheck: true, onRefresh: () => {},
         });
       }

@@ -1,7 +1,8 @@
 # macOS launch qualification (#192, #688): the automated real-process signal
-# available without a WKWebView WebDriver. Builds embedded assets and records
+# available without UI automation. Builds embedded assets and records
 # bounded release foreground-readiness and hidden warm-activation p50/p95.
 # Native log timing does not qualify presented frames or Dock-bounce/input latency.
+# The separate macos-native-ui workflow pilots Appium Mac2/XCTest outcomes.
 name: macOS Smoke
 
 on:

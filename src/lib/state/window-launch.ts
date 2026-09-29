@@ -206,6 +206,7 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
     };
 
     let child: WebviewWindow | null = null;
+    let requestId: string | null = null;
     let seedKey: string | null = null;
     let seedTimer: ReturnType<typeof setTimeout> | null = null;
     let retired = false;
@@ -242,6 +243,9 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
           retireChild();
           dependencies.reportFailure?.({ label, ...failure });
         }, () => {
+          if (import.meta.env.VITE_E2E_HOOKS === "1") {
+            logFrontendDiagnostic("window native created", { label, requestId });
+          }
           owned = true;
           if (retired) retireChild();
         });
@@ -265,6 +269,7 @@ export function createWindowLauncher(overrides: Partial<WindowLaunchDependencies
       dependencies.sourceWindow(),
       label,
       async (handoff) => {
+        requestId = handoff.requestId;
         if (!publishSeed(tabSeedKey(label), { snapshot: normalizedTabSnapshot, ts: Date.now(), handoff })) {
           throw new Error("Tab snapshot exceeds the window handoff budget");
         }

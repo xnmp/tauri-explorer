@@ -1,8 +1,7 @@
 import { browser, $, expect } from "@wdio/globals";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, basename } from "node:path";
+import { basename } from "node:path";
 import { domText, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 /**
  * Embedded terminal against the real binary (issue #139): a genuine PTY
@@ -30,12 +29,10 @@ async function sendTerminalCommand(
     timeout: 2_000,
     timeoutMsg: "xterm input never received focus",
   });
-  // msedgedriver can deliver a multi-character element Send Keys payload to
-  // xterm/ConPTY out of order. Awaiting one WebDriver command per character
-  // gives the terminal an ordering boundary between key events.
-  for (const character of command) {
-    await browser.keys(character);
-  }
+  // One Send Keys payload. Per-character typing used to hide the app's own
+  // input reordering (#709); keystrokes must now arrive in order however fast
+  // the driver sends them.
+  await input.addValue(command);
   await browser.keys("Enter");
 }
 
@@ -134,7 +131,7 @@ describe("embedded terminal", () => {
       }
       await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
 
-      const target = mkdtempSync(join(tmpdir(), "te-cwd-"));
+      const target = createNativeFixtureDirectory("te-cwd-");
       await navigateTo(target);
 
       const input = await $(".terminal-panel textarea.xterm-helper-textarea");

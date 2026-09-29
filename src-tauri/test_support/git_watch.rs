@@ -363,26 +363,58 @@ fn canceling_one_successful_reply_preserves_a_shared_owners_other_lease() {
 
     let dir = repo();
     let path = dir.path().to_string_lossy().into_owned();
-    let f = fixture();
-    let mut canceled = Box::pin(f.service.acquire(&f.owner, path.clone()));
+    // Hold registration until the first poll has established Pending. The
+    // worker can otherwise send the successful reply before that poll ends.
+    let (entered_tx, entered) = mpsc::channel();
+    let (continue_tx, resume) = mpsc::channel();
+    let (observers_tx, observers) = mpsc::channel();
+    let (events_tx, emitted) = mpsc::channel();
+    let owner = Owner::default();
+    let service = Service::spawn(
+        Box::new(move |_target, callback| {
+            entered_tx.send(()).unwrap();
+            resume.recv_timeout(Duration::from_secs(20)).unwrap();
+            let (dropped_tx, dropped) = mpsc::channel();
+            observers_tx
+                .send(Observed {
+                    callback: Arc::new(Mutex::new(callback)),
+                    dropped,
+                })
+                .unwrap();
+            Ok(Box::new(DropSignal(dropped_tx)) as Observer)
+        }),
+        Box::new(move |key| {
+            events_tx.send(key.to_owned()).unwrap();
+            Ok(())
+        }),
+        Timing {
+            debounce: Duration::from_millis(5),
+            retry: Duration::from_millis(5),
+            retry_cap: Duration::from_millis(20),
+        },
+    )
+    .unwrap();
+    let mut canceled = Box::pin(service.acquire(&owner, path.clone()));
     let mut context = Context::from_waker(Waker::noop());
 
     assert!(matches!(
         canceled.as_mut().poll(&mut context),
         Poll::Pending
     ));
-    let observer = receive(&f.observers);
-    let surviving = run(f.service.acquire(&f.owner, path)).unwrap();
-    assert!(f.observers.try_recv().is_err());
+    receive(&entered);
+    continue_tx.send(()).unwrap();
+    let observer = receive(&observers);
+    let surviving = run(service.acquire(&owner, path)).unwrap();
+    assert!(observers.try_recv().is_err());
 
     drop(canceled);
     // This round trip establishes that request retirement was processed.
-    run(f.service.release(&f.owner, "unknown".into())).unwrap();
+    run(service.release(&owner, "unknown".into())).unwrap();
     assert!(observer.dropped.try_recv().is_err());
     (observer.callback.lock().unwrap())(Ok(notify::Event::new(notify::EventKind::Any)));
-    assert_eq!(receive(&f.emitted), surviving.repo_root);
+    assert_eq!(receive(&emitted), surviving.repo_root);
 
-    run(f.service.release(&f.owner, surviving.id)).unwrap();
+    run(service.release(&owner, surviving.id)).unwrap();
     receive(&observer.dropped);
 }
 

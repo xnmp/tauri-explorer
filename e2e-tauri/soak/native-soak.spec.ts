@@ -5,31 +5,40 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  SOAK_SCENARIOS,
   buildNativeQualificationReport,
+  createNativeFixtureDirectory,
   executeQualificationRun,
+  MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH,
   measureProcessTreeRss,
+  nativeWindowsCleanAfterClose,
   readVerifiedNativeBuildManifest,
   resolveSoakArtifactPaths,
   resolveSoakConfiguration,
+  selectFreshWindowHandle,
+  selectNativeProcessRoot,
+  rollingWebKitSharedMemoryFdGrowth,
   type NativeQualificationReport,
   type NativePlatform,
+  type NativeWindowState,
+  type NativeWindowVisibility,
   type ResourceMeasurement,
   type ScenarioMeasurement,
   type SoakScenario,
 } from "../native-qualification";
 import { domText, entryNames, navigateTo } from "../specs/helpers";
+import { waitForWindowOperation, type WindowOperationResponse, type WindowOperationWaitRequest, type RendererWaitResult } from "../window-transfer-waits";
 
 const configuration = resolveSoakConfiguration(process.env);
 const { durationMs, maxCycles, seed } = configuration;
-const scenarios = SOAK_SCENARIOS;
+const scenarios = configuration.scenarios;
+const harnessCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 
 let scratchRoot = "";
 let workspaceA = "";
 let workspaceB = "";
 
 function initializeScratchWorkspaces(): void {
-  scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tauri-native-soak-"));
+  scratchRoot = createNativeFixtureDirectory("soak-");
   workspaceA = path.join(scratchRoot, "workspace-a");
   workspaceB = path.join(scratchRoot, "workspace-b");
   fs.mkdirSync(workspaceA);
@@ -106,12 +115,30 @@ function processRows(): Array<{
     }));
 }
 
-function sampleNativeRss(
+function countWebKitSharedMemoryFds(pid: number): number {
+  let count = 0;
+  for (const descriptor of fs.readdirSync(`/proc/${pid}/fd`)) {
+    try {
+      if (fs.readlinkSync(`/proc/${pid}/fd/${descriptor}`).includes("WebKitSharedMemory")) count += 1;
+    } catch (error) {
+      // A descriptor can close between enumeration and readlink.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return count;
+}
+
+function sampleNativeResources(
   sampledAtMs: number,
   expectedBinary: string,
 ): ResourceMeasurement {
   const rows = processRows();
-  return measureProcessTreeRss(rows, expectedBinary, sampledAtMs);
+  const rss = measureProcessTreeRss(rows, expectedBinary, sampledAtMs);
+  return process.platform === "linux"
+    ? { ...rss, webKitSharedMemoryFds: countWebKitSharedMemoryFds(
+      selectNativeProcessRoot(rows, expectedBinary).pid,
+    ) }
+    : rss;
 }
 
 async function assertUsable(expectedPath: string): Promise<void> {
@@ -190,29 +217,145 @@ async function interruptSurface(cycle: number): Promise<void> {
   }
 }
 
-async function runWindowWorkspace(cycle: number): Promise<void> {
+async function windowOperation(op: string, target?: string): Promise<unknown> {
+  const observed = await browser.executeAsync<
+    RendererWaitResult<WindowOperationResponse>, [WindowOperationWaitRequest]
+  >(waitForWindowOperation, {
+    token: crypto.randomUUID(), op, target, timeoutMs: 20_000,
+  });
+  if (!observed.ok) throw new Error(observed.reason);
+  if (observed.value.error) throw new Error(observed.value.error);
+  return observed.value.result;
+}
+
+type LabelledWindowVisibility = NativeWindowVisibility & { label: string; warmReady: boolean };
+
+async function visibleWindowHandles(original: string): Promise<LabelledWindowVisibility[]> {
+  const states: LabelledWindowVisibility[] = [];
+  try {
+    for (const handle of await browser.getWindowHandles()) {
+      await browser.switchToWindow(handle);
+      const identity = await browser.execute(() => ({
+        label: document.documentElement.dataset.e2eWindowLabel ?? "",
+        warmReady: document.documentElement.dataset.e2eWarmReady === "1",
+      }));
+      if (!identity.label) continue;
+      await browser.switchToWindow(original);
+      const state = await windowOperation("target-state", identity.label) as { exists?: boolean; visible?: boolean };
+      states.push({
+        handle, label: identity.label, warmReady: identity.warmReady,
+        visible: state.exists === true && state.visible === true,
+      });
+    }
+  } finally {
+    await browser.switchToWindow(original);
+  }
+  return states;
+}
+
+async function runWindowWorkspace(cycle: number): Promise<"warm" | "fresh"> {
+  if (configuration.diagnosticMainOnly) {
+    const mainLabel = await browser.execute(() => document.documentElement.dataset.e2eWindowLabel ?? "");
+    if (!mainLabel) throw new Error("main window identity is unavailable");
+    const target = cycle % 2 === 0 ? workspaceA : workspaceB;
+    const opened = await windowOperation("fresh-open", target) as { kind?: string; label?: string } | null;
+    if (opened?.kind !== "fresh" || !opened.label) throw new Error("fresh window launch did not complete");
+    const childLabel = opened.label;
+    await browser.waitUntil(async () => {
+      const state = await windowOperation("target-readiness", childLabel) as {
+        exists?: boolean; visible?: boolean; readyPath?: string | null;
+      };
+      return state.exists === true && state.visible === true && state.readyPath === target;
+    }, { timeout: 20_000, timeoutMsg: "fresh native window did not present its initial listing" });
+    await windowOperation("native-close", childLabel);
+    await browser.waitUntil(async () => {
+      const states = await windowOperation("window-states") as NativeWindowState[];
+      return nativeWindowsCleanAfterClose(states, mainLabel, childLabel);
+    }, { timeout: 10_000, timeoutMsg: "native close retained a child or visible spare" });
+    const returnPath = cycle % 2 === 0 ? workspaceB : workspaceA;
+    await navigateTo(returnPath);
+    await assertUsable(returnPath);
+    return "fresh";
+  }
   const original = await browser.getWindowHandle();
-  const before = new Set(await browser.getWindowHandles());
-  await browser.keys(["Control", "n"]);
-  await browser.waitUntil(
-    async () =>
-      (await browser.getWindowHandles()).some((handle) => !before.has(handle)),
-    {
+  const mainLabel = await browser.execute(() => document.documentElement.dataset.e2eWindowLabel ?? "");
+  if (!mainLabel) throw new Error("main window identity is unavailable");
+  const target = cycle % 2 === 0 ? workspaceA : workspaceB;
+  const fresh = configuration.diagnosticWindowMode
+    ? configuration.diagnosticWindowMode === "fresh"
+    : cycle % 2 === 0;
+  let parked: LabelledWindowVisibility | undefined;
+  if (!fresh) {
+    await windowOperation("warm-prime");
+    await browser.waitUntil(async () => {
+      parked = (await visibleWindowHandles(original)).find(({ label, visible, warmReady }) =>
+        label.startsWith("explorer-warm-") && !visible && warmReady);
+      return parked !== undefined;
+    }, {
       timeout: 20_000,
-      timeoutMsg: "native new-window command produced no WebDriver window",
-    },
-  );
-  const created = (await browser.getWindowHandles()).find(
-    (handle) => !before.has(handle),
-  );
+      timeoutMsg: "no ready parked warm window before Ctrl+N churn",
+    });
+  }
+  const beforeHandles = await browser.getWindowHandles();
+  let created: string | null = null;
+  let expectedLabel: string;
+  if (fresh) {
+    const opened = await windowOperation("fresh-open", target) as { kind?: string; label?: string } | null;
+    if (opened?.kind !== "fresh" || !opened.label) throw new Error("fresh window launch did not complete");
+    expectedLabel = opened.label;
+    await browser.waitUntil(async () => {
+      created = selectFreshWindowHandle(beforeHandles, await browser.getWindowHandles());
+      if (!created) return false;
+      const state = await windowOperation("target-state", expectedLabel) as { exists?: boolean; visible?: boolean };
+      return state.exists === true && state.visible === true;
+    }, {
+      timeout: 20_000,
+      timeoutMsg: "fresh native window did not become uniquely visible",
+    });
+  } else {
+    if (!parked) throw new Error("ready warm window disappeared before Ctrl+N");
+    expectedLabel = parked.label;
+    created = parked.handle;
+    await browser.keys(["Control", "n"]);
+    await browser.waitUntil(async () => {
+      const state = await windowOperation("target-state", expectedLabel) as { exists?: boolean; visible?: boolean };
+      return state.exists === true && state.visible === true;
+    }, {
+      timeout: 20_000,
+      timeoutMsg: "Ctrl+N did not reveal the ready warm window",
+    });
+  }
   if (!created) throw new Error("new native window handle disappeared");
+  // Do not execute scripts in the parked or retiring WebKit pages after a
+  // launch: that driver command can delete the entire session (#817).
   await browser.switchToWindow(created);
-  await navigateTo(cycle % 2 === 0 ? workspaceA : workspaceB);
-  await assertUsable(cycle % 2 === 0 ? workspaceA : workspaceB);
-  await browser.closeWindow();
+  await assertUsable(target);
+  const expectedEntry = target === workspaceA ? "qualification.md" : "interruptions.txt";
+  await browser.waitUntil(async () => browser.execute((entry) =>
+    document.querySelector(".file-list")?.textContent?.includes(entry) === true,
+  expectedEntry), {
+    timeout: 20_000,
+    timeoutMsg: `new native window did not initially list ${expectedEntry}`,
+  });
+  await navigateTo(target);
+  await assertUsable(target);
+  expect(await browser.execute(() => document.documentElement.dataset.e2eWindowLabel)).toBe(expectedLabel);
+  await browser.execute((token) => window.dispatchEvent(new CustomEvent("e2e-window-operation", {
+    detail: { token, op: "native-close" },
+  })), crypto.randomUUID());
   await browser.switchToWindow(original);
+  await browser.waitUntil(async () => {
+    const handles = await browser.getWindowHandles();
+    if (handles.includes(created!) || handles.length > 2) return false;
+    const states = await windowOperation("window-states") as NativeWindowState[];
+    return nativeWindowsCleanAfterClose(states, mainLabel, expectedLabel);
+  }, {
+    timeout: 10_000,
+    timeoutMsg: "native close retained a child or left a visible spare window",
+  });
   await navigateTo(cycle % 2 === 0 ? workspaceB : workspaceA);
   await assertUsable(cycle % 2 === 0 ? workspaceB : workspaceA);
+  return fresh ? "fresh" : "warm";
 }
 
 async function runPluginChurn(): Promise<void> {
@@ -316,6 +459,8 @@ async function runPreviewNativeInput(cycle: number): Promise<void> {
       timeoutMsg: `native Ctrl+Home did not visibly select ${filename}`,
     },
   );
+  if (!(await $(".preview-pane").isExisting())) await browser.keys(" ");
+  await $(".preview-pane").waitForDisplayed();
   if (filename.endsWith(".md")) {
     await browser.waitUntil(async () =>
       (await domText(".preview-markdown")).includes("Native qualification"),
@@ -334,7 +479,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const scenarioActions: Record<SoakScenario, (cycle: number) => Promise<void>> =
+const scenarioActions: Record<SoakScenario, (cycle: number) => Promise<void | "warm" | "fresh">> =
   {
     "window-workspace": runWindowWorkspace,
     "plugin-churn": async () => runPluginChurn(),
@@ -375,11 +520,13 @@ describe("extended real-native qualification soak", () => {
     const report = await executeQualificationRun<NativeQualificationReport>({
       outputPath: reportPath,
       execute: async (runErrors) => {
-        const sampleResource = (stage: string): void => {
+        const sampleResource = (stage: string): ResourceMeasurement | undefined => {
           try {
-            resources.push(sampleNativeRss(Date.now() - started, build.binary));
+            const sample = sampleNativeResources(Date.now() - started, build.binary);
+            resources.push(sample);
+            return sample;
           } catch (error) {
-            runErrors.push(`${stage} RSS unavailable: ${errorText(error)}`);
+            runErrors.push(`${stage} native resource sample unavailable: ${errorText(error)}`);
           }
         };
 
@@ -422,15 +569,22 @@ describe("extended real-native qualification soak", () => {
               const failureArtifacts: string[] = [];
               try {
                 await interruptSurface(cycle);
-                await scenarioActions[scenario](cycle);
+                const windowMode = await scenarioActions[scenario](cycle);
                 await assertExplorerUsable();
-                sampleResource(`cycle ${cycle} ${scenario}`);
+                const resource = sampleResource(`cycle ${cycle} ${scenario}`);
+                if (scenario === "window-workspace" && resource && platform.os === "linux") {
+                  const fdGrowth = rollingWebKitSharedMemoryFdGrowth(resources);
+                  if (fdGrowth !== null && fdGrowth > MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH) {
+                    throw new Error(`WebKit shared-memory descriptors grew ${fdGrowth}, above ${MAX_WEBKIT_SHARED_MEMORY_FD_GROWTH}`);
+                  }
+                }
                 measurements.push({
                   id: scenario,
                   cycle,
                   durationMs: Date.now() - scenarioStarted,
                   outcome: "passed",
                   failureArtifacts,
+                  ...(windowMode ? { windowMode } : {}),
                 });
               } catch (error) {
                 const artifactDir = artifactPaths.failureDirectory;
@@ -464,14 +618,17 @@ describe("extended real-native qualification soak", () => {
               }
             }
           }
+          fs.mkdirSync(artifactPaths.failureDirectory, { recursive: true });
+          await browser.saveScreenshot(path.join(artifactPaths.failureDirectory, "completed-cycle.png"));
         } finally {
           sampleResource("final");
-          if (scratchRoot)
-            fs.rmSync(scratchRoot, { recursive: true, force: true });
+          // The runner removes fixtures after native processes exit. Windows
+          // can retain directory handles while this session remains alive.
         }
       },
       createReport: (runErrors) =>
         buildNativeQualificationReport({
+          harnessCommit,
           build,
           platform,
           configuration,

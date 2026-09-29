@@ -5,6 +5,16 @@ use serde::{Deserialize, Serialize};
 
 pub(super) const MAX_ERROR_BYTES: usize = 16 * 1024;
 
+/// A recorded error cut to the journal's bound at a character boundary.
+pub(super) fn bounded_error(mut message: String) -> String {
+    let mut end = message.len().min(MAX_ERROR_BYTES);
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    message.truncate(end);
+    message
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LockIdentity {
@@ -185,8 +195,9 @@ pub(crate) struct ReplacementState {
     /// Measured size of the currently retained private artifact, in bytes.
     /// Legacy checkpoints and every confirmed content transition are
     /// unmeasured: the retained artifact changes identity, so a previous
-    /// measurement is evidence about a different payload (ADR 0023).
-    #[serde(default)]
+    /// measurement is evidence about a different payload (ADR 0023). Omitted
+    /// while absent so builds that predate the field can still decode it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_bytes: Option<u64>,
     pub root: Option<ObjectId>,
     pub phase: Phase,
@@ -372,17 +383,11 @@ impl ReplacementSpec {
         Ok(())
     }
 
-    fn validate_root(
-        &self,
-        resources: &[super::resources::Resource],
-        root: ObjectId,
-    ) -> std::io::Result<()> {
+    fn validate_root(&self, root: ObjectId) -> std::io::Result<()> {
         if !root.same_volume(self.parent)
             || root == self.parent
             || root == self.original.object
-            || resources
-                .iter()
-                .any(|resource| resource.path == self.source && resource.object == Some(root))
+            || root == self.source_version.object
         {
             return Err(invalid(
                 "Recovery artifact root aliases a user object or lies on another device",
@@ -418,11 +423,9 @@ impl OperationState {
     pub(super) fn validate(&self, intent: &DurableIntent) -> std::io::Result<()> {
         match (&intent.operation, self) {
             (OperationSpec::CopyReplacement(spec), Self::Replacement(state)) => {
-                state.validate(spec, &intent.resources)
+                state.validate(spec)
             }
-            (OperationSpec::Move(spec), Self::Move(state)) => {
-                state.validate(spec, &intent.resources)
-            }
+            (OperationSpec::Move(spec), Self::Move(state)) => state.validate(spec),
             _ => Err(invalid(
                 "Recovery checkpoint kind disagrees with its immutable intent",
             )),
@@ -432,11 +435,7 @@ impl OperationState {
 
 #[cfg(unix)]
 impl ReplacementState {
-    fn validate(
-        &self,
-        spec: &ReplacementSpec,
-        resources: &[super::resources::Resource],
-    ) -> std::io::Result<()> {
+    fn validate(&self, spec: &ReplacementSpec) -> std::io::Result<()> {
         let root_required = !matches!(self.phase, Phase::Planned | Phase::RootIntent);
         let publication_required = matches!(
             self.phase,
@@ -471,7 +470,7 @@ impl ReplacementState {
             ));
         }
         if let Some(root) = self.root {
-            spec.validate_root(resources, root)?;
+            spec.validate_root(root)?;
         }
         if let Some(published) = &self.published {
             published.validate()?;
@@ -497,9 +496,7 @@ impl LocalManifest {
     pub(super) fn validate(&self, opened_root: ObjectId) -> std::io::Result<()> {
         self.intent.validate()?;
         match &self.intent.operation {
-            OperationSpec::CopyReplacement(spec) => {
-                spec.validate_root(&self.intent.resources, self.root)?
-            }
+            OperationSpec::CopyReplacement(spec) => spec.validate_root(self.root)?,
             OperationSpec::Move(_) => {
                 return Err(invalid(
                     "Move artifact manifests require their root-specific native owner",

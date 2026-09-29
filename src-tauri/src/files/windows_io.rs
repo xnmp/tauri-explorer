@@ -11,8 +11,15 @@ pub(super) fn io_error(error: Error) -> io::Error {
     }
 }
 
+/// `RtlNtStatusToDosError` returns this for a status it cannot map.
+const ERROR_MR_MID_NOT_FOUND: u32 = 317;
+
 pub(super) fn nt_error(status: windows::Win32::Foundation::NTSTATUS) -> io::Error {
     // SAFETY: status conversion has no borrowed memory or ownership effects.
     let code = unsafe { windows::Win32::Foundation::RtlNtStatusToDosError(status) };
+    if code == ERROR_MR_MID_NOT_FOUND {
+        // Keep the native status rather than an unrelated message-table error.
+        return io::Error::other(format!("NTSTATUS {:#010x}", status.0 as u32));
+    }
     io::Error::from_raw_os_error(code as i32)
 }

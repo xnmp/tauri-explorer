@@ -289,6 +289,10 @@ fn a_tree_is_removed_without_following_inner_links_or_special_files() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "APFS rejects names that are not valid UTF-8 (EILSEQ)"
+)]
 fn non_unicode_leaves_and_parents_are_deleted_exactly() {
     let root = tempfile::tempdir().unwrap();
     let parent = root
@@ -746,4 +750,42 @@ fn birth_time_is_captured_where_the_filesystem_reports_it() {
     // must at least match the live object so a mismatch path is meaningful.
     assert_eq!(unix::birth_of_path_for_test(&source).unwrap(), before);
     execute(&mut deletion, &source, no_hook).unwrap();
+}
+
+#[test]
+#[ignore = "spawned by the restrictive umask test"]
+fn subprocess_restrictive_umask_deletion() {
+    let Ok(root) = std::env::var("EXPLORER_DELETE_UMASK_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    // SAFETY: umask only replaces this child's creation mask.
+    unsafe { libc::umask(0o277) };
+    delete(&root.join("file")).unwrap();
+    delete(&root.join("tree")).unwrap();
+}
+
+#[test]
+fn a_restrictive_umask_cannot_break_permanent_deletion() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("file"), b"selected bytes").unwrap();
+    fs::create_dir_all(root.path().join("tree/nested")).unwrap();
+    fs::write(root.path().join("tree/nested/leaf"), b"leaf").unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "files::permanent_delete::tests::subprocess_restrictive_umask_deletion",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("EXPLORER_DELETE_UMASK_ROOT", root.path())
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "restrictive umask deletion failed: {status}"
+    );
+    assert!(fs::symlink_metadata(root.path().join("file")).is_err());
+    assert!(fs::symlink_metadata(root.path().join("tree")).is_err());
+    assert!(staging(root.path()).is_empty());
 }

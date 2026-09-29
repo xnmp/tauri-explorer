@@ -3,8 +3,11 @@ import { startWindowSessionProbe } from "../src/test-support/window-session-prob
 const navigate = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
 vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: {
   windowLabel: "test-window", getActiveExplorer: () => ({ navigateTo: navigate }),
+  whenNativeCloseObserved: () => Promise.resolve(false),
 } }));
 vi.mock("$lib/state/warm-window", () => ({ spawnWarmWindow: async () => {} }));
+const launch = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock("$lib/state/window-launch", () => ({ createWindowLauncher: launch.create }));
 const pool = vi.hoisted(() => {
   let release!: () => void;
   const imported = new Promise<void>(resolve => { release = resolve; });
@@ -27,6 +30,22 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("page-owned native test hooks", () => {
+  it("uses the request token as the fresh native window label before acknowledging launch", async () => {
+    launch.create.mockImplementation(({ uuid }: { uuid: () => string }) =>
+      async () => ({ kind: "fresh", label: `explorer-${uuid()}` }));
+    const lifetime = new AbortController();
+    startWindowSessionProbe(lifetime.signal);
+    window.dispatchEvent(new CustomEvent("e2e-window-operation", {
+      detail: { token: "planned-child", op: "fresh-open", target: "/fixture" },
+    }));
+    await vi.waitFor(() => expect(dataset.e2eWindowResult).toBeDefined());
+    expect(JSON.parse(dataset.e2eWindowResult)).toEqual({
+      token: "planned-child",
+      result: { kind: "fresh", label: "explorer-planned-child" },
+    });
+    lifetime.abort();
+  });
+
   it("retires handlers and prevents an old navigation completion overwriting its replacement", async () => {
     let finish!: (value: boolean) => void;
     navigate.mockReturnValue(new Promise(resolve => { finish = resolve; }));

@@ -153,6 +153,13 @@ impl Progress {
     }
 }
 
+/// Errnos that, from an exactly unchanged probe namespace, mean the volume lacks
+/// exclusive rename. macOS `renameatx_np(RENAME_EXCL)` reports `ENOTSUP` (45);
+/// its distinct `EOPNOTSUPP` (102) is the socket error. Linux defines both as 95.
+pub(super) fn unsupported_exclusive_rename(errno: i32) -> bool {
+    [libc::ENOSYS, libc::ENOTSUP, libc::EOPNOTSUPP, libc::EINVAL].contains(&errno)
+}
+
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
@@ -160,7 +167,6 @@ fn invalid(message: &str) -> io::Error {
 pub(super) fn validate(
     spec: &super::move_model::MoveSpec,
     state: &super::move_model::MoveState,
-    resources: &[super::resources::Resource],
 ) -> io::Result<()> {
     use super::move_model::MovePhase;
     if state.phase == MovePhase::Aborted && spec.rename_probes.is_none() {
@@ -204,7 +210,7 @@ pub(super) fn validate(
     // Removed probe identities may be reused by later artifact creation; they
     // cannot be compared against newly created move-root identities.
     let mut prior_removed = true;
-    for ((plan, _, parent), step) in spec.probe_plans().zip(&progress.steps) {
+    for ((_, _, parent), step) in spec.probe_plans().zip(&progress.steps) {
         if !prior_removed && !matches!(step, Step::Planned) {
             return Err(invalid("Rename probes must execute in order"));
         }
@@ -231,7 +237,7 @@ pub(super) fn validate(
                 (*root, file.as_ref())
             }
         };
-        spec.validate_root(resources, plan, parent, root)?;
+        spec.validate_root(parent, root)?;
         if !objects.insert(root) {
             return Err(invalid("Probe root aliases other evidence"));
         }
@@ -248,3 +254,7 @@ pub(super) fn validate(
     }
     Ok(())
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../../test_support/recovery_move_capability_model.rs"]
+mod tests;

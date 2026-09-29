@@ -1,19 +1,18 @@
 # ADR 0020: Durable file recovery
 
-Status: Proposed — implementation and crash/platform acceptance outstanding.
+Status: Proposed for default enablement and cross-platform support. Durable
+copy and move recovery are implemented on Linux behind independent opt-in
+features; Windows/macOS recovery adapters and final platform acceptance remain
+outstanding.
 
-Release policy (2026-09-09): creation of new durable replacement-copy records is
-opt-in through Cargo's `durable-copy-recovery` feature; retirement now exists
-(#687, [ADR 0023](0023-recovery-artifact-retention.md)), and the remaining gate on
-default enablement is native acceptance rather than unbounded retention. Default
-builds keep transient admission and staged overwrites. Existing recovery
-discovery, restore and history remain available. Executable durable moves are
-implemented (#685) behind the independent `durable-move-recovery` feature, opt-in
-for the same reason plus its own outstanding retirement plan: ADR 0023 lists a
-Move record, measures its roots and never retires it automatically, but the
-retirement plan naming which of a move's artifacts may be removed is not written
-yet, so a parked cross-filesystem source and a displaced overwrite target remain
-retained bytes only an explicit user decision can reclaim.
+Release policy (2026-09-09): creation of durable copy and move records remains
+opt-in through `durable-copy-recovery` and `durable-move-recovery`. Default builds
+keep transient admission and staged overwrites. Existing recovery discovery,
+restore and history remain available. [ADR 0023](0023-recovery-artifact-retention.md)
+defines bounded retention and journaled retirement for replacement and move
+records. Linux implementation and targeted native acceptance exist; default
+enablement is a release-owner decision (plan D1), and non-Linux adapters remain
+outside the implemented scope (plan D2).
 The frozen release scope in `docs/review-completion.md` supersedes broader
 implementation prerequisites below.
 
@@ -1005,10 +1004,32 @@ executes the actual no-replace primitive to an absent name, verifies its identit
 and removes its file and root with journaled intent and directory barriers.
 Later move transitions require every probe's successful terminal checkpoint.
 There is no filesystem allowlist or cache; this adds per-move I/O to the opt-in
-recovery path and is not presented as a performance improvement.
+recovery path and is not presented as a performance improvement. Per moved
+entry and volume that is roughly five journal commits and six directory or file
+syncs, and the probe root's creation and removal are visible to directory
+watchers. Caching a proven capability per (device, mount) would change what an
+intent proves and is left to an owner decision (#760).
 
-Only ENOSYS, EOPNOTSUPP or EINVAL with an exactly unchanged probe namespace means
-unsupported capability. The move is rejected after its owned probes are cleaned
+A probe renames inside one directory, so it cannot observe a cross-mount
+`EXDEV`. Bind mounts share `st_dev`, so a move between two mounts of one device
+would choose `Rename` and fail at publication. Binding compares `STATX_MNT_ID`
+when devices match and refuses differing mounts before any record exists.
+Kernels without it (`ENOSYS`, `EINVAL`) and seccomp profiles that reject `statx`
+(`EPERM`) keep the device comparison rather than refusing every move. Supporting
+such moves through the cross-volume layout needs a recorded mount identity in
+`MoveSpec`. `rename(2)` also refuses an endpoint that is itself a mount point
+(`EBUSY`), which a cross-volume move would meet only when parking its source
+beside the published copy. Binding therefore refuses a source, or an existing
+destination, whose mount id differs from its parent's (its device, where mount
+ids are unavailable) before any record exists.
+
+Probe files and directories are private storage, so they are created owner-only
+and their owner access is restored explicitly when a restrictive umask (for
+example `0277`) strips it at creation; user-visible directories keep honoring
+the umask.
+
+Only ENOSYS, EOPNOTSUPP (on Darwin also its distinct ENOTSUP spelling) or EINVAL
+with an exactly unchanged probe namespace means unsupported capability. The move is rejected after its owned probes are cleaned
 and the record durably aborted. Permission, space and I/O failures, ambiguous
 rename outcomes, foreign entries and substituted identities preserve evidence.
 An interrupted probe can be inspected and explicitly discarded through File

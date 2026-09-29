@@ -65,6 +65,7 @@ pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bo
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
+    let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
     list_directory_with(path, scan_directory_with_diagnostics).await
 }
 
@@ -296,6 +297,14 @@ fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) 
 /// snapshot directly avoids paced transport batches and partial-success states.
 #[tauri::command]
 pub async fn list_directory_fresh(path: String) -> Result<DirectoryListing, AppError> {
+    let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
+    list_directory_for_lease(path).await
+}
+
+// Scan the identity admitted by a watch without resolving filesystem spelling
+// again: a case-only rename between registration and scanning must not split
+// the returned listing path from its lease/event path.
+async fn list_directory_for_lease(path: String) -> Result<DirectoryListing, AppError> {
     let started_at = Instant::now();
     log::info!("navigation list_directory_fresh requested: path={path:?}");
     let dir_path = PathBuf::from(&path);
@@ -359,8 +368,8 @@ pub async fn start_observed_directory(
     session_id: String,
 ) -> Result<ObservedDirectoryListing, AppError> {
     let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
-    let pending = super::fs_watcher::observe_directory(owner.clone(), path.clone()).await?;
-    let listing = list_directory_fresh(path).await?;
+    let pending = super::fs_watcher::observe_directory(owner.clone(), path).await?;
+    let listing = list_directory_for_lease(pending.path().to_owned()).await?;
     if !owner.active() {
         return Err(AppError::Other(
             "Native resource renderer was replaced".into(),
@@ -377,6 +386,41 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn observed_scan_preserves_the_admitted_path_identity() {
+        let root = tempdir().unwrap();
+        let directory = root.path().join("Folder");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("entry.txt"), "observed contents").unwrap();
+        let admitted = root
+            .path()
+            .join(".")
+            .join("Folder")
+            .to_string_lossy()
+            .into_owned();
+        let listing =
+            tauri::async_runtime::block_on(list_directory_for_lease(admitted.clone())).unwrap();
+        assert_eq!(listing.path, admitted);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "entry.txt");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn observed_scan_keeps_lease_spelling_after_case_only_rename() {
+        let root = tempdir().unwrap();
+        let directory = root.path().join("Folder");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("entry.txt"), "observed contents").unwrap();
+        let admitted = super::super::directory_identity::resolve(&directory.to_string_lossy());
+        fs::rename(&directory, root.path().join("FOLDER")).unwrap();
+        let listing =
+            tauri::async_runtime::block_on(list_directory_for_lease(admitted.clone())).unwrap();
+        assert_eq!(listing.path, admitted);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "entry.txt");
+    }
 
     #[test]
     fn observed_snapshot_keeps_its_lease_outside_the_transport_columns() {

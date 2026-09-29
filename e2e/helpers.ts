@@ -34,6 +34,12 @@ export const MULTI_SELECT_MODIFIER: "Meta" | "Control" =
 /** Home URL for most tests */
 export const HOME_URL = "/?path=/home/user";
 
+/** Every built-in theme id (src/lib/themes/*.css). */
+export const BUILT_IN_THEMES = [
+  "aurora", "catppuccin", "dark", "desert", "gruvbox", "hacker",
+  "horizon", "light", "nord", "ocean-blue", "solarized-light", "tahoe",
+] as const;
+
 /** Wait for the file list to be populated with entry items */
 export async function waitForEntries(page: Page) {
   await page.waitForSelector(".file-list");

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "1.10.0"
+version = "1.11.0"
 description = "A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 authors = ["xnmp"]
 license = "MIT"
@@ -135,3 +135,6 @@ opt-level = 3
 # Tracks crabnebula-dev/drag-rs#72.
 [patch.crates-io]
 drag = { path = "vendor/drag" }
+# Keep the WebKit IPC signal callback from retaining its owning WebView after
+# native close. Remove this patch when the fix ships in upstream Wry.
+wry = { path = "vendor/wry" }

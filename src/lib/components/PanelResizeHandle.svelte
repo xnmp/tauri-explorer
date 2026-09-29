@@ -19,5 +19,5 @@
     cursor: ew-resize; touch-action: none; z-index: 1; background: transparent; }
   .outset { right: -3px; width: 6px; z-index: 10; }
   .resize-handle:hover, .resizing { background: var(--accent); }
-  .resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .resize-handle:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
 </style>

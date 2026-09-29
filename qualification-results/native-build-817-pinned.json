@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "75859d97f7b91ad1c46a9d357dc16a2ac4b13f9b",
+  "profile": "debug-custom-protocol-e2e-hooks",
+  "buildCommand": [
+    "bun",
+    "run",
+    "tauri",
+    "build",
+    "--no-bundle",
+    "--debug"
+  ],
+  "startedAt": "2026-09-27T09:28:44.528Z",
+  "completedAt": "2026-09-27T09:29:07.228Z",
+  "binary": "/home/chong/Repos/tauri-explorer/.claude/worktrees/linux-retention-soak/src-tauri/target/debug/tauri-explorer",
+  "binarySha256": "0067945418da5f5b35cf72f50517d6488c592a91923f00c49cee6a9015cb81ce",
+  "binaryBytes": 682973120,
+  "binaryModifiedAt": "2026-09-27T09:29:07.027Z"
+}

@@ -75,7 +75,12 @@ fn issue_651_real_streaming_command_reuses_refreshes_and_cancels_listings() {
     let overlap_parent =
         tempfile::tempdir_in(fixture_parent.path()).expect("overlapping parent search root");
     let rewatched = tempfile::tempdir_in(fixture_parent.path()).expect("rewatched search root");
-    let retired = tempfile::tempdir_in(fixture_parent.path()).expect("retired-owner search root");
+    // Keep the owner-retirement cache assertion off the parent watched by the
+    // earlier fixtures. On macOS, a parent event accepted before this root is
+    // registered may be delivered after registration and conservatively
+    // attributed to the new root. That valid invalidation would make the
+    // retirement assertion count an unrelated second scan.
+    let retired = tempfile::tempdir().expect("independent retired-owner search root");
     let cancelled_root =
         tempfile::tempdir_in(fixture_parent.path()).expect("cancelled search root");
     let racing_root = tempfile::tempdir_in(fixture_parent.path()).expect("racing search root");

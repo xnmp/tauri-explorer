@@ -379,6 +379,10 @@ where
 pub(super) struct PendingLease(Option<Lease>);
 
 impl PendingLease {
+    pub fn path(&self) -> &str {
+        &self.0.as_ref().expect("pending directory lease").path
+    }
+
     pub fn take(mut self) -> Lease {
         self.0.take().expect("pending directory lease")
     }
@@ -419,6 +423,7 @@ async fn acquire_pending_directory(
 ) -> Result<PendingLease, AppError> {
     let (send, receive) = tokio::sync::oneshot::channel();
     tauri::async_runtime::spawn_blocking(move || {
+        let path = super::directory_identity::resolve(&path);
         let result = with_watcher(|watcher| {
             if observed {
                 watcher.observe(&owner, path)

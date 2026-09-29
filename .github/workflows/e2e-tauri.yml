@@ -5,7 +5,24 @@ on:
     branches: [dev, main]
   push:
     branches: [dev, main]
+  # Scoped dispatches diagnose #715 and #710; only the default full run counts toward
+  # the W2.4 five-run Windows smoke gate.
   workflow_dispatch:
+    inputs:
+      native_scope:
+        description: Native suite scope for a manual diagnostic run
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - clipboard
+          - transfer
+      clipboard_runs:
+        description: Fresh clipboard-spec sessions (1-10; clipboard scope only)
+        type: number
+        required: true
+        default: 1
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -19,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON((inputs.native_scope == 'clipboard' || inputs.native_scope == 'transfer') && '["windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the
@@ -265,10 +282,41 @@ jobs:
       - name: Run smoke suite (Windows)
         if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' && steps.webview_driver.outcome == 'success' }}
         timeout-minutes: 15
+        shell: bash
         env:
           VITE_E2E_NO_WARM_PRIME: "1"
           RUST_LOG: debug
-        run: bun run test:e2e:tauri
+          NATIVE_SCOPE: ${{ inputs.native_scope || 'all' }}
+          CLIPBOARD_RUNS: ${{ inputs.clipboard_runs || 1 }}
+        run: |
+          set -euo pipefail
+          if [[ "$NATIVE_SCOPE" == 'clipboard' ]]; then
+            if [[ ! "$CLIPBOARD_RUNS" =~ ^([1-9]|10)$ ]]; then
+              echo "::error::clipboard_runs must be between 1 and 10"
+              exit 2
+            fi
+            failures=0
+            for ((i = 1; i <= CLIPBOARD_RUNS; i++)); do
+              printf 'Clipboard diagnostic session %s/%s\n' "$i" "$CLIPBOARD_RUNS"
+              if bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/context-clipboard.spec.ts; then
+                printf 'Clipboard diagnostic session %s passed\n' "$i"
+              else
+                printf 'Clipboard diagnostic session %s failed\n' "$i"
+                failures=$((failures + 1))
+              fi
+            done
+            if (( failures > 0 )); then
+              echo "::error::$failures clipboard diagnostic session(s) failed"
+              exit 1
+            fi
+          elif [[ "$NATIVE_SCOPE" == 'transfer' ]]; then
+            bunx wdio run e2e-tauri/wdio.conf.ts --spec e2e-tauri/specs/window-transfer-lifetime.spec.ts
+          elif [[ "$NATIVE_SCOPE" == 'all' ]]; then
+            bun run test:e2e:tauri
+          else
+            echo "::error::Unknown native_scope: $NATIVE_SCOPE"
+            exit 2
+          fi
 
       # Tauri writes frontend/native failures outside the checkout. In particular,
       # WebKitWebDriver need not forward the app's stdout to tauri-driver.

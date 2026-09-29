@@ -12,6 +12,7 @@ import {
   executeLoggedQualificationProcess,
   measureProcessTreeRss,
   parseAttributedMacStartupLog,
+  resetSoakWorkerLogDirectory,
   resolveQualificationArtifactPath,
   resolveSoakArtifactPaths,
   resolveSoakConfiguration,
@@ -298,6 +299,84 @@ describe("native qualification process boundaries", () => {
     }
   });
 
+  it("retains fixtures on both filesystems until one worker teardown completes", async () => {
+    const environment: NodeJS.ProcessEnv = {};
+    let stops = 0;
+    const hooks = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
+      additionalFixtureRoots: [{ stateEnvironmentKey: "SECOND_FIXTURE_ROOT", temporaryRoot: os.tmpdir() }],
+      stop: async () => {
+        stops++;
+        expect(fs.readFileSync(path.join(first, "proof"), "utf8")).toBe("first");
+        expect(fs.readFileSync(path.join(second, "proof"), "utf8")).toBe("second");
+      },
+    });
+    hooks.prepare();
+    const first = environment.TAURI_NATIVE_CLEANUP_STATE_DIRECTORY!;
+    const second = environment.SECOND_FIXTURE_ROOT!;
+    try {
+      expect(second).toBeTruthy();
+      expect(second).not.toBe(first);
+      fs.writeFileSync(path.join(first, "proof"), "first");
+      fs.writeFileSync(path.join(second, "proof"), "second");
+      await hooks.cleanup();
+      expect(stops).toBe(1);
+      expect(fs.existsSync(first) && fs.existsSync(second)).toBe(true);
+      hooks.complete();
+      expect(fs.existsSync(first) || fs.existsSync(second)).toBe(false);
+      expect(environment.SECOND_FIXTURE_ROOT).toBeUndefined();
+    } finally {
+      hooks.complete();
+    }
+  });
+
+  it("rolls back prepared roots when another fixture volume cannot be prepared", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "native-prepare-rollback-"));
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment, temporaryRoot: parent, stateEnvironmentKey: "PRIMARY",
+      additionalFixtureRoots: [{ stateEnvironmentKey: "SECONDARY", temporaryRoot: path.join(parent, "missing") }],
+      stop: async () => {},
+    });
+    try {
+      expect(() => hooks.prepare()).toThrow();
+      expect(fs.readdirSync(parent)).toEqual([]);
+      expect(environment.PRIMARY).toBeUndefined();
+      expect(environment.SECONDARY).toBeUndefined();
+    } finally {
+      hooks.complete();
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the second fixture volume even when primary removal fails", () => {
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment, stateEnvironmentKey: "PRIMARY",
+      additionalFixtureRoots: [{ stateEnvironmentKey: "SECONDARY", temporaryRoot: os.tmpdir() }],
+      stop: async () => {},
+    });
+    hooks.prepare();
+    const first = environment.PRIMARY!;
+    const second = environment.SECONDARY!;
+    const remove = fs.rmSync;
+    const spy = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (target === first) throw new Error("primary locked");
+      return remove(target, options);
+    });
+    try {
+      expect(second).toBeTruthy();
+      expect(() => hooks.complete()).toThrow("primary locked");
+      expect(fs.existsSync(second)).toBe(false);
+      expect(environment.SECONDARY).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+      fs.rmSync(first, { recursive: true, force: true });
+      if (second) fs.rmSync(second, { recursive: true, force: true });
+    }
+  });
+
   it("refuses unowned native fixtures and nested fixture prefixes", () => {
     expect(() => createNativeFixtureDirectory("fixture-", {})).toThrow("ownership is unavailable");
     expect(() => createNativeFixtureDirectory("../escape-", {
@@ -312,6 +391,7 @@ describe("native qualification process boundaries", () => {
       environment,
       stateEnvironmentKey: "NATIVE_CLEANUP_TEST_STATE",
       temporaryRoot: dir,
+      additionalFixtureRoots: [{ stateEnvironmentKey: "NATIVE_SECONDARY_TEST_STATE", temporaryRoot: dir }],
       stop: async () => {
         throw new Error("WebDriver remained alive after SIGKILL");
       },
@@ -319,7 +399,9 @@ describe("native qualification process boundaries", () => {
 
     hooks.prepare();
     const markerDirectory = environment.NATIVE_CLEANUP_TEST_STATE;
+    const secondaryDirectory = environment.NATIVE_SECONDARY_TEST_STATE;
     expect(markerDirectory).toBeTruthy();
+    expect(secondaryDirectory).toBeTruthy();
     await expect(hooks.cleanup()).rejects.toThrow(
       "WebDriver remained alive after SIGKILL",
     );
@@ -327,12 +409,54 @@ describe("native qualification process boundaries", () => {
     expect(() => hooks.complete()).toThrow(
       "native qualification cleanup failed: WebDriver remained alive after SIGKILL",
     );
-    expect(fs.existsSync(markerDirectory!)).toBe(false);
-    expect(environment.NATIVE_CLEANUP_TEST_STATE).toBeUndefined();
+    expect(fs.existsSync(markerDirectory!)).toBe(true);
+    expect(fs.existsSync(secondaryDirectory!)).toBe(true);
+    expect(environment.NATIVE_CLEANUP_TEST_STATE).toBe(markerDirectory);
+    expect(environment.NATIVE_SECONDARY_TEST_STATE).toBe(secondaryDirectory);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("reports a failed marker-directory removal alongside already-collected cleanup failures, retrying first", async () => {
+  it("preserves both roots if a worker starts but afterSession never confirms process exit", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "NATIVE_CLEANUP_TEST_STATE",
+      temporaryRoot: dir,
+      additionalFixtureRoots: [{ stateEnvironmentKey: "NATIVE_SECONDARY_TEST_STATE", temporaryRoot: dir }],
+      stop: async () => {},
+    });
+    hooks.prepare();
+    const first = environment.NATIVE_CLEANUP_TEST_STATE!;
+    const second = environment.NATIVE_SECONDARY_TEST_STATE!;
+    hooks.begin();
+    expect(() => hooks.complete()).toThrow("without confirming process exit");
+    expect(fs.existsSync(first)).toBe(true);
+    expect(fs.existsSync(second)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("removes owned roots only after a started worker confirms process exit", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
+    const environment: NodeJS.ProcessEnv = {};
+    const hooks = createNativeProcessCleanupHooks({
+      environment,
+      stateEnvironmentKey: "NATIVE_CLEANUP_TEST_STATE",
+      temporaryRoot: dir,
+      stop: async () => {},
+    });
+    hooks.prepare();
+    const root = environment.NATIVE_CLEANUP_TEST_STATE!;
+    hooks.begin();
+    expect(fs.readdirSync(root)).toHaveLength(1);
+    await hooks.cleanup();
+    expect(fs.readdirSync(root)).toEqual([]);
+    hooks.complete();
+    expect(fs.existsSync(root)).toBe(false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("preserves fixture roots when cleanup markers cannot be read", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-cleanup-hook-"));
     const environment: NodeJS.ProcessEnv = {};
     const hooks = createNativeProcessCleanupHooks({
@@ -351,26 +475,9 @@ describe("native qualification process boundaries", () => {
     );
     expect(fs.readdirSync(markerDirectory)).toHaveLength(1);
 
-    const rmSyncSpy = vi
-      .spyOn(fs, "rmSync")
-      .mockImplementationOnce(() => {
-        throw new Error("EBUSY: resource busy or locked");
-      });
-    try {
-      expect(() => hooks.complete()).toThrow(
-        "native qualification cleanup failed: WebDriver remained alive after SIGKILL; " +
-          "failed to remove cleanup marker directory: EBUSY: resource busy or locked",
-      );
-      // Retries were requested rather than surfacing a single bare attempt.
-      expect(rmSyncSpy).toHaveBeenCalledWith(
-        markerDirectory,
-        expect.objectContaining({ maxRetries: 5, retryDelay: 200 }),
-      );
-    } finally {
-      rmSyncSpy.mockRestore();
-    }
-    // The mocked failure prevented real removal; clean up for real now.
-    fs.rmSync(markerDirectory, { recursive: true, force: true });
+    fs.writeFileSync(path.join(markerDirectory, "unreadable.json"), "{");
+    expect(() => hooks.complete()).toThrow("failed to read cleanup markers");
+    expect(fs.existsSync(markerDirectory)).toBe(true);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
@@ -390,6 +497,7 @@ describe("native qualification process boundaries", () => {
       artifacts.report,
       artifacts.driverLog,
       artifacts.failureDirectory,
+      artifacts.workerLogDirectory,
     ]) {
       expect(path.relative(root, artifact)).not.toMatch(/^\.\.(?:[/\\]|$)/);
     }
@@ -426,6 +534,43 @@ describe("native qualification process boundaries", () => {
     expect(serialized.configuration.seed).toBe(rawSeed);
   });
 
+  it("clears only this seed's old worker logs before a new qualification run", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "soak-worker-logs-"));
+    try {
+      const root = path.join(dir, "qualification-results");
+      const worker = resolveSoakArtifactPaths(root, "linux", "repeat-seed")
+        .workerLogDirectory;
+      const otherSeed = path.join(root, "wdio-other-seed");
+      fs.mkdirSync(worker, { recursive: true });
+      fs.mkdirSync(otherSeed);
+      fs.writeFileSync(path.join(worker, "stale.log"), "old run");
+      fs.writeFileSync(path.join(otherSeed, "keep.log"), "other run");
+
+      resetSoakWorkerLogDirectory(root, worker);
+      expect(fs.readdirSync(worker)).toEqual([]);
+      expect(fs.readFileSync(path.join(otherSeed, "keep.log"), "utf8"))
+        .toBe("other run");
+
+      const external = path.join(dir, "external");
+      fs.mkdirSync(external);
+      fs.writeFileSync(path.join(external, "sentinel"), "untouched");
+      fs.rmSync(worker, { recursive: true });
+      fs.symlinkSync(external, worker, "dir");
+      resetSoakWorkerLogDirectory(root, worker);
+      expect(fs.lstatSync(worker).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(path.join(external, "sentinel"), "utf8"))
+        .toBe("untouched");
+
+      const rootLink = path.join(dir, "root-link");
+      fs.symlinkSync(root, rootLink, "dir");
+      expect(() => resetSoakWorkerLogDirectory(
+        rootLink, path.join(rootLink, "wdio-repeat-seed"),
+      )).toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("attributes RSS to the verified launched binary and its descendants", () => {
     const launchedBinary = path.resolve("/qualified/build/tauri-explorer");
     expect(
@@ -454,6 +599,10 @@ describe("native qualification process boundaries", () => {
         123,
       ),
     ).toEqual({ rssBytes: 140, sampledAtMs: 123 });
+    expect(() => measureProcessTreeRss([
+      { pid: 10, parentPid: 1, rssBytes: 100, executable: launchedBinary },
+      { pid: 20, parentPid: 1, rssBytes: 100, executable: launchedBinary },
+    ], launchedBinary, 123)).toThrow("native process identity is ambiguous");
   });
 
   // Write fixture bytes synchronously before exiting, so these tests verify
@@ -462,6 +611,9 @@ describe("native qualification process boundaries", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "native-driver-log-"));
     const logPath = path.join(dir, "seed-webdriver.log");
     const reportPath = path.join(dir, "report.json");
+    const workerLogDirectory = path.join(dir, "seed", "wdio");
+    fs.mkdirSync(workerLogDirectory, { recursive: true });
+    fs.writeFileSync(path.join(workerLogDirectory, "soak-0-0.log"), "worker proof\n");
     const result = await executeLoggedQualificationProcess({
       command: [
         process.execPath,
@@ -472,6 +624,7 @@ describe("native qualification process boundaries", () => {
       ],
       reportPath,
       driverLogPath: logPath,
+      additionalFailureArtifacts: [workerLogDirectory, path.join(dir, "absent")],
       mirrorOutput: false,
       createFallbackReport: (exitCode) =>
         buildNativeQualificationReport({
@@ -511,7 +664,7 @@ describe("native qualification process boundaries", () => {
     const persisted = JSON.parse(fs.readFileSync(reportPath, "utf8"));
     expect(persisted).toMatchObject({
       passed: false,
-      failureArtifacts: [logPath],
+      failureArtifacts: [logPath, workerLogDirectory],
     });
     const driverLog = fs.readFileSync(logPath, "utf8");
     expect(driverLog).toContain("driver stdout proof");

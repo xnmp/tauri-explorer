@@ -102,10 +102,18 @@ pub(crate) struct MoveState {
     pub phase: MovePhase,
     /// Only a cross-filesystem move stages an independent copied payload.
     pub staged: Option<super::durable_model::StagedPayload>,
-    #[serde(default)]
+    /// Both retirement-era fields are omitted while absent: strict decoders in
+    /// builds that predate them must still read a record that does not use them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_bytes: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retirement: Option<super::move_retention::RetirementState>,
+    /// Why an automatic discard could not even be journaled: a removal
+    /// preflight, journal headroom or a changed endpoint. Enforcement leaves
+    /// the record for the user's explicit Discard rather than claiming it on
+    /// every pass (#760). Omitted while absent, like the fields above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred: Option<String>,
     pub error: Option<String>,
 }
 
@@ -120,6 +128,7 @@ impl Default for MoveState {
             staged: None,
             retained_bytes: None,
             retirement: None,
+            deferred: None,
             error: None,
         }
     }
@@ -127,14 +136,20 @@ impl Default for MoveState {
 
 #[cfg(unix)]
 impl MoveState {
-    pub(super) fn validate(
-        &self,
-        spec: &MoveSpec,
-        resources: &[super::resources::Resource],
-    ) -> io::Result<()> {
-        super::move_capability_model::validate(spec, self, resources)?;
+    pub(super) fn validate(&self, spec: &MoveSpec) -> io::Result<()> {
+        super::move_capability_model::validate(spec, self)?;
         if let Some(retirement) = &self.retirement {
             retirement.validate(spec, self)?;
+        }
+        if self.deferred.as_ref().is_some_and(|reason| {
+            reason.len() > super::durable_model::MAX_ERROR_BYTES
+                || self.retirement.is_some()
+                || super::move_retention::disposal(spec, self.phase)
+                    != Some(super::retention::Disposal::AutomaticWhenSourceIntact)
+        }) {
+            return Err(invalid(
+                "Only a settled, automatically retirable move can defer its cleanup",
+            ));
         }
         let observed = self.phase.roots_observed();
         if self.source_root.is_some() != (observed && spec.source_root.is_some())
@@ -178,10 +193,10 @@ impl MoveState {
             (self.source_root, &spec.source_root, spec.source_parent),
             (self.target_root, &spec.target_root, spec.target_parent),
         ] {
-            let (Some(identity), Some(plan)) = (identity, plan.as_ref()) else {
+            let (Some(identity), Some(_)) = (identity, plan.as_ref()) else {
                 continue;
             };
-            spec.validate_root(resources, plan, parent, identity)?;
+            spec.validate_root(parent, identity)?;
         }
         if let Some(staged) = &self.staged {
             staged.validate()?;
@@ -232,14 +247,12 @@ impl MoveSpec {
 
     /// An observed artifact root must be a private sibling of its owning user
     /// entry: same volume as that parent, and never an alias of user data.
+    /// Only the move's subjects are compared. Other intent resources, such as
+    /// the parent-alias entries admission records for traversed symlinks, are
+    /// not kept alive, so a fresh root can reuse a freed inode number from any
+    /// of them (#788).
     #[cfg(unix)]
-    pub(super) fn validate_root(
-        &self,
-        resources: &[super::resources::Resource],
-        plan: &ArtifactPlan,
-        parent: ObjectId,
-        root: ObjectId,
-    ) -> io::Result<()> {
+    pub(super) fn validate_root(&self, parent: ObjectId, root: ObjectId) -> io::Result<()> {
         if !root.same_volume(parent)
             || root == parent
             || root == self.source_version.object
@@ -247,9 +260,6 @@ impl MoveSpec {
                 .target_original
                 .as_ref()
                 .is_some_and(|original| original.object == root)
-            || resources
-                .iter()
-                .any(|resource| resource.object == Some(root) && resource.path.0 != plan.path.0)
         {
             return Err(invalid(
                 "Move artifact root aliases a user object or lies on another device",

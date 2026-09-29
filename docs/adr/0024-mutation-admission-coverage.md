@@ -1,7 +1,9 @@
 # ADR 0024: Mutation admission coverage
 
-Status: Accepted for the families migrated below; the deferrals are decisions,
-not omissions.
+Status: Accepted for the enumerated family decisions. Runtime mutation admission
+is implemented only for the Linux families marked migrated below; this ADR does
+not claim full managed-mutation or cross-platform admission coverage. The
+deferrals are decisions, not omissions.
 
 Governs: `src-tauri/src/file_mutation.rs`, `src-tauri/src/archive.rs`,
 `src-tauri/src/files/archive_plan.rs`, `src-tauri/src/git_actions.rs`,
@@ -45,7 +47,7 @@ footprint is not derivable without an unbounded prewalk, the family defers.
 | Deletion / trash | `file_mutation.rs::delete_entries` | Selected paths plus Linux trash auxiliary namespaces: layout directories, `.trashinfo` metadata, exact artifact names and prepared fallback layouts (lesson 680, *Trash preparation includes its auxiliary namespaces*). | Yes. | **Migrated on Linux for forward `delete_entries` and native Trash Undo/Redo**, including permanent forward deletion. Trash claims its full prepared source/layout/artifact set; permanent deletion binds its source paths. See below. |
 | Grouped / bulk rename | `BulkRenameDialog.svelte` → N × `rename_entry` | Each call: old path + new path (write, subtree), plus traversed parent-symlink reads. | Yes, per item. | **No gap** — every item already takes all three through the `entry()` path (`files/entry_plan.rs`). The batch is a renderer loop with no grouped inverse; that is a history-grouping question, not an admission one. |
 | Plugin-driven mutations | `plugins/api.ts::moveFile` → `state/file-transfer.ts::performFileTransfer` → `move_entry` | Source + destination (write, subtree). | Yes. | **No gap** — `performFileTransfer` dispatches through `api/files.ts`, which goes through `api/file-mutations.ts` and therefore carries a session id; `move_entry` already takes all three. `PluginWorkspace` exposes no other mutating method. The remaining difference is that plugins use the per-item path rather than the ordered session (#685); that is ordering, not admission. |
-| Ordinary copy outside the session | `file_mutation.rs::copy_entry` | Source (read) + destination (write). Holds (1) and (2); it takes a recovery claim only on the overwrite path, via `Runtime::copy_overwriting`. | In principle. | **Deferred** — no production caller. Its only frontend caller is `performFileTransfer`'s `isCopy: true` branch, which no UI flow reaches: paste and drop both run the ordered `copy_session`. It is not dead, though — `src/test-support/file-recovery-probe.ts` drives it with `overwrite: true`, so the native recovery suite exercises exactly the `copy_overwriting` path. Extending admission would harden a path only that probe reaches, and deleting it would remove that coverage; the ordered session is where ordinary copy should converge. |
+| Ordered copy session | `file_mutation.rs::copy_entries` → `files/copy_session.rs` | Each ordered child binds its source read and destination write through live inspection. Overwrite also enters runtime recovery admission; the selection has one native reservation and one history effect. | Yes. | **Converged in #813** — paste, drop, and the native recovery overwrite probe use `copy_entries`; the standalone `copy_entry` IPC and unreachable frontend copy branch were removed. Branch acceptance still depends on the existing copy-session Rust, browser, and native suites. |
 | Git working-tree mutations | `git_actions.rs` — `git_checkout`, `git_create_branch(checkout)`, `git_cherry_pick`, `git_revert`, `git_merge`, `git_rebase`(+`_continue`/`_abort`), `git_stash_apply`/`_pop`, `git_reset --hard`, `git_merge_abort`, `git_cherry_pick_abort`, `git_revert_abort`, `git_checkout_tracking`, `git_sync_local_branches` (checked-out branch), `git_undo` → `HeadMove` | Every working-tree path that differs between two trees, plus `.git` internals. Not derivable without diffing the two trees — an unbounded prewalk — and the operation runs in a subprocess that chooses its own paths. | Yes, in principle. | **Deferred** — the only capturable footprint is a write claim on the whole worktree root, which would serialize *all* file operations in the repository against any git action. That is a blanket lock, not the footprint, and #686 explicitly does not authorize a blanket rewrite of Git operations. Git's own `index.lock` arbitrates git-vs-git. None of these commands acquires (1) either; adding (1) alone would give renderer-lifetime ownership without filesystem exclusion, which is the misleading half. |
 
 `git_watch.rs`'s lease is an observation lifetime, not filesystem admission; it
@@ -248,4 +250,6 @@ inverse exists.
 Archive operations are not durable-recovery operations: they hold an ordinary
 reservation for the life of the call and promote nothing into the catalog, so a
 crash mid-archive is not discoverable after restart. Non-Linux builds keep (1)
-and (2) only, exactly as every other family does. Ordinary copy outside the session and Git remain outside (3); "full managed-mutation coverage" is still not claimed.
+and (2) only, exactly as every other family does. Git remains outside (3);
+ordinary copy is routed through the ordered session. "Full managed-mutation
+coverage" is still not claimed.

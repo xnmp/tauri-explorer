@@ -3,10 +3,11 @@
  * atomic admission of a forward mutation and its subsequent history push. */
 import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { exactApplicationPid } from "../native-process";
+import { gatedDescribe } from "./gated-describe";
 import { entryNames, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
 type Direction = "undo" | "redo";
 type RenameAction = { type: "rename"; path: string; oldName: string; newName: string };
@@ -201,11 +202,17 @@ async function destroyCurrentWindow(handle: string): Promise<void> {
   });
 }
 
-const gatedDescribe = process.platform === "linux" && gateDirectory ? describe : describe.skip;
-gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E_HISTORY_GATE_DIR)", () => {
+// Linux-only: exercises the durable history-recovery gate directories
+// (`durable-copy-recovery`, `cfg(unix)`/`cfg(target_os = "linux")`, ADR 0020,
+// plan decision D2) and `exactApplicationPid`'s `/proc`-based process
+// identity, neither of which exists on Windows (#800).
+gatedDescribe("native shared file-history lifetime", [
+  [process.platform === "linux", "Linux"],
+  [gateDirectory !== "", "TAURI_E2E_HISTORY_GATE_DIR"],
+], () => {
   before(async () => {
     fs.accessSync(gateDirectory, fs.constants.R_OK | fs.constants.W_OK);
-    scratch = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-history-lifetime-"));
+    scratch = createNativeFixtureDirectory("tauri-explorer-history-lifetime-");
     await navigateTo(scratch);
     mainHandle = await browser.getWindowHandle();
     applicationPid = exactApplicationPid();
@@ -236,7 +243,6 @@ gatedDescribe("native shared file-history lifetime (requires Linux and TAURI_E2E
       }
       if ((await browser.getWindowHandles()).includes(mainHandle)) await browser.switchToWindow(mainHandle);
     }
-    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
   });
 
   it("admits a shared inverse once and synchronizes both participants", async function () {

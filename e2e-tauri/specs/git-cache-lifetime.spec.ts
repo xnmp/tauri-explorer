@@ -2,12 +2,17 @@
 import { browser, $, $$, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, domText, domTexts } from "./helpers";
 import { directoryKey } from "../../src/lib/domain/path";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const repository = fs.mkdtempSync(path.join(os.tmpdir(), process.platform === "win32" ? "explorer-cache-" : "explorer-cache-|"));
+// createNativeFixtureDirectory's prefix is restricted to [a-zA-Z0-9_-]; the
+// delimiter this test needs lives in a nested directory name instead, so the
+// root itself stays a plain, always-removable name.
+const cacheRoot = createNativeFixtureDirectory("explorer-cache-");
+const repository = path.join(cacheRoot, process.platform === "win32" ? "repo" : "repo-|-delimiter");
+fs.mkdirSync(repository);
 function git(...args: string[]) {
   return execFileSync("git", ["-c", "user.name=Cache Test", "-c", "user.email=cache@example.test", ...args], { cwd: repository });
 }
@@ -54,7 +59,6 @@ describe("native graph cache lifetime", () => {
     await $("button[aria-label='Close settings']").click();
     await $(".settings-dialog").waitForDisplayed({ reverse: true });
   });
-  after(() => fs.rmSync(repository, { recursive: true, force: true }));
   it("reopening a hidden graph includes an external commit in a path containing a delimiter", async () => {
     await navigateTo(repository);
     await toggleGraph();
@@ -223,6 +227,10 @@ describe("native graph cache lifetime", () => {
       }
       throw error;
     } finally {
+      // native-fixture-lifetime-allow: `oldRoot` is this test's own renamed-away
+      // subject (the "displaced inode" it deliberately creates to exercise
+      // observer recovery), not the shared fixture root; it must be retired
+      // synchronously so the next assertion sees a clean tree.
       fs.rmSync(oldRoot, { recursive: true, force: true });
     }
     await toggleGraph();

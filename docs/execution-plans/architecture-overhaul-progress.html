@@ -77,10 +77,10 @@
   <body>
     <main>
       <header>
-        <p class="eyebrow">Release preparation · final-dev qualification</p>
+        <p class="eyebrow">v1.11.0 release · architecture overhaul</p>
         <h1>Architecture overhaul progress</h1>
-        <p class="lead">The clipboard fix, five-run Windows smoke streak and final-tip gate set are accepted. The audited records await publication, and v1.11.0 release preparation is underway.</p>
-        <p class="meta">Updated 29 September 2026 · final <code>dev</code> source tree <code>b4ab8655</code> · merged commit <code>de35c97b</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
+        <p class="lead">All 31 in-scope architecture-overhaul items are accepted. The v1.11.0 release includes the qualified product changes, audited acceptance records and six platform bundles.</p>
+        <p class="meta">Updated 29 September 2026 · qualified product source <code>de35c97b</code> (tree <code>b4ab8655</code>) · released <code>main</code> commit <code>af30dec3</code><br /><a href="architecture-overhaul-remaining.md">Detailed plan</a><a href="../review-completion.md">Acceptance ledger</a><a href="architecture-overhaul-local-gates-2026-09-28.md">Local gate evidence</a></p>
       </header>
 
       <div class="tabs" role="tablist" aria-label="Progress views">
@@ -90,15 +90,15 @@
 
       <div id="board-panel" class="panel" role="tabpanel" aria-labelledby="board-tab">
         <div class="progress-panel">
-          <div class="progress-topline"><strong>30 / 31 accepted</strong><span>97% by item count</span></div>
-          <progress value="30" max="31" aria-label="30 of 31 in-scope plan items accepted"></progress>
+          <div class="progress-topline"><strong>31 / 31 accepted</strong><span>100% by item count</span></div>
+          <progress value="31" max="31" aria-label="31 of 31 in-scope plan items accepted"></progress>
           <p class="scope-note">Release scope excludes W3.5 (closed by ADR) and W5.4 (physical-Mac startup follow-up). Item count is not a time estimate.</p>
-          <p class="scope-note">One row remains: complete the v1.11.0 release and verify all six platform assets. Five consecutive full post-fix <code>dev</code> Windows smokes passed.</p>
+          <p class="scope-note">All in-scope rows are complete. Five consecutive full post-fix <code>dev</code> Windows smokes passed.</p>
         </div>
 
         <div class="notice" role="status">
-          <strong>Final-dev qualification accepted</strong>
-          <p>Exact-tip local, browser, native recovery, Windows/Linux smoke, Mac2 UI, macOS startup, platform Rust and CI gates passed on product-source <code>dev</code> <code>de35c97b</code>. Audited documentation merged as <code>e582d7d9</code> with no product or gate-input changes; release assets remain open.</p>
+          <strong>v1.11.0 release accepted</strong>
+          <p>Qualified product-source gates passed on <code>dev</code> <code>de35c97b</code>; audited records merged as <code>e582d7d9</code>. Release preparation and the <code>dev</code>-to-<code>main</code> merge passed their final-head checks. The <a href="https://github.com/xnmp/tauri-explorer/releases/tag/v1.11.0">published release</a> targets <code>af30dec3</code> and has all six platform bundles.</p>
         </div>
 
         <section class="inner" aria-labelledby="items-title">
@@ -109,13 +109,11 @@
               <ul class="items"></ul>
             </section>
             <section class="lane" aria-labelledby="doing-title">
-              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">1 item</span></div>
-              <ul class="items">
-                <li><strong>W8.3</strong> v1.11.0 release <small><a href="https://github.com/xnmp/tauri-explorer/pull/838">PR #838</a> has aligned versions, dated notes and a six-bundle publication guard. The full <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36476638800">Windows and Linux native smoke</a> passed on prior head <code>a51efb7f</code>, including the eight-pane transfer; all 18 prior-head checks passed. The accepted docs merge is incorporated into the release branch; its new final-head checks, dev-to-main merge and release assets remain.</small></li>
-              </ul>
+              <div class="lane-header"><h3 id="doing-title">Doing</h3><span class="lane-count">0 items</span></div>
+              <ul class="items"></ul>
             </section>
             <section class="lane" aria-labelledby="done-title">
-              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">30 items</span></div>
+              <div class="lane-header"><h3 id="done-title">Done</h3><span class="lane-count">31 items</span></div>
               <ul class="items">
                 <li><strong>W1.1</strong> macOS Rust suite</li>
                 <li><strong>W1.2</strong> Windows Rust suite</li>
@@ -147,26 +145,29 @@
                 <li><strong>W7.4</strong> Plugin failure isolation</li>
                 <li><strong>W8.1</strong> Final-tip qualification <small>Exact <code>dev</code> <code>de35c97b</code> local, browser and six hosted workflow gates passed. Windows native: 76 passed/36 skipped; Linux: 97 passed/18 skipped; gated recovery: 19 passed.</small></li>
                 <li><strong>W8.2</strong> Audited acceptance records <small><a href="https://github.com/xnmp/tauri-explorer/pull/832">PR #832</a> passed 15 final-head checks and merged to <code>dev</code> as <code>e582d7d9</code>; its 20 changed paths are limited to docs and screenshots, preserving W8.1 product and gate inputs. Issue #818 closed.</small></li>
+                <li><strong>W8.3</strong> v1.11.0 release <small><a href="https://github.com/xnmp/tauri-explorer/pull/838">Preparation PR #838</a> passed 18 exact-head checks and merged to <code>dev</code> as <code>e6165e04</code>; <a href="https://github.com/xnmp/tauri-explorer/pull/839">release PR #839</a> passed all 19 latest check contexts and merged to <code>main</code> as <code>a1fff931</code>. The first release build exposed lockfile deletion and failed before tagging. <a href="https://github.com/xnmp/tauri-explorer/pull/840">Hotfix #840</a> passed 16 exact-head checks and merged to <code>dev</code> as <code>4c3fec51</code>; <a href="https://github.com/xnmp/tauri-explorer/pull/841">PR #841</a> merged that fix to <code>main</code> as <code>af30dec3</code> after 16 latest checks passed. The automatic <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36510884453">release workflow</a> published tag <code>v1.11.0</code> and six verified platform assets.</small></li>
               </ul>
             </section>
           </div>
         </section>
 
         <section class="inner" aria-labelledby="next-title">
-          <h2 id="next-title">Remaining gates</h2>
+          <h2 id="next-title">Follow-ups outside this release</h2>
           <ul class="gates">
-            <li><strong>Publish acceptance records</strong><p>The ledger and ADR fact-check passed. Publish the broader docs PR after approval, merge it, and prove the docs-only merge leaves qualified product inputs unchanged.</p></li>
-            <li><strong>Cut v1.11.0</strong><p>Finish draft PR #838 checks on the docs-merged dev tip, merge it, then merge the dev-to-main release PR after its checks and verify all six published assets.</p></li>
+            <li><strong>Physical-Mac startup</strong><p>Measure the half-bounce target on physical hardware under #696. Virtual-runner samples and the Mac2 listing/navigation pilot do not qualify it.</p></li>
+            <li><strong>Recovery scope decisions</strong><p>D1/D2 retain opt-in Linux-only durable recovery for this release. Windows/macOS admission adapters and broader mutation-family adoption remain separate work.</p></li>
+            <li><strong>Intermittent window transfer</strong><p>Investigate the earlier eight-pane Windows <code>moved: false</code> case under #710; later full native smokes passed with correlated diagnostics.</p></li>
           </ul>
         </section>
 
         <section class="inner" aria-labelledby="evidence-title">
           <h2 id="evidence-title">Latest evidence</h2>
           <ul class="evidence">
+            <li><a href="https://github.com/xnmp/tauri-explorer/releases/tag/v1.11.0">v1.11.0</a> was published by the successful <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36510884453">automatic release workflow</a>. The tag targets final <code>main</code> merge <code>af30dec3</code>; six unique, nonempty Linux, macOS ARM64 and Windows bundles were verified. Preparation and release PRs <a href="https://github.com/xnmp/tauri-explorer/pull/838">#838</a>/<a href="https://github.com/xnmp/tauri-explorer/pull/839">#839</a> passed their exact-head gates; lockfile hotfix PRs <a href="https://github.com/xnmp/tauri-explorer/pull/840">#840</a>/<a href="https://github.com/xnmp/tauri-explorer/pull/841">#841</a> passed theirs before the corrected release.</li>
             <li>Published <code>dev</code> <code>de35c97b</code> passes Svelte/type, 2,715 unit cases with 3 skips, 29 perf contracts, native TypeScript, maps 514/514, bundle budget, both Rust library variants (1,431 passed/35 ignored), strict Clippy and 7/7 load cases. The identical Git tree on <a href="https://github.com/xnmp/tauri-explorer/pull/837">PR #837</a> passed the all-view browser suite: 2,372 passed, 36 skipped, exit 0.</li>
             <li>Exact-dev hosted <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462869987">recovery</a> passed all 19 gated cases; <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462870071">native smoke</a> passed 76 Windows cases with 36 skips and 97 Linux cases with 18 skips. <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462870005">Mac2 native UI</a> confirmed child listing and parent navigation. <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36462869939">macOS startup</a> retained 30 foreground and 30 warm-probe samples on a virtual Mac. Platform Rust and CI passed; CI Chromium retried one flaky marquee-positioning test before passing.</li>
             <li>The pinned <a href="../../qualification-results/linux-linux-four-hour-817-wry-isolated-20260927-ccc3a09cb1be.json">Linux four-hour report</a> records 2,510 cycles over 240.09 minutes and 10,040 passing outcomes; the <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36393848199/artifacts/10957692938">Windows bounded soak</a> records one complete four-scenario cycle and a screenshot. Five consecutive full post-fix Windows <code>dev</code> smokes passed, accepting W2.4.</li>
-            <li>Passing browser assertions do not prove a crash-free WebKit engine: 16 page-process cores were observed during an earlier passing all-view run. The virtual-Mac startup reports explicitly leave the physical-Mac half-bounce target unqualified. Durable recovery remains opt-in and Linux-only under the draft v1.11.0 release scope.</li>
+            <li>Passing browser assertions do not prove a crash-free WebKit engine: 16 page-process cores were observed during an earlier passing all-view run. The virtual-Mac startup reports explicitly leave the physical-Mac half-bounce target unqualified. Durable recovery remains opt-in and Linux-only in v1.11.0.</li>
           </ul>
         </section>
       </div>
@@ -174,6 +175,7 @@
       <section id="history-panel" class="panel" role="tabpanel" aria-labelledby="history-tab" hidden>
         <h2>History</h2>
         <ol class="history">
+          <li><time datetime="2026-09-29T12:28:00+10:00">29 September 2026, 12:28 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/838">Preparation PR #838</a> and <a href="https://github.com/xnmp/tauri-explorer/pull/839">release PR #839</a> merged after their exact-head checks. The first release build failed before tagging because it discarded <code>bun.lock</code>; <a href="https://github.com/xnmp/tauri-explorer/pull/840">hotfix #840</a> and <a href="https://github.com/xnmp/tauri-explorer/pull/841">main PR #841</a> restored frozen dependency installation and passed their latest checks. The <a href="https://github.com/xnmp/tauri-explorer/actions/runs/36510884453">corrected automatic workflow</a> published <a href="https://github.com/xnmp/tauri-explorer/releases/tag/v1.11.0">v1.11.0</a> at <code>af30dec3</code> with all six verified, nonempty platform assets. W8.3 moved to Done; <strong>31 / 31 accepted.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-29T09:05:00+10:00">29 September 2026, 09:05 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/pull/832">Acceptance-record PR #832</a> passed 15 exact-head checks and merged into <code>dev</code> as <code>e582d7d9</code>; issue #818 closed. The 20-path diff from the qualified product commit <code>de35c97b</code> changes only docs and screenshots, so W8.1 evidence carries by input equivalence, without claiming tests reran at the docs commit. W8.2 moved to Done and W8.3 remains Doing. <strong>30 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-29T06:40:00+10:00">29 September 2026, 06:40 AEST</time><p>All <a href="https://github.com/xnmp/tauri-explorer/pull/838">release preparation PR #838</a> checks passed on exact head <code>a51efb7f</code>: 18 green, including both WebKit shards and full Windows/Linux native smoke. The PR description now records the final validation and the unresolved intermittent #710 transfer cause. W8.3 remains Doing until the docs-only acceptance merge, final release-head checks, dev-to-main merge and six assets complete. W8.2 is waiting for authorization to publish the broader audited docs branch. <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>
           <li><time datetime="2026-09-29T06:24:00+10:00">29 September 2026, 06:24 AEST</time><p><a href="https://github.com/xnmp/tauri-explorer/actions/runs/36476638800">Final-head native smoke</a> passed on Windows and Linux for release PR #838 head <code>a51efb7f</code>. The Windows transfer spec passed all seven cases, including the eight-pane handoff; the hosted log retained correlated native creation, seed adoption and acknowledgement markers. Platform Rust, recovery, Mac2 UI, macOS startup, Chromium, frontend, maps and performance also passed; two WebKit shards remain. The earlier intermittent transfer cause is still unclassified. W8.3 stays Doing; <strong>29 / 31 done.</strong></p><p class="small">Active work since previous entry: Not recorded.</p></li>

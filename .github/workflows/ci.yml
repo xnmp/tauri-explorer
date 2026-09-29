@@ -38,6 +38,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Root type checks and relay tests import website/api/report.js, whose
+      # Blob client belongs to the independently deployed website package.
+      - name: Install website dependencies
+        run: bun install --cwd website --frozen-lockfile
+
       - name: Type check
         run: bun run check
 

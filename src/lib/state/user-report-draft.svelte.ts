@@ -54,11 +54,17 @@ export function createUserReportDraftStore() {
     persister.writeNow(value);
   }
 
+  /** Submission can outlive or close the page before the trailing save. */
+  function saveNow(): void {
+    persister.writeNow(value);
+  }
+
   return {
     get value() {
       return value;
     },
     update,
+    saveNow,
     clear,
     dispose: () => persister.dispose(),
   };

@@ -77,6 +77,7 @@ export type UserReportErrorKind =
   | "rate_limited"
   | "daily_cap"
   | "server_rejected"
+  | "submission_uncertain"
   | "attachment_uploader_unavailable"
   | "attachment_upload_failed"
   | "clipboard_unavailable";
@@ -89,22 +90,23 @@ export interface UserReportError {
 export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
 ): string {
+  const retry = "Your text is saved; images remain available until this window closes.";
   if (kind === "attachment_uploader_unavailable") {
-    return "Install GitHub CLI and the gh-image extension to submit images: gh extension install drogers0/gh-image. Your draft is saved for retry.";
+    return `Could not reach an image uploader. ${retry}`;
   }
   if (kind === "attachment_upload_failed") {
-    return "Could not upload the image through gh-image. Install or configure the extension, then reopen Report Issue to retry; your draft is saved.";
+    return `Could not upload the image. ${retry}`;
   }
   if (kind === "malformed_input") {
-    return "One of your attached images is not valid. Your draft is saved; reopen Report Issue, remove it, and try again.";
+    return `One of your attached images is not valid. ${retry} Reopen Report Issue, remove it, and try again.`;
   }
   if (kind === "daily_cap") {
-    return "Reports are temporarily unavailable. Your draft is saved for retry.";
+    return `Reports are temporarily unavailable. ${retry}`;
   }
   if (kind === "rate_limited") {
-    return "Too many reports were submitted. Your draft is saved; try again later.";
+    return `Too many reports were submitted. ${retry} Try again later.`;
   }
-  return "Could not submit the report with its attachments. Your draft is saved for retry.";
+  return `Could not submit the report with its attachments. ${retry}`;
 }
 
 const REPO_ISSUES_URL = "https://github.com/xnmp/tauri-explorer/issues/new";

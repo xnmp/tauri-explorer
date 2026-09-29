@@ -15,7 +15,6 @@
 
 use crate::error::AppError;
 use std::process::Command;
-use std::time::Instant;
 
 /// Detect whether the session is Wayland or X11.
 #[cfg(not(windows))]
@@ -116,7 +115,7 @@ fn percent_decode(input: &str) -> String {
 /// Read file paths from the OS clipboard.
 /// Tries `x-special/gnome-copied-files` first (GNOME/XFCE/MATE), then `text/uri-list` (KDE).
 /// `Ok(vec![])` = no file paths on the clipboard; `Err` = broken tooling (#279).
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn read_clipboard_file_paths() -> Result<Vec<String>, AppError> {
     // GNOME/XFCE format: first line is "copy" or "cut", rest are URIs
     if let Some(text) = read_mime("x-special/gnome-copied-files")? {
@@ -140,6 +139,100 @@ fn read_clipboard_file_paths() -> Result<Vec<String>, AppError> {
     }
 
     Ok(Vec::new())
+}
+
+#[cfg(target_os = "macos")]
+fn read_clipboard_file_paths() -> Result<Vec<String>, AppError> {
+    use clipboard_rs::Clipboard;
+    let context = clipboard_rs::ClipboardContext::new()
+        .map_err(|error| AppError::Other(format!("Mac clipboard unavailable: {error}")))?;
+    // clipboard-rs reports an empty clipboard as "no files".
+    Ok(context.get_files().unwrap_or_default())
+}
+
+#[cfg(target_os = "macos")]
+fn write_clipboard_file_paths(paths: &[String]) -> Result<(), AppError> {
+    use clipboard_rs::Clipboard;
+    if paths.is_empty() {
+        return Err(AppError::InvalidPath("No paths to copy".into()));
+    }
+    let context = clipboard_rs::ClipboardContext::new()
+        .map_err(|error| AppError::Other(format!("Mac clipboard unavailable: {error}")))?;
+    context
+        .set_files(paths.to_vec())
+        .map_err(|error| AppError::Other(format!("Mac clipboard write failed: {error}")))
+}
+
+/// Read plain text without relying on WebKit's Clipboard API permission.
+/// That permission is unavailable in some packaged WebKitGTK sessions even
+/// when the terminal owns focus and the desktop clipboard has text (#732).
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn read_clipboard_text_sync() -> Result<String, AppError> {
+    let (tool, package, args): (&str, &str, &[&str]) = if is_wayland() {
+        (
+            "wl-paste",
+            "wl-clipboard",
+            &["--no-newline", "--type", "text"],
+        )
+    } else {
+        ("xclip", "xclip", &["-o", "-selection", "clipboard"])
+    };
+    let output = Command::new(tool)
+        .args(args)
+        .output()
+        .map_err(|error| tool_error(tool, package, error))?;
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "{tool} exited with {}",
+            output.status
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn read_clipboard_text_sync() -> Result<String, AppError> {
+    let output = Command::new("pbpaste")
+        .output()
+        .map_err(|error| AppError::Other(format!("Failed to start pbpaste: {error}")))?;
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "pbpaste exited with {}",
+            output.status
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[cfg(windows)]
+fn read_clipboard_text_sync() -> Result<String, AppError> {
+    use base64::Engine as _;
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$text = [System.Windows.Forms.Clipboard]::GetText()
+[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($text))
+"#;
+    let output = run_powershell(script, &[])
+        .ok_or_else(|| AppError::Other("Failed to start PowerShell for clipboard text".into()))?;
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "PowerShell clipboard text read exited with {}",
+            output.status
+        )));
+    }
+    let encoded = ps_lines(&output.stdout).concat();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| AppError::Other(format!("Invalid clipboard text encoding: {error}")))?;
+    String::from_utf8(bytes)
+        .map_err(|error| AppError::Other(format!("Invalid clipboard UTF-8: {error}")))
+}
+
+#[tauri::command]
+pub async fn clipboard_read_text() -> Result<String, AppError> {
+    tokio::task::spawn_blocking(read_clipboard_text_sync)
+        .await
+        .map_err(|error| AppError::Other(format!("Clipboard task failed: {error}")))?
 }
 
 /// Percent-encode a file path for use in `file://` URIs.
@@ -221,7 +314,7 @@ fn write_mime(mime: &str, data: &[u8]) -> Result<(), AppError> {
 /// clobber the first format instead of adding to it. We write the GNOME format
 /// (richest: carries copy/cut semantics); KDE/Dolphin paste of our copies is
 /// not supported until a multi-target clipboard backend is used.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn write_clipboard_file_paths(paths: &[String]) -> Result<(), AppError> {
     if paths.is_empty() {
         return Err(AppError::InvalidPath("No paths to copy".to_string()));
@@ -560,54 +653,28 @@ fn clipboard_paste_image_sync(directory: String) -> Result<String, AppError> {
 /// read/write commands (#279).
 #[tauri::command]
 pub async fn clipboard_has_files() -> bool {
-    tokio::task::spawn_blocking(|| {
-        read_clipboard_file_paths()
-            .map(|p| !p.is_empty())
-            .unwrap_or(false)
-    })
-    .await
-    .unwrap_or(false)
+    clipboard_read_files()
+        .await
+        .map(|paths| !paths.is_empty())
+        .unwrap_or(false)
 }
 
 #[tauri::command]
 pub async fn clipboard_read_files() -> Result<Vec<String>, AppError> {
-    let started = Instant::now();
-    log::info!("clipboard file read started");
-    let result = tokio::task::spawn_blocking(read_clipboard_file_paths)
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::ReadPaths { reply })?;
+    received
         .await
-        .unwrap_or_else(|e| Err(AppError::Other(format!("Clipboard task failed: {}", e))));
-    match &result {
-        Ok(paths) => log::info!(
-            "clipboard file read finished elapsed_ms={} path_count={}",
-            started.elapsed().as_millis(),
-            paths.len()
-        ),
-        Err(error) => log::warn!(
-            "clipboard file read failed elapsed_ms={} error={error}",
-            started.elapsed().as_millis()
-        ),
-    }
-    result
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
 }
 
 #[tauri::command]
 pub async fn clipboard_write_files(paths: Vec<String>) -> Result<(), AppError> {
-    let started = Instant::now();
-    log::info!("clipboard file write started path_count={}", paths.len());
-    let result = tokio::task::spawn_blocking(move || write_clipboard_file_paths(&paths))
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::WriteLegacy { paths, reply })?;
+    received
         .await
-        .unwrap_or_else(|e| Err(AppError::Other(format!("Clipboard task failed: {}", e))));
-    match &result {
-        Ok(()) => log::info!(
-            "clipboard file write finished elapsed_ms={}",
-            started.elapsed().as_millis()
-        ),
-        Err(error) => log::warn!(
-            "clipboard file write failed elapsed_ms={} error={error}",
-            started.elapsed().as_millis()
-        ),
-    }
-    result
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
 }
 
 #[cfg(test)]
@@ -734,5 +801,610 @@ mod tests {
             uris,
             vec!["file:///home/user/doc.txt", "file:///tmp/test%20file.txt",]
         );
+    }
+}
+
+// Process-wide file clipboard protocol. Commands enqueue before awaiting, so a
+// cancelled renderer request cannot cancel or overtake an accepted OS write.
+#[cfg(target_os = "linux")]
+const FILE_CLIPBOARD_TOKEN: &str = "application/x-tauri-explorer-file-token";
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileClipboardSnapshot {
+    revision: u64,
+    entries: Option<Vec<serde_json::Value>>,
+    paths: Vec<String>,
+    operation: Option<String>,
+    mirror_error: Option<String>,
+}
+
+enum FileClipboardJob {
+    Publish {
+        entries: Vec<serde_json::Value>,
+        operation: String,
+        reply: tokio::sync::oneshot::Sender<Result<FileClipboardSnapshot, AppError>>,
+    },
+    Snapshot {
+        reply: tokio::sync::oneshot::Sender<Result<FileClipboardSnapshot, AppError>>,
+    },
+    ReadPaths {
+        reply: tokio::sync::oneshot::Sender<Result<Vec<String>, AppError>>,
+    },
+    WriteLegacy {
+        paths: Vec<String>,
+        reply: tokio::sync::oneshot::Sender<Result<(), AppError>>,
+    },
+    Clear {
+        revision: u64,
+        reply: tokio::sync::oneshot::Sender<Result<bool, AppError>>,
+    },
+    Rekey {
+        revision: u64,
+        old_path: String,
+        entry: serde_json::Value,
+        reply: tokio::sync::oneshot::Sender<Result<Option<FileClipboardSnapshot>, AppError>>,
+    },
+}
+
+struct FileClipboardCoordinator {
+    revision: u64,
+    entries: Option<Vec<serde_json::Value>>,
+    paths: Vec<String>,
+    operation: Option<String>,
+    token: Option<String>,
+    mirror_error: Option<String>,
+    failed_mirror_baseline_paths: Option<Vec<String>>,
+    #[cfg(target_os = "linux")]
+    failed_mirror_baseline_owner: Option<u32>,
+    #[cfg(target_os = "linux")]
+    x11: Option<clipboard_rs::ClipboardContext>,
+}
+
+impl FileClipboardCoordinator {
+    fn new() -> Self {
+        Self {
+            revision: 0,
+            entries: None,
+            paths: Vec::new(),
+            operation: None,
+            token: None,
+            mirror_error: None,
+            failed_mirror_baseline_paths: None,
+            #[cfg(target_os = "linux")]
+            failed_mirror_baseline_owner: None,
+            #[cfg(target_os = "linux")]
+            x11: if is_wayland() {
+                None
+            } else {
+                clipboard_rs::ClipboardContext::new().ok()
+            },
+        }
+    }
+
+    fn snapshot(&mut self) -> Result<FileClipboardSnapshot, AppError> {
+        let paths = match read_clipboard_file_paths() {
+            Ok(paths) => paths,
+            Err(_) if self.mirror_error.is_some() && self.operation.as_deref() == Some("copy") => {
+                return Ok(self.cached_snapshot());
+            }
+            Err(error) => return Err(error),
+        };
+        if self.mirror_error.is_some()
+            && self.operation.as_deref() == Some("copy")
+            && Some(&paths) == self.failed_mirror_baseline_paths.as_ref()
+            && self.failed_mirror_owner_unchanged()
+        {
+            return Ok(self.cached_snapshot());
+        }
+        let native_token = self.native_token();
+        if native_token != self.token || paths != self.paths {
+            self.revision = self.revision.wrapping_add(1);
+            self.entries = None;
+            self.operation = None;
+            self.token = native_token;
+            self.paths = paths.clone();
+            self.mirror_error = None;
+            self.failed_mirror_baseline_paths = None;
+            #[cfg(target_os = "linux")]
+            {
+                self.failed_mirror_baseline_owner = None;
+            }
+        }
+        Ok(FileClipboardSnapshot {
+            revision: self.revision,
+            entries: self.entries.clone(),
+            paths,
+            operation: self.operation.clone(),
+            mirror_error: self.mirror_error.clone(),
+        })
+    }
+
+    fn failed_mirror_owner_unchanged(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        if !is_wayland() {
+            return self
+                .failed_mirror_baseline_owner
+                .is_some_and(|owner| x11_clipboard_owner() == Some(owner));
+        }
+        true
+    }
+
+    fn cached_snapshot(&self) -> FileClipboardSnapshot {
+        FileClipboardSnapshot {
+            revision: self.revision,
+            entries: self.entries.clone(),
+            paths: self.paths.clone(),
+            operation: self.operation.clone(),
+            mirror_error: self.mirror_error.clone(),
+        }
+    }
+
+    fn native_token(&self) -> Option<String> {
+        #[cfg(target_os = "linux")]
+        if let Some(x11) = &self.x11 {
+            use clipboard_rs::Clipboard;
+            return x11
+                .get_buffer(FILE_CLIPBOARD_TOKEN)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+        }
+        None
+    }
+
+    fn write(&mut self, paths: &[String], _token: &str) -> Result<bool, AppError> {
+        #[cfg(target_os = "linux")]
+        if let Some(x11) = &self.x11 {
+            use clipboard_rs::{Clipboard, ClipboardContent};
+            let uris = paths_to_uris(paths);
+            let data = vec![
+                ClipboardContent::Files(uris.clone()),
+                ClipboardContent::Other(
+                    "x-special/gnome-copied-files".into(),
+                    format!("copy\n{}", uris.join("\n")).into_bytes(),
+                ),
+                ClipboardContent::Other(FILE_CLIPBOARD_TOKEN.into(), _token.as_bytes().to_vec()),
+            ];
+            x11.set(data)
+                .map_err(|error| AppError::Other(format!("X11 clipboard write failed: {error}")))?;
+            return Ok(self.native_token().as_deref() == Some(_token));
+        }
+        write_clipboard_file_paths(paths)?;
+        Ok(false)
+    }
+
+    fn publish(
+        &mut self,
+        entries: Vec<serde_json::Value>,
+        operation: String,
+    ) -> Result<FileClipboardSnapshot, AppError> {
+        if operation != "copy" && operation != "cut" {
+            return Err(AppError::Other("Invalid clipboard operation".into()));
+        }
+        let paths: Vec<String> = entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| AppError::InvalidPath("Clipboard entry has no path".into()))
+            })
+            .collect::<Result<_, _>>()?;
+        if paths.is_empty() {
+            return Err(AppError::InvalidPath("No paths to copy".into()));
+        }
+        #[cfg(target_os = "linux")]
+        if operation == "cut" && self.x11.is_none() {
+            return Err(AppError::Other(
+                "Cut requires X11 clipboard ownership; Copy is available here".into(),
+            ));
+        }
+        #[cfg(not(target_os = "linux"))]
+        if operation == "cut" {
+            return Err(AppError::Other(
+                "Cut requires native clipboard ownership; Copy is available here".into(),
+            ));
+        }
+        let next_revision = self.revision.wrapping_add(1);
+        let token = new_clipboard_token()?;
+        let baseline = if operation == "copy" {
+            read_clipboard_file_paths().ok()
+        } else {
+            None
+        };
+        #[cfg(target_os = "linux")]
+        let baseline_owner = if operation == "copy" {
+            x11_clipboard_owner()
+        } else {
+            None
+        };
+        let write = self.write(&paths, &token);
+        if operation == "cut" && !matches!(write, Ok(true)) {
+            return Err(AppError::Other(
+                "Could not verify native Cut clipboard ownership".into(),
+            ));
+        }
+        self.revision = next_revision;
+        self.entries = Some(entries);
+        self.paths = paths;
+        self.operation = Some(operation);
+        self.token = if matches!(write, Ok(true)) {
+            Some(token)
+        } else {
+            None
+        };
+        self.mirror_error = write.err().map(|error| error.to_string());
+        self.failed_mirror_baseline_paths = self.mirror_error.as_ref().and(baseline);
+        #[cfg(target_os = "linux")]
+        {
+            self.failed_mirror_baseline_owner = self.mirror_error.as_ref().and(baseline_owner);
+        }
+        Ok(FileClipboardSnapshot {
+            revision: self.revision,
+            entries: self.entries.clone(),
+            paths: self.paths.clone(),
+            operation: self.operation.clone(),
+            mirror_error: self.mirror_error.clone(),
+        })
+    }
+
+    fn clear(&mut self, revision: u64) -> Result<bool, AppError> {
+        let current = self.snapshot()?;
+        if current.revision != revision || self.entries.is_none() {
+            return Ok(false);
+        }
+        self.revision = self.revision.wrapping_add(1);
+        self.entries = None;
+        self.operation = None;
+        // The OS clipboard keeps the paths for subsequent Copy paste.
+        Ok(true)
+    }
+
+    fn rekey(
+        &mut self,
+        revision: u64,
+        old_path: &str,
+        entry: serde_json::Value,
+    ) -> Result<Option<FileClipboardSnapshot>, AppError> {
+        let current = self.snapshot()?;
+        if current.revision != revision {
+            return Ok(None);
+        }
+        let Some(entries) = self.entries.as_ref() else {
+            return Ok(None);
+        };
+        let Some(index) = entries.iter().position(|candidate| {
+            candidate.get("path").and_then(serde_json::Value::as_str) == Some(old_path)
+        }) else {
+            return Ok(None);
+        };
+        let new_path = entry
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| AppError::InvalidPath("Clipboard entry has no path".into()))?
+            .to_owned();
+        let Some(path_index) = self.paths.iter().position(|path| path == old_path) else {
+            return Ok(None);
+        };
+        let mut paths = self.paths.clone();
+        paths[path_index] = new_path;
+        let token = new_clipboard_token()?;
+        let baseline = if self.operation.as_deref() == Some("copy") {
+            read_clipboard_file_paths().ok()
+        } else {
+            None
+        };
+        #[cfg(target_os = "linux")]
+        let baseline_owner = if self.operation.as_deref() == Some("copy") {
+            x11_clipboard_owner()
+        } else {
+            None
+        };
+        let write = self.write(&paths, &token);
+        if self.operation.as_deref() == Some("cut") && !matches!(write, Ok(true)) {
+            return Err(AppError::Other(
+                "Could not verify native Cut after rename".into(),
+            ));
+        }
+        let verified = matches!(write, Ok(true));
+        self.mirror_error = write.err().map(|error| error.to_string());
+        self.failed_mirror_baseline_paths = self.mirror_error.as_ref().and(baseline);
+        #[cfg(target_os = "linux")]
+        {
+            self.failed_mirror_baseline_owner = self.mirror_error.as_ref().and(baseline_owner);
+        }
+        self.entries.as_mut().expect("entries checked above")[index] = entry;
+        self.paths = paths;
+        self.token = verified.then_some(token);
+        self.revision = self.revision.wrapping_add(1);
+        Ok(Some(FileClipboardSnapshot {
+            revision: self.revision,
+            entries: self.entries.clone(),
+            paths: self.paths.clone(),
+            operation: self.operation.clone(),
+            mirror_error: self.mirror_error.clone(),
+        }))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn x11_clipboard_owner() -> Option<u32> {
+    if is_wayland() {
+        return None;
+    }
+    use x11rb::protocol::xproto::ConnectionExt;
+    let (connection, _) = x11rb::connect(None).ok()?;
+    let atom = connection
+        .intern_atom(false, b"CLIPBOARD")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    let owner = connection
+        .get_selection_owner(atom)
+        .ok()?
+        .reply()
+        .ok()?
+        .owner;
+    Some(owner)
+}
+
+fn new_clipboard_token() -> Result<String, AppError> {
+    let mut nonce = [0u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| AppError::Other(format!("Clipboard token unavailable: {error}")))?;
+    Ok(nonce.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn clipboard_queue() -> &'static std::sync::mpsc::Sender<FileClipboardJob> {
+    static QUEUE: std::sync::OnceLock<std::sync::mpsc::Sender<FileClipboardJob>> =
+        std::sync::OnceLock::new();
+    QUEUE.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("file-clipboard".into())
+            .spawn(move || {
+                let mut coordinator = FileClipboardCoordinator::new();
+                while let Ok(job) = receiver.recv() {
+                    match job {
+                        FileClipboardJob::Publish {
+                            entries,
+                            operation,
+                            reply,
+                        } => {
+                            let _ = reply.send(coordinator.publish(entries, operation));
+                        }
+                        FileClipboardJob::Snapshot { reply } => {
+                            let _ = reply.send(coordinator.snapshot());
+                        }
+                        FileClipboardJob::ReadPaths { reply } => {
+                            let _ =
+                                reply.send(coordinator.snapshot().map(|snapshot| snapshot.paths));
+                        }
+                        FileClipboardJob::WriteLegacy { paths, reply } => {
+                            let result = new_clipboard_token()
+                                .and_then(|token| {
+                                    coordinator
+                                        .write(&paths, &token)
+                                        .map(|verified| (token, verified))
+                                })
+                                .map(|(token, verified)| {
+                                    coordinator.revision = coordinator.revision.wrapping_add(1);
+                                    coordinator.entries = None;
+                                    coordinator.operation = None;
+                                    coordinator.paths = paths;
+                                    coordinator.token = verified.then_some(token);
+                                });
+                            let _ = reply.send(result);
+                        }
+                        FileClipboardJob::Clear { revision, reply } => {
+                            let _ = reply.send(coordinator.clear(revision));
+                        }
+                        FileClipboardJob::Rekey {
+                            revision,
+                            old_path,
+                            entry,
+                            reply,
+                        } => {
+                            let _ = reply.send(coordinator.rekey(revision, &old_path, entry));
+                        }
+                    }
+                }
+            })
+            .expect("clipboard worker must start");
+        sender
+    })
+}
+
+fn send_clipboard_job(job: FileClipboardJob) -> Result<(), AppError> {
+    clipboard_queue()
+        .send(job)
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))
+}
+
+#[tauri::command]
+pub async fn clipboard_publish(
+    entries: Vec<serde_json::Value>,
+    operation: String,
+) -> Result<FileClipboardSnapshot, AppError> {
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::Publish {
+        entries,
+        operation,
+        reply,
+    })?;
+    received
+        .await
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
+}
+
+#[tauri::command]
+pub async fn clipboard_snapshot() -> Result<FileClipboardSnapshot, AppError> {
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::Snapshot { reply })?;
+    received
+        .await
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
+}
+
+#[tauri::command]
+pub async fn clipboard_compare_and_clear(revision: u64) -> Result<bool, AppError> {
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::Clear { revision, reply })?;
+    received
+        .await
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
+}
+
+#[tauri::command]
+pub async fn clipboard_rekey(
+    revision: u64,
+    old_path: String,
+    entry: serde_json::Value,
+) -> Result<Option<FileClipboardSnapshot>, AppError> {
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::Rekey {
+        revision,
+        old_path,
+        entry,
+        reply,
+    })?;
+    received
+        .await
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod clipboard_coordinator_x11_tests {
+    use super::*;
+
+    // Run on a private Xvfb display: xvfb-run -a cargo test x11_cut_identity -- --ignored
+    #[test]
+    #[ignore = "requires a private X11 display and xclip"]
+    fn x11_cut_identity_and_external_file_formats() {
+        use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext};
+        assert!(!is_wayland());
+        let mut coordinator = FileClipboardCoordinator::new();
+        assert!(coordinator.x11.is_some());
+        let entry = serde_json::json!({"name":"same.txt","path":"/tmp/same.txt"});
+        let cut = coordinator
+            .publish(vec![entry.clone()], "cut".into())
+            .unwrap();
+        assert_eq!(cut.operation.as_deref(), Some("cut"));
+        assert_eq!(
+            coordinator.snapshot().unwrap().operation.as_deref(),
+            Some("cut")
+        );
+        let targets = Command::new("xclip")
+            .args(["-o", "-selection", "clipboard", "-t", "TARGETS"])
+            .output()
+            .unwrap();
+        let formats = String::from_utf8_lossy(&targets.stdout);
+        assert!(
+            formats.contains("x-special/gnome-copied-files"),
+            "{formats}"
+        );
+        assert!(formats.contains("text/uri-list"), "{formats}");
+        assert!(formats.contains(FILE_CLIPBOARD_TOKEN), "{formats}");
+
+        let renamed = coordinator
+            .rekey(
+                cut.revision,
+                "/tmp/same.txt",
+                serde_json::json!({
+                    "name": "renamed.txt", "path": "/tmp/renamed.txt"
+                }),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(renamed.paths, vec!["/tmp/renamed.txt"]);
+        assert_eq!(
+            coordinator.snapshot().unwrap().operation.as_deref(),
+            Some("cut")
+        );
+
+        // A different owner advertises the identical renamed file list,
+        // without our private token. Cut must become external Copy.
+        let external = ClipboardContext::new().unwrap();
+        external
+            .set(vec![ClipboardContent::Files(vec![
+                "file:///tmp/renamed.txt".into(),
+            ])])
+            .unwrap();
+        let observed = coordinator.snapshot().unwrap();
+        assert_eq!(observed.paths, vec!["/tmp/renamed.txt"]);
+        assert!(observed.entries.is_none());
+        assert!(observed.operation.is_none());
+        assert!(!coordinator.clear(renamed.revision).unwrap());
+        assert!(coordinator
+            .rekey(renamed.revision, "/tmp/renamed.txt", entry)
+            .unwrap()
+            .is_none());
+
+        // Dropping the command reply models renderer cancellation after the
+        // worker accepted the job. The subsequent snapshot must observe it.
+        let (reply, received) = tokio::sync::oneshot::channel();
+        send_clipboard_job(FileClipboardJob::Publish {
+            entries: vec![serde_json::json!({"name":"survives.txt","path":"/tmp/survives.txt"})],
+            operation: "copy".into(),
+            reply,
+        })
+        .unwrap();
+        drop(received);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let after_cancel = runtime.block_on(clipboard_snapshot()).unwrap();
+        assert_eq!(after_cancel.paths, vec!["/tmp/survives.txt"]);
+        assert_eq!(after_cancel.operation.as_deref(), Some("copy"));
+
+        // Model a write-only mirror failure while OS reads still work. The
+        // accepted in-app Copy remains usable until the OS owner changes.
+        external
+            .set_files(vec!["file:///tmp/baseline.txt".into()])
+            .unwrap();
+        coordinator.revision += 1;
+        coordinator.entries = Some(vec![
+            serde_json::json!({"name":"failed.txt","path":"/tmp/failed.txt"}),
+        ]);
+        coordinator.paths = vec!["/tmp/failed.txt".into()];
+        coordinator.operation = Some("copy".into());
+        coordinator.token = None;
+        coordinator.mirror_error = Some("simulated write-only failure".into());
+        coordinator.failed_mirror_baseline_paths = Some(vec!["/tmp/baseline.txt".into()]);
+        coordinator.failed_mirror_baseline_owner = x11_clipboard_owner();
+        assert_eq!(
+            coordinator.snapshot().unwrap().paths,
+            vec!["/tmp/failed.txt"]
+        );
+
+        let same_paths_new_owner = ClipboardContext::new().unwrap();
+        same_paths_new_owner
+            .set_files(vec!["file:///tmp/baseline.txt".into()])
+            .unwrap();
+        let same = coordinator.snapshot().unwrap();
+        assert_eq!(same.paths, vec!["/tmp/baseline.txt"]);
+        assert!(same.entries.is_none());
+        assert!(same.operation.is_none());
+
+        coordinator.revision += 1;
+        coordinator.entries = Some(vec![
+            serde_json::json!({"name":"failed-again.txt","path":"/tmp/failed-again.txt"}),
+        ]);
+        coordinator.paths = vec!["/tmp/failed-again.txt".into()];
+        coordinator.operation = Some("copy".into());
+        coordinator.mirror_error = Some("simulated write-only failure".into());
+        coordinator.failed_mirror_baseline_paths = Some(vec!["/tmp/baseline.txt".into()]);
+        coordinator.failed_mirror_baseline_owner = x11_clipboard_owner();
+        let changed_owner = ClipboardContext::new().unwrap();
+        changed_owner
+            .set_files(vec!["file:///tmp/external.txt".into()])
+            .unwrap();
+        let changed = coordinator.snapshot().unwrap();
+        assert_eq!(changed.paths, vec!["/tmp/external.txt"]);
+        assert!(changed.entries.is_none());
+        assert!(changed.operation.is_none());
     }
 }

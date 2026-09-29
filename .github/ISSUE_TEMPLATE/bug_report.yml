@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Tip: the fastest way to file a complete report is from inside the app — **Command Palette → "Report a Bug"**. It pre-fills this form with your OS, app version, and a recent log excerpt (you see everything before submitting; nothing is sent automatically).
+        Tip: use **Command Palette → "Report Issue"** in the app. It includes your OS and app version when you submit, and can attach images you choose. The issue and images are public; logs are not attached automatically.
   - type: textarea
     id: what-happened
     attributes:
@@ -18,8 +18,8 @@ body:
     id: version
     attributes:
       label: App version
-      description: Command Palette → "About", or the filename you downloaded
-      placeholder: "v1.3.1"
+      description: The release or installer filename you downloaded
+      placeholder: "v1.11.1"
     validations:
       required: true
   - type: dropdown

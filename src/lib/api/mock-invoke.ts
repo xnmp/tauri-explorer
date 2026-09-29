@@ -950,6 +950,9 @@ const mockWrittenFiles: Record<string, string> = {};
 
 /** In-memory OS clipboard file list, round-tripped by the clipboard_* mocks. */
 let mockClipboardFiles: string[] = [];
+let mockClipboardEntries: unknown[] | null = null;
+let mockClipboardOperation: "copy" | "cut" | null = null;
+let mockClipboardRevision = 0;
 
 // ----- Deterministic commit graph for git_log / git_refs mocks (#57) -----
 
@@ -3098,13 +3101,53 @@ if (typeof window !== "undefined") {
   // In-memory clipboard so write → has → read round-trips in browser/E2E mode,
   // mirroring the real OS clipboard contract (write paths, then read them back).
 
+  clipboard_publish: (args: Record<string, unknown>) => {
+    // Browser tests simulate the admitted X11 cohort by default. Set this
+    // flag to exercise Wayland/Windows/macOS Cut refusal.
+    if (args.operation === "cut" && localStorage.getItem("mock-cut-ownership-unavailable") === "1") {
+      throw new Error("Cut requires native clipboard ownership; Copy is available here");
+    }
+    const entries = args.entries as Array<{ path: string }>;
+    mockClipboardFiles = entries.map((entry) => entry.path);
+    mockClipboardEntries = entries;
+    mockClipboardOperation = args.operation as "copy" | "cut";
+    mockClipboardRevision++;
+    return { revision: mockClipboardRevision, entries, paths: [...mockClipboardFiles], operation: mockClipboardOperation, mirrorError: null };
+  },
+  clipboard_snapshot: () => ({
+    revision: mockClipboardRevision, entries: mockClipboardEntries,
+    paths: [...mockClipboardFiles], operation: mockClipboardOperation, mirrorError: null,
+  }),
+  clipboard_compare_and_clear: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || !mockClipboardEntries) return false;
+    mockClipboardRevision++;
+    mockClipboardEntries = null;
+    mockClipboardOperation = null;
+    return true;
+  },
+  clipboard_rekey: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || !mockClipboardEntries) return null;
+    const entries = mockClipboardEntries as Array<{ path: string }>;
+    const index = entries.findIndex((entry) => entry.path === args.oldPath);
+    if (index < 0) return null;
+    mockClipboardEntries = entries.map((entry, at) => at === index ? args.entry : entry);
+    mockClipboardFiles = (mockClipboardEntries as Array<{ path: string }>).map((entry) => entry.path);
+    mockClipboardRevision++;
+    return { revision: mockClipboardRevision, entries: mockClipboardEntries,
+      paths: [...mockClipboardFiles], operation: mockClipboardOperation, mirrorError: null };
+  },
   clipboard_has_files: () => mockClipboardFiles.length > 0,
 
   clipboard_read_files: () => [...mockClipboardFiles],
 
+  clipboard_read_text: () => localStorage.getItem("mock-clipboard-text") ?? "",
+
   clipboard_write_files: (args) => {
     const paths = (args.paths as string[]) ?? [];
     mockClipboardFiles = [...paths];
+    mockClipboardEntries = null;
+    mockClipboardOperation = null;
+    mockClipboardRevision++;
     return true;
   },
 

@@ -26,15 +26,11 @@ Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest
 # manual walkthrough of the same steps.
 curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_install.sh | bash
 
-# macOS via Homebrew — second command needed until the app is notarized
-brew install --cask xnmp/tap/tauri-explorer
-xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app
-
-# Arch Linux (repacks the release .deb; source-build PKGBUILD at repo root)
-git clone https://github.com/xnmp/tauri-explorer && cd tauri-explorer/packaging/aur && makepkg -si
 ```
 
-Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them — the `xattr` command above clears the quarantine flag (Homebrew removed its `--no-quarantine` option, so this manual step is the only way until the app is notarized).
+Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them; after installing the downloaded Apple Silicon DMG, run `xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app` to clear quarantine. The release page is the supported binary install route; the repository-root `PKGBUILD` provides an Arch source build. The older Homebrew cask and `packaging/aur` binary recipe are not current release channels.
+
+File Cut is available on X11, where the app can verify native clipboard ownership before moving the source. On Wayland, Windows, and macOS, file Copy remains available but Cut reports that ownership cannot yet be verified.
 
 ## Use as system file picker
 
@@ -95,4 +91,4 @@ bun run start
 
 ## Status
 
-Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report Issue", or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose). Image attachments require authenticated [GitHub CLI](https://cli.github.com/) plus the optional [`gh-image`](https://github.com/drogers0/gh-image) extension (`gh extension install drogers0/gh-image`); background submission failures save the report draft for retry.
+Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report Issue", or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose). Submitted reports and selected images become public. If in-app submission fails, text is saved for retry and images remain available until the app window closes. The GitHub issue form opens when a new issue is safe to create; add images manually there.

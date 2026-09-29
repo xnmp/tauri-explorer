@@ -44,6 +44,8 @@ for (const kind of ["bug", "feature"] as const) {
       "aria-pressed",
       String(kind === "feature"),
     );
+    await expect(dialog.getByText(/Submitting creates a public GitHub issue/)).toBeVisible();
+    await expect(dialog.getByText(/Local logs are not attached automatically/)).toBeVisible();
     await dialog.getByLabel("Title").fill(`${kind} report title`);
     await dialog.getByLabel("Description").fill("Typed description");
     await dialog.getByLabel(/How can we reach you/).fill("@playwright-reporter");
@@ -179,6 +181,21 @@ test("a failed report retires the in-flight toast before the error toast", async
   });
 });
 
+test("uncertain submission keeps the draft without opening a duplicate issue form", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-error", "submission_uncertain"));
+
+  const dialog = await openReportDialog(page);
+  await dialog.getByLabel("Title").fill("Check before retrying");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(page.locator(".toast.error")).toContainText("Check recent issues before retrying");
+  expect(await page.evaluate(() => localStorage.getItem("mock-opened-url"))).toBeNull();
+  const reopened = await openReportDialog(page);
+  await expect(reopened.getByLabel("Title")).toHaveValue("Check before retrying");
+});
+
 /** #597: Report Issue is reachable without going through the palette. */
 test("Alt+I opens the report dialog and the palette advertises the shortcut", async ({ page }) => {
   await page.goto("/");
@@ -225,11 +242,11 @@ test("the single Report Issue command defaults to bug and accepts a blank descri
   });
 });
 
-test("report dialog footer buttons use the themed control treatment", async ({ page }) => {
-  for (const [kind, screenshot] of [
-    ["bug", "ac-1-report-dialog-buttons.png"],
-    ["feature", "ac-1-feature-dialog-buttons.png"],
-  ] as const) {
+for (const [kind, screenshot] of [
+  ["bug", "ac-1-report-dialog-buttons.png"],
+  ["feature", "ac-1-feature-dialog-buttons.png"],
+] as const) {
+  test(`${kind} report dialog footer buttons use the themed control treatment`, async ({ page }) => {
     await page.goto("/");
     await waitForEntries(page);
     const dialog = await openReportDialog(page, kind);
@@ -264,8 +281,8 @@ test("report dialog footer buttons use the themed control treatment", async ({ p
       .toBe("solid");
 
     await page.screenshot({ path: evidencePath(screenshot) });
-  }
-});
+  });
+}
 
 test("failed submission preserves the draft in the GitHub fallback", async ({ page }) => {
   await page.goto("/");
@@ -478,10 +495,10 @@ test("failed optimistic attachment submission restores the complete draft on reo
   await dialog.getByRole("button", { name: "Submit" }).click();
 
   await expect(dialog).toBeHidden();
-  await expect(page.locator(".toast.error")).toContainText("saved for retry");
+  await expect(page.locator(".toast.error")).toContainText("Your text is saved");
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
-    .toBeNull();
+    .toContain("https://github.com/xnmp/tauri-explorer/issues/new?");
 
   const restoredDialog = await openReportDialog(page);
   await expect(restoredDialog.getByLabel("Title")).toHaveValue("Keep attachment title");
@@ -509,8 +526,8 @@ for (const [kind, message] of [
   ["daily_cap", "Reports are temporarily unavailable"],
   ["rate_limited", "Too many reports"],
   ["malformed_input", "not valid"],
-  ["attachment_uploader_unavailable", "Install GitHub CLI"],
-  ["attachment_upload_failed", "Could not upload the image through gh-image"],
+  ["attachment_uploader_unavailable", "Could not reach an image uploader"],
+  ["attachment_upload_failed", "Could not upload the image"],
 ] as const) {
   test(`${kind} optimistic attachment failure is explained by a toast`, async ({
     page,
@@ -531,6 +548,9 @@ for (const [kind, message] of [
 
     await expect(dialog).toBeHidden();
     await expect(page.locator(".toast.error")).toContainText(message);
+    await expect(page.locator(".toast.error")).toContainText("add the images there manually");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .toContain("https://github.com/xnmp/tauri-explorer/issues/new?");
   });
 }
 

@@ -127,7 +127,9 @@ export function validateReport(input) {
   }
   const record = /** @type {Record<string, unknown>} */ (input);
   const title = requiredString(record.title, "title", 120);
-  const body = optionalMultilineString(record.body, "body", 8000);
+  // The app accepts an 8,000-unit description and appends contact/version/OS
+  // metadata before posting. Preserve that user text in full.
+  const body = optionalMultilineString(record.body, "body", 8500);
   if (/^(?:https?:\/\/|www\.)\S+$/iu.test(body)) {
     throw new ReportError("malformed_input", "Description cannot be only a link");
   }
@@ -262,6 +264,7 @@ export async function processReport(
     throw new ReportError("server_rejected", "Image hosting is not configured", 503);
   }
   const hostedAttachments = [];
+  let issueAttempted = false;
   try {
     for (const attachment of report.attachments) {
       hostedAttachments.push({
@@ -269,15 +272,22 @@ export async function processReport(
         url: await attachmentStore.upload(attachment),
       });
     }
+    issueAttempted = true;
     return await createIssue(buildGitHubIssue(report, hostedAttachments));
   } catch (error) {
-    if (hostedAttachments.length > 0) {
+    // After the POST starts, a lost response cannot prove whether GitHub
+    // created the issue. Keep its image links valid and stop automatic retry.
+    const uncertain = issueAttempted && !(error instanceof ReportError && error.code === "server_rejected");
+    if (!uncertain && hostedAttachments.length > 0) {
       const urls = hostedAttachments.map(({ url }) => url);
       try {
         await attachmentStore.remove(urls);
       } catch (cleanupError) {
         console.error("Failed to remove report attachment blobs", cleanupError);
       }
+    }
+    if (uncertain) {
+      throw new ReportError("submission_uncertain", "GitHub may have created the issue; check recent issues before retrying", 503);
     }
     throw error;
   }

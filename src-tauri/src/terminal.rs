@@ -466,28 +466,41 @@ fn take_valid_utf8(pending: &mut Vec<u8>) -> String {
 fn zsh_shim_files() -> [(&'static str, String); 4] {
     // Shared preamble: source the user's equivalent startup file (if any) with
     // ZDOTDIR pointed at their real dir, then restore the shim dir.
-    let source = |user_file: &str| -> String {
+    let source = |user_file: &str, reset_history: bool| -> String {
+        // macOS /etc/zshrc sets HISTFILE from the temporary ZDOTDIR before
+        // our .zshrc runs. Reset it before sourcing the user's .zshrc, which
+        // may itself choose another location (#784).
+        let history = if reset_history {
+            "HISTFILE=\"${_TE_USER_HISTFILE-$USER_ZDOTDIR/.zsh_history}\"\n"
+        } else {
+            ""
+        };
         format!(
             "# tauri-explorer zsh shell integration (issue #149) — do not edit.\n\
              USER_ZDOTDIR=\"${{_TE_ORIG_ZDOTDIR:-$HOME}}\"\n\
-             if [[ -f \"$USER_ZDOTDIR/{user_file}\" ]]; then\n\
+             {history}if [[ -f \"$USER_ZDOTDIR/{user_file}\" ]]; then\n\
+             \x20 _TE_HISTFILE_BEFORE=\"${{HISTFILE-}}\"\n\
              \x20 ZDOTDIR=\"$USER_ZDOTDIR\"\n\
              \x20 source \"$USER_ZDOTDIR/{user_file}\"\n\
+             \x20 if [[ \"${{HISTFILE-}}\" != \"$_TE_HISTFILE_BEFORE\" ]]; then\n\
+             \x20\x20 _TE_USER_HISTFILE=\"${{HISTFILE-}}\"\n\
+             \x20 fi\n\
+             \x20 unset _TE_HISTFILE_BEFORE\n\
              fi\n\
              ZDOTDIR=\"${{_TE_SHIM_ZDOTDIR:-$ZDOTDIR}}\"\n"
         )
     };
-    let mut zshrc = source(".zshrc");
+    let mut zshrc = source(".zshrc", true);
     zshrc.push_str(
         "\n# Report cwd via OSC 7 so the file explorer can follow the shell.\n\
          _tauri_explorer_osc7() { printf '\\033]7;file://%s%s\\033\\\\' \"${HOST}\" \"${PWD}\" }\n\
          autoload -Uz add-zsh-hook 2>/dev/null && { add-zsh-hook chpwd _tauri_explorer_osc7; _tauri_explorer_osc7 }\n",
     );
     [
-        (".zshenv", source(".zshenv")),
-        (".zprofile", source(".zprofile")),
+        (".zshenv", source(".zshenv", false)),
+        (".zprofile", source(".zprofile", false)),
         (".zshrc", zshrc),
-        (".zlogin", source(".zlogin")),
+        (".zlogin", source(".zlogin", false)),
     ]
 }
 
@@ -1786,6 +1799,75 @@ mod tests {
             zshrc.contains("file://"),
             "zshrc emits an OSC 7 file:// sequence"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn zsh_shim_restores_user_history_path_before_user_zshrc() {
+        if std::process::Command::new("zsh")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let user = root.path().join("user");
+        std::fs::create_dir(&user).unwrap();
+        let shim = ensure_zsh_shim(root.path()).unwrap();
+        let run = |user_env: &str, user_profile: &str, user_rc: &str, login: bool| {
+            std::fs::write(user.join(".zshenv"), user_env).unwrap();
+            std::fs::write(user.join(".zprofile"), user_profile).unwrap();
+            std::fs::write(user.join(".zshrc"), user_rc).unwrap();
+            let mut command = std::process::Command::new("zsh");
+            if login {
+                command.arg("-l");
+            }
+            let output = command
+                .args(["-i", "-c", "HISTSIZE=100; SAVEHIST=100; print -s -- alpha-history-proof; fc -W; print -r -- HISTFILE=$HISTFILE"])
+                .env("HOME", &user)
+                .env("ZDOTDIR", &shim)
+                .env("_TE_ORIG_ZDOTDIR", &user)
+                .env("_TE_SHIM_ZDOTDIR", &shim)
+                // macOS /etc/zshrc derives this from the temporary ZDOTDIR.
+                .env("HISTFILE", shim.join(".zsh_history"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        };
+        assert!(run("", "", "", false)
+            .contains(&format!("HISTFILE={}", user.join(".zsh_history").display())));
+        assert!(
+            run("", "", "HISTFILE=$HOME/custom-history\n", false).contains(&format!(
+                "HISTFILE={}",
+                user.join("custom-history").display()
+            ))
+        );
+        assert!(run("HISTFILE=$HOME/from-zshenv\n", "", "", false)
+            .contains(&format!("HISTFILE={}", user.join("from-zshenv").display())));
+        assert!(
+            run("", "HISTFILE=$HOME/from-zprofile\n", "", true).contains(&format!(
+                "HISTFILE={}",
+                user.join("from-zprofile").display()
+            ))
+        );
+        for name in [
+            ".zsh_history",
+            "custom-history",
+            "from-zshenv",
+            "from-zprofile",
+        ] {
+            let saved = std::fs::read_to_string(user.join(name)).unwrap();
+            assert!(
+                saved.contains("alpha-history-proof"),
+                "{name} did not save history"
+            );
+        }
     }
 
     // ─── busy detection ──────────────────────────────────────────────────────

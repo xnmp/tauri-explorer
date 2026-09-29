@@ -104,6 +104,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path, an ordered writer closed with the PTY (#709).
+- `terminal-input-order.ts` — holds later terminal input behind asynchronous Paste reads, captures xterm's bracketed-paste bytes in the original key position, and drops pending input on restart/disposal (#732).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
@@ -151,7 +152,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `paste-operations.ts` — clipboard-mode dispatch to the copy or move session and cut-clipboard release.
 - `drop-operations.ts` — drop source-path extraction and dispatch to the copy or move session.
 - `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
-- `clipboard.svelte.ts` — cross-pane/window file clipboard (cut/copy paths).
+- `clipboard.svelte.ts` — cross-pane/window revisioned file clipboard state and Cut ownership reconciliation.
 - `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
 - `undo.svelte.ts` — revisioned native-history projection; queued writes retain their receipts so Undo targets the entry captured at intent.
 - `undo-helpers.ts` — pure completion labels for renderer and native-only history actions.
@@ -237,7 +238,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `thumbnails.ts` — image/video thumbnail, folder preview, palette-extract IPC.
 - `archive.ts` — zip compress/extract/preview IPC.
 - `config.ts` — JSON config persistence + user theme CSS file IPC.
-- `os-clipboard.ts` — OS clipboard file cut/copy/paste IPC.
+- `os-clipboard.ts` — native file clipboard publish/snapshot/CAS IPC plus text and image helpers.
 - `terminal.ts` — embedded terminal spawn/write/resize IPC (#139).
 - `activate.ts` — resolve what double-click/Enter activation targets.
 - `ai-organize.ts` — AI "where does this file belong" IPC (#158).
@@ -406,12 +407,12 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
 - `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
-- `clipboard.rs` — OS clipboard file operations.
+- `clipboard.rs` — OS clipboard file operations and process-wide ordered worker with X11 Cut ownership token.
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
-- `user_report.rs` — typed async report relay command, environment/log-tail body assembly, and ureq transport.
+- `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `process_ext.rs` — suppress console-window flash for spawned children.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).

@@ -5,9 +5,10 @@ import {
   createRestRateLimitStore,
   enforceReportLimits,
   processReport,
+  ReportError,
   validateReport,
 } from "../../website/api/report-core.js";
-import reportHandler, { reporterIp } from "../../website/api/report.js";
+import reportHandler, { createGitHubIssue, reporterIp } from "../../website/api/report.js";
 
 const valid = {
   title: "Explorer freezes 🧊",
@@ -21,6 +22,44 @@ const valid = {
 const pngData = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
 ]).toString("base64");
+
+describe("GitHub issue submission boundary", () => {
+  const issue = { title: "Alpha report", body: "Body", labels: ["user-report", "bug"] };
+
+  it("returns the public issue URL after an acknowledged creation", async () => {
+    vi.stubEnv("GITHUB_ISSUE_TOKEN", "test-token");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ html_url: "https://github.com/xnmp/tauri-explorer/issues/900", number: 900 }),
+    }));
+    try {
+      await expect(createGitHubIssue(issue)).resolves.toEqual({
+        url: "https://github.com/xnmp/tauri-explorer/issues/900",
+        number: 900,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ["lost response", () => { throw new Error("connection reset"); }, "submission_uncertain"],
+    ["malformed success", () => ({ ok: true, status: 201, json: async () => ({}) }), "submission_uncertain"],
+    ["upstream failure", () => ({ ok: false, status: 503 }), "submission_uncertain"],
+    ["definite rejection", () => ({ ok: false, status: 422 }), "server_rejected"],
+  ])("classifies %s without inviting an automatic duplicate", async (_case, respond, code) => {
+    vi.stubEnv("GITHUB_ISSUE_TOKEN", "test-token");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(respond));
+    try {
+      await expect(createGitHubIssue(issue)).rejects.toMatchObject({ code });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("report relay validation", () => {
   it("normalizes a valid report and selects observable GitHub labels", () => {
@@ -67,6 +106,13 @@ describe("report relay validation", () => {
 
   it("accepts an 8000-character unicode body", () => {
     expect(validateReport({ ...valid, body: "🐛".repeat(4000) }).body).toHaveLength(8000);
+  });
+
+  it("accepts the full description with appended app metadata but rejects larger relay bodies", () => {
+    expect(validateReport({ ...valid, body: "x".repeat(8500) }).body).toHaveLength(8500);
+    expect(() => validateReport({ ...valid, body: "x".repeat(8501) })).toThrow(
+      expect.objectContaining({ code: "malformed_input" }),
+    );
   });
 
   it("decodes supported image attachments for the hosting boundary", () => {
@@ -208,7 +254,7 @@ describe("report attachment delivery", () => {
   });
 
   it("reports failed blob cleanup while preserving the delivery error", async () => {
-    const createIssue = vi.fn().mockRejectedValue(new Error("GitHub unavailable"));
+    const createIssue = vi.fn().mockRejectedValue(new ReportError("server_rejected", "GitHub rejected the report", 502));
     const attachmentStore = {
       upload: vi.fn().mockResolvedValue("https://blob.test/orphan.png"),
       remove: vi.fn().mockRejectedValue(new Error("Blob cleanup unavailable")),
@@ -221,13 +267,28 @@ describe("report attachment delivery", () => {
       createInMemoryRateLimitStore(),
       createIssue,
       attachmentStore,
-    )).rejects.toThrow("GitHub unavailable");
+    )).rejects.toThrow("GitHub rejected the report");
     expect(attachmentStore.remove).toHaveBeenCalledWith(["https://blob.test/orphan.png"]);
     expect(consoleError).toHaveBeenCalledWith(
       "Failed to remove report attachment blobs",
       expect.any(Error),
     );
     consoleError.mockRestore();
+  });
+
+  it("keeps hosted images when GitHub may have created an issue before its response was lost", async () => {
+    const attachmentStore = {
+      upload: vi.fn().mockResolvedValue("https://blob.test/possibly-published.png"),
+      remove: vi.fn(),
+    };
+    await expect(processReport(
+      { ...valid, attachments: [{ name: "shot.png", mediaType: "image/png", data: pngData }] },
+      "198.51.100.12",
+      createInMemoryRateLimitStore(),
+      vi.fn().mockRejectedValue(new ReportError("submission_uncertain", "Check recent issues", 503)),
+      attachmentStore,
+    )).rejects.toMatchObject({ code: "submission_uncertain" });
+    expect(attachmentStore.remove).not.toHaveBeenCalled();
   });
 
   it("cleans up earlier blobs when a later image upload fails", async () => {

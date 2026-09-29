@@ -1,196 +1,153 @@
-/**
- * Global clipboard state for cross-pane and cross-window file operations.
- * Issue: tauri-explorer-u7bg, tauri-explorer-za55, tauri-explorer-rdra, tauri-explorer-jrfg, tauri-anov
- *
- * This enables copy/cut/paste between dual panes, across windows, and with external apps.
- * Supports multiple files for batch copy/cut/paste operations.
- *
- * Cross-window sync: Uses Tauri's inter-window event system to broadcast
- * clipboard changes so cut/copy in one window is available for paste in another.
- */
-
+/** Process-wide file clipboard state. The native worker owns order and Cut identity. */
 import type { FileEntry } from "$lib/domain/file";
 import { basename } from "$lib/domain/path";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  osClipboardCompareAndClear,
   osClipboardHasFiles,
-  osClipboardReadFiles,
-  osClipboardWriteFiles,
+  osClipboardPublish,
+  osClipboardRekey,
+  osClipboardSnapshot,
+  type NativeClipboardSnapshot,
+  errorMessage,
 } from "$lib/api/os-clipboard";
 import { toastStore } from "./toast.svelte";
 
-/** Mirror the in-app clipboard to the OS clipboard, surfacing failures
- *  (e.g. wl-clipboard not installed) instead of silently dropping them —
- *  the in-app copy still works either way (#279). */
-async function mirrorToOsClipboard(paths: string[]): Promise<void> {
-  const result = await osClipboardWriteFiles(paths);
-  if (!result.ok) {
-    toastStore.error(`Copy works in-app, but the system clipboard failed: ${result.error}`);
-  }
-}
-
 export type ClipboardOperation = "copy" | "cut";
-
-export interface ClipboardContent {
-  entries: FileEntry[];
-  operation: ClipboardOperation;
-}
-
-/** Content from OS clipboard (external apps). */
-export interface OsClipboardContent {
-  paths: string[];
-  operation: "copy"; // External sources are always copy
-}
-
+export interface ClipboardContent { entries: FileEntry[]; operation: ClipboardOperation }
+export interface OsClipboardContent { paths: string[]; operation: "copy" }
 const CLIPBOARD_EVENT = "app://clipboard-sync";
 
 function createClipboardStore() {
   let content = $state<ClipboardContent | null>(null);
+  let revision = $state(0);
   let unlisten: UnlistenFn | null = null;
-  // Native clipboard writes can outlive the click that started them. Serialize
-  // our writes and expose pending state so in-app Copy can paste immediately.
-  let osWriteTail: Promise<void> = Promise.resolve();
-  let pendingLocalCopy: ClipboardContent | null = null;
+  let pendingCopy: ClipboardContent | null = null;
+  let latestLocalJob = 0;
+  const pathSet = $derived(new Set(content?.entries.map((entry) => entry.path) ?? []));
 
-  // Per-row membership checks (isInClipboard) run for every visible row on
-  // every render — a Set makes them O(1) instead of scanning the entries
-  // array per row.
-  const pathSet = $derived(new Set(content?.entries.map((e) => e.path) ?? []));
+  function apply(snapshot: NativeClipboardSnapshot): void {
+    if (snapshot.revision < revision || pendingCopy) return;
+    revision = snapshot.revision;
+    content = snapshot.entries && snapshot.operation
+      ? { entries: snapshot.entries, operation: snapshot.operation }
+      : null;
+  }
 
-  // Broadcast clipboard content to all windows
-  async function broadcast(data: ClipboardContent | null): Promise<void> {
+  async function reconcile(): Promise<NativeClipboardSnapshot | null> {
     try {
-      await emit(CLIPBOARD_EVENT, data);
+      const snapshot = await osClipboardSnapshot();
+      apply(snapshot);
+      return snapshot;
     } catch {
-      // Emit may fail if not running in Tauri (e.g., dev browser)
+      return null;
     }
   }
 
-  // Listen for clipboard changes from other windows
+  async function notify(revisionHint = revision): Promise<void> {
+    try { await emit(CLIPBOARD_EVENT, { revision: revisionHint }); } catch { /* browser mode */ }
+  }
+
   async function startListening(): Promise<void> {
     try {
-      unlisten = await listen<ClipboardContent | null>(CLIPBOARD_EVENT, (event) => {
-        // Update local state from the event (avoids infinite loop since
-        // the emitting window already has the correct state)
-        content = event.payload;
+      unlisten = await listen<{ revision: number }>(CLIPBOARD_EVENT, (event) => {
+        if (event.payload.revision >= revision) void reconcile();
       });
-    } catch {
-      // Listen may fail if not running in Tauri
-    }
+      await reconcile();
+    } catch { /* browser mode */ }
   }
+  void startListening();
 
-  // Start listening immediately
-  startListening();
-
-  async function setContent(entries: FileEntry[], operation: ClipboardOperation): Promise<void> {
-    if (entries.length === 0) return;
-    const next: ClipboardContent = { entries, operation };
-    content = next;
-    const published = content;
-    pendingLocalCopy = operation === "copy" ? published : null;
-    const write = osWriteTail.then(() => mirrorToOsClipboard(entries.map((e) => e.path)));
-    osWriteTail = write.catch(() => {});
+  async function publish(entries: FileEntry[], operation: ClipboardOperation): Promise<boolean> {
+    if (entries.length === 0) return false;
+    const optimistic = { entries, operation };
+    const job = ++latestLocalJob;
+    pendingCopy = operation === "copy" ? optimistic : null;
+    if (operation === "copy") content = optimistic;
     try {
-      await write;
-    } finally {
-      if (pendingLocalCopy === published) pendingLocalCopy = null;
+      const snapshot = await osClipboardPublish(entries, operation);
+      if (job === latestLocalJob) {
+        pendingCopy = null;
+        apply(snapshot);
+        await reconcile();
+      }
+      if (snapshot.mirrorError) toastStore.error(`Copy works in-app, but the system clipboard failed: ${snapshot.mirrorError}`);
+      await notify(snapshot.revision);
+      return true;
+    } catch (error) {
+      if (operation === "cut") {
+        toastStore.error(`Cut failed: ${errorMessage(error)}`);
+      } else {
+        toastStore.error(`System clipboard failed: ${errorMessage(error)}`);
+      }
+      if (job === latestLocalJob) {
+        pendingCopy = null;
+        await reconcile();
+      }
+      return false;
     }
-    // A later local copy/cut supersedes this event while its OS write queues.
-    if (content === published) await broadcast(published);
   }
 
   return {
-    get content() {
-      return content;
-    },
-    get isCut() {
-      return content?.operation === "cut";
-    },
-    get count() {
-      return content?.entries.length ?? 0;
-    },
-    get hasPendingLocalCopy() {
-      return pendingLocalCopy !== null && content === pendingLocalCopy;
-    },
-    /** Paths of all clipboard entries, for O(1) membership checks. */
-    get pathSet() {
-      return pathSet;
-    },
-
-    /**
-     * Copy files to clipboard (internal + OS clipboard + broadcast).
-     */
-    async copy(entries: FileEntry[]): Promise<void> {
-      await setContent(entries, "copy");
-    },
-
-    /**
-     * Cut files (internal + OS clipboard + broadcast).
-     */
-    async cut(entries: FileEntry[]): Promise<void> {
-      await setContent(entries, "cut");
-    },
-
-    clear(): void {
+    get content() { return content; },
+    get revision() { return revision; },
+    get isCut() { return content?.operation === "cut"; },
+    get count() { return content?.entries.length ?? 0; },
+    get hasPendingLocalCopy() { return pendingCopy !== null && content === pendingCopy; },
+    get pathSet() { return pathSet; },
+    copy(entries: FileEntry[]): Promise<boolean> { return publish(entries, "copy"); },
+    cut(entries: FileEntry[]): Promise<boolean> { return publish(entries, "cut"); },
+    async clear(): Promise<void> {
+      const expected = revision;
       content = null;
-      broadcast(null);
+      try {
+        if (await osClipboardCompareAndClear(expected)) await notify();
+        else await reconcile();
+      } catch { await reconcile(); }
     },
-
-    /**
-     * Take the clipboard content (clears cut items, keeps copy items).
-     */
-    take(): ClipboardContent | null {
-      if (!content) return null;
-      const result = content;
-      if (content.operation === "cut") {
-        content = null;
-        broadcast(null);
+    async take(): Promise<ClipboardContent | null> {
+      const snapshot = await reconcile();
+      if (!snapshot?.entries || !snapshot.operation) return null;
+      const selected = { entries: snapshot.entries, operation: snapshot.operation };
+      if (selected.operation === "cut") await this.clearIfRevision(snapshot.revision);
+      return selected;
+    },
+    async clearIfRevision(expected: number): Promise<void> {
+      try {
+        if (await osClipboardCompareAndClear(expected)) {
+          await reconcile();
+          await notify();
+        }
+      } catch { await reconcile(); }
+    },
+    async rekeyPath(oldPath: string, newPath: string, snapshot: FileEntry | null = null): Promise<void> {
+      const current = content;
+      const existing = current?.entries.find((entry) => entry.path === oldPath);
+      if (!existing) return;
+      const entry = snapshot ?? { ...existing, path: newPath, name: basename(newPath) };
+      try {
+        const changed = await osClipboardRekey(revision, oldPath, entry);
+        if (changed) { apply(changed); await notify(); }
+        else await reconcile();
+      } catch { await reconcile(); }
+    },
+    hasOsFiles(): Promise<boolean> { return osClipboardHasFiles(); },
+    async readOsFiles(): Promise<{ content: OsClipboardContent | null; error: string | null; snapshot: NativeClipboardSnapshot | null }> {
+      // The native snapshot waits for every accepted job across renderers.
+      try {
+        let snapshot = await osClipboardSnapshot();
+        while (snapshot.revision < revision) snapshot = await osClipboardSnapshot();
+        apply(snapshot);
+        return {
+          content: snapshot.paths.length ? { paths: snapshot.paths, operation: "copy" } : null,
+          error: null,
+          snapshot,
+        };
+      } catch (error) {
+        return { content: null, error: String(error), snapshot: null };
       }
-      return result;
     },
-
-    /** Rekey a committed rename even if a fresh metadata snapshot is missing.
-     * Existing clipboard metadata remains a last-known snapshot of the item. */
-    rekeyPath(oldPath: string, newPath: string, snapshot: FileEntry | null = null): void {
-      if (!content) return;
-      const idx = content.entries.findIndex((e) => e.path === oldPath);
-      if (idx === -1) return;
-      const updated = [...content.entries];
-      updated[idx] = snapshot ?? { ...updated[idx], path: newPath, name: basename(newPath) };
-      content = { ...content, entries: updated };
-      broadcast(content);
-    },
-
-    async hasOsFiles(): Promise<boolean> {
-      return osClipboardHasFiles();
-    },
-
-    /**
-     * Read file paths from the OS clipboard. A read failure is returned, not
-     * toasted — the caller may still satisfy the paste another way (e.g. an
-     * image on the clipboard makes the file-list read fail on macOS, #401)
-     * and should only surface the error when the whole paste comes up empty.
-     */
-    async readOsFiles(): Promise<{ content: OsClipboardContent | null; error: string | null }> {
-      // A second copy can start while an earlier write is settling. Wait for
-      // the local queue to stop advancing before reading the OS clipboard.
-      let observedTail: Promise<void>;
-      do {
-        observedTail = osWriteTail;
-        await observedTail;
-      } while (observedTail !== osWriteTail);
-      const result = await osClipboardReadFiles();
-      if (!result.ok) {
-        return { content: null, error: result.error };
-      }
-      if (result.data.length === 0) return { content: null, error: null };
-      return { content: { paths: result.data, operation: "copy" }, error: null };
-    },
-
-    /** Cleanup listener (call on app unmount). */
-    destroy(): void {
-      unlisten?.();
-    },
+    destroy(): void { unlisten?.(); },
   };
 }
 

@@ -570,13 +570,13 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function copyToClipboard(entries: FileEntry[]) {
-    await clipboardStore.copy(entries);
+    if (!await clipboardStore.copy(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Copied: ${label}`, false);
   }
 
   async function cutToClipboard(entries: FileEntry[]) {
-    await clipboardStore.cut(entries);
+    if (!await clipboardStore.cut(entries)) return;
     const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
     toastStore.clipboard(`Cut: ${label}`, true);
   }
@@ -615,39 +615,25 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (!origin.path) return "No current directory";
     const context = makePasteContext(origin);
 
-    // After our OS mirror settles, the OS clipboard is the source of truth for
-    // what was most recently copied. The internal clipboard carries cut
-    // semantics and richer metadata, but is otherwise authoritative only
-    // while it matches the OS clipboard. An external copy then wins instead
-    // of silently pasting our stale internal selection.
-    // A local Copy is already an accepted in-app selection. If its OS mirror
-    // is still writing, avoid blocking paste on PowerShell startup and avoid
-    // mistaking the previous OS file list for a newer external copy. During
-    // that pending write, this local Copy wins; #835 tracks external changes
-    // concurrent with an OS write. Keep Cut on the settled path so its source
-    // cannot move before the mirror finishes.
-    const pendingCopy = clipboardStore.hasPendingLocalCopy;
-    const { content: osContent, error: osReadError } = pendingCopy
-      ? { content: null, error: null }
-      : await clipboardStore.readOsFiles();
-    const internal = clipboardStore.content;
-
-    const internalPaths = internal ? internal.entries.map((e) => e.path) : null;
-    const osMatchesInternal =
-      internalPaths !== null &&
-      osContent !== null &&
-      osContent.paths.length === internalPaths.length &&
-      osContent.paths.every((p) => internalPaths.includes(p));
-    const useInternal = internal !== null && (osContent === null || osMatchesInternal);
+    // The native snapshot waits behind every accepted file clipboard job,
+    // including jobs from other windows. Paste never bypasses this order.
+    const { content: osContent, error: osReadError, snapshot } = await clipboardStore.readOsFiles();
+    const internal = snapshot?.entries && snapshot.operation
+      ? { entries: snapshot.entries, operation: snapshot.operation }
+      : null;
+    const useInternal = internal !== null &&
+      ((snapshot !== null && snapshot.paths.length > 0) ||
+        (osReadError !== null && internal.operation === "copy"));
 
     if (useInternal) {
       const { entries, operation } = internal!;
       const isCut = operation === "cut";
+      const cutRevision = snapshot?.revision;
       const error = await pasteEntries(
         entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
         context,
-        () => { if (isCut && clipboardStore.content === internal) clipboardStore.clear(); },
+        () => { if (isCut && cutRevision !== undefined) void clipboardStore.clearIfRevision(cutRevision); },
       );
       if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;

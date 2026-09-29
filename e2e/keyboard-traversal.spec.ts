@@ -336,10 +336,9 @@ test.describe("Keyboard traversal", () => {
     await expect(suggestions).toHaveText([/Documents/, /Downloads/]);
     await input.fill("/home/user/Vi");
     await expect(suggestions).toHaveText([/Videos/]);
-    // Enter first applies the pre-selected suggestion, then confirms the path.
-    // Videos has no subfolders, so no new suggestion is pre-selected between
-    // the two presses (a folder with subfolders would descend instead).
-    await page.keyboard.press("Enter");
+    // Tab explicitly completes the suggestion. Enter confirms the resulting
+    // path, even when suggestions are visible (#711).
+    await page.keyboard.press("Tab");
     await expect(input).toHaveValue("/home/user/Videos/");
     await page.keyboard.press("Enter");
     await expect(page.locator(".explorer-pane .crumb.current")).toHaveText("Videos");

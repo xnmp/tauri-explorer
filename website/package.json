@@ -4,5 +4,8 @@
   "type": "module",
   "dependencies": {
     "@vercel/blob": "^2.6.1"
+  },
+  "overrides": {
+    "undici": "^6.28.1"
   }
 }

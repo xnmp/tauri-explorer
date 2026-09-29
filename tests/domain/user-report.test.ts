@@ -84,11 +84,12 @@ describe("userReportFallbackUrl", () => {
 
 describe("userReportAttachmentFailureMessage", () => {
   it.each([
-    ["attachment_uploader_unavailable" as const, "Install GitHub CLI"],
-    ["attachment_upload_failed" as const, "Could not upload the image through gh-image"],
+    ["attachment_uploader_unavailable" as const, "Could not reach an image uploader"],
+    ["attachment_upload_failed" as const, "Could not upload the image"],
   ])("explains how to recover from %s", (kind, expected) => {
     expect(userReportAttachmentFailureMessage(kind)).toContain(expected);
     expect(userReportAttachmentFailureMessage(kind)).toContain("saved");
+    expect(userReportAttachmentFailureMessage(kind)).toContain("window closes");
   });
 });
 

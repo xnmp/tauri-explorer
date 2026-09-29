@@ -38,8 +38,8 @@ X server. Tiling compositors can ignore maximize requests for grouped Xwayland
 clients. Use an isolated display for reproducible maximize/restore acceptance:
 
 ```bash
-# Debian/Ubuntu prerequisites: xvfb openbox x11-utils dbus-daemon
-GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+# Debian/Ubuntu prerequisites: xvfb openbox x11-utils xclip dbus-daemon
+env -u WAYLAND_DISPLAY GDK_BACKEND=x11 xvfb-run -a --server-args="-screen 0 1280x1024x24" \
   dbus-run-session -- bash e2e-tauri/with-window-manager.sh bun run test:e2e:tauri
 ```
 
@@ -48,7 +48,9 @@ after the test command exits. `dbus-run-session` supplies an isolated session bu
 and terminates it after the wrapper exits; the suite does not depend on a desktop
 session already being active. See the [D-Bus testing guidance](https://dbus.freedesktop.org/doc/dbus-run-session.1.html).
 `GDK_BACKEND=x11` ensures GTK uses that X display even when the parent shell
-has a Wayland session. Run it under `xvfb-run`, not on your working desktop.
+has a Wayland session. Unset the inherited Wayland socket too, so clipboard
+reads cannot escape the isolated X server. Run it under `xvfb-run`, not on your
+working desktop.
 CI uses the same fixture; unsupported compositor behavior must not weaken native
 state assertions or be inferred merely from a failed assertion.
 

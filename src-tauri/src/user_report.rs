@@ -1,14 +1,6 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
-use std::process::{Command, Stdio};
-
-use crate::process_ext::NoConsole;
-
 const DEFAULT_REPORT_URL: &str = "https://tauri-explorer.vercel.app/api/report";
-const GITHUB_REPO: &str = "xnmp/tauri-explorer";
-const GITHUB_ISSUE_URL_PREFIX: &str = "https://github.com/xnmp/tauri-explorer/issues/";
-const GITHUB_ATTACHMENT_URL_PREFIX: &str = "https://github.com/user-attachments/";
 const MAX_ATTACHMENTS: usize = 3;
 const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ATTACHMENTS_BYTES: usize = 3 * 1024 * 1024;
@@ -164,7 +156,9 @@ pub struct Environment<'a> {
     pub arch: &'a str,
 }
 
-const MAX_RELAY_BODY_UNITS: usize = 8000;
+const MAX_REPORT_DESCRIPTION_UNITS: usize = 8000;
+#[cfg(test)]
+const MAX_RELAY_BODY_UNITS: usize = 8500;
 
 fn sanitize(value: &str) -> String {
     value
@@ -189,15 +183,6 @@ fn truncate_utf16(value: &str, max_units: usize) -> String {
         .collect()
 }
 
-fn append_issue_section(body: &mut String, section: &str) {
-    let separator = if body.is_empty() { "" } else { "\n\n" };
-    let added_units = separator.encode_utf16().count() + section.encode_utf16().count();
-    if body.encode_utf16().count() + added_units <= MAX_RELAY_BODY_UNITS {
-        body.push_str(separator);
-        body.push_str(section);
-    }
-}
-
 /// Assemble the GitHub issue body from the reporter's draft.
 ///
 /// Deliberately carries no log tail (#595): the last 50 log lines are almost
@@ -211,7 +196,6 @@ pub fn assemble_issue_body(
     environment: &Environment<'_>,
 ) -> String {
     let description = sanitize(description);
-    let mut body = truncate_utf16(description.trim(), MAX_RELAY_BODY_UNITS);
     let contact = contact
         .map(sanitize)
         .as_deref()
@@ -220,14 +204,22 @@ pub fn assemble_issue_body(
         .map(|value| format!("How to reach the reporter: {value}"));
     let environment = format!(
         "---\n- Tauri Explorer: v{}\n- OS: {} ({})",
-        sanitize(environment.version),
-        sanitize(environment.os),
-        sanitize(environment.arch)
+        truncate_utf16(&sanitize(environment.version), 100),
+        truncate_utf16(&sanitize(environment.os), 100),
+        truncate_utf16(&sanitize(environment.arch), 100)
     );
-    for section in contact.iter().chain(std::iter::once(&environment)) {
-        append_issue_section(&mut body, section);
+    let suffix = contact
+        .iter()
+        .chain(std::iter::once(&environment))
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let description = description.trim();
+    if description.is_empty() {
+        suffix
+    } else {
+        format!("{description}\n\n{suffix}")
     }
-    body
 }
 
 fn validate_draft(
@@ -250,7 +242,7 @@ fn validate_draft(
             "Title must be 1–120 characters",
         ));
     }
-    if body.encode_utf16().count() > MAX_RELAY_BODY_UNITS || invalid_control(body) {
+    if body.encode_utf16().count() > MAX_REPORT_DESCRIPTION_UNITS || invalid_control(body) {
         return Err(SubmitReportError::new(
             "malformed_input",
             "Description must be at most 8000 characters",
@@ -273,224 +265,9 @@ fn validate_draft(
 
 fn map_transport_error(_error: ureq::Error) -> SubmitReportError {
     SubmitReportError::new(
-        "network_unreachable",
-        "The report service could not be reached",
+        "submission_uncertain",
+        "The report service response was lost; check recent issues before retrying",
     )
-}
-
-#[derive(Debug, PartialEq)]
-enum GitHubCliError {
-    Unavailable,
-    AttachmentUpload(String),
-    Rejected,
-    InvalidResponse,
-}
-
-impl GitHubCliError {
-    fn into_submit_error(self) -> SubmitReportError {
-        match self {
-            Self::Unavailable => SubmitReportError::new(
-                "attachment_uploader_unavailable",
-                "GitHub CLI or the gh-image extension is unavailable",
-            ),
-            Self::AttachmentUpload(message) => {
-                SubmitReportError::new("attachment_upload_failed", message)
-            }
-            Self::Rejected | Self::InvalidResponse => {
-                SubmitReportError::new("server_rejected", "GitHub rejected the report")
-            }
-        }
-    }
-}
-
-fn github_issue_args(payload: &RelayRequest) -> Vec<String> {
-    vec![
-        "issue".to_string(),
-        "create".to_string(),
-        "--repo".to_string(),
-        GITHUB_REPO.to_string(),
-        "--title".to_string(),
-        payload.title.clone(),
-        "--body-file".to_string(),
-        "-".to_string(),
-        "--label".to_string(),
-        "user-report".to_string(),
-        "--label".to_string(),
-        if payload.kind == "bug" {
-            "bug".to_string()
-        } else {
-            "enhancement".to_string()
-        },
-    ]
-}
-
-fn parse_github_attachment_output(stdout: &[u8]) -> Result<String, GitHubCliError> {
-    let stdout = std::str::from_utf8(stdout).map_err(|_| GitHubCliError::InvalidResponse)?;
-    stdout
-        .lines()
-        .map(str::trim)
-        .find(|line| line.contains(GITHUB_ATTACHMENT_URL_PREFIX))
-        .map(str::to_string)
-        .ok_or(GitHubCliError::InvalidResponse)
-}
-
-fn attachment_extension(media_type: &str) -> Result<&'static str, GitHubCliError> {
-    match media_type {
-        "image/png" => Ok("png"),
-        "image/jpeg" => Ok("jpg"),
-        "image/gif" => Ok("gif"),
-        _ => Err(GitHubCliError::AttachmentUpload(
-            "Attachment type is not supported".to_string(),
-        )),
-    }
-}
-
-fn github_attachment_args(path: &std::path::Path) -> Vec<std::ffi::OsString> {
-    vec![
-        "image".into(),
-        path.as_os_str().to_owned(),
-        "--repo".into(),
-        GITHUB_REPO.into(),
-    ]
-}
-
-fn upload_github_attachments(
-    attachments: &[ReportAttachment],
-) -> Result<Vec<String>, GitHubCliError> {
-    let directory = tempfile::Builder::new()
-        .prefix("tauri-explorer-report-")
-        .tempdir()
-        .map_err(|error| GitHubCliError::AttachmentUpload(error.to_string()))?;
-    let mut markdown = Vec::with_capacity(attachments.len());
-
-    for (index, attachment) in attachments.iter().enumerate() {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&attachment.data)
-            .map_err(|_| {
-                GitHubCliError::AttachmentUpload("Attachment data is invalid".to_string())
-            })?;
-        let path = directory.path().join(format!(
-            "attachment-{}.{}",
-            index + 1,
-            attachment_extension(&attachment.media_type)?,
-        ));
-        std::fs::write(&path, bytes)
-            .map_err(|error| GitHubCliError::AttachmentUpload(error.to_string()))?;
-
-        let output = Command::new("gh")
-            .no_console()
-            .args(github_attachment_args(&path))
-            .env("GH_PROMPT_DISABLED", "true")
-            .env("GH_NO_UPDATE_NOTIFIER", "true")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|_| GitHubCliError::Unavailable)?;
-        if !output.status.success() {
-            let detail = String::from_utf8_lossy(&output.stderr)
-                .lines()
-                .next()
-                .unwrap_or("gh image failed")
-                .to_string();
-            return Err(GitHubCliError::AttachmentUpload(detail));
-        }
-        markdown.push(parse_github_attachment_output(&output.stdout)?);
-    }
-
-    Ok(markdown)
-}
-
-fn body_with_github_attachments(body: &str, attachments: &[String]) -> String {
-    if attachments.is_empty() {
-        return body.to_string();
-    }
-    let separator = if body.is_empty() { "" } else { "\n\n" };
-    format!(
-        "{body}{separator}## Attachments\n\n{}",
-        attachments.join("\n\n"),
-    )
-}
-
-fn parse_github_issue_output(stdout: &[u8]) -> Result<SubmittedUserReport, GitHubCliError> {
-    let stdout = std::str::from_utf8(stdout).map_err(|_| GitHubCliError::InvalidResponse)?;
-    let url = stdout
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| line.starts_with(GITHUB_ISSUE_URL_PREFIX))
-        .ok_or(GitHubCliError::InvalidResponse)?;
-    let number = url
-        .strip_prefix(GITHUB_ISSUE_URL_PREFIX)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or(GitHubCliError::InvalidResponse)?;
-    Ok(SubmittedUserReport {
-        url: url.to_string(),
-        number,
-    })
-}
-
-fn submit_via_github_cli(payload: &RelayRequest) -> Result<SubmittedUserReport, GitHubCliError> {
-    let attachment_markdown = upload_github_attachments(&payload.attachments)?;
-    let issue_body = body_with_github_attachments(&payload.body, &attachment_markdown);
-    let mut command = Command::new("gh");
-    command
-        .no_console()
-        .args(github_issue_args(payload))
-        .env("GH_PROMPT_DISABLED", "true")
-        .env("GH_NO_UPDATE_NOTIFIER", "true")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|_| GitHubCliError::Unavailable)?;
-    let Some(mut stdin) = child.stdin.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(GitHubCliError::Unavailable);
-    };
-    if stdin.write_all(issue_body.as_bytes()).is_err() {
-        drop(stdin);
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(GitHubCliError::Rejected);
-    }
-    drop(stdin);
-    let output = child
-        .wait_with_output()
-        .map_err(|_| GitHubCliError::Rejected)?;
-    if !output.status.success() {
-        return Err(GitHubCliError::Rejected);
-    }
-    parse_github_issue_output(&output.stdout)
-}
-
-fn deliver_report_with<G, R>(
-    payload: RelayRequest,
-    submit_to_github: G,
-    submit_to_relay: R,
-) -> Result<SubmittedUserReport, SubmitReportError>
-where
-    G: FnOnce(&RelayRequest) -> Result<SubmittedUserReport, GitHubCliError>,
-    R: FnOnce(RelayRequest) -> Result<SubmittedUserReport, SubmitReportError>,
-{
-    let has_attachments = !payload.attachments.is_empty();
-    match submit_to_github(&payload) {
-        Ok(issue) => return Ok(issue),
-        Err(error) if has_attachments => return Err(error.into_submit_error()),
-        Err(error) => {
-            log::debug!("GitHub CLI report submission unavailable: {error:?}");
-        }
-    }
-    submit_to_relay(payload)
-}
-
-fn deliver_report(
-    endpoint: &str,
-    payload: RelayRequest,
-) -> Result<SubmittedUserReport, SubmitReportError> {
-    deliver_report_with(payload, submit_via_github_cli, |payload| {
-        send_report(endpoint, payload)
-    })
 }
 
 fn send_report(
@@ -505,10 +282,11 @@ fn send_report(
         .send_json(payload)
         .map_err(map_transport_error)?;
     if !response.status().is_success() {
-        let fallback_kind = if response.status().as_u16() == 429 {
-            "rate_limited"
-        } else {
-            "server_rejected"
+        let status = response.status().as_u16();
+        let fallback_kind = match status {
+            429 => "rate_limited",
+            408 | 500..=599 => "submission_uncertain",
+            _ => "server_rejected",
         };
         let error = response
             .body_mut()
@@ -519,6 +297,8 @@ fn send_report(
             Some("daily_cap") => "daily_cap",
             Some("rate_limited") => "rate_limited",
             Some("malformed_input") => "malformed_input",
+            Some("submission_uncertain") => "submission_uncertain",
+            Some("server_rejected") => "server_rejected",
             _ => fallback_kind,
         };
         return Err(SubmitReportError::new(
@@ -533,8 +313,8 @@ fn send_report(
         .read_json::<SubmittedUserReport>()
         .map_err(|_| {
             SubmitReportError::new(
-                "server_rejected",
-                "The report service returned an invalid response",
+                "submission_uncertain",
+                "The report service returned an invalid response; check recent issues before retrying",
             )
         })
 }
@@ -573,7 +353,7 @@ pub async fn submit_user_report(
         website: String::new(),
         attachments,
     };
-    tauri::async_runtime::spawn_blocking(move || deliver_report(&endpoint, payload))
+    tauri::async_runtime::spawn_blocking(move || send_report(&endpoint, payload))
         .await
         .map_err(|error| SubmitReportError::new("server_rejected", error.to_string()))?
 }
@@ -581,13 +361,10 @@ pub async fn submit_user_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_issue_body, attachment_from_image_bytes, body_with_github_attachments,
-        deliver_report_with, github_attachment_args, github_issue_args,
-        parse_github_attachment_output, parse_github_issue_output, report_image_media_type,
-        send_report, validate_attachments, validate_draft, Environment, GitHubCliError,
-        RelayRequest, ReportAttachment, SubmittedUserReport, MAX_RELAY_BODY_UNITS,
+        assemble_issue_body, attachment_from_image_bytes, report_image_media_type, send_report,
+        validate_attachments, validate_draft, Environment, RelayRequest, ReportAttachment,
+        MAX_RELAY_BODY_UNITS,
     };
-    use std::cell::Cell;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};
 
@@ -681,7 +458,21 @@ mod tests {
             },
         );
         assert!(body.encode_utf16().count() <= MAX_RELAY_BODY_UNITS);
-        assert_eq!(body, description);
+        assert!(body.starts_with(&description));
+        assert!(body.contains("How to reach the reporter: @reporter"));
+        assert!(body.ends_with("- Tauri Explorer: v1.7.0\n- OS: linux (x86_64)"));
+
+        let full = assemble_issue_body(
+            &"x".repeat(8000),
+            Some(&"c".repeat(100)),
+            &Environment {
+                version: &"v".repeat(100),
+                os: &"o".repeat(100),
+                arch: &"a".repeat(100),
+            },
+        );
+        assert!(full.starts_with(&"x".repeat(8000)));
+        assert!(full.encode_utf16().count() <= MAX_RELAY_BODY_UNITS);
 
         let sanitized = assemble_issue_body(
             "safe\u{0}text\u{7}\nsecond line",
@@ -775,159 +566,6 @@ mod tests {
     }
 
     #[test]
-    fn github_cli_submission_uses_stdin_and_the_matching_report_label() {
-        let args = github_issue_args(&payload());
-        assert_eq!(
-            args,
-            [
-                "issue",
-                "create",
-                "--repo",
-                "xnmp/tauri-explorer",
-                "--title",
-                "Title",
-                "--body-file",
-                "-",
-                "--label",
-                "user-report",
-                "--label",
-                "bug",
-            ]
-        );
-
-        let mut feature = payload();
-        feature.kind = "feature".to_string();
-        assert_eq!(github_issue_args(&feature).last().unwrap(), "enhancement");
-    }
-
-    #[test]
-    fn github_image_output_is_appended_to_the_issue_body() {
-        assert_eq!(
-            github_attachment_args(std::path::Path::new("/tmp/report image.png")),
-            [
-                "image",
-                "/tmp/report image.png",
-                "--repo",
-                "xnmp/tauri-explorer",
-            ]
-            .map(std::ffi::OsString::from),
-        );
-        let markdown = parse_github_attachment_output(
-            b"![attachment-1.png](https://github.com/user-attachments/assets/abc123)\n",
-        )
-        .unwrap();
-        assert_eq!(
-            body_with_github_attachments("Description", &[markdown]),
-            "Description\n\n## Attachments\n\n![attachment-1.png](https://github.com/user-attachments/assets/abc123)",
-        );
-        assert_eq!(
-            body_with_github_attachments(
-                "",
-                &["![shot](https://github.com/user-attachments/assets/123)".to_string()],
-            ),
-            "## Attachments\n\n![shot](https://github.com/user-attachments/assets/123)",
-        );
-        assert_eq!(
-            parse_github_attachment_output(b"not an attachment").unwrap_err(),
-            GitHubCliError::InvalidResponse,
-        );
-    }
-
-    #[test]
-    fn github_cli_output_returns_the_created_issue_contract() {
-        let issue =
-            parse_github_issue_output(b"https://github.com/xnmp/tauri-explorer/issues/591\n")
-                .unwrap();
-        assert_eq!(issue.number, 591);
-        assert_eq!(
-            issue.url,
-            "https://github.com/xnmp/tauri-explorer/issues/591"
-        );
-        assert_eq!(
-            parse_github_issue_output(b"not an issue url").unwrap_err(),
-            GitHubCliError::InvalidResponse
-        );
-    }
-
-    #[test]
-    fn text_reports_prefer_github_cli_and_fall_back_to_the_relay() {
-        let relay_called = Cell::new(false);
-        let issue = deliver_report_with(
-            payload(),
-            |_| {
-                Ok(SubmittedUserReport {
-                    url: "https://github.com/xnmp/tauri-explorer/issues/591".to_string(),
-                    number: 591,
-                })
-            },
-            |_| {
-                relay_called.set(true);
-                unreachable!("relay must not run after a successful gh submission")
-            },
-        )
-        .unwrap();
-        assert_eq!(issue.number, 591);
-        assert!(!relay_called.get());
-
-        let relay_called = Cell::new(false);
-        let issue = deliver_report_with(
-            payload(),
-            |_| Err(GitHubCliError::Unavailable),
-            |_| {
-                relay_called.set(true);
-                Ok(SubmittedUserReport {
-                    url: "https://github.com/xnmp/tauri-explorer/issues/592".to_string(),
-                    number: 592,
-                })
-            },
-        )
-        .unwrap();
-        assert_eq!(issue.number, 592);
-        assert!(relay_called.get());
-    }
-
-    #[test]
-    fn reports_with_images_require_the_cli_upload_to_succeed() {
-        let mut report = payload();
-        report.attachments.push(png_attachment());
-        let github_called = Cell::new(false);
-        let delivered = deliver_report_with(
-            report,
-            |payload| {
-                github_called.set(true);
-                assert_eq!(payload.attachments.len(), 1);
-                Ok(SubmittedUserReport {
-                    url: "https://github.com/xnmp/tauri-explorer/issues/593".to_string(),
-                    number: 593,
-                })
-            },
-            |_| unreachable!("relay must not run after a successful attachment upload"),
-        )
-        .unwrap();
-        assert_eq!(delivered.number, 593);
-        assert!(github_called.get());
-
-        let mut report = payload();
-        report.attachments.push(png_attachment());
-        let relay_called = Cell::new(false);
-        let error = deliver_report_with(
-            report,
-            |_| {
-                Err(GitHubCliError::AttachmentUpload(
-                    "upload failed".to_string(),
-                ))
-            },
-            |_| {
-                relay_called.set(true);
-                unreachable!("selected images must never be silently dropped")
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error.kind, "attachment_upload_failed");
-        assert!(!relay_called.get());
-    }
-
-    #[test]
     fn clipboard_report_media_type_recognizes_png_and_jpeg_bytes() {
         assert_eq!(
             report_image_media_type(b"\x89PNG\r\n\x1a\npayload"),
@@ -987,14 +625,31 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_relay_has_a_network_error_kind() {
+    fn lost_relay_response_is_uncertain_to_avoid_duplicate_submission() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
         assert_eq!(
             send_report(&endpoint, payload()).unwrap_err().kind,
-            "network_unreachable"
+            "submission_uncertain"
         );
+    }
+
+    #[test]
+    fn relay_uncertainty_is_preserved_for_the_ui() {
+        let endpoint = stub_response(
+            "503 Service Unavailable",
+            r#"{"error":{"code":"submission_uncertain","message":"Check recent issues before retrying"}}"#,
+        );
+        let error = send_report(&endpoint, payload()).unwrap_err();
+        assert_eq!(error.kind, "submission_uncertain");
+    }
+
+    #[test]
+    fn untyped_gateway_error_is_uncertain_after_a_possible_issue_creation() {
+        let endpoint = stub_response("502 Bad Gateway", "upstream response was lost");
+        let error = send_report(&endpoint, payload()).unwrap_err();
+        assert_eq!(error.kind, "submission_uncertain");
     }
 
     #[test]

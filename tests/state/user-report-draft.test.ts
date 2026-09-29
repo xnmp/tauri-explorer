@@ -71,4 +71,16 @@ describe("user report drafts", () => {
     });
     reopened.dispose();
   });
+
+  it("saves the submitted draft immediately for an uncertain network outcome", () => {
+    const draft = createUserReportDraftStore();
+    draft.update({ title: "Last second report", body: "Recent details" });
+    draft.saveNow();
+
+    const restored = createUserReportDraftStore();
+    expect(restored.value.title).toBe("Last second report");
+    expect(restored.value.body).toBe("Recent details");
+    restored.dispose();
+    draft.dispose();
+  });
 });

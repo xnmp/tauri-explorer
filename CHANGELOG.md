@@ -2,6 +2,39 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.1 — 2026-09-30
+
+This update prepares a small alpha tester cohort with safer file actions and
+more reliable feedback. Qualify the downloaded installer on each invited
+platform before sending invitations.
+
+### Fixed
+
+- File clipboard writes now follow one process-wide order across windows. On
+  X11, Cut verifies native clipboard ownership before moving a file; an
+  external Copy of the same path remains a Copy (#835).
+- Enter on a complete address-bar path navigates to that directory instead of
+  its first child (#711).
+- Embedded terminal paste uses the native clipboard fallback when WebKit
+  denies browser clipboard access, and paste bytes stay ordered with other
+  terminal input (#732).
+- Embedded zsh history respects the selected `HISTFILE` through startup-file
+  initialization (#784).
+- The Linux Trash shortcut opens the file manager's native Trash view even
+  when the default directory handler is a terminal (#723, #733, #757).
+- In-app report text is saved before submission, remains available after a
+  definite failure, and avoids prompting a duplicate after an uncertain
+  response. Reports with images use the same relay path as text reports.
+- The showcase's download fallback opens the releases page when the GitHub
+  release API is unavailable.
+
+### Release limits
+
+- File Cut is available only on X11 until native clipboard ownership can be
+  verified on Wayland, Windows, and macOS. File Copy remains available.
+- Display-scale-specific marquee selection on Linux (#756) and platform
+  acceptance beyond the qualified first cohort remain separate follow-ups.
+
 ## v1.11.0 — 2026-09-29
 
 File operations have clearer ownership and recovery behavior, and keyboard and

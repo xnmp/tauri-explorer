@@ -5,19 +5,17 @@
 "use strict";
 
 const REPO = "https://github.com/xnmp/tauri-explorer";
-const REL = `${REPO}/releases/latest/download`;
-const VERSION = "1.3.3";
+const RELEASE_PAGE = `${REPO}/releases/latest`;
 
-/* Release asset filenames embed the version, so `releases/latest/download/<name>`
-   goes 404 the moment a new version ships. These VERSION-built URLs are only the
-   fallback; resolveDownloads() swaps in the live asset URLs from the GitHub API. */
+/* Asset filenames embed the version. Until GitHub's API resolves the current
+   assets, link to the release page instead of guessing a stale filename. */
 const DL = {
-  linux: `${REL}/tauri-explorer_${VERSION}_amd64.AppImage`,
-  deb: `${REL}/tauri-explorer_${VERSION}_amd64.deb`,
-  rpm: `${REL}/tauri-explorer-${VERSION}-1.x86_64.rpm`,
-  win: `${REL}/tauri-explorer_${VERSION}_x64_en-US.msi`,
-  mac: `${REL}/tauri-explorer_${VERSION}_aarch64.dmg`,
-  exe: `${REL}/tauri-explorer_${VERSION}_x64-setup.exe`,
+  linux: RELEASE_PAGE,
+  deb: RELEASE_PAGE,
+  rpm: RELEASE_PAGE,
+  win: RELEASE_PAGE,
+  mac: RELEASE_PAGE,
+  exe: RELEASE_PAGE,
 };
 const DL_ASSET = { linux: /\.AppImage$/, deb: /\.deb$/, rpm: /\.rpm$/, win: /\.msi$/, mac: /\.dmg$/, exe: /-setup\.exe$/ };
 
@@ -43,7 +41,7 @@ function resolveDownloads() {
       const v = (rel.tag_name || "").replace(/^v/, "");
       if (v) $("status-right").textContent = `v${v} · MIT`;
     })
-    .catch(() => { /* offline or rate-limited: the VERSION fallback stands */ });
+    .catch(() => { /* offline or rate-limited: the release-page fallback stands */ });
 }
 
 const THEMES = [
@@ -138,9 +136,9 @@ ${shot("details-view.png", "The real thing: details view, git status column, bre
   <a class="dl-btn ghost" data-dl="deb" href="${DL.deb}">.deb</a>
   <a class="dl-btn ghost" data-dl="rpm" href="${DL.rpm}">.rpm</a>
 </div>
-<pre><code>chmod +x tauri-explorer_${VERSION}_amd64.AppImage
-./tauri-explorer_${VERSION}_amd64.AppImage</code></pre>
-<p>Arch users: a <code>PKGBUILD</code> ships in the repo.</p>
+<pre><code>chmod +x ./tauri-explorer_*.AppImage
+./tauri-explorer_*.AppImage</code></pre>
+<p>Arch users: the repository-root <code>PKGBUILD</code> builds from source.</p>
 <h2>Windows</h2>
 <div class="dl-row">
   <a class="dl-btn" data-dl="win" href="${DL.win}">MSI installer</a>
@@ -148,9 +146,10 @@ ${shot("details-view.png", "The real thing: details view, git status column, bre
 </div>
 <h2>macOS (Apple Silicon)</h2>
 <div class="dl-row"><a class="dl-btn" data-dl="mac" href="${DL.mac}">.dmg</a></div>
-<p class="note">Binaries aren't code-signed yet, so Gatekeeper and SmartScreen
-will warn on first launch — right-click → Open on macOS. It's open source;
-audit it, or build from source with <code>bun</code> + <code>cargo</code>.</p>
+<p class="note">Binaries aren't code-signed yet. Windows may show a SmartScreen
+warning. On macOS, clear quarantine on the installed app with
+<code>xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app</code>.
+You can also build from source with <code>bun</code> + <code>cargo</code>.</p>
 `,
     },
     {
@@ -344,12 +343,11 @@ ${shot("ai-rename.png", "AI rename: pick from suggestions derived from the file'
           name: "no-telemetry.md", kind: "file", size: "2 KB",
           content: `
 <h1>No telemetry. Actually none.</h1>
-<p>The app makes exactly two kinds of network requests, both visible in the
-source: an optional once-a-day GitHub check for new releases, and AI plugin
-calls if — and only if — you enable those plugins.</p>
-<p>Crash reports are written to <em>local files</em>. After a crash, the app
-offers to open a pre-filled GitHub issue <strong>in your browser</strong> — you see
-every byte before it leaves your machine, and declining is one click.</p>
+<p>There is no background telemetry. The app checks GitHub for updates at most
+once a day. Git remote operations, enabled AI plugins, and the in-app Report
+Issue command also use the network when you choose them.</p>
+<p>Submitted reports and selected images become public GitHub issues and public
+image URLs. Crash reports and logs stay local unless you choose to share them.</p>
 `,
         },
         {
@@ -367,8 +365,8 @@ on Linux, Windows and macOS in CI.</p>
     {
       name: "CHANGELOG.md", kind: "file", size: "6 KB",
       content: `
-<h1>v${VERSION}</h1>
-<p>Highlights of the 1.0 line:</p>
+<h1>Current release</h1>
+<p>Highlights:</p>
 <ul>
   <li>Per-pane tabs with live window detach</li>
   <li>Git commit graph with context actions</li>

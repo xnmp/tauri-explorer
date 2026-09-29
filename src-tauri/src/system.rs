@@ -44,6 +44,7 @@ fn reap_in_background(child: std::process::Child) {
 /// Immutable, platform-specific command specification for the native recycle
 /// bin surface. Keeping this separate from spawning makes the platform
 /// contract testable without launching the host desktop during tests.
+#[cfg(not(target_os = "linux"))]
 #[derive(Debug, PartialEq, Eq)]
 pub struct RecycleBinLauncher {
     pub program: &'static str,
@@ -98,55 +99,137 @@ fn linux_trash_files_directory() -> Result<PathBuf, AppError> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_recycle_bin_launcher() -> Result<RecycleBinLauncher, AppError> {
-    Ok(RecycleBinLauncher {
-        program: "xdg-open",
-        arguments: vec![linux_trash_files_directory()?.into_os_string()],
-    })
-}
-
-/// Open the Freedesktop deleted-files directory directly. A successful URI
-/// dispatcher exit cannot prove that its asynchronous desktop handler accepted
-/// `trash:///`, so Linux never sends that URI to the handler.
-#[cfg(target_os = "linux")]
-fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
-where
-    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
-{
-    open_linux_recycle_bin_with_launcher(&mut launch, linux_recycle_bin_launcher)
+#[derive(Debug)]
+enum FileManager1Failure {
+    Unavailable(String),
+    Uncertain(String),
 }
 
 #[cfg(target_os = "linux")]
-pub fn open_linux_recycle_bin_with_launcher<F, R>(
-    mut launch: F,
-    launcher: R,
-) -> Result<(), AppError>
-where
-    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
-    R: FnOnce() -> Result<RecycleBinLauncher, AppError>,
-{
-    let launcher = launcher()?;
-    log::info!(
-        "Recycle Bin: launching deleted-files directory via {} {:?}",
-        launcher.program,
-        launcher.arguments
-    );
-
-    match launch(&launcher) {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(AppError::Other(format!(
-            "Failed to open Recycle Bin: {} {:?} exited with {status}",
-            launcher.program, launcher.arguments
-        ))),
-        Err(error) => {
-            log::error!(
-                "Recycle Bin: failed to launch {} {:?}: {error}",
-                launcher.program,
-                launcher.arguments
+fn file_manager1_service_unavailable(error: &zbus::Error) -> bool {
+    let name = match error {
+        zbus::Error::MethodError(name, _, _) => name.as_str(),
+        zbus::Error::FDO(error) => {
+            return matches!(
+                error.as_ref(),
+                zbus::fdo::Error::ServiceUnknown(_)
+                    | zbus::fdo::Error::UnknownMethod(_)
+                    | zbus::fdo::Error::UnknownObject(_)
+                    | zbus::fdo::Error::UnknownInterface(_)
             );
-            Err(AppError::Io(error))
+        }
+        _ => return false,
+    };
+    matches!(
+        name,
+        "org.freedesktop.DBus.Error.ServiceUnknown"
+            | "org.freedesktop.DBus.Error.UnknownMethod"
+            | "org.freedesktop.DBus.Error.UnknownObject"
+            | "org.freedesktop.DBus.Error.UnknownInterface"
+    )
+}
+
+/// FileManager1 addresses a file manager directly and can open its native
+/// Trash view. Generic URI or directory MIME dispatch can select a terminal.
+#[cfg(target_os = "linux")]
+async fn show_linux_trash_with_file_manager1() -> Result<(), FileManager1Failure> {
+    use std::time::Duration;
+
+    let connection = tokio::time::timeout(Duration::from_secs(2), zbus::Connection::session())
+        .await
+        .map_err(|_| FileManager1Failure::Unavailable("Session bus connection timed out".into()))?
+        .map_err(|error| FileManager1Failure::Unavailable(error.to_string()))?;
+
+    let folders = vec!["trash:///"];
+    let body = (folders, "");
+    let call = connection.call_method(
+        Some("org.freedesktop.FileManager1"),
+        "/org/freedesktop/FileManager1",
+        Some("org.freedesktop.FileManager1"),
+        "ShowFolders",
+        &body,
+    );
+    match tokio::time::timeout(Duration::from_secs(5), call).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) if file_manager1_service_unavailable(&error) => {
+            Err(FileManager1Failure::Unavailable(error.to_string()))
+        }
+        Ok(Err(error)) => Err(FileManager1Failure::Uncertain(error.to_string())),
+        Err(_) => Err(FileManager1Failure::Uncertain(
+            "File manager activation timed out; the window may still open".into(),
+        )),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_graphical_file_manager(categories: Option<&str>, terminal: bool) -> bool {
+    !terminal
+        && categories.is_some_and(|categories| {
+            categories
+                .split(';')
+                .any(|category| category == "FileManager")
+        })
+}
+
+/// Launch only a desktop entry explicitly categorized as a graphical file
+/// manager. Never fall back to generic xdg-open: it can select Kitty or Yazi.
+#[cfg(target_os = "linux")]
+fn launch_linux_trash_with_graphical_handler(directory: &std::path::Path) -> Result<(), AppError> {
+    use gio::prelude::*;
+    use std::collections::HashSet;
+
+    let uri = url::Url::from_file_path(directory)
+        .map_err(|_| AppError::Other("Trash path is not an absolute file URL".into()))?;
+    let applications = gio::AppInfo::default_for_type("inode/directory", false)
+        .into_iter()
+        .chain(gio::AppInfo::recommended_for_type("inode/directory"))
+        .chain(gio::AppInfo::all_for_type("inode/directory"));
+    let mut seen = HashSet::new();
+    let mut failures = Vec::new();
+    for application in applications {
+        let Some(id) = application.id() else {
+            continue;
+        };
+        if !seen.insert(id.to_string())
+            || !(application.supports_uris() || application.supports_files())
+        {
+            continue;
+        }
+        let Ok(desktop) = application.clone().downcast::<gio::DesktopAppInfo>() else {
+            continue;
+        };
+        if desktop.is_hidden()
+            || !is_graphical_file_manager(
+                desktop.categories().as_deref(),
+                desktop.boolean("Terminal"),
+            )
+        {
+            continue;
+        }
+        let result = if application.supports_uris() {
+            application.launch_uris(&[uri.as_str()], None::<&gio::AppLaunchContext>)
+        } else {
+            application.launch(
+                &[gio::File::for_path(directory)],
+                None::<&gio::AppLaunchContext>,
+            )
+        };
+        match result {
+            Ok(()) => {
+                log::info!("Recycle Bin: opened with graphical file manager {id}");
+                return Ok(());
+            }
+            Err(error) => failures.push(format!("{id}: {error}")),
         }
     }
+    Err(AppError::Other(format!(
+        "No graphical file manager could open Recycle Bin{}",
+        if failures.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", failures.join("; "))
+        }
+    )))
 }
 
 /// Open the operating system's recycle-bin UI rather than treating the bin as
@@ -154,23 +237,27 @@ where
 /// Linux and macOS provide a desktop-visible trash location.
 #[tauri::command]
 pub async fn open_recycle_bin() -> Result<(), AppError> {
-    files::run_blocking(|| {
-        #[cfg(target_os = "linux")]
-        {
-            open_linux_recycle_bin_with(|launcher| {
-                log::info!(
-                    "Recycle Bin: launching native surface via {} {:?}",
-                    launcher.program,
-                    launcher.arguments
+    #[cfg(target_os = "linux")]
+    {
+        let directory = linux_trash_files_directory()?;
+        match show_linux_trash_with_file_manager1().await {
+            Ok(()) => Ok(()),
+            Err(FileManager1Failure::Unavailable(reason)) => {
+                log::warn!(
+                    "Recycle Bin: FileManager1 unavailable ({reason}); trying graphical handler"
                 );
-                std::process::Command::new(launcher.program)
-                    .args(&launcher.arguments)
-                    .status()
-            })
+                files::run_blocking(move || launch_linux_trash_with_graphical_handler(&directory))
+                    .await
+            }
+            Err(FileManager1Failure::Uncertain(reason)) => Err(AppError::Other(format!(
+                "Could not confirm whether Recycle Bin opened: {reason}"
+            ))),
         }
+    }
 
-        #[cfg(not(target_os = "linux"))]
-        {
+    #[cfg(not(target_os = "linux"))]
+    {
+        files::run_blocking(|| {
             let launcher = recycle_bin_launcher();
             log::info!(
                 "Recycle Bin: launching native surface via {} {:?}",
@@ -195,9 +282,9 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
                     Err(AppError::Io(error))
                 }
             }
-        }
-    })
-    .await
+        })
+        .await
+    }
 }
 
 /// Get the directory the app was launched from.
@@ -294,7 +381,7 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 mod tests {
     use super::is_launcher_artifact_cwd;
     #[cfg(target_os = "linux")]
-    use super::linux_recycle_bin_launcher;
+    use super::linux_trash_files_directory;
     #[cfg(not(target_os = "linux"))]
     use super::recycle_bin_launcher;
     #[cfg(target_os = "windows")]
@@ -324,11 +411,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn recycle_bin_launcher_uses_the_freedesktop_deleted_files_directory() {
-        let launcher = linux_recycle_bin_launcher().unwrap();
-
-        assert_eq!(launcher.program, "xdg-open");
-        assert!(Path::new(&launcher.arguments[0]).is_absolute());
-        assert!(Path::new(&launcher.arguments[0]).ends_with("Trash/files"));
+        let directory = linux_trash_files_directory().unwrap();
+        assert!(Path::new(&directory).is_absolute());
+        assert!(Path::new(&directory).ends_with("Trash/files"));
     }
 
     #[cfg(target_os = "windows")]

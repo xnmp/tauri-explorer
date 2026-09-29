@@ -1787,15 +1787,46 @@ mutations and non-Linux recovery adapters remain outside that runtime-admission
 claim. Durable copy/move record creation remains opt-in. Journal/catalog
 validation, Unix coordination and shared lock/identity boundaries are foundation
 work. Linux overwrite recovery, UI and exact Undo/Redo have targeted evidence, while
-broader adoption remains open; documentation publication and release are the remaining acceptance steps.
+broader adoption remains open outside the accepted v1.11.0 release scope.
 
 Update, 2026-09-26: the follow-up PRs are merged into dev and listed in
 [Architecture integration on dev — 2026-09-26](#architecture-integration-on-dev--2026-09-26).
 That is Linux integration evidence only; it is not release or platform
 acceptance. The rows below state the current 2026-09-29 implementation and
-evidence boundary at `dev` `de35c97b`. Final-tip W8.1 is accepted for this exact product-source commit; the documentation and release steps remain open.
+evidence boundary at product-source `dev` `de35c97b`. Final-tip W8.1 is accepted for this exact product-source commit. Audited documentation merged through PR #832 as `e582d7d9`, with an exact diff proving no product or gate-input changes. Release preparation merged through PR #838 as `e6165e04`; PR #839 then merged `dev` into `main` as `a1fff931`. The first main-branch build failed before tagging because release installation discarded `bun.lock`, letting the frontend Tauri API drift to 2.12.0 against Rust 2.11.2. Hotfix #840 passed 16 exact-head checks and merged as `4c3fec51`; #841 carried it to `main` as `af30dec3` after all 16 latest check contexts passed. The automatic corrected workflow published v1.11.0 with six verified bundles. These later steps do not imply W8.1 suites reran on the docs commit.
 Full checkpoint narratives and their exact historical limits are in the
 [archive](reviews/architecture-review-history-2026-09-08.md).
+
+### v1.11.0 release acceptance — 2026-09-29
+
+[Preparation PR #838](https://github.com/xnmp/tauri-explorer/pull/838) passed
+all 18 exact-head checks and merged to `dev` as `e6165e04`. The
+[release PR #839](https://github.com/xnmp/tauri-explorer/pull/839) passed all
+19 latest check contexts on that `dev` SHA, including bounded Windows soak,
+Windows/Linux native smoke, Mac2 UI, gated recovery, virtual-Mac startup,
+platform Rust, Chromium and both WebKit shards. Older `dev` push jobs on the
+same SHA were canceled by workflow concurrency when the PR runs started;
+those canceled jobs are not counted as passing evidence. PR #839 merged to
+`main` as `a1fff9315b225908046f75d38e8ed8f5009ec0bc`. The first release build failed before tagging because it discarded `bun.lock`, allowing a frontend Tauri API 2.12.0 / Rust Tauri 2.11.2 mismatch. [Hotfix #840](https://github.com/xnmp/tauri-explorer/pull/840) passed all 16 exact-head checks and merged to `dev` as `4c3fec51`; [PR #841](https://github.com/xnmp/tauri-explorer/pull/841) passed all 16 latest check contexts and merged to `main` as `af30dec3479bba4c59f72534736cca1c39e66a40`. The [automatic corrected build-and-release workflow](https://github.com/xnmp/tauri-explorer/actions/runs/36510884453)
+created tag `v1.11.0` at the final main merge commit and published one nonempty asset for
+each of six expected platform bundle types. The release workflow, tag target
+and asset names/sizes were verified after publication; no manual tag was made.
+Durable recovery remains opt-in Linux-only, and physical-Mac half-bounce is
+unqualified.
+
+The [published release](https://github.com/xnmp/tauri-explorer/releases/tag/v1.11.0)
+has exactly these six assets; the tag points to commit
+`af30dec3479bba4c59f72534736cca1c39e66a40`:
+
+| Asset | Bytes |
+| --- | ---: |
+| `tauri-explorer-1.11.0-1.x86_64.rpm` | 13,764,818 |
+| `tauri-explorer_1.11.0_aarch64.dmg` | 12,924,039 |
+| `tauri-explorer_1.11.0_amd64.AppImage` | 91,249,144 |
+| `tauri-explorer_1.11.0_amd64.deb` | 13,764,112 |
+| `tauri-explorer_1.11.0_x64-setup.exe` | 9,124,245 |
+| `tauri-explorer_1.11.0_x64_en-US.msi` | 12,140,544 |
+
 
 | Requirement | Required implementation and evidence | Current state |
 | --- | --- | --- |

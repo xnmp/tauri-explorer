@@ -129,15 +129,15 @@ for anything else.
 | --- | --- | --- | --- |
 | W8.1 | Re-run the full gate set on the final product-source `dev` tip: svelte-check, Vitest, perf contracts, Rust (default and feature-gated), Clippy, native suite (including the W3.3 gated suites), and `ALL_VIEW_MODES=1` Playwright. Record the exact numbers against that commit. A later documentation-only merge may carry those results only after an exact path diff proves that all product, build, dependency, test and workflow inputs are unchanged; do not claim a suite was re-executed at the docs commit. For native specs, count executed tests, not spec files: a file whose `describe` skips still counts as "passed" in the WDIO summary | Ledger section with tested commit SHA and any docs-only equivalence proof | **Done on published `dev` `de35c97b38a4f90c10df5ee46174344d9ceb52ca` (tree `b4ab8655`).** Local Svelte/type, 2,715 unit cases with 3 skips, 29 perf contracts, native TypeScript, maps 514/514, bundle, default and all-feature Rust library suites (1,431 passed/35 ignored each), strict all-target/all-feature Clippy and 7/7 load cases passed. The identical #837 final-head tree passed the all-view browser suite: 2,372/2,408 passed, 36 skipped, exit 0. Six exact-SHA hosted workflows completed success: gated recovery (19 executed cases), Windows/Linux native smoke (76 passed/36 skipped; 97 passed/18 skipped), Mac2 native UI, Windows/macOS platform Rust (Windows default 777/11 plus NTFS 8.3 1/1; macOS default and durable 1,091/25 each), virtual-Mac startup (30 foreground plus 30 warm-probe samples; half-bounce unqualified), and CI (Rust/Chromium/WebKit/frontend/maps); CI Chromium had one retry-classified flaky marquee test before passing. [Ledger](../review-completion.md#w81-exact-tip-product-source-acceptance-2026-09-29) records direct workflow links, default/gated distinctions, and limits. Later docs-only `dev` commits inherit this evidence only after an exact input-equivalence diff, not by claiming test re-execution |
 | W8.2 | Correct the 2026-09-26 ledger claim that "all 38 native specs pass": the gated recovery suites were skipped in that run. Update each ledger acceptance row and the ADR 0020 and 0024 status lines to match the evidence. Mark the "existing ownership overhaul" and "external jobs" rows accepted only if W8.1 covers them | Adversarial fact-check of the ledger against PRs and CI runs | **Done on published `dev` `e582d7d952e07d5f69c138757e8423defe75fce3` via [PR #832](https://github.com/xnmp/tauri-explorer/pull/832).** All 15 exact-head checks passed; issue #818 closed. The audited ledger distinguishes executed native cases from skipped specs, records bounded platform pilots separately from final-tip integration, reconciles #815/#816 and pinned W6.1 evidence, and aligns ADR 0020/0024 status with actual scope. An independent Sol fact-check found no remaining material contradiction; the coordinator verified live PR checks. An exact diff from qualified product-source `de35c97b` to the docs merge changes 20 paths only under `docs/` and `screenshots/`, with no product, build, dependency, test or workflow inputs, so W8.1 evidence carries by input equivalence without claiming reruns at the docs commit |
-| W8.3 | Cut the next minor release: bump the versions, write the CHANGELOG entry, open a Release PR from dev to main with `--merge` after the authorized approval and passing checks; never tag manually, then verify the release assets | GitHub release with every platform asset | **Doing; release preparation is [draft PR #838](https://github.com/xnmp/tauri-explorer/pull/838).** Branch `chore/release-v1.11.0` at `a51efb7f` aligns all five 1.11.0 version fields, dates the changelog to 2026-09-29 and records qualified behavior and limits. The release workflow requires exactly one correctly named bundle of each of six platform types before publishing. Its extracted shell step accepted the expected six assets and rejected missing, duplicate and wrong-version bundles; an independent Sol review found and verified the duplicate guard. Two Rust tests now synchronize cancellation against an observed fake-Git start and a held observer registration; the prior macOS job failed their timing assumptions on successive attempts. Both revised tests passed 100/100 local repeats, full default and opt-in Rust library suites passed at moderate concurrency, and independent review closed two test-harness concerns. On the earlier `711da177` head, macOS/Windows Rust, gated recovery, Mac2 native UI, Linux native smoke, macOS startup and both Chromium shards passed. The [Windows native smoke](https://github.com/xnmp/tauri-explorer/actions/runs/36472926377) failed one large-layout transfer case (`moved: false`); retained diagnostics did not distinguish native creation from handoff timeout. E2E-only correlated sender, native-creation and receiver traces are on `a51efb7f`. [Full native smoke](https://github.com/xnmp/tauri-explorer/actions/runs/36476638800) passed on Windows and Linux; the Windows transfer spec passed all seven cases, including the eight-pane handoff, and its retained app log confirms child seed adoption and acknowledgement. The intermittent earlier failure remains unclassified. Platform Rust, recovery, Mac2 UI, macOS startup, both Chromium shards, frontend, maps and perf passed on this head; both WebKit shards passed and all 18 checks on this PR head are green. The docs-only #832 merge `e582d7d9` is incorporated locally in the release branch. Publish the updated #838 head, recheck that final head, merge #838 under the standing authorization, open and merge `dev` → `main` with `--merge`, then verify the tag and all six published assets |
+| W8.3 | Cut the next minor release: bump the versions, write the CHANGELOG entry, open a Release PR from dev to main with `--merge` after the authorized approval and passing checks; never tag manually, then verify the release assets | GitHub release with every platform asset | **Done: [v1.11.0](https://github.com/xnmp/tauri-explorer/releases/tag/v1.11.0) published with six verified platform bundles.** [Preparation PR #838](https://github.com/xnmp/tauri-explorer/pull/838) passed 18 exact-head checks on `d2280942` and squash-merged to `dev` as `e6165e04`. [Release PR #839](https://github.com/xnmp/tauri-explorer/pull/839) passed all 19 latest check contexts on `e6165e04` (including Windows bounded soak, Windows/Linux native smoke, Mac2 UI, recovery, startup, platform Rust, Chromium and both WebKit shards) and merged to `main` with merge commit `a1fff9315b225908046f75d38e8ed8f5009ec0bc`. Older canceled `dev` push jobs on the same SHA were superseded by the PR-triggered run and are not counted as release evidence. The first build failed before tagging because deleting `bun.lock` drifted the frontend Tauri API minor version. [Hotfix #840](https://github.com/xnmp/tauri-explorer/pull/840) passed 16 exact-head checks and merged to `dev` as `4c3fec51`; [PR #841](https://github.com/xnmp/tauri-explorer/pull/841) passed 16 latest contexts and merged to `main` as `af30dec3479bba4c59f72534736cca1c39e66a40`. The automatic [build-and-release workflow](https://github.com/xnmp/tauri-explorer/actions/runs/36510884453) created tag `v1.11.0` at the final main merge commit and published exactly one nonempty bundle for each required Linux, macOS ARM64 and Windows package type. No manual tag was made. Durable recovery remains opt-in Linux-only; physical-Mac half-bounce remains unqualified; the earlier intermittent #710 transfer cause remains open |
 
-## Pending integration acceptance
+## Earlier integration checkpoint (superseded)
 
-Work on open PRs and local branches is branch evidence only. It does not close a
-plan row or establish release acceptance until it is merged into `dev` and the
-required platform outcomes execute. The five-run Windows smoke criterion and
-the pinned Linux four-hour report are accepted on `dev`; W8.1 passed on
-`de35c97b`, while documentation publication and the release remain open.
+The following diagnostic notes preserve the pre-release investigation. Its
+then-open gate statements are superseded by the completed W8 rows above and
+the release checklist below. The five-run Windows smoke criterion, pinned
+Linux four-hour report and exact-tip W8.1 gates were subsequently accepted;
+audited W8.2 records and v1.11.0 release acceptance are recorded above.
 The bounded Windows soak, native macOS UI and
 distinct NTFS 8.3 alias case have landed. Physical-Mac startup W5.4 is a
 follow-up outside this release gate. Non-Linux durable recovery adapters
@@ -210,26 +210,34 @@ selected `dev` SHA.
 
 ### W8.3 release checklist (v1.11.0)
 
-The five authoritative version fields on accepted `dev` before the release branch read
-`1.10.0`: `package.json`, `src-tauri/Cargo.toml`, the root package in
-`src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`, and the `PKGBUILD`
-fallback. PR #838 updates all five to `1.11.0`, resets `pkgrel=1`, and
-adds a dated `CHANGELOG.md` entry with the qualified platform and opt-in limits.
-Its release-workflow asset matrix now validates all six expected bundles before
-creating the release. The six-name, missing, duplicate and wrong-version
-preflights pass locally. A macOS Rust rerun on the earlier `af9db6f8` head exposed two distinct test-synchronization assumptions; PR #838 now includes deterministic test changes at `711da177`, locally verified in both Rust library variants. Correlated transfer diagnostics are on prior head `a51efb7f`; all 18 checks passed on that head, including Windows/Linux native smoke and both WebKit shards. The updated branch incorporates the accepted docs merge and awaits its own final-head checks.
+All five authoritative version fields are `1.11.0`, `PKGBUILD` has `pkgrel=1`,
+and the dated `CHANGELOG.md` describes the qualified behavior and limits.
+PR #838 passed all 18 exact-head checks and merged to `dev` as `e6165e04`.
+PR #839 passed all 19 latest check contexts and merged `dev` to `main` with
+merge commit `a1fff931`. The first release build failed before tagging due to unlocked Tauri API drift; #840/#841 restored the cross-platform frozen lockfile and merged as `4c3fec51` on `dev` and `af30dec3` on `main`. The earlier canceled `dev` push checks were superseded
+by the PR-triggered checks on the same SHA. The automatic main-branch workflow
+published `v1.11.0`; its tag target and six nonempty platform assets were
+verified against final main merge commit `af30dec3` and expected package names. No tag was
+created manually.
 
-W8.1 passed on exact `dev` `de35c97b`: the four-hour Linux report, bounded
-Windows report and screenshot, five consecutive post-fix Windows `dev` smokes,
-executed native recovery cases and final hosted Rust/platform checks are
-recorded in the ledger. D1/D2 retain the documented defaults until the owner
-chooses otherwise. Audited docs-only PR #832 merged as `e582d7d9`; its exact 20-path diff changed
-no qualified product, build, dependency, test or workflow inputs. That `dev`
-tip is incorporated into #838; require its new final-head checks and merge
-it under the standing approval. The release PR is `dev` → `main` with merge
-strategy `--merge`; require its checks before merging. Do not create a tag
-manually. Verify the resulting GitHub release tag and each of the six expected
-platform assets after the merge.
+The [published release](https://github.com/xnmp/tauri-explorer/releases/tag/v1.11.0)
+contains exactly these six verified, nonempty assets (sizes in bytes):
+
+| Platform bundle | Asset | Bytes |
+| --- | --- | ---: |
+| Linux RPM | `tauri-explorer-1.11.0-1.x86_64.rpm` | 13,764,818 |
+| macOS ARM64 DMG | `tauri-explorer_1.11.0_aarch64.dmg` | 12,924,039 |
+| Linux AppImage | `tauri-explorer_1.11.0_amd64.AppImage` | 91,249,144 |
+| Linux DEB | `tauri-explorer_1.11.0_amd64.deb` | 13,764,112 |
+| Windows installer | `tauri-explorer_1.11.0_x64-setup.exe` | 9,124,245 |
+| Windows MSI | `tauri-explorer_1.11.0_x64_en-US.msi` | 12,140,544 |
+
+W8.1 qualification remains attributed to product-source `de35c97b`; the
+W8.2 docs-only merge `e582d7d9` carried it by exact input equivalence.
+Release PR checks qualify the later version, changelog, workflow, test and
+E2E-only diagnostic changes. D1/D2 retain opt-in Linux-only durable recovery;
+physical-Mac half-bounce and the earlier intermittent #710 transfer cause
+remain outside this release acceptance.
 
 ## Decisions for the owner
 

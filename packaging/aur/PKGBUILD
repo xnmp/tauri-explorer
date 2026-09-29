@@ -19,6 +19,8 @@ depends=(
   'libsoup3'
   'pango'
   'webkit2gtk-4.1'
+  'wl-clipboard'
+  'xclip'
 )
 provides=('tauri-explorer')
 conflicts=('tauri-explorer')

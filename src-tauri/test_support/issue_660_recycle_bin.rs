@@ -1,9 +1,7 @@
 #[cfg(target_os = "linux")]
-use super::{linux_trash_files_directory_from, open_linux_recycle_bin_with};
+use super::{is_graphical_file_manager, linux_trash_files_directory_from};
 #[cfg(target_os = "linux")]
 use std::ffi::OsString;
-#[cfg(target_os = "linux")]
-use std::os::unix::process::ExitStatusExt;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
@@ -37,51 +35,17 @@ fn issue_660_recycle_bin_errors_without_an_absolute_xdg_or_home_directory() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn issue_660_recycle_bin_opens_the_trash_files_directory() {
-    let mut launchers = Vec::new();
-
-    let result = open_linux_recycle_bin_with(|launcher| {
-        launchers.push((launcher.program, launcher.arguments.clone()));
-        Ok(std::process::ExitStatus::from_raw(0))
-    });
-
-    assert!(result.is_ok());
-    assert_eq!(launchers.len(), 1);
-    assert_eq!(launchers[0].0, "xdg-open");
-    assert!(launchers[0].1[0]
-        .to_string_lossy()
-        .ends_with("/Trash/files"));
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn issue_660_recycle_bin_returns_an_error_when_the_linux_launcher_fails() {
-    let result = open_linux_recycle_bin_with(|_| Ok(std::process::ExitStatus::from_raw(1 << 8)));
-
-    assert!(result.is_err());
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn issue_660_recycle_bin_does_not_depend_on_gio() {
-    let mut launchers = Vec::new();
-
-    let result = open_linux_recycle_bin_with(|launcher| {
-        launchers.push((launcher.program, launcher.arguments.clone()));
-        if launcher.program == "gio" {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "gio missing",
-            ))
-        } else {
-            Ok(std::process::ExitStatus::from_raw(0))
-        }
-    });
-
-    assert!(result.is_ok());
-    assert_eq!(launchers.len(), 1);
-    assert_eq!(launchers[0].0, "xdg-open");
-    assert!(launchers[0].1[0]
-        .to_string_lossy()
-        .ends_with("/Trash/files"));
+fn issue_757_terminal_directory_handler_is_not_a_graphical_file_manager() {
+    // Arch can register kitty-open.desktop as the default for directories.
+    // Selecting it for Trash opens a terminal even though dispatch succeeds.
+    assert!(!is_graphical_file_manager(
+        Some("System;TerminalEmulator;"),
+        false
+    ));
+    assert!(!is_graphical_file_manager(Some("FileManager;"), true));
+    assert!(is_graphical_file_manager(
+        Some("System;FileTools;FileManager;"),
+        false
+    ));
+    assert!(!is_graphical_file_manager(Some("NotAFileManager;"), false));
 }

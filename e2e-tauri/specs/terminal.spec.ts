@@ -1,5 +1,7 @@
 import { browser, $, expect } from "@wdio/globals";
 import { basename } from "node:path";
+import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { domText, navigateTo } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
@@ -80,6 +82,48 @@ describe("embedded terminal", () => {
       timeout: 20_000,
       timeoutMsg: "echoed command output never appeared",
     });
+  });
+
+  (process.platform === "linux" ? it : it.skip)("pastes OS clipboard text into the real shell (#732)", async () => {
+    await $(".file-list").waitForExist({ timeout: 15_000 });
+    if (!(await $(".terminal-panel").isDisplayed())) await browser.keys(["Control", "`"]);
+    await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
+    await browser.waitUntil(async () => (await terminalText()).trim().length > 0, { timeout: 45_000 });
+    const marker = `terminal-paste-${Date.now()}`;
+    // The driver and app share only this isolated Xvfb clipboard. Supplying
+    // it externally catches WebKit's clipboard permissions and the xterm key
+    // path; a mocked browser clipboard would not exercise either one.
+    // xclip forks a clipboard owner; discard its inherited output handles so
+    // the fixture writer can return while that owner serves the app's read.
+    execFileSync("xclip", ["-selection", "clipboard"], {
+      input: `echo ${marker}`,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const input = await $(".terminal-panel textarea.xterm-helper-textarea");
+    await browser.execute((element: HTMLElement) => element.focus(), input);
+    await browser.waitUntil(() => input.isFocused(), { timeout: 2_000 });
+    await browser.keys(["Control", "v"]);
+    await browser.keys("Enter");
+    try {
+      await browser.waitUntil(async () => (await terminalText()).split(marker).length >= 3, {
+        timeout: 15_000,
+        timeoutMsg: "pasted clipboard command never executed in the terminal",
+      });
+      mkdirSync("screenshots/fix/terminal-paste-native-fallback", { recursive: true });
+      await browser.saveScreenshot("screenshots/fix/terminal-paste-native-fallback/native-terminal-paste.png");
+    } catch (error) {
+      const app = await browser.execute((marker: string) => ({
+        probe: document.documentElement.dataset.terminalPasteProbe,
+        focused: document.activeElement?.className,
+        secure: window.isSecureContext,
+        clipboard: typeof navigator.clipboard?.readText,
+        rowsContainMarker: document.querySelector(".terminal-panel .xterm-rows")?.textContent?.includes(marker),
+        rowLength: document.querySelector(".terminal-panel .xterm-rows")?.textContent?.length,
+      }), marker);
+      const osClipboard = execFileSync("xclip", ["-o", "-selection", "clipboard"], { encoding: "utf8" });
+      console.error("[terminal-paste-diagnostics]", JSON.stringify({ app, osMatches: osClipboard === `echo ${marker}`, osLength: osClipboard.length }));
+      throw error;
+    }
   });
 
   it("shell starts in the explorer's current directory", async () => {

@@ -36,9 +36,11 @@
   import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { createTerminalSession } from "$lib/state/terminal-session";
+  import { createTerminalInputOrder } from "$lib/state/terminal-input-order";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import { logFrontendError } from "$lib/api/crash";
+  import { osClipboardReadText } from "$lib/api/os-clipboard";
 
   let panelEl: HTMLDivElement | undefined = $state();
   let termEl: HTMLDivElement | undefined = $state();
@@ -69,6 +71,23 @@
   let queueToastShown = false;
 
   const visible = $derived(terminalPanelStore.visible);
+
+  async function readTerminalPasteText(): Promise<string> {
+    const browserRead = () => navigator.clipboard.readText();
+    // WebKitGTK can deny the browser API outright (#732). Prefer the native
+    // desktop clipboard on Linux; on Windows/macOS keep the fast browser path
+    // when available and use the native bridge after a permission failure.
+    if (isWindows || isMac) {
+      try { return await browserRead(); } catch { /* native fallback below */ }
+    }
+    const native = await osClipboardReadText();
+    if (native.ok) return native.data;
+    if (!isWindows && !isMac) {
+      try { return await browserRead(); } catch { /* report native error below */ }
+    }
+    toastStore.error(`Could not paste from clipboard: ${native.error}`);
+    return "";
+  }
 
   function focusOnRequest(): void {
     if (term && terminalPanelStore.consumeFocus()) term.focus();
@@ -101,7 +120,7 @@
       // Path insertions requested while the shell was still spawning (#265).
       if (terminalSession.id === null) return;
       for (const data of pendingInsertions.splice(0)) {
-        terminalSession.write(data);
+        terminalInput.write(data);
       }
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
@@ -114,6 +133,8 @@
   async function restartShell(): Promise<void> {
     // The user's restart action owns focus; PTY completion does not.
     term?.focus();
+    terminalInput.close();
+    terminalInput = createTerminalInputOrder((data) => { terminalSession.write(data); });
     await terminalSession.stop();
     stopQueuePoll();
     pendingCd = null;
@@ -134,7 +155,8 @@
    * Opening focus belongs to the store, including queued cold insertions. */
   function insertPaths(paths: string[]): void {
     const data = buildPathsInsertion(paths, shellProfile);
-    if (!terminalSession.write(data)) pendingInsertions.push(data);
+    if (terminalSession.id === null) pendingInsertions.push(data);
+    else terminalInput.write(data);
   }
 
   // Targets of cds we injected whose OSC 7 echo hasn't arrived yet
@@ -174,13 +196,14 @@
       },
     },
   );
+  let terminalInput = createTerminalInputOrder((data: string) => { terminalSession.write(data); });
 
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
     if (terminalSession.id === null || path == null) return;
     injectedCds.add(path);
-    terminalSession.write(buildCdSyncSequence(path, shellProfile));
+    terminalInput.write(buildCdSyncSequence(path, shellProfile));
   }
 
   /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
@@ -290,7 +313,7 @@
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
-      // — Cmd+C/V while the terminal is focused must copy/paste terminal
+  // — Cmd+C/V while the terminal is focused must copy/paste terminal
       // text, never fall through to the explorer's file clipboard.
       const primaryOnly = isMac
         ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
@@ -311,14 +334,11 @@
       // native paste into xterm's hidden textarea is unreliable in some
       // WebViews (#374), and the explorer's file-paste must never fire here.
       if (primaryOnly && event.key.toLowerCase() === "v") {
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) term?.paste(text);
-          })
-          .catch(() => {
-            /* clipboard unavailable — the native paste path may still work */
-          });
+        terminalInput.paste(
+          readTerminalPasteText(),
+          (text) => term?.paste(text),
+          (error) => toastStore.error(`Could not paste from clipboard: ${String(error)}`),
+        );
         event.preventDefault();
         return false;
       }
@@ -330,7 +350,7 @@
         effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac),
       );
       if (sequence !== null) {
-        terminalSession.write(sequence);
+        terminalInput.write(sequence);
         event.preventDefault();
         return false;
       }
@@ -353,7 +373,7 @@
     fitAddon.fit();
 
     term.onData((data) => {
-      terminalSession.write(data);
+      terminalInput.write(data);
     });
     term.onResize(({ cols, rows }) => {
       const id = terminalSession.id;
@@ -381,6 +401,7 @@
       resizeObserver.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
       stopQueuePoll();
+      terminalInput.close();
       void terminalSession.dispose();
       term?.dispose();
     };

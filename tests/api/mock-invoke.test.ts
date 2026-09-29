@@ -52,3 +52,31 @@ describe("mockInvoke — no-op external process commands", () => {
     await expect(mockInvoke<number>("start_nano_banana_job", {})).resolves.toBeTypeOf("number");
   });
 });
+
+describe("mockInvoke — revisioned clipboard", () => {
+  it("rekeys the native file list and rejects a stale clear", async () => {
+    const initial = await mockInvoke<{ revision: number }>("clipboard_publish", {
+      entries: [{ name: "old.txt", path: "/old.txt" }], operation: "cut",
+    });
+    const renamed = await mockInvoke<{ revision: number; paths: string[] }>("clipboard_rekey", {
+      revision: initial.revision, oldPath: "/old.txt", entry: { name: "new.txt", path: "/new.txt" },
+    });
+    expect(renamed.paths).toEqual(["/new.txt"]);
+    expect(await mockInvoke<boolean>("clipboard_compare_and_clear", { revision: initial.revision })).toBe(false);
+    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual(["/new.txt"]);
+  });
+
+  it("can simulate a platform without native Cut ownership", async () => {
+    localStorage.setItem("mock-cut-ownership-unavailable", "1");
+    try {
+      await expect(mockInvoke("clipboard_publish", {
+        entries: [{ name: "a.txt", path: "/a.txt" }], operation: "cut",
+      })).rejects.toThrow(/Cut requires native clipboard ownership/);
+      await expect(mockInvoke("clipboard_publish", {
+        entries: [{ name: "a.txt", path: "/a.txt" }], operation: "copy",
+      })).resolves.toMatchObject({ paths: ["/a.txt"], operation: "copy" });
+    } finally {
+      localStorage.removeItem("mock-cut-ownership-unavailable");
+    }
+  });
+});

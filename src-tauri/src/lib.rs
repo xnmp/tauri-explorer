@@ -311,7 +311,12 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Clipboard (Linux native)
             clipboard::clipboard_has_files,
             clipboard::clipboard_read_files,
+            clipboard::clipboard_read_text,
             clipboard::clipboard_write_files,
+            clipboard::clipboard_publish,
+            clipboard::clipboard_snapshot,
+            clipboard::clipboard_compare_and_clear,
+            clipboard::clipboard_rekey,
             clipboard::clipboard_has_image,
             clipboard::clipboard_read_report_image,
             clipboard::clipboard_paste_image,

@@ -17,7 +17,8 @@ const mocks = vi.hoisted(() => ({
   load: { current: (async () => ({ ok: false, error: "unset" })) as Load },
   cleanup: vi.fn(async () => {}),
   osReadFiles: vi.fn(),
-  osWriteFiles: vi.fn(async () => ({ ok: true, data: null })),
+  osWriteFiles: vi.fn(async (_paths: string[]): Promise<{ ok: true; data: null } | { ok: false; error: string }> => ({ ok: true, data: null })),
+  native: { revision: 0, entries: null as FileEntry[] | null, operation: null as "copy" | "cut" | null, paths: [] as string[], pending: Promise.resolve() as Promise<unknown> },
   transfer: vi.fn(),
   copyEntries: vi.fn(),
   moveEntries: vi.fn(),
@@ -43,6 +44,48 @@ vi.mock("$lib/api/os-clipboard", () => ({
   osClipboardHasFiles: vi.fn(async () => false),
   osClipboardReadFiles: mocks.osReadFiles,
   osClipboardWriteFiles: mocks.osWriteFiles,
+  osClipboardPublish: (entries: FileEntry[], operation: "copy" | "cut") => {
+    const publish = mocks.native.pending.then(async () => {
+    const written = await mocks.osWriteFiles(entries.map((entry) => entry.path));
+    if (!written.ok) throw new Error(written.error);
+    mocks.native.revision++;
+    mocks.native.entries = entries;
+    mocks.native.operation = operation;
+    mocks.native.paths = entries.map((entry) => entry.path);
+    return { ...mocks.native, mirrorError: null };
+    });
+    mocks.native.pending = publish.catch(() => {});
+    return publish;
+  },
+  osClipboardSnapshot: async () => {
+    await mocks.native.pending;
+    const result = await mocks.osReadFiles();
+    if (!result.ok) throw new Error(result.error);
+    const paths: string[] = result.data;
+    if (paths.length !== mocks.native.paths.length || paths.some((path, index) => path !== mocks.native.paths[index])) {
+      mocks.native.revision++;
+      mocks.native.entries = null;
+      mocks.native.operation = null;
+      mocks.native.paths = paths;
+    }
+    return { ...mocks.native, mirrorError: null };
+  },
+  osClipboardCompareAndClear: async (revision: number) => {
+    if (revision !== mocks.native.revision || !mocks.native.entries) return false;
+    mocks.native.revision++;
+    mocks.native.entries = null;
+    mocks.native.operation = null;
+    return true;
+  },
+  osClipboardRekey: async (revision: number, oldPath: string, entry: FileEntry) => {
+    if (revision !== mocks.native.revision || !mocks.native.entries) return null;
+    const index = mocks.native.entries.findIndex((candidate) => candidate.path === oldPath);
+    if (index < 0) return null;
+    mocks.native.entries = mocks.native.entries.map((candidate, at) => at === index ? entry : candidate);
+    mocks.native.paths = mocks.native.entries.map((candidate) => candidate.path);
+    mocks.native.revision++;
+    return { ...mocks.native, mirrorError: null };
+  },
 }));
 
 vi.mock("$lib/api/clipboard-image", () => ({
@@ -165,13 +208,17 @@ async function waitForCall(mock: ReturnType<typeof vi.fn>): Promise<void> {
 
 let explorers: ExplorerInstance[] = [];
 
-beforeEach(() => {
-  clipboardStore.clear();
+beforeEach(async () => {
+  mocks.native = { revision: mocks.native.revision + 1, entries: null, operation: null, paths: [], pending: Promise.resolve() };
+  await clipboardStore.clear();
   vi.clearAllMocks();
+  mocks.osReadFiles.mockReset();
+  mocks.osWriteFiles.mockReset();
+  mocks.osWriteFiles.mockResolvedValue({ ok: true, data: null });
   localStorage.clear();
   explorers = [];
   mocks.load.current = async () => ({ ok: false, error: "unset" });
-  mocks.osReadFiles.mockResolvedValue({ ok: true, data: [] });
+  mocks.osReadFiles.mockImplementation(async () => ({ ok: true, data: [...mocks.native.paths] }));
   mocks.clipboardHasImage.mockResolvedValue(false);
   mocks.undo.mockResolvedValue({ error: "Nothing to undo" });
   mocks.copyEntries.mockImplementation(async (sources: readonly string[], destination: string, options: {
@@ -191,11 +238,11 @@ beforeEach(() => {
 
 afterEach(async () => {
   await Promise.all(explorers.map((explorer) => explorer.destroy()));
-  clipboardStore.clear();
+  await clipboardStore.clear();
 });
 
 describe("paste and undo publication ownership", () => {
-  it("pastes the current in-app copy without waiting for a slow OS clipboard write", async () => {
+  it("waits for the ordered native snapshot before pasting a pending Copy", async () => {
     const explorer = explorerAtA();
     const source = entry("pending.txt", "/source");
     let finishWrite!: () => void;
@@ -205,16 +252,12 @@ describe("paste and undo publication ownership", () => {
     const copying = clipboardStore.copy([source]);
     const pasting = explorer.paste();
 
-    try {
-      await vi.waitFor(() => expect(mocks.copyEntries).toHaveBeenCalledWith(
-        [source.path], "/a", expect.anything(),
-      ), { timeout: 500 });
-      expect(mocks.osReadFiles).not.toHaveBeenCalled();
-    } finally {
-      finishWrite?.();
-    }
+    await waitForCall(mocks.osWriteFiles);
+    expect(mocks.copyEntries).not.toHaveBeenCalled();
+    finishWrite();
     expect(await pasting).toBeNull();
     await copying;
+    expect(mocks.copyEntries).toHaveBeenCalledWith([source.path], "/a", expect.anything());
   });
 
   it("waits for a Cut mirror before moving its source", async () => {
@@ -244,6 +287,33 @@ describe("paste and undo publication ownership", () => {
 
     expect(await explorer.paste()).toBeNull();
     expect(mocks.copyEntries).toHaveBeenCalledWith([external.path], "/a", expect.anything());
+  });
+
+  it("copies an external selection with identical paths after native Cut ownership changes", async () => {
+    const explorer = explorerAtA();
+    const source = entry("same.txt", "/source");
+    await clipboardStore.cut([source]);
+    // The external owner can advertise the same files but has no private
+    // token. A path comparison must never authorize a move.
+    mocks.native.revision++;
+    mocks.native.entries = null;
+    mocks.native.operation = null;
+    mocks.native.paths = [source.path];
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [source.path] });
+
+    expect(await explorer.paste()).toBeNull();
+    expect(mocks.copyEntries).toHaveBeenCalledWith([source.path], "/a", expect.anything());
+    expect(mocks.moveEntries).not.toHaveBeenCalled();
+  });
+
+  it("does not move an old Cut after another app replaces it with an empty file clipboard", async () => {
+    const explorer = explorerAtA();
+    await clipboardStore.cut([entry("old-cut.txt", "/source")]);
+    mocks.osReadFiles.mockResolvedValueOnce({ ok: true, data: [] });
+
+    expect(await explorer.paste()).toBe("Nothing in clipboard");
+    expect(mocks.moveEntries).not.toHaveBeenCalled();
+    expect(mocks.copyEntries).not.toHaveBeenCalled();
   });
 
   it("preserves a newer Cut operation when clipboard content changes during the OS read", async () => {

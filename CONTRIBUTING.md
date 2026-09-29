@@ -4,7 +4,7 @@ Thanks for your interest! Bug reports, feature requests, and pull requests are a
 
 ## Reporting bugs
 
-The fastest route is from inside the app: **Command Palette → "Report a Bug"** — it pre-fills a GitHub issue with your OS, app version, and a recent local log excerpt (nothing is sent automatically; you see everything before submitting). Otherwise, [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose).
+The fastest route is from inside the app: **Command Palette → "Report Issue"**. The form includes your OS and app version when you submit it, and can include images you select. The resulting GitHub issue and images are public; local logs are not attached automatically. If in-app submission fails, the app saves your draft and opens GitHub's issue form when possible. You can also [open an issue directly](https://github.com/xnmp/tauri-explorer/issues/new/choose).
 
 ## Development setup
 

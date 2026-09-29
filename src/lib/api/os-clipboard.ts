@@ -13,7 +13,7 @@ import { invoke } from "./common";
 
 export type OsClipboardResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   // Tauri command failures arrive as the serialized AppError object
@@ -55,6 +55,15 @@ export async function osClipboardReadFiles(): Promise<OsClipboardResult<string[]
   }
 }
 
+/** Read text for terminal paste when WebKit denies the browser Clipboard API. */
+export async function osClipboardReadText(): Promise<OsClipboardResult<string>> {
+  try {
+    return { ok: true, data: await invoke<string>("clipboard_read_text") };
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) };
+  }
+}
+
 /**
  * Write file paths to the OS clipboard so external file managers can paste
  * them. Failure carries the reason for the caller to surface.
@@ -66,4 +75,35 @@ export async function osClipboardWriteFiles(filePaths: string[]): Promise<OsClip
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   }
+}
+
+export interface NativeClipboardSnapshot {
+  revision: number;
+  entries: import("$lib/domain/file").FileEntry[] | null;
+  paths: string[];
+  operation: "copy" | "cut" | null;
+  mirrorError: string | null;
+}
+
+export function osClipboardPublish(
+  entries: import("$lib/domain/file").FileEntry[],
+  operation: "copy" | "cut",
+): Promise<NativeClipboardSnapshot> {
+  return invoke<NativeClipboardSnapshot>("clipboard_publish", { entries, operation });
+}
+
+export function osClipboardSnapshot(): Promise<NativeClipboardSnapshot> {
+  return invoke<NativeClipboardSnapshot>("clipboard_snapshot");
+}
+
+export function osClipboardCompareAndClear(revision: number): Promise<boolean> {
+  return invoke<boolean>("clipboard_compare_and_clear", { revision });
+}
+
+export function osClipboardRekey(
+  revision: number,
+  oldPath: string,
+  entry: import("$lib/domain/file").FileEntry,
+): Promise<NativeClipboardSnapshot | null> {
+  return invoke<NativeClipboardSnapshot | null>("clipboard_rekey", { revision, oldPath, entry });
 }

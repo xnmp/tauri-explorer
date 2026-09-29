@@ -75,7 +75,9 @@ test("a failed report keeps its in-session attachment retry draft", async ({ pag
   await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
   await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await dialog.getByRole("button", { name: "Submit" }).click();
-  await expect(page.locator(".toast.error")).toContainText("saved for retry");
+  await expect(page.locator(".toast.error")).toContainText(
+    "Your text is saved; images remain available until this window closes",
+  );
 
   dialog = await openReportDialog(page);
   await expect(dialog.getByLabel("Title")).toHaveValue("Retry with image");

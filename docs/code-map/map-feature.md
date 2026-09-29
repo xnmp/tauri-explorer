@@ -86,7 +86,7 @@ backend for E2E/browser).
 ## Recycle Bin
 
 - `components/FilesSidebarView.svelte`, `state/recycle-bin.ts`, `api/open.ts` — sidebar action opens the native Recycle Bin and reports an IPC failure through `toastStore`.
-- `src-tauri/src/system.rs` — `open_recycle_bin`: Linux launches an absolute Freedesktop `Trash/files` directory through `xdg-open` without dispatching `trash:///`; Windows and macOS retain their native shell launchers.
+- `src-tauri/src/system.rs` — `open_recycle_bin`: Linux sends `trash:///` directly to FileManager1 for its native Trash view, falling back only on definite service unavailability to a registered graphical file manager opening the absolute `Trash/files` directory; Windows and macOS retain their native shell launchers.
 - FLOW: sidebar click → `openRecycleBinWithFeedback` → `open_recycle_bin` IPC → platform launcher; a terminal failure returns to the toast.
 
 ## Window tabs
@@ -153,7 +153,7 @@ backend for E2E/browser).
 
 ## Copy / paste / file-ops & progress
 
-- `state/clipboard.svelte.ts` — in-app cut/copy path set
+- `state/clipboard.svelte.ts` — revisioned native file clipboard snapshot and in-app cut/copy path set; cross-window events invalidate and reconcile, while Rust `clipboard.rs` orders commands and verifies the X11 Cut token
 - `state/paste-operations.ts` — paste orchestration (conflict, dest); explorer captures destination before clipboard waits and guards pane callbacks by navigation/lifetime.
 - `state/pane-mutations.ts` — `createPaneMutations`: durable affected-parent/undo effects; navigation/lifetime-owned entry updates and exact editor-session completion
 - Native history lifetime acceptance: `src/test-support/file-history-probe.ts` observes the production summary channel and dispatches real IPC; `src-tauri/test_support/file_history_gate.rs` holds accepted native work before filesystem execution only in opt-in recovery builds. `e2e-tauri/specs/file-history-lifetime.spec.ts` verifies actual shared inverse outcomes across windows; `e2e-tauri/specs/file-forward-history.spec.ts` verifies native rename history before renderer completion and accepted forward work after native window destruction.
@@ -399,7 +399,7 @@ backend for E2E/browser).
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
 - `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown
 - FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
-- REPORT FLOW: `help.reportIssue` → `dialogStore` → `UserReportDialog` (text fields bind through `userReportDraftStore`'s debounced localStorage draft; picker + clipboard-image previews and failed-draft attachment retry cache remain in-session) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments, enriches with environment only — no log tail (#595), uploads selected images through `gh image`, appends the returned GitHub `user-attachments` Markdown, then runs `gh issue create`); a successful report clears the persisted text draft, background failures toast, attachment failures restore on the next open, and text-only CLI/relay failures use `userReportFallbackUrl`.
+- REPORT FLOW: `help.reportIssue` → `dialogStore` → `UserReportDialog` (text fields bind through `userReportDraftStore`'s debounced localStorage draft; picker + clipboard-image previews and failed-draft attachment retry cache remain in-session) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments and appends version/OS metadata without truncating the 8,000-unit user description or including log tails (#595)) → the public relay for both text and image reports. The relay hosts images on Blob, creates the GitHub issue, and cleans up blobs only on definite rejection. An ambiguous POST/response is reported as `submission_uncertain` so the app retains the draft and asks the reporter to check recent issues without opening a duplicate issue form. Ordinary failures use `userReportFallbackUrl`.
 
 ## Theming
 
@@ -429,6 +429,7 @@ backend for E2E/browser).
 ## Terminal panel
 
 - `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input goes through `session.write`, backed by `domain/ordered-writer.ts`: separate `terminal_write` invocations complete in any order, so at most one is in flight and later input coalesces behind it (#709).
+- `state/terminal-input-order.ts` — holds later keystrokes behind an asynchronous clipboard read and captures xterm's paste bytes before flushing them to the session in key order (#732).
 
 - `components/TerminalPanel.svelte` — embedded terminal UI
 - `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)

@@ -182,6 +182,8 @@
       contact,
       attachments: [...attachments],
     };
+    userReportDraftStore.update({ kind, title, body, contact });
+    userReportDraftStore.saveNow();
     const submittedClipboardAttachmentData = clipboardAttachmentData;
     onClose();
     // The dialog closes the moment Submit is pressed, so until the relay
@@ -206,13 +208,34 @@
     } catch (unknownError) {
       retirePendingToast();
       const error = unknownError as Partial<UserReportError>;
-      if ((draft.attachments?.length ?? 0) > 0) {
+      if (error.kind === "submission_uncertain") {
         retainDraftForRetry(draft, submittedClipboardAttachmentData);
         toastStore.show(
-          userReportAttachmentFailureMessage(error.kind),
+          "The report may have been submitted. Check recent issues before retrying. Text is saved; images remain until this window closes.",
+          "error",
+          { duration: 10000 },
+        );
+        return;
+      }
+      if ((draft.attachments?.length ?? 0) > 0) {
+        retainDraftForRetry(draft, submittedClipboardAttachmentData);
+        const fallbackUrl = userReportFallbackUrl(draft);
+        toastStore.show(
+          `${userReportAttachmentFailureMessage(error.kind)}${fallbackUrl ? " Opening GitHub; add the images there manually." : ""}`,
           "error",
           { duration: 8000 },
         );
+        if (fallbackUrl) {
+          try {
+            await openExternalUrl(fallbackUrl);
+          } catch {
+            toastStore.show(
+              "Could not open GitHub. Your draft is saved; reopen Report Issue to retry.",
+              "error",
+              { duration: 8000 },
+            );
+          }
+        }
         return;
       }
       const dailyCap = error.kind === "daily_cap";
@@ -333,7 +356,7 @@
           </label>
         </div>
       </div>
-      <p class="attachment-hint">PNG, JPEG, or GIF. Up to 3 images, 2 MiB each and 3 MiB total.</p>
+      <p class="attachment-hint">PNG, JPEG, or GIF. Up to 3 images, 2 MiB each and 3 MiB total. Failed images can be retried until this window closes.</p>
       {#if attachmentError}
         <p class="attachment-error" role="alert">{attachmentError}</p>
       {/if}
@@ -358,6 +381,12 @@
         </ul>
       {/if}
     </section>
+
+    <p class="report-disclosure">
+      Submitting creates a public GitHub issue. Your description, optional contact details,
+      app and OS version, and any images will be public. Images are uploaded to public hosting.
+      Local logs are not attached automatically.
+    </p>
 
     <footer>
       <span class="hint">Ctrl+Enter to submit</span>
@@ -416,6 +445,11 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .report-disclosure {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
   }
   .attachment-heading, .attachment-actions {
     display: flex;

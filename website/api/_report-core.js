@@ -207,15 +207,24 @@ return blocked`;
       const args = [];
       for (const entry of entries) args.push(entry.limit, entry.windowMs);
       for (const entry of entries) args.push(entry.scope);
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(["EVAL", script, keys.length, ...keys, ...args]),
-      });
-      if (!response.ok) throw new ReportError("server_rejected", "Rate limit store unavailable", 503);
-      const payload = await response.json();
-      if (payload.error) throw new ReportError("server_rejected", "Rate limit store unavailable", 503);
-      return payload.result || undefined;
+      let payload;
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(["EVAL", script, keys.length, ...keys, ...args]),
+        });
+        if (!response.ok) throw new Error("Rate limit store unavailable");
+        payload = await response.json();
+      } catch {
+        throw new ReportError("server_rejected", "Rate limit store unavailable", 503);
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)
+        || Object.hasOwn(payload, "error")
+        || (payload.result !== "" && !entries.some((entry) => entry.scope === payload.result))) {
+        throw new ReportError("server_rejected", "Rate limit store unavailable", 503);
+      }
+      return payload.result === "" ? undefined : payload.result;
     },
   };
 }

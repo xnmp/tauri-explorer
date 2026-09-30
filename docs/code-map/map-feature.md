@@ -400,6 +400,7 @@ backend for E2E/browser).
 - `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown
 - FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
 - REPORT FLOW: `help.reportIssue` → `dialogStore` → `UserReportDialog` (text fields bind through `userReportDraftStore`'s debounced localStorage draft; picker + clipboard-image previews and failed-draft attachment retry cache remain in-session) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments and appends version/OS metadata without truncating the 8,000-unit user description or including log tails (#595)) → the public relay for both text and image reports. The relay hosts images on Blob, creates the GitHub issue, and cleans up blobs only on definite rejection. An ambiguous POST/response is reported as `submission_uncertain` so the app retains the draft and asks the reporter to check recent issues without opening a duplicate issue form. Ordinary failures use `userReportFallbackUrl`.
+- RELAY LIMITS: `website/api/report.js` is the public handler; `website/api/_report-core.js` validates reports and atomic REST Redis acknowledgements before image upload or issue creation. The underscore helper is excluded from Vercel function discovery. Production requires both shared KV environment variables and rejects malformed or unavailable counter responses with typed 503 errors (#849).
 
 ## Theming
 

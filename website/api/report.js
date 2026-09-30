@@ -5,7 +5,7 @@ import {
   createInMemoryRateLimitStore,
   createRestRateLimitStore,
   processReport,
-} from "./report-core.js";
+} from "./_report-core.js";
 
 /** @typedef {{status(code: number): HttpResponse, setHeader(name: string, value: string): HttpResponse, json(payload: unknown): HttpResponse, end(): HttpResponse}} HttpResponse */
 /** @typedef {Record<string, string | string[] | undefined>} RequestHeaders */

@@ -450,7 +450,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `package.json` — website-project runtime dependencies, including Vercel Blob hosting for report images.
 - `api/report.js` — POST-only user-report relay, public Blob storage adapter, and GitHub Issues client.
-- `api/report-core.js` — pure validation, attachment delivery/cleanup, issue shaping, honeypot, and atomic burst/hour/day limit logic.
+- `api/_report-core.js` — pure validation, attachment delivery/cleanup, issue shaping, honeypot, and atomic burst/hour/day limit logic; underscore excludes this helper from Vercel function discovery.
 - `vercel.json` — response cache policy; API routes are explicitly `no-store`.
 
 ### src-tauri/src/files/ — file operations module.

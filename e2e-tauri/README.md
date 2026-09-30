@@ -27,7 +27,7 @@ sudo apt-get install -y webkit2gtk-driver
 
 ```bash
 # 1. Build the Tauri debug binary with the frontend + e2e hooks embedded
-VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks
 
 # 2. Run the smoke suite
 bun run test:e2e:tauri
@@ -58,9 +58,22 @@ Build through the Tauri CLI, **not** `cargo build`. A bare cargo debug build
 omits the `tauri/custom-protocol` feature, so the binary serves `build.devUrl`
 (localhost:1420) and the suite silently depends on a Vite dev server running
 alongside it. `--debug` embeds the frontend, so the suite exercises the shipped
-asset path with no dev server in the loop. The suite's test hooks are compiled
-in with `VITE_E2E_HOOKS=1` at build time (see `src/lib/domain/e2e-hooks.ts`);
-without it every spec fails with "dev e2e hooks never became ready".
+asset path with no dev server in the loop. The suite's test hooks have one
+gate per layer, and a hook build sets both (#884):
+
+- Frontend: `VITE_E2E_HOOKS=1` at build time (`src/lib/api/e2e-hooks.ts`).
+  Without it every spec fails with "dev e2e hooks never became ready". A Vite
+  dev server does not enable hooks either; `import.meta.env.DEV` is not a gate.
+  Probes live in `src/test-support/` and load only through `loadE2EHooks()`;
+  a build without the flag fails if it bundles `src/test-support/`, and
+  `bun run check:bundle` also fails on hook markers in the emitted scripts.
+- Rust: the `e2e-hooks` Cargo feature. It honours test-only environment
+  overrides such as `TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS`; without it
+  `external-job-timeout.spec.ts` waits for the ten-minute production timeout.
+
+`TAURI_EXPLORER_REPORT_URL` is not a test hook: release builds honour it for
+the alpha smoke's controlled relay, but only for `https://` or loopback
+`http://` URLs (see SECURITY.md).
 
 Windows additionally builds with `--features e2e-webview2-attach`, sets
 `VITE_E2E_NO_WARM_PRIME=1`, and runs with `TAURI_NATIVE_DRIVER` pointing to a
@@ -181,7 +194,7 @@ handles instead of reusable numeric PIDs. Build
 the debug binary with the test feature and embedded hooks:
 
 ```bash
-VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks,e2e-renderer-recovery
 ```
 
 Run it under the existing isolated Xvfb/openbox wrapper:
@@ -342,7 +355,7 @@ explicit recovery stay available.
 The recovery-copy acceptance build must explicitly opt in:
 
 ```sh
-VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery,durable-copy-recovery
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks,e2e-renderer-recovery,durable-copy-recovery
 ```
 
 Keep ordinary native smoke builds without `durable-copy-recovery` so the default

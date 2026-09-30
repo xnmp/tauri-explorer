@@ -86,6 +86,9 @@ describe("native qualification workflow cache and diagnostics (#694)", () => {
 
     expect(workflow).toContain("bun run check:e2e:tauri");
     expect(workflow).toContain("bun run tauri build --debug --no-bundle");
+    // Both hook gates (#884): the frontend build flag and the Rust feature.
+    expect(workflow).toContain('VITE_E2E_HOOKS: "1"');
+    expect(workflow).toContain("--no-bundle --features e2e-hooks");
     expect(workflow).toContain("bun run test:e2e:tauri");
   });
 

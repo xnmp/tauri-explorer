@@ -2,7 +2,7 @@
  * Native event delivery/window construction does not establish tab adoption. */
 import { listen, emitTo } from "@tauri-apps/api/event";
 import { isRecord, isWindowPath } from "$lib/domain/window-input";
-import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+import { traceError, traceWindowFailure, traceWindowProgress } from "./window-trace";
 
 export const TAB_ADOPT_EVENT = "explorer://adopt-tab";
 const ADOPTED_EVENT = "explorer://tab-adopted";
@@ -63,20 +63,22 @@ export function requestWindowAcknowledgement(
     const finish = (adopted: boolean, phase: string, error?: unknown) => {
       if (settled) return;
       settled = true;
-      if (import.meta.env.VITE_E2E_HOOKS === "1") {
-        logFrontendDiagnostic("window handoff result", {
-          sourceWindow, targetWindow, requestId: handoff.requestId, phase, adopted,
-          elapsedMs: Date.now() - startedAt,
-          listenMs: listeningAt === null ? null : listeningAt - startedAt,
-          dispatchMs: dispatchedAt === null || listeningAt === null ? null : dispatchedAt - listeningAt,
-          error: error === undefined ? null : String(error).slice(0, 240),
-        });
-      }
+      const context = {
+        event, sourceWindow, targetWindow, requestId: handoff.requestId, phase, adopted,
+        elapsedMs: Date.now() - startedAt,
+        listenMs: listeningAt === null ? null : listeningAt - startedAt,
+        dispatchMs: dispatchedAt === null || listeningAt === null ? null : dispatchedAt - listeningAt,
+      };
+      // Settle before tracing, so no trace failure can leave the hand-off pending.
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       if (unlisten) stopListening(unlisten);
       unlisten = undefined;
       resolve(adopted);
+      // Timeouts, rejections and dispatch errors are the failures users hit.
+      const traced = { ...context, error: traceError(error) };
+      if (adopted) traceWindowProgress("window handoff acknowledged", traced);
+      else traceWindowFailure("window handoff failed", traced);
     };
     const abort = () => finish(false, "abort");
     const timer = setTimeout(() => finish(false, "timeout"), timeoutMs);

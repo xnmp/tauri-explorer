@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startWindowSessionProbe } from "../src/test-support/window-session-probe";
+import { startWindowSessionProbe } from "../../src/test-support/e2e-hooks";
 const navigate = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
 vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: {
   windowLabel: "test-window", getActiveExplorer: () => ({ navigateTo: navigate }),

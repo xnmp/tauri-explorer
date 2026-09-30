@@ -42,7 +42,7 @@ import {
 } from "./persisted";
 import { parentDir } from "$lib/domain/path";
 import { acknowledgeWindowHandoff, normalizeWindowHandoff } from "./window-handoff";
-import { logFrontendDiagnostic } from "$lib/api/frontend-log";
+import { traceError, traceWindowFailure, traceWindowProgress } from "./window-trace";
 import { isFreshSeed, isRecord, normalizeDirectorySeed, windowSeedFitsBudget, WINDOW_SEED_MAX_CHARS, type ExplorerSeed } from "$lib/domain/window-input";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
@@ -667,28 +667,33 @@ function createWindowTabsManager(options: {
     const freshTabSeed = isRecord(tabSeed) && isFreshSeed(tabSeed.ts, Date.now(), 10_000);
     const snapshot = freshTabSeed ? normalizeSnapshot(tabSeed.snapshot) : null;
     const handoff = isRecord(tabSeed) ? normalizeWindowHandoff(tabSeed.handoff) : null;
-    const traceTabSeed = (phase: string, error?: unknown) => {
-      if (import.meta.env.VITE_E2E_HOOKS !== "1") return;
-      logFrontendDiagnostic("window tab seed", {
+    const traceTabSeed = (phase: string, failed: boolean, error?: unknown) => {
+      const context = {
         label: WINDOW_LABEL, requestId: handoff?.requestId ?? null, phase,
         seedPresent: tabSeed !== null, fresh: freshTabSeed,
+        seedAgeMs: isRecord(tabSeed) && typeof tabSeed.ts === "number" ? Date.now() - tabSeed.ts : null,
         snapshotValid: snapshot !== null, handoffValid: handoff !== null,
-        error: error === undefined ? null : String(error).slice(0, 240),
-      });
+        error: traceError(error),
+      };
+      if (failed) traceWindowFailure("window tab seed failed", context);
+      else traceWindowProgress("window tab seed", context);
     };
-    traceTabSeed("read");
+    traceTabSeed("read", false);
     if (snapshot) {
       const adopted = adoptTab(snapshot);
-      traceTabSeed("adopted");
+      traceTabSeed("adopted", false);
       if (handoff) {
         void acknowledgeWindowHandoff(handoff, WINDOW_LABEL)
-          .then(() => traceTabSeed("acknowledged"))
-          .catch((error) => traceTabSeed("acknowledgement-error", error));
+          .then(() => traceTabSeed("acknowledged", false))
+          .catch((error) => traceTabSeed("acknowledgement-error", true, error));
       } else {
-        traceTabSeed("acknowledgement-skipped");
+        // The sender waits for an acknowledgement this window cannot send.
+        traceTabSeed("acknowledgement-skipped", true);
       }
       return adopted;
     }
+    // A stale or malformed seed means the sender's tab is not adopted here.
+    if (tabSeed !== null) traceTabSeed("rejected", true);
 
     // Check for parent-window seed (child windows get entries pre-loaded)
     const targetPath = overridePath ?? initialPath;

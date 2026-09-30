@@ -97,6 +97,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-session.ts` — composes page subscriptions, startup, command readiness and post-readiness warm priming with rollback/teardown.
 - `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; labelled failure-phase diagnostics; tear-offs require adoption ACK before source retirement.
 - `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
+- `window-trace.ts` — launch/hand-off/tab-seed tracing: failures and timeouts to the native log in every build, progress phases only in hook builds (#884).
 - `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
 
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
@@ -229,6 +230,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-wire.ts` — validates compact native listing columns and reconstructs exact immutable domain entries.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
+- `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
 - `mock-invoke.ts` — mock command dispatch/simulation for browser/E2E (no Tauri): stateful git working tree, trash, clipboard, drives. Open when E2E data wrong.
 - `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
 - `mock-fixtures.ts` — static fixture data for mock-invoke.ts: the seeded fake filesystem tree (`mockFiles`), fake file contents, the fake drives list, and the fake commit graph shape/refs (#869).
@@ -353,7 +355,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
 - `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).
-- `e2e-hooks.ts` — `E2E_HOOKS_ENABLED` flag gating the `e2e-*` test hooks/probes; folds to `false` and tree-shakes out unless `VITE_E2E_HOOKS=1`, which only the smoke workflow sets (#457).
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
@@ -537,14 +538,17 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 
-## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
+## src/test-support/ — opt-in E2E fixtures; loaded only by `loadE2EHooks()` in hook builds (`VITE_E2E_HOOKS=1`).
 
-- `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
+- `e2e-hooks.ts` — entry point: installs every probe for one page session (navigate/reset/file-op hooks, readiness, child-ready receipts); abort retires them all.
+- `dom-rpc.ts` — `createDomRpc`: the shared tokened DOM request/response protocol across WebDriver's isolated world; every request settles, including rejections.
+- `window-operations.ts` — one handler per `e2e-window-operation` op: rejected/unready targets, in-flight closure, duplicate-label creation and warm fixtures, with late-import retirement.
+- `directory-listing-probe.ts` — times real backend listings of one armed path through the `files.ts` listing interceptor seam.
 - `src/test-support/external-job-probe.ts` — page-session native E2E bridge that starts Nano through the production plugin-jobs controller.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
 - `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery inventory/transfer requests and deliberately unmanaged channels for renderer-retirement acceptance; native move cleanup outcomes in `e2e-tauri/specs/move-retirement.spec.ts`.
 - `e2e-tauri/specs/session-cancellation.spec.ts` — ungated Linux/Windows smoke outcomes for copy/move cancellation IPC, released admission, rendered listing refresh and native Undo/Redo.
-- `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
+- `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC via the `files.ts` mutation interceptor; tokened, re-arm, pagehide and session release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
 
@@ -659,7 +663,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
-- `scripts/build-native-qualification.ts` — clean-worktree debug/release native build and exact binary provenance.
+- `scripts/build-native-qualification.ts` — clean-worktree debug/release native build (both hook gates when hooks are on) and exact binary provenance.
 - `scripts/qualify-macos-startup.ts` — separate real Mac foreground-only and warm-probe samples with process survival and cleanup.
 - `scripts/grant-macos-accessibility.sh` — CI-only, SIP-guarded Xcode Helper Accessibility grant for the Appium Mac2 pilot.
 - `.github/workflows/macos-native-ui.yml` — hosted macOS production bundle build, Appium Mac2 run and outcome artifact upload.

@@ -9,7 +9,7 @@
 import { decodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
-import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import {
   invoke,
   isTauri,
@@ -23,24 +23,50 @@ import { logFrontendDiagnostic } from "./frontend-log";
 import { getNativeResourceSession } from "./native-resource-session";
 import { invokeFileMutation } from "./file-mutations";
 
-// Vite must erase this import before extracting dynamic chunks. An imported
-// constant folds too late and leaves an orphan test chunk in release assets.
-const fileMutationProbe = (import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1")
-  ? import("../../test-support/file-mutation-probe")
-  : null;
+/** Commands whose successful result a native E2E probe may hold before publication. */
+export type HeldFileMutationCommand = "create_directory" | "rename_entry";
 
-interface DirectoryListingE2EProbe {
-  targetPath: string;
-  delays: number[];
-  calls: number;
-  completed: number;
-  starts: number[];
-  finishes: number[];
-  writeOperation?: string;
-  abort: AbortController;
+/**
+ * Observation seam around one native directory listing. `begin` runs before
+ * the backend request; its continuation runs after the reply decodes and
+ * before the listing is returned. Only `src/test-support/` installs one, and
+ * only hook builds consult it (see `api/e2e-hooks.ts`).
+ */
+export interface DirectoryListingInterceptor {
+  begin(path: string): (() => Promise<void>) | null;
 }
 
-let directoryListingE2EProbe: DirectoryListingE2EProbe | null = null;
+/** Observation seam after a successful create/rename, before its publication. */
+export type FileMutationInterceptor = (
+  command: HeldFileMutationCommand,
+  targetPath: string,
+  resultPath: string,
+) => Promise<void>;
+
+let listingInterceptor: DirectoryListingInterceptor | null = null;
+let mutationInterceptor: FileMutationInterceptor | null = null;
+
+/** Install a listing interceptor; the returned function removes it. */
+export function interceptDirectoryListings(interceptor: DirectoryListingInterceptor): () => void {
+  listingInterceptor = interceptor;
+  return () => { if (listingInterceptor === interceptor) listingInterceptor = null; };
+}
+
+/** Install a mutation interceptor; the returned function removes it. */
+export function interceptFileMutations(interceptor: FileMutationInterceptor): () => void {
+  mutationInterceptor = interceptor;
+  return () => { if (mutationInterceptor === interceptor) mutationInterceptor = null; };
+}
+
+async function afterFileMutation(
+  command: HeldFileMutationCommand,
+  targetPath: string,
+  result: ApiResult<FileMutationReceipt>,
+): Promise<void> {
+  if (E2E_HOOKS_ENABLED && result.ok && mutationInterceptor) {
+    await mutationInterceptor(command, targetPath, result.data.path);
+  }
+}
 
 function publishReadyDirectoryWatch(path: string): void {
   if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
@@ -48,47 +74,6 @@ function publishReadyDirectoryWatch(path: string): void {
   const readyPaths: string[] = encoded ? JSON.parse(encoded) : [];
   if (!readyPaths.includes(path)) readyPaths.push(path);
   document.documentElement.dataset.e2eReadyDirectoryWatches = JSON.stringify(readyPaths);
-}
-
-function publishDirectoryListingE2EProbe(): void {
-  if (!E2E_HOOKS_ENABLED || typeof document === "undefined") return;
-  if (directoryListingE2EProbe) {
-    document.documentElement.dataset.e2eDirectoryListingProbe = JSON.stringify({
-      calls: directoryListingE2EProbe.calls,
-      completed: directoryListingE2EProbe.completed,
-      starts: directoryListingE2EProbe.starts,
-      finishes: directoryListingE2EProbe.finishes,
-    });
-  } else {
-    delete document.documentElement.dataset.e2eDirectoryListingProbe;
-  }
-}
-
-// WebKitWebDriver evaluates injected scripts in an isolated JavaScript world,
-// so replacing window.__TAURI_INTERNALS__.invoke there cannot instrument the
-// application's Tauri calls. This dev-only DOM event crosses that boundary and
-// configures deterministic timing around the real backend listing invocation.
-if (E2E_HOOKS_ENABLED && typeof window !== "undefined") {
-  window.addEventListener("e2e-directory-listing-probe", ((
-    event: CustomEvent<{ targetPath?: string; delays?: number[]; writeOperation?: string }>,
-  ) => {
-    directoryListingE2EProbe?.abort.abort();
-    delete document.documentElement.dataset.e2eWatcherWriteOperation;
-    const targetPath = event.detail?.targetPath;
-    directoryListingE2EProbe = targetPath
-      ? {
-          targetPath,
-          delays: event.detail.delays ?? [],
-          calls: 0,
-          completed: 0,
-          starts: [],
-          finishes: [],
-          writeOperation: event.detail.writeOperation,
-          abort: new AbortController(),
-        }
-      : null;
-    publishDirectoryListingE2EProbe();
-  }) as EventListener);
 }
 
 /**
@@ -152,7 +137,7 @@ export async function createDirectory(
       parentPath,
       name,
     });
-    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("create_directory", parentPath, result.data.path);
+    await afterFileMutation("create_directory", parentPath, result);
     return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -196,7 +181,7 @@ export async function renameEntry(
   if (guard) return guard;
   try {
     const result = await invokeFileMutation<FileMutationReceipt>("rename_entry", { path, newName });
-    if (result.ok && fileMutationProbe) await (await fileMutationProbe).holdFileMutationResult("rename_entry", path, result.data.path);
+    await afterFileMutation("rename_entry", path, result);
     return result;
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -442,16 +427,7 @@ export async function loadDirectory(
     }
   }
 
-  const e2eProbe =
-    E2E_HOOKS_ENABLED && directoryListingE2EProbe?.targetPath === path
-      ? directoryListingE2EProbe
-      : null;
-  const e2eCallIndex = e2eProbe?.calls ?? -1;
-  if (e2eProbe) {
-    e2eProbe.calls += 1;
-    e2eProbe.starts.push(Date.now());
-    publishDirectoryListingE2EProbe();
-  }
+  const settleListing = E2E_HOOKS_ENABLED ? listingInterceptor?.begin(path) ?? null : null;
 
   let acquired: (CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }) | undefined;
   try {
@@ -469,31 +445,7 @@ export async function loadDirectory(
     }
     const data: ObservedDirectoryListing = { ...decodeDirectoryListing(payload), watch_lease: payload.watch_lease };
     if (data.watch_lease) publishReadyDirectoryWatch(data.watch_lease.path);
-    if (e2eProbe) {
-      // Keep the literal build flag at this import: the bundler discovers
-      // dynamic chunks before folding imported constants, leaving an orphan
-      // test asset in release builds if this uses E2E_HOOKS_ENABLED alone.
-      if ((import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1") &&
-          e2eCallIndex === 0 && e2eProbe.writeOperation) {
-        const { holdListingForWatcherWrites } = await import("../../test-support/watcher-listing-probe");
-        await holdListingForWatcherWrites({
-          path,
-          operation: e2eProbe.writeOperation,
-          signal: e2eProbe.abort.signal,
-          write: async (filePath, content) => {
-            const result = await writeTextFile(filePath, content);
-            if (!result.ok) throw new Error(result.error);
-          },
-        });
-      }
-      const delay = e2eProbe.delays[e2eCallIndex] ?? 0;
-      if (delay > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-      e2eProbe.completed += 1;
-      e2eProbe.finishes.push(Date.now());
-      publishDirectoryListingE2EProbe();
-    }
+    if (settleListing) await settleListing();
     console.debug("[navigation] list_directory_fresh completed", {
       path,
       entries: data.entries.length,

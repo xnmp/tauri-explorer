@@ -2,7 +2,7 @@
  * this owner acquires and retires the page's subscriptions and delayed work. */
 import { isTauri } from "$lib/api/common";
 import { getNativeResourceSession } from "$lib/api/native-resource-session";
-import { E2E_WARM_WINDOW_PRIMING_DISABLED } from "$lib/domain/e2e-hooks";
+import { E2E_WARM_WINDOW_PRIMING_DISABLED, loadE2EHooks } from "$lib/api/e2e-hooks";
 import { planWindowLaunch } from "$lib/domain/window-launch-plan";
 import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
 import { useFileWatchers } from "$lib/composables/use-file-watchers";
@@ -101,13 +101,10 @@ export function startWindowSession(options: WindowSessionOptions) {
     stops.push(initTabTransferListener());
     stops.push(startConfigWatch());
 
-    // Literal flags prevent the bundler emitting this optional test module in
-    // ordinary release assets. A retired session cannot install late hooks.
-    if (import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1") {
-      void import("../../test-support/window-session-probe").then(({ startWindowSessionProbe }) => {
-        startWindowSessionProbe(lifetime.signal, warmWindow?.ready);
-      }).catch(reportError);
-    }
+    // Null in builds without hooks. A retired session cannot install late hooks.
+    void loadE2EHooks()?.then(({ startWindowSessionProbe }) => {
+      startWindowSessionProbe(lifetime.signal, warmWindow?.ready);
+    }).catch(reportError);
 
     queueMicrotask(() => {
       if (lifetime.signal.aborted) return;

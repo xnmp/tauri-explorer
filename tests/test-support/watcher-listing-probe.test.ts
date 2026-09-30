@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { holdListingForWatcherWrites } from "../src/test-support/watcher-listing-probe";
+import { holdListingForWatcherWrites } from "../../src/test-support/watcher-listing-probe";
 
 let events: EventTarget;
 let dataset: Record<string, string>;

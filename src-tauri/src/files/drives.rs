@@ -24,7 +24,7 @@ pub(super) struct LinuxMount {
     pub(super) source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DriveKind {
     Fixed,
@@ -45,13 +45,15 @@ pub enum CloudProvider {
     Wsl,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Drive {
     /// Display name. For removable drives this is the volume label when one is
     /// available, falling back to the drive letter / mount name.
     pub name: String,
-    /// Empty only for a discovered, unmounted Linux volume. Never a route.
-    pub path: String,
+    /// The mount root, and the only navigable route. `None` only for a
+    /// discovered, unmounted Linux volume, which must be mounted first.
+    pub path: Option<String>,
     /// UDisks object identity, stable across mount-state changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
@@ -70,7 +72,7 @@ impl Drive {
     fn simple(name: String, path: String, kind: DriveKind) -> Self {
         Drive {
             name,
-            path,
+            path: Some(path),
             kind,
             detail: None,
             provider: None,
@@ -359,7 +361,7 @@ fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
 
             Some(Drive {
                 name: "Google Drive".into(),
-                path: entry.path().to_string_lossy().to_string(),
+                path: Some(entry.path().to_string_lossy().to_string()),
                 kind: DriveKind::Cloud,
                 detail: account,
                 provider: Some(CloudProvider::GoogleDrive),
@@ -415,7 +417,7 @@ fn parse_linux_rclone_mount(line: &str) -> Option<Drive> {
         } else {
             mount_name.to_string()
         },
-        path,
+        path: Some(path),
         kind: DriveKind::Cloud,
         detail: (!remote_name.is_empty()).then(|| remote_name.to_string()),
         provider: is_google.then_some(CloudProvider::GoogleDrive),
@@ -512,7 +514,7 @@ fn enumerate_drives() -> Vec<Drive> {
                 name: volume_label
                     .clone()
                     .unwrap_or_else(|| "Google Drive".into()),
-                path,
+                path: Some(path),
                 kind: DriveKind::Cloud,
                 detail: Some(letter_label),
                 provider: Some(CloudProvider::GoogleDrive),
@@ -531,7 +533,7 @@ fn enumerate_drives() -> Vec<Drive> {
 
         drives.push(Drive {
             name,
-            path,
+            path: Some(path),
             kind,
             detail,
             provider: None,
@@ -704,7 +706,7 @@ fn windows_wsl_drives() -> Vec<Drive> {
         let path = format!("\\\\wsl$\\{}\\home", distro);
         drives.push(Drive {
             name: distro.to_string(),
-            path,
+            path: Some(path),
             kind: DriveKind::Cloud,
             detail: Some("WSL".into()),
             provider: Some(CloudProvider::Wsl),
@@ -792,7 +794,7 @@ mod linux_tests {
 
         assert_eq!(drives.len(), 1);
         assert_eq!(drives[0].name, "USB BACKUP");
-        assert_eq!(drives[0].path, "/mnt/USB BACKUP");
+        assert_eq!(drives[0].path.as_deref(), Some("/mnt/USB BACKUP"));
         assert!(matches!(drives[0].kind, DriveKind::Removable));
     }
 
@@ -855,7 +857,7 @@ mod linux_tests {
 
         assert_eq!(drives.len(), 1);
         assert_eq!(drives[0].name, "Google Drive");
-        assert_eq!(drives[0].path, mount.to_string_lossy());
+        assert_eq!(drives[0].path.as_deref(), Some(&*mount.to_string_lossy()));
         assert_eq!(drives[0].detail.as_deref(), Some("user@example.com"));
         assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
     }
@@ -868,7 +870,7 @@ mod linux_tests {
 
         assert_eq!(drives.len(), 1);
         assert_eq!(drives[0].name, "Google Drive");
-        assert_eq!(drives[0].path, "/home/chong/GDrive");
+        assert_eq!(drives[0].path.as_deref(), Some("/home/chong/GDrive"));
         assert_eq!(drives[0].detail.as_deref(), Some("gdrive"));
         assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
         assert!(matches!(drives[0].kind, DriveKind::Cloud));
@@ -897,7 +899,7 @@ mod linux_tests {
         let drives = parse_linux_rclone_mounts(mountinfo);
 
         assert_eq!(drives.len(), 1);
-        assert_eq!(drives[0].path, "/home/user/Google Drive");
+        assert_eq!(drives[0].path.as_deref(), Some("/home/user/Google Drive"));
         assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
     }
 
@@ -910,6 +912,20 @@ mod linux_tests {
     fn leaves_unknown_mountinfo_escape_literal_instead_of_panicking() {
         assert_eq!(decode_mountinfo_field(r"/mnt/a\777b"), r"/mnt/a\777b");
     }
+}
+
+/// Whether drive changes are pushed as `drives-changed` events right now. The
+/// frontend polls `list_drives` only as a slow backstop while this is true.
+/// Only Linux has a push source (the UDisks2 subscription); elsewhere, and on
+/// Linux without a system bus or UDisks, discovery relies on polling.
+#[tauri::command]
+pub async fn drive_updates_live() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        super::linux_volumes::updates_live()
+    }
+    #[cfg(not(target_os = "linux"))]
+    false
 }
 
 #[tauri::command]

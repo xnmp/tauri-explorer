@@ -2,7 +2,8 @@
 
 Status: Proposed
 
-Governs: `src-tauri/src/files/linux_volumes.rs`, `src-tauri/src/files/drives.rs`,
+Governs: `src-tauri/src/files/linux_volumes.rs`,
+`src-tauri/src/files/linux_volume_monitor.rs`, `src-tauri/src/files/drives.rs`,
 `src/lib/api/drives.ts`, `src/lib/state/drive-opening.ts`,
 `src/lib/state/drives.svelte.ts`, `src/lib/components/FilesSidebarView.svelte`
 
@@ -40,9 +41,12 @@ separate contracts.
 
 ### Identity, validation, and navigation
 
-- UDisks object identity is independent of the filesystem path and remains the
-  sidebar key across a mount transition. An empty path means unmounted; it must
-  never enter navigation or mounted-root/disconnected-drive tracking.
+- UDisks object identity (`deviceId` on the wire) is independent of the
+  filesystem path and remains the sidebar key across a mount transition. An
+  unmounted volume has a null path (`Option<String>` in Rust, `string | null`
+  in TypeScript); it must never enter navigation or
+  mounted-root/disconnected-drive tracking (#888 replaced the former empty-string
+  sentinel).
 - Already-mounted volumes open directly. Otherwise the backend calls
   Filesystem.Mount and returns the service's path only after a successful reply.
   Returned paths must be UTF-8, absolute, and contain no NUL. This is syntactic
@@ -54,10 +58,31 @@ separate contracts.
   and mount path. The newer UDisks mount state wins, including external unmounts,
   so one filesystem volume does not become two rows during refresh.
 
+### Change detection (#888)
+
+- One process-wide system-bus connection subscribes to UDisks2's ObjectManager
+  `InterfacesAdded`/`InterfacesRemoved`, every object's `PropertiesChanged`, and
+  the service's `NameOwnerChanged`, applying each signal to a cached
+  `GetManagedObjects` snapshot. Discovery reads that cache; polling never opens
+  a connection or queries the bus. A signal that cannot be applied exactly
+  (invalidated properties, an unknown object) triggers a full refetch, and a
+  30-second backstop refetch corrects any missed signal.
+- A change to the derived volume list emits `drives-changed { live }` to every
+  window; unrelated property churn is silent. While `live`, the frontend polls
+  `list_drives` only every 30 seconds for sources outside UDisks (FUSE/rclone
+  mounts). Without a push source (browser mode, macOS, Windows, Linux without a
+  system bus or UDisks) it keeps the 1.5-second poll.
+- Mount requests reuse the subscription's connection and resynchronize it
+  before returning, so the caller's next discovery reflects the outcome. Mount
+  authority still comes from a fresh snapshot, never the cache.
+
 ### Failure, concurrency, and effect uncertainty
 
 - System-bus connection and discovery each have a two-second deadline. Missing
   or failed UDisks discovery retains mounted-filesystem and cloud discovery.
+  The subscription retries an unreachable or lost bus every five seconds and
+  picks up a restarted UDisks service from `NameOwnerChanged` on the same
+  connection.
   Mount requests surface understandable service or authorization errors and
   must not navigate on failure.
 - Each sidebar opener coalesces repeated clicks on the same pending identity
@@ -94,7 +119,11 @@ desktop, rather than by Explorer configuration.
 `src-tauri/tests/linux_removable_volumes.rs` exercises the production adapter
 against an isolated D-Bus service: read-only discovery, mount success and errors,
 stable identity, stale mount-table snapshots, removal, missing service, and label
-handling. Existing mount-table and cloud unit tests preserve fallback behavior.
+handling, plus the subscription: pushed mount/unmount/removal/insertion on one
+connection with no refetch, post-mount resync, the backstop, bus loss and
+recovery, and a service restart without reconnecting.
+`tests/state/drives-push.test.ts` covers the frontend's push handling and poll
+cadence. Existing mount-table and cloud unit tests preserve fallback behavior.
 `tests/state/drive-opening.test.ts` and `unmounted-drive-roots.test.ts` assert
 navigation admission, errors, coalescing, and mounted-root semantics. Browser
 specs assert the rendered sidebar and provide acceptance images; browser service

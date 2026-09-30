@@ -198,9 +198,11 @@ import `components/modal.css` in `UpdateNotice.svelte` so the globally scoped
 dialog styles accompany the otherwise standalone notice.
 
 Linux removable-volume discovery combines a single mount-table snapshot with
-UDisks2 filesystem objects (`files/linux_volumes.rs`). UDisks object identity is
-separate from `Drive.path`: an empty path means unmounted and must never enter
-navigation or mounted-root tracking. Mount only on explicit opening, through
+UDisks2 filesystem objects (`files/linux_volumes.rs`), read from one cached
+subscription (`files/linux_volume_monitor.rs`) that pushes `drives-changed`;
+never reconnect or refetch per `list_drives` poll (#888). UDisks object identity
+(`deviceId`) is separate from `Drive.path`: a null path means unmounted and must
+never enter navigation or mounted-root tracking. Mount only on explicit opening, through
 `state/drive-opening.ts` and `mount_drive`; discovery itself is read-only.
 Decode hex escapes only in `/dev/disk/by-label` aliases, once. UDisks `IdLabel`
 and returned mount paths are already decoded, and may contain literal `\x20`.

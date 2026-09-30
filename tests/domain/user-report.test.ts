@@ -3,6 +3,7 @@ import {
   MAX_USER_REPORT_ATTACHMENT_BYTES,
   MAX_USER_REPORT_ATTACHMENTS_BYTES,
   userReportAttachmentFailureMessage,
+  userReportFallbackNotice,
   userReportFallbackUrl,
   validateUserReportAttachmentFiles,
 } from "$lib/domain/user-report";
@@ -90,6 +91,24 @@ describe("userReportAttachmentFailureMessage", () => {
     expect(userReportAttachmentFailureMessage(kind)).toContain(expected);
     expect(userReportAttachmentFailureMessage(kind)).toContain("saved");
     expect(userReportAttachmentFailureMessage(kind)).toContain("window closes");
+  });
+});
+
+describe("definite network failure (#889)", () => {
+  it("says nothing was sent rather than that the report may have been submitted", () => {
+    expect(userReportFallbackNotice("network_unreachable"))
+      .toBe("Couldn't reach the report server — nothing was sent. Opening GitHub instead");
+    expect(userReportAttachmentFailureMessage("network_unreachable"))
+      .toMatch(/^Couldn't reach the report server — nothing was sent\. Your text is saved/);
+  });
+
+  it("keeps the existing notices for other definite failures", () => {
+    expect(userReportFallbackNotice("daily_cap"))
+      .toBe("Reports are temporarily unavailable — opening GitHub instead");
+    expect(userReportFallbackNotice("server_rejected"))
+      .toBe("Could not submit in-app — opening GitHub instead");
+    expect(userReportFallbackNotice(undefined))
+      .toBe("Could not submit in-app — opening GitHub instead");
   });
 });
 

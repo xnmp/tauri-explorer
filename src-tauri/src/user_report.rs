@@ -4,6 +4,9 @@ const DEFAULT_REPORT_URL: &str = "https://tauri-explorer.vercel.app/api/report";
 const MAX_ATTACHMENTS: usize = 3;
 const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ATTACHMENTS_BYTES: usize = 3 * 1024 * 1024;
+const MAX_TITLE_UNITS: usize = 120;
+const MAX_ATTACHMENT_NAME_UNITS: usize = 120;
+const MAX_CONTACT_UNITS: usize = 100;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,16 +16,14 @@ pub struct ReportAttachment {
     pub data: String,
 }
 
+/// Contact and environment details travel inside `body`
+/// (`assemble_issue_body`); the relay publishes nothing else.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RelayRequest {
     title: String,
     body: String,
     kind: String,
-    contact: String,
-    version: String,
-    os: String,
-    arch: String,
     website: String,
     attachments: Vec<ReportAttachment>,
 }
@@ -88,7 +89,7 @@ pub(crate) fn validate_attachments(
     for attachment in attachments {
         let name = attachment.name.trim();
         if name.is_empty()
-            || name.encode_utf16().count() > 120
+            || name.encode_utf16().count() > MAX_ATTACHMENT_NAME_UNITS
             || name.chars().any(char::is_control)
             || !matches!(
                 attachment.media_type.as_str(),
@@ -157,8 +158,6 @@ pub struct Environment<'a> {
 }
 
 const MAX_REPORT_DESCRIPTION_UNITS: usize = 8000;
-#[cfg(test)]
-const MAX_RELAY_BODY_UNITS: usize = 8500;
 
 fn sanitize(value: &str) -> String {
     value
@@ -234,7 +233,7 @@ fn validate_draft(
             .any(|character| character.is_control() && character != '\n' && character != '\r')
     };
     if title.trim().is_empty()
-        || title.trim().encode_utf16().count() > 120
+        || title.trim().encode_utf16().count() > MAX_TITLE_UNITS
         || invalid_control(title)
     {
         return Err(SubmitReportError::new(
@@ -254,7 +253,7 @@ fn validate_draft(
             "Unknown report kind",
         ));
     }
-    if contact.unwrap_or_default().encode_utf16().count() > 100 {
+    if contact.unwrap_or_default().encode_utf16().count() > MAX_CONTACT_UNITS {
         return Err(SubmitReportError::new(
             "malformed_input",
             "Contact must be at most 100 characters",
@@ -263,11 +262,54 @@ fn validate_draft(
     Ok(())
 }
 
-fn map_transport_error(_error: ureq::Error) -> SubmitReportError {
+/// True only when the failure provably happened before any request byte
+/// reached the relay. Everything else — resets, timeouts while awaiting the
+/// response, unreachable-host errors that an established socket can also
+/// report — may follow a delivered report.
+fn failed_before_sending(error: &ureq::Error) -> bool {
+    use ureq::{Error, Timeout};
+    match error {
+        Error::HostNotFound
+        | Error::ConnectionFailed
+        | Error::BadUri(_)
+        | Error::RequireHttpsOnly(_)
+        | Error::TlsRequired
+        | Error::InvalidProxyUrl
+        | Error::ConnectProxyFailed(_)
+        | Error::Timeout(Timeout::Resolve | Timeout::Connect) => true,
+        // TCP reports a refusal only while connecting; ureq also uses it when
+        // every resolved address refused.
+        Error::Io(error) => error.kind() == std::io::ErrorKind::ConnectionRefused,
+        _ => false,
+    }
+}
+
+fn map_transport_error(error: ureq::Error) -> SubmitReportError {
+    if failed_before_sending(&error) {
+        log::warn!("User report relay unreachable: {error}");
+        return SubmitReportError::new(
+            "network_unreachable",
+            "Couldn't reach the report server — nothing was sent",
+        );
+    }
+    log::warn!("User report relay response lost: {error}");
     SubmitReportError::new(
         "submission_uncertain",
         "The report service response was lost; check recent issues before retrying",
     )
+}
+
+/// The app error kind for a relay's typed error code; unknown codes fall back
+/// to the HTTP status classification.
+fn relay_error_kind(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "daily_cap" => "daily_cap",
+        "rate_limited" => "rate_limited",
+        "malformed_input" => "malformed_input",
+        "submission_uncertain" => "submission_uncertain",
+        "server_rejected" => "server_rejected",
+        _ => return None,
+    })
 }
 
 fn send_report(
@@ -293,14 +335,10 @@ fn send_report(
             .read_json::<RelayErrorBody>()
             .ok()
             .map(|body| body.error);
-        let kind = match error.as_ref().map(|value| value.code.as_str()) {
-            Some("daily_cap") => "daily_cap",
-            Some("rate_limited") => "rate_limited",
-            Some("malformed_input") => "malformed_input",
-            Some("submission_uncertain") => "submission_uncertain",
-            Some("server_rejected") => "server_rejected",
-            _ => fallback_kind,
-        };
+        let kind = error
+            .as_ref()
+            .and_then(|value| relay_error_kind(&value.code))
+            .unwrap_or(fallback_kind);
         return Err(SubmitReportError::new(
             kind,
             error
@@ -346,10 +384,6 @@ pub async fn submit_user_report(
         title: title.trim().replace(['\n', '\r'], " "),
         body: assembled,
         kind,
-        contact: contact.unwrap_or_default(),
-        version: info.version,
-        os: info.os,
-        arch: info.arch,
         website: String::new(),
         attachments,
     };
@@ -361,12 +395,73 @@ pub async fn submit_user_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_issue_body, attachment_from_image_bytes, report_image_media_type, send_report,
-        validate_attachments, validate_draft, Environment, RelayRequest, ReportAttachment,
-        MAX_RELAY_BODY_UNITS,
+        assemble_issue_body, attachment_from_image_bytes, map_transport_error, relay_error_kind,
+        report_image_media_type, send_report, validate_attachments, validate_draft, Environment,
+        RelayRequest, ReportAttachment, MAX_ATTACHMENTS, MAX_ATTACHMENTS_BYTES,
+        MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_NAME_UNITS, MAX_CONTACT_UNITS,
+        MAX_REPORT_DESCRIPTION_UNITS, MAX_TITLE_UNITS,
     };
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};
+
+    /// The limits and error codes the relay (`website/api/_report-core.js`)
+    /// enforces; its vitest suite asserts the same fixture.
+    fn contract() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../tests/contract/fixtures/report_relay.json"
+        ))
+        .expect("report relay contract fixture")
+    }
+
+    fn contract_limit(name: &str) -> usize {
+        contract()["limits"][name]
+            .as_u64()
+            .unwrap_or_else(|| panic!("contract limit {name}")) as usize
+    }
+
+    #[test]
+    fn native_limits_match_the_relay_contract() {
+        assert_eq!(MAX_ATTACHMENTS, contract_limit("maxAttachments"));
+        assert_eq!(MAX_ATTACHMENT_BYTES, contract_limit("maxAttachmentBytes"));
+        assert_eq!(MAX_ATTACHMENTS_BYTES, contract_limit("maxAttachmentsBytes"));
+        assert_eq!(MAX_TITLE_UNITS, contract_limit("maxTitleUnits"));
+        assert_eq!(
+            MAX_ATTACHMENT_NAME_UNITS,
+            contract_limit("maxAttachmentNameUnits")
+        );
+    }
+
+    #[test]
+    fn every_relay_error_code_reaches_the_ui_unchanged() {
+        let codes = contract()["relayErrorCodes"].as_array().unwrap().clone();
+        assert!(!codes.is_empty());
+        for code in codes {
+            let code = code.as_str().unwrap();
+            assert_eq!(relay_error_kind(code), Some(code));
+        }
+        assert_eq!(relay_error_kind("method_not_allowed"), None);
+    }
+
+    #[test]
+    fn relay_request_carries_only_contract_fields() {
+        let json = serde_json::to_value(payload()).unwrap();
+        let mut sent: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let contract = contract();
+        let mut expected: Vec<&str> = contract["requestFields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field.as_str().unwrap())
+            .collect();
+        sent.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(sent, expected);
+    }
 
     #[test]
     fn user_report_body_contains_description_contact_and_environment() {
@@ -457,22 +552,22 @@ mod tests {
                 arch: "x86_64",
             },
         );
-        assert!(body.encode_utf16().count() <= MAX_RELAY_BODY_UNITS);
+        assert!(body.encode_utf16().count() <= contract_limit("maxRelayBodyUnits"));
         assert!(body.starts_with(&description));
         assert!(body.contains("How to reach the reporter: @reporter"));
         assert!(body.ends_with("- Tauri Explorer: v1.7.0\n- OS: linux (x86_64)"));
 
         let full = assemble_issue_body(
-            &"x".repeat(8000),
-            Some(&"c".repeat(100)),
+            &"x".repeat(MAX_REPORT_DESCRIPTION_UNITS),
+            Some(&"c".repeat(MAX_CONTACT_UNITS)),
             &Environment {
                 version: &"v".repeat(100),
                 os: &"o".repeat(100),
                 arch: &"a".repeat(100),
             },
         );
-        assert!(full.starts_with(&"x".repeat(8000)));
-        assert!(full.encode_utf16().count() <= MAX_RELAY_BODY_UNITS);
+        assert!(full.starts_with(&"x".repeat(MAX_REPORT_DESCRIPTION_UNITS)));
+        assert!(full.encode_utf16().count() <= contract_limit("maxRelayBodyUnits"));
 
         let sanitized = assemble_issue_body(
             "safe\u{0}text\u{7}\nsecond line",
@@ -493,10 +588,6 @@ mod tests {
             title: "Title".to_string(),
             body: "Description".to_string(),
             kind: "bug".to_string(),
-            contact: String::new(),
-            version: "1.7.0".to_string(),
-            os: "linux".to_string(),
-            arch: "x86_64".to_string(),
             website: String::new(),
             attachments: Vec::new(),
         }
@@ -578,6 +669,26 @@ mod tests {
         assert_eq!(report_image_media_type(b"not an image"), None);
     }
 
+    /// Consume one complete HTTP request (headers and sized body).
+    fn read_request(stream: &mut std::net::TcpStream) {
+        let mut reader = BufReader::new(stream);
+        let mut content_length = 0;
+        loop {
+            let mut header = String::new();
+            reader.read_line(&mut header).unwrap();
+            if header == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = header.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    content_length = value.trim().parse().unwrap();
+                }
+            }
+        }
+        let mut request_body = vec![0_u8; content_length];
+        reader.read_exact(&mut request_body).unwrap();
+    }
+
     fn stub_response(status: &str, response_body: &str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -585,23 +696,7 @@ mod tests {
         let status = status.to_string();
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(&mut stream);
-            let mut content_length = 0;
-            loop {
-                let mut header = String::new();
-                reader.read_line(&mut header).unwrap();
-                if header == "\r\n" {
-                    break;
-                }
-                if let Some((name, value)) = header.split_once(':') {
-                    if name.eq_ignore_ascii_case("content-length") {
-                        content_length = value.trim().parse().unwrap();
-                    }
-                }
-            }
-            let mut request_body = vec![0_u8; content_length];
-            reader.read_exact(&mut request_body).unwrap();
-            drop(reader);
+            read_request(&mut stream);
 
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
@@ -625,14 +720,56 @@ mod tests {
     }
 
     #[test]
-    fn lost_relay_response_is_uncertain_to_avoid_duplicate_submission() {
+    fn refused_connection_is_a_definite_failure() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
         assert_eq!(
             send_report(&endpoint, payload()).unwrap_err().kind,
+            "network_unreachable"
+        );
+    }
+
+    #[test]
+    fn lost_relay_response_is_uncertain_to_avoid_duplicate_submission() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            // Receive the whole request, then vanish without a response: the
+            // relay may already have created the issue.
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            stream.shutdown(Shutdown::Both).unwrap();
+        });
+        assert_eq!(
+            send_report(&endpoint, payload()).unwrap_err().kind,
             "submission_uncertain"
         );
+    }
+
+    #[test]
+    fn only_failures_before_sending_are_definite() {
+        use std::io::{Error as IoError, ErrorKind};
+        use ureq::{Error, Timeout};
+        for definite in [
+            Error::HostNotFound,
+            Error::ConnectionFailed,
+            Error::Timeout(Timeout::Resolve),
+            Error::Timeout(Timeout::Connect),
+            Error::Io(IoError::from(ErrorKind::ConnectionRefused)),
+        ] {
+            assert_eq!(map_transport_error(definite).kind, "network_unreachable");
+        }
+        for uncertain in [
+            Error::Timeout(Timeout::SendBody),
+            Error::Timeout(Timeout::RecvResponse),
+            Error::Timeout(Timeout::Global),
+            Error::Io(IoError::from(ErrorKind::ConnectionReset)),
+            Error::Io(IoError::from(ErrorKind::HostUnreachable)),
+            Error::Io(IoError::from(ErrorKind::UnexpectedEof)),
+        ] {
+            assert_eq!(map_transport_error(uncertain).kind, "submission_uncertain");
+        }
     }
 
     #[test]

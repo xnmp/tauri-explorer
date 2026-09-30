@@ -9,6 +9,7 @@
   import {
     userReportAttachmentBytes,
     userReportAttachmentFailureMessage,
+    userReportFallbackNotice,
     userReportFallbackUrl,
     validateUserReportAttachmentFiles,
     type UserReportAttachment,
@@ -242,11 +243,8 @@
         }
         return;
       }
-      const dailyCap = error.kind === "daily_cap";
       toastStore.show(
-        dailyCap
-          ? "Reports are temporarily unavailable — opening GitHub instead"
-          : "Could not submit in-app — opening GitHub instead",
+        userReportFallbackNotice(error.kind),
         "error",
         { duration: 6000 },
       );

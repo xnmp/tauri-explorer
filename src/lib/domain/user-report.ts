@@ -87,6 +87,16 @@ export interface UserReportError {
   message: string;
 }
 
+const NOTHING_SENT = "Couldn't reach the report server — nothing was sent";
+
+/** Toast for a definite in-app failure that falls back to GitHub's form.
+ *  `submission_uncertain` never reaches here: it must not invite a retry. */
+export function userReportFallbackNotice(kind: UserReportErrorKind | undefined): string {
+  if (kind === "network_unreachable") return `${NOTHING_SENT}. Opening GitHub instead`;
+  if (kind === "daily_cap") return "Reports are temporarily unavailable — opening GitHub instead";
+  return "Could not submit in-app — opening GitHub instead";
+}
+
 export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
 ): string {
@@ -102,6 +112,9 @@ export function userReportAttachmentFailureMessage(
   }
   if (kind === "daily_cap") {
     return `Reports are temporarily unavailable. ${retry}`;
+  }
+  if (kind === "network_unreachable") {
+    return `${NOTHING_SENT}. ${retry}`;
   }
   if (kind === "rate_limited") {
     return `Too many reports were submitted. ${retry} Try again later.`;

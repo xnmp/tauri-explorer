@@ -5,19 +5,18 @@ import {
   createRestRateLimitStore,
   enforceReportLimits,
   processReport,
+  REPORT_ERROR_CODES,
+  REPORT_LIMITS,
   ReportError,
   validateReport,
 } from "../../website/api/_report-core.js";
+import contract from "../contract/fixtures/report_relay.json";
 import reportHandler, { createGitHubIssue, reporterIp } from "../../website/api/report.js";
 
 const valid = {
   title: "Explorer freezes 🧊",
   body: "Opening a directory hangs.",
   kind: "bug",
-  contact: "",
-  version: "1.7.0",
-  os: "linux",
-  arch: "x86_64",
 };
 const pngData = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
@@ -61,17 +60,49 @@ describe("GitHub issue submission boundary", () => {
   });
 });
 
+describe("report relay contract (shared with the native boundary)", () => {
+  it("enforces the limits in the shared fixture", () => {
+    expect(REPORT_LIMITS).toEqual(contract.limits);
+  });
+
+  it("emits only error codes the app maps", () => {
+    expect(REPORT_ERROR_CODES).toEqual(contract.relayErrorCodes);
+  });
+
+  it("accepts exactly the title, attachment-name and body limits", () => {
+    const { maxTitleUnits, maxAttachmentNameUnits, maxRelayBodyUnits } = contract.limits;
+    const at = (name: string) => [{ name, mediaType: "image/png", data: pngData }];
+    expect(validateReport({ ...valid, title: "t".repeat(maxTitleUnits) }).title).toHaveLength(maxTitleUnits);
+    expect(() => validateReport({ ...valid, title: "t".repeat(maxTitleUnits + 1) }))
+      .toThrow(expect.objectContaining({ code: "malformed_input" }));
+    expect(validateReport({ ...valid, body: "b".repeat(maxRelayBodyUnits) }).body).toHaveLength(maxRelayBodyUnits);
+    expect(() => validateReport({ ...valid, body: "b".repeat(maxRelayBodyUnits + 1) }))
+      .toThrow(expect.objectContaining({ code: "malformed_input" }));
+    expect(validateReport({ ...valid, attachments: at("n".repeat(maxAttachmentNameUnits)) }).attachments)
+      .toHaveLength(1);
+    expect(() => validateReport({ ...valid, attachments: at("n".repeat(maxAttachmentNameUnits + 1)) }))
+      .toThrow(expect.objectContaining({ code: "malformed_input" }));
+  });
+
+  it("publishes only the request fields the app sends and ignores legacy metadata", () => {
+    const legacy = { ...valid, contact: "x".repeat(500), version: "1.7.0", os: "linux", arch: "x86_64", website: "" };
+    const report = validateReport(legacy);
+    expect(Object.keys(report).sort()).toEqual(
+      contract.requestFields.filter((field) => field !== "website").sort(),
+    );
+    expect(buildGitHubIssue(report).body).toBe(valid.body);
+  });
+});
+
 describe("report relay validation", () => {
   it("normalizes a valid report and selects observable GitHub labels", () => {
     const report = validateReport({
       ...valid,
       title: "  Explorer\nfreezes 🧊  ",
-      contact: "  @reporter  ",
     });
     expect(report).toEqual({
       ...valid,
       title: "Explorer freezes 🧊",
-      contact: "@reporter",
       attachments: [],
     });
     expect(buildGitHubIssue(report)).toMatchObject({
@@ -92,7 +123,6 @@ describe("report relay validation", () => {
     [{ ...valid, body: "x".repeat(10_000) }],
     [{ ...valid, body: "https://spam.example/path" }],
     [{ ...valid, kind: "question" }],
-    [{ ...valid, contact: "x".repeat(101) }],
     [{ ...valid, title: "bad\u0000title" }],
   ])("rejects malformed input with a typed error", (input) => {
     expect(() => validateReport(input)).toThrow(

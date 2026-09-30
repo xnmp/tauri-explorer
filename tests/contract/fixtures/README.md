@@ -26,3 +26,8 @@ different concrete inputs:
   command rejects and a substring the message must contain.
 - `fs_ops.json` — `list_directory` ordering (dirs first, then case-insensitive
   by name, dotfiles included) plus rename/delete shape+semantics.
+
+`report_relay.json` is the user-report relay contract: the limits and error
+codes shared by the native boundary (`src-tauri/src/user_report.rs` tests) and
+the Vercel relay (`tests/website/report-relay.test.ts` against
+`website/api/_report-core.js`), plus the request fields the app sends.

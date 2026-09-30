@@ -38,7 +38,7 @@ test("report fallback keeps a solid toast over contrasting app content", async (
   await dialog.getByRole("button", { name: "Submit" }).click();
 
   const toast = page.locator(".toast.error");
-  await expect(toast).toContainText("Could not submit in-app — opening GitHub instead");
+  await expect(toast).toContainText("Couldn't reach the report server — nothing was sent. Opening GitHub instead");
   await expect.poll(() => toast.evaluate((element) => {
     const style = getComputedStyle(element);
     const channels = style.backgroundColor.match(/[\d.]+/g) ?? [];

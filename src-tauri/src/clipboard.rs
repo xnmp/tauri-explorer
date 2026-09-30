@@ -648,35 +648,6 @@ fn clipboard_paste_image_sync(directory: String) -> Result<String, AppError> {
     Ok(filepath.to_string_lossy().to_string())
 }
 
-/// Probe used for paste-menu enablement — silent `false` on failure is the
-/// right behavior here; the actionable errors surface on the actual
-/// read/write commands (#279).
-#[tauri::command]
-pub async fn clipboard_has_files() -> bool {
-    clipboard_read_files()
-        .await
-        .map(|paths| !paths.is_empty())
-        .unwrap_or(false)
-}
-
-#[tauri::command]
-pub async fn clipboard_read_files() -> Result<Vec<String>, AppError> {
-    let (reply, received) = tokio::sync::oneshot::channel();
-    send_clipboard_job(FileClipboardJob::ReadPaths { reply })?;
-    received
-        .await
-        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
-}
-
-#[tauri::command]
-pub async fn clipboard_write_files(paths: Vec<String>) -> Result<(), AppError> {
-    let (reply, received) = tokio::sync::oneshot::channel();
-    send_clipboard_job(FileClipboardJob::WriteLegacy { paths, reply })?;
-    received
-        .await
-        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,13 +798,6 @@ enum FileClipboardJob {
     },
     Snapshot {
         reply: tokio::sync::oneshot::Sender<Result<FileClipboardSnapshot, AppError>>,
-    },
-    ReadPaths {
-        reply: tokio::sync::oneshot::Sender<Result<Vec<String>, AppError>>,
-    },
-    WriteLegacy {
-        paths: Vec<String>,
-        reply: tokio::sync::oneshot::Sender<Result<(), AppError>>,
     },
     Clear {
         revision: u64,
@@ -1177,26 +1141,6 @@ fn clipboard_queue() -> &'static std::sync::mpsc::Sender<FileClipboardJob> {
                         }
                         FileClipboardJob::Snapshot { reply } => {
                             let _ = reply.send(coordinator.snapshot());
-                        }
-                        FileClipboardJob::ReadPaths { reply } => {
-                            let _ =
-                                reply.send(coordinator.snapshot().map(|snapshot| snapshot.paths));
-                        }
-                        FileClipboardJob::WriteLegacy { paths, reply } => {
-                            let result = new_clipboard_token()
-                                .and_then(|token| {
-                                    coordinator
-                                        .write(&paths, &token)
-                                        .map(|verified| (token, verified))
-                                })
-                                .map(|(token, verified)| {
-                                    coordinator.revision = coordinator.revision.wrapping_add(1);
-                                    coordinator.entries = None;
-                                    coordinator.operation = None;
-                                    coordinator.paths = paths;
-                                    coordinator.token = verified.then_some(token);
-                                });
-                            let _ = reply.send(result);
                         }
                         FileClipboardJob::Clear { revision, reply } => {
                             let _ = reply.send(coordinator.clear(revision));

@@ -3136,20 +3136,7 @@ if (typeof window !== "undefined") {
     return { revision: mockClipboardRevision, entries: mockClipboardEntries,
       paths: [...mockClipboardFiles], operation: mockClipboardOperation, mirrorError: null };
   },
-  clipboard_has_files: () => mockClipboardFiles.length > 0,
-
-  clipboard_read_files: () => [...mockClipboardFiles],
-
   clipboard_read_text: () => localStorage.getItem("mock-clipboard-text") ?? "",
-
-  clipboard_write_files: (args) => {
-    const paths = (args.paths as string[]) ?? [];
-    mockClipboardFiles = [...paths];
-    mockClipboardEntries = null;
-    mockClipboardOperation = null;
-    mockClipboardRevision++;
-    return true;
-  },
 
   clipboard_has_image: () =>
     localStorage.getItem("mock-report-clipboard-image") === "1",

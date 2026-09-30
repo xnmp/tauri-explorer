@@ -306,4 +306,104 @@ describe("user report drafts", () => {
     draft.finishSubmission(submission);
     draft.dispose();
   });
+
+  // Independent review of #915 (2026-09-30): the counter-plus-generation
+  // scheme must reject a *stale* read's finish rather than letting it
+  // decrement a newer generation's count, and every read must re-validate
+  // against attachments other concurrent reads committed while it awaited.
+
+  it("keeps a newer read counted after an older, clear()-invalidated read finishes", async () => {
+    const store = createUserReportDraftStore();
+    const readA = deferredRead<UserReportAttachment[]>();
+    const promiseA = store.attachFiles([imageFile], readA.read);
+    expect(store.readingAttachments).toBe(true);
+
+    store.clear();
+    const readB = deferredRead<UserReportAttachment[]>();
+    const promiseB = store.attachFiles([imageFile], readB.read);
+    expect(store.readingAttachments).toBe(true);
+
+    // Finishing the stale read A must not decrement generation B's counter.
+    readA.release([image]);
+    expect(await promiseA).toBeNull();
+    expect(store.readingAttachments).toBe(true);
+    expect(store.beginSubmission()).toBeNull();
+
+    readB.release([image]);
+    expect(await promiseB).toBeNull();
+    expect(store.readingAttachments).toBe(false);
+    store.dispose();
+  });
+
+  it("re-validates a concurrent files read against attachments committed while it was in flight", async () => {
+    const store = createUserReportDraftStore();
+    const clipboardRead = deferredRead<UserReportAttachment>();
+    const filesRead = deferredRead<UserReportAttachment[]>();
+    const threeFiles = [
+      imageFile,
+      { ...imageFile, name: "b.png" },
+      { ...imageFile, name: "c.png" },
+    ];
+    const clipboardPromise = store.attachClipboard(clipboardRead.read);
+    const filesPromise = store.attachFiles(threeFiles, filesRead.read);
+
+    clipboardRead.release({ ...image, name: "clip.png" });
+    expect(await clipboardPromise).toBeNull();
+    expect(store.attachments).toHaveLength(1);
+
+    filesRead.release([
+      image,
+      { ...image, name: "b.png" },
+      { ...image, name: "c.png" },
+    ]);
+    expect(await filesPromise).toBe("Attach up to 3 images.");
+    expect(store.attachments).toHaveLength(1);
+    store.dispose();
+  });
+
+  it("does not report a clipboard read while only a files read is pending", async () => {
+    const store = createUserReportDraftStore();
+    const filesRead = deferredRead<UserReportAttachment[]>();
+    const promise = store.attachFiles([imageFile], filesRead.read);
+    expect(store.readingAttachments).toBe(true);
+    expect(store.readingClipboard).toBe(false);
+
+    filesRead.release([image]);
+    await promise;
+    expect(store.readingClipboard).toBe(false);
+    store.dispose();
+  });
+
+  it("does not commit a clipboard image whose read was invalidated by clear()", async () => {
+    const store = createUserReportDraftStore();
+    const clipboardRead = deferredRead<UserReportAttachment>();
+    const promise = store.attachClipboard(clipboardRead.read);
+    store.clear();
+
+    clipboardRead.release(image);
+    expect(await promise).toBeNull();
+    expect(store.attachments).toEqual([]);
+    expect(store.clipboardAttachmentData).toBeNull();
+    store.dispose();
+  });
+
+  it("rejects a clipboard image that would exceed the attachment count limit", async () => {
+    const store = createUserReportDraftStore();
+    const threeFiles = [
+      imageFile,
+      { ...imageFile, name: "b.png" },
+      { ...imageFile, name: "c.png" },
+    ];
+    expect(await store.attachFiles(threeFiles, () => Promise.resolve([
+      image,
+      { ...image, name: "b.png" },
+      { ...image, name: "c.png" },
+    ]))).toBeNull();
+    expect(store.attachments).toHaveLength(3);
+
+    const error = await store.attachClipboard(() => Promise.resolve({ ...image, name: "clip.png" }));
+    expect(error).toBe("Attach up to 3 images.");
+    expect(store.attachments).toHaveLength(3);
+    store.dispose();
+  });
 });

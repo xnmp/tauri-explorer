@@ -416,6 +416,7 @@ backend for E2E/browser).
 ## Plugins
 
 - `state/owned-registry.ts` — invocation identity and duplicate policy shared by command, menu, dialog and filesystem contributions.
+- `state/ordered-registry.ts` — plugin-list-position ordering over owned registrations for menu items and settings sections.
 - `state/modal-ownership.svelte.ts` — contributed dialogs and shared Modal participate in the same input gate as built-in dialogs.
 
 - `plugins/registry.svelte.ts` — `pluginRegistry` owns activation, retry and shutdown completion; context retirement precedes reentrant hooks

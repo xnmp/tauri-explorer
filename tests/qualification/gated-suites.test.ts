@@ -27,11 +27,25 @@ describe("gated native suites", () => {
     expect(gatedMode("TAURI_E2E_HISTORY_GATE_DIR", true)).toBe("fail");
   });
 
-  it("requires gated suites only for the exact opt-in value", () => {
+  it("requires gated suites for either opt-in spelling", () => {
     expect(requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: "1" })).toBe(true);
-    expect(requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: "true" })).toBe(false);
-    expect(requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: "" })).toBe(false);
+    expect(requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: "true" })).toBe(true);
+  });
+
+  it("does not require gated suites when the variable is unset, empty or explicitly off", () => {
     expect(requireGatedFromEnvironment({})).toBe(false);
+    expect(requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: "" })).toBe(false);
+    expect(requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: "0" })).toBe(false);
+    expect(requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: "false" })).toBe(false);
+  });
+
+  it("rejects an unrecognised value instead of silently skipping gated suites", () => {
+    // A typo in a dedicated job would otherwise skip every gated suite, and WDIO
+    // counts each skipped spec file as passed (#873).
+    for (const value of ["yes", "TRUE", " 1", "on", "2"]) {
+      expect(() => requireGatedFromEnvironment({ TAURI_E2E_REQUIRE_GATED: value }))
+        .toThrow(/TAURI_E2E_REQUIRE_GATED/);
+    }
   });
 
   it("treats an empty requirement list as runnable", () => {

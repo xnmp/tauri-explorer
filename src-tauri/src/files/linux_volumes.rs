@@ -116,25 +116,33 @@ pub(super) fn volumes(objects: &ManagedObjects) -> Vec<Volume> {
     found
 }
 
+pub(super) enum FetchError {
+    /// No reply within the two-second discovery deadline.
+    TimedOut,
+    Bus(zbus::Error),
+}
+
 /// One `GetManagedObjects` round trip on an existing connection.
-pub(super) async fn fetch_objects(connection: &Connection) -> zbus::Result<ManagedObjects> {
-    tokio::time::timeout(Duration::from_secs(2), async {
+pub(super) async fn fetch_objects(connection: &Connection) -> Result<ManagedObjects, FetchError> {
+    let fetch = async {
         let proxy = zbus::fdo::ObjectManagerProxy::builder(connection)
             .destination(SERVICE)?
             .path(ROOT)?
             .build()
             .await?;
         proxy.get_managed_objects().await.map_err(zbus::Error::from)
-    })
-    .await
-    .unwrap_or_else(|_| Err(zbus::Error::Failure("UDisks2 discovery timed out".into())))
+    };
+    match tokio::time::timeout(Duration::from_secs(2), fetch).await {
+        Ok(result) => result.map_err(FetchError::Bus),
+        Err(_) => Err(FetchError::TimedOut),
+    }
 }
 async fn objects(connection: &Connection) -> Result<ManagedObjects, AppError> {
     fetch_objects(connection).await.map_err(|e| match e {
-        zbus::Error::Failure(message) if message.contains("timed out") => {
-            AppError::Other("Linux storage service (UDisks2) timed out".into())
+        FetchError::TimedOut => AppError::Other("Linux storage service (UDisks2) timed out".into()),
+        FetchError::Bus(e) => {
+            AppError::Other(format!("Linux storage service (UDisks2) unavailable: {e}"))
         }
-        e => AppError::Other(format!("Linux storage service (UDisks2) unavailable: {e}")),
     })
 }
 async fn system_connection() -> Result<Connection, AppError> {

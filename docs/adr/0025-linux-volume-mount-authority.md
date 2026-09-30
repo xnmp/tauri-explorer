@@ -66,7 +66,12 @@ separate contracts.
   `GetManagedObjects` snapshot. Discovery reads that cache; polling never opens
   a connection or queries the bus. A signal that cannot be applied exactly
   (invalidated properties, an unknown object) triggers a full refetch, and a
-  30-second backstop refetch corrects any missed signal.
+  30-second backstop refetch corrects any missed signal. A dedicated task drains
+  both signal streams into an unbounded queue, because zbus stops reading the
+  socket while a stream's bounded queue is full and a signal burst would
+  otherwise stall the refetch reply behind it. A refetch that times out keeps
+  the last snapshot and retries after five seconds; only a definite service
+  error or `NameOwnerChanged` owner loss drops it.
 - A change to the derived volume list emits `drives-changed { live }` to every
   window; unrelated property churn is silent. While `live`, the frontend polls
   `list_drives` only every 30 seconds for sources outside UDisks (FUSE/rclone
@@ -120,8 +125,9 @@ desktop, rather than by Explorer configuration.
 against an isolated D-Bus service: read-only discovery, mount success and errors,
 stable identity, stale mount-table snapshots, removal, missing service, and label
 handling, plus the subscription: pushed mount/unmount/removal/insertion on one
-connection with no refetch, post-mount resync, the backstop, bus loss and
-recovery, and a service restart without reconnecting.
+connection with no refetch, a change racing the first snapshot, a signal burst
+during a refetch, a timed-out refetch, post-mount resync, the backstop, bus
+loss and recovery, and a service restart without reconnecting.
 `tests/state/drives-push.test.ts` covers the frontend's push handling and poll
 cadence. Existing mount-table and cloud unit tests preserve fallback behavior.
 `tests/state/drive-opening.test.ts` and `unmounted-drive-roots.test.ts` assert

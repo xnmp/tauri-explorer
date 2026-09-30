@@ -89,13 +89,41 @@ fn objects(state: usize) -> Objects {
 struct Manager {
     state: Arc<AtomicUsize>,
     snapshots: Arc<AtomicUsize>,
+    mount_after_snapshot: Arc<AtomicBool>,
+    stall_next_reply: Arc<AtomicBool>,
 }
 #[zbus::interface(name = "org.freedesktop.DBus.ObjectManager")]
 impl Manager {
-    fn get_managed_objects(&self) -> Objects {
+    async fn get_managed_objects(
+        &self,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) -> Objects {
         self.snapshots.fetch_add(1, Ordering::SeqCst);
-        objects(self.state.load(Ordering::SeqCst))
+        if self.stall_next_reply.swap(false, Ordering::SeqCst) {
+            // Outlast the client's two-second discovery deadline once.
+            tokio::time::sleep(Duration::from_millis(2_500)).await;
+        }
+        let snapshot = objects(self.state.load(Ordering::SeqCst));
+        if self.mount_after_snapshot.swap(false, Ordering::SeqCst) {
+            // A mount lands after the snapshot was taken but before its reply:
+            // the signal reaches the client first.
+            self.state.store(MOUNTED, Ordering::SeqCst);
+            connection
+                .emit_signal(
+                    None::<&str>,
+                    ID,
+                    "org.freedesktop.DBus.Properties",
+                    "PropertiesChanged",
+                    &(FILESYSTEM, mounted_change(MOUNTED), Vec::<String>::new()),
+                )
+                .await
+                .unwrap();
+        }
+        snapshot
     }
+}
+fn mounted_change(state: usize) -> HashMap<String, OwnedValue> {
+    HashMap::from([("MountPoints".to_owned(), mount_points(state))])
 }
 struct Filesystem {
     state: Arc<AtomicUsize>,
@@ -134,6 +162,8 @@ struct Bus {
     state: Arc<AtomicUsize>,
     calls: Arc<AtomicUsize>,
     snapshots: Arc<AtomicUsize>,
+    mount_after_snapshot: Arc<AtomicBool>,
+    stall_next_reply: Arc<AtomicBool>,
 }
 impl Bus {
     async fn start() -> Self {
@@ -150,6 +180,8 @@ impl Bus {
         let state = Arc::new(AtomicUsize::new(UNMOUNTED));
         let calls = Arc::new(AtomicUsize::new(0));
         let snapshots = Arc::new(AtomicUsize::new(0));
+        let mount_after_snapshot = Arc::new(AtomicBool::new(false));
+        let stall_next_reply = Arc::new(AtomicBool::new(false));
         let server = zbus::connection::Builder::address(address.as_str())
             .unwrap()
             .name(SERVICE)
@@ -159,6 +191,8 @@ impl Bus {
                 Manager {
                     state: state.clone(),
                     snapshots: snapshots.clone(),
+                    mount_after_snapshot: mount_after_snapshot.clone(),
+                    stall_next_reply: stall_next_reply.clone(),
                 },
             )
             .unwrap()
@@ -180,6 +214,8 @@ impl Bus {
             state,
             calls,
             snapshots,
+            mount_after_snapshot,
+            stall_next_reply,
         }
     }
     async fn client(&self) -> zbus::Connection {
@@ -388,6 +424,64 @@ async fn subscription_pushes_mount_unmount_removal_and_insertion_over_one_connec
 }
 
 #[tokio::test]
+async fn a_change_between_snapshot_and_reply_is_not_lost() {
+    let bus = Bus::start().await;
+    bus.mount_after_snapshot.store(true, Ordering::SeqCst);
+    let mut h = harness(&bus, QUIET);
+    h.discover("").await;
+    assert!(h.changed().await, "first snapshot (unmounted)");
+    assert!(h.changed().await, "the racing mount signal is applied");
+    assert_eq!(
+        h.discover(MOUNTED_TABLE).await[0].path.as_deref(),
+        Some("/media/USB Backup")
+    );
+    assert_eq!(bus.snapshots.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_signal_burst_during_a_refetch_neither_stalls_nor_drops_the_feed() {
+    let bus = Bus::start().await;
+    let mut h = harness(&bus, QUIET);
+    h.discover("").await;
+    assert!(h.changed().await);
+    // An object the cache has never seen forces a refetch; a burst far larger
+    // than zbus's per-stream queue then arrives while that reply is pending.
+    let invalidated: Vec<String> = vec![];
+    bus.emit(
+        "/org/freedesktop/UDisks2/block_devices/unknown",
+        "org.freedesktop.DBus.Properties",
+        "PropertiesChanged",
+        &(
+            BLOCK,
+            HashMap::<String, OwnedValue>::new(),
+            invalidated.clone(),
+        ),
+    )
+    .await;
+    for tick in 0..500u64 {
+        let changed = HashMap::from([("TimeMediaDetected".to_owned(), val(tick))]);
+        bus.emit(
+            DISK,
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            &(
+                "org.freedesktop.UDisks2.Drive",
+                changed,
+                invalidated.clone(),
+            ),
+        )
+        .await;
+    }
+    bus.set_mounted(true).await;
+    assert!(h.changed().await, "the feed stays live through the burst");
+    assert_eq!(
+        h.discover(MOUNTED_TABLE).await[0].path.as_deref(),
+        Some("/media/USB Backup")
+    );
+    assert_eq!(h.connects.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn mounting_reuses_the_subscription_and_is_visible_to_the_next_discovery() {
     let bus = Bus::start().await;
     let mut h = harness(&bus, QUIET);
@@ -427,6 +521,24 @@ async fn backstop_resync_corrects_a_change_no_signal_described() {
         Some("/media/USB Backup")
     );
     assert_eq!(h.connects.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_slow_service_reply_keeps_the_last_volumes_and_retries_soon() {
+    let bus = Bus::start().await;
+    let mut h = harness(&bus, Duration::from_millis(100));
+    assert_eq!(h.discover("").await.len(), 1);
+    assert!(h.changed().await);
+    bus.stall_next_reply.store(true, Ordering::SeqCst);
+    // The backstop refetch times out; the volume must not vanish meanwhile.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(3_000);
+    while tokio::time::Instant::now() < deadline {
+        assert_eq!(h.discover("").await.len(), 1, "a timeout is not an outage");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    h.assert_quiet().await;
+    bus.set_mounted(true).await;
+    assert!(h.changed().await, "the feed recovered after the slow reply");
 }
 
 #[tokio::test]

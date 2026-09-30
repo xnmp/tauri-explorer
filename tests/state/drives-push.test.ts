@@ -127,6 +127,19 @@ it("a stale liveness answer cannot override a newer push", async () => {
   expect(drivesStore.removable).toHaveLength(0);
 });
 
+it("a change before the push listener existed is read once the feed is live", async () => {
+  mocks.live.mockResolvedValue(true);
+  const listen = mocks.listen.getMockImplementation()!;
+  mocks.listen.mockImplementation(async (name: string, handler: (event: { payload: unknown }) => void) => {
+    // The mount lands after the initial read but before this subscription:
+    // its push went to nobody.
+    if (name === "drives-changed") backend = [usb("/media/USB Backup")];
+    return listen(name, handler);
+  });
+  await drivesStore.startPolling();
+  expect(drivesStore.removable[0].path).toBe("/media/USB Backup");
+});
+
 it("stopping removes the push listener", async () => {
   mocks.live.mockResolvedValue(true);
   await drivesStore.startPolling();

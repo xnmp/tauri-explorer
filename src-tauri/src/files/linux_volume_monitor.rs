@@ -11,7 +11,7 @@
 //! Without a system bus or UDisks, discovery reports `Unavailable` and callers
 //! keep mount-table discovery (ADR 0025). The worker retries the connection,
 //! and a returning service is picked up from `NameOwnerChanged`.
-use super::linux_volumes::{fetch_objects, volumes, Volume, ROOT, SERVICE};
+use super::linux_volumes::{fetch_objects, volumes, FetchError, Volume, ROOT, SERVICE};
 use crate::error::AppError;
 use std::{
     collections::HashMap,
@@ -231,59 +231,86 @@ impl Worker {
 
     async fn session(&mut self, connection: &Connection) -> SessionEnd {
         // Subscribe before the first snapshot so no change falls between them.
-        let (Ok(mut signals), Ok(mut owners)) = (
-            MessageStream::for_match_rule(udisks_signals_rule(), connection, None).await,
-            MessageStream::for_match_rule(service_owner_rule(), connection, None).await,
-        ) else {
+        // AddMatch has no deadline of its own; a wedged bus must not hold the
+        // monitor in Pending.
+        let subscribe = async {
+            (
+                MessageStream::for_match_rule(udisks_signals_rule(), connection, None).await,
+                MessageStream::for_match_rule(service_owner_rule(), connection, None).await,
+            )
+        };
+        let Ok((Ok(signals), Ok(owners))) = tokio::time::timeout(SETUP_DEADLINE, subscribe).await
+        else {
             return SessionEnd::Disconnected;
         };
-        let mut cache = match fetch(connection).await {
-            Fetched::Objects(objects) => Some(objects),
-            Fetched::ServiceMissing => None,
-            Fetched::Disconnected => return SessionEnd::Disconnected,
+        // Drain both streams on their own task. zbus stops reading the socket
+        // while any stream's bounded queue is full, so a signal burst during a
+        // refetch would otherwise hold back the GetManagedObjects reply itself.
+        let (sender, mut events) = mpsc::unbounded_channel();
+        let _forwarder = AbortOnDrop(tokio::spawn(forward(signals, owners, sender)));
+        let mut state = SessionState {
+            cache: None,
+            refetch: true,
         };
-        self.publish(cache.as_ref());
+        let mut acks: Vec<oneshot::Sender<()>> = Vec::new();
         let period = self.config.backstop;
         let mut backstop = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
         // A slow refetch must not queue a burst of catch-up refetches.
         backstop.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let retry = tokio::time::sleep(Duration::ZERO);
+        tokio::pin!(retry);
+        let mut retry_armed = false;
         loop {
-            let mut ack = None;
-            let resync = tokio::select! {
-                message = next(&mut signals) => match message {
-                    Some(Ok(message)) => !cache
-                        .as_mut()
-                        .is_some_and(|objects| apply_signal(objects, &message)),
-                    _ => return SessionEnd::Disconnected,
-                },
-                message = next(&mut owners) => match message {
-                    Some(Ok(message)) if service_has_owner(&message) => true,
-                    Some(Ok(_)) => {
-                        // The service exited; its objects left with it.
-                        cache = None;
-                        false
+            if state.refetch {
+                state.refetch = false;
+                match fetch(connection).await {
+                    Fetched::Objects(objects) => {
+                        state.cache = Some(objects);
+                        retry_armed = false;
                     }
-                    _ => return SessionEnd::Disconnected,
-                },
-                _ = backstop.tick() => true,
+                    Fetched::ServiceMissing => state.cache = None,
+                    // Keep the last snapshot through a slow reply; retry soon
+                    // rather than dropping volumes until the next backstop.
+                    Fetched::TimedOut => {
+                        retry
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + self.config.retry);
+                        retry_armed = true;
+                    }
+                    Fetched::Disconnected => return SessionEnd::Disconnected,
+                }
+                self.publish(state.cache.as_ref());
+                for ack in acks.drain(..) {
+                    let _ = ack.send(());
+                }
+            }
+            tokio::select! {
+                event = events.recv() => {
+                    if !state.apply(event) {
+                        return SessionEnd::Disconnected;
+                    }
+                    // Fold the rest of a burst in before publishing or refetching.
+                    while let Ok(event) = events.try_recv() {
+                        if !state.apply(Some(event)) {
+                            return SessionEnd::Disconnected;
+                        }
+                    }
+                }
+                _ = backstop.tick() => state.refetch = true,
+                _ = &mut retry, if retry_armed => {
+                    retry_armed = false;
+                    state.refetch = true;
+                }
                 request = self.requests.recv() => match request {
-                    Some(request) => {
-                        ack = Some(request);
-                        true
+                    Some(ack) => {
+                        acks.push(ack);
+                        state.refetch = true;
                     }
                     None => return SessionEnd::Shutdown,
                 },
-            };
-            if resync {
-                cache = match fetch(connection).await {
-                    Fetched::Objects(objects) => Some(objects),
-                    Fetched::ServiceMissing => None,
-                    Fetched::Disconnected => return SessionEnd::Disconnected,
-                };
             }
-            self.publish(cache.as_ref());
-            if let Some(ack) = ack {
-                let _ = ack.send(());
+            if !state.refetch {
+                self.publish(state.cache.as_ref());
             }
         }
     }
@@ -309,6 +336,73 @@ impl Worker {
     }
 }
 
+/// Subscription setup (two AddMatch round trips) deadline.
+const SETUP_DEADLINE: Duration = Duration::from_secs(2);
+
+enum Event {
+    /// A UDisks object signal.
+    Changed(Message),
+    /// `NameOwnerChanged` for the UDisks service.
+    Owner(Message),
+}
+
+struct SessionState {
+    cache: Option<ManagedObjects>,
+    refetch: bool,
+}
+
+impl SessionState {
+    /// Fold one event into the cache. Returns false when the connection is gone.
+    fn apply(&mut self, event: Option<Event>) -> bool {
+        match event {
+            Some(Event::Changed(message)) => {
+                let applied = self
+                    .cache
+                    .as_mut()
+                    .is_some_and(|objects| apply_signal(objects, &message));
+                self.refetch |= !applied;
+            }
+            Some(Event::Owner(message)) if service_has_owner(&message) => self.refetch = true,
+            // The service exited; its objects left with it.
+            Some(Event::Owner(_)) => self.cache = None,
+            None => return false,
+        }
+        true
+    }
+}
+
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Move both subscriptions' messages into an unbounded queue until either
+/// stream reports the connection lost (an error item, then its end); dropping
+/// the sender then tells the session.
+async fn forward(
+    mut signals: MessageStream,
+    mut owners: MessageStream,
+    sender: mpsc::UnboundedSender<Event>,
+) {
+    loop {
+        let event = tokio::select! {
+            message = next(&mut signals) => match message {
+                Some(Ok(message)) => Event::Changed(message),
+                _ => return,
+            },
+            message = next(&mut owners) => match message {
+                Some(Ok(message)) => Event::Owner(message),
+                _ => return,
+            },
+        };
+        if sender.send(event).is_err() {
+            return;
+        }
+    }
+}
+
 async fn next(stream: &mut MessageStream) -> Option<zbus::Result<Message>> {
     std::future::poll_fn(|cx| Pin::new(&mut *stream).poll_next(cx)).await
 }
@@ -316,16 +410,18 @@ async fn next(stream: &mut MessageStream) -> Option<zbus::Result<Message>> {
 enum Fetched {
     Objects(ManagedObjects),
     ServiceMissing,
+    TimedOut,
     Disconnected,
 }
 
 async fn fetch(connection: &Connection) -> Fetched {
     match fetch_objects(connection).await {
         Ok(objects) => Fetched::Objects(objects),
-        // A socket failure ends this connection; anything else (no owner,
-        // activation failure, timeout) leaves the bus usable for the next event.
-        Err(zbus::Error::InputOutput(_)) => Fetched::Disconnected,
-        Err(_) => Fetched::ServiceMissing,
+        Err(FetchError::TimedOut) => Fetched::TimedOut,
+        // A socket failure ends this connection; any other failure (no owner,
+        // activation refused) leaves the bus usable for the next event.
+        Err(FetchError::Bus(zbus::Error::InputOutput(_))) => Fetched::Disconnected,
+        Err(FetchError::Bus(_)) => Fetched::ServiceMissing,
     }
 }
 

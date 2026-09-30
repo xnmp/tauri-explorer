@@ -17,6 +17,12 @@ Gotchas:
 - zbus reports a lost socket as one `Err` item on each `MessageStream`, and
   the stream ends after it. Treat either as disconnection and reconnect;
   holding the connection does not keep the stream alive.
+- zbus stops reading the socket while any `MessageStream` queue holds its
+  limit (64 messages). If the worker awaits `GetManagedObjects` without
+  draining its streams, a signal burst stalls the reply until it times out.
+  Drain the streams on their own task into an unbounded channel.
+- A discovery timeout is not an outage. Keep the last snapshot and retry soon.
+  Dropping it hides every unmounted volume until the next event or backstop.
 - UDisks emits frequent `PropertiesChanged` for unrelated drive data. Compare
   the derived volume list before notifying, or every window refreshes on SMART
   updates.

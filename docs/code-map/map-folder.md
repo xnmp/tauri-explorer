@@ -409,7 +409,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
 - `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
-- `clipboard.rs` — OS clipboard file operations and process-wide ordered worker with X11 Cut ownership token.
+- `clipboard/` — OS clipboard commands, the ordered file-clipboard worker and per-platform backends; see the `src-tauri/src/clipboard/` section below.
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
@@ -454,6 +454,20 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `api/report.js` — POST-only user-report relay, public Blob storage adapter, and GitHub Issues client.
 - `api/_report-core.js` — pure validation, attachment delivery/cleanup, issue shaping, honeypot, and atomic burst/hour/day limit logic; underscore excludes this helper from Vercel function discovery.
 - `vercel.json` — response cache policy; API routes are explicitly `no-store`.
+
+### src-tauri/src/clipboard/ — OS clipboard module.
+
+- `src-tauri/src/clipboard/mod.rs` — Tauri clipboard commands, the process-wide ordered `file-clipboard` worker (jobs queued before awaiting, so cancelled IPC cannot drop accepted writes) and one-time platform backend selection.
+- `src-tauri/src/clipboard/backend.rs` — the platform seam: `ClipboardBackend` (worker-owned file-list read/write, owner token, selection owner, Cut admission; defaults fail closed) and `ClipboardReader` (stateless text/image reads).
+- `src-tauri/src/clipboard/coordinator.rs` — `FileClipboardCoordinator`: revisioned app selection, external-change adoption, Cut ownership proof, failed-Copy-mirror fallback, CAS clear, rekey and the `CutLease` claim (#835, #871). Behavioural tests run on every platform against `fake_backend.rs`.
+- `src-tauri/src/clipboard/fake_backend.rs` — test-only in-memory OS clipboard with configurable ownership/owner-identity capabilities and simulated external programs and failures.
+- `src-tauri/src/clipboard/content.rs` — report-screenshot image selection and paste-image-to-file over any `ClipboardReader`.
+- `src-tauri/src/clipboard/file_uri.rs` — `file://` URI list and `x-special/gnome-copied-files` encoding/decoding (Linux; tested everywhere).
+- `src-tauri/src/clipboard/linux/mod.rs` — `wl-clipboard`/`xclip` CLI adapter shared by the Linux backends, and the Linux text/image reader.
+- `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend (`wl-copy`/`wl-paste`); Cut fails closed until #877's held owner process.
+- `src-tauri/src/clipboard/linux/x11.rs` — X11 file-list backend: `clipboard-rs` multi-target owner with the private Cut token, `x11rb` selection owner; ignored real-Xvfb coordinator test.
+- `src-tauri/src/clipboard/macos.rs` — macOS backend/reader (`clipboard-rs`, `pbpaste`, `osascript`) and the AppleScript PNG parser; Cut fails closed until #877.
+- `src-tauri/src/clipboard/windows.rs` — Windows backend/reader through PowerShell `System.Windows.Forms.Clipboard`; Cut fails closed until #877.
 
 ### src-tauri/src/files/ — file operations module.
 

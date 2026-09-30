@@ -32,8 +32,9 @@ export interface ForegroundGate {
   whenForeground(start: Start): () => void;
   /**
    * Enter the foreground, starting every deferred feed. Resolves once each
-   * started feed has settled (its failures are its own), so an activating
-   * window can reveal itself with current state. Idempotent.
+   * started feed has settled (its failures are its own). Callers that reveal
+   * a window must not await it: a feed's first backend read can be slow.
+   * Idempotent.
    */
   enterForeground(): Promise<void>;
 }

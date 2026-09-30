@@ -181,7 +181,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
-- `page-foreground.ts` — `warmMode()` and the page foreground gate: a parked warm window defers foreground-only feeds (drives) until activation opens it before reveal (#931).
+- `page-foreground.ts` — `warmMode()` and the page foreground gate: a parked warm window defers foreground-only feeds (drive pushes/poll) until activation opens it; the reveal never waits for them (#931).
 - `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.

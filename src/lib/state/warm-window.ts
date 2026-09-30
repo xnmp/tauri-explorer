@@ -202,13 +202,13 @@ export function runWarmWindow(measure: boolean, onActivated?: () => void): { rea
       const explorer = windowTabsManager.getActiveExplorer();
       if (!explorer) throw new Error("Warm destination has no active explorer");
       if (viewMode) explorer.setViewMode(viewMode);
-      // Feeds deferred while parked (drives, #931) load alongside the listing,
-      // so the window is never revealed with the parked page's empty state.
-      const [navigated] = await Promise.all([
-        explorer.navigateTo(path, { autoEnterSingleSubdir: false }),
-        pageForeground.enterForeground(),
-      ]);
-      if (!navigated) throw new Error("Warm navigation failed or was superseded");
+      // Feeds deferred while parked (#931) start now but never gate the
+      // reveal: the parked page already shows its boot-time drive list, and a
+      // slow backend read (PowerShell on Windows) must not delay activation.
+      void pageForeground.enterForeground();
+      if (!await explorer.navigateTo(path, { autoEnterSingleSubdir: false })) {
+        throw new Error("Warm navigation failed or was superseded");
+      }
     },
     prepare: async ({ path, x, y, width, height }, current) => {
       try {

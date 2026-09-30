@@ -368,7 +368,7 @@ backend for E2E/browser).
 - `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
 - `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
-- `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only non-null paths count as mounted roots; `drives-changed` push + backstop/fallback poll; nothing runs in a parked warm window until `page-foreground` opens, #931)
+- `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only non-null paths count as mounted roots; `drives-changed` push + backstop/fallback poll; a parked warm window reads once, and its push/poll feeds wait until `page-foreground` opens, #931)
 - `domain/drives.ts`; `api/drives.ts` (listDrives/mountDrive); `state/drive-opening.ts` (mount-before-navigation and errors); `src-tauri/src/files/drives.rs` (`list_drives`, `mount_drive`, `drive_updates_live`) + `linux_volumes.rs` (UDisks2 projection, merge, mount) + `linux_volume_monitor.rs` (cached subscription, mounted fallback) + `linux_mount_watch.rs` (mount-table change push) + `linux_gvfs_watch.rs` (GVfs MountTracker push)
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)

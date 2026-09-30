@@ -130,9 +130,10 @@ export function createDrivesStore(foreground: ForegroundGate) {
   }
 
   /**
-   * Start this page's drive feeds. A parked warm window defers them until it
-   * is activated (#931); the returned promise settles once they have started,
-   * or once the session stops before that.
+   * Start this page's drive feeds. A parked warm window reads the list once
+   * and defers the feeds (re-read, watches, pushes, poll) until it is
+   * activated (#931); the returned promise settles once they have started, or
+   * once the session stops before that.
    */
   function startPolling(): Promise<void> {
     if (active) return active.ready;
@@ -141,6 +142,10 @@ export function createDrivesStore(foreground: ForegroundGate) {
       watches: new Map(), unlisten: [], ready: Promise.resolve(), cancelStart: () => {},
     };
     active = session;
+    // A parked page still reads the list once, so a claimed window is revealed
+    // with its drives; only the ongoing feeds wait for the foreground. Windows
+    // enumerates drives through PowerShell, far too slow to await on reveal.
+    if (!foreground.isForeground) void refresh().catch(console.error);
     session.ready = new Promise<void>((resolve) => {
       const cancel = foreground.whenForeground(() => begin(session).finally(resolve));
       session.cancelStart = () => { cancel(); resolve(); };

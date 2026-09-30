@@ -260,7 +260,7 @@ fn a_payload_that_crosses_into_another_mount_is_refused_before_any_record() {
         );
         fs::write(tree.join("inner/mounted"), OLD).unwrap();
         let error = refused_move(&source, &target, &base_path);
-        assert!(error.contains("another mounted volume"), "{error}");
+        assert!(error.contains("cannot cross mount point"), "{error}");
         assert_eq!(fs::read(tree.join("inner/mounted")).unwrap(), OLD);
         assert_eq!(fs::read(tree.join("entry")).unwrap(), OLD);
         isolated_mount("umount", &[tree.join("inner").as_os_str()]);

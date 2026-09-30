@@ -4,6 +4,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function contextMenuOn(page: Page, name: string) {
   const entry = page.locator(".entry-item").filter({ hasText: name }).first();
@@ -23,8 +24,8 @@ async function aiMenuItem(menu: ReturnType<Page["locator"]>, label: string) {
 
 const setFailure = (page: Page, command: string, message: string | null) =>
   page.evaluate(([name, error]) => {
-    const g = globalThis as { __MOCK_FAILURES__?: Record<string, string> };
-    g.__MOCK_FAILURES__ = error === null ? {} : { [name]: error };
+    const g = globalThis as { __mockControl?: MockControl };
+    (g.__mockControl ??= {}).failures = error === null ? {} : { [name]: error };
   }, [command, message] as const);
 
 test("a failing plugin action reports its error while another plugin still works", async ({ page }) => {

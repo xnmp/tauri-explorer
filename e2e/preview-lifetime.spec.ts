@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload, pressShortcut, waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openPreview(page: Page, path: string, filename: string) {
   await page.goto(`/?path=${encodeURIComponent(path)}`);
@@ -11,7 +12,7 @@ async function openPreview(page: Page, path: string, filename: string) {
 
 async function reviseAndRefresh(page: Page, path: string) {
   await page.evaluate((target) => {
-    (window as unknown as { __mockPreviewRevision(path: string): void }).__mockPreviewRevision(target);
+    (window as unknown as { __mockControl?: MockControl }).__mockControl?.previewRevision?.(target);
   }, path);
   await page.keyboard.press("F5");
 }
@@ -21,11 +22,13 @@ test.describe("Preview request lifetime", () => {
     await page.addInitScript(() => {
       const resolvers: Array<(value: string) => void> = [];
       const w = window as unknown as {
-        __mockPreviewReadText(path: string): Promise<string>;
+        __mockControl?: MockControl;
         __previewTextResolvers: Array<(value: string) => void>;
       };
       w.__previewTextResolvers = resolvers;
-      w.__mockPreviewReadText = () => new Promise((resolve) => resolvers.push(resolve));
+      // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+      // so this writer must create it (`??=`) rather than assume it exists.
+      (w.__mockControl ??= {}).previewReadText = () => new Promise((resolve) => resolvers.push(resolve));
     });
 
     const path = "/home/user/Documents/project/src/App.tsx";
@@ -60,7 +63,7 @@ test.describe("Preview request lifetime", () => {
       const originalRevoke = URL.revokeObjectURL.bind(URL);
       URL.revokeObjectURL = (url) => { revoked.push(url); originalRevoke(url); };
       const w = window as unknown as {
-        __mockPreviewReadImage(path: string): Promise<string>;
+        __mockControl?: MockControl;
         __previewImageResolvers: Array<(color: string) => void>;
         __previewImageUrls: string[];
         __previewRevokedUrls: string[];
@@ -68,7 +71,9 @@ test.describe("Preview request lifetime", () => {
       w.__previewImageUrls = urls;
       w.__previewRevokedUrls = revoked;
       w.__previewImageResolvers = resolvers;
-      w.__mockPreviewReadImage = () => new Promise((resolve) => resolvers.push((color) => {
+      // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+      // so this writer must create it (`??=`) rather than assume it exists.
+      (w.__mockControl ??= {}).previewReadImage = () => new Promise((resolve) => resolvers.push((color) => {
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="${color}"/></svg>`;
         const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
         urls.push(url);

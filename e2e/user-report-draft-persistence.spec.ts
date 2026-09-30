@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 function evidencePath(name: string): string {
   return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
@@ -14,8 +15,10 @@ async function openReportDialog(page: import("@playwright/test").Page) {
 
 async function delayAndCountReports(page: import("@playwright/test").Page) {
   await page.addInitScript(() => {
-    (globalThis as typeof globalThis & { __MOCK_LATENCY__?: Record<string, number> })
-      .__MOCK_LATENCY__ = { submit_user_report: 8000 };
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    ((globalThis as typeof globalThis & { __mockControl?: MockControl })
+      .__mockControl ??= {}).latency = { submit_user_report: 8000 };
     const setItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {
       if (key === "mock-submitted-report") {

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mockInvoke } from "../../src/lib/api/mock-invoke";
 import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
+import { MOCK_LOCAL_KEYS } from "../../src/lib/api/mock-control";
 
 describe("mockInvoke — clipboard file round-trip", () => {
   type Snapshot = { revision: number; paths: string[]; operation: string | null };
@@ -58,7 +59,7 @@ describe("mockInvoke — revisioned clipboard", () => {
   });
 
   it("can simulate a platform without native Cut ownership", async () => {
-    localStorage.setItem("mock-cut-ownership-unavailable", "1");
+    localStorage.setItem(MOCK_LOCAL_KEYS.cutOwnershipUnavailable, "1");
     try {
       await expect(mockInvoke("clipboard_publish", {
         entries: [{ name: "a.txt", path: "/a.txt" }], operation: "cut",
@@ -67,7 +68,7 @@ describe("mockInvoke — revisioned clipboard", () => {
         entries: [{ name: "a.txt", path: "/a.txt" }], operation: "copy",
       })).resolves.toMatchObject({ paths: ["/a.txt"], operation: "copy" });
     } finally {
-      localStorage.removeItem("mock-cut-ownership-unavailable");
+      localStorage.removeItem(MOCK_LOCAL_KEYS.cutOwnershipUnavailable);
     }
   });
 });

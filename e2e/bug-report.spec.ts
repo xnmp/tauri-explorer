@@ -2,6 +2,7 @@
 
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function runPaletteCommand(page: import("@playwright/test").Page, query: string) {
   await page.keyboard.press("Control+Shift+p");
@@ -65,9 +66,7 @@ test("report submission closes before the native command completes", async ({ pa
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { submit_user_report: 800 };
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { submit_user_report: 800 };
   });
 
   const dialog = await openReportDialog(page);
@@ -89,9 +88,7 @@ test("an in-flight report announces itself before the outcome toast", async ({ p
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { submit_user_report: 2000 };
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { submit_user_report: 2000 };
   });
 
   const dialog = await openReportDialog(page);
@@ -125,9 +122,7 @@ test("an unrelated info toast does not delete the in-flight indicator", async ({
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { submit_user_report: 3000 };
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { submit_user_report: 3000 };
   });
 
   const dialog = await openReportDialog(page);
@@ -156,9 +151,7 @@ test("a failed report retires the in-flight toast before the error toast", async
   await waitForEntries(page);
   await page.evaluate(() => {
     localStorage.setItem("mock-report-error", "daily_cap");
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { open_external_url: 3000 };
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { open_external_url: 3000 };
   });
 
   const dialog = await openReportDialog(page);

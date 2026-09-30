@@ -5,6 +5,7 @@ import {
   createInMemoryRateLimitStore,
   createRestRateLimitStore,
   processReport,
+  submissionUncertain,
 } from "./_report-core.js";
 
 /** @typedef {{status(code: number): HttpResponse, setHeader(name: string, value: string): HttpResponse, json(payload: unknown): HttpResponse, end(): HttpResponse}} HttpResponse */
@@ -43,17 +44,17 @@ export async function createGitHubIssue(issue) {
     body: JSON.stringify(issue),
     });
   } catch {
-    throw new ReportError("submission_uncertain", "GitHub may have created the issue; check recent issues before retrying", 503);
+    throw submissionUncertain();
   }
   if (!response.ok && response.status < 500 && response.status !== 408) {
     throw new ReportError("server_rejected", "GitHub rejected the report", 502);
   }
   if (!response.ok) {
-    throw new ReportError("submission_uncertain", "GitHub may have created the issue; check recent issues before retrying", 503);
+    throw submissionUncertain();
   }
   const payload = await response.json().catch(() => ({}));
   if (typeof payload.html_url !== "string" || !Number.isSafeInteger(payload.number)) {
-    throw new ReportError("submission_uncertain", "GitHub may have created the issue; check recent issues before retrying", 503);
+    throw submissionUncertain();
   }
   return { url: payload.html_url, number: payload.number };
 }

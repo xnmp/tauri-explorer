@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_USER_REPORT_ATTACHMENT_BYTES,
+  MAX_USER_REPORT_ATTACHMENTS,
   MAX_USER_REPORT_ATTACHMENTS_BYTES,
+  MAX_USER_REPORT_CONTACT_UNITS,
+  MAX_USER_REPORT_DESCRIPTION_UNITS,
+  MAX_USER_REPORT_TITLE_UNITS,
   userReportAttachmentFailureMessage,
+  userReportFallbackNotice,
   userReportFallbackUrl,
   validateUserReportAttachmentFiles,
 } from "$lib/domain/user-report";
@@ -90,6 +95,45 @@ describe("userReportAttachmentFailureMessage", () => {
     expect(userReportAttachmentFailureMessage(kind)).toContain(expected);
     expect(userReportAttachmentFailureMessage(kind)).toContain("saved");
     expect(userReportAttachmentFailureMessage(kind)).toContain("window closes");
+  });
+});
+
+describe("report limits (shared contract)", () => {
+  it("match the native boundary and relay", async () => {
+    const { default: contract } = await import("../contract/fixtures/report_relay.json");
+    expect({
+      maxAttachments: MAX_USER_REPORT_ATTACHMENTS,
+      maxAttachmentBytes: MAX_USER_REPORT_ATTACHMENT_BYTES,
+      maxAttachmentsBytes: MAX_USER_REPORT_ATTACHMENTS_BYTES,
+      maxTitleUnits: MAX_USER_REPORT_TITLE_UNITS,
+    }).toEqual({
+      maxAttachments: contract.limits.maxAttachments,
+      maxAttachmentBytes: contract.limits.maxAttachmentBytes,
+      maxAttachmentsBytes: contract.limits.maxAttachmentsBytes,
+      maxTitleUnits: contract.limits.maxTitleUnits,
+    });
+    expect({
+      maxDescriptionUnits: MAX_USER_REPORT_DESCRIPTION_UNITS,
+      maxContactUnits: MAX_USER_REPORT_CONTACT_UNITS,
+    }).toEqual(contract.appLimits);
+  });
+});
+
+describe("definite network failure (#889)", () => {
+  it("says nothing was sent rather than that the report may have been submitted", () => {
+    expect(userReportFallbackNotice("network_unreachable"))
+      .toBe("Couldn't reach the report server — nothing was sent. Opening GitHub instead");
+    expect(userReportAttachmentFailureMessage("network_unreachable"))
+      .toMatch(/^Couldn't reach the report server — nothing was sent\. Your text is saved/);
+  });
+
+  it("keeps the existing notices for other definite failures", () => {
+    expect(userReportFallbackNotice("daily_cap"))
+      .toBe("Reports are temporarily unavailable — opening GitHub instead");
+    expect(userReportFallbackNotice("server_rejected"))
+      .toBe("Could not submit in-app — opening GitHub instead");
+    expect(userReportFallbackNotice(undefined))
+      .toBe("Could not submit in-app — opening GitHub instead");
   });
 });
 

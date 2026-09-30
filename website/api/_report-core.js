@@ -1,7 +1,7 @@
 /** @typedef {{ scope: string, key: string, limit: number, windowMs: number }} LimitEntry */
 /** @typedef {{ consume(entries: LimitEntry[], now?: number): Promise<string | undefined> }} RateLimitStore */
 /** @typedef {{ name: string, mediaType: "image/png" | "image/jpeg" | "image/gif", bytes: Uint8Array }} ValidAttachment */
-/** @typedef {{ title: string, body: string, kind: "bug" | "feature", contact: string, version: string, os: string, arch: string, attachments: ValidAttachment[] }} ValidReport */
+/** @typedef {{ title: string, body: string, kind: "bug" | "feature", attachments: ValidAttachment[] }} ValidReport */
 /** @typedef {{ upload(attachment: ValidAttachment): Promise<string>, remove(urls: string[]): Promise<void> }} AttachmentStore */
 
 const IP_LIMITS = [
@@ -9,12 +9,40 @@ const IP_LIMITS = [
   { scope: "hour", limit: 10, windowMs: 60 * 60_000 },
 ];
 const DAILY_LIMIT = { scope: "day", limit: 100, windowMs: 24 * 60 * 60_000 };
-const MAX_ATTACHMENTS = 3;
-const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
-const MAX_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+/** Limits shared with the app's native boundary (`src-tauri/src/user_report.rs`).
+ * Both sides assert them against `tests/contract/fixtures/report_relay.json`. */
+export const REPORT_LIMITS = Object.freeze({
+  maxAttachments: 3,
+  maxAttachmentBytes: 2 * 1024 * 1024,
+  maxAttachmentsBytes: 3 * 1024 * 1024,
+  maxTitleUnits: 120,
+  maxAttachmentNameUnits: 120,
+  // The app appends contact and environment details to the description.
+  maxRelayBodyUnits: 8500,
+});
+
+/** Error codes the app maps to its own error kinds. `ReportError` accepts
+ * only these, so the type check rejects a code the app would not recognise. */
+export const REPORT_ERROR_CODES = Object.freeze(/** @type {const} */ ([
+  "malformed_input",
+  "rate_limited",
+  "daily_cap",
+  "server_rejected",
+  "submission_uncertain",
+]));
+/** @typedef {typeof REPORT_ERROR_CODES[number]} ReportErrorCode */
+
+/** After GitHub's issue POST starts, a failure cannot prove the issue was not created. */
+export function submissionUncertain() {
+  return new ReportError(
+    "submission_uncertain",
+    "GitHub may have created the issue; check recent issues before retrying",
+    503,
+  );
+}
 
 export class ReportError extends Error {
-  /** @param {string} code @param {string} message @param {number} [status] */
+  /** @param {ReportErrorCode} code @param {string} message @param {number} [status] */
   constructor(code, message, status = 400) {
     super(message);
     this.name = "ReportError";
@@ -30,19 +58,6 @@ function requiredString(input, field, max) {
   }
   const value = input.trim();
   if (!value || value.length > max || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) {
-    throw new ReportError("malformed_input", `${field} is invalid`);
-  }
-  return value;
-}
-
-/** @param {unknown} input @param {string} field @param {number} max */
-function optionalString(input, field, max) {
-  if (input == null || input === "") return "";
-  if (typeof input !== "string") {
-    throw new ReportError("malformed_input", `${field} is invalid`);
-  }
-  const value = input.trim();
-  if (value.length > max || /[\u0000-\u001f\u007f]/u.test(value)) {
     throw new ReportError("malformed_input", `${field} is invalid`);
   }
   return value;
@@ -79,7 +94,7 @@ function hasImageMagic(mediaType, bytes) {
 /** @param {unknown} input @returns {ValidAttachment[]} */
 function validateAttachments(input) {
   if (input == null) return [];
-  if (!Array.isArray(input) || input.length > MAX_ATTACHMENTS) {
+  if (!Array.isArray(input) || input.length > REPORT_LIMITS.maxAttachments) {
     throw new ReportError("malformed_input", "Attach up to 3 images");
   }
   let total = 0;
@@ -88,7 +103,7 @@ function validateAttachments(input) {
       throw new ReportError("malformed_input", "Attachment is invalid");
     }
     const record = /** @type {Record<string, unknown>} */ (value);
-    const name = requiredString(record.name, "attachment name", 120);
+    const name = requiredString(record.name, "attachment name", REPORT_LIMITS.maxAttachmentNameUnits);
     const mediaType = record.mediaType;
     if (!["image/png", "image/jpeg", "image/gif"].includes(
       /** @type {string} */ (mediaType),
@@ -104,12 +119,12 @@ function validateAttachments(input) {
     const buffer = Buffer.from(record.data, "base64");
     if (buffer.toString("base64") !== record.data
       || buffer.length === 0
-      || buffer.length > MAX_ATTACHMENT_BYTES
+      || buffer.length > REPORT_LIMITS.maxAttachmentBytes
       || !hasImageMagic(/** @type {string} */ (mediaType), buffer)) {
       throw new ReportError("malformed_input", "Attachment data is invalid");
     }
     total += buffer.length;
-    if (total > MAX_ATTACHMENTS_BYTES) {
+    if (total > REPORT_LIMITS.maxAttachmentsBytes) {
       throw new ReportError("malformed_input", "Attachments must total 3 MiB or less");
     }
     return {
@@ -126,10 +141,10 @@ export function validateReport(input) {
     throw new ReportError("malformed_input", "A report is required");
   }
   const record = /** @type {Record<string, unknown>} */ (input);
-  const title = requiredString(record.title, "title", 120);
-  // The app accepts an 8,000-unit description and appends contact/version/OS
-  // metadata before posting. Preserve that user text in full.
-  const body = optionalMultilineString(record.body, "body", 8500);
+  const title = requiredString(record.title, "title", REPORT_LIMITS.maxTitleUnits);
+  // The app appends contact and environment details to its description before
+  // posting; its native tests keep that assembly within maxRelayBodyUnits.
+  const body = optionalMultilineString(record.body, "body", REPORT_LIMITS.maxRelayBodyUnits);
   if (/^(?:https?:\/\/|www\.)\S+$/iu.test(body)) {
     throw new ReportError("malformed_input", "Description cannot be only a link");
   }
@@ -140,10 +155,6 @@ export function validateReport(input) {
     title: title.replace(/\s*\r?\n\s*/gu, " "),
     body,
     kind: record.kind,
-    contact: optionalString(record.contact, "contact", 100),
-    version: optionalString(record.version, "version", 100),
-    os: optionalString(record.os, "os", 100),
-    arch: optionalString(record.arch, "arch", 100),
     attachments: validateAttachments(record.attachments),
   };
 }
@@ -296,7 +307,7 @@ export async function processReport(
       }
     }
     if (uncertain) {
-      throw new ReportError("submission_uncertain", "GitHub may have created the issue; check recent issues before retrying", 503);
+      throw submissionUncertain();
     }
     throw error;
   }

@@ -1,0 +1,28 @@
+{
+  "limits": {
+    "maxAttachments": 3,
+    "maxAttachmentBytes": 2097152,
+    "maxAttachmentsBytes": 3145728,
+    "maxTitleUnits": 120,
+    "maxAttachmentNameUnits": 120,
+    "maxRelayBodyUnits": 8500
+  },
+  "appLimits": {
+    "maxDescriptionUnits": 8000,
+    "maxContactUnits": 100
+  },
+  "relayErrorCodes": [
+    "malformed_input",
+    "rate_limited",
+    "daily_cap",
+    "server_rejected",
+    "submission_uncertain"
+  ],
+  "requestFields": [
+    "title",
+    "body",
+    "kind",
+    "website",
+    "attachments"
+  ]
+}

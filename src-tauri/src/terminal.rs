@@ -17,16 +17,18 @@
 //! (terminal follows explorer) needs to know whether a foreground command is
 //! running before injecting a `cd`; `terminal_status` answers that.
 
+mod input;
+
 use crate::error::AppError;
+use input::{run_input_writer, InputReceipt, TerminalInput};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 
 struct TerminalHandle {
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: SharedMaster,
     child: SharedChild,
     /// The spawned shell's pid; used for foreground-process-group busy
@@ -42,6 +44,9 @@ struct TerminalSlot {
     window_label: String,
     token: Arc<AtomicBool>,
     phase: TerminalPhase,
+    /// The terminal's one input stream (#882). It exists from reservation, so
+    /// typeahead written while the shell starts is held and delivered first.
+    input: TerminalInput,
 }
 
 enum TerminalPhase {
@@ -56,6 +61,7 @@ impl TerminalSlot {
             window_label,
             token: Arc::new(AtomicBool::new(false)),
             phase: TerminalPhase::Reserved,
+            input: TerminalInput::new(),
         }
     }
 
@@ -533,6 +539,7 @@ fn zsh_shim_files() -> [(&'static str, String); 4] {
 #[cfg(unix)]
 fn ensure_zsh_shim(cache_root: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     use sha2::{Digest, Sha256};
+    use std::io::Write;
 
     let files = zsh_shim_files();
     let mut hasher = Sha256::new();
@@ -756,6 +763,7 @@ fn spawn_shell_with(
             return Err(AppError::Other(format!("pty writer failed: {error}")));
         }
     };
+    let (input_sender, input_receiver) = std::sync::mpsc::channel();
 
     let child = {
         let mut map = terminals()
@@ -776,8 +784,11 @@ fn spawn_shell_with(
         }
         let child = Arc::new(Mutex::new(child));
         let master = Arc::new(Mutex::new(pair.master));
-        publish.expect("checked above").phase = TerminalPhase::Running(TerminalHandle {
-            writer: Arc::new(Mutex::new(writer)),
+        let slot = publish.expect("checked above");
+        // Attach under the registry lock: held typeahead enters the channel
+        // before any write admitted after publication can.
+        slot.input.attach(input_sender);
+        slot.phase = TerminalPhase::Running(TerminalHandle {
             master: master.clone(),
             child: child.clone(),
             pid,
@@ -786,6 +797,9 @@ fn spawn_shell_with(
         (child, master)
     };
     let (child, _reader_master) = child;
+
+    let writer_token = token.clone();
+    std::thread::spawn(move || run_input_writer(writer, input_receiver, &writer_token));
 
     let reader_token = token.clone();
     std::thread::spawn(move || {
@@ -972,13 +986,26 @@ fn running<T>(
     Ok(pick(handle))
 }
 
-/// `terminal_write`'s blocking half: user input reaches the PTY unchanged.
-fn write_terminal(id: u64, window_label: &str, data: &[u8]) -> Result<(), AppError> {
-    let writer = running(id, window_label, |handle| handle.writer.clone())?;
-    let mut writer = writer.lock().unwrap_or_else(|error| error.into_inner());
-    writer
-        .write_all(data)
-        .map_err(|e| AppError::Other(format!("pty write failed: {e}")))
+/// `terminal_write`'s body: admit write `seq` to the terminal's ordered input
+/// stream. Only enqueues, so it never waits on the PTY; a reserved or starting
+/// terminal holds the input as typeahead (#882).
+fn write_terminal(
+    id: u64,
+    window_label: &str,
+    seq: u64,
+    data: Vec<u8>,
+) -> Result<InputReceipt, AppError> {
+    let mut map = terminals()
+        .lock()
+        .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
+    let slot = map
+        .get_mut(&id)
+        .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+    slot.check_owner(window_label)?;
+    if slot.token.load(Ordering::Relaxed) {
+        return Err(AppError::Other(format!("terminal {id} is closing")));
+    }
+    Ok(slot.input.submit(seq, data))
 }
 
 /// `terminal_resize`'s blocking half. The kernel signals the new size to the
@@ -996,12 +1023,20 @@ fn resize_terminal(id: u64, window_label: &str, cols: u16, rows: u16) -> Result<
         .map_err(|e| AppError::Other(format!("pty resize failed: {e}")))
 }
 
-/// Write user input (keystrokes) to the terminal.
+/// Write user input to the terminal as write number `seq` of its input
+/// stream (0, 1, 2, … per terminal). Bytes reach the shell in `seq` order
+/// whatever order the invocations run in, and a repeated `seq` is ignored.
+/// Input written before the shell starts is held (bounded) and delivered once
+/// it does; the receipt reports any typeahead that had to be discarded.
 #[tauri::command]
-pub async fn terminal_write(window: tauri::Window, id: u64, data: String) -> Result<(), AppError> {
-    tokio::task::spawn_blocking(move || write_terminal(id, window.label(), data.as_bytes()))
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+pub async fn terminal_write(
+    window: tauri::Window,
+    id: u64,
+    seq: u64,
+    data: String,
+) -> Result<InputReceipt, AppError> {
+    // Enqueue-only under a briefly held registry lock: no blocking-pool hop.
+    write_terminal(id, window.label(), seq, data.into_bytes())
 }
 
 /// Resize the PTY to match the xterm.js grid.
@@ -1254,24 +1289,17 @@ mod tests {
             |_| {},
         )
         .unwrap();
-        let (writer, master, shell_pid) = {
-            let map = terminals()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let TerminalPhase::Running(handle) = &map.get(&id).unwrap().phase else {
-                panic!("terminal not running")
-            };
-            (
-                handle.writer.clone(),
-                handle.master.clone(),
-                handle.pid.unwrap(),
-            )
-        };
-        writer
-            .lock()
-            .unwrap()
-            .write_all(b"sh -c 'trap \"\" HUP; while :; do sleep 1; done'\n")
-            .unwrap();
+        let (master, shell_pid) = running(id, "job-control-owner", |handle| {
+            (handle.master.clone(), handle.pid.unwrap())
+        })
+        .unwrap();
+        write_terminal(
+            id,
+            "job-control-owner",
+            0,
+            b"sh -c 'trap \"\" HUP; while :; do sleep 1; done'\n".to_vec(),
+        )
+        .unwrap();
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let foreground_group = loop {
@@ -1303,38 +1331,172 @@ mod tests {
         unsafe { libc::kill(-foreground_group, libc::SIGKILL) };
     }
 
-    #[test]
+    /// Collects one hermetic shell's output until a marker appears.
     #[cfg(unix)]
-    fn blocked_terminal_writer_does_not_hold_registry_lock() {
-        let (id, token) = reserve_started("blocked-writer");
+    struct Transcript {
+        output: mpsc::Receiver<String>,
+        text: String,
+    }
+
+    #[cfg(unix)]
+    impl Transcript {
+        fn expect(&mut self, marker: &str) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
+            while !self.text.contains(marker) {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "the shell never printed {marker:?}; output so far: {:?}",
+                    self.text
+                );
+                if let Ok(chunk) = self
+                    .output
+                    .recv_timeout(remaining.min(Duration::from_millis(100)))
+                {
+                    self.text.push_str(&chunk);
+                }
+            }
+        }
+    }
+
+    /// Spawn the hermetic shell for an already-begun terminal.
+    #[cfg(unix)]
+    fn spawn_hermetic(id: u64, owner: &str, token: Arc<AtomicBool>) -> Transcript {
+        let (output_tx, output) = mpsc::channel::<String>();
         spawn_shell_with(
             &hermetic_shell(),
             id,
-            "blocked-writer".into(),
+            owner.into(),
             token,
             None,
-            80,
+            200,
             24,
-            |_| {},
+            move |chunk| {
+                let _ = output_tx.send(chunk);
+            },
             |_| {},
             |_| {},
         )
-        .unwrap();
-        let writer = {
-            let map = terminals()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let TerminalPhase::Running(handle) = &map.get(&id).unwrap().phase else {
-                panic!("terminal not running")
-            };
-            handle.writer.clone()
-        };
-        let _blocked_writer = writer.lock().unwrap();
+        .expect("spawn the hermetic shell");
+        Transcript {
+            output,
+            text: String::new(),
+        }
+    }
 
-        let unrelated = reserve_terminal("unrelated").unwrap();
-        assert!(terminals().lock().unwrap().contains_key(&unrelated));
-        on_window_destroyed("unrelated");
-        kill_test_terminal(id);
+    #[cfg(unix)]
+    struct DestroyOnDrop(&'static str);
+
+    #[cfg(unix)]
+    impl Drop for DestroyOnDrop {
+        fn drop(&mut self) {
+            on_window_destroyed(self.0);
+        }
+    }
+
+    /// #882: keystrokes typed while the shell is still starting are queued,
+    /// then run by the shell ahead of anything written after it started.
+    /// Each marker is printed only when the shell evaluates the command, never
+    /// by the terminal echoing the typed line.
+    #[test]
+    #[cfg(unix)]
+    fn typeahead_before_the_shell_starts_runs_first_once_it_does() {
+        const OWNER: &str = "typeahead";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let id = reserve_terminal(OWNER).unwrap();
+        // Reserved: the frontend has an id but has not asked for a shell yet.
+        write_terminal(id, OWNER, 0, b"printf 'TA:%s:' ".to_vec()).unwrap();
+        let token = begin_terminal(id, OWNER).unwrap();
+        // Starting: the PTY is being prepared.
+        write_terminal(id, OWNER, 1, b"ahead; printf 'first\\n'\n".to_vec()).unwrap();
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        write_terminal(id, OWNER, 2, b"printf 'AFTER:%s\\n' start\n".to_vec()).unwrap();
+        transcript.expect("AFTER:start");
+        let typeahead = transcript
+            .text
+            .find("TA:ahead:first")
+            .expect("the typeahead ran");
+        assert!(typeahead < transcript.text.find("AFTER:start").unwrap());
+    }
+
+    /// #882: ordering is the backend's guarantee, not the caller's. Every
+    /// character is its own write from its own thread, released together, and
+    /// the shell still receives the sequence-number order.
+    #[test]
+    #[cfg(unix)]
+    fn concurrent_writes_reach_the_shell_in_sequence_order() {
+        const OWNER: &str = "concurrent-writes";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (id, token) = reserve_started(OWNER);
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        let alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let mut chunks = vec!["printf 'ORD:%s\\n' ".to_string()];
+        chunks.extend(alphabet.chars().map(String::from));
+        chunks.push("\n".into());
+        let barrier = Arc::new(std::sync::Barrier::new(chunks.len()));
+        let writers: Vec<_> = chunks
+            .into_iter()
+            .enumerate()
+            .rev()
+            .map(|(seq, chunk)| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    write_terminal(id, OWNER, seq as u64, chunk.into_bytes()).unwrap();
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        transcript.expect(&format!("ORD:{alphabet}"));
+    }
+
+    /// #882: a caller may retry a write whose reply it lost; the shell runs
+    /// it once.
+    #[test]
+    #[cfg(unix)]
+    fn a_retried_write_runs_once() {
+        const OWNER: &str = "retried-write";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (id, token) = reserve_started(OWNER);
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        let command = b"printf 'DUP:%s\\n' once\n".to_vec();
+        write_terminal(id, OWNER, 0, command.clone()).unwrap();
+        write_terminal(id, OWNER, 0, command).unwrap();
+        write_terminal(id, OWNER, 1, b"printf 'END:%s\\n' marker\n".to_vec()).unwrap();
+        transcript.expect("END:marker");
+        assert_eq!(transcript.text.matches("DUP:once").count(), 1);
+    }
+
+    /// #882: closing a terminal ends its input stream. Input addressed to it
+    /// is refused rather than delivered to whatever shell replaces it, and a
+    /// replacement starts its own stream at write 0.
+    #[test]
+    #[cfg(unix)]
+    fn a_closed_terminal_refuses_input_and_its_successor_starts_clean() {
+        const OWNER: &str = "restart";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (first, token) = reserve_started(OWNER);
+        let mut transcript = spawn_hermetic(first, OWNER, token);
+        write_terminal(first, OWNER, 0, b"printf 'ONE:%s\\n' up\n".to_vec()).unwrap();
+        transcript.expect("ONE:up");
+        // A still-pending reservation holding typeahead dies with it too.
+        let pending = reserve_terminal(OWNER).unwrap();
+        write_terminal(pending, OWNER, 0, b"printf 'STALE\\n'\n".to_vec()).unwrap();
+
+        on_window_destroyed(OWNER);
+        assert!(
+            write_terminal(first, OWNER, 1, b"printf 'LATE\\n'\n".to_vec()).is_err(),
+            "a closing terminal refuses input"
+        );
+        assert!(write_terminal(pending, OWNER, 1, b"x".to_vec()).is_err());
+
+        let (second, token) = reserve_started(OWNER);
+        let mut successor = spawn_hermetic(second, OWNER, token);
+        write_terminal(second, OWNER, 0, b"printf 'TWO:%s\\n' fresh\n".to_vec()).unwrap();
+        successor.expect("TWO:fresh");
+        assert!(!successor.text.contains("STALE") && !successor.text.contains("LATE"));
     }
 
     #[test]
@@ -1417,19 +1579,7 @@ mod tests {
         .expect("spawn failed")
         .id;
 
-        {
-            let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            let slot = map.get_mut(&id).expect("terminal registered");
-            let TerminalPhase::Running(handle) = &mut slot.phase else {
-                panic!("not running")
-            };
-            handle
-                .writer
-                .lock()
-                .unwrap()
-                .write_all(b"pwd && exit\n")
-                .unwrap();
-        }
+        write_terminal(id, "test-window", 0, b"pwd && exit\n".to_vec()).unwrap();
 
         let mut output = String::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -1519,20 +1669,20 @@ mod tests {
             }
         };
 
-        write_terminal(id, OWNER, b"printf 'RT:%s:%s\\n' round trip\n").unwrap();
+        write_terminal(id, OWNER, 0, b"printf 'RT:%s:%s\\n' round trip\n".to_vec()).unwrap();
         expect_output("RT:round:trip");
 
-        write_terminal(id, OWNER, b"stty size | sed 's/^/SIZE=/'\n").unwrap();
+        write_terminal(id, OWNER, 1, b"stty size | sed 's/^/SIZE=/'\n".to_vec()).unwrap();
         expect_output("SIZE=24 80");
         assert!(
             resize_terminal(id, "another-window", 100, 30).is_err(),
             "only the owning window may resize its terminal"
         );
         resize_terminal(id, OWNER, 132, 40).unwrap();
-        write_terminal(id, OWNER, b"stty size | sed 's/^/SIZE=/'\n").unwrap();
+        write_terminal(id, OWNER, 2, b"stty size | sed 's/^/SIZE=/'\n".to_vec()).unwrap();
         expect_output("SIZE=40 132");
 
-        write_terminal(id, OWNER, b"exit 7\n").unwrap();
+        write_terminal(id, OWNER, 3, b"exit 7\n".to_vec()).unwrap();
         let status = exit_rx
             .recv_timeout(Duration::from_secs(15))
             .expect("the shell's exit is observed");
@@ -2058,19 +2208,7 @@ mod tests {
         }
 
         // Start a foreground command.
-        {
-            let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            let slot = map.get_mut(&id).unwrap();
-            let TerminalPhase::Running(handle) = &mut slot.phase else {
-                panic!("not running")
-            };
-            handle
-                .writer
-                .lock()
-                .unwrap()
-                .write_all(b"sleep 2\n")
-                .unwrap();
-        }
+        write_terminal(id, "busy-test", 0, b"sleep 2\n".to_vec()).unwrap();
 
         // Poll until busy is observed.
         let busy_deadline = std::time::Instant::now() + Duration::from_secs(5);

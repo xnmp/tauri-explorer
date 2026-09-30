@@ -430,13 +430,14 @@ backend for E2E/browser).
 
 ## Terminal panel
 
-- `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input goes through `session.write`, backed by `domain/ordered-writer.ts`: separate `terminal_write` invocations complete in any order, so at most one is in flight and later input coalesces behind it (#709).
-- `state/terminal-input-order.ts` — holds later keystrokes behind an asynchronous clipboard read and captures xterm's paste bytes before flushing them to the session in key order (#732).
+- `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input (keys, shortcut bytes, pastes, path insertions, `cd` sync) goes through `session.write` into `domain/terminal-input-queue.ts`, which accepts promises so a clipboard read or a dialect-dependent insertion keeps its key position (#709, #882).
+- `domain/terminal-paste.ts` — paste source order per platform (#732) and the bytes xterm's `paste()` would emit.
+- `src-tauri/src/terminal/input.rs` — the ordering guarantee: `terminal_write(id, seq, data)` is admitted in `seq` order whatever order the async commands run in; typeahead before the PTY exists is held (64 KiB, then discarded with a receipt the panel warns about); one writer thread per PTY (#882).
 
 - `components/TerminalPanel.svelte` — embedded terminal UI
 - `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)
 - `api/terminal.ts`; `src-tauri/src/terminal.rs` — PTY spawn/write/resize/kill
-- FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync.
+- FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync. Input: xterm `onData`/paste/insertion → `session.write` → input queue → `terminal_write(seq)` → `terminal/input.rs` sequencer → PTY writer thread.
 
 ## Archives, external apps, wallpaper, system
 

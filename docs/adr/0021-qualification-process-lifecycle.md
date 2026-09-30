@@ -67,6 +67,11 @@ Unmeasured warm durations are null. Release logs can be streamed through the
 explicit `TAURI_EXPLORER_LOG_STDOUT=1` diagnostic option. Every sample still
 requires foreground readiness and the survival interval. A fresh process does
 not imply cold operating-system caches, a presented frame or successful input.
+A sample that reaches its readiness bound is still owned while the runner
+captures bounded stall evidence (process table, profiles, unified log, new
+crash reports) into the sample's artifact directory; cleanup then proceeds as
+usual. The timeout, with the parser's last rejection, always leads the failure,
+and a capture that fails or overruns its deadline only adds to it (#936).
 
 ## Consequences
 

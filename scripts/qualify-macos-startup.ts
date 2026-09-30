@@ -8,12 +8,17 @@ import {
   readVerifiedNativeBuildManifest,
   buildInteractiveMacStartupQualificationReport,
   buildMacStartupQualificationReport,
+  MacStartupTimeoutError,
   resolveQualificationArtifactPath,
   stopNativeStartupProcess,
   waitForMacStartupProcess,
   writeQualificationArtifact,
   type AttributedMacStartupMeasurement,
 } from "../e2e-tauri/native-qualification";
+import {
+  captureMacStartupStallEvidence,
+  withStallEvidence,
+} from "../e2e-tauri/native-qualification/stall-evidence";
 
 if (process.platform !== "darwin") {
   throw new Error("macOS startup qualification must run on a real macOS host");
@@ -76,11 +81,10 @@ if (measureWarm) sampleEnvironment.WARM_MEASURE = "1";
 async function runSample(
   index: number,
 ): Promise<AttributedMacStartupMeasurement & { log: string }> {
-  const logPath = resolveQualificationArtifactPath(
-    outputDir,
-    `sample-${String(index).padStart(2, "0")}.log`,
-  );
+  const sampleName = `sample-${String(index).padStart(2, "0")}`;
+  const logPath = resolveQualificationArtifactPath(outputDir, `${sampleName}.log`);
   let log = "";
+  const sampleStartedAtMs = Date.now();
   const child = spawn(binary, [], {
     env: sampleEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
@@ -97,6 +101,21 @@ async function runSample(
       measureWarm,
     });
     return { ...measurement, log: logPath };
+  } catch (error) {
+    // A timed-out sample's process is still alive: record what the operating
+    // system can show about it before cleanup stops it (#936).
+    if (error instanceof MacStartupTimeoutError) {
+      throw await withStallEvidence(error, outputDir, () =>
+        captureMacStartupStallEvidence({
+          pid: child.pid,
+          binary,
+          outputDir,
+          directoryName: `${sampleName}-stall`,
+          sampleStartedAtMs,
+        }),
+      );
+    }
+    throw error;
   } finally {
     try {
       await stopNativeStartupProcess(child);
@@ -130,8 +149,16 @@ async function runDirectProcessScenario() {
     }
   }
   const artifacts = fs
-    .readdirSync(outputDir)
-    .filter((name) => name.endsWith(".log"))
+    .readdirSync(outputDir, { withFileTypes: true })
+    .flatMap((entry) => {
+      if (entry.isFile() && entry.name.endsWith(".log")) return [entry.name];
+      // Each stalled sample's evidence directory is indexed by its summary.
+      const summary = path.join(entry.name, "evidence.json");
+      return entry.isDirectory() && entry.name.endsWith("-stall") &&
+        fs.existsSync(path.join(outputDir, summary))
+        ? [summary]
+        : [];
+    })
     .map((name) => resolveQualificationArtifactPath(outputDir, name));
   return buildMacStartupQualificationReport({
     build,

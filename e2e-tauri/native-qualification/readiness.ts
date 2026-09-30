@@ -1,3 +1,4 @@
+import { describeStartupProgress, summarizeStartupProgress, type StartupProgressSummary } from "./startup-progress";
 import type { AttributedMacStartupMeasurement, MacStartupPhases, NativeStartupChild } from "./types";
 
 function durationToMilliseconds(value: string, unit: string): number {
@@ -20,11 +21,28 @@ function durationToMilliseconds(value: string, unit: string): number {
 
 /**
  * How far the two wall-clock-correlated boundaries may disagree with the native
- * monotonic total before the sample is rejected. Ordinary scheduling jitter
- * between the two clocks is sub-millisecond; anything beyond this is a clock
- * step or a log that does not describe a single run.
+ * monotonic total before the sample is rejected: a fixed allowance for clock
+ * granularity plus a rate term for wall-clock slewing over the launch.
+ *
+ * The rate term comes from the retained CI residuals (#936): across 7,480
+ * macOS samples the most negative residual grew with launch length, about
+ * -1.5ms under 3s, -2.0ms at 3-4s, -3.0ms at 4-6s, -3.8ms at 6-8s, -4.06ms at
+ * 8.1s and -6.18ms at 12.3s, i.e. about 0.5ms per second, while the median
+ * stayed near 0. That is the 500 ppm frequency bound of the kernel's NTP clock
+ * discipline (MAXFREQ): while the wall clock is being slewed it can drift from
+ * the monotonic clock by at most that rate. A fixed 5ms bound therefore
+ * rejected every slow cold sample (>~10s) launched during a slew and reported
+ * it as missing markers. A clock step or a log holding two runs still
+ * disagrees by far more than this bound.
  */
-const CORRELATION_TOLERANCE_MS = 5;
+const CORRELATION_TOLERANCE_FLOOR_MS = 5;
+const WALL_CLOCK_SLEW_RATE = 0.0005;
+
+export function correlationToleranceMs(launchTotalMs: number): number {
+  return Number(
+    (CORRELATION_TOLERANCE_FLOOR_MS + WALL_CLOCK_SLEW_RATE * Math.max(0, launchTotalMs)).toFixed(3),
+  );
+}
 
 function requiredNumber(
   match: RegExpMatchArray | null,
@@ -162,7 +180,7 @@ export function parseAttributedMacStartupLog(
   // the only ones a wall-clock step (or a log holding two runs) can inflate;
   // when that happens the residual goes sharply negative instead of the phases
   // looking wrong. Reject the sample rather than publish a plausible fiction.
-  if (phases.unattributedMs < -CORRELATION_TOLERANCE_MS) {
+  if (phases.unattributedMs < -correlationToleranceMs(launchTotalMs)) {
     throw new Error(
       "correlated startup clocks disagree with the native monotonic total: " +
         `residual ${phases.unattributedMs.toFixed(3)}ms`,
@@ -201,6 +219,27 @@ function parseDirectProcessStartupLog(
     inputReadyMs: null,
     measureWarm: options.measureWarm,
   });
+}
+
+/**
+ * The readiness bound expired. Carries what the log did show so the failure
+ * reports why, instead of only that markers were missing: the attributed
+ * parser's final rejection (e.g. a clock-correlation bound rather than an
+ * absent marker) and the main window's last streamed progress mark (#936).
+ */
+export class MacStartupTimeoutError extends Error {
+  constructor(
+    readonly timeoutMs: number,
+    readonly lastRejection: string | null,
+    readonly progress: StartupProgressSummary,
+  ) {
+    super(
+      `startup markers missing after ${timeoutMs}ms` +
+        `; last parser rejection: ${lastRejection ?? "none recorded"}` +
+        `; ${describeStartupProgress(progress)}`,
+    );
+    this.name = "MacStartupTimeoutError";
+  }
 }
 
 export function waitForMacStartupProcess(
@@ -258,20 +297,27 @@ export function waitForMacStartupProcess(
         resolve(measurement);
       }, options.survivalMs);
     };
+    let lastRejection: string | null = null;
     const inspectLog = (): void => {
       if (survivalTimer || completed) return;
       try {
         succeedAfterSurvival(parseDirectProcessStartupLog(readLog(), options));
-      } catch {
-        // Keep collecting the scenario's required native markers until the bound.
+      } catch (error) {
+        // Keep collecting the scenario's required native markers until the
+        // bound, but remember why so a timeout can say so.
+        lastRejection = error instanceof Error ? error.message : String(error);
       }
     };
 
-    const timeoutTimer = setTimeout(
-      () =>
-        fail(new Error(`startup markers missing after ${options.timeoutMs}ms`)),
-      options.timeoutMs,
-    );
+    const timeoutTimer = setTimeout(() => {
+      fail(
+        new MacStartupTimeoutError(
+          options.timeoutMs,
+          lastRejection,
+          summarizeStartupProgress(readLog()),
+        ),
+      );
+    }, options.timeoutMs);
     const pollTimer = setInterval(inspectLog, options.pollMs ?? 25);
     child.once("exit", onExit);
     child.once("error", onError);

@@ -325,16 +325,82 @@ pub async fn log_startup_timing(
     // scheduling delay, so the receipt epoch is logged alongside it and the
     // gap stays attributable instead of being folded into app work.
     if window.label() == "main" {
-        let receipt_epoch_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs_f64() * 1000.0)
-            .unwrap_or(f64::NAN);
+        let receipt_epoch_ms = epoch_ms_now();
         log::info!(
             "Startup(native-ready): window=main app-run-to-ready={:.1}ms receipt-epoch-ms={:.3}",
             clock.started.elapsed().as_secs_f64() * 1000.0,
             receipt_epoch_ms,
         );
     }
+    Ok(())
+}
+
+/// Wall-clock milliseconds since the Unix epoch, the unit every correlated
+/// startup marker uses. NaN (never a panic) if the clock predates the epoch.
+pub(crate) fn epoch_ms_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64() * 1000.0)
+        .unwrap_or(f64::NAN)
+}
+
+/// Longest accepted progress mark name; marks are short fixed identifiers.
+const STARTUP_PROGRESS_MARK_MAX: usize = 32;
+/// A webview offset beyond a day is not a startup measurement.
+const STARTUP_PROGRESS_WEBVIEW_MS_MAX: f64 = 86_400_000.0;
+
+/// Format one `Startup(webview-progress)` diagnostic line (#936).
+///
+/// The webview mirrors each startup milestone here as it is recorded, so a
+/// startup that never reaches `ui-ready` still shows the last milestone it
+/// reached and, via heartbeats, whether its JavaScript kept running. The
+/// native receipt time is on the same monotonic clock as `native-ready`.
+/// These lines are diagnostics only: the attributed startup parser must never
+/// read them, which the distinct `webview-progress` tag guarantees. The mark
+/// is validated because it becomes part of a parsed log line.
+pub(crate) fn startup_progress_line(
+    window: &str,
+    mark: &str,
+    webview_ms: f64,
+    app_run_ms: f64,
+) -> Result<String, AppError> {
+    let valid_mark = !mark.is_empty()
+        && mark.len() <= STARTUP_PROGRESS_MARK_MAX
+        && mark.starts_with(|c: char| c.is_ascii_lowercase())
+        && mark
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid_mark {
+        return Err(AppError::Other(format!(
+            "invalid startup progress mark: {mark:?}"
+        )));
+    }
+    if !webview_ms.is_finite() || !(0.0..=STARTUP_PROGRESS_WEBVIEW_MS_MAX).contains(&webview_ms) {
+        return Err(AppError::Other(format!(
+            "invalid startup progress offset: {webview_ms}"
+        )));
+    }
+    Ok(format!(
+        "Startup(webview-progress): window={window} mark={mark} webview-ms={webview_ms:.1} app-run-ms={app_run_ms:.1}"
+    ))
+}
+
+/// Record one webview startup milestone as it happens (see
+/// [`startup_progress_line`]). Fire-and-forget from the page's point of view.
+#[tauri::command]
+pub async fn log_startup_progress(
+    window: tauri::Window,
+    clock: tauri::State<'_, StartupClock>,
+    mark: String,
+    webview_ms: f64,
+) -> Result<(), AppError> {
+    let line = startup_progress_line(
+        window.label(),
+        &mark,
+        webview_ms,
+        clock.started.elapsed().as_secs_f64() * 1000.0,
+    )?;
+    log::info!("{line}");
     Ok(())
 }
 
@@ -384,9 +450,44 @@ mod tests {
     use super::linux_trash_files_directory;
     #[cfg(not(target_os = "linux"))]
     use super::recycle_bin_launcher;
+    use super::startup_progress_line;
     #[cfg(target_os = "windows")]
     use std::ffi::OsString;
     use std::path::Path;
+
+    #[test]
+    fn startup_progress_lines_carry_mark_and_both_clocks() {
+        assert_eq!(
+            startup_progress_line("main", "settings-ready", 1500.04, 3102.46).unwrap(),
+            "Startup(webview-progress): window=main mark=settings-ready webview-ms=1500.0 app-run-ms=3102.5"
+        );
+        // The distinct tag keeps the attributed `Startup(webview):` parser blind to it.
+        assert!(!startup_progress_line("main", "list-ready", 1.0, 2.0)
+            .unwrap()
+            .contains("Startup(webview):"));
+    }
+
+    #[test]
+    fn startup_progress_rejects_marks_that_could_forge_log_fields() {
+        for mark in [
+            "",
+            "List-ready",
+            "1st",
+            "list ready",
+            "list-ready=1ms",
+            "ready\nStartup(native-ready): window=main",
+            &"a".repeat(33),
+        ] {
+            assert!(
+                startup_progress_line("main", mark, 1.0, 1.0).is_err(),
+                "{mark:?}"
+            );
+        }
+        assert!(startup_progress_line("main", &"a".repeat(32), 1.0, 1.0).is_ok());
+        for offset in [f64::NAN, f64::INFINITY, -1.0, 86_400_001.0] {
+            assert!(startup_progress_line("main", "heartbeat", offset, 1.0).is_err());
+        }
+    }
 
     #[test]
     fn launcher_artifact_cwds_are_rejected() {

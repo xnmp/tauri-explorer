@@ -207,7 +207,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
 - `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards); serialized config-file writer plus `isConfigWritePending`/`lastWrittenConfig`, the echo-suppression facts config autoreload reads (#599).
-- `startup-timing.ts` — boot/list/settings/commands/readiness milestones; main-window report also records app-run-to-ready on the Rust monotonic clock.
+- `startup-timing.ts` — boot/list/settings/commands/readiness milestones; main-window report also records app-run-to-ready on the Rust monotonic clock. The main window also mirrors each mark (and a bounded heartbeat) to the native log as `Startup(webview-progress)` while startup is pending (#936).
 - `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
 - `git-warm.ts` — wires the pure git-warm scheduler to the repo-root probe + git-graph/SCM cache warmers.
 - `tab-transfer.ts` (above).
@@ -647,6 +647,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/native-qualification/process.ts` — process-tree RSS sampling, logged qualification process execution, and native process start/stop/fixture-cleanup lifecycle (SIGKILL-rejection-vs-exit race per #910/#911).
 - `e2e-tauri/native-qualification/readiness.ts` — the single macOS startup log marker parser used by both the readiness predicate and the report (#696), plus the direct-process readiness wait.
 - `e2e-tauri/native-qualification/attribution.ts` — macOS startup/interactive-evidence report assembly, phase-attribution summaries and half-bounce qualification.
+- `e2e-tauri/native-qualification/startup-progress.ts` — diagnostic summary of streamed `Startup(webview-progress)` lines (last mark, heartbeats after it); never used to qualify readiness (#936).
+- `e2e-tauri/native-qualification/stall-evidence.ts` — bounded macOS capture for a timed-out startup sample: `ps`, `sample`/`spindump`, unified log and new DiagnosticReports into `sample-NN-stall/` (#936).
 - `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
 - `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
@@ -671,7 +673,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
-- `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual and half-bounce verdicts.
+- `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual (bound scaled with launch length) and half-bounce verdicts.
+- `tests/qualification/macos-startup-progress.test.ts` — progress lines never change attributed parsing; timeout reports the last parser rejection and last streamed mark (#936).
+- `tests/qualification/macos-startup-stall-evidence.test.ts` — stall evidence selection, bounds, spindump fallback, overall deadline and timeout-first error composition (#936).
 - `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
 - `tests/e2e-tauri/window-transfer-waits.test.ts` — stale-token, delayed-listing and duplicate-name contracts for renderer observers.
 - `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.

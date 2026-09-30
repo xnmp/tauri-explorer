@@ -14,7 +14,7 @@
  * navigations or HMR can't skew it.
  */
 
-import { logStartupTiming } from "$lib/api/environment";
+import { logStartupProgress, logStartupTiming } from "$lib/api/environment";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Mark = { name: string; t: number };
@@ -35,11 +35,67 @@ const windowLabel =
     ? getCurrentWindow().label
     : "browser";
 
+/**
+ * Progress stream (#936). The `Startup(webview)` summary is written only once
+ * `ui-ready` is reached, so a startup that stalls before then leaves no
+ * webview evidence at all. Each mark is therefore also mirrored to the native
+ * log as `Startup(webview-progress)` the moment it is recorded. This is a
+ * diagnostic side channel of `markStartup`, not a second set of marks: the
+ * single-owner rule for which module records which mark is unchanged, and the
+ * attributed qualification parser never reads progress lines. Only the
+ * initial `main` window streams, because only its startup is attributed and
+ * warm windows can stay hidden (and never reach `ui-ready`) indefinitely.
+ */
+const streamsProgress = windowLabel === "main";
+
+/**
+ * While main-window startup is pending, a heartbeat shows whether the page's
+ * JavaScript is still running: heartbeats that continue past the last mark
+ * mean the page is alive but waiting (e.g. on IPC); heartbeats that stop mean
+ * the renderer hung or died. Bounded beyond the 30 s qualification timeout.
+ *
+ * Retire-when: #936 closed
+ */
+export const STARTUP_HEARTBEAT_INTERVAL_MS = 1_000;
+export const STARTUP_HEARTBEAT_LIMIT = 60;
+let heartbeat: ReturnType<typeof setInterval> | undefined;
+let heartbeats = 0;
+
+function elapsedSinceBoot(): number {
+  return (typeof performance !== "undefined" ? performance.now() : 0) - t0;
+}
+
+function sendProgress(mark: string, t: number): void {
+  // Fire-and-forget, like the summary: telemetry must never affect startup.
+  void logStartupProgress(mark, Math.max(0, t)).catch(() => {});
+}
+
+function stopHeartbeat(): void {
+  clearInterval(heartbeat);
+  heartbeat = undefined;
+}
+
+function startHeartbeat(): void {
+  if (heartbeat !== undefined || reported || heartbeats >= STARTUP_HEARTBEAT_LIMIT) return;
+  heartbeat = setInterval(() => {
+    if (reported || heartbeats >= STARTUP_HEARTBEAT_LIMIT) {
+      stopHeartbeat();
+      return;
+    }
+    heartbeats += 1;
+    sendProgress("heartbeat", elapsedSinceBoot());
+  }, STARTUP_HEARTBEAT_INTERVAL_MS);
+}
+
 /** Record a named milestone, measured from boot t0 (ms). */
 export function markStartup(name: string): void {
   if (reported) return;
-  const t = (typeof performance !== "undefined" ? performance.now() : 0) - t0;
+  const t = elapsedSinceBoot();
   marks.push({ name, t });
+  if (streamsProgress) {
+    sendProgress(name, t);
+    startHeartbeat();
+  }
 }
 
 /**
@@ -54,6 +110,7 @@ export function reportStartupReady(): void {
   // this mark.
   markStartup("ui-ready");
   reported = true;
+  stopHeartbeat();
 
   const total = marks.length ? marks[marks.length - 1].t : 0;
   const summary = marks.map((m) => `${m.name}=${m.t.toFixed(1)}ms`).join(" ");

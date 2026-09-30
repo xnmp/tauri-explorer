@@ -1058,6 +1058,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // poll mode; the volume evidence specs assert on that polling.
   drive_updates_live: () => false,
   log_startup_timing: () => undefined,
+  log_startup_progress: () => undefined,
 
   // Crash reporting (#184, #302): a Rust crash is simulated when the e2e test
   // sets localStorage.mockCrashReport before load; a frontend crash is

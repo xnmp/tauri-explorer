@@ -421,6 +421,25 @@ fn default_shell() -> String {
     }
 }
 
+/// Which shell a PTY runs, and where its Unix startup shims are cached. Tests
+/// pass their own so they never read the developer's `$SHELL` or write the
+/// real cache directory (#883).
+struct ShellLaunch {
+    program: String,
+    #[cfg(unix)]
+    cache_root: Option<std::path::PathBuf>,
+}
+
+impl ShellLaunch {
+    fn user() -> Self {
+        Self {
+            program: default_shell(),
+            #[cfg(unix)]
+            cache_root: dirs::cache_dir(),
+        }
+    }
+}
+
 /// Drain the longest valid UTF-8 prefix from `pending`, leaving any
 /// incomplete trailing multibyte sequence for the next read (so chunk
 /// boundaries never corrupt characters). Genuinely invalid bytes are
@@ -542,17 +561,53 @@ fn ensure_zsh_shim(cache_root: &std::path::Path) -> std::io::Result<std::path::P
         staged.write_all(body.as_bytes())?;
         staged.persist(&target).map_err(|error| error.error)?;
     }
+    prune_stale_zsh_shims(&shim, ZSH_SHIM_RETENTION);
     Ok(shim)
+}
+
+/// Superseded shims stay long enough for shells an older build started to
+/// finish with them; after that each release's shim would otherwise remain in
+/// the cache forever (#883).
+#[cfg(unix)]
+const ZSH_SHIM_RETENTION: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Best-effort removal of sibling `zsh-shim-*` directories that have not been
+/// modified within `retention`. The current shim is never removed.
+#[cfg(unix)]
+fn prune_stale_zsh_shims(current: &std::path::Path, retention: std::time::Duration) {
+    let (Some(parent), Some(current_name)) = (current.parent(), current.file_name()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name == current_name || !name.to_string_lossy().starts_with("zsh-shim-") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > retention);
+        if stale {
+            if let Err(error) = std::fs::remove_dir_all(entry.path()) {
+                log::debug!("zsh OSC 7 shim: could not prune {name:?}: {error}");
+            }
+        }
+    }
 }
 
 /// Best-effort: install the zsh OSC 7 shim and point the shell at it. Any
 /// failure degrades gracefully to spawning without cwd reporting.
 #[cfg(unix)]
-fn install_zsh_shim(cmd: &mut CommandBuilder) {
-    let Some(cache) = dirs::cache_dir() else {
+fn install_zsh_shim(cmd: &mut CommandBuilder, cache_root: Option<&std::path::Path>) {
+    let Some(cache) = cache_root else {
         return;
     };
-    let shim = match ensure_zsh_shim(&cache) {
+    let shim = match ensure_zsh_shim(cache) {
         Ok(shim) => shim,
         Err(e) => {
             log::warn!("zsh OSC 7 shim: install failed: {e}");
@@ -602,6 +657,33 @@ fn spawn_shell(
     on_exit: impl FnOnce(Option<u32>) + Send + 'static,
     on_cwd: impl Fn(String) + Send + 'static,
 ) -> Result<TerminalSpawnInfo, AppError> {
+    spawn_shell_with(
+        &ShellLaunch::user(),
+        id,
+        window_label,
+        token,
+        cwd,
+        cols,
+        rows,
+        on_output,
+        on_exit,
+        on_cwd,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_shell_with(
+    launch: &ShellLaunch,
+    id: u64,
+    window_label: String,
+    token: Arc<AtomicBool>,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    on_output: impl Fn(String) + Send + 'static,
+    on_exit: impl FnOnce(Option<u32>) + Send + 'static,
+    on_cwd: impl Fn(String) + Send + 'static,
+) -> Result<TerminalSpawnInfo, AppError> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -612,7 +694,7 @@ fn spawn_shell(
         })
         .map_err(|e| AppError::Other(format!("openpty failed: {e}")))?;
 
-    let shell = default_shell();
+    let shell = launch.program.clone();
     #[cfg(unix)]
     let shell_basename = std::path::Path::new(&shell)
         .file_name()
@@ -645,7 +727,7 @@ fn spawn_shell(
     // it), so it's skipped for now; fish emits OSC 7 natively.
     #[cfg(unix)]
     if shell_basename == "zsh" {
-        install_zsh_shim(&mut cmd);
+        install_zsh_shim(&mut cmd, launch.cache_root.as_deref());
     }
 
     let mut child = pair
@@ -983,6 +1065,14 @@ pub async fn terminal_status(window: tauri::Window, id: u64) -> Result<TerminalS
 
 #[cfg(test)]
 mod tests {
+    /// A shell that reads no user startup files and caches nothing (#883).
+    #[cfg(unix)]
+    fn hermetic_shell() -> super::ShellLaunch {
+        super::ShellLaunch {
+            program: "/bin/sh".into(),
+            cache_root: None,
+        }
+    }
     use super::*;
     #[cfg(unix)]
     use std::sync::mpsc;
@@ -1032,7 +1122,8 @@ mod tests {
             .unwrap_or_else(|error| error.into_inner())
             .remove(&id);
 
-        let result = spawn_shell(
+        let result = spawn_shell_with(
+            &hermetic_shell(),
             id,
             "owner".into(),
             token,
@@ -1150,7 +1241,8 @@ mod tests {
     #[cfg(unix)]
     fn window_teardown_releases_pty_while_foreground_job_ignores_hangup() {
         let (id, token) = reserve_started("job-control-owner");
-        spawn_shell(
+        spawn_shell_with(
+            &hermetic_shell(),
             id,
             "job-control-owner".into(),
             token,
@@ -1215,7 +1307,8 @@ mod tests {
     #[cfg(unix)]
     fn blocked_terminal_writer_does_not_hold_registry_lock() {
         let (id, token) = reserve_started("blocked-writer");
-        spawn_shell(
+        spawn_shell_with(
+            &hermetic_shell(),
             id,
             "blocked-writer".into(),
             token,
@@ -1305,7 +1398,8 @@ mod tests {
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
 
         let (id, token) = reserve_started("test-window");
-        let id = spawn_shell(
+        let id = spawn_shell_with(
+            &hermetic_shell(),
             id,
             "test-window".into(),
             token,
@@ -1388,7 +1482,8 @@ mod tests {
         let (output_tx, output_rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
         let (id, token) = reserve_started(OWNER);
-        spawn_shell(
+        spawn_shell_with(
+            &hermetic_shell(),
             id,
             OWNER.into(),
             token,
@@ -1465,7 +1560,8 @@ mod tests {
         let (exit_tx_b, exit_rx_b) = mpsc::channel::<Option<u32>>();
 
         let (a_id, a_token) = reserve_started("win-a");
-        let _a = spawn_shell(
+        let _a = spawn_shell_with(
+            &hermetic_shell(),
             a_id,
             "win-a".into(),
             a_token,
@@ -1480,7 +1576,8 @@ mod tests {
         )
         .unwrap();
         let (b_id, b_token) = reserve_started("win-b");
-        let b = spawn_shell(
+        let b = spawn_shell_with(
+            &hermetic_shell(),
             b_id,
             "win-b".into(),
             b_token,
@@ -1649,6 +1746,49 @@ mod tests {
     /// during another spawn's install must still find every startup file
     /// whole (#779). An editor keeps replacing `.zshrc` so the installers
     /// also repair it concurrently.
+    #[test]
+    #[cfg(unix)]
+    fn stale_zsh_shims_are_pruned_but_current_and_recent_ones_stay() {
+        use std::time::SystemTime;
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("tauri-explorer");
+        let stale = parent.join("zsh-shim-0000000000000000");
+        let recent = parent.join("zsh-shim-1111111111111111");
+        let unrelated = parent.join("thumbnails");
+        for dir in [&stale, &recent, &unrelated] {
+            std::fs::create_dir_all(dir.join("child")).unwrap();
+        }
+        let age = |dir: &std::path::Path, by: Duration| {
+            std::fs::File::open(dir)
+                .unwrap()
+                .set_modified(SystemTime::now() - by)
+                .unwrap();
+        };
+        age(&stale, ZSH_SHIM_RETENTION + Duration::from_secs(60));
+        age(&unrelated, ZSH_SHIM_RETENTION * 2);
+
+        let current = ensure_zsh_shim(root.path()).unwrap();
+
+        assert!(
+            current.join(".zshrc").is_file(),
+            "the current shim is installed"
+        );
+        assert!(
+            !stale.exists(),
+            "a superseded shim past retention is removed"
+        );
+        assert!(
+            recent.exists(),
+            "a recently used shim may still serve a running shell"
+        );
+        assert!(unrelated.exists(), "only zsh-shim-* siblings are pruned");
+
+        // An old current shim is never pruned by its own installation.
+        age(&current, ZSH_SHIM_RETENTION * 2);
+        assert_eq!(ensure_zsh_shim(root.path()).unwrap(), current);
+        assert!(current.join(".zshrc").is_file());
+    }
+
     #[test]
     #[cfg(unix)]
     fn concurrent_shim_installs_never_hide_a_startup_file() {
@@ -1880,7 +2020,8 @@ mod tests {
     fn busy_detection_tracks_foreground_command() {
         let (exit_tx, _exit_rx) = mpsc::channel::<Option<u32>>();
         let (id, token) = reserve_started("busy-test");
-        let id = spawn_shell(
+        let id = spawn_shell_with(
+            &hermetic_shell(),
             id,
             "busy-test".into(),
             token,
@@ -1973,16 +2114,20 @@ mod tests {
             return;
         }
 
-        // Force the shell to zsh for this spawn regardless of $SHELL.
-        let prev_shell = std::env::var("SHELL").ok();
-        std::env::set_var("SHELL", "zsh");
+        // Spawn zsh explicitly with a private shim cache: no process-wide
+        // $SHELL mutation and no writes to the developer's cache (#883).
+        let cache = tempfile::tempdir().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (cwd_tx, cwd_rx) = mpsc::channel::<String>();
         let (id, token) = reserve_started("zsh-osc7");
-        let info = spawn_shell(
+        let info = spawn_shell_with(
+            &ShellLaunch {
+                program: "zsh".into(),
+                cache_root: Some(cache.path().to_path_buf()),
+            },
             id,
             "zsh-osc7".into(),
             token,
@@ -1998,12 +2143,6 @@ mod tests {
             },
         )
         .expect("spawn failed");
-
-        // Restore SHELL so we don't leak state to other tests.
-        match prev_shell {
-            Some(v) => std::env::set_var("SHELL", v),
-            None => std::env::remove_var("SHELL"),
-        }
 
         let got_cwd = cwd_rx.recv_timeout(Duration::from_secs(8));
         // Drain any output for diagnostics.

@@ -498,5 +498,5 @@ fn invalid(message: &str) -> AppError {
 }
 
 #[cfg(all(test, target_os = "linux"))]
-#[path = "../../../test_support/recovery_move_retirement.rs"]
+#[path = "../../../test_support/recovery_move_retirement/mod.rs"]
 mod tests;

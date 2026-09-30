@@ -3,8 +3,10 @@
 Three native WebDriver cases pass against the real production move executor and
 recovery IPC. Source and target fixtures are on different mounted filesystems;
 the test rejects equal device IDs. There is no mock backend or injected recovery
-record. See the [machine-readable provenance](move-retirement-native-2026-09-23.json)
-for binary/source hashes and the retained raw log/profile paths.
+record. The machine-readable provenance JSON companion (binary/source hashes
+and retained raw log/profile paths, SHA-256
+`5806deecb52599135f94c7fdf18d4795d5b354b7def9c6cf1898f734dac1f1dd`) was
+removed per #894/#895 repo-artifact-and-docs-hygiene.
 
 - Cross-volume file overwrite: Reclaim measures and preserves both retained roots;
   explicit dialog discard removes both, leaves the source absent and destination

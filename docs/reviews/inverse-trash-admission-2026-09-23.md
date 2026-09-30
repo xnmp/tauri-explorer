@@ -39,3 +39,7 @@ or atomic identity-conditional protection from arbitrary external processes.
 Native rename inverse admission remains #749; permanent-delete external identity
 safety remains #739. No startup or general performance improvement is claimed by
 this patch. No release or merge is implied by acceptance results.
+
+The machine-readable JSON companion (SHA-256
+`6f2648c0d1e876aa793bf41770503013712f4c5a6fd657262ed81a6da78ac781`) was removed
+per #894/#895 repo-artifact-and-docs-hygiene.

@@ -183,6 +183,27 @@ describe("stall evidence capture", () => {
     ]);
     const error = await withStallEvidence(new Error("timeout"), root, async () => result);
     expect(error.message).toContain("3 new diagnostic report(s) (1 written during capture)");
+
+    // Induced reports beyond the copy limit are still counted as induced.
+    const limited = await captureMacStartupStallEvidence({
+      pid: APP_PID,
+      binary: "tauri-explorer",
+      outputDir: root,
+      directoryName: "sample-06-stall",
+      sampleStartedAtMs: SAMPLE_STARTED,
+      run: scriptedRunner((command, args) => {
+        if (command === "/bin/ps") return { stdout: PS_TABLE };
+        if (command === "/usr/bin/sample" && args[0] === "5002") {
+          for (const n of [1, 2]) fs.writeFileSync(path.join(reports, `Kernel-${n}.gpuRestart`), "GPU Reset");
+        }
+        return { report: "profile" };
+      }).run,
+      now: () => CAPTURED,
+      diagnosticReportDirectories: [reports],
+      limits: { maxDiagnosticReports: 1 },
+    });
+    expect(limited.summary.diagnosticReports).toMatchObject({ omitted: 4, omittedDuringCapture: 1 });
+    expect(limited.summary.diagnosticReports.duringCapture).toHaveLength(1);
   });
 
   it("bounds copied diagnostic reports and profile files by size", async () => {
@@ -229,7 +250,9 @@ describe("stall evidence capture", () => {
     });
     expect(summary.captures.every((record) => record.status === "failed")).toBe(true);
     expect(summary.webContentPids).toEqual([]);
-    expect(summary.diagnosticReports).toEqual({ copied: [], duringCapture: [], omitted: 0, errors: [] });
+    expect(summary.diagnosticReports).toEqual({
+      copied: [], duringCapture: [], omitted: 0, omittedDuringCapture: 0, errors: [],
+    });
   });
 
   it("stops waiting at the overall deadline", async () => {

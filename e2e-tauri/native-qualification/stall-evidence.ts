@@ -76,6 +76,8 @@ export interface StallEvidenceSummary {
      */
     duringCapture: string[];
     omitted: number;
+    /** Reports beyond the copy limit that also appeared during the capture. */
+    omittedDuringCapture: number;
     errors: string[];
   };
   errors: string[];
@@ -330,7 +332,7 @@ export async function captureMacStartupStallEvidence(options: {
     incomplete: false,
     webContentPids: [],
     captures: [],
-    diagnosticReports: { copied: [], duringCapture: [], omitted: 0, errors: [] },
+    diagnosticReports: { copied: [], duringCapture: [], omitted: 0, omittedDuringCapture: 0, errors: [] },
     errors: [],
   };
   const relative = (file: string): string => path.relative(options.outputDir, file);
@@ -448,6 +450,7 @@ export async function captureMacStartupStallEvidence(options: {
     for (const [index, report] of reports.entries()) {
       if (index >= limits.maxDiagnosticReports) {
         summary.diagnosticReports.omitted += 1;
+        if (!reportsBeforeCapture.has(report)) summary.diagnosticReports.omittedDuringCapture += 1;
         continue;
       }
       try {
@@ -526,12 +529,13 @@ export function describeStallEvidence(result: StallEvidenceResult, outputDir: st
   const captures = summary.captures
     .map((record) => `${record.id} ${record.status}${record.truncated ? " (truncated)" : ""}`)
     .join(", ");
-  const { copied, omitted, duringCapture } = summary.diagnosticReports;
+  const { copied, omitted, duringCapture, omittedDuringCapture } = summary.diagnosticReports;
   const reports = copied.length + omitted;
+  const induced = duringCapture.length + omittedDuringCapture;
   return (
     `stall evidence in ${path.relative(outputDir, result.directory) || "."}: ${captures || "no captures"}` +
     `; ${reports} new diagnostic report(s)` +
-    `${duringCapture.length > 0 ? ` (${duringCapture.length} written during capture)` : ""}` +
+    `${induced > 0 ? ` (${induced} written during capture)` : ""}` +
     `${summary.incomplete ? "; incomplete (overall deadline)" : ""}` +
     `${summary.errors.length > 0 ? `; errors: ${summary.errors.join("; ")}` : ""}`
   );

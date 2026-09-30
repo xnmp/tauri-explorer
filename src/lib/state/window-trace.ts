@@ -14,17 +14,32 @@ import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 
 export type WindowTraceContext = Record<string, string | number | boolean | null>;
 
+// Tracing observes a flow; it must never throw into the flow it observes.
+function log(event: string, context: WindowTraceContext): void {
+  try {
+    logFrontendDiagnostic(event, context);
+  } catch {
+    // The log sink is best-effort.
+  }
+}
+
 /** A launch or hand-off did not complete. Logged in every build. */
 export function traceWindowFailure(event: string, context: WindowTraceContext): void {
-  logFrontendDiagnostic(event, context);
+  log(event, context);
 }
 
 /** An intermediate or successful phase. Logged only in hook builds. */
 export function traceWindowProgress(event: string, context: WindowTraceContext): void {
-  if (E2E_HOOKS_ENABLED) logFrontendDiagnostic(event, context);
+  if (E2E_HOOKS_ENABLED) log(event, context);
 }
 
-/** Bounded, log-safe rendering of an arbitrary rejection. */
+/** Bounded, log-safe rendering of an arbitrary rejection. Never throws, even
+ * for a value whose `toString` throws or returns a non-string. */
 export function traceError(error: unknown): string | null {
-  return error === undefined ? null : String(error).slice(0, 240);
+  if (error === undefined) return null;
+  try {
+    return String(error).slice(0, 240);
+  } catch {
+    return "(unprintable error)";
+  }
 }

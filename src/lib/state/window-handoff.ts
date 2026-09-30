@@ -68,16 +68,17 @@ export function requestWindowAcknowledgement(
         elapsedMs: Date.now() - startedAt,
         listenMs: listeningAt === null ? null : listeningAt - startedAt,
         dispatchMs: dispatchedAt === null || listeningAt === null ? null : dispatchedAt - listeningAt,
-        error: traceError(error),
       };
-      // Timeouts, rejections and dispatch errors are the failures users hit.
-      if (adopted) traceWindowProgress("window handoff acknowledged", context);
-      else traceWindowFailure("window handoff failed", context);
+      // Settle before tracing, so no trace failure can leave the hand-off pending.
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       if (unlisten) stopListening(unlisten);
       unlisten = undefined;
       resolve(adopted);
+      // Timeouts, rejections and dispatch errors are the failures users hit.
+      const traced = { ...context, error: traceError(error) };
+      if (adopted) traceWindowProgress("window handoff acknowledged", traced);
+      else traceWindowFailure("window handoff failed", traced);
     };
     const abort = () => finish(false, "abort");
     const timer = setTimeout(() => finish(false, "timeout"), timeoutMs);

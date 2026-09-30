@@ -43,11 +43,28 @@ function isRequest(value: unknown): value is DomRpcRequest {
     typeof (value as { token?: unknown }).token === "string";
 }
 
+function describeFailure(failure: unknown): string {
+  try {
+    return ` (formatting failed: ${String(failure)})`;
+  } catch {
+    return "";
+  }
+}
+
 export function createDomRpc<R extends DomRpcRequest>(options: DomRpcOptions<R>): void {
   const { signal, resultKey, handlers } = options;
   if (signal.aborted) return;
   const root = document.documentElement;
-  const formatError = options.formatError ?? ((error: unknown) => String(error));
+  // Every request must publish a result, so formatting an error never throws:
+  // a value whose `toString` throws, or a custom formatter that fails, still
+  // settles the request with a fallback message.
+  const formatError = (error: unknown): string => {
+    try {
+      return (options.formatError ?? String)(error);
+    } catch (formatFailure) {
+      return `Unprintable ${options.event} error${describeFailure(formatFailure)}`;
+    }
+  };
   const publish = (payload: { token: string; result?: unknown; error?: string }) => {
     if (signal.aborted) return;
     let encoded: string;

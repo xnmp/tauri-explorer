@@ -369,14 +369,38 @@ fn report_endpoint(override_url: Option<&str>) -> Result<String, SubmitReportErr
         None | Some("") => Ok(DEFAULT_REPORT_URL.to_string()),
         Some(url) if permitted_report_url(url) => Ok(url.to_string()),
         Some(url) => {
-            log::warn!(
-                "Ignoring {REPORT_URL_OVERRIDE}={url:?}: it must be https:// or loopback http://"
-            );
+            log::warn!("{}", rejected_override_warning(url));
             Err(SubmitReportError::new(
                 "server_rejected",
                 format!("{REPORT_URL_OVERRIDE} must be an https:// URL or a loopback http:// URL; nothing was sent"),
             ))
         }
+    }
+}
+
+fn rejected_override_warning(url: &str) -> String {
+    format!(
+        "Ignoring {REPORT_URL_OVERRIDE} ({}): it must be https:// or loopback http://",
+        redacted_report_url(url)
+    )
+}
+
+/// Log-safe summary of a rejected override: scheme and host only. Userinfo
+/// (`user:token@`), path and query can carry credentials, so they never reach
+/// the log; the host is bounded because the value is attacker-sized input.
+fn redacted_report_url(url: &str) -> String {
+    const MAX_HOST_CHARS: usize = 128;
+    let Ok(uri) = url.parse::<ureq::http::Uri>() else {
+        return "unparseable URL".to_string();
+    };
+    let scheme = uri.scheme_str().unwrap_or("no scheme");
+    match uri.host().filter(|host| !host.is_empty()) {
+        Some(host) if host.chars().count() > MAX_HOST_CHARS => {
+            let bounded: String = host.chars().take(MAX_HOST_CHARS).collect();
+            format!("{scheme}://{bounded}...")
+        }
+        Some(host) => format!("{scheme}://{host}"),
+        None => format!("{scheme} URL without a host"),
     }
 }
 
@@ -499,7 +523,9 @@ mod tests {
         MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_NAME_UNITS, MAX_CONTACT_UNITS,
         MAX_REPORT_DESCRIPTION_UNITS, MAX_TITLE_UNITS,
     };
-    use super::{report_endpoint, DEFAULT_REPORT_URL};
+    use super::{
+        redacted_report_url, rejected_override_warning, report_endpoint, DEFAULT_REPORT_URL,
+    };
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};
 
@@ -555,6 +581,41 @@ mod tests {
     fn report_endpoint_rejects_an_extremely_long_override_without_panicking() {
         let url = format!("http://{}.example.test/report", "a".repeat(100_000));
         assert!(report_endpoint(Some(&url)).is_err());
+    }
+
+    #[test]
+    fn rejected_override_logs_only_scheme_and_host() {
+        assert_eq!(
+            rejected_override_warning("http://reporter:s3cret@relay.example.test/api?token=t0k"),
+            "Ignoring TAURI_EXPLORER_REPORT_URL (http://relay.example.test): \
+             it must be https:// or loopback http://"
+        );
+        assert_eq!(
+            redacted_report_url("http://reporter:s3cret@relay.example.test:8080/api?token=t0k"),
+            "http://relay.example.test"
+        );
+        assert_eq!(
+            redacted_report_url("ftp://ops:hunter2@[::1]/report"),
+            "ftp://[::1]"
+        );
+        for url in [
+            "http://reporter:s3cret@relay.example.test/report?token=t0k",
+            "https://:s3cret@/report",
+            "localhost:s3cret",
+            "not a url s3cret",
+            "javascript:alert('s3cret')",
+            "file:///home/me/s3cret",
+        ] {
+            let redacted = rejected_override_warning(url);
+            assert!(!redacted.contains("s3cret"), "{url} -> {redacted}");
+            assert!(!redacted.contains("t0k"), "{url} -> {redacted}");
+        }
+    }
+
+    #[test]
+    fn rejected_override_log_is_bounded_for_extremely_long_hosts() {
+        let url = format!("http://{}.example.test/report", "a".repeat(100_000));
+        assert!(redacted_report_url(&url).len() < 200);
     }
 
     /// The limits and error codes the relay (`website/api/_report-core.js`)

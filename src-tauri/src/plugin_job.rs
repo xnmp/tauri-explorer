@@ -265,8 +265,15 @@ mod tests {
     #[test]
     fn builds_without_hooks_ignore_the_timeout_override() {
         // The variable is never read (it is absent from release binaries), so
-        // the production timeout is fixed regardless of the environment.
-        assert_eq!(job_timeout(), JOB_TIMEOUT);
+        // the production timeout is fixed even when the override is set. No
+        // other code in a build without the feature reads this variable, so
+        // setting it cannot race a concurrently running test.
+        const OVERRIDE: &str = "TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS";
+        std::env::set_var(OVERRIDE, "100");
+        let timeout = job_timeout();
+        std::env::remove_var(OVERRIDE);
+        assert_eq!(timeout, JOB_TIMEOUT);
+        assert_ne!(timeout, std::time::Duration::from_millis(100));
     }
 
     #[cfg(feature = "e2e-hooks")]

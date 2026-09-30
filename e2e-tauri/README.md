@@ -65,7 +65,8 @@ gate per layer, and a hook build sets both (#884):
   Without it every spec fails with "dev e2e hooks never became ready". A Vite
   dev server does not enable hooks either; `import.meta.env.DEV` is not a gate.
   Probes live in `src/test-support/` and load only through `loadE2EHooks()`;
-  `bun run check:bundle` fails if a release build contains hook code.
+  a build without the flag fails if it bundles `src/test-support/`, and
+  `bun run check:bundle` also fails on hook markers in the emitted scripts.
 - Rust: the `e2e-hooks` Cargo feature. It honours test-only environment
   overrides such as `TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS`; without it
   `external-job-timeout.spec.ts` waits for the ten-minute production timeout.

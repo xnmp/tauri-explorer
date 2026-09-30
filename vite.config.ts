@@ -1,12 +1,19 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
+import { releaseHookGuard } from "./scripts/release-hook-leaks.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
 const port = parseInt(process.env.DEV_PORT || "1420", 10);
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
-  plugins: [sveltekit()],
+export default defineConfig(async ({ mode }) => ({
+  plugins: [
+    sveltekit(),
+    // A build without VITE_E2E_HOOKS=1 fails if it bundles src/test-support (#884).
+    releaseHookGuard({
+      hooksEnabled: loadEnv(mode, process.cwd(), "VITE_").VITE_E2E_HOOKS === "1",
+    }),
+  ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

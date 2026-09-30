@@ -63,6 +63,29 @@ describe("createDomRpc", () => {
     await vi.waitFor(() => expect(reply()).toMatchObject({ token: "t6", error: expect.stringContaining("circular") }));
   });
 
+  it("settles a rejection whose toString throws", async () => {
+    const unprintable = { toString() { throw new Error("toString exploded"); } };
+    start({ default: async () => { throw unprintable; } });
+    send({ token: "unprintable" });
+    await vi.waitFor(() => expect(reply()).toEqual({
+      token: "unprintable",
+      error: "Unprintable probe-op error (formatting failed: Error: toString exploded)",
+    }));
+  });
+
+  it("settles a request when a custom error formatter throws", async () => {
+    createDomRpc({
+      event: "probe-op", resultKey: "result", signal: new AbortController().signal,
+      handlers: { default: () => { throw new Error("backend refused"); } },
+      formatError: () => { throw new Error("formatter bug"); },
+    });
+    send({ token: "bad-formatter" });
+    await vi.waitFor(() => expect(reply()).toEqual({
+      token: "bad-formatter",
+      error: "Unprintable probe-op error (formatting failed: Error: formatter bug)",
+    }));
+  });
+
   it("ignores requests without a correlatable token", async () => {
     const handler = vi.fn();
     start({ default: handler });

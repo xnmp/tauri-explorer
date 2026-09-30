@@ -25,7 +25,9 @@
  *    emits an orphan test chunk into release assets even though nothing can
  *    load it. Keep this the only module that imports `src/test-support/`.
  *
- * `bun run check:bundle` fails if a release build contains a hook chunk.
+ * A build without the flag fails if it bundles any `src/test-support/` module
+ * (the `releaseHookGuard` Vite plugin), and `bun run check:bundle` also fails
+ * on hook markers in the emitted scripts (`scripts/release-hook-leaks.mjs`).
  */
 export const E2E_HOOKS_ENABLED = import.meta.env.VITE_E2E_HOOKS === "1";
 

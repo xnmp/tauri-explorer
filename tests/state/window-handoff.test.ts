@@ -115,6 +115,28 @@ it("logs a failed dispatch with a bounded error message", async () => {
   }));
 });
 
+/** Resolves to "pending" if `promise` has not settled within a short real-time bound. */
+function settledWithin<T>(promise: Promise<T>, ms = 200): Promise<T | "pending"> {
+  return Promise.race([promise, new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), ms))]);
+}
+
+it("settles a dispatch failure whose rejection value cannot be stringified", async () => {
+  const unprintable = { toString() { throw new Error("toString exploded"); } };
+  const result = requestWindowHandoff("source", "target", async () => { throw unprintable; }, 60_000);
+  expect(await settledWithin(result)).toBe(false);
+  expect(harness.unlisten).toHaveBeenCalledOnce();
+  expect(harness.log).toHaveBeenCalledWith("window handoff failed", expect.objectContaining({
+    phase: "dispatch-error", error: "(unprintable error)",
+  }));
+});
+
+it("settles a failed handoff even when the log sink throws", async () => {
+  harness.log.mockImplementationOnce(() => { throw new Error("log sink down"); });
+  const result = requestWindowHandoff("source", "target", async () => { throw new Error("emit failed"); }, 60_000);
+  expect(await settledWithin(result)).toBe(false);
+  expect(harness.unlisten).toHaveBeenCalledOnce();
+});
+
 it("logs a target's explicit rejection", async () => {
   let request!: WindowHandoff;
   const result = requestWindowHandoff("source", "target", async (value) => { request = value; });

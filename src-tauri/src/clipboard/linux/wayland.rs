@@ -32,7 +32,7 @@ use super::{tool_error, CliTool};
 use crate::clipboard::backend::{ClipboardBackend, ClipboardOperation};
 use crate::clipboard::file_uri::{gnome_copied_files, paths_to_uris};
 use crate::error::AppError;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const FILE_LIST_TYPE: &str = "x-special/gnome-copied-files";
 
@@ -41,6 +41,23 @@ const FILE_LIST_TYPE: &str = "x-special/gnome-copied-files";
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(2);
 const FIRST_POLL: Duration = Duration::from_millis(2);
 const MAX_POLL: Duration = Duration::from_millis(50);
+/// How long one `wl-paste` read may take. A source that never sends its data
+/// would otherwise block the clipboard worker indefinitely.
+const READ_TIMEOUT: Duration = Duration::from_secs(1);
+const READ_POLL: Duration = Duration::from_millis(2);
+
+/// What one read of the selection found.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Offer {
+    /// Nothing is copied, or nothing is offered as the requested type.
+    Empty,
+    /// The selection offers these bytes as the requested type.
+    Bytes(Vec<u8>),
+    /// The read failed, so what the selection offers is unknown. It must
+    /// never be taken to mean "not our payload": an identical offer the read
+    /// could not see would then be credited to a new owner.
+    Unreadable(String),
+}
 
 /// A running process that serves the selection.
 pub(super) trait OwnerProcess {
@@ -63,8 +80,8 @@ pub(super) trait WaylandSession {
         payload: &[u8],
     ) -> Result<Box<dyn OwnerProcess>, AppError>;
 
-    /// The bytes the selection currently offers as `media_type`, if any.
-    fn read_offer(&mut self, media_type: &str) -> Option<Vec<u8>>;
+    /// What the selection currently offers as `media_type`.
+    fn read_offer(&mut self, media_type: &str) -> Offer;
 
     /// File paths the selection currently offers.
     fn read_files(&mut self) -> Result<Vec<String>, AppError>;
@@ -103,15 +120,28 @@ impl WaylandBackend {
     }
 
     /// Wait until the selection offers `payload` while `process` still runs.
+    /// `Ok(true)` proves publication. `Ok(false)` means a read failed, so
+    /// publication can be neither proven nor ruled out.
+    ///
     /// The caller has checked that the selection did not already offer
     /// `payload`, so seeing it proves that some client published it since;
     /// a process still alive after that read is the publisher, or will
     /// publish: a client that took the selection later would have ended it.
+    ///
+    /// Known residual: the proof is by content, not by source. Suppose
+    /// `process` stays alive but never publishes (a wedged `wl-copy`), and
+    /// another client offers byte-identical data after the baseline read and
+    /// within this poll window. For example, a clipboard manager restores
+    /// the list after `stop_owner`, or the user copies the same files within
+    /// 2 s. That offer is then credited to `process`. Closing this needs
+    /// per-write identity: a unique payload, or the source identity that
+    /// only the data-control protocol exposes. Whether GTK file managers
+    /// accept a unique payload is unverified.
     fn await_published(
         &mut self,
         process: &mut dyn OwnerProcess,
         payload: &[u8],
-    ) -> Result<(), AppError> {
+    ) -> Result<bool, AppError> {
         let mut waited = Duration::ZERO;
         let mut poll = FIRST_POLL;
         loop {
@@ -120,9 +150,18 @@ impl WaylandBackend {
                     "wl-copy exited ({status}) before it owned the clipboard"
                 )));
             }
-            let offered = self.session.read_offer(FILE_LIST_TYPE);
-            if offered.as_deref() == Some(payload) && process.exit_status().is_none() {
-                return Ok(());
+            match self.session.read_offer(FILE_LIST_TYPE) {
+                Offer::Bytes(offered) if offered == payload && process.exit_status().is_none() => {
+                    return Ok(true);
+                }
+                // Stop waiting; the owner keeps serving the list, unproven.
+                Offer::Unreadable(reason) => {
+                    log::warn!(
+                        "Wayland clipboard read-back failed; Cut stays unverified: {reason}"
+                    );
+                    return Ok(false);
+                }
+                Offer::Bytes(_) | Offer::Empty => {}
             }
             if waited >= PUBLISH_TIMEOUT {
                 return Err(AppError::Other(format!(
@@ -156,18 +195,31 @@ impl ClipboardBackend for WaylandBackend {
         // Another client (a file manager, a previous app instance) may already
         // offer these exact bytes; then their visibility cannot show that our
         // process published, and paths alone must never keep a Cut (#835).
-        // Serve the list anyway so Copy works, but vouch for nothing.
+        // A failed read may hide such an offer. In both cases serve the list
+        // anyway so Copy works, but vouch for nothing.
         let baseline = self.session.read_offer(FILE_LIST_TYPE);
         let mut process = self.session.spawn_owner(FILE_LIST_TYPE, &payload)?;
-        let provable = baseline.as_deref() != Some(payload.as_slice());
-        if provable {
-            if let Err(error) = self.await_published(process.as_mut(), &payload) {
-                process.stop();
-                return Err(error);
+        let provable = match &baseline {
+            Offer::Empty => true,
+            Offer::Bytes(offered) => offered != &payload,
+            Offer::Unreadable(reason) => {
+                log::warn!("Wayland clipboard read failed; Cut stays unverified: {reason}");
+                false
             }
-        }
+        };
+        let proven = if provable {
+            match self.await_published(process.as_mut(), &payload) {
+                Ok(proven) => proven,
+                Err(error) => {
+                    process.stop();
+                    return Err(error);
+                }
+            }
+        } else {
+            false
+        };
         self.owner = Some(Owner {
-            token: provable.then(|| token.to_owned()),
+            token: proven.then(|| token.to_owned()),
             process,
         });
         Ok(())
@@ -223,12 +275,16 @@ impl WaylandSession for WlClipboard {
         Ok(Box::new(process))
     }
 
-    fn read_offer(&mut self, media_type: &str) -> Option<Vec<u8>> {
-        CliTool::WlClipboard
-            .read_mime(media_type)
-            .ok()
-            .flatten()
-            .map(String::into_bytes)
+    fn read_offer(&mut self, media_type: &str) -> Offer {
+        let mut command = std::process::Command::new("wl-paste");
+        command.args(["--no-newline", "--type", media_type]);
+        match run_bounded(&mut command, READ_TIMEOUT) {
+            Ok(run) => classify_paste(run.code, run.stdout, &run.stderr, media_type),
+            Err(RunFailure::Spawn(error)) => {
+                Offer::Unreadable(tool_error("wl-paste", "wl-clipboard", error).to_string())
+            }
+            Err(RunFailure::Unfinished(reason)) => Offer::Unreadable(format!("wl-paste {reason}")),
+        }
     }
 
     fn read_files(&mut self) -> Result<Vec<String>, AppError> {
@@ -237,6 +293,119 @@ impl WaylandSession for WlClipboard {
 
     fn pause(&mut self, duration: Duration) {
         std::thread::sleep(duration);
+    }
+}
+
+/// A finished process: its exit code (`None` if a signal ended it) and output.
+struct FinishedRun {
+    code: Option<i32>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+enum RunFailure {
+    Spawn(std::io::Error),
+    /// It could not be observed, or did not finish (and was killed).
+    Unfinished(String),
+}
+
+/// Run `command` to completion, killing it after `timeout`.
+fn run_bounded(
+    command: &mut std::process::Command,
+    timeout: Duration,
+) -> Result<FinishedRun, RunFailure> {
+    use std::process::Stdio;
+    let mut child = command
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(RunFailure::Spawn)?;
+    // Drain both pipes while waiting, so a large offer cannot stall the
+    // child on a full pipe.
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(READ_POLL),
+            unfinished => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RunFailure::Unfinished(match unfinished {
+                    Err(error) => format!("could not be observed: {error}"),
+                    _ => format!("did not finish within {timeout:?}"),
+                }));
+            }
+        }
+    };
+    // A descendant that inherited a pipe could hold it open after the exit.
+    let grace = deadline
+        .saturating_duration_since(Instant::now())
+        .max(READ_POLL);
+    match (stdout.recv_timeout(grace), stderr.recv_timeout(grace)) {
+        (Ok(stdout), Ok(stderr)) => Ok(FinishedRun {
+            code: status.code(),
+            stdout,
+            stderr,
+        }),
+        _ => Err(RunFailure::Unfinished(
+            "exited, but its output did not close".into(),
+        )),
+    }
+}
+
+/// Read `pipe` to its end on a helper thread.
+fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    if let Some(mut pipe) = pipe {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if pipe.read_to_end(&mut bytes).is_ok() {
+                let _ = sender.send(bytes);
+            }
+        });
+    }
+    receiver
+}
+
+/// Classify a finished `wl-paste --type <media_type>` run. Only wl-paste's
+/// own "nothing to paste" reports count as an empty selection. Anything else
+/// (a lost compositor, a signal, a message from an unknown version) leaves
+/// the selection's contents unknown.
+fn classify_paste(code: Option<i32>, stdout: Vec<u8>, stderr: &[u8], media_type: &str) -> Offer {
+    let message = String::from_utf8_lossy(stderr);
+    match code {
+        Some(0) => Offer::Bytes(stdout),
+        Some(1) if reports_no_offer(&message, media_type) => Offer::Empty,
+        Some(code) => Offer::Unreadable(format!(
+            "wl-paste exited with code {code}: {}",
+            message.trim()
+        )),
+        None => Offer::Unreadable("wl-paste was killed by a signal".into()),
+    }
+}
+
+/// Whether `stderr` is exactly one of wl-paste's reports that the selection
+/// offers nothing as `media_type` (wl-clipboard `src/wl-paste.c`):
+/// - 2.2 and later: `Nothing is copied`, or `Clipboard content is not
+///   available as requested type "<type>"` followed by a `--list-types` hint.
+/// - 1.0 to 2.1: `No selection`, or `No suitable type of content copied`.
+fn reports_no_offer(stderr: &str, media_type: &str) -> bool {
+    const NO_OFFER: [&str; 3] = [
+        "Nothing is copied",
+        "No selection",
+        "No suitable type of content copied",
+    ];
+    const LIST_TYPES_HINT: &str = "Use \"wl-paste --list-types\" to view available types.";
+    let wrong_type =
+        format!("Clipboard content is not available as requested type \"{media_type}\"");
+    match stderr.lines().collect::<Vec<_>>().as_slice() {
+        [only] => NO_OFFER.contains(only),
+        [first, hint] => *first == wrong_type && *hint == LIST_TYPES_HINT,
+        _ => false,
     }
 }
 
@@ -310,6 +479,9 @@ mod tests {
         next_behaviour: Option<Behaviour>,
         fail_spawn: bool,
         pauses: usize,
+        reads: usize,
+        /// 1-based numbers of the `wl-paste` reads that fail.
+        failing_reads: Vec<usize>,
     }
 
     #[derive(Clone)]
@@ -436,10 +608,14 @@ mod tests {
             }))
         }
 
-        fn read_offer(&mut self, media_type: &str) -> Option<Vec<u8>> {
+        fn read_offer(&mut self, media_type: &str) -> Offer {
             assert_eq!(media_type, FILE_LIST_TYPE);
             self.0.with(|compositor| {
-                let offer = compositor.offer();
+                compositor.reads += 1;
+                if compositor.failing_reads.contains(&compositor.reads) {
+                    return Offer::Unreadable("wl-paste exited with code 1: Broken pipe".into());
+                }
+                let offer = compositor.offer().map_or(Offer::Empty, Offer::Bytes);
                 if let Some(Selection::Process(index)) = compositor.selection {
                     if compositor.processes[index].behaviour == Behaviour::ExitsAfterServing {
                         compositor.processes[index].life = Life::Exited;
@@ -691,6 +867,130 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_baseline_read_never_proves_a_cut() {
+        // A failed wl-paste (spawn error, lost compositor, timeout) says
+        // nothing about the selection, which may already offer our exact
+        // bytes. Reading it as "empty" credits that offer to the new owner,
+        // exactly as in the identical-offer case.
+        for behaviour in [Behaviour::NeverPublishes, Behaviour::Publishes] {
+            let desktop = Desktop::default();
+            desktop.external_copy(&payload_of(&["/tmp/a.txt"]));
+            desktop.next_spawn_behaves(behaviour);
+            desktop.with(|compositor| compositor.failing_reads = vec![1]);
+            let mut coordinator = FileClipboardCoordinator::new(Box::new(desktop.backend()));
+            let entry = serde_json::json!({ "name": "a.txt", "path": "/tmp/a.txt" });
+            let error = coordinator.publish(vec![entry.clone()], "cut").unwrap_err();
+            assert!(
+                error.to_string().contains("Could not verify native Cut"),
+                "{error}"
+            );
+            assert_eq!(
+                desktop.with(|compositor| compositor.pauses),
+                0,
+                "an unprovable write does not wait for the publish timeout"
+            );
+
+            // Copy needs no proof: it is still served after a failed read.
+            desktop.with(|compositor| compositor.failing_reads = vec![compositor.reads + 1]);
+            let copy = coordinator.publish(vec![entry], "copy").unwrap();
+            assert_eq!(copy.operation, Some(ClipboardOperation::Copy));
+            assert_eq!(copy.mirror_error, None);
+            assert_eq!(desktop.lives().last(), Some(&Life::Running));
+        }
+    }
+
+    #[test]
+    fn a_failed_read_back_serves_the_list_but_proves_nothing() {
+        let desktop = Desktop::default();
+        let mut backend = desktop.backend();
+        // Read 1 is the baseline; read 2 is the first read-back.
+        desktop.with(|compositor| compositor.failing_reads = vec![2]);
+        backend
+            .write_files(&paths(&["/tmp/a.txt"]), ClipboardOperation::Cut, TOKEN)
+            .unwrap();
+        assert_eq!(backend.owner_token(), None);
+        assert_eq!(desktop.lives(), vec![Life::Running]);
+    }
+
+    #[test]
+    fn only_wl_paste_reports_of_an_empty_selection_read_as_empty() {
+        let classify = |code: Option<i32>, stderr: &str| {
+            classify_paste(code, b"out".to_vec(), stderr.as_bytes(), FILE_LIST_TYPE)
+        };
+        let wrong_type = |media_type: &str| {
+            format!(
+                "Clipboard content is not available as requested type \"{media_type}\"\n\
+                 Use \"wl-paste --list-types\" to view available types.\n"
+            )
+        };
+        assert_eq!(classify(Some(0), ""), Offer::Bytes(b"out".to_vec()));
+        for empty in [
+            "Nothing is copied\n".to_string(),
+            "No selection\n".to_string(),
+            "No suitable type of content copied\n".to_string(),
+            wrong_type(FILE_LIST_TYPE),
+        ] {
+            assert_eq!(classify(Some(1), &empty), Offer::Empty, "{empty}");
+        }
+        for failure in [
+            (
+                Some(1),
+                "Failed to connect to a Wayland server: No such file or directory\n\
+                       Note: WAYLAND_DISPLAY is set to wayland-1\n"
+                    .to_string(),
+            ),
+            (Some(1), "No such seat\n".to_string()),
+            (Some(1), "pipe: Too many open files\n".to_string()),
+            (Some(1), String::new()),
+            (
+                Some(1),
+                "Nothing is copied\nNothing is copied\n".to_string(),
+            ),
+            (Some(1), wrong_type("text/plain")),
+            (Some(2), "Nothing is copied\n".to_string()),
+            (None, "Nothing is copied\n".to_string()),
+        ] {
+            assert!(
+                matches!(classify(failure.0, &failure.1), Offer::Unreadable(_)),
+                "{failure:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_read_that_cannot_start_or_finish_fails() {
+        use std::process::Command;
+        let missing = run_bounded(
+            &mut Command::new("/nonexistent/wl-paste"),
+            Duration::from_secs(1),
+        );
+        assert!(matches!(missing, Err(RunFailure::Spawn(_))));
+
+        let started = Instant::now();
+        let mut hung = Command::new("sleep");
+        hung.arg("30");
+        let hung = run_bounded(&mut hung, Duration::from_millis(100));
+        assert!(matches!(hung, Err(RunFailure::Unfinished(_))));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "killed at the timeout"
+        );
+
+        let mut finished = Command::new("sh");
+        finished.args([
+            "-c",
+            "printf out; printf 'Nothing is copied\\n' >&2; exit 1",
+        ]);
+        let Ok(run) = run_bounded(&mut finished, Duration::from_secs(5)) else {
+            panic!("sh did not finish");
+        };
+        assert_eq!(
+            classify_paste(run.code, run.stdout, &run.stderr, FILE_LIST_TYPE),
+            Offer::Empty
+        );
+    }
+
+    #[test]
     fn the_coordinator_admits_a_wayland_cut_and_demotes_it_on_replacement() {
         let desktop = Desktop::default();
         let mut coordinator = FileClipboardCoordinator::new(Box::new(desktop.backend()));
@@ -737,6 +1037,21 @@ mod real_wl_copy_tests {
             std::env::var_os("PRIVATE_WAYLAND_CLIPBOARD").is_some(),
             "refusing to replace a desktop clipboard: see the module comment"
         );
+        // The installed wl-paste's "nothing to paste" reports read as empty,
+        // not as failures (which would refuse every Cut).
+        assert!(Command::new("wl-copy")
+            .arg("--clear")
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(WlClipboard.read_offer(FILE_LIST_TYPE), Offer::Empty);
+        assert!(Command::new("wl-copy")
+            .arg("plain text")
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(WlClipboard.read_offer(FILE_LIST_TYPE), Offer::Empty);
+
         let mut backend = WaylandBackend::new();
         let file = vec!["/tmp/wayland owner é.txt".to_string()];
         backend

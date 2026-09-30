@@ -24,12 +24,31 @@ its own write still owns the clipboard, through the `owner_token` seam from
   while the child is alive; the child must still be alive *after* that read.
   Do not make the payload unique with a `#` comment line: whether GTK file
   managers accept one is unknown.
+- A failed read is not an empty selection. `read_mime(...).ok().flatten()`
+  collapsed a spawn error, a lost compositor and "nothing copied" into one
+  `None`, so a failed baseline read hid an identical external offer and the
+  next read credited it to the new owner. Reads are now tri-state (`Offer`:
+  empty, bytes, unreadable). Only wl-paste's own exit-1 reports count as
+  empty, matched exactly: `Nothing is copied` and `Clipboard content is not
+  available as requested type "<type>"` (2.2+), and `No selection` and `No
+  suitable type of content copied` (1.0–2.1). Other exits, signals and a 1 s
+  read timeout are unreadable. An unreadable baseline or read-back serves the
+  list for Copy but leaves the write unproven, so Cut is refused.
 - Remaining windows, accepted and fail-open only within them:
   - An identical external Copy can land between the baseline read and our
     publish. Our child then publishes over it, and we own the selection.
   - An identical external Copy can land after we publish but before `wl-copy`
     handles `cancelled`. Until the child exits, `owner_token` still vouches
     for it.
+  - Known residual (found in review, not fixed): the read-back proves
+    publication by content, not by source. It needs a `wl-copy` that stays
+    alive but never publishes (wedged), and byte-identical data that another
+    client offers after the baseline read and within the 2 s poll window.
+    Examples: a clipboard manager restoring the list after `stop_owner`, or
+    the user copying the same files within 2 s. That offer is then credited
+    to our child. The full fix needs per-write identity: a unique payload,
+    or the source identity that only the data-control protocol exposes.
+    Whether GTK file managers accept a unique payload is unverified.
 - Stop (kill and reap) the previous owner *before* starting the next. If the
   old owner still served an identical list (Copy then Cut of the same file),
   the read-back could not show whether the new owner had published.
@@ -88,12 +107,16 @@ list, ends it.
   Copy/Cut for the 2 s publish timeout before failing. That happens when the
   compositor has no data-control protocol and `wl-copy` gets no keyboard
   focus.
+- Wayland: when `wl-paste` fails or prints a message this backend does not
+  recognise (a future wl-clipboard wording), every read is unreadable, so
+  Copy still works and Cut is refused.
 
 ## Verification
 
 - Pure rules: `change_counter` tests; Wayland lifecycle tests against a
   simulated compositor (publish wait, replacement, crash, republish reaping,
-  exit-before-publish, timeout).
+  exit-before-publish, timeout, identical or unreadable baseline); wl-paste
+  exit classification and the bounded read (spawn failure, timeout).
 - Real `wl-copy`: the ignored `wayland_owner_process` test, run inside a
   private headless `cage` session. `cage` has no data-control, so `wl-copy`
   needs keyboard focus: hold a virtual keyboard with `wtype -s 600000 x &`.
@@ -109,5 +132,8 @@ list, ends it.
   exactly one pass. Off-platform, type-check both modules with a scratch
   crate that symlinks them in, using
   `cargo clippy --target aarch64-apple-darwin` or
-  `--target x86_64-pc-windows-gnu`. The full crate cannot build for those
-  targets here, because its C dependencies need target toolchains.
+  `--target x86_64-pc-windows-gnu`. The full crate also passes
+  `cargo clippy --target aarch64-apple-darwin --all-targets -- -D warnings`
+  with `CC=true AR=true` and `turbojpeg-sys` pointed at empty directories
+  (`TURBOJPEG_SOURCE=explicit`, `TURBOJPEG_LIB_DIR`,
+  `TURBOJPEG_INCLUDE_DIR`); clippy never links, so stub C tools suffice.

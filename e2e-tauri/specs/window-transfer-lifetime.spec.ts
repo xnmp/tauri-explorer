@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { navigateTo, domTexts } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
-import { captureDiagnostics } from "../window-transfer-diagnostics";
+import { captureDiagnostics } from "../diagnostics/window-transfer";
 import {
   waitForListingEntry,
   waitForWindowOperation,

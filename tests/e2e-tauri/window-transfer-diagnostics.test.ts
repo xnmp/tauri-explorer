@@ -1,4 +1,8 @@
 /// <reference types="mocha" />
+/** #710: native transfer failures retain partial JSON and the failing window screenshot.
+ *
+ * Retire-when: #710 closed
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let waits: typeof import("../../e2e-tauri/window-transfer-waits");
 

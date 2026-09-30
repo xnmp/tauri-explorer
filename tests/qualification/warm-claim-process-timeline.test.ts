@@ -1,22 +1,25 @@
-/** #781: preserve renderer identities when abandoned warm-claim expiry loses the session. */
+/**
+ * #781: preserve renderer identities when abandoned warm-claim expiry loses the session.
+ *
+ * Retire-when: #781 closed
+ */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { NativeProcessEvidence, ProcessObservation } from "../../e2e-tauri/fresh-window-diagnostics";
+import type { NativeProcessEvidence, ProcessObservation } from "../../e2e-tauri/diagnostics/process-timeline";
+import { monitorWarmClaimExpiry as monitor, type WarmClaimStage } from "../../e2e-tauri/diagnostics/warm-claim";
 
-const diagnostic = vi.hoisted(() => ({ collect: vi.fn() }));
-const driver = vi.hoisted(() => ({ getWindowHandles: vi.fn() }));
-
-vi.mock("@wdio/globals", () => ({ browser: driver, $: vi.fn(), $$: vi.fn() }));
-vi.mock("../../e2e-tauri/fresh-window-diagnostics", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../../e2e-tauri/fresh-window-diagnostics")>(),
-  collectNativeProcessEvidence: diagnostic.collect,
-}));
-
+const collect = vi.fn();
+const driver = { getWindowHandles: vi.fn() };
 const output = fs.mkdtempSync(path.join(os.tmpdir(), "warm-claim-timeline-"));
-vi.stubEnv("TAURI_NATIVE_DIAGNOSTICS_DIR", output);
-const { monitorWarmClaimExpiry } = await import("../../e2e-tauri/specs/helpers");
+
+function monitorWarmClaimExpiry<T>(
+  claim: Parameters<typeof monitor>[0],
+  action: (mark: (stage: WarmClaimStage) => void) => Promise<T>,
+): Promise<T> {
+  return monitor(claim, action, { collect, directory: output });
+}
 
 function renderer(pid: number): ProcessObservation {
   return {
@@ -42,14 +45,13 @@ describe("warm claim session-loss diagnostics", () => {
   afterEach(() => vi.useRealTimers());
 
   afterAll(() => {
-    vi.unstubAllEnvs();
     fs.rmSync(output, { recursive: true, force: true });
   });
 
   it("writes the claimed label and exact vanished renderer after a handle poll loses the session", async () => {
     const surviving = renderer(20);
     const vanished = renderer(21);
-    diagnostic.collect.mockImplementation(() => sample(
+    collect.mockImplementation(() => sample(
       Date.now() < 1_500 ? [surviving, vanished] : [surviving],
     ));
     const lostSession = new Error("session deleted because of page crash or hang");
@@ -104,7 +106,7 @@ describe("warm claim session-loss diagnostics", () => {
 
   it("keeps the initial and final process states when one command exceeds both waits", async () => {
     const vanished = renderer(21);
-    diagnostic.collect.mockImplementation(() => sample(Date.now() < 2_000 ? [vanished] : []));
+    collect.mockImplementation(() => sample(Date.now() < 2_000 ? [vanished] : []));
     const pending = monitorWarmClaimExpiry({
       sourceHandle: "source",
       survivorHandle: "survivor",
@@ -133,7 +135,7 @@ describe("warm claim session-loss diagnostics", () => {
   });
 
   it("does not write a failure artifact when claim expiry completes", async () => {
-    diagnostic.collect.mockImplementation(() => sample([]));
+    collect.mockImplementation(() => sample([]));
     await expect(monitorWarmClaimExpiry({
       sourceHandle: "source",
       survivorHandle: "survivor",

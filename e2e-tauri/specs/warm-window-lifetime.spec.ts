@@ -3,7 +3,8 @@ import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
 import path from "node:path";
-import { domTexts, monitorWarmClaimExpiry, navigateTo } from "./helpers";
+import { domTexts, navigateTo } from "./helpers";
+import { monitorWarmClaimExpiry } from "../diagnostics/warm-claim";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("explorer-warm-lifetime-");

@@ -8,10 +8,10 @@ import {
   domTexts,
   entryPathSelector,
   navigateTo,
-  monitorFreshWindowOpen,
   switchToFreshWindow,
   waitForFreshWindowElement,
 } from "./helpers";
+import { monitorFreshWindowOpen } from "../diagnostics/fresh-window";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("explorer-directory-recovery-");

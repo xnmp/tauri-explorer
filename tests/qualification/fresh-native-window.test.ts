@@ -9,7 +9,7 @@ const driver = vi.hoisted(() => ({
 }));
 vi.mock("@wdio/globals", () => ({ browser: driver, $: vi.fn(), $$: vi.fn() }));
 
-// Keep #703 fresh-window diagnostics out of the checkout during unit runs.
+// Keep fresh-window diagnostics (#781) out of the checkout during unit runs.
 const diagnostics = vi.hoisted(() => {
   // Hoisted before any import, so build the path without node:fs/os helpers.
   const directory = `${process.env.TMPDIR ?? "/tmp"}/fresh-native-window-${process.pid}`;

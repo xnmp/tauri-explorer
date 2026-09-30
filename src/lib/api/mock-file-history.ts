@@ -7,6 +7,11 @@ import { parentDir } from "$lib/domain/path";
 
 type Entry = { id: number; action: UndoAction };
 type Invoke = (command: string, args: Record<string, unknown>) => Promise<unknown>;
+/** Restores trashed entries in place. Mirrors the backend: undo of a delete
+ * is resolved entirely inside `file_history_execute` (Rust), never through a
+ * separate wire command, so the mock does the same restore work directly
+ * rather than dispatching a mock-only IPC command. */
+type RestoreFromTrash = (paths: string[]) => FileBatchOutcome;
 
 function recoverable(action: UndoAction): UndoAction | null {
   if (action.type === "copy" && action.restoreSupported === false) return null;
@@ -32,7 +37,11 @@ function affectedDirectories(action: UndoAction): string[] {
   }
 }
 
-export function createMockFileHistory(invoke: Invoke, publishEffects: (directories: string[]) => void) {
+export function createMockFileHistory(
+  invoke: Invoke,
+  publishEffects: (directories: string[]) => void,
+  restoreFromTrash: RestoreFromTrash,
+) {
   let undo: Entry[] = [];
   let redo: Entry[] = [];
   let nextId = 0;
@@ -49,16 +58,19 @@ export function createMockFileHistory(invoke: Invoke, publishEffects: (directori
     try { await invoke(command, args); return { ok: true as const }; }
     catch (error) { return { ok: false as const, error: String(error) }; }
   };
-  const batch = async (command: string, paths: string[]) => {
-    try { return { ok: true as const, data: await invoke(command, { paths }) as FileBatchOutcome }; }
+  const batch = async (command: string, args: Record<string, unknown>) => {
+    try { return { ok: true as const, data: await invoke(command, args) as FileBatchOutcome }; }
     catch (error) { return { ok: false as const, error: String(error) }; }
   };
+  // Delete/undo-delete route through the same production command
+  // (`delete_entries`, permanent: false) the real backend uses; restoring is
+  // the backend's internal undo step, so it bypasses the invoke() round trip.
   const files: UndoApiDeps = {
     renameEntry: (path, newName) => call("rename_entry", { path, newName }),
     moveEntry: (source, destDir) => call("move_entry", { source, destDir, overwrite: false }),
-    deleteEntry: (path) => call("move_to_trash", { path }),
-    deleteMultipleEntries: (paths) => batch("move_multiple_to_trash", paths),
-    restoreFromTrash: (paths) => batch("restore_from_trash", paths),
+    deleteEntry: (path) => call("delete_entries", { paths: [path], permanent: false }),
+    deleteMultipleEntries: (paths) => batch("delete_entries", { paths, permanent: false }),
+    restoreFromTrash: async (paths) => ({ ok: true, data: restoreFromTrash(paths) }),
   };
   return {
     summary,

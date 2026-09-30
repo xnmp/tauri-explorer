@@ -1426,7 +1426,11 @@ if (typeof window !== "undefined") {
   };
 }
 
-const mockFileHistory = createMockFileHistory((command, args) => invokeMockCommand(command, args), broadcastFileChange);
+const mockFileHistory = createMockFileHistory(
+  (command, args) => invokeMockCommand(command, args),
+  broadcastFileChange,
+  (paths) => mockBatch(paths, restoreMockEntry),
+);
 
 // --- File Recovery fixture (ADR 0023 retention/retirement) -----------------
 // The browser build exercises the same commands as the native backend so the
@@ -1664,6 +1668,10 @@ const mockCommands: Record<string, CommandHandler> = {
     }));
   },
 
+  // `.lnk` shortcuts don't exist in the browser fixture; the real command
+  // also resolves to null on every non-Windows platform.
+  resolve_shortcut: () => null,
+
   estimate_size: (args) => {
     const paths = args.paths as string[];
     let fileCount = 0;
@@ -1736,13 +1744,7 @@ const mockCommands: Record<string, CommandHandler> = {
     throw new Error("Entry not found");
   },
 
-  move_to_trash: (args) => removeMockEntry(args.path as string, true),
-
-  move_multiple_to_trash: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, true)),
-
   delete_entries: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, !args.permanent)),
-
-  restore_from_trash: (args) => mockBatch(args.paths as string[], restoreMockEntry),
 
   move_entry: (args) => {
     const source = args.source as string;
@@ -1785,17 +1787,6 @@ const mockCommands: Record<string, CommandHandler> = {
     const content = mockFileContent[path];
     if (content !== undefined) return content;
     throw new Error(`File not found: ${path}`);
-  },
-
-  delete_entry_permanent: (args) => {
-    const path = args.path as string;
-    const parentPath = parentDir(path);
-    const entries = mockFiles[parentPath] || [];
-    const entryIndex = entries.findIndex((e) => e.path === path);
-    if (entryIndex >= 0) {
-      entries.splice(entryIndex, 1);
-    }
-    delete mockFiles[path];
   },
 
   open_file: () => {
@@ -3081,6 +3072,12 @@ if (typeof window !== "undefined") {
     }
     return destPath;
   },
+
+  // compress_to_zip/extract_archive resolve synchronously in the mock, so any
+  // cancellation always races a job that has already finished — a no-op,
+  // matching the real command's "best-effort" cancellation semantics.
+  cancel_compress: () => undefined,
+  cancel_extract: () => undefined,
 
   // ----- Filesystem watcher (no-op in mock) -----
 

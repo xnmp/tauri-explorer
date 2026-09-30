@@ -3097,8 +3097,8 @@ if (typeof window !== "undefined") {
   // mirroring the real OS clipboard contract (write paths, then read them back).
 
   clipboard_publish: (args: Record<string, unknown>) => {
-    // Browser tests simulate the admitted X11 cohort by default. Set this
-    // flag to exercise Wayland/Windows/macOS Cut refusal.
+    // Browser tests admit Cut by default, as every native backend does when
+    // it proves ownership (#877). Set this flag to exercise Cut refusal.
     if (args.operation === "cut" && localStorage.getItem("mock-cut-ownership-unavailable") === "1") {
       throw new Error("Cut requires native clipboard ownership; Copy is available here");
     }

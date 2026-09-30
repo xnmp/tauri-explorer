@@ -5,11 +5,23 @@
 # Windows contract loop because it gates that job's native smoke.
 name: Rust platforms
 
+# Only Rust inputs can change these results. The nightly run catches drift that
+# path filters hide: `dtolnay/rust-toolchain@stable` advances independently of
+# this repository (#872).
 on:
   push:
     branches: [main, dev]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-platforms.yml"
   pull_request:
     branches: [main, dev]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-platforms.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -25,6 +37,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Scheduled runs start from the default branch (main); qualify dev.
+          ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:

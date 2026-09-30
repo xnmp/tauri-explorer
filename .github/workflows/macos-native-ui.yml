@@ -1,10 +1,30 @@
 name: macOS Native UI
 
+# The hosted Mac pilot is the most expensive job and is not a required check.
+# It runs for backend, harness and build-input changes, and weekly so that
+# frontend-only regressions on WKWebView still surface (#872).
 on:
   push:
     branches: [dev]
+    paths:
+      - "src-tauri/**"
+      - "e2e-tauri/macos-ui-smoke.ts"
+      - "scripts/grant-macos-accessibility.sh"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/macos-native-ui.yml"
   pull_request:
     branches: [dev]
+    paths:
+      - "src-tauri/**"
+      - "e2e-tauri/macos-ui-smoke.ts"
+      - "scripts/grant-macos-accessibility.sh"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/macos-native-ui.yml"
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
@@ -16,6 +36,9 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Scheduled runs start from the default branch (main); qualify dev.
+          ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
 
       - name: Record hosted Mac environment
         run: |

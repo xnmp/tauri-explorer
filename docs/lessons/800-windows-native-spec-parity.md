@@ -1,7 +1,7 @@
 # #800 — Windows native-spec parity audit
 
 Audit of every Linux-gated native spec in `e2e-tauri/specs`, done for W4.2–W4.4
-of `docs/execution-plans/architecture-overhaul-remaining.md`.
+of `docs/archive/execution-plans/architecture-overhaul-remaining.md`.
 
 ## Enabled on Windows (`smoke (windows-latest)`)
 

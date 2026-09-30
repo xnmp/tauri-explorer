@@ -39,7 +39,7 @@ fn move_history_uses_recorded_source_parent_despite_inconsistent_legacy_metadata
         original_dir: unrelated.to_string_lossy().into_owned(),
     };
     // Exercise renderer admission as well as the real native filesystem port.
-    let action = super::action::prepare_renderer(action, true)
+    let action = super::action::prepare_renderer(action, crate::platform::TrashRestore::Supported)
         .unwrap()
         .unwrap();
     let result =

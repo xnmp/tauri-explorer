@@ -138,7 +138,7 @@ pub async fn file_history_push(
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     // Shape/capability normalization is outside the shared history lock.
     let action = match action {
-        Some(action) => action::prepare_renderer(action, !cfg!(target_os = "macos")),
+        Some(action) => action::prepare_renderer(action, crate::platform::TrashRestore::HOST),
         None => Ok(None),
     };
     let mut service = service().lock().unwrap();

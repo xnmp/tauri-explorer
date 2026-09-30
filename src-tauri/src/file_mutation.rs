@@ -6,7 +6,7 @@ use crate::{
     files::{
         admission, batch::FileBatchOutcome, entry_plan::EntryPlan, mutation::FileMutationReceipt,
     },
-    renderer_owner,
+    platform, renderer_owner,
 };
 use std::path::Path;
 use tauri::Manager;
@@ -66,7 +66,7 @@ fn delete_outcome(
     mut result: FileBatchOutcome,
     permanent: bool,
 ) -> MutationOutcome<FileBatchOutcome> {
-    if !permanent && !cfg!(target_os = "macos") {
+    if !permanent && platform::TRASH_RESTORE_SUPPORTED {
         for path in &result.succeeded {
             if !result.artifacts.contains_key(path)
                 && !result.warnings.iter().any(|warning| &warning.path == path)
@@ -148,7 +148,7 @@ pub(crate) fn copy_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
     Some(Action::Copy {
         copied_path: publication.path.to_string_lossy().into_owned(),
         parent_dir: publication.path.parent()?.to_string_lossy().into_owned(),
-        restore_supported: !cfg!(target_os = "macos"),
+        restore_supported: platform::TRASH_RESTORE_SUPPORTED,
         recovery: Recovery::Capture,
         publication: Some(publication.clone()),
     })
@@ -218,7 +218,7 @@ pub(crate) fn copy_session_outcome(
                 actions.push(Action::Copy {
                     copied_path: receipt.path.clone(),
                     parent_dir: destination.clone(),
-                    restore_supported: !cfg!(target_os = "macos"),
+                    restore_supported: platform::TRASH_RESTORE_SUPPORTED,
                     recovery: Recovery::Capture,
                     publication: None,
                 });

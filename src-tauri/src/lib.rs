@@ -29,6 +29,7 @@ mod git_watch;
 mod github;
 mod nano_banana;
 mod palette;
+mod platform;
 mod plugin_job;
 #[cfg(target_os = "linux")]
 mod portal;

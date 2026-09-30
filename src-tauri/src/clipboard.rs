@@ -17,14 +17,14 @@ use crate::error::AppError;
 use std::process::Command;
 
 /// Detect whether the session is Wayland or X11.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn is_wayland() -> bool {
     std::env::var("WAYLAND_DISPLAY").is_ok()
 }
 
 /// A clipboard tool failed to start. Distinguish "not installed" — the
 /// common, actionable case (#279) — from other spawn failures.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn tool_error(tool: &str, package: &str, e: std::io::Error) -> AppError {
     if e.kind() == std::io::ErrorKind::NotFound {
         AppError::Other(format!(
@@ -39,7 +39,7 @@ fn tool_error(tool: &str, package: &str, e: std::io::Error) -> AppError {
 /// Try to read a specific MIME type from the clipboard.
 /// `Ok(None)` means the MIME type isn't present (an empty clipboard is not
 /// an error); `Err` means the clipboard tool itself is unusable (#279).
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn read_mime(mime: &str) -> Result<Option<String>, AppError> {
     let output = if is_wayland() {
         Command::new("wl-paste")
@@ -66,7 +66,7 @@ fn read_mime(mime: &str) -> Result<Option<String>, AppError> {
 }
 
 /// Parse `file://` URIs into filesystem paths.
-#[cfg(any(not(windows), test))]
+#[cfg(any(all(not(windows), not(target_os = "macos")), test))]
 fn parse_file_uris(text: &str) -> Vec<String> {
     text.lines()
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -80,7 +80,7 @@ fn parse_file_uris(text: &str) -> Vec<String> {
 /// Minimal percent-decoding for file paths.
 /// Decodes to raw bytes first, then interprets the whole result as UTF-8 so
 /// multi-byte sequences (e.g. %C3%A9 -> é) aren't mangled byte-by-byte.
-#[cfg(any(not(windows), test))]
+#[cfg(any(all(not(windows), not(target_os = "macos")), test))]
 fn percent_decode(input: &str) -> String {
     let mut bytes = Vec::with_capacity(input.len());
     let mut iter = input.bytes();
@@ -236,7 +236,7 @@ pub async fn clipboard_read_text() -> Result<String, AppError> {
 }
 
 /// Percent-encode a file path for use in `file://` URIs.
-#[cfg(any(not(windows), test))]
+#[cfg(any(all(not(windows), not(target_os = "macos")), test))]
 fn percent_encode_path(path: &str) -> String {
     let mut result = String::with_capacity(path.len() * 2);
     for b in path.bytes() {
@@ -255,7 +255,7 @@ fn percent_encode_path(path: &str) -> String {
 }
 
 /// Build file URIs from paths.
-#[cfg(any(not(windows), test))]
+#[cfg(any(all(not(windows), not(target_os = "macos")), test))]
 fn paths_to_uris(paths: &[String]) -> Vec<String> {
     paths
         .iter()
@@ -265,7 +265,7 @@ fn paths_to_uris(paths: &[String]) -> Vec<String> {
 
 /// Write clipboard data with a specific MIME type using native tools.
 /// Uses wl-copy on Wayland, xclip on X11. Failures carry the reason (#279).
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn write_mime(mime: &str, data: &[u8]) -> Result<(), AppError> {
     let tool = if is_wayland() { "wl-copy" } else { "xclip" };
     let package = if is_wayland() {

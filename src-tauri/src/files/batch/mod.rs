@@ -124,6 +124,7 @@ impl Ledger {
     /// Setup is read-only, and its captures must be inert when discarded
     /// before execution. Once setup returns, context and operation cleanup are
     /// part of execution and a panic must preserve the settled item receipts.
+    #[cfg(any(target_os = "linux", target_os = "windows", test))]
     fn execute_with_setup<C>(
         &self,
         setup: impl FnOnce() -> Result<C, AppError>,
@@ -305,6 +306,7 @@ pub(super) async fn run_dedicated_receipts_owned<O: Send + 'static, C: 'static>(
     Ok(ledger.settle(worker_error))
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()

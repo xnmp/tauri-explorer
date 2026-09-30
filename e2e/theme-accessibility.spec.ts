@@ -40,6 +40,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { test, expect, type Page } from "./fixtures";
 import { BUILT_IN_THEMES as THEMES, VIEW_MODES, HOME_URL, seedSettings, switchViewMode, waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function prepareForContrast(page: Page) {
   await page.addStyleTag({
@@ -171,7 +172,9 @@ for (const premium of [false, true]) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await seedSettings(page, { theme, premiumTheme: premium }, { replace: true });
       await page.addInitScript(() => {
-        (globalThis as { __MOCK_FAILURES__?: Record<string, string> }).__MOCK_FAILURES__ = {
+        // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+        // so this writer must create it (`??=`) rather than assume it exists.
+        ((globalThis as { __mockControl?: MockControl }).__mockControl ??= {}).failures = {
           file_recovery_subscribe: "recovery store unavailable",
         };
       });

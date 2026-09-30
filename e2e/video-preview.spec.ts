@@ -5,6 +5,7 @@
  */
 import { test, expect } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openVideosWithPreview(page: import("@playwright/test").Page) {
   await page.goto("/?path=/home/user/Videos");
@@ -43,7 +44,9 @@ test("selecting a video displays its still frame and opens fullscreen", async ({
 
 test("a failed frame extraction shows the unavailable preview state", async ({ page }) => {
   await page.addInitScript(() => {
-    (window as unknown as { __mockVideoThumbnail?: () => string }).__mockVideoThumbnail = () => {
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).videoThumbnail = () => {
       throw new Error("ffmpeg unavailable");
     };
   });
@@ -56,7 +59,9 @@ test("a failed frame extraction shows the unavailable preview state", async ({ p
 test("a late frame from a previously selected video cannot replace the current frame", async ({ page }) => {
   await page.addInitScript(() => {
     const frame = (color: string) => `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><rect width="80" height="60" fill="${color}"/></svg>`)}`;
-    (window as unknown as { __mockVideoThumbnail?: (path: string) => Promise<string> | string }).__mockVideoThumbnail = (path) =>
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).videoThumbnail = (path) =>
       path.endsWith("recording.mp4") ? new Promise((resolve) => window.setTimeout(() => resolve(frame("red")), 350)) : frame("blue");
   });
   const previewPane = await openVideosWithPreview(page);
@@ -74,7 +79,9 @@ test("a late frame from a previous revision keeps the new revision loading", asy
   await page.addInitScript(() => {
     let recordingRequest = 0;
     const frame = (color: string) => `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><rect width="80" height="60" fill="${color}"/></svg>`)}`;
-    (window as unknown as { __mockVideoThumbnail?: (path: string) => Promise<string> | string }).__mockVideoThumbnail = (path) => {
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).videoThumbnail = (path) => {
       if (!path.endsWith("recording.mp4")) return frame("gray");
       recordingRequest += 1;
       return new Promise((resolve) => window.setTimeout(() => resolve(frame(recordingRequest === 1 ? "red" : "blue")), recordingRequest === 1 ? 350 : 700));
@@ -82,7 +89,7 @@ test("a late frame from a previous revision keeps the new revision loading", asy
   });
   const previewPane = await openVideosWithPreview(page);
   await page.locator(".entry-item", { hasText: "recording.mp4" }).first().click();
-  await page.evaluate(() => (window as unknown as { __mockVideoRevision?: () => void }).__mockVideoRevision?.());
+  await page.evaluate(() => (window as unknown as { __mockControl?: MockControl }).__mockControl?.videoRevision?.());
   await page.keyboard.press("F5");
 
   await page.waitForTimeout(450);

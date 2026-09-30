@@ -229,7 +229,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-wire.ts` — validates compact native listing columns and reconstructs exact immutable domain entries.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
-- `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
+- `mock-invoke.ts` — mock command dispatch/simulation for browser/E2E (no Tauri): stateful git working tree, trash, clipboard, drives. Open when E2E data wrong.
+- `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
+- `mock-fixtures.ts` — static fixture data for mock-invoke.ts: the seeded fake filesystem tree (`mockFiles`), fake file contents, the fake drives list, and the fake commit graph shape/refs (#869).
 - `mock-file-history.ts` — browser-only fixture history for UI tests; native policy lives in Rust.
 - `mock-file-history-execution.ts` — browser-only fixture inverse execution against mock filesystem commands.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.

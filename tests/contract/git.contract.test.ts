@@ -11,11 +11,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { getMockControl } from "../../src/lib/api/mock-control";
 
-// The mock's merge-conflict affordances register on `window` at import time
-// (the same hooks the browser E2E suite uses). Stub a window before importing
-// so they are available in this Node test. Vitest isolates modules per file, so
-// this does not leak the stub into other suites.
+// The mock's merge-conflict affordances register on `window.__mockControl` at
+// import time (the same hooks the browser E2E suite uses). Stub a window
+// before importing so they are available in this Node test. Vitest isolates
+// modules per file, so this does not leak the stub into other suites.
 vi.stubGlobal("window", {} as unknown as Window & typeof globalThis);
 const { mockInvoke } = await import("../../src/lib/api/mock-invoke");
 
@@ -58,23 +59,16 @@ function normalize(s: Summary) {
   };
 }
 
-const win = () =>
-  window as unknown as {
-    __mockGitReset: () => void;
-    __mockGitSetClean: () => void;
-    __mockGitStartMergeConflict: () => void;
-  };
-
 const status = () => mockInvoke<Summary>("git_status", { repoPath: REPO });
 
 describe("git contract — mock agrees with real backend (fixtures)", () => {
   beforeEach(() => {
-    win().__mockGitReset();
+    getMockControl().gitReset!();
   });
 
   describe("git_status bucket classification + op_state", () => {
     it("clean tree", async () => {
-      win().__mockGitSetClean();
+      getMockControl().gitSetClean!();
       expect(normalize(await status())).toEqual(gitStatusFx.clean);
     });
 
@@ -83,16 +77,16 @@ describe("git contract — mock agrees with real backend (fixtures)", () => {
     });
 
     it("conflicted merge (merge bucket + op_state=merge)", async () => {
-      win().__mockGitSetClean();
-      win().__mockGitStartMergeConflict();
+      getMockControl().gitSetClean!();
+      getMockControl().gitStartMergeConflict!();
       expect(normalize(await status())).toEqual(gitStatusFx.conflicted_merge);
     });
   });
 
   describe("git_commit conflict guard", () => {
     it("refuses to commit while a merge conflict is unresolved", async () => {
-      win().__mockGitSetClean();
-      win().__mockGitStartMergeConflict();
+      getMockControl().gitSetClean!();
+      getMockControl().gitStartMergeConflict!();
       const fx = gitCommitFx.commit_while_conflicted as {
         expect_error: boolean;
         error_substring: string;
@@ -105,8 +99,8 @@ describe("git contract — mock agrees with real backend (fixtures)", () => {
 
   describe("git_discard conflict guard", () => {
     it("refuses to discard a conflicted path (no silent deletion)", async () => {
-      win().__mockGitSetClean();
-      win().__mockGitStartMergeConflict();
+      getMockControl().gitSetClean!();
+      getMockControl().gitStartMergeConflict!();
       const fx = gitDiscardFx.discard_conflicted_refuses as {
         expect_error: boolean;
         error_substring: string;

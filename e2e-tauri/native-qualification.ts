@@ -1573,20 +1573,20 @@ async function stopNativeQualificationProcess(
   }
   if (child.exitCode !== null || child.signalCode !== null) return;
 
-  let forceAccepted: boolean;
+  let refusal: string | null = null;
   try {
-    forceAccepted = child.kill("SIGKILL");
+    if (!child.kill("SIGKILL")) refusal = "";
   } catch (error) {
-    throw new Error(
-      `${label} SIGKILL was rejected: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    refusal = `: ${error instanceof Error ? error.message : String(error)}`;
   }
-  if (!forceAccepted) {
-    throw new Error(`${label} SIGKILL was rejected`);
+  const exited = await waitForProcessExit(child, options.forceTimeoutMs);
+  // A process that exits between the liveness check and SIGKILL makes the
+  // kill fail (Windows reports the handle as gone). Only a refusal while the
+  // process is still alive is a rejected force kill (#910).
+  if (refusal !== null && !exited) {
+    throw new Error(`${label} SIGKILL was rejected${refusal}`);
   }
-  if (!(await waitForProcessExit(child, options.forceTimeoutMs))) {
+  if (!exited) {
     throw new Error(
       `${label} remained alive after SIGKILL for ${options.forceTimeoutMs}ms`,
     );

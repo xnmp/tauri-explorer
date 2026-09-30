@@ -209,6 +209,26 @@ describe("native qualification process boundaries", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("accepts a refused force kill when the process had already exited (#910)", async () => {
+    vi.useFakeTimers();
+    // Windows: the app exits after the graceful wait but before SIGKILL, so
+    // kill() refuses the already-gone process and its exit event follows.
+    const racing = new FakeStartupChild();
+    racing.onKill = (signal) => {
+      if (signal !== "SIGKILL") return true;
+      queueMicrotask(() => racing.exit(1, null));
+      return false;
+    };
+    const stopped = stopNativeStartupProcess(racing, {
+      gracefulTimeoutMs: 100,
+      forceTimeoutMs: 50,
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(stopped).resolves.toBeUndefined();
+    expect(racing.killSignals).toEqual([undefined, "SIGKILL"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("reaps every owned native process after graceful or forced exit", async () => {
     vi.useFakeTimers();
     const driver = new FakeStartupChild();

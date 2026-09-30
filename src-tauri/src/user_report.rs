@@ -263,11 +263,13 @@ fn validate_draft(
 }
 
 /// True only when the failure provably happened before any request byte
-/// reached the relay. Everything else — resets, timeouts while awaiting the
-/// response, unreachable-host errors that an established socket can also
-/// report — may follow a delivered report.
+/// reached the relay. This holds because `send_report` follows no redirects
+/// (a redirect hop would reconnect after the POST was delivered) and sets no
+/// timeouts (ureq can attribute a send-phase timeout to the connect phase).
+/// Everything else — resets, response timeouts, unreachable-host errors that
+/// an established socket can also report — may follow a delivered report.
 fn failed_before_sending(error: &ureq::Error) -> bool {
-    use ureq::{Error, Timeout};
+    use ureq::Error;
     match error {
         Error::HostNotFound
         | Error::ConnectionFailed
@@ -275,8 +277,7 @@ fn failed_before_sending(error: &ureq::Error) -> bool {
         | Error::RequireHttpsOnly(_)
         | Error::TlsRequired
         | Error::InvalidProxyUrl
-        | Error::ConnectProxyFailed(_)
-        | Error::Timeout(Timeout::Resolve | Timeout::Connect) => true,
+        | Error::ConnectProxyFailed(_) => true,
         // TCP reports a refusal only while connecting; ureq also uses it when
         // every resolved address refused.
         Error::Io(error) => error.kind() == std::io::ErrorKind::ConnectionRefused,
@@ -284,13 +285,53 @@ fn failed_before_sending(error: &ureq::Error) -> bool {
     }
 }
 
+fn relay_unreachable() -> SubmitReportError {
+    SubmitReportError::new(
+        "network_unreachable",
+        "Couldn't reach the report server — nothing was sent",
+    )
+}
+
+/// Resolve the relay host before sending. ureq reports a lookup failure as an
+/// unattributed I/O error, indistinguishable from a later socket error, so the
+/// usual offline case (no DNS) is only provably pre-send when checked here.
+/// Skipped when a proxy resolves the host instead.
+fn resolve_relay_host(endpoint: &str) -> Result<(), SubmitReportError> {
+    use std::net::ToSocketAddrs;
+    // A malformed endpoint is left for ureq to report.
+    let Ok(uri) = endpoint.parse::<ureq::http::Uri>() else {
+        return Ok(());
+    };
+    let Some(host) = uri.host() else {
+        return Ok(());
+    };
+    if ureq::Proxy::try_from_env().is_some_and(|proxy| !proxy.is_no_proxy(&uri)) {
+        return Ok(());
+    }
+    let port = uri
+        .port_u16()
+        .unwrap_or(if uri.scheme_str() == Some("http") {
+            80
+        } else {
+            443
+        });
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    match (host, port).to_socket_addrs() {
+        Ok(mut addresses) => match addresses.next() {
+            Some(_) => Ok(()),
+            None => Err(relay_unreachable()),
+        },
+        Err(error) => {
+            log::warn!("User report relay host did not resolve: {error}");
+            Err(relay_unreachable())
+        }
+    }
+}
+
 fn map_transport_error(error: ureq::Error) -> SubmitReportError {
     if failed_before_sending(&error) {
         log::warn!("User report relay unreachable: {error}");
-        return SubmitReportError::new(
-            "network_unreachable",
-            "Couldn't reach the report server — nothing was sent",
-        );
+        return relay_unreachable();
     }
     log::warn!("User report relay response lost: {error}");
     SubmitReportError::new(
@@ -316,10 +357,14 @@ fn send_report(
     endpoint: &str,
     payload: RelayRequest,
 ) -> Result<SubmittedUserReport, SubmitReportError> {
+    resolve_relay_host(endpoint)?;
     let mut response = ureq::post(endpoint)
         .header("User-Agent", "tauri-explorer")
         .config()
         .http_status_as_error(false)
+        // Following a redirect would reconnect after the report was delivered,
+        // so a failure on that hop could be misreported as never sent.
+        .max_redirects(0)
         .build()
         .send_json(payload)
         .map_err(map_transport_error)?;
@@ -429,6 +474,12 @@ mod tests {
             MAX_ATTACHMENT_NAME_UNITS,
             contract_limit("maxAttachmentNameUnits")
         );
+        let app_limit = |name: &str| contract()["appLimits"][name].as_u64().unwrap() as usize;
+        assert_eq!(
+            MAX_REPORT_DESCRIPTION_UNITS,
+            app_limit("maxDescriptionUnits")
+        );
+        assert_eq!(MAX_CONTACT_UNITS, app_limit("maxContactUnits"));
     }
 
     #[test]
@@ -690,16 +741,21 @@ mod tests {
     }
 
     fn stub_response(status: &str, response_body: &str) -> String {
+        stub_response_with_headers(status, "", response_body)
+    }
+
+    fn stub_response_with_headers(status: &str, headers: &str, response_body: &str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let response_body = response_body.to_string();
         let status = status.to_string();
+        let headers = headers.to_string();
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             read_request(&mut stream);
 
             let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
+                "HTTP/1.1 {status}\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
                 response_body.len()
             );
             stream.write_all(response.as_bytes()).unwrap();
@@ -731,6 +787,30 @@ mod tests {
     }
 
     #[test]
+    fn unresolvable_relay_host_is_a_definite_failure_before_sending() {
+        // `.invalid` never resolves (RFC 6761).
+        let error =
+            send_report("https://relay.tauri-explorer.invalid/api/report", payload()).unwrap_err();
+        assert_eq!(error.kind, "network_unreachable");
+    }
+
+    #[test]
+    fn a_redirect_is_not_followed_after_the_report_was_delivered() {
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let refused = format!("http://{}/", closed.local_addr().unwrap());
+        drop(closed);
+        let endpoint = stub_response_with_headers(
+            "303 See Other",
+            &format!("Location: {refused}\r\n"),
+            r#"{"error":{"code":"server_rejected","message":"moved"}}"#,
+        );
+        // Following it to a refused port would report "nothing was sent" for
+        // a report the first hop already received.
+        let error = send_report(&endpoint, payload()).unwrap_err();
+        assert_eq!(error.kind, "server_rejected");
+    }
+
+    #[test]
     fn lost_relay_response_is_uncertain_to_avoid_duplicate_submission() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -754,19 +834,22 @@ mod tests {
         for definite in [
             Error::HostNotFound,
             Error::ConnectionFailed,
-            Error::Timeout(Timeout::Resolve),
-            Error::Timeout(Timeout::Connect),
             Error::Io(IoError::from(ErrorKind::ConnectionRefused)),
         ] {
             assert_eq!(map_transport_error(definite).kind, "network_unreachable");
         }
         for uncertain in [
+            // ureq can attribute a send-phase timeout to connect or resolve.
+            Error::Timeout(Timeout::Resolve),
+            Error::Timeout(Timeout::Connect),
             Error::Timeout(Timeout::SendBody),
             Error::Timeout(Timeout::RecvResponse),
             Error::Timeout(Timeout::Global),
             Error::Io(IoError::from(ErrorKind::ConnectionReset)),
             Error::Io(IoError::from(ErrorKind::HostUnreachable)),
             Error::Io(IoError::from(ErrorKind::UnexpectedEof)),
+            // A lookup failure inside ureq is an unattributed I/O error.
+            Error::Io(IoError::other("failed to lookup address information")),
         ] {
             assert_eq!(map_transport_error(uncertain).kind, "submission_uncertain");
         }

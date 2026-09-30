@@ -7,9 +7,14 @@ export const USER_REPORT_IMAGE_TYPES = [
 ] as const;
 export type UserReportImageType = (typeof USER_REPORT_IMAGE_TYPES)[number];
 
+// Mirrors the native boundary and the relay; all three assert these against
+// tests/contract/fixtures/report_relay.json.
 export const MAX_USER_REPORT_ATTACHMENTS = 3;
 export const MAX_USER_REPORT_ATTACHMENT_BYTES = 2 * 1024 * 1024;
 export const MAX_USER_REPORT_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+export const MAX_USER_REPORT_TITLE_UNITS = 120;
+export const MAX_USER_REPORT_DESCRIPTION_UNITS = 8000;
+export const MAX_USER_REPORT_CONTACT_UNITS = 100;
 
 export interface UserReportAttachment {
   name: string;

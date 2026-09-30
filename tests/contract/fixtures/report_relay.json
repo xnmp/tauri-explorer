@@ -7,6 +7,10 @@
     "maxAttachmentNameUnits": 120,
     "maxRelayBodyUnits": 8500
   },
+  "appLimits": {
+    "maxDescriptionUnits": 8000,
+    "maxContactUnits": 100
+  },
   "relayErrorCodes": [
     "malformed_input",
     "rate_limited",
@@ -14,5 +18,11 @@
     "server_rejected",
     "submission_uncertain"
   ],
-  "requestFields": ["title", "body", "kind", "website", "attachments"]
+  "requestFields": [
+    "title",
+    "body",
+    "kind",
+    "website",
+    "attachments"
+  ]
 }

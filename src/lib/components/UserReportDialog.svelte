@@ -8,6 +8,9 @@
   import { clipboardHasImage } from "$lib/api/clipboard-image";
   import {
     userReportAttachmentBytes,
+    MAX_USER_REPORT_CONTACT_UNITS,
+    MAX_USER_REPORT_DESCRIPTION_UNITS,
+    MAX_USER_REPORT_TITLE_UNITS,
     userReportAttachmentFailureMessage,
     userReportFallbackNotice,
     userReportFallbackUrl,
@@ -311,15 +314,15 @@
     <label>
       <span>Title</span>
       <!-- svelte-ignore a11y_autofocus -- Modal traps and restores focus; the title is the deliberate first step in this short report flow. -->
-      <input bind:value={title} maxlength="120" required autofocus />
+      <input bind:value={title} maxlength={MAX_USER_REPORT_TITLE_UNITS} required autofocus />
     </label>
     <label>
       <span>Description (optional)</span>
-      <textarea bind:value={body} maxlength="8000" rows="8"></textarea>
+      <textarea bind:value={body} maxlength={MAX_USER_REPORT_DESCRIPTION_UNITS} rows="8"></textarea>
     </label>
     <label>
       <span>How can we reach you? (GitHub handle, email — optional)</span>
-      <input bind:value={contact} maxlength="100" />
+      <input bind:value={contact} maxlength={MAX_USER_REPORT_CONTACT_UNITS} />
     </label>
 
     <section class="attachments" aria-label="Image attachments">

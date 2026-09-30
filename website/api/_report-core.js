@@ -21,14 +21,16 @@ export const REPORT_LIMITS = Object.freeze({
   maxRelayBodyUnits: 8500,
 });
 
-/** Error codes the app maps to its own error kinds. */
-export const REPORT_ERROR_CODES = Object.freeze([
+/** Error codes the app maps to its own error kinds. `ReportError` accepts
+ * only these, so the type check rejects a code the app would not recognise. */
+export const REPORT_ERROR_CODES = Object.freeze(/** @type {const} */ ([
   "malformed_input",
   "rate_limited",
   "daily_cap",
   "server_rejected",
   "submission_uncertain",
-]);
+]));
+/** @typedef {typeof REPORT_ERROR_CODES[number]} ReportErrorCode */
 
 /** After GitHub's issue POST starts, a failure cannot prove the issue was not created. */
 export function submissionUncertain() {
@@ -40,7 +42,7 @@ export function submissionUncertain() {
 }
 
 export class ReportError extends Error {
-  /** @param {string} code @param {string} message @param {number} [status] */
+  /** @param {ReportErrorCode} code @param {string} message @param {number} [status] */
   constructor(code, message, status = 400) {
     super(message);
     this.name = "ReportError";

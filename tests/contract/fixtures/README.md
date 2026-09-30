@@ -31,3 +31,6 @@ different concrete inputs:
 codes shared by the native boundary (`src-tauri/src/user_report.rs` tests) and
 the Vercel relay (`tests/website/report-relay.test.ts` against
 `website/api/_report-core.js`), plus the request fields the app sends.
+`appLimits` are enforced by the app only (native boundary and the report
+dialog, `src/lib/domain/user-report.ts`); the relay only bounds the assembled
+body by `limits.maxRelayBodyUnits`.

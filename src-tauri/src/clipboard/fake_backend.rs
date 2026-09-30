@@ -31,20 +31,22 @@ struct OsClipboard {
 pub(super) struct Capabilities {
     /// The backend offers Cut before trying a write.
     pub admits_cut: bool,
-    /// Writes carry a readable ownership token (X11 today).
+    /// Writes carry a readable ownership token.
     pub proves_ownership: bool,
     /// The platform identifies the selection owner.
     pub tracks_owner: bool,
 }
 
 impl Capabilities {
-    /// Like X11: tokened multi-target writes and an identifiable owner.
+    /// Like X11, Windows and macOS: provable writes and an identifiable
+    /// clipboard owner (or content counter).
     pub const OWNED: Self = Self {
         admits_cut: true,
         proves_ownership: true,
         tracks_owner: true,
     };
-    /// Like Wayland, Windows and macOS today: Copy only, no owner identity.
+    /// A backend that can prove nothing (X11 without a `clipboard-rs`
+    /// connection): Copy only, no owner identity.
     pub const COPY_ONLY: Self = Self {
         admits_cut: false,
         proves_ownership: false,

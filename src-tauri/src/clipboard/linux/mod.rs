@@ -4,7 +4,9 @@
 //! xclip packages); when one is missing the operation reports how to install
 //! it (#279) and file Copy keeps working in-app.
 //!
-//! The file-list backends differ by session: see `wayland.rs` and `x11.rs`.
+//! The file-list backends differ by session: see `wayland.rs` (a held
+//! `wl-copy --foreground` owner) and `x11.rs` (a `clipboard-rs` owner). Both
+//! prove Cut ownership (#835, #877).
 
 mod wayland;
 mod x11;
@@ -16,7 +18,8 @@ use super::file_uri::{
 use crate::error::AppError;
 use std::process::{Command, Output, Stdio};
 
-/// Cut is proven only through the X11 multi-target owner so far (#877).
+/// X11 proves Cut through its multi-target owner; without one (clipboard-rs
+/// could not connect) it refuses Cut.
 const CUT_NEEDS_X11_OWNERSHIP: &str =
     "Cut requires X11 clipboard ownership; Copy is available here";
 

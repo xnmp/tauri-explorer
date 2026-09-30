@@ -3,7 +3,7 @@ import { HOME_URL, waitForEntries } from "./helpers";
 import type { Drive } from "../src/lib/api/drives";
 
 type VolumeFixture = { __mockLinuxVolumes: Drive[]; __mockMountError?: string; __mockInvokeCounts?: Record<string, number> };
-const volume = { name: "USB Backup", path: "", kind: "removable" as const, device_id: "/org/freedesktop/UDisks2/block_devices/sdb1" };
+const volume = { name: "USB Backup", path: null, kind: "removable" as const, deviceId: "/org/freedesktop/UDisks2/block_devices/sdb1" };
 
 test("Linux volume sidebar discovers, mounts, reports errors and removes volumes", async ({ page }) => {
   await page.addInitScript(({ volume }) => {
@@ -17,7 +17,7 @@ test("Linux volume sidebar discovers, mounts, reports errors and removes volumes
   await expect(usb).toHaveCount(1);
   await expect(usb).toContainText("Not mounted");
   await page.evaluate(() => (window as unknown as VolumeFixture).__mockLinuxVolumes.push({
-    name: "SD Card", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdc1",
+    name: "SD Card", path: null, kind: "removable", deviceId: "/org/freedesktop/UDisks2/block_devices/sdc1",
   }));
   await expect(page.locator(".drive-item").filter({ hasText: "SD Card" })).toBeVisible();
 

@@ -190,7 +190,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `recent-files.svelte.ts` — recent files store.
 - `frecency.svelte.ts` — zoxide-style frecency path ranking.
-- `drives.svelte.ts` — discovered volumes and mounted-root reactive store.
+- `drives.svelte.ts` — discovered volumes and mounted-root reactive store; refreshes on `drives-changed` pushes, polling slowly while the backend pushes and quickly otherwise.
 - `drive-opening.ts` — coalesces mount requests; navigates only after mounting succeeds and reports failures.
 - `home.svelte.ts` — cached home directory (sync `.value`).
 - `sidebar-views.svelte.ts` — activity-bar sidebar view registry (#52).
@@ -525,6 +525,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_status.rs` — per-entry git status indicators.
 - `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding.
 - `linux_volumes.rs` — UDisks2 filesystem discovery, stable volume identity, mount-table merge and click-to-mount adapter.
+- `linux_gvfs_watch.rs` — session-bus `org.gtk.vfs.MountTracker` Mounted/Unmounted subscription that pushes `drives-changed` when GVfs Google Drive entries change (gvfsd-fuse raises no inotify events).
+- `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change.
+- `linux_volume_monitor.rs` — one long-lived UDisks2 subscription (ObjectManager + PropertiesChanged + NameOwnerChanged) feeding a cached snapshot, 30 s backstop resync, reconnect/fallback, and `drives-changed` notifications.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 

@@ -157,6 +157,55 @@ describe("terminal input queue", () => {
     expect(events.error).toHaveBeenCalledOnce();
   });
 
+  it("keeps resending while reused numbers come back spent", async () => {
+    const { input, events } = queue();
+    const send = vi.fn(async (seq: number): Promise<TerminalInputReceipt> =>
+      seq < 2 ? { droppedBytes: 0, duplicate: true } : { droppedBytes: 0 });
+    input.open();
+    input.attach(send);
+    input.write("data");
+    await settle();
+    input.write("next");
+    await settle();
+    expect(send.mock.calls).toEqual([[0, "data"], [1, "data"], [2, "data"], [3, "next"]]);
+    expect(events.error).not.toHaveBeenCalled();
+  });
+
+  it("reports a write the backend declared lost without resending it", async () => {
+    const { input, events } = queue();
+    const send = vi.fn(async (seq: number): Promise<TerminalInputReceipt> =>
+      seq === 0 ? { droppedBytes: 0, lost: true } : { droppedBytes: 0 });
+    input.open();
+    input.attach(send);
+    input.write("late");
+    await settle();
+    input.write("next");
+    await settle();
+    expect(send.mock.calls).toEqual([[0, "late"], [1, "next"]]);
+    expect(events.error).toHaveBeenCalledOnce();
+  });
+
+  it("discards an attached stream's queued input when a new stream opens", async () => {
+    const { input } = queue();
+    const first = backend();
+    input.open();
+    input.attach(first.send);
+    input.write("sent");
+    input.write("queued behind the in-flight send");
+    const pending = deferred<string>();
+    input.write(pending.promise);
+    input.open();
+    input.write("new stream");
+    const second = backend();
+    input.attach(second.send);
+    pending.resolve("stale paste");
+    await settle();
+    await first.drain();
+    await second.drain();
+    expect(first.delivered()).toBe("sent");
+    expect(second.delivered()).toBe("new stream");
+  });
+
   it("does not report a send that fails after its stream closed", async () => {
     const { input, events } = queue();
     const pty = backend();
@@ -177,7 +226,10 @@ describe("terminal input queue", () => {
     input.attach(pty.send);
     pty.calls[0].ok({ droppedBytes: 10 });
     await settle();
-    expect(events.dropped).toHaveBeenCalledWith(10);
+    input.write("y");
+    pty.calls[1].ok({ droppedBytes: 1 });
+    await settle();
+    expect(events.dropped.mock.calls).toEqual([[10, true], [1, false]]);
   });
 
   it("releases later input when a queued read fails, and reports the failure", async () => {

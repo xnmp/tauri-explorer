@@ -414,7 +414,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
-- `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead, and feeds one writer thread per PTY through a channel (#882).
+- `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead (an overflow discards all of it), and feeds one writer thread per PTY through a channel (#882).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `process_ext.rs` — suppress console-window flash for spawned children.

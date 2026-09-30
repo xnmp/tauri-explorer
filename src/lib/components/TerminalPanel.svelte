@@ -194,10 +194,15 @@
         void logFrontendError(`terminal input write failed: ${String(err)}`).catch(() => {});
       },
       // Typeahead is bounded while the shell starts (#882).
-      inputDropped: (bytes) => {
+      // Overflow discards ALL pre-start input, so the user must know their
+      // typing was lost rather than find a truncated command on the prompt.
+      inputDropped: (bytes, firstInStream) => {
         const message = `terminal typeahead buffer full: discarded ${bytes} bytes typed before the shell started`;
         console.warn(`[terminal] ${message}`);
         if (!import.meta.env.DEV) void logFrontendError(message).catch(() => {});
+        if (firstInStream) {
+          toastStore.error("Input typed before the terminal started was too large and was discarded");
+        }
       },
     },
   );

@@ -14,18 +14,23 @@
 //! ([`run_input_writer`]), so a blocked PTY never blocks the caller or the
 //! terminal registry. Input admitted before the shell starts (typeahead) is
 //! held, bounded by [`TYPEAHEAD_LIMIT`], and handed to the writer ahead of
-//! everything admitted later.
+//! everything admitted later. Typeahead that overflows the bound is discarded
+//! whole: none of it reaches the shell.
 
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
-/// Typeahead held before the shell starts. Once a chunk does not fit, the
-/// rest of the pre-start input is discarded too: delivering later input
-/// after a hole could run a command the user never typed (a dropped paste
-/// followed by Enter).
+/// Typeahead held before the shell starts. Once a chunk does not fit, ALL
+/// pre-start input is discarded: what was already held, the chunk, and
+/// everything else written before the shell starts. Delivering any part of it
+/// could leave a partial command on the prompt (`rm -rf ./` held, the path
+/// paste dropped) for the user's next Enter to run.
 pub(super) const TYPEAHEAD_LIMIT: usize = 64 * 1024;
+
+/// Lost gaps remembered so a late write into one is reported as `lost`.
+const LOST_RANGES_KEPT: usize = 16;
 
 /// Early arrivals held while waiting for a missing sequence number. A caller
 /// that keeps one write in flight never reaches this; it bounds memory if a
@@ -44,6 +49,10 @@ pub struct InputReceipt {
     /// caller that reused the number after an unseen outcome resends its data
     /// under the next one.
     duplicate: bool,
+    /// The sequence number fell in a gap that was already declared lost (see
+    /// `REORDER_LIMIT`), so this data was ignored. Unlike a duplicate it was
+    /// never delivered, but resending it now would reorder the stream.
+    lost: bool,
 }
 
 impl InputReceipt {
@@ -56,6 +65,11 @@ impl InputReceipt {
     pub(super) fn duplicate(&self) -> bool {
         self.duplicate
     }
+
+    #[cfg(test)]
+    pub(super) fn lost(&self) -> bool {
+        self.lost
+    }
 }
 
 /// The sequencer and typeahead buffer in front of one PTY writer.
@@ -65,6 +79,8 @@ pub(super) struct TerminalInput {
     typeahead: Vec<u8>,
     typeahead_full: bool,
     sink: Option<Sender<Vec<u8>>>,
+    /// Half-open sequence ranges skipped as lost, newest last.
+    lost: Vec<std::ops::Range<u64>>,
 }
 
 impl TerminalInput {
@@ -75,6 +91,7 @@ impl TerminalInput {
             typeahead: Vec::new(),
             typeahead_full: false,
             sink: None,
+            lost: Vec::new(),
         }
     }
 
@@ -84,7 +101,11 @@ impl TerminalInput {
     pub(super) fn submit(&mut self, seq: u64, data: Vec<u8>) -> InputReceipt {
         let mut receipt = InputReceipt::default();
         if seq < self.next_seq || self.early.contains_key(&seq) {
-            receipt.duplicate = true;
+            if self.lost.iter().any(|range| range.contains(&seq)) {
+                receipt.lost = true;
+            } else {
+                receipt.duplicate = true;
+            }
             return receipt;
         }
         self.early.insert(seq, data);
@@ -94,6 +115,10 @@ impl TerminalInput {
                 "terminal input: writes {}..{resume} never arrived; continuing without them",
                 self.next_seq
             );
+            if self.lost.len() == LOST_RANGES_KEPT {
+                self.lost.remove(0);
+            }
+            self.lost.push(self.next_seq..resume);
             self.next_seq = resume;
         }
         while let Some(chunk) = self.early.remove(&self.next_seq) {
@@ -104,7 +129,8 @@ impl TerminalInput {
     }
 
     /// Connect the running PTY's writer. Held typeahead goes first, so no
-    /// later write can overtake it.
+    /// later write can overtake it; typeahead that overflowed was already
+    /// discarded whole, so none of it is delivered.
     pub(super) fn attach(&mut self, sink: Sender<Vec<u8>>) {
         let typeahead = std::mem::take(&mut self.typeahead);
         if !typeahead.is_empty() {
@@ -125,9 +151,13 @@ impl TerminalInput {
             let _ = sink.send(chunk);
             return 0;
         }
-        if self.typeahead_full || self.typeahead.len() + chunk.len() > TYPEAHEAD_LIMIT {
-            self.typeahead_full = true;
+        if self.typeahead_full {
             return chunk.len();
+        }
+        if self.typeahead.len() + chunk.len() > TYPEAHEAD_LIMIT {
+            self.typeahead_full = true;
+            let held = std::mem::take(&mut self.typeahead).len();
+            return held + chunk.len();
         }
         self.typeahead.extend_from_slice(&chunk);
         0
@@ -214,24 +244,29 @@ mod tests {
     }
 
     #[test]
-    fn full_typeahead_discards_the_rest_of_the_pre_start_input() {
+    fn overflowing_typeahead_discards_all_pre_start_input() {
         let mut input = TerminalInput::new();
-        assert_eq!(
-            input
-                .submit(0, vec![b'a'; TYPEAHEAD_LIMIT - 1])
-                .dropped_bytes(),
-            0
-        );
-        assert_eq!(input.submit(1, b"paste".to_vec()).dropped_bytes(), 5);
-        // A later chunk that would fit is discarded too: Enter after a hole
-        // must not run a partial command.
+        let held = TYPEAHEAD_LIMIT - 1;
+        assert_eq!(input.submit(0, vec![b'a'; held]).dropped_bytes(), 0);
+        // The chunk that does not fit takes the held prefix with it.
+        assert_eq!(input.submit(1, b"paste".to_vec()).dropped_bytes(), held + 5);
+        // A later chunk that would fit is discarded too.
         assert_eq!(input.submit(2, b"\r".to_vec()).dropped_bytes(), 1);
         let (sender, receiver) = mpsc::channel();
         input.attach(sender);
         assert_eq!(input.submit(3, b"after".to_vec()).dropped_bytes(), 0);
-        let delivered = received(&receiver);
-        assert_eq!(delivered.len(), TYPEAHEAD_LIMIT - 1 + "after".len());
-        assert!(delivered.ends_with("aafter"));
+        assert_eq!(received(&receiver), "after");
+    }
+
+    #[test]
+    fn enter_after_the_start_runs_nothing_typed_before_an_overflow() {
+        let mut input = TerminalInput::new();
+        input.submit(0, b"rm -rf ./".to_vec());
+        input.submit(1, vec![b'p'; TYPEAHEAD_LIMIT]);
+        let (sender, receiver) = mpsc::channel();
+        input.attach(sender);
+        input.submit(2, b"\r".to_vec());
+        assert_eq!(received(&receiver), "\r");
     }
 
     #[test]
@@ -241,7 +276,19 @@ mod tests {
             input.submit(0, vec![b'a'; TYPEAHEAD_LIMIT]).dropped_bytes(),
             0
         );
-        assert_eq!(input.submit(1, b"b".to_vec()).dropped_bytes(), 1);
+        let (sender, receiver) = mpsc::channel();
+        input.attach(sender);
+        assert_eq!(received(&receiver).len(), TYPEAHEAD_LIMIT);
+    }
+
+    #[test]
+    fn one_byte_past_the_limit_discards_the_full_buffer_too() {
+        let mut input = TerminalInput::new();
+        input.submit(0, vec![b'a'; TYPEAHEAD_LIMIT]);
+        assert_eq!(
+            input.submit(1, b"b".to_vec()).dropped_bytes(),
+            TYPEAHEAD_LIMIT + 1
+        );
     }
 
     #[test]
@@ -275,9 +322,12 @@ mod tests {
         let delivered = received(&receiver);
         assert_eq!(delivered.len(), REORDER_LIMIT + 1);
         assert!(delivered.ends_with("-z"));
-        // The lost write, arriving late, cannot jump the queue.
-        input.submit(1, b"late".to_vec());
+        // The lost write, arriving late, cannot jump the queue, and is
+        // reported as lost rather than as an already-delivered duplicate.
+        let late = input.submit(1, b"late".to_vec());
+        assert!(late.lost() && !late.duplicate());
         assert_eq!(received(&receiver), "");
+        assert!(input.submit(0, b"a".to_vec()).duplicate());
     }
 
     #[test]

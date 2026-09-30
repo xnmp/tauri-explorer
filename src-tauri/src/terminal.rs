@@ -1419,6 +1419,29 @@ mod tests {
         assert!(typeahead < transcript.text.find("AFTER:start").unwrap());
     }
 
+    /// #882: typeahead that overflows the bound is discarded whole, so the
+    /// user's first Enter after the start cannot run a partial command that
+    /// was held before the overflow.
+    #[test]
+    #[cfg(unix)]
+    fn overflowed_typeahead_leaves_nothing_for_the_first_enter_to_run() {
+        const OWNER: &str = "typeahead-overflow";
+        let _cleanup = DestroyOnDrop(OWNER);
+        let (id, token) = reserve_started(OWNER);
+        write_terminal(id, OWNER, 0, b"printf 'HELD:%s' ran".to_vec()).unwrap();
+        let receipt = write_terminal(id, OWNER, 1, vec![b'x'; input::TYPEAHEAD_LIMIT]).unwrap();
+        assert!(receipt.dropped_bytes() > input::TYPEAHEAD_LIMIT);
+        let mut transcript = spawn_hermetic(id, OWNER, token);
+        write_terminal(id, OWNER, 2, b"\n".to_vec()).unwrap();
+        write_terminal(id, OWNER, 3, b"printf 'END:%s\\n' marker\n".to_vec()).unwrap();
+        transcript.expect("END:marker");
+        assert!(
+            !transcript.text.contains("HELD"),
+            "pre-start input reached the shell: {:?}",
+            transcript.text
+        );
+    }
+
     /// #882: ordering is the backend's guarantee, not the caller's. Every
     /// character is its own write from its own thread, released together, and
     /// the shell still receives the sequence-number order.

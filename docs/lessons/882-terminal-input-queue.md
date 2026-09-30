@@ -20,24 +20,31 @@ bodies in either order.
   ignores a repeated number. One writer thread per PTY drains a channel, so a
   blocked PTY never blocks the command or the registry. The input stream exists
   from reservation. Typeahead is held (64 KiB) and delivered before any later
-  write. Once one chunk does not fit, the rest of the pre-start input is
-  discarded, so an Enter after a hole cannot run a partial command. The receipt
-  reports the discarded bytes, and the panel warns about them.
+  write. If one chunk does not fit, ALL pre-start input is discarded: the
+  prefix already held, that chunk, and everything else written before the
+  start. None of it reaches the shell. Delivering only the held prefix
+  (`rm -rf ./` held, the pasted path dropped) would leave a partial command
+  for the user's first Enter after the start to run. The receipt reports the
+  discarded bytes. The panel logs them and shows the user a toast.
+  A late write into a gap the backend already declared lost is reported as
+  `lost` rather than `duplicate`, so a caller does not resend it out of
+  order.
 - `domain/terminal-input-queue.ts`: the one frontend queue. `write` takes a
   string or a promise, so a clipboard read or a dialect-dependent insertion
   keeps its key position. It holds input until reservation returns the id, and
   it keeps one coalescing send in flight. A sequence number is spent only by a
   send that succeeded, so a failed send never leaves the backend waiting for a
   gap. If the failure hid a write the backend had in fact admitted, the reused
-  number comes back as a `duplicate` and the data is resent under the next
-  number, so nothing is lost silently.
+  number comes back as a `duplicate`, and the data is resent under the next
+  number until one is accepted, so nothing is lost silently.
 - `state/terminal-session.ts`: opens the queue at start, and at `restart`
   before the old shell is killed, so keys typed during a restart go to the
   replacement shell. It closes the queue on stop or exit, and a stop always
   cancels a start or restart in progress. The old stream's unsent input never
   reaches a successor (#709). Keys typed while the shell is exited are dropped.
-  A path insertion requested then waits for the restart, as it did before
-  (`session.insert`).
+  A path insertion (`session.insert`) requested then, or during a start that
+  fails or is replaced, waits for the next shell that does start, as it did
+  before.
 - `domain/terminal-paste.ts`: per-platform paste source order with the readers
   injected, and the bytes xterm's `paste()` emits. This replaces capturing
   `onData` during a synchronous `term.paste()`.

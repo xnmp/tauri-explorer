@@ -27,8 +27,9 @@ export interface TerminalSessionCallbacks {
   exit(): void;
   /** Input could not be delivered: a failed send or a failed queued read. */
   writeError(error: unknown): void;
-  /** The backend discarded `bytes` of typeahead typed before the shell started. */
-  inputDropped(bytes: number): void;
+  /** The backend discarded `bytes` of typeahead typed before the shell
+   *  started; `firstInStream` marks the first report for that shell. */
+  inputDropped(bytes: number, firstInStream: boolean): void;
 }
 
 interface Acquisition {
@@ -254,7 +255,8 @@ export function createTerminalSession(
    * Queue text built for the shell that receives it, such as a path
    * insertion quoted in the spawned shell's dialect. It holds its place in
    * the input queue until that shell runs. With no shell running or starting,
-   * it waits for the next one instead of being dropped.
+   * it waits for the next one instead of being dropped, and likewise when
+   * the shell it was waiting for never starts.
    */
   function insert(build: InsertionBuilder): void {
     if (disposed) return;
@@ -262,7 +264,13 @@ export function createTerminalSession(
       pendingInsertions.push(build);
       return;
     }
-    input.write(stream.running.then((info) => (info ? build(info) : "")));
+    input.write(stream.running.then((info) => {
+      if (info) return build(info);
+      // That shell never ran (spawn failed or was stopped): keep the
+      // insertion for the next one, whose stream may already be open.
+      insert(build);
+      return "";
+    }));
   }
 
   return {

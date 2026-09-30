@@ -252,6 +252,41 @@ describe("terminal session input", () => {
     expect(build).not.toHaveBeenCalled();
   });
 
+  it("keeps an insertion requested during a failed start for the next successful shell", async () => {
+    let nextId = 41;
+    const spawn = vi.fn()
+      .mockRejectedValueOnce(new Error("spawn failed"))
+      .mockResolvedValue({ shellKind: "posix", wslDistro: null });
+    const h = harness({ spawn, reserveId: vi.fn(async () => nextId++) });
+    const failing = h.session.start("/work", 80, 24);
+    h.session.insert((info) => `'/tmp/x' (${info.shellKind})`);
+    await expect(failing).rejects.toThrow("spawn failed");
+    await settle();
+    await h.session.start("/work", 80, 24);
+    await settle();
+    const sent = vi.mocked(h.dependencies.write).mock.calls.filter(([id]) => id === 42);
+    expect(sent.map(([, , data]) => data).join("")).toBe("'/tmp/x' (posix)");
+  });
+
+  it("keeps an insertion pending on a restarted shell for its replacement", async () => {
+    let nextId = 41;
+    const spawning = deferred<{ shellKind: "posix"; wslDistro: null }>();
+    const spawn = vi.fn()
+      .mockReturnValueOnce(spawning.promise)
+      .mockResolvedValue({ shellKind: "powershell", wslDistro: null });
+    const h = harness({ spawn, reserveId: vi.fn(async () => nextId++) });
+    const first = h.session.start("/work", 80, 24);
+    h.session.insert((info) => `[${info.shellKind}]`);
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+    const restarting = h.session.restart("/work", 80, 24);
+    spawning.resolve({ shellKind: "posix", wslDistro: null });
+    await first;
+    await restarting;
+    await settle();
+    const sent = vi.mocked(h.dependencies.write).mock.calls;
+    expect(sent.map(([id, , data]) => [id, data])).toEqual([[42, "[powershell]"]]);
+  });
+
   it("holds an insertion requested while the shell is exited for the restarted shell", async () => {
     let exitHandler: (() => void) | undefined;
     let nextId = 41;
@@ -328,7 +363,7 @@ describe("terminal session input", () => {
     await h.session.start("/work", 80, 24);
     h.session.write("discard");
     await settle();
-    expect(h.callbacks.inputDropped).toHaveBeenCalledWith(7);
+    expect(h.callbacks.inputDropped).toHaveBeenCalledWith(7, true);
   });
 
   it("sends nothing queued during a start that is disposed before it gets an id", async () => {

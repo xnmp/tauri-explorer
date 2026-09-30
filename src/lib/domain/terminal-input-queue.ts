@@ -28,10 +28,14 @@
 import { createOrderedWriter, type OrderedWriter } from "./ordered-writer";
 
 export interface TerminalInputReceipt {
-  /** Typeahead the backend discarded because its bounded buffer was full. */
+  /** Typeahead the backend discarded because its bounded buffer overflowed.
+   *  An overflow discards all pre-start input, including what was held. */
   droppedBytes: number;
   /** The sequence number was already admitted, so this data was ignored. */
   duplicate?: boolean;
+  /** The sequence number fell in a gap the backend declared lost, so this
+   *  data was ignored; resending it would reorder the stream. */
+  lost?: boolean;
 }
 
 /** Deliver write number `seq` of the current stream to its PTY. */
@@ -40,8 +44,9 @@ export type TerminalInputSend = (seq: number, data: string) => Promise<TerminalI
 export interface TerminalInputQueueEvents {
   /** A send or a queued asynchronous input failed; it contributes nothing. */
   error(error: unknown): void;
-  /** The backend discarded `bytes` of typeahead typed before the shell started. */
-  dropped(bytes: number): void;
+  /** The backend discarded `bytes` of typeahead typed before the shell
+   *  started. `firstInStream` is true for the stream's first report. */
+  dropped(bytes: number, firstInStream: boolean): void;
 }
 
 export interface TerminalInputQueue {
@@ -128,19 +133,27 @@ export function createTerminalInputQueue(events: TerminalInputQueueEvents): Term
     attach(send) {
       if (state !== "holding") return;
       let seq = 0;
+      let droppedBefore = false;
       const stream: OrderedWriter = createOrderedWriter(async (data) => {
         let receipt = await send(seq, data);
         // A failed send's number is reused, so the backend never waits on a
         // write that did not arrive. If the failure hid a write the backend
         // did admit, the reused number comes back as a duplicate: resend
-        // under the next one.
-        if (receipt?.duplicate) {
+        // under the next one, for as long as numbers keep coming back spent.
+        while (receipt?.duplicate) {
           seq += 1;
           receipt = await send(seq, data);
         }
         seq += 1;
+        if (receipt?.lost) {
+          throw new Error(`terminal input write ${seq - 1} arrived after the backend declared it lost`);
+        }
         const dropped = receipt?.droppedBytes ?? 0;
-        if (dropped > 0) report(() => events.dropped(dropped));
+        if (dropped > 0) {
+          const first = !droppedBefore;
+          droppedBefore = true;
+          report(() => events.dropped(dropped, first));
+        }
       }, (error) => {
         // A send that raced the stream's close (the shell exited or was
         // killed) is expected to fail; only a live stream's failure matters.

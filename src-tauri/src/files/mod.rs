@@ -1,7 +1,13 @@
 //! File operations module for Tauri commands.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s, tauri-explorer-9djf.6
 
+// The Unix recovery, anchored-copy, file-identity and handle-relative directory
+// modules compile and run their unit tests on macOS, but only Linux production
+// paths call them until a macOS adapter is connected (#772). Their dead-code
+// allowance is scoped to these modules so macOS still reports dead code
+// everywhere else (#870).
 #[cfg(unix)]
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 mod anchored_copy;
 pub(crate) mod archive_plan;
 pub mod batch;
@@ -20,6 +26,7 @@ pub(crate) mod entry_plan;
 mod entry_version;
 pub mod external_apps;
 #[cfg(any(unix, test))]
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 mod file_identity;
 pub mod file_ops;
 #[cfg(target_os = "linux")]
@@ -33,10 +40,12 @@ pub(crate) mod move_plan;
 pub(crate) mod move_session;
 pub(crate) mod mutation;
 #[cfg(any(unix, test))]
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 mod native_directory;
 mod object_id;
 mod permanent_delete;
 mod publication;
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 pub(crate) mod recovery;
 mod replacement;
 #[cfg(any(target_os = "windows", test))]

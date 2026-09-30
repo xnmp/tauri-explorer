@@ -42,6 +42,11 @@ list, ends it.
   The token read-back tolerates trailing NULs, because `GlobalSize` may exceed
   the requested size. A process that re-renders every clipboard change
   (remote-desktop redirection) makes Cut fail closed.
+- The first real-clipboard CI run proved ownership and exposed an older bug:
+  `read_files` printed paths on PowerShell's redirected stdout, which uses the
+  console code page, so `é` came back as `?`. File lists now travel as
+  base64 UTF-8, as `read_text` already did. Any PowerShell output that can
+  hold user text needs this.
 - macOS: `clipboard-rs`'s `set([Files, Other])` cannot carry a token. Its
   `Other` arm calls `declareTypes`, which clears the files written just
   before. The backend declares `NSFilenamesPboardType` and the token type in

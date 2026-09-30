@@ -64,18 +64,38 @@ fn ps_lines(stdout: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Decode `read_files`' base64 UTF-8, newline-separated path list.
+fn decode_path_list(stdout: &[u8]) -> Result<Vec<String>, AppError> {
+    use base64::Engine as _;
+    let encoded = ps_lines(stdout).concat();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| AppError::Other(format!("Invalid clipboard file list: {error}")))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|error| AppError::Other(format!("Invalid clipboard file list: {error}")))?;
+    Ok(text
+        .split('\n')
+        .map(|path| path.trim_end_matches('\r'))
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
 impl ClipboardBackend for WindowsFileClipboard {
     /// A clipboard held open by another process makes `GetFileDropList`
     /// throw; stop on it so that reads as a failure, not as "no files".
+    /// Paths travel as base64 UTF-8: PowerShell writes redirected stdout in
+    /// the console code page, which turned `é` into `?` (found by #877's
+    /// real-clipboard test).
     fn read_files(&mut self) -> Result<Vec<String>, AppError> {
         let script = r#"
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $files = [System.Windows.Forms.Clipboard]::GetFileDropList()
-if ($files) { $files -join "`n" }
+if ($files) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($files -join "`n")) }
 "#;
         match run_powershell(script, &[]) {
-            Some(o) if o.status.success() => Ok(ps_lines(&o.stdout)),
+            Some(o) if o.status.success() => decode_path_list(&o.stdout),
             Some(o) => Err(AppError::Other(format!(
                 "PowerShell clipboard read exited with {}",
                 o.status
@@ -289,6 +309,40 @@ mod native {
             // SAFETY: this thread opened the clipboard in `open`.
             let _ = unsafe { CloseClipboard() };
         }
+    }
+}
+
+#[cfg(test)]
+mod path_list_tests {
+    use super::decode_path_list;
+    use base64::Engine as _;
+
+    fn encoded(text: &str) -> Vec<u8> {
+        let mut stdout = base64::engine::general_purpose::STANDARD
+            .encode(text)
+            .into_bytes();
+        stdout.extend_from_slice(b"\r\n");
+        stdout
+    }
+
+    #[test]
+    fn non_ascii_paths_survive_the_powershell_round_trip() {
+        let paths = decode_path_list(&encoded("C:\\a\\cut me é.txt\nC:\\b\\日本.txt")).unwrap();
+        assert_eq!(paths, vec!["C:\\a\\cut me é.txt", "C:\\b\\日本.txt"]);
+    }
+
+    #[test]
+    fn an_empty_clipboard_is_no_files_and_garbage_is_an_error() {
+        assert!(decode_path_list(b"").unwrap().is_empty());
+        assert!(decode_path_list(b"\r\n").unwrap().is_empty());
+        assert!(decode_path_list(b"not base64!\r\n").is_err());
+        assert!(decode_path_list(&encoded_bytes(&[0xff, 0xfe])).is_err());
+    }
+
+    fn encoded_bytes(bytes: &[u8]) -> Vec<u8> {
+        base64::engine::general_purpose::STANDARD
+            .encode(bytes)
+            .into_bytes()
     }
 }
 

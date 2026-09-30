@@ -2024,7 +2024,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // but never emits output. Real terminal behavior is covered by e2e-tauri.
   terminal_reserve_id: () => 1,
   terminal_spawn: () => ({ id: 1, shellKind: "posix", wslDistro: null }),
-  terminal_write: () => {},
+  terminal_write: () => ({ droppedBytes: 0 }),
   terminal_resize: () => {},
   terminal_kill: () => {},
   terminal_status: () => ({ busy: false, cwd: null }),

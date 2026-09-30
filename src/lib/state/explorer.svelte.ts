@@ -28,7 +28,7 @@ import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
-import { clipboardStore } from "./clipboard.svelte";
+import { clipboardStore, CUT_ALREADY_PASTED } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
@@ -622,13 +622,22 @@ function createExplorerState(seed?: ExplorerSeed) {
     const source = selectPasteSource(snapshot, osReadError);
 
     if (source.kind === "internal") {
-      const isCut = source.operation === "cut";
-      const error = await pasteEntries(
-        source.entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
-        isCut,
-        context,
-        () => { if (isCut) void clipboardStore.clearIfRevision(source.revision); },
-      );
+      const sources = source.entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
+      let error: string | null;
+      if (source.operation === "cut") {
+        const outcome = await clipboardStore.withCutClaim(source.revision, async () => {
+          let complete = false;
+          const result = await pasteEntries(sources, true, context, () => { complete = true; });
+          return { result, complete };
+        });
+        if (!outcome.claimed) {
+          toastStore.show(CUT_ALREADY_PASTED, "info");
+          return null;
+        }
+        error = outcome.result;
+      } else {
+        error = await pasteEntries(sources, false, context);
+      }
       if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }

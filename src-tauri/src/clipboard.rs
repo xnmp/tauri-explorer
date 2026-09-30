@@ -809,6 +809,41 @@ enum FileClipboardJob {
         entry: serde_json::Value,
         reply: tokio::sync::oneshot::Sender<Result<Option<FileClipboardSnapshot>, AppError>>,
     },
+    ClaimCut {
+        revision: u64,
+        reply: tokio::sync::oneshot::Sender<Result<bool, AppError>>,
+    },
+    ReleaseCut {
+        revision: u64,
+        reply: tokio::sync::oneshot::Sender<bool>,
+    },
+}
+
+/// Which clipboard revision's Cut a paste currently holds (#871). Every window
+/// shares the one worker, so claims are ordered with every publish; only the
+/// claimant moves the files. A lease on an older revision is simply stale.
+#[derive(Default)]
+struct CutLease {
+    leased: Option<u64>,
+}
+
+impl CutLease {
+    fn claim(&mut self, current: u64, requested: u64, is_cut: bool) -> bool {
+        if !is_cut || current != requested || self.leased == Some(current) {
+            return false;
+        }
+        self.leased = Some(current);
+        true
+    }
+
+    /// Return an unfinished paste's Cut so it stays pasteable.
+    fn release(&mut self, current: u64, requested: u64) -> bool {
+        if current != requested || self.leased != Some(requested) {
+            return false;
+        }
+        self.leased = None;
+        true
+    }
 }
 
 struct FileClipboardCoordinator {
@@ -819,6 +854,7 @@ struct FileClipboardCoordinator {
     token: Option<String>,
     mirror_error: Option<String>,
     failed_mirror_baseline_paths: Option<Vec<String>>,
+    cut_lease: CutLease,
     #[cfg(target_os = "linux")]
     failed_mirror_baseline_owner: Option<u32>,
     #[cfg(target_os = "linux")]
@@ -835,6 +871,7 @@ impl FileClipboardCoordinator {
             token: None,
             mirror_error: None,
             failed_mirror_baseline_paths: None,
+            cut_lease: CutLease::default(),
             #[cfg(target_os = "linux")]
             failed_mirror_baseline_owner: None,
             #[cfg(target_os = "linux")]
@@ -1025,6 +1062,18 @@ impl FileClipboardCoordinator {
         Ok(true)
     }
 
+    /// Claim the Cut at `revision` for one paste. Fails when another paste
+    /// holds it, when it was consumed or replaced, or when it is a Copy.
+    fn claim_cut(&mut self, revision: u64) -> Result<bool, AppError> {
+        let current = self.snapshot()?;
+        let is_cut = current.entries.is_some() && current.operation.as_deref() == Some("cut");
+        Ok(self.cut_lease.claim(current.revision, revision, is_cut))
+    }
+
+    fn release_cut(&mut self, revision: u64) -> bool {
+        self.cut_lease.release(self.revision, revision)
+    }
+
     fn rekey(
         &mut self,
         revision: u64,
@@ -1153,6 +1202,12 @@ fn clipboard_queue() -> &'static std::sync::mpsc::Sender<FileClipboardJob> {
                         } => {
                             let _ = reply.send(coordinator.rekey(revision, &old_path, entry));
                         }
+                        FileClipboardJob::ClaimCut { revision, reply } => {
+                            let _ = reply.send(coordinator.claim_cut(revision));
+                        }
+                        FileClipboardJob::ReleaseCut { revision, reply } => {
+                            let _ = reply.send(coordinator.release_cut(revision));
+                        }
                     }
                 }
             })
@@ -1219,6 +1274,74 @@ pub async fn clipboard_rekey(
         .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
 }
 
+/// Claim the Cut at `revision` so exactly one paste moves it. A complete move
+/// then clears it with `clipboard_compare_and_clear`; an unfinished one
+/// returns it with `clipboard_release_cut`.
+#[tauri::command]
+pub async fn clipboard_claim_cut(revision: u64) -> Result<bool, AppError> {
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::ClaimCut { revision, reply })?;
+    received
+        .await
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))?
+}
+
+#[tauri::command]
+pub async fn clipboard_release_cut(revision: u64) -> Result<bool, AppError> {
+    let (reply, received) = tokio::sync::oneshot::channel();
+    send_clipboard_job(FileClipboardJob::ReleaseCut { revision, reply })?;
+    received
+        .await
+        .map_err(|_| AppError::WorkerFailed("Clipboard worker exited".into()))
+}
+
+#[cfg(test)]
+mod cut_lease_tests {
+    use super::CutLease;
+
+    #[test]
+    fn only_one_paste_claims_a_cut_revision() {
+        let mut lease = CutLease::default();
+        assert!(lease.claim(7, 7, true));
+        assert!(
+            !lease.claim(7, 7, true),
+            "a second window must not move the same Cut"
+        );
+    }
+
+    #[test]
+    fn released_cut_can_be_claimed_again() {
+        let mut lease = CutLease::default();
+        assert!(lease.claim(7, 7, true));
+        assert!(lease.release(7, 7));
+        assert!(lease.claim(7, 7, true));
+    }
+
+    #[test]
+    fn copies_stale_revisions_and_foreign_releases_are_refused() {
+        let mut lease = CutLease::default();
+        assert!(!lease.claim(7, 7, false), "a Copy is never claimed");
+        assert!(!lease.claim(8, 7, true), "a replaced Cut cannot be claimed");
+        assert!(!lease.release(7, 7), "nothing is leased");
+        assert!(lease.claim(7, 7, true));
+        assert!(!lease.release(7, 6));
+        assert!(
+            !lease.claim(7, 7, true),
+            "a mismatched release keeps the lease"
+        );
+    }
+
+    #[test]
+    fn a_new_revision_is_claimable_despite_an_older_lease() {
+        let mut lease = CutLease::default();
+        assert!(lease.claim(7, 7, true));
+        // The clipboard moved on (new Cut, rekey, external replacement): the
+        // old lease is stale and neither blocks nor can release the new one.
+        assert!(!lease.release(8, 7));
+        assert!(lease.claim(8, 8, true));
+    }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod clipboard_coordinator_x11_tests {
     use super::*;
@@ -1267,6 +1390,13 @@ mod clipboard_coordinator_x11_tests {
             coordinator.snapshot().unwrap().operation.as_deref(),
             Some("cut")
         );
+        assert!(
+            !coordinator.claim_cut(cut.revision).unwrap(),
+            "rekey replaced the revision"
+        );
+        assert!(coordinator.claim_cut(renamed.revision).unwrap());
+        assert!(!coordinator.claim_cut(renamed.revision).unwrap());
+        assert!(coordinator.release_cut(renamed.revision));
 
         // A different owner advertises the identical renamed file list,
         // without our private token. Cut must become external Copy.

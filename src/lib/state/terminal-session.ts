@@ -63,6 +63,9 @@ function createInputStream(): InputStream {
   };
 }
 
+/** Builds inserted text for the shell that actually spawned. */
+export type InsertionBuilder = (info: TerminalSessionSpawnInfo) => string;
+
 const cancelled = Symbol("terminal-session-cancelled");
 
 /** Owns the complete async lifetime of one frontend terminal session. */
@@ -83,12 +86,17 @@ export function createTerminalSession(
   });
   let stream = createInputStream();
   closeInput();
+  // Insertions requested while no shell runs or starts; the next shell gets
+  // them first, quoted in its own dialect (#265, #409).
+  const pendingInsertions: InsertionBuilder[] = [];
 
   /** Hold input for a shell that is starting; keeps an already-open stream. */
-  function openInput(): void {
-    if (!stream.closed) return;
+  function openInput(): InputStream {
+    if (!stream.closed) return stream;
     stream = createInputStream();
     input.open();
+    for (const build of pendingInsertions.splice(0)) insert(build);
+    return stream;
   }
 
   /** No shell is coming for the current stream: drop its unsent input. */
@@ -130,18 +138,20 @@ export function createTerminalSession(
     cols: number,
     rows: number,
   ): Promise<TerminalSessionSpawnInfo | null> {
-    if (disposed || current !== null || starting !== null) return null;
-    // Typeahead from here on belongs to this shell.
-    openInput();
+    if (disposed || starting !== null) return null;
+    // Typeahead from here on belongs to this shell (a no-op while a running
+    // shell's stream is open).
+    const opened = openInput();
     if (stopping !== null) await stopping;
-    if (disposed || current !== null) return null;
+    // A stop requested meanwhile closed this stream and cancels the start.
+    if (disposed || current !== null || opened.closed) return null;
 
     const acquisition: Acquisition = {
       generation: ++generation,
       id: null,
       unlisteners: [],
       spawned: false,
-      stream,
+      stream: opened,
     };
     current = acquisition;
     const operation = (async () => {
@@ -189,9 +199,10 @@ export function createTerminalSession(
   }
 
   async function stop(): Promise<void> {
-    if (stopping !== null) return stopping;
+    // Even a stop joining one in progress cancels whatever started since.
     generation += 1;
     closeInput();
+    if (stopping !== null) return stopping;
     const acquisition = current;
     const operation = (async () => {
       if (starting !== null) await starting.catch(() => undefined);
@@ -215,13 +226,17 @@ export function createTerminalSession(
     rows: number,
   ): Promise<TerminalSessionSpawnInfo | null> {
     const stopped = stop();
-    if (!disposed) openInput();
+    if (disposed) return null;
+    const opened = openInput();
     await stopped;
+    // A stop requested during the restart wins.
+    if (opened.closed) return null;
     return start(cwd, cols, rows);
   }
 
   async function dispose(): Promise<void> {
     disposed = true;
+    pendingInsertions.length = 0;
     closeInput();
     await stop();
   }
@@ -235,9 +250,19 @@ export function createTerminalSession(
     if (!disposed) input.write(data);
   }
 
-  /** The running (or starting) shell's spawn info; null if none comes. */
-  function whenRunning(): Promise<TerminalSessionSpawnInfo | null> {
-    return stream.running;
+  /**
+   * Queue text built for the shell that receives it, such as a path
+   * insertion quoted in the spawned shell's dialect. It holds its place in
+   * the input queue until that shell runs. With no shell running or starting,
+   * it waits for the next one instead of being dropped.
+   */
+  function insert(build: InsertionBuilder): void {
+    if (disposed) return;
+    if (stream.closed) {
+      pendingInsertions.push(build);
+      return;
+    }
+    input.write(stream.running.then((info) => (info ? build(info) : "")));
   }
 
   return {
@@ -248,7 +273,7 @@ export function createTerminalSession(
     restart,
     dispose,
     write,
-    whenRunning,
+    insert,
   };
 }
 

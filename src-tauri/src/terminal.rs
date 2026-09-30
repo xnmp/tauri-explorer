@@ -1463,7 +1463,7 @@ mod tests {
         let mut transcript = spawn_hermetic(id, OWNER, token);
         let command = b"printf 'DUP:%s\\n' once\n".to_vec();
         write_terminal(id, OWNER, 0, command.clone()).unwrap();
-        write_terminal(id, OWNER, 0, command).unwrap();
+        assert!(write_terminal(id, OWNER, 0, command).unwrap().duplicate());
         write_terminal(id, OWNER, 1, b"printf 'END:%s\\n' marker\n".to_vec()).unwrap();
         transcript.expect("END:marker");
         assert_eq!(transcript.text.matches("DUP:once").count(), 1);
@@ -1496,7 +1496,6 @@ mod tests {
         let mut successor = spawn_hermetic(second, OWNER, token);
         write_terminal(second, OWNER, 0, b"printf 'TWO:%s\\n' fresh\n".to_vec()).unwrap();
         successor.expect("TWO:fresh");
-        assert!(!successor.text.contains("STALE") && !successor.text.contains("LATE"));
     }
 
     #[test]

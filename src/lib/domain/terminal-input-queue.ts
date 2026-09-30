@@ -16,7 +16,9 @@
  *  - sequence asynchronous input with synchronous input, and
  *  - coalesce keystrokes behind one in-flight send, which bounds IPC traffic
  *    and keeps the sequence gap-free: a number is used up only by a send that
- *    succeeded, so a failed send never leaves the backend waiting for it.
+ *    succeeded, so a failed send never leaves the backend waiting for it (and
+ *    a reused number the backend had in fact admitted is reported as a
+ *    duplicate, whose data is resent under the next number).
  *
  * Lifecycle: `open` begins a stream for a shell that is starting, `attach`
  * connects it to that terminal's id, and `close` ends it. Unsent input from a
@@ -28,6 +30,8 @@ import { createOrderedWriter, type OrderedWriter } from "./ordered-writer";
 export interface TerminalInputReceipt {
   /** Typeahead the backend discarded because its bounded buffer was full. */
   droppedBytes: number;
+  /** The sequence number was already admitted, so this data was ignored. */
+  duplicate?: boolean;
 }
 
 /** Deliver write number `seq` of the current stream to its PTY. */
@@ -124,14 +128,25 @@ export function createTerminalInputQueue(events: TerminalInputQueueEvents): Term
     attach(send) {
       if (state !== "holding") return;
       let seq = 0;
-      writer = createOrderedWriter(async (data) => {
-        const receipt = await send(seq, data);
-        // Advanced only on success: a failed write's number is reused, so the
-        // backend never waits on a write that did not arrive.
+      const stream: OrderedWriter = createOrderedWriter(async (data) => {
+        let receipt = await send(seq, data);
+        // A failed send's number is reused, so the backend never waits on a
+        // write that did not arrive. If the failure hid a write the backend
+        // did admit, the reused number comes back as a duplicate: resend
+        // under the next one.
+        if (receipt?.duplicate) {
+          seq += 1;
+          receipt = await send(seq, data);
+        }
         seq += 1;
         const dropped = receipt?.droppedBytes ?? 0;
         if (dropped > 0) report(() => events.dropped(dropped));
-      }, events.error);
+      }, (error) => {
+        // A send that raced the stream's close (the shell exited or was
+        // killed) is expected to fail; only a live stream's failure matters.
+        if (writer === stream) events.error(error);
+      });
+      writer = stream;
       state = "attached";
       flush();
     },

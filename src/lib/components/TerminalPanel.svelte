@@ -152,11 +152,10 @@
   /** Type paths into the prompt (space-delimited, shell-quoted, no Enter).
    * Opening focus belongs to the store, including queued cold insertions.
    * The insertion holds its place in the input queue until the shell has
-   * started, so it is quoted in the dialect of the shell actually spawned
-   * (#265, #409). */
+   * started, so it is quoted in the dialect of the shell actually spawned;
+   * with the shell exited it waits for the restart (#265, #409). */
   function insertPaths(paths: string[]): void {
-    terminalSession.write(terminalSession.whenRunning().then((info) =>
-      buildPathsInsertion(paths, info ? profileOf(info) : shellProfile)));
+    terminalSession.insert((info) => buildPathsInsertion(paths, profileOf(info)));
   }
 
   // Targets of cds we injected whose OSC 7 echo hasn't arrived yet

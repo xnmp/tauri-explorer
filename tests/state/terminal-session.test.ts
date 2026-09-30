@@ -229,7 +229,7 @@ describe("terminal session input", () => {
     const spawning = deferred<{ shellKind: "powershell"; wslDistro: null }>();
     const h = harness({ spawn: vi.fn().mockReturnValue(spawning.promise) });
     const starting = h.session.start("/work", 80, 24);
-    h.session.write(h.session.whenRunning().then((info) => `[${info?.shellKind}]`));
+    h.session.insert((info) => `[${info.shellKind}]`);
     h.session.write(" typed");
     spawning.resolve({ shellKind: "powershell", wslDistro: null });
     await starting;
@@ -238,16 +238,73 @@ describe("terminal session input", () => {
     expect(sent).toBe("[powershell] typed");
   });
 
-  it("settles whenRunning with null when the shell fails to start, and closes input", async () => {
+  it("closes input when the shell fails to start, and sends nothing for a pending insertion", async () => {
+    const build = vi.fn(() => "inserted");
     const h = harness({ spawn: vi.fn().mockRejectedValue(new Error("spawn failed")) });
     const starting = h.session.start("/work", 80, 24);
-    const running = h.session.whenRunning();
+    h.session.insert(build);
     await expect(starting).rejects.toThrow("spawn failed");
-    await expect(running).resolves.toBeNull();
+    await settle();
     vi.mocked(h.dependencies.write).mockClear();
     h.session.write("after failure");
     await settle();
     expect(h.dependencies.write).not.toHaveBeenCalled();
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it("holds an insertion requested while the shell is exited for the restarted shell", async () => {
+    let exitHandler: (() => void) | undefined;
+    let nextId = 41;
+    const h = harness({
+      reserveId: vi.fn(async () => nextId++),
+      listenExit: vi.fn(async (_id: number, handler: () => void) => {
+        exitHandler = handler;
+        return vi.fn();
+      }),
+    });
+    await h.session.start("/work", 80, 24);
+    exitHandler?.();
+    h.session.insert((info) => `'/tmp/a b' (${info.shellKind})`);
+    h.session.write("dropped while exited");
+    await settle();
+    expect(h.dependencies.write).not.toHaveBeenCalled();
+    await h.session.restart("/work", 80, 24);
+    h.session.write(" typed");
+    await settle();
+    const sent = vi.mocked(h.dependencies.write).mock.calls;
+    expect(sent.every(([id]) => id === 42)).toBe(true);
+    expect(sent.map(([, , data]) => data).join("")).toBe("'/tmp/a b' (posix) typed");
+  });
+
+  it("lets a stop requested during a restart cancel the replacement", async () => {
+    const killing = deferred<void>();
+    const h = harness({ kill: vi.fn().mockReturnValue(killing.promise) });
+    await h.session.start("/work", 80, 24);
+    const restarting = h.session.restart("/work", 80, 24);
+    const stopping = h.session.stop();
+    h.session.write("after stop");
+    killing.resolve();
+    await expect(restarting).resolves.toBeNull();
+    await stopping;
+    expect(h.dependencies.spawn).toHaveBeenCalledTimes(1);
+    expect(h.session.id).toBeNull();
+    expect(h.dependencies.write).not.toHaveBeenCalled();
+  });
+
+  it("starts a shell requested while a stop is still killing the old one", async () => {
+    const killing = deferred<void>();
+    let nextId = 41;
+    const h = harness({ reserveId: vi.fn(async () => nextId++), kill: vi.fn().mockReturnValue(killing.promise) });
+    await h.session.start("/work", 80, 24);
+    const stopping = h.session.stop();
+    const starting = h.session.start("/work", 80, 24);
+    h.session.write("typeahead");
+    killing.resolve();
+    await stopping;
+    await expect(starting).resolves.toEqual({ shellKind: "posix", wslDistro: null });
+    await settle();
+    expect(h.session.id).toBe(42);
+    expect(vi.mocked(h.dependencies.write).mock.calls).toEqual([[42, 0, "typeahead"]]);
   });
 
   it("reports a failed write, reuses its sequence number and keeps accepting input", async () => {

@@ -5,8 +5,10 @@
 //! order can reach this module in either order (#709). Each write therefore
 //! carries the caller's sequence number, starting at 0 for every terminal.
 //! [`TerminalInput`] admits writes strictly in sequence order, holding early
-//! arrivals until the gap before them fills, and ignoring a repeated sequence
-//! number so a caller may safely retry a write whose outcome it did not see.
+//! arrivals until the gap before them fills. A sequence number that was
+//! already admitted is ignored and reported as a duplicate, so a caller that
+//! did not see a write's outcome can resend it, or learn that the number is
+//! spent.
 //!
 //! Admitted bytes go through one channel to one writer thread per PTY
 //! ([`run_input_writer`]), so a blocked PTY never blocks the caller or the
@@ -38,12 +40,21 @@ pub struct InputReceipt {
     /// Bytes this write caused to be discarded because the typeahead buffer
     /// was full. Zero for an ordinary write.
     dropped_bytes: usize,
+    /// The sequence number was already admitted, so this data was ignored. A
+    /// caller that reused the number after an unseen outcome resends its data
+    /// under the next one.
+    duplicate: bool,
 }
 
 impl InputReceipt {
     #[cfg(test)]
     pub(super) fn dropped_bytes(&self) -> usize {
         self.dropped_bytes
+    }
+
+    #[cfg(test)]
+    pub(super) fn duplicate(&self) -> bool {
+        self.duplicate
     }
 }
 
@@ -69,10 +80,11 @@ impl TerminalInput {
 
     /// Admit the write numbered `seq`. Bytes reach the PTY in sequence order
     /// no matter which order the writes arrive in; a sequence number that was
-    /// already admitted is ignored.
+    /// already admitted is ignored and reported as a duplicate.
     pub(super) fn submit(&mut self, seq: u64, data: Vec<u8>) -> InputReceipt {
         let mut receipt = InputReceipt::default();
         if seq < self.next_seq || self.early.contains_key(&seq) {
+            receipt.duplicate = true;
             return receipt;
         }
         self.early.insert(seq, data);
@@ -180,12 +192,12 @@ mod tests {
     }
 
     #[test]
-    fn a_retried_write_is_delivered_once() {
+    fn a_retried_write_is_delivered_once_and_reported_as_a_duplicate() {
         let (mut input, receiver) = attached();
-        input.submit(0, b"ls\r".to_vec());
-        input.submit(0, b"ls\r".to_vec());
-        input.submit(2, b"!".to_vec());
-        input.submit(2, b"!".to_vec());
+        assert!(!input.submit(0, b"ls\r".to_vec()).duplicate());
+        assert!(input.submit(0, b"ls\r".to_vec()).duplicate());
+        assert!(!input.submit(2, b"!".to_vec()).duplicate());
+        assert!(input.submit(2, b"!".to_vec()).duplicate(), "held early");
         input.submit(1, b"x".to_vec());
         assert_eq!(received(&receiver), "ls\rx!");
     }

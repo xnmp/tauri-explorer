@@ -139,6 +139,36 @@ describe("terminal input queue", () => {
     expect(pty.delivered()).toBe("next");
   });
 
+  it("resends under the next number when a reused number turns out to be spent", async () => {
+    const { input, events } = queue();
+    const send = vi.fn(async (seq: number, data: string): Promise<TerminalInputReceipt> => {
+      if (seq === 0 && data === "first") throw new Error("reply lost after the backend admitted it");
+      return seq === 0 ? { droppedBytes: 0, duplicate: true } : { droppedBytes: 0 };
+    });
+    input.open();
+    input.attach(send);
+    input.write("first");
+    await settle();
+    input.write("second");
+    await settle();
+    input.write("third");
+    await settle();
+    expect(send.mock.calls).toEqual([[0, "first"], [0, "second"], [1, "second"], [2, "third"]]);
+    expect(events.error).toHaveBeenCalledOnce();
+  });
+
+  it("does not report a send that fails after its stream closed", async () => {
+    const { input, events } = queue();
+    const pty = backend();
+    input.open();
+    input.attach(pty.send);
+    input.write("racing exit");
+    input.close();
+    pty.calls[0].fail(new Error("terminal 41 is closing"));
+    await settle();
+    expect(events.error).not.toHaveBeenCalled();
+  });
+
   it("reports typeahead the backend discarded", async () => {
     const { input, events } = queue();
     const pty = backend();

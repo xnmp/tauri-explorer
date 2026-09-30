@@ -28,11 +28,16 @@ bodies in either order.
   keeps its key position. It holds input until reservation returns the id, and
   it keeps one coalescing send in flight. A sequence number is spent only by a
   send that succeeded, so a failed send never leaves the backend waiting for a
-  gap.
+  gap. If the failure hid a write the backend had in fact admitted, the reused
+  number comes back as a `duplicate` and the data is resent under the next
+  number, so nothing is lost silently.
 - `state/terminal-session.ts`: opens the queue at start, and at `restart`
   before the old shell is killed, so keys typed during a restart go to the
-  replacement shell. It closes the queue on stop or exit. The old stream's
-  unsent input never reaches a successor (#709).
+  replacement shell. It closes the queue on stop or exit, and a stop always
+  cancels a start or restart in progress. The old stream's unsent input never
+  reaches a successor (#709). Keys typed while the shell is exited are dropped.
+  A path insertion requested then waits for the restart, as it did before
+  (`session.insert`).
 - `domain/terminal-paste.ts`: per-platform paste source order with the readers
   injected, and the bytes xterm's `paste()` emits. This replaces capturing
   `onData` during a synchronous `term.paste()`.
@@ -46,6 +51,14 @@ concurrent test fails when the sequencer is bypassed. Unit tests in
 `tests/domain/terminal-paste.test.ts` and `tests/state/terminal-session.test.ts`
 cover the protocol, the paste source order on each platform, and the session
 lifecycle.
+
+**Known limits.**
+- The writer channel is unbounded. Input to a PTY whose foreground job never
+  reads stdin accumulates in the backend, where it used to accumulate in the
+  page's ordered writer.
+- A multi-line paste made before the shell starts is typeahead. Bracketed
+  paste is not active yet, so each line runs when the shell starts. This
+  matches ordinary terminals.
 
 **Rule.** When a stream crosses Tauri IPC and its order matters, number it
 at the source and enforce the order where it is consumed. Keep one owner for

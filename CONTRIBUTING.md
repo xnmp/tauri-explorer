@@ -25,7 +25,7 @@ Before opening a PR, please make sure `bun run check`, `bun run test`, and `carg
 ## Pull requests
 
 - Development happens on the `dev` branch; `main` tracks releases. Target PRs at `dev`.
-- Keep diffs small and focused; one concern per PR.
+- Keep diffs small and focused; one concern per PR. This applies to release preparation too: a release-prep PR bumps versions and the changelog, and nothing else — do not bundle it with unrelated fixes or features.
 - New business logic should come with unit tests; user-visible changes should update or add a Playwright spec asserting the actual outcome (not just that a component renders).
 - The frontend has three view modes (Details, List, Tiles) — UI changes to file display need to work in all three (`ALL_VIEW_MODES=1 npx playwright test`).
 

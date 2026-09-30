@@ -35,12 +35,11 @@
   let attachmentError = $state("");
   let clipboardImageAvailable = $state(false);
   let clipboardAttachmentData = $state<string | null>(null);
-  let readingClipboard = $state(false);
-  let submitting = $state(false);
-  let retryDraft: UserReportDraft | null = null;
-  let retryClipboardAttachmentData: string | null = null;
+  const readingClipboard = $derived(userReportDraftStore.readingClipboard);
+  const readingAttachments = $derived(userReportDraftStore.readingAttachments);
+  const submitting = $derived(userReportDraftStore.submitting);
   const canSubmit = $derived(
-    title.trim().length > 0 && !submitting,
+    title.trim().length > 0 && !submitting && !readingAttachments,
   );
   const clipboardImageAttached = $derived(
     clipboardAttachmentData !== null
@@ -49,40 +48,40 @@
 
   $effect(() => {
     if (!open) return;
-    const restoredDraft = retryDraft;
-    const restoredClipboardAttachmentData = retryClipboardAttachmentData;
-    retryDraft = null;
-    retryClipboardAttachmentData = null;
     // Persisting the restored text updates the store below; do not let that
-    // write rerun this one-shot opening reset and discard retry attachments.
+    // write rerun this one-shot opening reset and discard the current selection.
     const persistedDraft = untrack(() => userReportDraftStore.value);
-    kind = restoredDraft?.kind ?? persistedDraft.kind;
-    title = restoredDraft?.title ?? persistedDraft.title;
-    body = restoredDraft?.body ?? persistedDraft.body;
-    contact = restoredDraft?.contact ?? persistedDraft.contact;
-    attachments = [...(restoredDraft?.attachments ?? [])];
+    kind = persistedDraft.kind;
+    title = persistedDraft.title;
+    body = persistedDraft.body;
+    contact = persistedDraft.contact;
+    attachments = untrack(() => [...userReportDraftStore.attachments]);
     attachmentError = "";
     clipboardImageAvailable = false;
-    clipboardAttachmentData = restoredClipboardAttachmentData;
-    readingClipboard = false;
-    submitting = false;
+    clipboardAttachmentData = untrack(() => userReportDraftStore.clipboardAttachmentData);
     void probeClipboardImage();
   });
 
-  // Persist the user-visible text only. Attachment retries remain in memory so
-  // closing/reopening after a failed submission continues to restore them.
+  // Save text between launches and keep the current image selection in memory.
+  // One draft owns both, so reopening cannot resurrect an older retry snapshot.
   $effect(() => {
     if (!open) return;
     const textDraft = { kind, title, body, contact };
     // The store reads and replaces its own reactive value while saving; keep
     // that internal state out of this effect's dependency set.
-    untrack(() => userReportDraftStore.update(textDraft));
+    const imageDraft = attachments;
+    const clipboardData = clipboardAttachmentData;
+    untrack(() => {
+      userReportDraftStore.update(textDraft);
+      userReportDraftStore.updateAttachments(imageDraft, clipboardData);
+    });
   });
 
   function attachmentUsage() {
+    const current = userReportDraftStore.attachments;
     return {
-      count: attachments.length,
-      bytes: attachments.reduce(
+      count: current.length,
+      bytes: current.reduce(
         (total, attachment) => total + userReportAttachmentBytes(attachment.data),
         0,
       ),
@@ -108,27 +107,40 @@
       attachmentError = error;
       return;
     }
-    const next = await Promise.all(selected.map(async (file): Promise<UserReportAttachment> => ({
-      name: file.name,
-      mediaType: file.type as UserReportAttachment["mediaType"],
-      data: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
-    })));
-    // A second picker change can complete while these reads are in flight.
-    // Revalidate against the latest immutable selection before committing.
-    const currentError = validateUserReportAttachmentFiles(selected, attachmentUsage());
-    if (currentError) {
-      attachmentError = currentError;
-      return;
+    const read = userReportDraftStore.beginAttachmentRead("files");
+    if (!read) return;
+    try {
+      const next = await Promise.all(selected.map(async (file): Promise<UserReportAttachment> => ({
+        name: file.name,
+        mediaType: file.type as UserReportAttachment["mediaType"],
+        data: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
+      })));
+      if (!userReportDraftStore.hasAttachmentRead(read)) return;
+      // Concurrent reads validate against the latest shared selection.
+      const currentError = validateUserReportAttachmentFiles(selected, attachmentUsage());
+      if (currentError) {
+        attachmentError = currentError;
+        return;
+      }
+      attachments = [...userReportDraftStore.attachments, ...next];
+      userReportDraftStore.updateAttachments(attachments, clipboardAttachmentData);
+      attachmentError = "";
+    } catch {
+      if (userReportDraftStore.hasAttachmentRead(read)) {
+        attachmentError = "Could not read the selected images. Try selecting them again.";
+      }
+    } finally {
+      userReportDraftStore.finishAttachmentRead(read);
     }
-    attachments = [...attachments, ...next];
-    attachmentError = "";
   }
 
   async function attachClipboardImage(): Promise<void> {
     if (readingClipboard) return;
-    readingClipboard = true;
+    const read = userReportDraftStore.beginAttachmentRead("clipboard");
+    if (!read) return;
     try {
       const image = await readClipboardReportImage();
+      if (!userReportDraftStore.hasAttachmentRead(read)) return;
       const error = validateUserReportAttachmentFiles(
         [{
           name: image.name,
@@ -141,13 +153,16 @@
         attachmentError = error;
         return;
       }
-      attachments = [...attachments, image];
+      attachments = [...userReportDraftStore.attachments, image];
       clipboardAttachmentData = image.data;
+      userReportDraftStore.updateAttachments(attachments, clipboardAttachmentData);
       attachmentError = "";
     } catch {
-      attachmentError = "Could not read the clipboard image. Try saving it and selecting the file.";
+      if (userReportDraftStore.hasAttachmentRead(read)) {
+        attachmentError = "Could not read the clipboard image. Try saving it and selecting the file.";
+      }
     } finally {
-      readingClipboard = false;
+      userReportDraftStore.finishAttachmentRead(read);
     }
   }
 
@@ -156,25 +171,8 @@
     attachmentError = "";
   }
 
-  function retainDraftForRetry(
-    draft: UserReportDraft,
-    submittedClipboardAttachmentData: string | null,
-  ): void {
-    retryDraft = {
-      ...draft,
-      attachments: [...(draft.attachments ?? [])],
-    };
-    retryClipboardAttachmentData = submittedClipboardAttachmentData !== null
-      && draft.attachments?.some(
-        (attachment) => attachment.data === submittedClipboardAttachmentData,
-      )
-      ? submittedClipboardAttachmentData
-      : null;
-  }
-
   async function submit(): Promise<void> {
     if (!canSubmit) return;
-    submitting = true;
     const draft: UserReportDraft = {
       title,
       body,
@@ -183,8 +181,9 @@
       attachments: [...attachments],
     };
     userReportDraftStore.update({ kind, title, body, contact });
-    userReportDraftStore.saveNow();
-    const submittedClipboardAttachmentData = clipboardAttachmentData;
+    userReportDraftStore.updateAttachments(attachments, clipboardAttachmentData);
+    const submission = userReportDraftStore.beginSubmission();
+    if (!submission) return;
     onClose();
     // The dialog closes the moment Submit is pressed, so until the relay
     // answers this toast is the ONLY sign the report went anywhere (#596).
@@ -199,7 +198,14 @@
     const retirePendingToast = () => toastStore.dismiss(pendingToastId);
     try {
       const issue = await submitUserReport(draft);
-      userReportDraftStore.clear();
+      if (userReportDraftStore.finishSubmission(submission, true) && open) {
+        kind = "bug";
+        title = "";
+        body = "";
+        contact = "";
+        attachments = [];
+        clipboardAttachmentData = null;
+      }
       retirePendingToast();
       toastStore.show("Report submitted", "success", {
         duration: 6000,
@@ -209,7 +215,6 @@
       retirePendingToast();
       const error = unknownError as Partial<UserReportError>;
       if (error.kind === "submission_uncertain") {
-        retainDraftForRetry(draft, submittedClipboardAttachmentData);
         toastStore.show(
           "The report may have been submitted. Check recent issues before retrying. Text is saved; images remain until this window closes.",
           "error",
@@ -218,7 +223,6 @@
         return;
       }
       if ((draft.attachments?.length ?? 0) > 0) {
-        retainDraftForRetry(draft, submittedClipboardAttachmentData);
         const fallbackUrl = userReportFallbackUrl(draft);
         toastStore.show(
           `${userReportAttachmentFailureMessage(error.kind)}${fallbackUrl ? " Opening GitHub; add the images there manually." : ""}`,
@@ -248,7 +252,6 @@
       );
       const fallbackUrl = userReportFallbackUrl(draft);
       if (!fallbackUrl) {
-        retainDraftForRetry(draft, submittedClipboardAttachmentData);
         toastStore.show(
           "Report is too long for GitHub’s browser form. Your draft is saved; reopen Report Issue to retry.",
           "error",
@@ -259,7 +262,6 @@
       try {
         await openExternalUrl(fallbackUrl);
       } catch {
-        retainDraftForRetry(draft, submittedClipboardAttachmentData);
         toastStore.show(
           "Could not open GitHub. Your draft is saved; reopen Report Issue to retry.",
           "error",
@@ -268,7 +270,7 @@
       }
     } finally {
       retirePendingToast();
-      submitting = false;
+      userReportDraftStore.finishSubmission(submission);
     }
   }
 
@@ -286,13 +288,11 @@
   overlayClass="dialog-backdrop user-report-backdrop"
   label="Report Issue"
   onkeydown={handleKeydown}
-  closeOnBackdrop={!submitting}
-  closeOnEscape={!submitting}
 >
   <form class="modal-card user-report-dialog" onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <header>
       <h2>Report Issue</h2>
-      <button type="button" class="close" aria-label="Close" onclick={onClose} disabled={submitting}>×</button>
+      <button type="button" class="close" aria-label="Close" onclick={onClose}>×</button>
     </header>
 
     <div class="kind-toggle" role="group" aria-label="Report type">
@@ -390,9 +390,9 @@
 
     <footer>
       <span class="hint">Ctrl+Enter to submit</span>
-      <button type="button" class="btn secondary" onclick={onClose} disabled={submitting}>Cancel</button>
+      <button type="button" class="btn secondary" onclick={onClose}>{submitting ? "Close" : "Cancel"}</button>
       <button type="submit" class="btn primary" disabled={!canSubmit}>
-        {submitting ? "Submitting…" : "Submit"}
+        {submitting ? "Submitting…" : readingAttachments ? "Reading images…" : "Submit"}
       </button>
     </footer>
   </form>

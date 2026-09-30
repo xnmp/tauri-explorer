@@ -2,6 +2,17 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.11.2 — 2026-09-30
+
+### Fixed
+
+- Reopening Report Issue while a report is still submitting keeps Submit
+  disabled, preventing duplicate reports (#851).
+- A completed report preserves newer draft edits. Image retries use the
+  current in-memory selection, including images removed or replaced after a
+  failure. Text survives application restarts; image drafts last until the
+  window closes (#851).
+
 ## v1.11.1 — 2026-09-30
 
 This update prepares a small alpha tester cohort with safer file actions and

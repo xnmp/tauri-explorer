@@ -9,6 +9,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
@@ -70,7 +71,7 @@ test.describe("SCM panel UI", () => {
 
     // Slow the summary fetch down so the transient loading state is observable.
     await page.evaluate(() => {
-      (window as unknown as { __MOCK_LATENCY__?: Record<string, number> }).__MOCK_LATENCY__ = {
+      ((window as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = {
         git_status: 1500,
       };
     });

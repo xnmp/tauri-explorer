@@ -11,7 +11,7 @@ extraction or final `dev`.
 The clean-worktree `bun run build:native:qualification` build of `c4696e8e`
 recorded binary SHA-256
 `3dd64cfce6fb8ff749243a0eb4bcba6a7c5a188b1c8c1d7fc9639e4aef5b6a1c`.
-The [committed bounded report](../../qualification-results/linux-extracted-c4696e8e-dual-private-edd11a8752e5.json)
+The [committed bounded report](../../../qualification-results/linux-extracted-c4696e8e-dual-private-edd11a8752e5.json)
 records two complete native cycles: **8/8 scenario outcomes passed**, with
 `window-workspace` warm in cycle 1 and fresh in cycle 2, no run errors or
 failure artifacts, and display scale 1. The run used a private Xvfb/Openbox

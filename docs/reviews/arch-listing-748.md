@@ -89,9 +89,13 @@ under the sandbox and passed with the required permissions. Eighteen native
 outcomes passed across six sessions. Independent source and evidence review is
 recorded with the machine-readable results.
 
-[Machine-readable evidence](arch-listing-748.json) contains all 88 startup samples,
+The machine-readable evidence JSON companion (SHA-256
+`933bffafc330e593e8569eac7ebac9bad4357c7432c9490fcab3ad91504a0ee0`) was
+removed per #894/#895 repo-artifact-and-docs-hygiene; it contained all 88 startup samples,
 raw native outcomes, diagnostic observations, executable/source hashes, production
-patch and runner sources. Baseline binary provenance is in
-[the preceding qualification](arch-listing-737.json). Native WebDriver alone uses
+patch and runner sources. Baseline binary provenance was in the preceding
+qualification's own JSON companion (SHA-256
+`d5a26c3cad7344c8b2b819c485f5b5bc40ca504c37dd7912996a8648331c008f`, also
+removed — see [arch-listing-737.md](arch-listing-737.md)). Native WebDriver alone uses
 an exact-executable fork bypass; startup never does. No Windows/macOS performance
 or runtime qualification follows from these Arch results.

@@ -2,7 +2,7 @@
 
 Historical evidence moved from the completion ledger with claims and limits
 preserved; relative links are adjusted for this directory.
-Use [the current ledger](../review-completion.md) for requirements and status.
+Use [the current ledger](../../review-completion.md) for requirements and status.
 
 ## Shared recovery file locks — integration checkpoint
 
@@ -225,7 +225,7 @@ host. CI now discovers tests before running its filters, and a reproduced stale
 filter is rejected instead of silently passing zero tests. Maps cover 415/415
 source files. See [the evidence record](windows-batch-admission-2026-09-08.json).
 
-[Proposed ADR 0020](../adr/0020-durable-file-recovery.md) specifies durable artifact
+[Proposed ADR 0020](../../adr/0020-durable-file-recovery.md) specifies durable artifact
 ownership, bounded discovery, cross-process conflict admission and crash
 reconciliation. It is design, not implemented recovery. The next vertical must
 integrate the journal with replacement ownership and a usable recovery surface
@@ -452,7 +452,7 @@ Native acceptance first exposed read-only staged-directory publication failure;
 a failing-before Rust regression now verifies publication and exact final mode,
 and the corrected native case passes. See
 [the checkpoint evidence](file-move-recovery-checkpoint-2026-09-08.json)
-and [the native screenshot](../../screenshots/refactor/repo-health-cleanup/partial-move-recovery.png).
+and [the native screenshot](../../../screenshots/refactor/repo-health-cleanup/partial-move-recovery.png).
 
 Startup JavaScript is 217,236 gzip bytes, 383 above the preceding checkpoint.
 No startup latency improvement is claimed. Durable transaction journals and
@@ -499,7 +499,7 @@ Windows/macOS runtime acceptance. See ADR 0018 for the continuation.
 The current working tree moves shared file history into the native process and
 uses `{ path, entry }` mutation receipts, where the committed path remains valid
 as an operation result when presentation metadata is unavailable. See proposed
-[ADR 0018](../adr/0018-native-file-history.md). The old TypeScript executor now lives
+[ADR 0018](../../adr/0018-native-file-history.md). The old TypeScript executor now lives
 only in the browser fixture backend.
 
 Current integration checks pass 2,275 frontend cases plus 30 performance cases
@@ -1317,7 +1317,7 @@ re-discovers/reinstalls failed observation with bounded exponential delay while
 leases remain. Final release removes observation and its deadlines. Shutdown
 rejects late acknowledgements and joins the worker. SCM now uses the same ordered
 frontend owner as graph/cache consumers, retaining failed releases for retry.
-[ADR 0009](../adr/0009-git-observation-leases.md) records the contracts and limits.
+[ADR 0009](../../adr/0009-git-observation-leases.md) records the contracts and limits.
 
 `git_watch/target.rs` separates discovery and event policy. Worktree `Cargo.lock`
 and backup-named files now invalidate normally; only temporary Git metadata is
@@ -1466,7 +1466,7 @@ which resolves after disposal. Independent review exposed a request which could
 resume after lazy loading and dispatch native work after teardown; a regression
 failed before adding the acceptance check around those imports. Already accepted
 navigation, mutation and transfer work remains with its existing domain owner.
-Window-scoped stores retain their data lifetimes. [ADR 0010](../adr/0010-page-session-and-core-readiness.md)
+Window-scoped stores retain their data lifetimes. [ADR 0010](../../adr/0010-page-session-and-core-readiness.md)
 records these boundaries; this is not a claim to cancel every window operation
 on page teardown.
 
@@ -1515,7 +1515,7 @@ leases before recovery and retains observers still shared with live windows.
 Registration that finishes after its owner retires is drained before an ACK can
 be returned. Native event handling does not wait for registration or observer
 destruction. Closing windows which never used Git does not start the worker.
-[ADR 0009](../adr/0009-git-observation-leases.md) records the contract.
+[ADR 0009](../../adr/0009-git-observation-leases.md) records the contract.
 
 The regression first failed against the unchanged worker behavior with ownership
 arguments mechanically added to expose its missing retirement boundary
@@ -2406,7 +2406,7 @@ A delayed earlier notification cannot satisfy this predicate.
 Evidence:
 
 - [Structured two-cycle result](renderer-recovery-acceptance-2026-09-07.json).
-- [Inspected recovered listing](../../screenshots/refactor/repo-health-cleanup/native-renderer-crash-recovery.png)
+- [Inspected recovered listing](../../../screenshots/refactor/repo-health-cleanup/native-renderer-crash-recovery.png)
   shows `observed-after-crash-2.txt` in repository-2.
 - Native acceptance exits 0; existing native window destruction, ordinary
   reload, and blank-renderer crash tests pass 3/3 on the same binary.
@@ -2454,7 +2454,7 @@ including all three views, real UI rename followed by multiword type-ahead,
 Miller Enter/Space navigation, address editing, selected directory Open, Preview
 and graph-button ownership. The rebuilt native debug binary passes the original
 Markdown preview/zoom/dock/fullscreen/pointer/keyboard scenario in five seconds.
-Its [inspected screenshot](../../screenshots/refactor/repo-health-cleanup/native-preview-resize.png)
+Its [inspected screenshot](../../../screenshots/refactor/repo-health-cleanup/native-preview-resize.png)
 shows the real Markdown result. No Windows or macOS runtime acceptance is implied.
 
 The independent review also identified an existing focus/selection split: Tab
@@ -2577,8 +2577,8 @@ Evidence in [the acceptance artifact](directory-recovery-acceptance-2026-09-08.j
   the selected Markdown preview and its 8 KiB metadata.
 - Six native specs / eleven outcomes pass in 51 seconds, including the existing
   refresh/coalescing and directory/Git lifetime regressions. A second two-case run
-  passes and captures inspected [replacement](../../screenshots/refactor/repo-health-cleanup/native-directory-replacement.png)
-  and [updated preview](../../screenshots/refactor/repo-health-cleanup/native-directory-content-update.png)
+  passes and captures inspected [replacement](../../../screenshots/refactor/repo-health-cleanup/native-directory-replacement.png)
+  and [updated preview](../../../screenshots/refactor/repo-health-cleanup/native-directory-content-update.png)
   screenshots. These are correctness outcomes, not startup benchmarks.
 - Thirteen injected observation contracts cover faults, rescans, stale callbacks,
   registration interleavings, parent sharing, partial recursive installation,

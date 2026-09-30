@@ -113,7 +113,6 @@ describe("embedded terminal", () => {
       await browser.saveScreenshot("screenshots/fix/terminal-paste-native-fallback/native-terminal-paste.png");
     } catch (error) {
       const app = await browser.execute((marker: string) => ({
-        probe: document.documentElement.dataset.terminalPasteProbe,
         focused: document.activeElement?.className,
         secure: window.isSecureContext,
         clipboard: typeof navigator.clipboard?.readText,

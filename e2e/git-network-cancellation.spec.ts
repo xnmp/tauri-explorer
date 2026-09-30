@@ -1,5 +1,6 @@
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openGraph(page: import("@playwright/test").Page): Promise<void> {
   await page.keyboard.press("Control+Shift+p");
@@ -48,8 +49,7 @@ test("a cancelled graph fetch skips local sync and leaves the graph usable", asy
   await expect
     .poll(() =>
       page.evaluate(
-        () => (window as typeof window & { __mockInvokeCounts?: Record<string, number> })
-          .__mockInvokeCounts?.git_sync_local_branches ?? 0,
+        () => (window as unknown as { __mockControl?: MockControl }).__mockControl?.invokeCounts?.git_sync_local_branches ?? 0,
       ),
     )
     .toBe(0);
@@ -129,8 +129,7 @@ test("a late pull cancellation reports finishing and preserves undo", async ({ p
   await expect
     .poll(() =>
       page.evaluate(
-        () => (window as typeof window & { __mockInvokeCounts?: Record<string, number> })
-          .__mockInvokeCounts?.cancel_git_network_operation ?? 0,
+        () => (window as unknown as { __mockControl?: MockControl }).__mockControl?.invokeCounts?.cancel_git_network_operation ?? 0,
       ),
     )
     .toBe(1);

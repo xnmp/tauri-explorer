@@ -8,7 +8,7 @@
 > closed with evidence. #696 stays
 > open for Mac half-bounce qualification, and #739 had no macOS/Windows native
 > qualification. See the
-> [2026-09-26 ledger section](../review-completion.md#architecture-integration-on-dev--2026-09-26).
+> [2026-09-26 ledger section](../../review-completion.md#architecture-integration-on-dev--2026-09-26).
 > The rest of this document is the historical 2026-09-25 checkpoint.
 
 The user's latest instruction was **“please commit WIP then write a comprehensive handover document for another agent to continue the goal.”** This checkpoint fulfills that instruction, not the overall architectural goal. No PR was merged and no release was cut during this checkpoint. Do not declare the review complete.
@@ -25,14 +25,14 @@ The overhaul is recorded across an audit, a requirements/completion ledger and
 architecture decisions; this handover is the continuation checkpoint, not a
 replacement for that broader plan. Read these documents before implementing:
 
-1. **[Repository health and startup review — #680](../repo-health-review.md)**:
+1. **[Repository health and startup review — #680](../../repo-health-review.md)**:
    the September architectural review, rationale, subsystem findings and proposed
    direction. This is the main overview of the overhaul behind the current work.
-2. **[Architectural review completion ledger — #680](../review-completion.md)**:
+2. **[Architectural review completion ledger — #680](../../review-completion.md)**:
    requirement-by-requirement implementation/evidence history and the explicit
-   [scope freeze](../review-completion.md#active-scope--frozen-2026-09-09).
+   [scope freeze](../../review-completion.md#active-scope--frozen-2026-09-09).
    It links the deferred workstreams (#685–#688) and their acceptance boundaries.
-3. **[Architecture Decision Records](../adr/README.md)**:
+3. **[Architecture Decision Records](../../adr/README.md)**:
    the detailed contracts for resource ownership, startup readiness, observation,
    mutation publication, native history, exact trash, durable recovery,
    retirement and admission coverage. Preserve each ADR's Accepted/Proposed
@@ -43,8 +43,8 @@ replacement for that broader plan. Read these documents before implementing:
 Earlier reviews provide additional provenance:
 [June comprehensive codebase review](../reviews/comprehensive-review-2026-06-11.md),
 [July architectural review](../reviews/architecture-review-2026-07-04.md),
-[July security architecture audit](../reviews/security-architecture-audit-2026-07-05.md),
-and [perceived-latency review](../perf-review.md). These are historical findings,
+[July security architecture audit](../../reviews/security-architecture-audit-2026-07-05.md),
+and [perceived-latency review](../../perf-review.md). These are historical findings,
 not a list of bugs presumed still present or permission to expand current scope.
 
 **Status precedence:** the older overview/ledger preserve checkpoint wording
@@ -311,9 +311,9 @@ goes into a separate issue under the user's scope freeze.
 
 ### Qualification, build policy and release mechanics
 
-- Read the finite [native product qualification matrix](../testing/native-product-qualification.md),
-  [native suite instructions](../../e2e-tauri/README.md), and
-  [qualification process ADR](../adr/0021-qualification-process-lifecycle.md).
+- Read the finite [native product qualification matrix](../../testing/native-product-qualification.md),
+  [native suite instructions](../../../e2e-tauri/README.md), and
+  [qualification process ADR](../../adr/0021-qualification-process-lifecycle.md).
   The opt-in runner is `bun run test:e2e:tauri:soak`; do not silently turn an
   extended soak into a required PR gate. Browser proxies, native checks and
   actual Mac usability measurements remain different evidence categories.
@@ -323,12 +323,12 @@ goes into a separate issue under the user's scope freeze.
   with the locked package-manager configuration if this restored worktree lacks
   them. Root dependencies exist, but no worktree dependency setup was performed
   during the Rust-only checkpoint.
-- [Cargo features](../../src-tauri/Cargo.toml) currently leave both
+- [Cargo features](../../../src-tauri/Cargo.toml) currently leave both
   `durable-copy-recovery` and `durable-move-recovery` opt-in. Preserve this until
   the applicable runtime/retirement/platform acceptance justifies a separate
   enablement decision. Completing retirement does not itself enable a feature.
   Keep E2E hooks and Windows debug attachment out of shipping builds.
-- [Release workflow](../../.github/workflows/release.yml) runs on **push to main**.
+- [Release workflow](../../../.github/workflows/release.yml) runs on **push to main**.
   It reads the version from `package.json`, skips building if that version's tag
   already exists, builds Linux/macOS ARM64/Windows bundles, then creates the
   GitHub release and uploads assets. `dev` integration alone does not release.

@@ -10,13 +10,13 @@ export function createDriveOpener(deps: {
 }) {
   const pending = new Set<string>();
   return async (drive: Drive): Promise<void> => {
-    const key = drive.device_id ?? drive.path;
-    if (pending.has(key)) return;
-    if (drive.path) { deps.navigate(drive.path); return; }
-    if (!drive.device_id) { deps.error(`Cannot open ${drive.name}: no mountable volume available`); return; }
-    pending.add(key);
+    if (drive.path !== null) { deps.navigate(drive.path); return; }
+    const deviceId = drive.deviceId;
+    if (!deviceId) { deps.error(`Cannot open ${drive.name}: no mountable volume available`); return; }
+    if (pending.has(deviceId)) return;
+    pending.add(deviceId);
     try {
-      const result = await deps.mount(drive.device_id);
+      const result = await deps.mount(deviceId);
       if (!result.ok) { deps.error(`Cannot open ${drive.name}: ${result.error}`); return; }
       if (!result.data.startsWith("/") || result.data.includes("\0")) {
         deps.error(`Cannot open ${drive.name}: storage service returned an invalid mount path`);
@@ -27,7 +27,7 @@ export function createDriveOpener(deps: {
     } catch (error) {
       deps.error(`Cannot open ${drive.name}: ${String(error)}`);
     } finally {
-      pending.delete(key);
+      pending.delete(deviceId);
     }
   };
 }

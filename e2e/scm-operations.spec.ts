@@ -10,21 +10,11 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload } from "./helpers";
-
-interface MockGitCommit {
-  message: string;
-  amend: boolean;
-  files: string[];
-  commit_id: string;
-}
+import type { MockControl } from "../src/lib/api/mock-control";
 
 declare global {
   interface Window {
-    __mockGitCommits?: MockGitCommit[];
-    __mockGitExternalModify?: (path: string) => void;
-    __mockGitSetClean?: () => void;
-    __mockGitReset?: () => void;
-    __mockGitArchived?: string[];
+    __mockControl?: MockControl;
   }
 }
 
@@ -105,7 +95,7 @@ test.describe("SCM panel operations", () => {
     await expect(untracked).toHaveCount(0);
     await expect(badge(page, "untracked")).toHaveText("2");
     await expect(page.getByText("Archived 1 item to .archive")).toBeVisible();
-    expect(await page.evaluate(() => window.__mockGitArchived ?? [])).toContain(".archive/src/router.tsx");
+    expect(await page.evaluate(() => window.__mockControl?.gitArchived ?? [])).toContain(".archive/src/router.tsx");
     await page.screenshot({ path: evidencePath("ac-1-untracked-file-archived.png") });
   });
 
@@ -137,7 +127,7 @@ test.describe("SCM panel operations", () => {
     await expect(commitBtn).toBeDisabled();
 
     // The backend actually recorded the message.
-    const messages = await page.evaluate(() => window.__mockGitCommits?.map((c) => c.message) ?? []);
+    const messages = await page.evaluate(() => window.__mockControl?.gitCommits?.map((c) => c.message) ?? []);
     expect(messages).toContain("feat: ship the thing");
 
     // Working-tree changes survive the commit.
@@ -153,13 +143,13 @@ test.describe("SCM panel operations", () => {
     await input.fill("line one");
     await input.press("Shift+Enter");
     await expect(badge(page, "staged")).toHaveText("1");
-    expect(await page.evaluate(() => window.__mockGitCommits?.length ?? 0)).toBe(0);
+    expect(await page.evaluate(() => window.__mockControl?.gitCommits?.length ?? 0)).toBe(0);
 
     // Plain Enter commits.
     await input.fill("commit via enter");
     await input.press("Enter");
     await expect(badge(page, "staged")).toHaveText("0");
-    const messages = await page.evaluate(() => window.__mockGitCommits?.map((c) => c.message) ?? []);
+    const messages = await page.evaluate(() => window.__mockControl?.gitCommits?.map((c) => c.message) ?? []);
     expect(messages).toContain("commit via enter");
   });
 
@@ -194,7 +184,7 @@ test.describe("SCM panel operations", () => {
     // the checkbox reset.
     await expect(badge(page, "staged")).toHaveText("0");
     await expect(amend).not.toBeChecked();
-    const commits = await page.evaluate(() => window.__mockGitCommits ?? []);
+    const commits = await page.evaluate(() => window.__mockControl?.gitCommits ?? []);
     expect(commits).toHaveLength(1);
     expect(commits[0].message).toBe("amended message");
   });
@@ -210,7 +200,7 @@ test.describe("SCM panel operations", () => {
 
     // Simulate another process modifying a file; the store must re-fetch off
     // the watcher event, not a click.
-    await page.evaluate(() => window.__mockGitExternalModify?.("src/service.ts"));
+    await page.evaluate(() => window.__mockControl?.gitExternalModify?.("src/service.ts"));
 
     await expect(
       page.locator('[data-section="changes"] .row', { hasText: "service.ts" }),
@@ -235,7 +225,7 @@ test.describe("SCM panel operations", () => {
     await expect(page.locator(".clean-state")).toHaveCount(0);
 
     // Everything committed/discarded elsewhere → clean tree via watcher event.
-    await page.evaluate(() => window.__mockGitSetClean?.());
+    await page.evaluate(() => window.__mockControl?.gitSetClean?.());
 
     await expect(page.locator(".clean-state")).toHaveText(/Working tree clean/i);
     await expect(badge(page, "staged")).toHaveText("0");

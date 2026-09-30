@@ -2,6 +2,7 @@
 
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import { MOCK_LOCAL_KEYS, type MockControl } from "../src/lib/api/mock-control";
 
 async function runPaletteCommand(page: import("@playwright/test").Page, query: string) {
   await page.keyboard.press("Control+Shift+p");
@@ -65,9 +66,7 @@ test("report submission closes before the native command completes", async ({ pa
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { submit_user_report: 800 };
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { submit_user_report: 800 };
   });
 
   const dialog = await openReportDialog(page);
@@ -75,7 +74,7 @@ test("report submission closes before the native command completes", async ({ pa
   await dialog.getByRole("button", { name: "Submit" }).click();
 
   await expect(dialog).toBeHidden({ timeout: 300 });
-  expect(await page.evaluate(() => localStorage.getItem("mock-submitted-report"))).toBeNull();
+  expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport)).toBeNull();
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
 });
 
@@ -89,9 +88,7 @@ test("an in-flight report announces itself before the outcome toast", async ({ p
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { submit_user_report: 2000 };
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { submit_user_report: 2000 };
   });
 
   const dialog = await openReportDialog(page);
@@ -106,7 +103,7 @@ test("an in-flight report announces itself before the outcome toast", async ({ p
     .poll(() => pending.evaluate((el) => getComputedStyle(el).opacity))
     .toBe("1");
   // Still outstanding: the mock has not recorded the submission yet.
-  expect(await page.evaluate(() => localStorage.getItem("mock-submitted-report"))).toBeNull();
+  expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport)).toBeNull();
   await page.screenshot({ path: evidencePath("issue-596-submitting-toast.png") });
 
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
@@ -125,9 +122,7 @@ test("an unrelated info toast does not delete the in-flight indicator", async ({
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => {
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { submit_user_report: 3000 };
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { submit_user_report: 3000 };
   });
 
   const dialog = await openReportDialog(page);
@@ -154,12 +149,10 @@ test("an unrelated info toast does not delete the in-flight indicator", async ({
 test("a failed report retires the in-flight toast before the error toast", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => {
-    localStorage.setItem("mock-report-error", "daily_cap");
-    (globalThis as typeof globalThis & {
-      __MOCK_LATENCY__?: Record<string, number>;
-    }).__MOCK_LATENCY__ = { open_external_url: 3000 };
-  });
+  await page.evaluate((reportErrorKey) => {
+    localStorage.setItem(reportErrorKey, "daily_cap");
+    ((globalThis as unknown as { __mockControl?: MockControl }).__mockControl ??= {}).latency = { open_external_url: 3000 };
+  }, MOCK_LOCAL_KEYS.reportError);
 
   const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Doomed report");
@@ -169,11 +162,11 @@ test("a failed report retires the in-flight toast before the error toast", async
   // Snapshot both facts in one evaluate, with no auto-retry: `toBeHidden()`
   // would keep polling until the browser launch resolved and `finally` ran,
   // which is exactly the interval this test exists to inspect.
-  const duringHandoff = await page.evaluate(() => ({
+  const duringHandoff = await page.evaluate((openedUrlKey) => ({
     progressToasts: document.querySelectorAll(".toast.progress").length,
     errorToasts: document.querySelectorAll(".toast.error").length,
-    browserLaunched: localStorage.getItem("mock-opened-url") !== null,
-  }));
+    browserLaunched: localStorage.getItem(openedUrlKey) !== null,
+  }), MOCK_LOCAL_KEYS.openedUrl);
   expect(duringHandoff).toEqual({
     progressToasts: 0,
     errorToasts: 1,
@@ -184,14 +177,14 @@ test("a failed report retires the in-flight toast before the error toast", async
 test("uncertain submission keeps the draft without opening a duplicate issue form", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("mock-report-error", "submission_uncertain"));
+  await page.evaluate((key) => localStorage.setItem(key, "submission_uncertain"), MOCK_LOCAL_KEYS.reportError);
 
   const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Check before retrying");
   await dialog.getByRole("button", { name: "Submit" }).click();
 
   await expect(page.locator(".toast.error")).toContainText("Check recent issues before retrying");
-  expect(await page.evaluate(() => localStorage.getItem("mock-opened-url"))).toBeNull();
+  expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl)).toBeNull();
   const reopened = await openReportDialog(page);
   await expect(reopened.getByLabel("Title")).toHaveValue("Check before retrying");
 });
@@ -221,7 +214,7 @@ test("Alt+I opens the report dialog and the palette advertises the shortcut", as
 test("the single Report Issue command defaults to bug and accepts a blank description", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("mock-report-clipboard-image", "1"));
+  await page.evaluate((key) => localStorage.setItem(key, "1"), MOCK_LOCAL_KEYS.reportClipboardImage);
 
   const dialog = await openReportDialog(page);
   await expect(dialog.getByLabel("Description")).not.toHaveAttribute("required", "");
@@ -232,9 +225,9 @@ test("the single Report Issue command defaults to bug and accepts a blank descri
 
   await expect(dialog).toBeHidden();
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mock-submitted-report")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport))
     .not.toBeNull();
-  const submitted = await page.evaluate(() => localStorage.getItem("mock-submitted-report"));
+  const submitted = await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport);
   expect(JSON.parse(submitted!)).toMatchObject({
     title: "Title-only bug",
     body: "",
@@ -287,7 +280,7 @@ for (const [kind, screenshot] of [
 test("failed submission preserves the draft in the GitHub fallback", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("mock-report-error", "daily_cap"));
+  await page.evaluate((key) => localStorage.setItem(key, "daily_cap"), MOCK_LOCAL_KEYS.reportError);
 
   const dialog = await openReportDialog(page, "feature");
   await dialog.getByLabel("Title").fill("Keep my feature title");
@@ -298,10 +291,10 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
     "Reports are temporarily unavailable",
   );
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
     .not.toBeNull();
   const url = new URL(
-    (await page.evaluate(() => localStorage.getItem("mock-opened-url")))!,
+    (await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))!,
   );
   expect(url.searchParams.get("title")).toBe("Keep my feature title");
   expect(url.searchParams.get("body")).toContain("Keep my typed description 🐛");
@@ -345,7 +338,7 @@ test("feature dialog also accepts multiple image files", async ({ page }) => {
 test("clipboard image is offered and attached without creating a file", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("mock-report-clipboard-image", "1"));
+  await page.evaluate((key) => localStorage.setItem(key, "1"), MOCK_LOCAL_KEYS.reportClipboardImage);
   const dialog = await openReportDialog(page, "feature");
 
   const clipboardButton = dialog.getByRole("button", { name: "Attach from clipboard" });
@@ -474,7 +467,7 @@ test("successful submission forwards selected images to the native report comman
 
   await expect(dialog).toBeHidden();
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
-  const submitted = await page.evaluate(() => localStorage.getItem("mock-submitted-report"));
+  const submitted = await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport);
   expect(JSON.parse(submitted!).attachments).toEqual([
     expect.objectContaining({ name: "contract.png", mediaType: "image/png" }),
   ]);
@@ -483,10 +476,10 @@ test("successful submission forwards selected images to the native report comman
 test("failed optimistic attachment submission restores the complete draft on reopen", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => {
-    localStorage.setItem("mock-report-error", "network_unreachable");
-    localStorage.setItem("mock-report-clipboard-image", "1");
-  });
+  await page.evaluate(({ reportError, reportClipboardImage }) => {
+    localStorage.setItem(reportError, "network_unreachable");
+    localStorage.setItem(reportClipboardImage, "1");
+  }, { reportError: MOCK_LOCAL_KEYS.reportError, reportClipboardImage: MOCK_LOCAL_KEYS.reportClipboardImage });
   const dialog = await openReportDialog(page, "feature");
   await dialog.getByLabel("Title").fill("Keep attachment title");
   await dialog.getByLabel("Description").fill("Keep attachment description");
@@ -497,7 +490,7 @@ test("failed optimistic attachment submission restores the complete draft on reo
   await expect(dialog).toBeHidden();
   await expect(page.locator(".toast.error")).toContainText("Your text is saved");
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
     .toContain("https://github.com/xnmp/tauri-explorer/issues/new?");
 
   const restoredDialog = await openReportDialog(page);
@@ -534,9 +527,9 @@ for (const [kind, message] of [
   }) => {
     await page.goto("/");
     await waitForEntries(page);
-    await page.evaluate((errorKind) => {
-      localStorage.setItem("mock-report-error", errorKind);
-    }, kind);
+    await page.evaluate(({ errorKind, reportErrorKey }) => {
+      localStorage.setItem(reportErrorKey, errorKind);
+    }, { errorKind: kind, reportErrorKey: MOCK_LOCAL_KEYS.reportError });
     const dialog = await openReportDialog(page);
     await dialog.getByLabel("Title").fill(`Keep ${kind} title`);
     await dialog.getByLabel("Description").fill(`Keep ${kind} description`);
@@ -549,7 +542,7 @@ for (const [kind, message] of [
     await expect(dialog).toBeHidden();
     await expect(page.locator(".toast.error")).toContainText(message);
     await expect(page.locator(".toast.error")).toContainText("add the images there manually");
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
       .toContain("https://github.com/xnmp/tauri-explorer/issues/new?");
   });
 }
@@ -557,10 +550,10 @@ for (const [kind, message] of [
 test("draft is restored when both relay and browser fallback fail", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => {
-    localStorage.setItem("mock-report-error", "network_unreachable");
-    localStorage.setItem("mock-open-url-error", "1");
-  });
+  await page.evaluate(({ reportError, openUrlError }) => {
+    localStorage.setItem(reportError, "network_unreachable");
+    localStorage.setItem(openUrlError, "1");
+  }, { reportError: MOCK_LOCAL_KEYS.reportError, openUrlError: MOCK_LOCAL_KEYS.openUrlError });
 
   const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Do not lose this title");
@@ -581,7 +574,7 @@ test("draft is restored when both relay and browser fallback fail", async ({ pag
 test("unicode draft is restored when it cannot fit in a fallback URL", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
+  await page.evaluate((key) => localStorage.setItem(key, "network_unreachable"), MOCK_LOCAL_KEYS.reportError);
 
   const dialog = await openReportDialog(page);
   const description = "🐛".repeat(4000);
@@ -592,7 +585,7 @@ test("unicode draft is restored when it cannot fit in a fallback URL", async ({ 
   await expect(dialog).toBeHidden();
   await expect(page.locator(".toast.error")).toContainText("draft is saved");
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
     .toBeNull();
 
   const restoredDialog = await openReportDialog(page);

@@ -1,4 +1,7 @@
-import { createOrderedWriter, type OrderedWriter } from "$lib/domain/ordered-writer";
+import {
+  createTerminalInputQueue,
+  type TerminalInputReceipt,
+} from "$lib/domain/terminal-input-queue";
 
 export type TerminalSessionUnlisten = () => void;
 
@@ -14,14 +17,19 @@ export interface TerminalSessionDependencies {
   listenCwd(id: number, handler: (payload: string) => void): Promise<TerminalSessionUnlisten>;
   spawn(id: number, cwd: string | undefined, cols: number, rows: number): Promise<TerminalSessionSpawnInfo>;
   kill(id: number): Promise<void>;
-  write(id: number, data: string): Promise<void>;
+  /** Write number `seq` of terminal `id`'s input stream (#882). */
+  write(id: number, seq: number, data: string): Promise<TerminalInputReceipt>;
 }
 
 export interface TerminalSessionCallbacks {
   output(payload: string): void;
   cwd(payload: string): void;
   exit(): void;
+  /** Input could not be delivered: a failed send or a failed queued read. */
   writeError(error: unknown): void;
+  /** The backend discarded `bytes` of typeahead typed before the shell
+   *  started; `firstInStream` marks the first report for that shell. */
+  inputDropped(bytes: number, firstInStream: boolean): void;
 }
 
 interface Acquisition {
@@ -29,9 +37,35 @@ interface Acquisition {
   id: number | null;
   unlisteners: TerminalSessionUnlisten[];
   spawned: boolean;
-  /** The only path to this PTY's input; created once the PTY runs (#709). */
-  writer: OrderedWriter | null;
+  /** The input stream this acquisition's shell will serve. */
+  stream: InputStream;
 }
+
+/** One opening of the input queue, from `open` until it closes. */
+interface InputStream {
+  /** Settles with the spawn info once its shell runs, or null if none does. */
+  running: Promise<TerminalSessionSpawnInfo | null>;
+  settle(info: TerminalSessionSpawnInfo | null): void;
+  closed: boolean;
+}
+
+function createInputStream(): InputStream {
+  let resolve!: (info: TerminalSessionSpawnInfo | null) => void;
+  const running = new Promise<TerminalSessionSpawnInfo | null>((done) => { resolve = done; });
+  let settled = false;
+  return {
+    running,
+    settle(info) {
+      if (settled) return;
+      settled = true;
+      resolve(info);
+    },
+    closed: false,
+  };
+}
+
+/** Builds inserted text for the shell that actually spawned. */
+export type InsertionBuilder = (info: TerminalSessionSpawnInfo) => string;
 
 const cancelled = Symbol("terminal-session-cancelled");
 
@@ -45,6 +79,33 @@ export function createTerminalSession(
   let current: Acquisition | null = null;
   let starting: Promise<TerminalSessionSpawnInfo | null> | null = null;
   let stopping: Promise<void> | null = null;
+  // The only path to the shell's input (#709, #882). Opened when a shell
+  // starts, attached once it has an id, closed when it stops or exits.
+  const input = createTerminalInputQueue({
+    error: callbacks.writeError,
+    dropped: callbacks.inputDropped,
+  });
+  let stream = createInputStream();
+  closeInput();
+  // Insertions requested while no shell runs or starts; the next shell gets
+  // them first, quoted in its own dialect (#265, #409).
+  const pendingInsertions: InsertionBuilder[] = [];
+
+  /** Hold input for a shell that is starting; keeps an already-open stream. */
+  function openInput(): InputStream {
+    if (!stream.closed) return stream;
+    stream = createInputStream();
+    input.open();
+    for (const build of pendingInsertions.splice(0)) insert(build);
+    return stream;
+  }
+
+  /** No shell is coming for the current stream: drop its unsent input. */
+  function closeInput(): void {
+    stream.closed = true;
+    stream.settle(null);
+    input.close();
+  }
 
   const isCurrent = (acquisition: Acquisition): boolean =>
     !disposed && acquisition.generation === generation;
@@ -54,8 +115,6 @@ export function createTerminalSession(
   };
 
   async function release(acquisition: Acquisition, kill: boolean): Promise<void> {
-    acquisition.writer?.close();
-    acquisition.writer = null;
     for (const unlisten of acquisition.unlisteners.splice(0).reverse()) {
       try {
         unlisten();
@@ -80,16 +139,20 @@ export function createTerminalSession(
     cols: number,
     rows: number,
   ): Promise<TerminalSessionSpawnInfo | null> {
-    if (disposed || current !== null || starting !== null) return null;
+    if (disposed || starting !== null) return null;
+    // Typeahead from here on belongs to this shell (a no-op while a running
+    // shell's stream is open).
+    const opened = openInput();
     if (stopping !== null) await stopping;
-    if (disposed || current !== null) return null;
+    // A stop requested meanwhile closed this stream and cancels the start.
+    if (disposed || current !== null || opened.closed) return null;
 
     const acquisition: Acquisition = {
       generation: ++generation,
       id: null,
       unlisteners: [],
       spawned: false,
-      writer: null,
+      stream: opened,
     };
     current = acquisition;
     const operation = (async () => {
@@ -97,6 +160,8 @@ export function createTerminalSession(
         acquisition.id = await dependencies.reserveId();
         requireCurrent(acquisition);
         const id = acquisition.id;
+        // The backend holds input for a terminal that has not started yet.
+        input.attach((seq, data) => dependencies.write(id, seq, data));
         acquisition.unlisteners.push(await dependencies.listenOutput(id, (payload) => {
           if (isCurrent(acquisition)) callbacks.output(payload);
         }));
@@ -105,6 +170,7 @@ export function createTerminalSession(
           if (!isCurrent(acquisition)) return;
           callbacks.exit();
           generation += 1;
+          closeInput();
           void release(acquisition, false);
         }));
         requireCurrent(acquisition);
@@ -115,12 +181,11 @@ export function createTerminalSession(
         const info = await dependencies.spawn(id, cwd, cols, rows);
         acquisition.spawned = true;
         requireCurrent(acquisition);
-        acquisition.writer = createOrderedWriter(
-          (data) => dependencies.write(id, data),
-          callbacks.writeError,
-        );
+        acquisition.stream.settle(info);
         return info;
       } catch (error) {
+        // A superseded start leaves the input to whoever superseded it.
+        if (isCurrent(acquisition)) closeInput();
         await release(acquisition, acquisition.id !== null);
         if (error === cancelled) return null;
         throw error;
@@ -135,8 +200,10 @@ export function createTerminalSession(
   }
 
   async function stop(): Promise<void> {
-    if (stopping !== null) return stopping;
+    // Even a stop joining one in progress cancels whatever started since.
     generation += 1;
+    closeInput();
+    if (stopping !== null) return stopping;
     const acquisition = current;
     const operation = (async () => {
       if (starting !== null) await starting.catch(() => undefined);
@@ -150,20 +217,60 @@ export function createTerminalSession(
     }
   }
 
+  /**
+   * Replace the shell. Input written from this call on is typeahead for the
+   * replacement; unsent input for the old shell is discarded.
+   */
+  async function restart(
+    cwd: string | undefined,
+    cols: number,
+    rows: number,
+  ): Promise<TerminalSessionSpawnInfo | null> {
+    const stopped = stop();
+    if (disposed) return null;
+    const opened = openInput();
+    await stopped;
+    // A stop requested during the restart wins.
+    if (opened.closed) return null;
+    return start(cwd, cols, rows);
+  }
+
   async function dispose(): Promise<void> {
     disposed = true;
+    pendingInsertions.length = 0;
+    closeInput();
     await stop();
   }
 
   /**
-   * Queue input for the running PTY in call order. Returns false, sending
-   * nothing, when no PTY is running.
+   * Queue input for the shell in call order. A promise holds its place until
+   * it settles. Input is held while the shell starts and dropped while no
+   * shell is running or starting.
    */
-  function write(data: string): boolean {
-    const writer = current?.writer;
-    if (!writer) return false;
-    writer.write(data);
-    return true;
+  function write(data: string | Promise<string>): void {
+    if (!disposed) input.write(data);
+  }
+
+  /**
+   * Queue text built for the shell that receives it, such as a path
+   * insertion quoted in the spawned shell's dialect. It holds its place in
+   * the input queue until that shell runs. With no shell running or starting,
+   * it waits for the next one instead of being dropped, and likewise when
+   * the shell it was waiting for never starts.
+   */
+  function insert(build: InsertionBuilder): void {
+    if (disposed) return;
+    if (stream.closed) {
+      pendingInsertions.push(build);
+      return;
+    }
+    input.write(stream.running.then((info) => {
+      if (info) return build(info);
+      // That shell never ran (spawn failed or was stopped): keep the
+      // insertion for the next one, whose stream may already be open.
+      insert(build);
+      return "";
+    }));
   }
 
   return {
@@ -171,8 +278,10 @@ export function createTerminalSession(
     get isDisposed(): boolean { return disposed; },
     start,
     stop,
+    restart,
     dispose,
     write,
+    insert,
   };
 }
 

@@ -4,12 +4,13 @@
  */
 
 import { test, expect } from "./fixtures";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 test("crash notice appears after a crash and dismisses", async ({ page }) => {
   // Seed the flag, then reload — addInitScript would re-seed it on every
   // navigation and defeat the consumed-on-read assertion below.
   await page.goto("/");
-  await page.evaluate(() => localStorage.setItem("mockCrashReport", "1"));
+  await page.evaluate((key) => localStorage.setItem(key, "1"), MOCK_LOCAL_KEYS.crashReport);
   await page.reload();
 
   const notice = page.locator('[data-testid="crash-notice"]');
@@ -51,7 +52,7 @@ test("a frontend error is recorded and offered as a crash on next launch", async
 
   // record_frontend_crash persists the record for the next launch.
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mockFrontendCrash")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.frontendCrash))
     .not.toBeNull();
 
   // Next launch: the notice offers the frontend crash exactly like a Rust one.

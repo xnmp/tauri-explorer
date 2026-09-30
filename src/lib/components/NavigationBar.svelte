@@ -70,7 +70,7 @@
     const crumbs = explorer.breadcrumbs;
     for (let i = 0; i < crumbs.length; i++) {
       const key = directoryKey(crumbs[i].path);
-      const drive = drivesStore.list.find((d) => directoryKey(d.path) === key);
+      const drive = drivesStore.list.find((d) => d.path !== null && directoryKey(d.path) === key);
       if (!drive) continue;
       if (drive.provider === "googledrive") {
         // Google Drive File Stream always nests personal files under a top-level

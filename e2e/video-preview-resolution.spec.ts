@@ -4,16 +4,19 @@
  */
 import { test, expect } from "./fixtures";
 import { pressShortcut, waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 test("video preview uses a 1024px frame while tiles retain their configured frame size", async ({ page }) => {
   await page.addInitScript(() => {
     type VideoRequest = { path: string; size?: number };
     const mockWindow = window as unknown as {
-      __mockVideoThumbnail?: (path: string, size?: number) => string;
+      __mockControl?: MockControl;
       __videoThumbnailRequests?: VideoRequest[];
     };
     mockWindow.__videoThumbnailRequests = [];
-    mockWindow.__mockVideoThumbnail = (path, size) => {
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    (mockWindow.__mockControl ??= {}).videoThumbnail = (path, size) => {
       mockWindow.__videoThumbnailRequests?.push({ path, size });
       const sourceSize = size ?? 128;
       return `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" width="${sourceSize}" height="${sourceSize}" viewBox="0 0 1000 1000"><rect width="1000" height="1000" fill="#2563eb"/><text x="500" y="465" fill="white" font-family="sans-serif" font-size="120" font-weight="700" text-anchor="middle">VIDEO FRAME</text><text x="500" y="610" fill="white" font-family="sans-serif" font-size="180" font-weight="700" text-anchor="middle">${sourceSize}px</text><text x="500" y="710" fill="#bfdbfe" font-family="sans-serif" font-size="64" text-anchor="middle">requested source size</text></svg>`)}`;

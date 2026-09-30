@@ -6,15 +6,16 @@
  */
 
 import { test, expect, type Page } from "./fixtures";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 async function readResponse(page: Page): Promise<{ token: string; paths: string[]; cancelled: boolean }> {
   // The mock invoke resolves asynchronously — poll until recorded.
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("mock-picker-response")), {
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.pickerResponse), {
       timeout: 3000,
     })
     .not.toBeNull();
-  const raw = await page.evaluate(() => localStorage.getItem("mock-picker-response"));
+  const raw = await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.pickerResponse);
   return JSON.parse(raw!);
 }
 
@@ -165,7 +166,7 @@ test.describe("File picker mode", () => {
       paths: [driveFolder],
     });
 
-    await page.evaluate(() => localStorage.removeItem("mock-picker-response"));
+    await page.evaluate((key) => localStorage.removeItem(key), MOCK_LOCAL_KEYS.pickerResponse);
     const uncFolder = "\\\\server\\share\\folder";
     const address = page.locator(".address-input");
     await address.fill(uncFolder);

@@ -26,8 +26,9 @@ nearest rank (sorted sample indices 9 and 18).
 
 Baseline: `9ca896d5fcf50b40974dde499e4e703b33210538`.
 Candidate: `822f8751d77cb91eeef9863310b2d9bcde94de00`, with no tracked build-time diff.
-Binary hashes, phase samples, environment and interaction runs are retained in
-[the machine-readable report](arch-startup-822f8751.json).
+Binary hashes, phase samples, environment and interaction runs were retained in
+the machine-readable report, removed per #894/#895 repo-artifact-and-docs-hygiene
+(SHA-256 `0b145d479ed1af587815bd481c555153e9db8e972ccb335595009c9969dd280c`).
 
 The old backend scanned and sorted the entire directory before returning 100
 entries, then broadcast the rest in 100-entry batches with a 1 ms pause between

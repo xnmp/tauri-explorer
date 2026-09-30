@@ -8,13 +8,40 @@ use super::super::{
 };
 use super::Root;
 use crate::files::recovery::artifact_layout::{probe, ORIGINAL, PUBLICATION};
-use crate::{error::AppError, files::native_directory::Directory};
+use crate::{
+    error::AppError,
+    files::{
+        native_directory::Directory,
+        tree_removal::{self, AbsentRoot, MountEvidence, Policy, Removal},
+    },
+};
 use std::{ffi::OsStr, io};
 
 /// Recovery roots are our own private storage; these bounds exist so a
 /// substituted or pathological namespace cannot make cleanup unbounded.
 const MAX_DEPTH: usize = 256;
 const MAX_ENTRIES: usize = 65_536;
+
+/// Removal of a root's entries is resumable, so an entry already gone is a
+/// completed step. Measurement counts a root's child as depth 0 and removal
+/// counts it as 1, so both admit the same trees. Durable evidence never meets
+/// a same-device bind mount it cannot see: without mount ids it refuses.
+const REMOVAL: Policy = Policy {
+    max_depth: MAX_DEPTH + 1,
+    mount_evidence: MountEvidence::Required,
+    absent_root: AbsentRoot::Removed,
+};
+
+/// Each emptied directory reaches disk before its own name is removed.
+struct Retire;
+
+impl Removal for Retire {
+    type Error = AppError;
+
+    fn emptied(&mut self, directory: &Directory) -> Result<(), AppError> {
+        Ok(directory.sync()?)
+    }
+}
 
 /// What the observed endpoints permit next. Derived from all three positions,
 /// never from the recorded phase alone.
@@ -290,7 +317,8 @@ impl Root {
         self.verify_namespace()?;
         let mut budget = MAX_ENTRIES;
         for name in self.directory.names(MAX_ENTRIES)? {
-            remove_tree(&self.directory, &name, 0, &mut budget)?;
+            tree_removal::remove(&self.directory, &name, REMOVAL, &mut budget, &mut Retire)
+                .map_err(|partial| partial.error)?;
         }
         self.directory.sync()?;
         // Only the exact retained handle and its named link may be unlinked.
@@ -304,38 +332,6 @@ impl Root {
         }
         Ok(())
     }
-}
-
-/// Handle-relative recursive removal. `open_existing` refuses to follow a
-/// symlink, so a link is always unlinked rather than traversed.
-fn remove_tree(
-    parent: &Directory,
-    name: &OsStr,
-    depth: usize,
-    budget: &mut usize,
-) -> Result<(), AppError> {
-    if depth > MAX_DEPTH {
-        return Err(invalid("Recovery artifact exceeds its removal depth limit"));
-    }
-    *budget = budget
-        .checked_sub(1)
-        .ok_or_else(|| invalid("Recovery artifact exceeds its removal entry limit"))?;
-    let stat = match parent.stat(name) {
-        Ok(stat) => stat,
-        // Removal is idempotent: an entry already gone is a completed step.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    if stat.st_mode & libc::S_IFMT != libc::S_IFDIR {
-        return Ok(parent.unlink(name, false)?);
-    }
-    let directory = parent.open_existing(name)?;
-    for child in directory.names(MAX_ENTRIES)? {
-        remove_tree(&directory, &child, depth + 1, budget)?;
-    }
-    directory.sync()?;
-    parent.unlink(name, true)?;
-    Ok(())
 }
 
 fn measure(

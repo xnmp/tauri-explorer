@@ -468,3 +468,14 @@ that the move is refused before any record instead of meeting `EBUSY` after
 journaling. `a_payload_that_crosses_into_another_mount_is_refused_before_any_record`
 mounts a tmpfs inside a payload the move would retain, whose discard could never
 traverse it, and checks the same refusal.
+
+The shared tree removal (#875) has one bind-mount test per caller, all named
+for what they never do: `a_bind_mount_inside_the_tree_is_never_entered`
+(the primitive, under both mount-evidence policies and for a mounted file),
+`deletion_never_descends_into_a_mount_inside_the_selection` (permanent delete),
+`replacement_retirement_never_descends_into_a_mount_inside_its_root` and
+`move_cleanup_never_descends_into_a_mount_inside_its_payload`. Each bind-mounts
+a directory of the same filesystem, so only mount identity reveals it, and
+checks the refusal plus every byte the mount exposes. Run them with the command
+above, replacing the test name with the filter `mount_inside` (which also
+selects the two older move-retirement mount tests).

@@ -151,6 +151,32 @@ fn published_copy_identity_trashes_and_restores_the_exact_entry() {
 }
 
 #[test]
+fn admission_claims_the_trash_layout_directories_the_deletion_will_use() {
+    let (root, context, source) = fixture();
+    let path = source.join("entry");
+    fs::write(&path, b"retain bytes").unwrap();
+    let (_, claims) = context
+        .prepare_selection(Arc::new(vec![path.to_str().unwrap().to_owned()]))
+        .unwrap()
+        .into_admission();
+    let trash = fs::canonicalize(root.path()).unwrap().join("data/Trash");
+    for directory in [trash.join("info"), trash.join("files")] {
+        assert!(
+            claims
+                .iter()
+                .any(|claim| claim.path.0 == directory && claim.scope == Scope::Entry),
+            "missing layout claim for {directory:?}"
+        );
+    }
+    // The trash root only excludes selected sources; it is not admitted as a
+    // broad lock that would serialize independent deletions.
+    assert!(claims
+        .iter()
+        .all(|claim| !(claim.path.0 == trash && claim.scope == Scope::Subtree)));
+    assert!(!context.data_home.exists());
+}
+
+#[test]
 fn trash_and_permanent_deletion_refuse_the_same_oversized_selection() {
     let (_root, context, source) = fixture();
     let path = source.join("entry");

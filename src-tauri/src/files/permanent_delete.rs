@@ -166,7 +166,7 @@ mod unix {
         container: OsString,
     }
 
-    type Birth = (i64, u32);
+    pub(super) type Birth = (i64, u32);
 
     /// Birth time of `name` relative to `directory` (or an absolute path with
     /// `AT_FDCWD`), without following a final symlink. `None` when the
@@ -243,7 +243,7 @@ mod unix {
     /// A native path keeps non-Unicode names exact; there is no receipt key.
     pub(super) fn delete_native(path: &Path) -> Result<TrashSuccess, AppError> {
         let mut preparation = Preparation::new(MAX_PLAN_BYTES);
-        prepare_item(&mut preparation, path, &mut random)?;
+        prepare_item(&mut preparation, path, &mut random, &mut birth_of_path)?;
         preparation
             .into_items()
             .pop_front()
@@ -259,9 +259,20 @@ mod unix {
         paths: Arc<Vec<String>>,
         random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
     ) -> Result<PreparedSelection, AppError> {
-        PreparedSelection::prepare(paths, MAX_PLAN_BYTES, |preparation, paths| {
+        prepare_observed(paths, random, MAX_PLAN_BYTES, &mut birth_of_path)
+    }
+
+    /// [`prepare_with`] under an explicit budget and birth-time reader, the
+    /// seams tests use to pin what a prepared deletion retains and captures.
+    pub(super) fn prepare_observed(
+        paths: Arc<Vec<String>>,
+        random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
+        maximum: usize,
+        birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
+    ) -> Result<PreparedSelection, AppError> {
+        PreparedSelection::prepare(paths, maximum, |preparation, paths| {
             for path in paths {
-                prepare_item(preparation, Path::new(path), random)?;
+                prepare_item(preparation, Path::new(path), random, birth_of)?;
             }
             Ok(())
         })
@@ -271,10 +282,12 @@ mod unix {
         preparation: &mut Preparation<Item>,
         path: &Path,
         random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
+        birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
     ) -> Result<(), AppError> {
+        // Birth time is read right after the version, before any claim.
         let (source, birth) = preparation.observe_with(path, |physical, version| {
             Ok(match version {
-                Some(_) => birth_of_path(physical)?,
+                Some(_) => birth_of(physical)?,
                 None => None,
             })
         })?;

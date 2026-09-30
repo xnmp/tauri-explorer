@@ -6,6 +6,7 @@ use crate::{
     files::{
         file_identity::{of_file, version_at},
         native_directory::Directory,
+        tree_removal::{self, AbsentRoot, MountEvidence, Policy, Removal},
     },
 };
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,14 @@ const MAX_ENTRIES: usize = 65_536;
 const MAX_DEPTH: usize = 256;
 // Conservative encoded-size bound, leaving journal space for immutable authority.
 const MAX_PLAN_BYTES: usize = 8 * 1024 * 1024;
+
+/// A resumed cleanup may find planned entries already gone. Linux cleanup
+/// requires positive mount identity (see [`mount_ids_match`]).
+const REMOVAL: Policy = Policy {
+    max_depth: MAX_DEPTH,
+    mount_evidence: MountEvidence::Required,
+    absent_root: AbsentRoot::Removed,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -268,20 +277,13 @@ impl Plan {
                 .file_name()
                 .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
             let mut budget = MAX_ENTRIES;
-            let payload_mount = existing_payload_mount_id(directory, name)?;
-            let identity = PayloadIdentity {
+            let mut planned = Planned {
+                root,
                 entries: &index,
-                mount: payload_mount,
-            };
-            remove_tree(
-                directory,
-                name,
-                &root.join(name),
-                &identity,
-                1,
-                &mut budget,
                 checkpoint,
-            )?;
+            };
+            tree_removal::remove(directory, name, REMOVAL, &mut budget, &mut planned)
+                .map_err(|partial| partial.error)?;
         }
         Ok(())
     }
@@ -397,7 +399,8 @@ fn observed(
     index: &HashMap<&Path, &EntryVersion>,
     removing: bool,
 ) -> Result<Option<EntryVersion>, AppError> {
-    let expected = index
+    // An unplanned name is refused even when it is already gone.
+    index
         .get(path)
         .ok_or_else(|| invalid("Move cleanup found an unplanned descendant"))?;
     let actual = match version_at(parent, name) {
@@ -405,6 +408,22 @@ fn observed(
         Err(error) if removing && error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
+    planned(index, path, &actual, removing)?;
+    Ok(Some(actual))
+}
+
+/// Does `actual` match the plan's authority for `path`? While removing, a
+/// directory's size and mtime change as its children go, so only its object,
+/// mode and ownership must still match.
+fn planned(
+    index: &HashMap<&Path, &EntryVersion>,
+    path: &Path,
+    actual: &EntryVersion,
+    removing: bool,
+) -> Result<(), AppError> {
+    let expected = index
+        .get(path)
+        .ok_or_else(|| invalid("Move cleanup found an unplanned descendant"))?;
     let matches = if expected.directory && removing {
         actual.directory
             && !actual.symlink
@@ -413,14 +432,14 @@ fn observed(
             && actual.uid == expected.uid
             && actual.gid == expected.gid
     } else {
-        actual == **expected
+        actual == *expected
     };
     if !matches {
         return Err(
             invalid("Move cleanup descendant changed; remaining evidence is preserved").into(),
         );
     }
-    Ok(Some(actual))
+    Ok(())
 }
 
 fn walk_budget(depth: usize, budget: &mut usize) -> Result<(), AppError> {
@@ -550,47 +569,42 @@ fn refusal(path: &Path, root: &Path, error: io::Error) -> AppError {
     ))
 }
 
-fn remove_tree(
-    parent: &Directory,
-    name: &OsStr,
-    path: &Path,
-    identity: &PayloadIdentity<'_>,
-    depth: usize,
-    budget: &mut usize,
-    checkpoint: &mut impl FnMut(&'static str) -> Result<(), AppError>,
-) -> Result<(), AppError> {
-    walk_budget(depth, budget)?;
-    let Some(actual) = observed(parent, name, path, identity.entries, true)? else {
-        return Ok(());
-    };
-    on_payload_mount(parent, name, path, identity.mount)?;
-    if actual.directory {
-        let directory = parent.open_existing(name)?;
-        if of_file(&directory.file)? != actual.object {
-            return Err(invalid("Move cleanup directory identity changed").into());
-        }
-        for child in directory.names(MAX_ENTRIES)? {
-            remove_tree(
-                &directory,
-                &child,
-                &path.join(&child),
-                identity,
-                depth + 1,
-                budget,
-                checkpoint,
-            )?;
-        }
-        directory.sync()?;
-    }
-    // Recheck the named entry after walking and before unlinking. Directory
-    // removal itself refuses any new children that raced the bounded walk.
-    if observed(parent, name, path, identity.entries, true)?.is_some() {
-        parent.unlink(name, actual.directory)?;
-        parent.sync()?;
-        checkpoint("entry-removed")?;
-    }
-    Ok(())
+/// Removal under a plan: only planned entries, each still matching its
+/// recorded authority, and every unlink durable before its checkpoint.
+struct Planned<'a, C> {
+    root: &'a Path,
+    entries: &'a HashMap<&'a Path, &'a EntryVersion>,
+    checkpoint: &'a mut C,
 }
+
+impl<C: FnMut(&'static str) -> Result<(), AppError>> Removal for Planned<'_, C> {
+    type Error = AppError;
+
+    fn admit(&mut self, entry: &tree_removal::Entry<'_>) -> Result<(), AppError> {
+        planned(
+            self.entries,
+            &self.root.join(entry.relative),
+            entry.version,
+            true,
+        )
+    }
+
+    fn unlink(
+        &mut self,
+        directory: &Directory,
+        name: &OsStr,
+        is_directory: bool,
+    ) -> Result<(), AppError> {
+        directory.unlink(name, is_directory)?;
+        directory.sync()?;
+        (self.checkpoint)("entry-removed")
+    }
+
+    fn emptied(&mut self, directory: &Directory) -> Result<(), AppError> {
+        Ok(directory.sync()?)
+    }
+}
+
 /// Cleanup unlinks through one volume's handles; a submount inside a payload
 /// is someone else's filesystem, never retained evidence.
 fn on_payload_volume(entry: &EntryVersion, payload: &EntryVersion) -> io::Result<()> {

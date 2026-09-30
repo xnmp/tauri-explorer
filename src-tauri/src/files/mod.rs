@@ -35,6 +35,9 @@ pub mod fs_watcher;
 pub mod git_status;
 #[cfg(target_os = "linux")]
 pub mod linux_volumes;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/mount_namespace.rs"]
+pub(crate) mod mount_namespace;
 pub(crate) mod move_execution;
 pub(crate) mod move_plan;
 pub(crate) mod move_session;
@@ -57,6 +60,8 @@ pub(crate) mod trash_artifact;
 mod trash_mounts;
 #[cfg(any(target_os = "windows", test))]
 mod trash_outcome;
+#[cfg(unix)]
+mod tree_removal;
 mod watch_observation;
 #[cfg(all(windows, test))]
 mod windows_io;

@@ -288,6 +288,35 @@ fn a_tree_is_removed_without_following_inner_links_or_special_files() {
     assert!(staging(root.path()).is_empty());
 }
 
+/// A same-device bind mount inside a selected folder is someone else's
+/// filesystem: deletion refuses it and every byte it exposes survives (#875).
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn deletion_never_descends_into_a_mount_inside_the_selection() {
+    use crate::files::mount_namespace::{require_private_namespace, BindMount};
+    require_private_namespace();
+    let root = tempfile::tempdir().unwrap();
+    let outside = root.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("foreign"), b"foreign bytes").unwrap();
+    let tree = root.path().join("tree");
+    fs::create_dir_all(tree.join("mounted")).unwrap();
+    fs::write(tree.join("sibling"), b"sibling").unwrap();
+    let mount = BindMount::new(&outside, &tree.join("mounted"));
+
+    let result = delete(&tree);
+
+    assert!(result.is_err(), "deletion crossed a mount: {result:?}");
+    assert_eq!(fs::read(outside.join("foreign")).unwrap(), b"foreign bytes");
+    assert_eq!(
+        fs::read(tree.join("mounted/foreign")).unwrap(),
+        b"foreign bytes"
+    );
+    drop(mount);
+    assert!(staging(root.path()).is_empty());
+}
+
 #[test]
 #[cfg_attr(
     target_os = "macos",

@@ -161,16 +161,6 @@ pub(super) fn parse_linux_block_mounts_with_labels(
         .collect()
 }
 
-/// Controlled input seam for the real Linux drive enumeration path.
-///
-/// This exists for integration tests that need deterministic mount-table and
-/// sysfs fixtures without mounting or unmounting hardware on the test host.
-#[cfg(target_os = "linux")]
-#[doc(hidden)]
-pub fn enumerate_linux_drives_for_test(mountinfo: &str, sys_block: &std::path::Path) -> Vec<Drive> {
-    enumerate_linux_drives(Some(mountinfo), sys_block, std::iter::empty())
-}
-
 #[cfg(target_os = "linux")]
 pub(super) fn parse_linux_mounts(mountinfo: &str) -> Vec<LinuxMount> {
     mountinfo.lines().filter_map(parse_linux_mount).collect()
@@ -346,9 +336,10 @@ pub(super) fn linux_gvfs_dir() -> std::path::PathBuf {
 }
 
 /// Google Drive accounts GVfs exposes as `google-drive:host=…` entries.
+/// Visible to `linux_gvfs_watch`, which re-derives drives from the same
+/// directory on every push.
 #[cfg(target_os = "linux")]
-#[doc(hidden)]
-pub fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
+pub(super) fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
     let Ok(entries) = std::fs::read_dir(base) else {
         return Vec::new();
     };
@@ -391,9 +382,9 @@ fn linux_rclone_drives() -> Vec<Drive> {
 /// Every drive the process mount table alone yields: block-device mounts and
 /// rclone/FUSE cloud mounts. UDisks and GVFS directory entries are separate
 /// sources. The mount-table watch compares this projection between wakes.
+/// Visible to `linux_mount_watch`, which derives it from every mountinfo wake.
 #[cfg(target_os = "linux")]
-#[doc(hidden)]
-pub fn linux_mount_table_drives(
+pub(super) fn linux_mount_table_drives(
     mountinfo: &str,
     sys_block: &std::path::Path,
     labels: &std::path::Path,
@@ -958,6 +949,13 @@ mod linux_tests {
         assert_eq!(decode_mountinfo_field(r"/mnt/a\777b"), r"/mnt/a\777b");
     }
 }
+
+/// Moved from Cargo's auto-discovered `tests/linux_drives_mounts.rs` (#926) so
+/// it can exercise `enumerate_linux_drives` directly instead of through a
+/// `#[doc(hidden)] pub` seam.
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/linux_drives_mounts.rs"]
+mod linux_drives_mounts_tests;
 
 /// Whether drive changes are pushed as `drives-changed` events right now. The
 /// frontend polls `list_drives` only as a slow backstop while this is true.

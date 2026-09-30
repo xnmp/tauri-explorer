@@ -529,10 +529,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
-- `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding.
-- `linux_volumes.rs` — UDisks2 filesystem discovery, stable volume identity, mount-table merge and click-to-mount adapter.
-- `linux_gvfs_watch.rs` — session-bus `org.gtk.vfs.MountTracker` Mounted/Unmounted subscription that pushes `drives-changed` when GVfs Google Drive entries change (gvfsd-fuse raises no inotify events).
-- `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change.
+- `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding. Mount-table/sysfs integration contracts against the private `enumerate_linux_drives` in `src-tauri/test_support/linux_drives_mounts.rs` (#926).
+- `linux_volumes.rs` — UDisks2 filesystem discovery, stable volume identity, mount-table merge and click-to-mount adapter. Production-adapter isolated-D-Bus contracts (#677, #888) in `src-tauri/test_support/linux_removable_volumes.rs` (#926).
+- `linux_gvfs_watch.rs` — session-bus `org.gtk.vfs.MountTracker` Mounted/Unmounted subscription that pushes `drives-changed` when GVfs Google Drive entries change (gvfsd-fuse raises no inotify events). Isolated-session-bus contracts stay in `src-tauri/tests/linux_gvfs_watch.rs`: `GvfsWatch` is ordinary public API, not a test-only seam.
+- `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change. The opt-in real-kernel/namespace test moved to `src-tauri/test_support/linux_mount_watch.rs` (#926); run via `cargo test --lib files::linux_mount_watch::privileged_tests -- --ignored` under the documented `unshare`.
 - `linux_volume_monitor.rs` — one long-lived UDisks2 subscription (ObjectManager + PropertiesChanged + NameOwnerChanged) feeding a cached snapshot, 30 s backstop resync, reconnect/fallback, and `drives-changed` notifications.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.

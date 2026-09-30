@@ -267,10 +267,13 @@ pub(super) fn updates_live() -> bool {
     MONITOR.get().is_some_and(VolumeMonitor::is_live)
 }
 
-/// Shared native discovery seam for deterministic mount-table/sysfs/D-Bus
-/// fixtures: the production merge over a monitor's cached discovery.
-#[doc(hidden)]
-pub async fn enumerate_with_monitor(
+/// The production merge over a monitor's cached discovery, parameterized over
+/// mount-table/sysfs/D-Bus fixtures. Exercised directly by this module's own
+/// tests (`test_support/linux_removable_volumes.rs`, #926); no production
+/// caller needs it since `supplement` fixes the real mount table and sysfs,
+/// so it is test-only rather than a `#[doc(hidden)] pub` seam.
+#[cfg(test)]
+async fn enumerate_with_monitor(
     mountinfo: &str,
     sys_block: &Path,
     labels: &Path,
@@ -292,11 +295,7 @@ pub(super) async fn mount(device_id: &str) -> Result<String, AppError> {
 
 /// Mount on the monitor's connection, then resynchronize so the caller's next
 /// discovery already reflects the outcome (mounted, or raced by another client).
-#[doc(hidden)]
-pub async fn mount_with_monitor(
-    monitor: &VolumeMonitor,
-    device_id: &str,
-) -> Result<String, AppError> {
+async fn mount_with_monitor(monitor: &VolumeMonitor, device_id: &str) -> Result<String, AppError> {
     let connection = match monitor.connection() {
         Some(connection) => connection,
         None => system_connection().await?,
@@ -307,8 +306,7 @@ pub async fn mount_with_monitor(
 }
 
 /// The same D-Bus adapter used by mount_drive, with an injectable bus for tests.
-#[doc(hidden)]
-pub async fn mount_with_connection(
+async fn mount_with_connection(
     connection: &Connection,
     device_id: &str,
 ) -> Result<String, AppError> {
@@ -361,3 +359,13 @@ pub async fn mount_with_connection(
     }
     Ok(path)
 }
+
+/// Production UDisks2 adapter against an isolated D-Bus daemon (#677, #888).
+/// Moved in from Cargo's auto-discovered `tests/linux_removable_volumes.rs`
+/// (#926) so it can reach `enumerate_with_monitor`/`mount_with_monitor`/
+/// `mount_with_connection` directly instead of through `#[doc(hidden)] pub`
+/// seams. Per CLAUDE.md (#677), this still exercises the production adapter,
+/// never a fake.
+#[cfg(test)]
+#[path = "../../test_support/linux_removable_volumes.rs"]
+mod tests;

@@ -1,5 +1,7 @@
-#![cfg(target_os = "linux")]
 //! Production UDisks2 adapter against an isolated D-Bus daemon (#677, #888).
+//! Moved in from Cargo's auto-discovered `tests/linux_removable_volumes.rs`
+//! (#926); see the parent module's doc comment on this `mod tests` include.
+use super::*;
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
@@ -10,15 +12,8 @@ use std::{
     },
     time::Duration,
 };
-use tauri_explorer_lib::{
-    error::AppError,
-    files::{
-        linux_volume_monitor::{MonitorConfig, VolumeMonitor},
-        linux_volumes::{enumerate_with_monitor, mount_with_connection, mount_with_monitor},
-    },
-};
 use tokio::sync::mpsc;
-use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+use zbus::zvariant::{OwnedObjectPath, Value};
 
 type Properties = HashMap<String, OwnedValue>;
 type Interfaces = HashMap<String, Properties>;
@@ -158,7 +153,7 @@ impl Drop for Daemon {
 struct Bus {
     _daemon: Daemon,
     address: String,
-    server: zbus::Connection,
+    server: Connection,
     state: Arc<AtomicUsize>,
     calls: Arc<AtomicUsize>,
     snapshots: Arc<AtomicUsize>,
@@ -218,7 +213,7 @@ impl Bus {
             stall_next_reply,
         }
     }
-    async fn client(&self) -> zbus::Connection {
+    async fn client(&self) -> Connection {
         zbus::connection::Builder::address(self.address.as_str())
             .unwrap()
             .build()
@@ -335,7 +330,7 @@ fn harness(bus: &Bus, backstop: Duration) -> Harness {
 }
 const QUIET: Duration = Duration::from_secs(60);
 impl Harness {
-    async fn discover(&self, mounts: &str) -> Vec<tauri_explorer_lib::files::drives::Drive> {
+    async fn discover(&self, mounts: &str) -> Vec<Drive> {
         let sys = tempfile::tempdir().unwrap();
         let labels = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(sys.path().join("sdb/sdb1")).unwrap();

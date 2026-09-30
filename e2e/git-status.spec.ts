@@ -5,7 +5,7 @@
  * Issue: feat/git-status-indicators
  */
 import { test, expect } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { HOME_URL, seedSettings, waitForEntries } from "./helpers";
 
 test.describe("Git status indicators", () => {
   test("settings dialog has git status toggle", async ({ page }) => {
@@ -21,12 +21,7 @@ test.describe("Git status indicators", () => {
 
   test("badges render on entries inside a git repo when enabled", async ({ page }) => {
     // Enable the (default-off) indicator setting before the app boots.
-    await page.addInitScript(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
+    await seedSettings(page, { showGitStatus: true });
     // The mock treats /home/user/Documents/project as a git repo with
     // CHANGELOG.md Modified and .env.example Untracked.
     await page.goto("/?path=/home/user/Documents/project");
@@ -41,12 +36,7 @@ test.describe("Git status indicators", () => {
   });
 
   test("no badges render outside a git repo", async ({ page }) => {
-    await page.addInitScript(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
+    await seedSettings(page, { showGitStatus: true });
     await page.goto(HOME_URL);
     await waitForEntries(page);
 

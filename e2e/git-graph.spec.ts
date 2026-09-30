@@ -4,7 +4,7 @@
  * lanes/edges and refs decoration, and the tab closes back to the explorer.
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { applySettingsAndReload, waitForEntries } from "./helpers";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {
   await page.keyboard.press("Control+Shift+p");
@@ -397,14 +397,7 @@ test.describe("Git graph tab", () => {
 
   test("SCM panel stays visible alongside the graph (#333)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      s.showScmPanel = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
     await waitForEntries(page);
     await expect(page.locator(".scm-panel")).toBeVisible();
 

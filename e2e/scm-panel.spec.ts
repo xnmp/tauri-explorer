@@ -8,17 +8,11 @@
  * (counts, rows, actions, commit button behaviour).
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const s = raw ? JSON.parse(raw) : {};
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
   await page.waitForLoadState("domcontentloaded");
 
   // Navigate the active pane to the mocked git repo via double-clicks into Documents/project.
@@ -71,14 +65,7 @@ test.describe("SCM panel UI", () => {
 
   test("shows a loading skeleton while the summary fetch is in flight, not the empty state (#271)", async ({ page }) => {
     await page.goto("/");
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      s.showScmPanel = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
     await page.waitForLoadState("domcontentloaded");
 
     // Slow the summary fetch down so the transient loading state is observable.
@@ -102,14 +89,7 @@ test.describe("SCM panel UI", () => {
 
   test("empty-state shows Initialize Repository when active pane is not a repo", async ({ page }) => {
     await page.goto("/");
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      s.showScmPanel = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
     await page.waitForLoadState("domcontentloaded");
 
     // Active pane defaults to /home/user (not a repo)

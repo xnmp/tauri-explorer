@@ -63,6 +63,7 @@ import { normalizeWarmActivation, type WarmActivatePayload } from "$lib/domain/w
 export type { WarmActivatePayload } from "$lib/domain/window-input";
 import { formatWindowTitle } from "../domain/tab-title";
 import { resolveLaunchHomePath } from "./window-title.svelte";
+import { pageForeground } from "./page-foreground";
 
 // Reuse the "explorer-" label prefix so warm windows inherit the same Tauri
 // capability/ACL scope as normal child windows (capabilities/default.json lists
@@ -74,15 +75,9 @@ const WARM_LABEL_PREFIX = "explorer-warm-";
 export const WARM_ACTIVATE_EVENT = "warm-activate";
 const WARM_ACTIVATED_EVENT = "explorer://warm-activated";
 
-/** "1" = normal parked warm window; "measure" = self-firing measurement run
- *  (Rust-spawned via WARM_MEASURE=1, flagged with the __WARM_MEASURE__
- *  global since its URL is fixed by WebviewUrl::App). */
-export function warmMode(): "off" | "park" | "measure" {
-  if (typeof window === "undefined") return "off";
-  if ((window as { __WARM_MEASURE__?: boolean }).__WARM_MEASURE__) return "measure";
-  if (new URLSearchParams(window.location.search).get("warm") === "1") return "park";
-  return "off";
-}
+/** "park" = normal parked warm window; "measure" = self-firing measurement
+ *  run (Rust-spawned via WARM_MEASURE=1). Owned by the page foreground gate. */
+export { warmMode } from "./page-foreground";
 
 /**
  * Create a hidden, parked warm window if the global pool wants one. The Rust
@@ -207,7 +202,13 @@ export function runWarmWindow(measure: boolean, onActivated?: () => void): { rea
       const explorer = windowTabsManager.getActiveExplorer();
       if (!explorer) throw new Error("Warm destination has no active explorer");
       if (viewMode) explorer.setViewMode(viewMode);
-      if (!await explorer.navigateTo(path, { autoEnterSingleSubdir: false })) throw new Error("Warm navigation failed or was superseded");
+      // Feeds deferred while parked (drives, #931) load alongside the listing,
+      // so the window is never revealed with the parked page's empty state.
+      const [navigated] = await Promise.all([
+        explorer.navigateTo(path, { autoEnterSingleSubdir: false }),
+        pageForeground.enterForeground(),
+      ]);
+      if (!navigated) throw new Error("Warm navigation failed or was superseded");
     },
     prepare: async ({ path, x, y, width, height }, current) => {
       try {

@@ -118,7 +118,7 @@ backend for E2E/browser).
 - `state/window-title.svelte.ts` — resolves launch-home context and synchronizes the OS window title with the active tab/pane directory
 - `state/window-close.ts` — common titlebar, last-tab and native-close lifecycle; blocks transfer admission until destruction or recovery
 - `state/window-chrome.ts` — native titlebar maximize observation with one in-flight read and owned late subscription cleanup
-- `state/warm-activation.ts`, `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — acknowledged warm-window activation, owned native reservations and expiring abandoned claims; `e2e-tauri/specs/warm-window-lifetime.spec.ts` and `e2e-tauri/diagnostics/warm-claim.ts` retain process evidence if native claim expiry loses the WebDriver session (#781)
+- `state/warm-activation.ts`, `state/warm-window.ts`, `state/page-foreground.ts` (parked pages defer drive feeds until activation, #931), `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — acknowledged warm-window activation, owned native reservations and expiring abandoned claims; `e2e-tauri/specs/warm-window-lifetime.spec.ts` and `e2e-tauri/diagnostics/warm-claim.ts` retain process evidence if native claim expiry loses the WebDriver session (#781)
 - FLOW: each layout leaf identifies one pane session. `PaneLayoutView` keys its `ExplorerPane` by the owned explorer and injects it explicitly; the component captures it for the mount lifetime. Cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage, validated before resource allocation.
 
 ## Workspaces & split panes
@@ -368,7 +368,7 @@ backend for E2E/browser).
 - `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
 - `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
-- `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only non-null paths count as mounted roots; `drives-changed` push + backstop/fallback poll)
+- `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only non-null paths count as mounted roots; `drives-changed` push + backstop/fallback poll; nothing runs in a parked warm window until `page-foreground` opens, #931)
 - `domain/drives.ts`; `api/drives.ts` (listDrives/mountDrive); `state/drive-opening.ts` (mount-before-navigation and errors); `src-tauri/src/files/drives.rs` (`list_drives`, `mount_drive`, `drive_updates_live`) + `linux_volumes.rs` (UDisks2 projection, merge, mount) + `linux_volume_monitor.rs` (cached subscription, mounted fallback) + `linux_mount_watch.rs` (mount-table change push) + `linux_gvfs_watch.rs` (GVfs MountTracker push)
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)

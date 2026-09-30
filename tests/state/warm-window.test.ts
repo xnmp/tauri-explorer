@@ -155,6 +155,7 @@ import {
   WARM_ACTIVATE_EVENT,
   type WarmActivatePayload,
 } from "../../src/lib/state/warm-window";
+import { pageForeground } from "../../src/lib/state/page-foreground";
 
 beforeEach(() => {
   window.dispatchEvent = vi.fn();
@@ -286,5 +287,20 @@ describe("warm-window reveal contract", () => {
     expect(window.dispatchEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: "explorer:focus-address-bar" }),
     );
+  });
+  it("loads feeds deferred while parked before a claimed window becomes visible (#931)", async () => {
+    let entered!: () => void;
+    const enter = vi.spyOn(pageForeground, "enterForeground").mockImplementation(() =>
+      new Promise<void>((resolve) => { entered = () => { currentWindow.calls.push("foreground"); resolve(); }; }));
+    await runWarmWindow(false).ready;
+    const activating = evt.listener!({
+      payload: { path: "/work/gamma", handoff: { sourceWindow: "main", requestId: "gamma" } },
+    });
+    await vi.waitFor(() => expect(entered).toBeDefined());
+    expect(currentWindow.calls).not.toContain("show");
+    entered();
+    await activating;
+    expect(currentWindow.calls.indexOf("foreground")).toBeLessThan(currentWindow.calls.indexOf("show"));
+    enter.mockRestore();
   });
 });

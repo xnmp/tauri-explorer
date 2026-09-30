@@ -332,6 +332,19 @@ describe("bounded evidence command", () => {
     expect(fs.statSync(output()).size).toBe(1_000);
   });
 
+  it("does not wait on descendants that inherited the output pipes", async () => {
+    // dash (Ubuntu's /bin/sh) forks rather than execs its last command; the
+    // orphaned child used to hold stdout open until the guard fired.
+    const began = Date.now();
+    const result = await runBoundedEvidenceCommand("/bin/sh", ["-c", "sleep 10 & sleep 10; wait"], {
+      timeoutMs: 100,
+      maxBytes: 1_000,
+      outputPath: output(),
+    });
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - began).toBeLessThan(3_000);
+  });
+
   it("kills a command that outlives its timeout", async () => {
     const began = Date.now();
     const result = await runBoundedEvidenceCommand("/bin/sh", ["-c", "sleep 10"], {

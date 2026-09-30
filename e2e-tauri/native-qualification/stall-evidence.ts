@@ -146,12 +146,24 @@ export const runBoundedEvidenceCommand: EvidenceCommandRunner = (
     };
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+      // Its own process group, so a kill also reaches any descendants that
+      // inherited the output pipes and would otherwise keep them open.
+      child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"], detached: true });
     } catch (reason) {
       error = String(reason);
       finish(null, null);
       return;
     }
+    let killed = false;
+    const kill = (): void => {
+      killed = true;
+      try {
+        if (child.pid === undefined) throw new Error("no pid");
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+    };
     const append = (chunk: Buffer): void => {
       if (truncated) return;
       const room = Math.max(0, maxBytes - bytes);
@@ -159,7 +171,7 @@ export const runBoundedEvidenceCommand: EvidenceCommandRunner = (
         output.write(chunk.subarray(0, room));
         bytes += room;
         truncated = true;
-        child.kill("SIGKILL");
+        kill();
         return;
       }
       output.write(chunk);
@@ -172,9 +184,17 @@ export const runBoundedEvidenceCommand: EvidenceCommandRunner = (
       finish(null, null);
     });
     child.on("close", (code, signal) => finish(code, signal));
+    // After a deliberate kill, stop waiting on the pipes: output past the cap
+    // or the deadline is not wanted.
+    child.on("exit", (code, signal) => {
+      if (!killed) return;
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      finish(code, signal);
+    });
     timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      kill();
     }, timeoutMs);
     // A killed child normally closes at once; never wait on it indefinitely.
     guard = setTimeout(() => {

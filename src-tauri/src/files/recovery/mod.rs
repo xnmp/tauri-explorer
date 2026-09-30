@@ -76,7 +76,7 @@ mod private_storage;
 #[cfg(target_os = "linux")]
 mod runtime;
 #[cfg(target_os = "linux")]
-pub(crate) use context::MutationAdmission;
+pub(crate) use context::{MutationAdmission, MutationContext};
 #[cfg(target_os = "linux")]
 pub(crate) use resources::{Access, Request as ResourceRequest, Scope};
 #[cfg(target_os = "linux")]

@@ -27,7 +27,7 @@ fn block<T>(future: impl Future<Output = T>) -> T {
 fn work(root: &Path) -> MoveWork {
     MoveWork {
         job_id: 4_242,
-        recovery: (Runtime::default(), root.join("recovery")),
+        runtime: Runtime::new(root.join("recovery")),
     }
 }
 

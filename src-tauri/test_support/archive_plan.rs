@@ -90,6 +90,7 @@ fn compress_publishes_the_output_directory() {
 #[cfg(target_os = "linux")]
 mod admission {
     use super::*;
+    use crate::files::admission::Plan;
     use crate::files::recovery::{Access, Scope};
 
     #[test]

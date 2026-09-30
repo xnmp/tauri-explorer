@@ -195,9 +195,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             .build(),
     );
 
-    #[cfg(target_os = "linux")]
-    let builder = builder.manage(files::recovery::Runtime::default());
-
     builder
         .manage(LaunchCwd(launch_cwd_for_state))
         .manage(system::StartupClock {
@@ -427,6 +424,15 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            // Before any window exists, so every mutation command can admit.
+            // Without a data directory, mutations fail rather than run unadmitted.
+            #[cfg(target_os = "linux")]
+            match tauri::Manager::path(app).app_local_data_dir() {
+                Ok(data) => {
+                    tauri::Manager::manage(app, files::recovery::Runtime::new(data.join("file-recovery")));
+                }
+                Err(error) => log::error!("File recovery storage is unavailable: {error}"),
+            }
             #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
             files::recovery::native_probe::seed(app.handle())?;
 

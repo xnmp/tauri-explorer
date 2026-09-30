@@ -8,24 +8,21 @@ fn conflicting_rename_claim(destination: bool) {
         let source = root.path().join("before");
         let target = root.path().join("after");
         fs::write(&source, b"original bytes").unwrap();
-        let runtime = Runtime::default();
         let storage = root.path().join("recovery");
+        let runtime = Runtime::new(storage.clone());
         let operations = NativeOperations {
-            recovery: Some((runtime.clone(), storage.clone())),
+            runtime: runtime.clone(),
         };
         let claim = runtime
-            .admit(
-                storage,
-                vec![ResourceRequest {
-                    path: if destination {
-                        target.clone()
-                    } else {
-                        source.clone()
-                    },
-                    access: Access::Read,
-                    scope: Scope::Subtree,
-                }],
-            )
+            .admit(vec![ResourceRequest {
+                path: if destination {
+                    target.clone()
+                } else {
+                    source.clone()
+                },
+                access: Access::Read,
+                scope: Scope::Subtree,
+            }])
             .await
             .unwrap();
         let result = operations
@@ -65,20 +62,17 @@ fn inverse_rename_preserves_disjoint_work_and_collision_history() {
         let original = root.path().join("before");
         let renamed = root.path().join("after");
         fs::write(&renamed, b"rename contents").unwrap();
-        let runtime = Runtime::default();
         let storage = root.path().join("recovery");
+        let runtime = Runtime::new(storage.clone());
         let operations = NativeOperations {
-            recovery: Some((runtime.clone(), storage.clone())),
+            runtime: runtime.clone(),
         };
         let sibling = runtime
-            .admit(
-                storage.clone(),
-                vec![ResourceRequest {
-                    path: root.path().join("sibling"),
-                    access: Access::Write,
-                    scope: Scope::Subtree,
-                }],
-            )
+            .admit(vec![ResourceRequest {
+                path: root.path().join("sibling"),
+                access: Access::Write,
+                scope: Scope::Subtree,
+            }])
             .await
             .unwrap();
         fs::write(&original, b"collision").unwrap();
@@ -124,7 +118,7 @@ fn inverse_rename_binds_the_next_direction_to_its_physical_parent() {
         fs::write(other.join("before"), b"unrelated").unwrap();
         std::os::unix::fs::symlink(&original, &alias).unwrap();
         let operations = NativeOperations {
-            recovery: Some((Runtime::default(), root.path().join("recovery"))),
+            runtime: Runtime::new(root.path().join("recovery")),
         };
         let undo = super::execution::execute(
             action(&alias.join("after")),
@@ -165,7 +159,7 @@ fn unrepresentable_rename_history_does_not_target_a_lossy_collision() {
         fs::write(lossy.join("before"), b"unrelated").unwrap();
         std::os::unix::fs::symlink(&native, &alias).unwrap();
         let operations = NativeOperations {
-            recovery: Some((Runtime::default(), root.path().join("recovery"))),
+            runtime: Runtime::new(root.path().join("recovery")),
         };
         let undo = super::execution::execute(
             action(&alias.join("after")),
@@ -197,22 +191,17 @@ fn partial_inverse_retains_the_refused_suffix_in_history_order() {
             fs::write(directory.join("after"), name.as_bytes()).unwrap();
             actions.push(action(&directory.join("after")));
         }
-        let runtime = Runtime::default();
         let storage = root.path().join("recovery");
+        let runtime = Runtime::new(storage.clone());
         let claim = runtime
-            .admit(
-                storage.clone(),
-                vec![ResourceRequest {
-                    path: root.path().join("blocked/after"),
-                    access: Access::Read,
-                    scope: Scope::Subtree,
-                }],
-            )
+            .admit(vec![ResourceRequest {
+                path: root.path().join("blocked/after"),
+                access: Access::Read,
+                scope: Scope::Subtree,
+            }])
             .await
             .unwrap();
-        let operations = NativeOperations {
-            recovery: Some((runtime, storage)),
-        };
+        let operations = NativeOperations { runtime };
         let result = super::execution::execute(
             super::Action::Batch {
                 actions,

@@ -10,7 +10,6 @@ struct Fixture {
     root: tempfile::TempDir,
     context: Context,
     runtime: Runtime,
-    storage: PathBuf,
 }
 impl Fixture {
     fn new() -> Self {
@@ -23,8 +22,7 @@ impl Fixture {
         Self {
             root,
             context,
-            runtime: Runtime::default(),
-            storage,
+            runtime: Runtime::new(storage),
         }
     }
     fn trash(&mut self, relative: &str) -> RestoreRequest {
@@ -41,10 +39,7 @@ impl Fixture {
         &self,
         requests: Vec<RestoreRequest>,
     ) -> Result<(PreparedSelection, crate::files::recovery::MutationAdmission), AppError> {
-        tauri::async_runtime::block_on(
-            self.runtime
-                .admit_prepared(self.storage.clone(), move || prepare(&requests)),
-        )
+        tauri::async_runtime::block_on(self.runtime.admit_prepared(move || prepare(&requests)))
     }
     fn claim(
         &self,
@@ -52,14 +47,11 @@ impl Fixture {
         access: Access,
         scope: Scope,
     ) -> Result<crate::files::recovery::MutationAdmission, AppError> {
-        tauri::async_runtime::block_on(self.runtime.admit(
-            self.storage.clone(),
-            vec![ResourceRequest {
-                path: path.into(),
-                access,
-                scope,
-            }],
-        ))
+        tauri::async_runtime::block_on(self.runtime.admit(vec![ResourceRequest {
+            path: path.into(),
+            access,
+            scope,
+        }]))
     }
 }
 fn artifact_paths(request: &RestoreRequest) -> (PathBuf, PathBuf) {

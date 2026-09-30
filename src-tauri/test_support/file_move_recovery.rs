@@ -3,6 +3,7 @@ use crate::error::AppError;
 use crate::files::move_plan::MovePlan;
 #[cfg(target_os = "linux")]
 use crate::files::{
+    admission::Plan,
     move_execution,
     recovery::{Access, ResourceRequest, Runtime, Scope},
 };
@@ -68,14 +69,9 @@ fn writing(path: &std::path::Path) -> Vec<ResourceRequest> {
 #[cfg(target_os = "linux")]
 fn assert_move_rejects_live_recovery_claim(claim: impl FnOnce(&MoveFixture) -> PathBuf) {
     let fixture = MoveFixture::new();
-    let runtime = Runtime::default();
-    let storage = fixture._root.path().join("recovery");
-    let owner = tauri::async_runtime::block_on(
-        runtime
-            .clone()
-            .admit(storage.clone(), writing(&claim(&fixture))),
-    )
-    .unwrap();
+    let runtime = Runtime::new(fixture._root.path().join("recovery"));
+    let owner =
+        tauri::async_runtime::block_on(runtime.clone().admit(writing(&claim(&fixture)))).unwrap();
     let plan = MovePlan::new(
         fixture.source.to_string_lossy().into_owned(),
         fixture.destination.to_string_lossy().into_owned(),
@@ -83,7 +79,7 @@ fn assert_move_rejects_live_recovery_claim(claim: impl FnOnce(&MoveFixture) -> P
     )
     .unwrap();
 
-    let result = tauri::async_runtime::block_on(move_execution::execute(plan, runtime, storage));
+    let result = tauri::async_runtime::block_on(move_execution::execute(plan, &runtime));
 
     assert!(
         result.completion.result.is_err(),
@@ -118,8 +114,7 @@ fn admitted_move_executes_a_normal_file_move() {
     .unwrap();
     let outcome = tauri::async_runtime::block_on(move_execution::execute(
         plan,
-        Runtime::default(),
-        fixture._root.path().join("recovery"),
+        &Runtime::new(fixture._root.path().join("recovery")),
     ));
     assert!(outcome.completion.result.is_ok());
     assert!(!fixture.source.exists());
@@ -149,8 +144,7 @@ fn admitted_move_resolves_parent_aliases_and_preserves_a_symlink_leaf() {
     .unwrap();
     let outcome = tauri::async_runtime::block_on(move_execution::execute(
         plan,
-        Runtime::default(),
-        root.path().join("recovery"),
+        &Runtime::new(root.path().join("recovery")),
     ));
 
     let receipt = outcome.completion.result.unwrap();
@@ -182,8 +176,8 @@ fn resolved_move_uses_admitted_parent_after_requested_alias_retargets() {
     fs::write(source.join("item.txt"), b"bound bytes").unwrap();
     std::os::unix::fs::symlink(&admitted, &requested_alias).unwrap();
     std::os::unix::fs::symlink(&admitted, &stable_alias).unwrap();
-    let runtime = Runtime::default();
     let storage = root.path().join("recovery");
+    let runtime = Runtime::new(storage.clone());
     let plan = MovePlan::new(
         source.join("item.txt").to_string_lossy().into_owned(),
         requested_alias.to_string_lossy().into_owned(),
@@ -191,8 +185,7 @@ fn resolved_move_uses_admitted_parent_after_requested_alias_retargets() {
     )
     .unwrap();
     let admission =
-        tauri::async_runtime::block_on(runtime.clone().admit(storage.clone(), plan.resources()))
-            .unwrap();
+        tauri::async_runtime::block_on(runtime.clone().admit(plan.resources())).unwrap();
     let plan = plan
         .resolve(admission.paths().map(std::path::Path::to_path_buf))
         .unwrap();
@@ -208,11 +201,11 @@ fn resolved_move_uses_admitted_parent_after_requested_alias_retargets() {
     assert!(tauri::async_runtime::block_on(
         runtime
             .clone()
-            .admit(storage.clone(), writing(&stable_alias.join("item.txt")),)
+            .admit(writing(&stable_alias.join("item.txt")),)
     )
     .is_err());
     admission.finish().unwrap();
-    tauri::async_runtime::block_on(runtime.admit(storage, writing(&stable_alias.join("item.txt"))))
+    tauri::async_runtime::block_on(runtime.admit(writing(&stable_alias.join("item.txt"))))
         .unwrap()
         .finish()
         .unwrap();

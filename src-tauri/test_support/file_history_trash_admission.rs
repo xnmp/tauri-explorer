@@ -55,10 +55,10 @@ fn inverse_admission_fixture() {
     .unwrap();
     let key = file.to_str().unwrap().to_owned();
     let kind = std::env::var("TAURI_TEST_INVERSE_KIND").unwrap();
-    let runtime = Runtime::default();
     let storage = root.join("recovery");
+    let runtime = Runtime::new(storage.clone());
     let operations = NativeOperations {
-        recovery: Some((runtime.clone(), storage.clone())),
+        runtime: runtime.clone(),
     };
     tauri::async_runtime::block_on(async {
         if kind == "native" {
@@ -77,14 +77,11 @@ fn inverse_admission_fixture() {
             None
         };
         let claim = runtime
-            .admit(
-                storage,
-                vec![ResourceRequest {
-                    path: file.clone(),
-                    access: Access::Read,
-                    scope: Scope::Subtree,
-                }],
-            )
+            .admit(vec![ResourceRequest {
+                path: file.clone(),
+                access: Access::Read,
+                scope: Scope::Subtree,
+            }])
             .await
             .unwrap();
         let result = match kind.as_str() {

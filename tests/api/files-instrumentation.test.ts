@@ -19,6 +19,12 @@ vi.mock("$lib/plugins/fs-providers", () => ({ providerFor: () => undefined }));
 
 import { readImageAsBlobUrl, readTextFile, loadDirectory } from "$lib/api/files";
 
+
+const emptyListing = (path: string) => ({
+  format: "columns-v1", path, path_prefix: null,
+  columns: { names: [], paths: [], kinds: [], sizes: [], modified: [] },
+});
+
 describe("preview and directory IPC instrumentation (#497)", () => {
   beforeEach(() => {
     invokeMock.mockReset();
@@ -119,7 +125,7 @@ describe("preview and directory IPC instrumentation (#497)", () => {
   it("rejects a native observed reply with a missing watch lease without releasing the previous watch", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     isTauriMock.mockReturnValue(true);
-    invokeMock.mockResolvedValueOnce({ path: "/watched", entries: [] }); // no watch_lease
+    invokeMock.mockResolvedValueOnce(emptyListing("/watched")); // no watch_lease
     const discard = vi.fn();
     try {
       await expect(loadDirectory("/watched", { discard })).resolves.toEqual({
@@ -135,7 +141,7 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     isTauriMock.mockReturnValue(true);
     invokeMock.mockResolvedValueOnce({
-      path: "/watched", entries: [], watch_lease: { id: 42, path: "/watched" },
+      ...emptyListing("/watched"), watch_lease: { id: 42, path: "/watched" },
     });
     const discard = vi.fn();
     try {
@@ -152,7 +158,7 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     isTauriMock.mockReturnValue(true);
     invokeMock.mockResolvedValueOnce({
-      path: "/watched", entries: [], watch_lease: { id: "owned-lease", path: null },
+      ...emptyListing("/watched"), watch_lease: { id: "owned-lease", path: null },
     });
     const discard = vi.fn();
     try {
@@ -169,7 +175,7 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     invokeMock
       .mockResolvedValueOnce("preview text")
-      .mockResolvedValueOnce({ path: "/tmp/folder", entries: [] });
+      .mockResolvedValueOnce(emptyListing("/tmp/folder"));
 
     await expect(readTextFile("/tmp/note.md")).resolves.toEqual({ ok: true, data: "preview text" });
     await expect(loadDirectory("/tmp/folder")).resolves.toMatchObject({ ok: true });

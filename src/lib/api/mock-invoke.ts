@@ -7,6 +7,7 @@ import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { HistoryDirection, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { createMockFileHistory } from "./mock-file-history";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
+import { encodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import type { GitNetworkPhaseEvent } from "$lib/domain/git-network-operation";
@@ -1521,6 +1522,16 @@ function mockRecoveryPublish(): unknown {
   return snapshot;
 }
 
+/** Both listing commands reply in the native compact wire format (#868). */
+function mockDirectoryListing(raw: string): CompactDirectoryListing {
+  const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
+  if (!isSynthetic && !(path in mockFiles)) {
+    throw new Error(`Path not found: ${path}`);
+  }
+  return encodeDirectoryListing({ path, entries: sortListing(getDirectoryEntries(path)) });
+}
+
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
@@ -1629,16 +1640,7 @@ const mockCommands: Record<string, CommandHandler> = {
   warm_pool_discard: () => undefined,
   warm_pool_shutdown: () => undefined,
 
-  list_directory: (args) => {
-    const raw = args.path as string;
-    const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
-    if (!isSynthetic && !(path in mockFiles)) {
-      throw new Error(`Path not found: ${path}`);
-    }
-    const entries = sortListing(getDirectoryEntries(path));
-    return { path, entries } as DirectoryListing;
-  },
+  list_directory: (args) => mockDirectoryListing(args.path as string),
 
   is_directory_empty: (args) => {
     const path = args.path as string;
@@ -1683,16 +1685,7 @@ const mockCommands: Record<string, CommandHandler> = {
     return { fileCount, totalBytes };
   },
 
-  list_directory_fresh: (args) => {
-    const raw = args.path as string;
-    const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    const isSynthetic = isPerfHugePath(path) || isPerfImagesPath(path);
-    if (!isSynthetic && !(path in mockFiles)) {
-      throw new Error(`Path not found: ${path}`);
-    }
-    const entries = sortListing(getDirectoryEntries(path));
-    return { path, entries } as DirectoryListing;
-  },
+  list_directory_fresh: (args) => mockDirectoryListing(args.path as string),
 
   create_directory: (args) => {
     const parentPath = args.parentPath as string;

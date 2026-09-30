@@ -616,7 +616,7 @@ function createWindowTabsManager(options: {
     if (!normalized || normalized.tabs.length === 0) return;
 
     // Destroy before clearing — otherwise backend watch refcounts and
-    // streaming listeners leak for every replaced explorer.
+    // directory listeners leak for every replaced explorer.
     paneActivation.cancel();
     transfers.clear();
     sessions.clear();

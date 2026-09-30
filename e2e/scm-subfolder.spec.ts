@@ -4,16 +4,11 @@
  * panel when activePath was inside a repo subdirectory.
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 async function openScmInSubfolder(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const s = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
   await page.waitForLoadState("domcontentloaded");
   await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
 

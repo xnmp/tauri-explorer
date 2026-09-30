@@ -3,18 +3,12 @@
  * Issue: feat/macos-vibrancy
  */
 import { test, expect } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { HOME_URL, applySettingsAndReload, waitForEntries } from "./helpers";
 
 test.describe("macOS vibrancy", () => {
   test("data-vibrancy attribute is set when macOsVibrancy is enabled", async ({ page }) => {
     await page.goto(HOME_URL);
-    await page.evaluate(() => {
-      const stored = localStorage.getItem("explorer-settings");
-      const settings = stored ? JSON.parse(stored) : {};
-      settings.macOsVibrancy = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(settings));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { macOsVibrancy: true });
     await waitForEntries(page);
 
     const hasAttr = await page.evaluate(() =>
@@ -25,13 +19,7 @@ test.describe("macOS vibrancy", () => {
 
   test("data-vibrancy attribute is absent when macOsVibrancy is disabled", async ({ page }) => {
     await page.goto(HOME_URL);
-    await page.evaluate(() => {
-      const stored = localStorage.getItem("explorer-settings");
-      const settings = stored ? JSON.parse(stored) : {};
-      settings.macOsVibrancy = false;
-      localStorage.setItem("explorer-settings", JSON.stringify(settings));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { macOsVibrancy: false });
     await waitForEntries(page);
 
     const hasAttr = await page.evaluate(() =>
@@ -42,13 +30,7 @@ test.describe("macOS vibrancy", () => {
 
   test("vibrancy CSS makes body transparent when enabled", async ({ page }) => {
     await page.goto(HOME_URL);
-    await page.evaluate(() => {
-      const stored = localStorage.getItem("explorer-settings");
-      const settings = stored ? JSON.parse(stored) : {};
-      settings.macOsVibrancy = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(settings));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { macOsVibrancy: true });
     await waitForEntries(page);
 
     const bodyBg = await page.evaluate(() =>

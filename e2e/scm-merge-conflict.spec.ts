@@ -8,6 +8,7 @@
  * and Abort clears the operation entirely.
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 interface MockGitCommit {
   message: string;
@@ -26,14 +27,7 @@ declare global {
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const s = raw ? JSON.parse(raw) : {};
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
   await page.waitForLoadState("domcontentloaded");
 
   await page.getByText("Documents", { exact: true }).first().dblclick();

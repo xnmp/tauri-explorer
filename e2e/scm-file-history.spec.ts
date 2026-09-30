@@ -6,18 +6,11 @@
  * the graph is filtered rather than merely opened.
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const settings = raw ? JSON.parse(raw) : {};
-    settings.showGitStatus = true;
-    settings.showScmPanel = true;
-    settings.scmTreeView = false;
-    localStorage.setItem("explorer-settings", JSON.stringify(settings));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true, scmTreeView: false });
   await page.waitForLoadState("domcontentloaded");
   await page.getByText("Documents", { exact: true }).first().dblclick();
   await page.getByText("project", { exact: true }).first().dblclick();

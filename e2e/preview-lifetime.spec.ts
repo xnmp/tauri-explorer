@@ -1,13 +1,9 @@
 import { test, expect, type Page } from "./fixtures";
-import { pressShortcut, waitForEntries } from "./helpers";
+import { applySettingsAndReload, pressShortcut, waitForEntries } from "./helpers";
 
 async function openPreview(page: Page, path: string, filename: string) {
   await page.goto(`/?path=${encodeURIComponent(path)}`);
-  await page.evaluate(() => {
-    const settings = JSON.parse(localStorage.getItem("explorer-settings") ?? "{}");
-    localStorage.setItem("explorer-settings", JSON.stringify({ ...settings, showPreviewPane: true }));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showPreviewPane: true });
   await waitForEntries(page);
   await expect(page.locator(".preview-pane")).toBeVisible();
   await page.locator(".entry-item", { hasText: filename }).first().click();

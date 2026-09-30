@@ -7,18 +7,11 @@
  * that puts the panel into the state each image claims to show.
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const s = raw ? JSON.parse(raw) : {};
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    s.scmTreeView = false;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true, scmTreeView: false });
   await page.waitForLoadState("domcontentloaded");
 
   await page.getByText("Documents", { exact: true }).first().dblclick();

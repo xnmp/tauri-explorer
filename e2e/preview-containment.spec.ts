@@ -14,7 +14,7 @@
  * explorer pane a usable file-list region.
  */
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, waitForEntries, type ViewMode } from "./helpers";
+import { VIEW_MODES, applySettingsAndReload, waitForEntries, type ViewMode } from "./helpers";
 
 const DIR = "/home/preview-containment";
 const LONG_NAME =
@@ -190,7 +190,7 @@ interface Layout {
 async function openWithPreview(page: Page, path: string, layout: Layout, settings: object = {}): Promise<void> {
   await page.setViewportSize(VIEWPORTS[layout.viewport]);
   await page.goto(`/?path=${path}`);
-  await page.evaluate((stored) => localStorage.setItem("explorer-settings", JSON.stringify(stored)), {
+  await applySettingsAndReload(page, {
     showPreviewPane: true,
     showPreviewInfo: layout.showPreviewInfo ?? true,
     previewPanePosition: layout.dock,
@@ -198,7 +198,6 @@ async function openWithPreview(page: Page, path: string, layout: Layout, setting
     ...SIZES[layout.size],
     ...settings,
   });
-  await page.reload();
   await waitForEntries(page);
 }
 

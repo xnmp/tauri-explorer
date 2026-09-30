@@ -9,6 +9,7 @@
  * input clearing, the recorded commit message — not just that a node rendered.
  */
 import { test, expect, type Page } from "./fixtures";
+import { applySettingsAndReload } from "./helpers";
 
 interface MockGitCommit {
   message: string;
@@ -29,15 +30,11 @@ declare global {
 
 async function openScmOnRepo(page: Page, opts: { preview?: boolean } = {}): Promise<void> {
   await page.goto("/");
-  await page.evaluate((preview) => {
-    const raw = localStorage.getItem("explorer-settings");
-    const s = raw ? JSON.parse(raw) : {};
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    if (preview) s.showPreviewPane = true;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  }, opts.preview ?? false);
-  await page.reload();
+  await applySettingsAndReload(page, {
+    showGitStatus: true,
+    showScmPanel: true,
+    ...(opts.preview ? { showPreviewPane: true } : {}),
+  });
   await page.waitForLoadState("domcontentloaded");
 
   await page.getByText("Documents", { exact: true }).first().dblclick();
@@ -223,14 +220,7 @@ test.describe("SCM panel operations", () => {
 
   test("error state: a non-repo folder offers Initialize Repository", async ({ page }) => {
     await page.goto("/");
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      s.showScmPanel = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
     await page.waitForLoadState("domcontentloaded");
 
     // Default pane (/home/user) is not a repo.

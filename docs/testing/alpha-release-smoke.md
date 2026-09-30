@@ -67,7 +67,8 @@ Submit a controlled text report and one synthetic image from the installed
 app, without `gh` or `gh-image` configured. Inspect the created public GitHub
 issue and hosted image for expected content and unintended personal data. Test
 a definite rejection and an ambiguous response in separate runs using a
-controlled local relay URL (`TAURI_EXPLORER_REPORT_URL`), not by sending
+controlled local relay URL (`TAURI_EXPLORER_REPORT_URL`; loopback `http://` or
+`https://` only, see SECURITY.md), not by sending
 duplicate reports to production: the text draft must survive, and ambiguity
 must not prompt a duplicate issue. Record the live issue URL, then close the
 controlled test issue. Do not use a real user's data.

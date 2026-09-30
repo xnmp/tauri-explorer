@@ -84,6 +84,12 @@ durable-copy-recovery = []
 # Independent of durable-copy-recovery: either policy may ship first.
 durable-move-recovery = []
 
+# The single Rust gate for native E2E test hooks (#884); the frontend's is
+# VITE_E2E_HOOKS=1 (src/lib/api/e2e-hooks.ts). Hook builds enable both. It adds
+# no dependencies and opens no ports: it only lets the harness shorten
+# timeouts through environment overrides. Release builds never enable it.
+e2e-hooks = []
+
 # Enables the programmatic WebView2 debug port used by the Windows binary-E2E
 # harness. This must stay opt-in: release builds must not expose a CDP port.
 e2e-webview2-attach = []
@@ -113,7 +119,16 @@ gtk = { version = "0.18", optional = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "0.38"
 windows-core = "0.61.2"
-windows = { version = "0.61.3", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security_Authorization", "Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_IO", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"] }
+# Win32_System_DataExchange/Memory: the clipboard sequence number and the
+# Cut token read-back (clipboard/windows.rs, #877).
+windows = { version = "0.61.3", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security_Authorization", "Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"] }
+
+# NSPasteboard change count and a private token type prove Cut ownership
+# (clipboard/macos.rs, #877). clipboard-rs already builds these versions.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
 
 # Thin LTO + single codegen unit: measurable wins for the CPU-bound stacks
 # (image decode, ripgrep, fuzzy matching, zip) at an acceptable release build

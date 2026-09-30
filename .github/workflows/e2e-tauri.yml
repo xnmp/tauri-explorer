@@ -149,10 +149,12 @@ jobs:
       # gone — but it removes a real timing dependency and a whole toolchain
       # from the test environment.)
       # VITE_E2E_HOOKS compiles in the `e2e-navigate` / `e2e-reset-view` hooks
-      # and the listing/watcher probes the specs drive. They used to ride on
-      # `import.meta.env.DEV`, which is what tied the suite to a dev-mode
-      # binary — and therefore to a dev server — in the first place. Release
-      # builds never set it, so the hooks tree-shake out of shipped binaries.
+      # and the listing/watcher probes the specs drive; the `e2e-hooks` Cargo
+      # feature is the matching Rust gate (#884), so a hook build enables both.
+      # They used to ride on `import.meta.env.DEV`, which is what tied the
+      # suite to a dev-mode binary — and therefore to a dev server — in the
+      # first place. Release builds set neither, so the hooks are absent from
+      # shipped binaries.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
         id: build-tauri-binary
         shell: bash
@@ -168,7 +170,7 @@ jobs:
           started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           set +e
           CARGO_LOG=cargo::core::compiler::fingerprint=info \
-            bun run tauri build --debug --no-bundle ${{ runner.os == 'Windows' && '--features e2e-webview2-attach' || '' }} \
+            bun run tauri build --debug --no-bundle --features e2e-hooks${{ runner.os == 'Windows' && ',e2e-webview2-attach' || '' }} \
             2>&1 | tee native-contract-diagnostics/tauri-build.log
           status="${PIPESTATUS[0]}"
           set -e
@@ -251,7 +253,7 @@ jobs:
       # Test failures remain fatal, but do not hide independent lint/UI results.
       - name: Windows Rust lint
         if: ${{ !cancelled() && runner.os == 'Windows' && steps.build-tauri-binary.outcome == 'success' }}
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-webview2-attach -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-hooks,e2e-webview2-attach -- -D warnings
 
       - name: Run smoke suite (Linux, isolated display and window manager)
         if: runner.os == 'Linux'

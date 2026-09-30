@@ -13,6 +13,10 @@
  *   direct-process readiness wait.
  * - `attribution.ts` — macOS startup report/evidence assembly and half-bounce
  *   qualification.
+ * - `startup-progress.ts` — diagnostic summary of streamed
+ *   `Startup(webview-progress)` lines; never used to qualify readiness (#936).
+ * - `stall-evidence.ts` — bounded macOS process/profile/log/crash-report capture
+ *   for a timed-out startup sample (#936).
  *
  * Every existing import of `e2e-tauri/native-qualification` keeps working
  * unchanged; new code may import the sibling modules directly.
@@ -26,3 +30,5 @@ export * from "./native-qualification/report";
 export * from "./native-qualification/process";
 export * from "./native-qualification/readiness";
 export * from "./native-qualification/attribution";
+export * from "./native-qualification/startup-progress";
+export * from "./native-qualification/stall-evidence";

@@ -5,6 +5,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+// The E2E readiness and receipt protocol exists only in hook builds (api/e2e-hooks.ts).
+vi.hoisted(() => { vi.stubEnv("VITE_E2E_HOOKS", "1"); });
+
 type WatcherPayload = string | { repoRoot: string; observedAt: number; paths: string[] };
 let watcherCallback: ((event: { payload: WatcherPayload }) => void) | null = null;
 const listen = vi.fn(async (_name: string, cb: (event: { payload: WatcherPayload }) => void) => {

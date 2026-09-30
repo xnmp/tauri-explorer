@@ -79,7 +79,8 @@ fn e2e_webview2_browser_args() -> String {
 mod wsl;
 
 use system::{
-    get_launch_cwd, get_log_dir, log_startup_timing, open_recycle_bin, set_window_theme, LaunchCwd,
+    get_launch_cwd, get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin,
+    set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -180,6 +181,20 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = tauri::Builder::default();
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     let builder = builder.on_web_content_process_terminate(|webview| {
+        // WebKit does not reload a terminated page and Wry adds no log of its
+        // own, so without this line a renderer loss is indistinguishable from
+        // a page that silently stopped making progress (#936). The epoch and
+        // app-run times correlate it with the `Startup(...)` markers.
+        let app_run_ms = tauri::Manager::try_state::<system::StartupClock>(webview)
+            .map(|clock| clock.started.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(f64::NAN);
+        log::warn!(
+            "Renderer(web-content-terminated): window={} webview={} epoch-ms={:.3} app-run-ms={:.1}",
+            webview.window().label(),
+            webview.label(),
+            system::epoch_ms_now(),
+            app_run_ms,
+        );
         renderer_owner::on_page_started(&webview.window());
     });
     // Every WebView sharing Windows' data directory must use the exact same
@@ -253,6 +268,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             config::write_theme_file,
             update_check::check_for_update,
             log_startup_timing,
+            log_startup_progress,
             // Trash operations
             file_mutation::delete_entries,
             files::recovery::commands::file_recovery_list,

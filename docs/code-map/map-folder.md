@@ -97,6 +97,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `window-session.ts` — composes page subscriptions, startup, command readiness and post-readiness warm priming with rollback/teardown.
 - `window-launch.ts` — destination-keyed seed lifetime and native created/error ownership; labelled failure-phase diagnostics; tear-offs require adoption ACK before source retirement.
 - `window-handoff.ts` — correlated native request/acknowledgement transport for tab adoption and warm activation; owns timeout and listener retirement.
+- `window-trace.ts` — launch/hand-off/tab-seed tracing: failures and timeouts to the native log in every build, progress phases only in hook builds (#884).
 - `plugin-jobs.ts` — window-owned accepted jobs, terminal event reconciliation and cleanup independent of plugin contributions.
 
 - `git-repo-watch.ts` — shared graph/SCM adapter over ordered watch ownership; retains unique native leases until acknowledged release, including retries.
@@ -206,7 +207,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
 - `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards); serialized config-file writer plus `isConfigWritePending`/`lastWrittenConfig`, the echo-suppression facts config autoreload reads (#599).
-- `startup-timing.ts` — boot/list/settings/commands/readiness milestones; main-window report also records app-run-to-ready on the Rust monotonic clock.
+- `startup-timing.ts` — boot/list/settings/commands/readiness milestones; main-window report also records app-run-to-ready on the Rust monotonic clock. The main window also mirrors each mark (and a bounded heartbeat) to the native log as `Startup(webview-progress)` while startup is pending (#936).
 - `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
 - `git-warm.ts` — wires the pure git-warm scheduler to the repo-root probe + git-graph/SCM cache warmers.
 - `tab-transfer.ts` (above).
@@ -229,6 +230,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-wire.ts` — validates compact native listing columns and reconstructs exact immutable domain entries.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
+- `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
 - `mock-invoke.ts` — mock command dispatch/simulation for browser/E2E (no Tauri): stateful git working tree, trash, clipboard, drives. Open when E2E data wrong.
 - `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
 - `mock-fixtures.ts` — static fixture data for mock-invoke.ts: the seeded fake filesystem tree (`mockFiles`), fake file contents, the fake drives list, and the fake commit graph shape/refs (#869).
@@ -353,7 +355,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
 - `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
 - `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).
-- `e2e-hooks.ts` — `E2E_HOOKS_ENABLED` flag gating the `e2e-*` test hooks/probes; folds to `false` and tree-shakes out unless `VITE_E2E_HOOKS=1`, which only the smoke workflow sets (#457).
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
@@ -465,13 +466,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/clipboard/backend.rs` — the platform seam: `ClipboardBackend` (worker-owned file-list read/write, owner token, selection owner, Cut admission; defaults fail closed) and `ClipboardReader` (stateless text/image reads).
 - `src-tauri/src/clipboard/coordinator.rs` — `FileClipboardCoordinator`: revisioned app selection, external-change adoption, Cut ownership proof, failed-Copy-mirror fallback, CAS clear, rekey and the `CutLease` claim (#835, #871). Behavioural tests run on every platform against `fake_backend.rs`.
 - `src-tauri/src/clipboard/fake_backend.rs` — test-only in-memory OS clipboard with configurable ownership/owner-identity capabilities and simulated external programs and failures.
+- `src-tauri/src/clipboard/change_counter.rs` — `CounterOwnership`: Cut ownership from a clipboard change counter (Windows sequence number, macOS `changeCount`) observed around a read-back of the write's private token (#877); pure, tested everywhere.
 - `src-tauri/src/clipboard/content.rs` — report-screenshot image selection and paste-image-to-file over any `ClipboardReader`.
 - `src-tauri/src/clipboard/file_uri.rs` — `file://` URI list and `x-special/gnome-copied-files` encoding/decoding (Linux; tested everywhere).
 - `src-tauri/src/clipboard/linux/mod.rs` — `wl-clipboard`/`xclip` CLI adapter shared by the Linux backends, and the Linux text/image reader.
-- `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend (`wl-copy`/`wl-paste`); Cut fails closed until #877's held owner process.
+- `src-tauri/src/clipboard/linux/wayland.rs` — Wayland file-list backend: a held `wl-copy --foreground` owner per write proves Cut while it runs (#877), `wl-paste` reads; simulated-compositor lifecycle tests and an ignored real test for a private `cage` session.
 - `src-tauri/src/clipboard/linux/x11.rs` — X11 file-list backend: `clipboard-rs` multi-target owner with the private Cut token, `x11rb` selection owner; ignored real-Xvfb coordinator test.
-- `src-tauri/src/clipboard/macos.rs` — macOS backend/reader (`clipboard-rs`, `pbpaste`, `osascript`) and the AppleScript PNG parser; Cut fails closed until #877.
-- `src-tauri/src/clipboard/windows.rs` — Windows backend/reader through PowerShell `System.Windows.Forms.Clipboard`; Cut fails closed until #877.
+- `src-tauri/src/clipboard/macos.rs` — macOS backend/reader: `NSPasteboard` file writes with a private token type and `changeCount` Cut ownership (#877), `clipboard-rs` file reads, `pbpaste`, `osascript`, and the AppleScript PNG parser; ignored real-pasteboard test run by rust-platforms CI.
+- `src-tauri/src/clipboard/windows.rs` — Windows backend/reader through PowerShell `System.Windows.Forms.Clipboard`, plus native `GetClipboardSequenceNumber` and private-token-format read-back for Cut ownership (#877); ignored real-clipboard test run by rust-platforms CI.
 
 ### src-tauri/src/files/ — file operations module.
 
@@ -529,22 +531,25 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory_watches.rs` — renderer-owned directory lease identities, shared registrations, cancellation, failed-release retry and retired-observer reconstruction.
 - `watch_observation.rs` — shared native generations, parent/root registration roles, callback failure/rescan recovery, partial recursive registration isolation and retry deadlines.
 - `git_status.rs` — per-entry git status indicators.
-- `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding.
-- `linux_volumes.rs` — UDisks2 filesystem discovery, stable volume identity, mount-table merge and click-to-mount adapter.
-- `linux_gvfs_watch.rs` — session-bus `org.gtk.vfs.MountTracker` Mounted/Unmounted subscription that pushes `drives-changed` when GVfs Google Drive entries change (gvfsd-fuse raises no inotify events).
-- `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change.
+- `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding. Mount-table/sysfs integration contracts against the private `enumerate_linux_drives` in `src-tauri/test_support/linux_drives_mounts.rs` (#926).
+- `linux_volumes.rs` — UDisks2 filesystem discovery, stable volume identity, mount-table merge and click-to-mount adapter. Production-adapter isolated-D-Bus contracts (#677, #888) in `src-tauri/test_support/linux_removable_volumes.rs` (#926).
+- `linux_gvfs_watch.rs` — session-bus `org.gtk.vfs.MountTracker` Mounted/Unmounted subscription that pushes `drives-changed` when GVfs Google Drive entries change (gvfsd-fuse raises no inotify events). Isolated-session-bus contracts stay in `src-tauri/tests/linux_gvfs_watch.rs`: `GvfsWatch` is ordinary public API, not a test-only seam.
+- `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change. The opt-in real-kernel/namespace test moved to `src-tauri/test_support/linux_mount_watch.rs` (#926); run via `cargo test --lib files::linux_mount_watch::privileged_tests -- --ignored` under the documented `unshare`.
 - `linux_volume_monitor.rs` — one long-lived UDisks2 subscription (ObjectManager + PropertiesChanged + NameOwnerChanged) feeding a cached snapshot, 30 s backstop resync, reconnect/fallback, and `drives-changed` notifications.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 
-## src/test-support/ — opt-in E2E fixtures; excluded from normal production builds.
+## src/test-support/ — opt-in E2E fixtures; loaded only by `loadE2EHooks()` in hook builds (`VITE_E2E_HOOKS=1`).
 
-- `window-session-probe.ts` — native E2E requests/readiness tied to the page session, including late-import retirement, rejected/unready targets, in-flight closure and duplicate-label creation fixtures.
+- `e2e-hooks.ts` — entry point: installs every probe for one page session (navigate/reset/file-op hooks, readiness, child-ready receipts); abort retires them all.
+- `dom-rpc.ts` — `createDomRpc`: the shared tokened DOM request/response protocol across WebDriver's isolated world; every request settles, including rejections.
+- `window-operations.ts` — one handler per `e2e-window-operation` op: rejected/unready targets, in-flight closure, duplicate-label creation and warm fixtures, with late-import retirement.
+- `directory-listing-probe.ts` — times real backend listings of one armed path through the `files.ts` listing interceptor seam.
 - `src/test-support/external-job-probe.ts` — page-session native E2E bridge that starts Nano through the production plugin-jobs controller.
 - `file-history-probe.ts` — opt-in passive native history summaries and tokened calls through the production IPC authority.
 - `src/test-support/file-recovery-probe.ts` — opt-in tokened native recovery inventory/transfer requests and deliberately unmanaged channels for renderer-retirement acceptance; native move cleanup outcomes in `e2e-tauri/specs/move-retirement.spec.ts`.
 - `e2e-tauri/specs/session-cancellation.spec.ts` — ungated Linux/Windows smoke outcomes for copy/move cancellation IPC, released admission, rendered listing refresh and native Undo/Redo.
-- `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC; tokened, re-arm and pagehide release.
+- `file-mutation-probe.ts` — one-shot E2E hold after successful native create/rename IPC via the `files.ts` mutation interceptor; tokened, re-arm, pagehide and session release.
 - `watcher-listing-probe.ts` — holds a native E2E listing until three real writes receive timestamped watcher acknowledgements; bounded cancellation and cleanup.
 - `lazy-dialog-lifetime.svelte.ts` — exercises the real Svelte effect adapter with a disposable parent and deferred imports.
 
@@ -642,6 +647,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/native-qualification/process.ts` — process-tree RSS sampling, logged qualification process execution, and native process start/stop/fixture-cleanup lifecycle (SIGKILL-rejection-vs-exit race per #910/#911).
 - `e2e-tauri/native-qualification/readiness.ts` — the single macOS startup log marker parser used by both the readiness predicate and the report (#696), plus the direct-process readiness wait.
 - `e2e-tauri/native-qualification/attribution.ts` — macOS startup/interactive-evidence report assembly, phase-attribution summaries and half-bounce qualification.
+- `e2e-tauri/native-qualification/startup-progress.ts` — diagnostic summary of streamed `Startup(webview-progress)` lines (last mark, heartbeats after it); never used to qualify readiness (#936).
+- `e2e-tauri/native-qualification/stall-evidence.ts` — bounded macOS capture for a timed-out startup sample: `ps`, `sample`/`spindump`, unified log and new DiagnosticReports into `sample-NN-stall/` (#936).
 - `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
 - `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
@@ -659,14 +666,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
 - `e2e-tauri/wdio.soak.conf.ts` — separate hours-long native qualification suite configuration.
-- `scripts/build-native-qualification.ts` — clean-worktree debug/release native build and exact binary provenance.
+- `scripts/build-native-qualification.ts` — clean-worktree debug/release native build (both hook gates when hooks are on) and exact binary provenance.
 - `scripts/qualify-macos-startup.ts` — separate real Mac foreground-only and warm-probe samples with process survival and cleanup.
 - `scripts/grant-macos-accessibility.sh` — CI-only, SIP-guarded Xcode Helper Accessibility grant for the Appium Mac2 pilot.
 - `.github/workflows/macos-native-ui.yml` — hosted macOS production bundle build, Appium Mac2 run and outcome artifact upload.
 - `scripts/run-native-soak.ts` — native soak configuration, run ownership and report finalization.
 - `tests/qualification/native-soak.test.ts` — native qualification inputs, binary provenance, report and startup-marker contracts.
 - `tests/qualification/native-runner-edge-cases.test.ts` — process exit, cleanup and artifact containment edge cases.
-- `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual and half-bounce verdicts.
+- `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual (bound scaled with launch length) and half-bounce verdicts.
+- `tests/qualification/macos-startup-progress.test.ts` — progress lines never change attributed parsing; timeout reports the last parser rejection and last streamed mark (#936).
+- `tests/qualification/macos-startup-stall-evidence.test.ts` — stall evidence selection, bounds, spindump fallback, overall deadline and timeout-first error composition (#936).
 - `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
 - `tests/e2e-tauri/window-transfer-waits.test.ts` — stale-token, delayed-listing and duplicate-name contracts for renderer observers.
 - `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.

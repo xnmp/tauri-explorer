@@ -13,7 +13,7 @@
  */
 
 import { listen } from "@tauri-apps/api/event";
-import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 
 export interface GitChange {
   /** Repo root the change belongs to; null when unknown. */

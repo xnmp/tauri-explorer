@@ -19,18 +19,28 @@ static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 pub const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CANCEL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Native acceptance shortens the timeout through the environment. Builds
+/// without the `e2e-hooks` feature never read the variable at all.
+#[cfg(feature = "e2e-hooks")]
 fn job_timeout() -> std::time::Duration {
-    #[cfg(debug_assertions)]
-    if option_env!("VITE_E2E_HOOKS") == Some("1") {
-        if let Some(milliseconds) = std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
+    job_timeout_with_override(
+        std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
             .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .filter(|value| *value > 0)
-        {
-            return std::time::Duration::from_millis(milliseconds);
-        }
-    }
+            .as_deref(),
+    )
+}
+
+#[cfg(not(feature = "e2e-hooks"))]
+fn job_timeout() -> std::time::Duration {
     JOB_TIMEOUT
+}
+
+#[cfg(feature = "e2e-hooks")]
+fn job_timeout_with_override(override_ms: Option<&str>) -> std::time::Duration {
+    override_ms
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map_or(JOB_TIMEOUT, std::time::Duration::from_millis)
 }
 
 #[derive(Clone)]
@@ -241,6 +251,45 @@ fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "e2e-hooks")]
+    #[test]
+    fn hook_builds_honour_a_positive_timeout_override() {
+        assert_eq!(
+            job_timeout_with_override(Some("100")),
+            std::time::Duration::from_millis(100)
+        );
+    }
+
+    #[cfg(not(feature = "e2e-hooks"))]
+    #[test]
+    fn builds_without_hooks_ignore_the_timeout_override() {
+        // The variable is never read (it is absent from release binaries), so
+        // the production timeout is fixed even when the override is set. No
+        // other code in a build without the feature reads this variable, so
+        // setting it cannot race a concurrently running test.
+        const OVERRIDE: &str = "TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS";
+        std::env::set_var(OVERRIDE, "100");
+        let timeout = job_timeout();
+        std::env::remove_var(OVERRIDE);
+        assert_eq!(timeout, JOB_TIMEOUT);
+        assert_ne!(timeout, std::time::Duration::from_millis(100));
+    }
+
+    #[cfg(feature = "e2e-hooks")]
+    #[test]
+    fn malformed_or_zero_e2e_timeout_overrides_keep_the_default() {
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("-5"),
+            Some("ten"),
+            Some("99999999999999999999999"),
+        ] {
+            assert_eq!(job_timeout_with_override(value), JOB_TIMEOUT, "{value:?}");
+        }
+    }
 
     #[test]
     fn cancellation_of_a_held_staging_file_removes_it_without_publication() {

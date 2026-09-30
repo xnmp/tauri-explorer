@@ -18,3 +18,8 @@ export function getLogDir(): Promise<string> {
 export function logStartupTiming(summary: string): Promise<void> {
   return invoke<void>("log_startup_timing", { summary });
 }
+
+/** Mirror one startup milestone to the native log as it happens (#936). */
+export function logStartupProgress(mark: string, webviewMs: number): Promise<void> {
+  return invoke<void>("log_startup_progress", { mark, webviewMs });
+}

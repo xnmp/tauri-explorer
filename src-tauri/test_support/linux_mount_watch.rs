@@ -1,22 +1,24 @@
-#![cfg(target_os = "linux")]
 //! Real kernel mount-table notifications (#888). Mounting needs a private
 //! user and mount namespace, so this is opt-in:
 //!
 //! ```sh
 //! EXPLORER_MOUNT_TEST_PARENT_NS=$(readlink /proc/self/ns/mnt) \
 //!   unshare --user --map-root-user --mount \
-//!   cargo test --test linux_mount_watch -- --ignored
+//!   cargo test --manifest-path src-tauri/Cargo.toml --lib \
+//!   files::linux_mount_watch::privileged_tests -- --ignored
 //! ```
+//!
+//! Moved in from Cargo's auto-discovered `tests/linux_mount_watch.rs` (#926)
+//! so `host_mount_table_drives` needs no `#[doc(hidden)] pub` seam kept only
+//! for this test.
+use super::*;
 use std::{
-    path::Path,
     process::Command,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::Duration,
 };
-use tauri_explorer_lib::files::linux_mount_watch::{host_mount_table_drives, MountTableWatch};
 use tokio::sync::mpsc;
 
 /// Refuse to mount anywhere but a namespace other than the launching one.
@@ -49,7 +51,7 @@ impl Drop for Mounted {
     }
 }
 
-async fn pushed(pushes: &mut mpsc::UnboundedReceiver<()>, within: Duration) -> bool {
+async fn pushed(pushes: &mut mpsc::UnboundedReceiver<()>, within: std::time::Duration) -> bool {
     tokio::time::timeout(within, pushes.recv()).await.is_ok()
 }
 
@@ -72,14 +74,23 @@ async fn drive_mounts_are_pushed_promptly_and_irrelevant_mounts_are_silent() {
     )
     .unwrap();
     // A block-backed directory, so a bind mount of it is a sidebar drive.
-    let base = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    // `CARGO_TARGET_TMPDIR` is only set for Cargo integration-test binaries;
+    // this now runs as a lib test, so read it at runtime with a fallback.
+    let target_tmpdir = std::env::var("CARGO_TARGET_TMPDIR").unwrap_or_else(|_| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target/tmp")
+            .to_string_lossy()
+            .into_owned()
+    });
+    std::fs::create_dir_all(&target_tmpdir).unwrap();
+    let base = tempfile::tempdir_in(&target_tmpdir).unwrap();
     for dir in ["scratch", "source", "Bound Drive"] {
         std::fs::create_dir(base.path().join(dir)).unwrap();
     }
 
     let scratch = Mounted::new(&["-t", "tmpfs", "tmpfs"], &base.path().join("scratch"));
     assert!(
-        !pushed(&mut pushes, Duration::from_millis(500)).await,
+        !pushed(&mut pushes, std::time::Duration::from_millis(500)).await,
         "tmpfs is not a drive"
     );
 
@@ -93,22 +104,22 @@ async fn drive_mounts_are_pushed_promptly_and_irrelevant_mounts_are_silent() {
         "fixture precondition: the bind mount is a drive"
     );
     assert!(
-        pushed(&mut pushes, Duration::from_secs(2)).await,
+        pushed(&mut pushes, std::time::Duration::from_secs(2)).await,
         "mount pushed well before the 30 s backstop"
     );
     drop(bound);
     assert!(
-        pushed(&mut pushes, Duration::from_secs(2)).await,
+        pushed(&mut pushes, std::time::Duration::from_secs(2)).await,
         "unmount pushed"
     );
     drop(scratch);
     assert!(
-        !pushed(&mut pushes, Duration::from_millis(500)).await,
+        !pushed(&mut pushes, std::time::Duration::from_millis(500)).await,
         "tmpfs removal is silent"
     );
     // Once the table is quiet the watch must sleep, not keep re-reading.
     let settled = reads.load(Ordering::SeqCst);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     assert_eq!(
         reads.load(Ordering::SeqCst),
         settled,

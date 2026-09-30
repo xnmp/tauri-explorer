@@ -100,6 +100,7 @@ describe("window launch owner", () => {
     expect(f.dependencies.save).not.toHaveBeenCalled();
     expect(f.dependencies.createWindow).not.toHaveBeenCalled();
     expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      elapsedMs: expect.any(Number),
       label: "explorer-id-1", phase: "geometry", error: expect.objectContaining({ message: "position" }),
     });
   });
@@ -113,6 +114,7 @@ describe("window launch owner", () => {
     expect(f.storage.size).toBe(0);
     expect(f.dependencies.remove).toHaveBeenCalledWith("dir-seed:explorer-id-1");
     expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      elapsedMs: expect.any(Number),
       label: "explorer-id-1", phase: "construct", error: expect.objectContaining({ message: "constructor" }),
     });
   });
@@ -134,6 +136,7 @@ describe("window launch owner", () => {
     await vi.waitFor(() => expect(f.windows).toHaveLength(1));
     f.windows[0].window.emit("tauri://error", "HRESULT 0x8007139F");
     expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      elapsedMs: expect.any(Number),
       label: "explorer-id-1", phase: "native", error: "HRESULT 0x8007139F",
     });
     await expect(opening).resolves.toBeNull();
@@ -172,14 +175,14 @@ describe("window launch owner", () => {
     const opening = f.open("/repo");
     await vi.advanceTimersByTimeAsync(10_000);
     await expect(opening).resolves.toBeNull();
-    expect(f.dependencies.reportFailure).toHaveBeenCalledWith({ label: "explorer-id-1", phase: "timeout" });
+    expect(f.dependencies.reportFailure).toHaveBeenCalledWith({ label: "explorer-id-1", phase: "timeout", elapsedMs: 10_000 });
     // Listener ownership follows the still-pending native creation task.
     // Its eventual error terminates the drain; acquisitions resolving even
     // later must retire themselves immediately.
     await vi.advanceTimersByTimeAsync(20_000);
     handlers["tauri://error"]!();
     expect(f.dependencies.reportFailure).toHaveBeenLastCalledWith({
-      label: "explorer-id-1", phase: "native", error: undefined,
+      label: "explorer-id-1", phase: "native", error: undefined, elapsedMs: 30_000,
     });
     createdAcquisition.resolve(lateStops[0]);
     errorAcquisition.resolve(lateStops[1]);
@@ -222,6 +225,7 @@ describe("window launch owner", () => {
     await Promise.resolve();
     expect(child.destroy).toHaveBeenCalledOnce();
     expect(f.dependencies.reportFailure).toHaveBeenCalledWith({
+      elapsedMs: expect.any(Number),
       label: "explorer-id-1", phase: "listener", error: expect.objectContaining({ message: "listener unavailable" }),
     });
   });

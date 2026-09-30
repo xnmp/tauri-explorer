@@ -155,6 +155,48 @@ fn a_plan_that_is_not_aligned_with_its_keys_is_refused() {
             preparation.push(Ok(fake("a")))
         });
     assert!(matches!(result, Err(AppError::WorkerFailed(_))));
+    let overfilled =
+        PreparedSelection::<Fake>::prepare(keys(&["a"]), MAX_PLAN_BYTES, |preparation, _| {
+            preparation.push(Ok(fake("a")))?;
+            preparation.push(Ok(fake("extra")))
+        });
+    assert!(matches!(overfilled, Err(AppError::WorkerFailed(_))));
+}
+
+#[test]
+fn an_empty_selection_executes_nothing() {
+    let mut selection = prepare_fakes(keys(&[]));
+    assert!(matches!(
+        run(&mut selection, ""),
+        Err(AppError::WorkerFailed(_))
+    ));
+}
+
+#[test]
+fn inspection_sees_the_physical_entry_before_its_claims_are_recorded() {
+    let root = tempfile::tempdir().unwrap();
+    let real = root.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::write(real.join("entry"), b"x").unwrap();
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let key = alias.join("entry").to_str().unwrap().to_owned();
+    let physical = fs::canonicalize(real.join("entry")).unwrap();
+    let mut preparation = Preparation::<Fake>::new(MAX_PLAN_BYTES);
+    let (source, inspected) = preparation
+        .observe_with(Path::new(&key), |path, version| {
+            Ok((path.to_owned(), version.is_some()))
+        })
+        .unwrap();
+    assert_eq!(inspected, (physical.clone(), true));
+    assert_eq!(source.path, physical);
+    // A refused inspection records no claim: the same entry is still free.
+    let mut refused = Preparation::<Fake>::new(MAX_PLAN_BYTES);
+    let error = refused.observe_with(Path::new(&key), |_, _| -> Result<(), AppError> {
+        Err(AppError::Other("inspection failed".into()))
+    });
+    assert!(matches!(error, Err(AppError::Other(_))));
+    assert!(refused.observe(Path::new(&key)).is_ok());
 }
 
 #[test]

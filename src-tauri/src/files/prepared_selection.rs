@@ -125,6 +125,18 @@ impl<I: SelectionItem> Preparation<I> {
     /// dependencies that resolve it, then observe the physical entry. The
     /// claim and the observation must name the same object.
     pub(in crate::files) fn observe(&mut self, path: &Path) -> Result<ObservedSource, AppError> {
+        self.observe_with(path, |_, _| Ok(()))
+            .map(|(source, ())| source)
+    }
+
+    /// [`Self::observe`], with `inspect` reading operation-specific identity
+    /// of the physical entry immediately after its version is observed and
+    /// before any claim is recorded.
+    pub(in crate::files) fn observe_with<T>(
+        &mut self,
+        path: &Path,
+        inspect: impl FnOnce(&Path, Option<&EntryVersion>) -> Result<T, AppError>,
+    ) -> Result<(ObservedSource, T), AppError> {
         let mut claims = resources::capture_requests(&[resources::Request {
             path: path.to_owned(),
             access: Access::Write,
@@ -145,6 +157,7 @@ impl<I: SelectionItem> Preparation<I> {
                 I::NOUN
             )));
         }
+        let inspected = inspect(&source.path.0, version.as_ref())?;
         self.claim(
             &source,
             SelectionRole::Source {
@@ -155,14 +168,15 @@ impl<I: SelectionItem> Preparation<I> {
             self.claim(&dependency, SelectionRole::Shared)?;
         }
         self.retain(source.path.0.capacity())?;
-        Ok(ObservedSource {
+        let observed = ObservedSource {
             parent: *source
                 .ancestors
                 .first()
                 .expect("validated source has a parent identity"),
             path: source.path.0,
             version,
-        })
+        };
+        Ok((observed, inspected))
     }
 
     /// Append the next item. A preparation failure stays aligned with its key

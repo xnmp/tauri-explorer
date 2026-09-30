@@ -272,11 +272,12 @@ mod unix {
         path: &Path,
         random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
     ) -> Result<(), AppError> {
-        let source = preparation.observe(path)?;
-        let birth = match source.version {
-            Some(_) => birth_of_path(&source.path)?,
-            None => None,
-        };
+        let (source, birth) = preparation.observe_with(path, |physical, version| {
+            Ok(match version {
+                Some(_) => birth_of_path(physical)?,
+                None => None,
+            })
+        })?;
         let Some(version) = source.version else {
             return preparation.push(Err(AppError::NotFound(path.display().to_string())));
         };

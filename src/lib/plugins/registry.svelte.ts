@@ -63,7 +63,7 @@ function createPluginRegistry(
         : inFlight.promise;
     }
 
-    const { ctx, dispose } = createPluginContext(plugin.id, plugin.name, plugins.indexOf(plugin));
+    const { ctx, dispose, reportFailure } = createPluginContext(plugin.id, plugin.name, plugins.indexOf(plugin));
     // Plugin code can synchronously request shutdown or retry. Publish the
     // actual completion before invoking it so those operations join this run.
     let resolve!: () => void;
@@ -106,7 +106,7 @@ function createPluginRegistry(
         // failed. Give its hook one chance to release them as well as the
         // context-owned contributions.
         deactivateActivation();
-        console.error(`[plugins] failed to activate "${plugin.id}":`, err);
+        reportFailure(err, "activation");
       } finally {
         if (activating.get(plugin.id) === activation) activating.delete(plugin.id);
       }

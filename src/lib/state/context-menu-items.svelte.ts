@@ -7,7 +7,7 @@
  * entries.
  */
 
-import { createOwnedRegistry } from "./owned-registry";
+import { createOrderedRegistry } from "./ordered-registry";
 import type { FileEntry } from "$lib/domain/file";
 
 export type ContextMenuItemGroup = "ai";
@@ -26,11 +26,7 @@ export interface ContextMenuItem {
 
 function createContextMenuItemsRegistry() {
   let items = $state<ContextMenuItem[]>([]);
-  const registrations = createOwnedRegistry<{ item: ContextMenuItem; order: number }>();
-  // Array sort is stable: items with the same order keep registration order.
-  const ordered = () => registrations.values()
-    .sort((a, b) => a.order - b.order)
-    .map(({ item }) => item);
+  const registrations = createOrderedRegistry<ContextMenuItem>();
 
   return {
     get items() {
@@ -39,10 +35,10 @@ function createContextMenuItemsRegistry() {
     /** Register an item; returns a disposer that removes it. Items appear by
      *  `order` (the contributing plugin's list position), then registration. */
     register(item: ContextMenuItem, order = Number.MAX_SAFE_INTEGER): () => void {
-      const dispose = registrations.register(item.id, { item, order });
-      items = ordered();
+      const dispose = registrations.register(item.id, item, order);
+      items = registrations.values();
       return () => {
-        if (dispose()) items = ordered();
+        if (dispose()) items = registrations.values();
       };
     },
     /** Items whose `when` predicate passes for the given selection. */

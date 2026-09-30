@@ -74,8 +74,9 @@ export interface PluginToast {
 }
 
 export interface PluginEvents {
-  /** Listen for a backend/window event; auto-disposed on deactivate. */
-  listen<T = unknown>(name: string, handler: (payload: T) => void): void;
+  /** Listen for a backend/window event; auto-disposed on deactivate. A
+   *  handler that throws or rejects is reported under the plugin's name. */
+  listen<T = unknown>(name: string, handler: (payload: T) => void | Promise<void>): void;
 }
 
 /** Outcome of a workspace file operation (structural subset of the shared
@@ -185,11 +186,14 @@ export function createPluginStorage(pluginId: string): PluginStorage {
  * Build a plugin context plus a `dispose` that runs every tracked teardown.
  * Disposers run in reverse registration order.
  *
- * A plugin's command or menu action that fails is reported to the user under
- * `pluginName` and written to the app log (#782). Commands still reject, so
- * `executeCommand` reports the failure to its caller; menu actions resolve,
- * because the context menu fires them without awaiting and a reported failure
- * is not an unhandled rejection.
+ * A plugin's command, menu action, event handler or activation that fails is
+ * reported to the user under `pluginName` and written to the app log (#782,
+ * #890); `reportFailure` is that report for the registry's activation path.
+ * Commands still reject, so `executeCommand` reports the failure to its
+ * caller; menu actions and event handlers resolve, because their callers fire
+ * them without awaiting and a reported failure is not an unhandled rejection.
+ * File-system provider failures are only logged: they still reject to the
+ * listing caller, which already shows the error to the user.
  *
  * `order` is the plugin's position in the plugin list. Menu items and settings
  * sections are placed by it, so their order does not depend on which
@@ -202,6 +206,7 @@ export function createPluginContext(
 ): {
   ctx: PluginContext;
   dispose: () => void;
+  reportFailure: (error: unknown, contribution: string) => void;
 } {
   const disposers: (() => void)[] = [];
   let disposed = false;
@@ -211,13 +216,16 @@ export function createPluginContext(
   };
   const storage = createPluginStorage(pluginId);
   // Tauri rejects with a serialized AppError ({ kind, message }), not an Error.
-  const report = (error: unknown, contribution: string) => {
+  const log = (error: unknown, contribution: string): string => {
     const message = extractError(error);
-    toastStore.error(`${pluginName}: ${message}`);
     const stack = error instanceof Error && error.stack ? `\n${error.stack}` : "";
     console.error(`[plugins] "${pluginId}" ${contribution} failed:`, error);
     void logFrontendError(`[plugins] "${pluginId}" ${contribution} failed: ${message}${stack}`)
       .catch(() => {});
+    return message;
+  };
+  const report = (error: unknown, contribution: string) => {
+    toastStore.error(`${pluginName}: ${log(error, contribution)}`);
   };
 
   const ctx: PluginContext = {
@@ -246,7 +254,15 @@ export function createPluginContext(
       track(pluginSettingsSections.register(pluginId, section, storage, order));
     },
     registerFsProvider(scheme: string, provider: FsProvider): void {
-      track(registerFsProvider(scheme, provider, false));
+      const list = async (path: string) => {
+        try {
+          return await provider.list(path);
+        } catch (error) {
+          log(error, `fs provider ${scheme}`);
+          throw error;
+        }
+      };
+      track(registerFsProvider(scheme, { list }, false));
     },
     registerDialog(descriptor: DialogDescriptor): void {
       track(dialogRegistry.register(descriptor));
@@ -263,11 +279,18 @@ export function createPluginContext(
       error: (message) => toastStore.error(message),
     },
     events: {
-      listen<T>(name: string, handler: (payload: T) => void): void {
+      listen<T>(name: string, handler: (payload: T) => void | Promise<void>): void {
         let un: UnlistenFn | null = null;
         let listenerDisposed = false;
+        const deliver = async (payload: T) => {
+          try {
+            await handler(payload);
+          } catch (error) {
+            report(error, `event handler ${name}`);
+          }
+        };
         listen<T>(name, (event) => {
-          if (!listenerDisposed && !disposed) handler(event.payload);
+          if (!listenerDisposed && !disposed) void deliver(event.payload);
         })
           .then((fn) => {
             if (listenerDisposed || disposed) fn();
@@ -308,6 +331,7 @@ export function createPluginContext(
 
   return {
     ctx,
+    reportFailure: report,
     dispose: () => {
       disposed = true;
       while (disposers.length) {

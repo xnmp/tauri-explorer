@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 test.describe("Quick Open recursive search debounce (#600)", () => {
   test.beforeEach(async ({ page }) => {
@@ -24,11 +25,11 @@ test.describe("Quick Open recursive search debounce (#600)", () => {
     await searchInput.pressSequentially("src", { delay: 80 });
 
     await expect(localResult).toBeVisible({ timeout: 40 });
-    expect(await page.evaluate(() => localStorage.getItem("mock-streaming-searches"))).toBeNull();
+    expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.streamingSearches)).toBeNull();
 
     await expect
       .poll(
-        () => page.evaluate(() => localStorage.getItem("mock-streaming-searches")),
+        () => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.streamingSearches),
         { timeout: 1000 },
       )
       .toBe(JSON.stringify([{ query: "src" }]));
@@ -67,7 +68,7 @@ test.describe("Quick Open recursive search debounce (#600)", () => {
     await expect(quickOpen.locator(".result-name", { hasText: "docs" })).toBeVisible({ timeout: 40 });
     await expect(quickOpen.locator(".result-name", { hasText: "report.pdf" })).toBeVisible({ timeout: 40 });
     await expect(quickOpen.locator(".result-name", { hasText: "Documents" })).toBeVisible({ timeout: 40 });
-    expect(await page.evaluate(() => localStorage.getItem("mock-streaming-searches"))).toBeNull();
+    expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.streamingSearches)).toBeNull();
     await page.screenshot({ path: "evidence/ac-2-immediate-local-matches.png" });
   });
 
@@ -86,7 +87,7 @@ test.describe("Quick Open recursive search debounce (#600)", () => {
 
     await expect
       .poll(
-        () => page.evaluate(() => localStorage.getItem("mock-streaming-searches")),
+        () => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.streamingSearches),
         { timeout: 1000 },
       )
       .toBe(JSON.stringify([{ query: "components" }]));

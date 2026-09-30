@@ -2,7 +2,7 @@
  * Rust policy/executor tests and binary E2E verify the authoritative behavior. */
 import type { HistoryDirection, HistoryReply, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { executeUndo, executeRedo, type UndoApiDeps } from "./mock-file-history-execution";
-import type { FileBatchOutcome } from "$lib/domain/file-batch-outcome";
+import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import { parentDir } from "$lib/domain/path";
 
 type Entry = { id: number; action: UndoAction };
@@ -65,10 +65,20 @@ export function createMockFileHistory(
   // Delete/undo-delete route through the same production command
   // (`delete_entries`, permanent: false) the real backend uses; restoring is
   // the backend's internal undo step, so it bypasses the invoke() round trip.
+  // deleteEntry goes through `batch`, not `call`: `delete_entries` reports
+  // per-path outcomes in a FileBatchOutcome rather than throwing, so `call`
+  // (which only detects a thrown invoke) would report success even when the
+  // path is in `failed[]` — mirrors `files.ts`'s `deleteOne`.
+  const deleteOne = async (path: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const result = await batch("delete_entries", { paths: [path], permanent: false });
+    if (!result.ok) return result;
+    const error = fileBatchError(result.data) ?? (result.data.succeeded.includes(path) ? null : `Path not found: ${path}`);
+    return error ? { ok: false, error } : { ok: true };
+  };
   const files: UndoApiDeps = {
     renameEntry: (path, newName) => call("rename_entry", { path, newName }),
     moveEntry: (source, destDir) => call("move_entry", { source, destDir, overwrite: false }),
-    deleteEntry: (path) => call("delete_entries", { paths: [path], permanent: false }),
+    deleteEntry: deleteOne,
     deleteMultipleEntries: (paths) => batch("delete_entries", { paths, permanent: false }),
     restoreFromTrash: async (paths) => ({ ok: true, data: restoreFromTrash(paths) }),
   };

@@ -72,3 +72,29 @@ describe("mockInvoke — revisioned clipboard", () => {
     }
   });
 });
+
+describe("mockInvoke — file history undo of a copy whose file is gone (PR #917 review)", () => {
+  it("reports an error and does not create a redo entry, matching the real backend's settled_copy rejection", async () => {
+    const copiedPath = "/home/user/does-not-exist.txt";
+    const pushed = await mockInvoke<{ summary: { undoId: number | null } }>("file_history_push", {
+      action: { type: "copy", copiedPath, parentDir: "/home/user" },
+    });
+    const undoId = pushed.summary.undoId;
+    expect(undoId).not.toBeNull();
+
+    const result = await mockInvoke<{ summary: { undoId: number | null; redoId: number | null }; error?: string }>(
+      "file_history_execute",
+      { direction: "undo", expectedEntryId: undoId },
+    );
+
+    // The real backend's file_history/execution.rs settled_copy rejects an
+    // undo whose copied_path isn't in `succeeded`; the mock must agree
+    // instead of silently treating a per-path delete_entries failure as
+    // success (#869 review finding).
+    expect(result.error).toBeTruthy();
+    expect(result.summary.redoId).toBeNull();
+    // The failed undo stays on the undo stack (as a fresh "remaining" entry)
+    // so it can be retried, rather than being dropped or turned into a redo.
+    expect(result.summary.undoId).not.toBeNull();
+  });
+});

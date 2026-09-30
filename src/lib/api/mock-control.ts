@@ -160,6 +160,9 @@ export const MOCK_LOCAL_KEYS = {
   pickerResponse: "mock-picker-response",
   /** JSON array log of streaming-search calls. */
   streamingSearches: "mock-streaming-searches",
+  /** JSON `{ [filename]: contents }` to pre-seed the mock config store with
+   *  before the app boots (see `MOCK_CONFIG_SEED_KEY` in mock-invoke.ts). */
+  configSeed: "mock-config-files",
 } as const;
 
 export type MockLocalKey = (typeof MOCK_LOCAL_KEYS)[keyof typeof MOCK_LOCAL_KEYS];

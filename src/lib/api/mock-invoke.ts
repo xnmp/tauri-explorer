@@ -2710,7 +2710,11 @@ if (typeof window !== "undefined") {
 
 /**
  * localStorage key an e2e/unit test can set to pre-seed the mock config store
- * with `{ [filename]: contents }` before the app boots.
+ * with `{ [filename]: contents }` before the app boots. Re-exported here
+ * (rather than requiring every caller to import `MOCK_LOCAL_KEYS` just for
+ * this one key) since `tests/state/settings-migration.test.ts` already
+ * imports it from this module; the value itself lives in
+ * `MOCK_LOCAL_KEYS.configSeed` alongside every other mock localStorage key.
  *
  * The mock config store is in-memory and starts empty, so without this there
  * is no way to present the app with an EXISTING settings.json — every mock
@@ -2718,7 +2722,7 @@ if (typeof window !== "undefined") {
  * a settings migration only runs against the durable store of record, which
  * the mock could never populate.
  */
-export const MOCK_CONFIG_SEED_KEY = "mock-config-files";
+export const MOCK_CONFIG_SEED_KEY = MOCK_LOCAL_KEYS.configSeed;
 
 /** In-memory config file store for mock mode, optionally test-seeded. */
 const mockConfigFiles: Record<string, string> = loadMockConfigSeed();

@@ -954,6 +954,8 @@ let mockClipboardFiles: string[] = [];
 let mockClipboardEntries: unknown[] | null = null;
 let mockClipboardOperation: "copy" | "cut" | null = null;
 let mockClipboardRevision = 0;
+/** Revision whose Cut a paste has claimed (mirrors the native CutLease). */
+let mockClipboardLease: number | null = null;
 
 // ----- Deterministic commit graph for git_log / git_refs mocks (#57) -----
 
@@ -3116,6 +3118,17 @@ if (typeof window !== "undefined") {
     mockClipboardRevision++;
     mockClipboardEntries = null;
     mockClipboardOperation = null;
+    return true;
+  },
+  clipboard_claim_cut: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || mockClipboardOperation !== "cut"
+      || !mockClipboardEntries || mockClipboardLease === mockClipboardRevision) return false;
+    mockClipboardLease = mockClipboardRevision;
+    return true;
+  },
+  clipboard_release_cut: (args: Record<string, unknown>) => {
+    if (args.revision !== mockClipboardRevision || mockClipboardLease !== args.revision) return false;
+    mockClipboardLease = null;
     return true;
   },
   clipboard_rekey: (args: Record<string, unknown>) => {

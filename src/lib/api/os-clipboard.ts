@@ -1,7 +1,8 @@
 /**
  * OS clipboard API. File lists go through the native revisioned clipboard
- * worker (`clipboard_publish` / `snapshot` / `compare_and_clear` / `rekey`),
- * which owns ordering across windows and Cut identity (#844, #865). Failures
+ * worker (`clipboard_publish` / `snapshot` / `compare_and_clear` / `rekey` /
+ * `claim_cut` / `release_cut`), which owns ordering across windows and Cut
+ * identity (#844, #865, #871). Failures
  * carry a reason (e.g. "wl-copy is not installed") so callers can surface it
  * instead of a silent no-op copy (#279).
  */
@@ -40,6 +41,16 @@ export function osClipboardSnapshot(): Promise<NativeClipboardSnapshot> {
 
 export function osClipboardCompareAndClear(revision: number): Promise<boolean> {
   return invoke<boolean>("clipboard_compare_and_clear", { revision });
+}
+
+/** Claim the Cut at `revision` so only one paste moves it (#871). */
+export function osClipboardClaimCut(revision: number): Promise<boolean> {
+  return invoke<boolean>("clipboard_claim_cut", { revision });
+}
+
+/** Return a claimed Cut whose move did not complete, so it stays pasteable. */
+export function osClipboardReleaseCut(revision: number): Promise<boolean> {
+  return invoke<boolean>("clipboard_release_cut", { revision });
 }
 
 export function osClipboardRekey(

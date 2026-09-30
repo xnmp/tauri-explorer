@@ -3,8 +3,10 @@ import type { FileEntry } from "$lib/domain/file";
 import { basename } from "$lib/domain/path";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  osClipboardClaimCut,
   osClipboardCompareAndClear,
   osClipboardPublish,
+  osClipboardReleaseCut,
   osClipboardRekey,
   osClipboardSnapshot,
   type NativeClipboardSnapshot,
@@ -16,6 +18,8 @@ export type ClipboardOperation = "copy" | "cut";
 export interface ClipboardContent { entries: FileEntry[]; operation: ClipboardOperation }
 export interface OsClipboardContent { paths: string[]; operation: "copy" }
 const CLIPBOARD_EVENT = "app://clipboard-sync";
+/** Shown when another window or pane holds or already consumed the Cut. */
+export const CUT_ALREADY_PASTED = "Those cut items were already pasted elsewhere.";
 
 function createClipboardStore() {
   let content = $state<ClipboardContent | null>(null);
@@ -103,13 +107,37 @@ function createClipboardStore() {
         else await reconcile();
       } catch { await reconcile(); }
     },
-    async clearIfRevision(expected: number): Promise<void> {
+    /**
+     * Move the Cut at `expected` only if this paste wins it (#871). Every
+     * window claims through the one native worker, so exactly one paste moves
+     * a given Cut. A complete move consumes the Cut; an unfinished or failed
+     * one returns it so it can be pasted again.
+     */
+    async withCutClaim<T>(
+      expected: number,
+      move: () => Promise<{ result: T; complete: boolean }>,
+    ): Promise<{ claimed: false } | { claimed: true; result: T }> {
+      if (!(await osClipboardClaimCut(expected))) {
+        await reconcile();
+        return { claimed: false };
+      }
+      let complete = false;
       try {
-        if (await osClipboardCompareAndClear(expected)) {
-          await reconcile();
-          await notify();
-        }
-      } catch { await reconcile(); }
+        const outcome = await move();
+        complete = outcome.complete;
+        return { claimed: true, result: outcome.result };
+      } finally {
+        try {
+          if (complete) {
+            if (await osClipboardCompareAndClear(expected)) {
+              await reconcile();
+              await notify();
+            }
+          } else {
+            await osClipboardReleaseCut(expected);
+          }
+        } catch { await reconcile(); }
+      }
     },
     async rekeyPath(oldPath: string, newPath: string, snapshot: FileEntry | null = null): Promise<void> {
       const current = content;

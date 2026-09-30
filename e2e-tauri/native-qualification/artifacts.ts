@@ -30,6 +30,12 @@ export function writeNativeQualificationReport(
   writeQualificationArtifact(outputPath, report);
 }
 
+// `qualification-results/` is gitignored: CI (see windows-soak.yml) uploads
+// the full report as a run artifact instead of committing it. If a report
+// must be preserved in the repo as a checkpoint, commit only a small summary
+// (config, timings, outcome counts, no per-sample/per-scenario arrays) plus
+// the full report's SHA-256 with `git add -f`, never the full report itself
+// (#894, #895).
 export function writeQualificationArtifact(
   outputPath: string,
   report: unknown,

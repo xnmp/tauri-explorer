@@ -12,6 +12,24 @@ its own write still owns the clipboard, through the `owner_token` seam from
   Otherwise the coordinator's next snapshot reads the previous list and
   adopts it as an external replacement, destroying the new Cut. The backend
   polls `wl-paste` for the exact payload bytes while the child is alive.
+- Seeing the payload proves nothing when the selection already offered those
+  bytes. Nautilus, Nemo, Caja and a previous app instance write the same
+  `copy\nfile:///…` list. Adversarial review found that a child that never
+  published was credited with the external offer. Its Cut then survived the
+  user's later external Copy of the same file, so Paste moved a file the user
+  had last copied (the #835 class). The write therefore reads the offer as a
+  baseline after stopping the previous owner. If the baseline already equals
+  the payload, the child serves the list for Copy, but its write is never
+  proven, so Cut is refused. Otherwise the offer must change to the payload
+  while the child is alive; the child must still be alive *after* that read.
+  Do not make the payload unique with a `#` comment line: whether GTK file
+  managers accept one is unknown.
+- Remaining windows, accepted and fail-open only within them:
+  - An identical external Copy can land between the baseline read and our
+    publish. Our child then publishes over it, and we own the selection.
+  - An identical external Copy can land after we publish but before `wl-copy`
+    handles `cancelled`. Until the child exits, `owner_token` still vouches
+    for it.
 - Stop (kill and reap) the previous owner *before* starting the next. If the
   old owner still served an identical list (Copy then Cut of the same file),
   the read-back could not show whether the new owner had published.
@@ -53,6 +71,23 @@ list, ends it.
   one `declareTypes` call through `objc2-app-kit`. The legacy type is
   deprecated, but it is what `clipboard-rs` wrote and reads, and Finder
   pastes it.
+  - `changeCount` moves only on an ownership change (`clearContents`,
+    `declareTypes`). Another process calling `addTypes` or `setData` on the
+    types we declared alters the content without moving the count, so that
+    edit keeps our ownership.
+
+## Where Cut degrades (fails closed or slows Copy)
+
+- A clipboard manager that re-owns every selection (`wl-clip-persist`,
+  Windows remote-desktop redirection, some Windows managers) ends ownership
+  at once, so Cut is refused.
+- Windows: if another process holds the clipboard open for more than about
+  100 ms (10 retries at 10 ms), the token read-back fails and that write is
+  unproven.
+- Wayland: a `wl-copy` that stays alive but never publishes blocks each
+  Copy/Cut for the 2 s publish timeout before failing. That happens when the
+  compositor has no data-control protocol and `wl-copy` gets no keyboard
+  focus.
 
 ## Verification
 

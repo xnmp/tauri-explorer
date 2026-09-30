@@ -73,7 +73,9 @@ pub(super) trait WaylandSession {
 }
 
 struct Owner {
-    token: String,
+    /// `None` when publication could not be proven: the process still serves
+    /// the list (Copy works) but never vouches for a Cut.
+    token: Option<String>,
     process: Box<dyn OwnerProcess>,
 }
 
@@ -101,8 +103,10 @@ impl WaylandBackend {
     }
 
     /// Wait until the selection offers `payload` while `process` still runs.
-    /// A process that is alive after its payload became visible published it
-    /// (or will: a client that took the selection later would have ended it).
+    /// The caller has checked that the selection did not already offer
+    /// `payload`, so seeing it proves that some client published it since;
+    /// a process still alive after that read is the publisher, or will
+    /// publish: a client that took the selection later would have ended it.
     fn await_published(
         &mut self,
         process: &mut dyn OwnerProcess,
@@ -149,13 +153,21 @@ impl ClipboardBackend for WaylandBackend {
         }
         let payload = gnome_copied_files(&paths_to_uris(paths)).into_bytes();
         self.stop_owner();
+        // Another client (a file manager, a previous app instance) may already
+        // offer these exact bytes; then their visibility cannot show that our
+        // process published, and paths alone must never keep a Cut (#835).
+        // Serve the list anyway so Copy works, but vouch for nothing.
+        let baseline = self.session.read_offer(FILE_LIST_TYPE);
         let mut process = self.session.spawn_owner(FILE_LIST_TYPE, &payload)?;
-        if let Err(error) = self.await_published(process.as_mut(), &payload) {
-            process.stop();
-            return Err(error);
+        let provable = baseline.as_deref() != Some(payload.as_slice());
+        if provable {
+            if let Err(error) = self.await_published(process.as_mut(), &payload) {
+                process.stop();
+                return Err(error);
+            }
         }
         self.owner = Some(Owner {
-            token: token.to_owned(),
+            token: provable.then(|| token.to_owned()),
             process,
         });
         Ok(())
@@ -168,7 +180,7 @@ impl ClipboardBackend for WaylandBackend {
             self.owner = None;
             return None;
         }
-        Some(owner.token.clone())
+        owner.token.clone()
     }
 
     fn cut_unavailable_reason(&self) -> Option<&'static str> {
@@ -267,6 +279,9 @@ mod tests {
         ExitsAtOnce,
         /// Runs but never publishes (a wedged compositor).
         NeverPublishes,
+        /// Publishes, then exits after serving its first paste (as
+        /// `wl-copy --paste-once` would, or a crash right after publishing).
+        ExitsAfterServing,
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -319,7 +334,10 @@ mod tests {
                 let process = &self.processes[index];
                 if process.life == Life::Running
                     && !process.published
-                    && process.behaviour == Behaviour::Publishes
+                    && matches!(
+                        process.behaviour,
+                        Behaviour::Publishes | Behaviour::ExitsAfterServing
+                    )
                 {
                     self.cancel_owner();
                     self.processes[index].published = true;
@@ -420,7 +438,16 @@ mod tests {
 
         fn read_offer(&mut self, media_type: &str) -> Option<Vec<u8>> {
             assert_eq!(media_type, FILE_LIST_TYPE);
-            self.0.with(|compositor| compositor.offer())
+            self.0.with(|compositor| {
+                let offer = compositor.offer();
+                if let Some(Selection::Process(index)) = compositor.selection {
+                    if compositor.processes[index].behaviour == Behaviour::ExitsAfterServing {
+                        compositor.processes[index].life = Life::Exited;
+                        compositor.selection = None;
+                    }
+                }
+                offer
+            })
         }
 
         fn read_files(&mut self) -> Result<Vec<String>, AppError> {
@@ -609,6 +636,60 @@ mod tests {
         assert_eq!(backend.owner_token().as_deref(), Some(TOKEN));
     }
 
+    fn payload_of(list: &[&str]) -> String {
+        gnome_copied_files(&paths_to_uris(&paths(list)))
+    }
+
+    #[test]
+    fn an_identical_preexisting_offer_never_proves_a_cut() {
+        // Nautilus, Nemo or Caja (or a previous app instance's owner) already
+        // offer the byte-identical list, so its visibility cannot show that
+        // our owner published. Otherwise a Cut would outlive the user's later
+        // external Copy of the same file, and Paste would move it (#835).
+        for behaviour in [Behaviour::NeverPublishes, Behaviour::Publishes] {
+            let desktop = Desktop::default();
+            desktop.external_copy(&payload_of(&["/tmp/a.txt"]));
+            desktop.next_spawn_behaves(behaviour);
+            let mut coordinator = FileClipboardCoordinator::new(Box::new(desktop.backend()));
+            let entry = serde_json::json!({ "name": "a.txt", "path": "/tmp/a.txt" });
+            let error = coordinator.publish(vec![entry.clone()], "cut").unwrap_err();
+            assert!(
+                error.to_string().contains("Could not verify native Cut"),
+                "{error}"
+            );
+            assert!(
+                desktop.with(|compositor| compositor.pauses) == 0,
+                "an unprovable write does not wait for the publish timeout"
+            );
+
+            desktop.external_copy(&payload_of(&["/tmp/a.txt"]));
+            let observed = coordinator.snapshot().unwrap();
+            assert_eq!(observed.operation, None, "no Cut survives");
+            assert!(!coordinator.claim_cut(observed.revision).unwrap());
+
+            // Copy needs no proof: it is admitted with the same list.
+            desktop.external_copy(&payload_of(&["/tmp/a.txt"]));
+            let copy = coordinator.publish(vec![entry], "copy").unwrap();
+            assert_eq!(copy.operation, Some(ClipboardOperation::Copy));
+            assert_eq!(copy.mirror_error, None);
+        }
+    }
+
+    #[test]
+    fn an_owner_that_exits_right_after_serving_its_offer_fails_the_write() {
+        // Seeing our payload once is not enough: the owner must still be
+        // running after that read, or nothing owns the selection.
+        let desktop = Desktop::default();
+        let mut backend = desktop.backend();
+        desktop.next_spawn_behaves(Behaviour::ExitsAfterServing);
+        let error = backend
+            .write_files(&paths(&["/tmp/a.txt"]), ClipboardOperation::Cut, TOKEN)
+            .unwrap_err();
+        assert!(error.to_string().contains("before it owned"), "{error}");
+        assert_eq!(backend.owner_token(), None);
+        assert_eq!(desktop.lives(), vec![Life::Reaped]);
+    }
+
     #[test]
     fn the_coordinator_admits_a_wayland_cut_and_demotes_it_on_replacement() {
         let desktop = Desktop::default();
@@ -695,10 +776,19 @@ mod real_wl_copy_tests {
         }
         assert_eq!(backend.read_files().unwrap(), file, "same paths, new owner");
 
+        // That client offers our exact bytes, so a new write cannot prove it
+        // published: it serves the list but never vouches for a Cut.
         backend
-            .write_files(&file, ClipboardOperation::Copy, "c".repeat(32).as_str())
+            .write_files(&file, ClipboardOperation::Cut, "c".repeat(32).as_str())
             .unwrap();
-        assert_eq!(backend.owner_token(), Some("c".repeat(32)));
+        assert_eq!(backend.owner_token(), None);
+        assert_eq!(backend.read_files().unwrap(), file);
+
+        let other = vec!["/tmp/another owner.txt".to_string()];
+        backend
+            .write_files(&other, ClipboardOperation::Cut, "d".repeat(32).as_str())
+            .unwrap();
+        assert_eq!(backend.owner_token(), Some("d".repeat(32)));
         let _ = Command::new("wl-copy").arg("--clear").status();
     }
 }

@@ -81,7 +81,7 @@ export type ApiResult<T> =
 /**
  * Reject real-fs operations on virtual (`scheme://…`) paths with a graceful
  * error instead of letting them reach the OS backend (#152). Virtual entries
- * are read-only plugin views; only listing (fetchDirectory / streaming) is
+ * are read-only plugin views; only directory listing (fetchDirectory) is
  * provider-routed today.
  */
 export function virtualPathGuard(...paths: (string | undefined)[]): { ok: false; error: string } | null {

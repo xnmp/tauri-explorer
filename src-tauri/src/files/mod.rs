@@ -112,8 +112,8 @@ pub enum FileKind {
 /// Directory listing response.
 ///
 /// `entries` is an `Arc` so cache hits in `dir_listing` share the cached
-/// allocation instead of deep-cloning thousands of `FileEntry`s per call
-/// (serde's `rc` feature serializes through the Arc transparently).
+/// allocation instead of deep-cloning thousands of `FileEntry`s per call.
+/// Its IPC form is the compact column format in `directory_wire.rs`.
 #[derive(Debug)]
 pub struct DirectoryListing {
     pub path: String,

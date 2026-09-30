@@ -21,7 +21,10 @@ describe("directory listing Tauri E2E probe", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockReset();
-    invokeMock.mockResolvedValue({ path: "/probe", entries: [] });
+    invokeMock.mockResolvedValue({
+      format: "columns-v1", path: "/probe", path_prefix: null,
+      columns: { names: [], paths: [], kinds: [], sizes: [], modified: [] },
+    });
     for (const key of Object.keys(document.documentElement.dataset)) {
       delete document.documentElement.dataset[key];
     }

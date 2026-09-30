@@ -1,8 +1,7 @@
 /**
  * Directory-ingest navigation correctness.
- * Issue: streaming-ingest-batching
  *
- * Directory navigation no longer paces entries in batches (#696): the backend
+ * Directory navigation no longer paces entries in batches (#738): the backend
  * `list_directory_fresh` command scans and sorts a directory once and returns
  * a single complete snapshot, which `explorer.svelte.ts` (navigateInternal)
  * commits in one reactive update instead of accumulating per-batch pushes.
@@ -11,8 +10,8 @@
  * (directories first, then alphabetical) — so a regression that drops,
  * duplicates, or misorders entries fails here.
  *
- * Note: the browser mock (mock-invoke.ts) returns the same complete-snapshot
- * shape used natively, so this spec covers the navigation outcome end-to-end
+ * Note: the browser mock (mock-invoke.ts) replies in the same compact
+ * `columns-v1` snapshot format used natively (#868), so this spec covers the navigation outcome end-to-end
  * against the current (non-streaming) contract. Snapshot-scan cost is covered
  * by the Rust criterion benches in `src-tauri/benches/` (e.g.
  * `scan_directory_parallel.rs`), not this spec.
@@ -26,7 +25,7 @@ async function gotoDir(page: Page, path: string) {
   await page.locator(".entry-item").first().waitFor({ timeout: 10000 });
 }
 
-test.describe("Streaming-ingest navigation correctness", () => {
+test.describe("Directory snapshot navigation correctness", () => {
   test("navigating a directory renders every entry, directories first then alphabetical", async ({
     page,
   }) => {

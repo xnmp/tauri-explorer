@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mockInvoke } from "../../src/lib/api/mock-invoke";
+import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
 
 describe("mockInvoke — clipboard file round-trip", () => {
   it("writes then reads back the same file list", async () => {
@@ -36,9 +37,9 @@ describe("mockInvoke — clipboard image paste", () => {
 
     expect(path).toBe(`${directory}/clipboard-image.png`);
 
-    const listing = await mockInvoke<{ entries: { path: string }[] }>("list_directory", {
+    const listing = decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>("list_directory", {
       path: directory,
-    });
+    }));
     expect(listing.entries.some((e) => e.path === path)).toBe(true);
   });
 });

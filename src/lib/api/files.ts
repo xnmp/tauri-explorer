@@ -6,7 +6,7 @@
  * dedicated sibling modules and are imported directly by feature consumers.
  */
 
-import { decodeDirectoryListing, type DirectoryListingPayload } from "./directory-wire";
+import { decodeDirectoryListing, type CompactDirectoryListing } from "./directory-wire";
 import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
 import type { DirectoryListing, FileEntry, FileMutationReceipt } from "$lib/domain/file";
 import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
@@ -111,7 +111,7 @@ export async function fetchDirectory(
     }
   }
   try {
-    const data = await invoke<DirectoryListingPayload>("list_directory", { path });
+    const data = await invoke<CompactDirectoryListing>("list_directory", { path });
     return { ok: true, data: decodeDirectoryListing(data) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -453,16 +453,16 @@ export async function loadDirectory(
     publishDirectoryListingE2EProbe();
   }
 
-  let acquired: (DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }) | undefined;
+  let acquired: (CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }) | undefined;
   try {
     const native = isTauri();
     const observed = Boolean(observation && native);
     const sessionId = observed ? await getNativeResourceSession() : undefined;
     const payload = observed
-      ? await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
+      ? await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("start_observed_directory", {
           path, sessionId,
         })
-      : await invoke<DirectoryListingPayload & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path });
+      : await invoke<CompactDirectoryListing & { watch_lease?: DirectoryWatchLease }>("list_directory_fresh", { path });
     acquired = payload;
     if (observed && !isValidWatchLease(payload.watch_lease)) {
       throw new Error("Invalid native directory watch lease");

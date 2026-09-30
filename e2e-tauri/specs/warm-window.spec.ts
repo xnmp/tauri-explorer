@@ -60,6 +60,15 @@ describe("warm-window pool", () => {
     expect(warm).toBeDefined();
     firstWarmHandle = byLabel.get(warm!)!;
 
+    // The label is readable before the page registers with the pool. Ctrl+N
+    // before registration correctly opens a fresh window instead, and the next
+    // test would then script a still-parked page as if it were activated (#931).
+    await browser.switchToWindow(firstWarmHandle);
+    await browser.waitUntil(
+      async () => (await browser.execute(() => document.documentElement.dataset.e2eWarmReady)) === "1",
+      { timeout: 15_000, timeoutMsg: "warm window never registered with the pool" },
+    );
+
     await browser.switchToWindow(mainHandle);
   });
 

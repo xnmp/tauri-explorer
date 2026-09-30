@@ -8,6 +8,7 @@
 
 import { invoke } from "./common";
 import type { ShellKind } from "$lib/domain/terminal-shell";
+import type { TerminalInputReceipt } from "$lib/domain/terminal-input-queue";
 
 /** Reserve a terminal id so listeners can register BEFORE the PTY spawns. */
 export async function terminalReserveId(): Promise<number> {
@@ -37,9 +38,14 @@ export async function terminalSpawn(
   return invoke<TerminalSpawnInfo>("terminal_spawn", { id, cwd, cols, rows });
 }
 
-/** Write user input (keystrokes) to the terminal. */
-export async function terminalWrite(id: number, data: string): Promise<void> {
-  return invoke("terminal_write", { id, data });
+/**
+ * Write number `seq` (0, 1, 2, … per terminal) of the terminal's input stream.
+ * The backend delivers writes in `seq` order whatever order the invocations
+ * run in, ignores a repeated `seq`, and holds input written before the shell
+ * starts; the receipt reports typeahead it had to discard (#882).
+ */
+export async function terminalWrite(id: number, seq: number, data: string): Promise<TerminalInputReceipt> {
+  return invoke<TerminalInputReceipt>("terminal_write", { id, seq, data });
 }
 
 /** Resize the PTY grid to match xterm's cols/rows. */

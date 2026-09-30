@@ -104,8 +104,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
-- `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path, an ordered writer closed with the PTY (#709).
-- `terminal-input-order.ts` — holds later terminal input behind asynchronous Paste reads, captures xterm's bracketed-paste bytes in the original key position, and drops pending input on restart/disposal (#732).
+- `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
@@ -191,7 +190,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `bookmarks.svelte.ts` — sidebar bookmarks store.
 - `recent-files.svelte.ts` — recent files store.
 - `frecency.svelte.ts` — zoxide-style frecency path ranking.
-- `drives.svelte.ts` — discovered volumes and mounted-root reactive store.
+- `drives.svelte.ts` — discovered volumes and mounted-root reactive store; refreshes on `drives-changed` pushes, polling slowly while the backend pushes and quickly otherwise.
 - `drive-opening.ts` — coalesces mount requests; navigates only after mounting succeeds and reports failures.
 - `home.svelte.ts` — cached home directory (sync `.value`).
 - `sidebar-views.svelte.ts` — activity-bar sidebar view registry (#52).
@@ -352,6 +351,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
 - `ordered-writer.ts` — one-in-flight, coalescing ordered stream over an IPC transport that does not preserve call order; PTY input (#709).
+- `terminal-input-queue.ts` — the terminal's one input queue: strings and promises (paste reads, insertions) in call order, held until the terminal has an id, sent through an ordered writer with gap-free `terminal_write` sequence numbers; unsent input never crosses to a successor stream (#882).
+- `terminal-paste.ts` — per-platform paste source order with injected browser/native readers, and xterm-equivalent paste bytes (CR line endings, bracketed paste) (#732, #882).
 - `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
@@ -414,6 +415,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
+- `terminal/input.rs` — per-terminal input sequencer: admits `terminal_write` in sequence-number order (early arrivals held, repeats ignored), holds 64 KiB of pre-start typeahead (an overflow discards all of it), and feeds one writer thread per PTY through a channel (#882).
 - `system.rs` — native launch context, Recycle Bin launcher, window theme and log-path commands.
 - `user_report.rs` — typed async report relay command, full-description/environment body assembly without log tails, and ureq transport with uncertain-response handling.
 - `process_ext.rs` — suppress console-window flash for spawned children.
@@ -526,6 +528,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_status.rs` — per-entry git status indicators.
 - `drives.rs` — enumerate drives/volumes cross-platform; Linux mount-table fallback and udev label decoding.
 - `linux_volumes.rs` — UDisks2 filesystem discovery, stable volume identity, mount-table merge and click-to-mount adapter.
+- `linux_gvfs_watch.rs` — session-bus `org.gtk.vfs.MountTracker` Mounted/Unmounted subscription that pushes `drives-changed` when GVfs Google Drive entries change (gvfsd-fuse raises no inotify events).
+- `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change.
+- `linux_volume_monitor.rs` — one long-lived UDisks2 subscription (ObjectManager + PropertiesChanged + NameOwnerChanged) feeding a cached snapshot, 30 s backstop resync, reconnect/fallback, and `drives-changed` notifications.
 - `external_apps.rs` — open files / image viewers / terminals externally.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 

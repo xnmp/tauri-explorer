@@ -367,8 +367,8 @@ backend for E2E/browser).
 - `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
 - `domain/quick-access.ts` + `state/home.svelte.ts` — default Quick Access rows are derived from the resolved home directory only; while `get_home_directory` is in flight there are no rows, because a placeholder root produced navigable `/home/Documents` links that stranded the pane on "Path not found" (#702)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
-- `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only nonempty paths count as mounted roots)
-- `domain/drives.ts`; `api/drives.ts` (listDrives/mountDrive); `state/drive-opening.ts` (mount-before-navigation and errors); `src-tauri/src/files/drives.rs` + `linux_volumes.rs` (UDisks2 and mounted fallback)
+- `state/drives.svelte.ts` — `drivesStore` (discovered volumes; only non-null paths count as mounted roots; `drives-changed` push + backstop/fallback poll)
+- `domain/drives.ts`; `api/drives.ts` (listDrives/mountDrive); `state/drive-opening.ts` (mount-before-navigation and errors); `src-tauri/src/files/drives.rs` (`list_drives`, `mount_drive`, `drive_updates_live`) + `linux_volumes.rs` (UDisks2 projection, merge, mount) + `linux_volume_monitor.rs` (cached subscription, mounted fallback) + `linux_mount_watch.rs` (mount-table change push) + `linux_gvfs_watch.rs` (GVfs MountTracker push)
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
 - `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)
 - `domain/resize-size.ts` → `state/scalar-resize.ts` → `composables/use-resize-owner.svelte.ts` — bounded scalar drafts with captured axis/scale, frame identity and shared DOM lifetime; `state/panel-resize.ts` + `composables/use-panel-resize.svelte.ts` adapt fixed/automatic localStorage widths, while `composables/use-controlled-size.svelte.ts` adapts Terminal/Preview settings and keyed Details sizes with final-only persistence, source supersession and conditional post-teardown finalization
@@ -433,13 +433,14 @@ backend for E2E/browser).
 
 ## Terminal panel
 
-- `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input goes through `session.write`, backed by `domain/ordered-writer.ts`: separate `terminal_write` invocations complete in any order, so at most one is in flight and later input coalesces behind it (#709).
-- `state/terminal-input-order.ts` — holds later keystrokes behind an asynchronous clipboard read and captures xterm's paste bytes before flushing them to the session in key order (#732).
+- `state/terminal-session.ts` — frontend resource owner for reserve/listen/spawn/kill; late completions drain before restart/disposal. All PTY input (keys, shortcut bytes, pastes, path insertions, `cd` sync) goes through `session.write` into `domain/terminal-input-queue.ts`, which accepts promises so a clipboard read or a dialect-dependent insertion keeps its key position (#709, #882).
+- `domain/terminal-paste.ts` — paste source order per platform (#732) and the bytes xterm's `paste()` would emit.
+- `src-tauri/src/terminal/input.rs` — the ordering guarantee: `terminal_write(id, seq, data)` is admitted in `seq` order whatever order the async commands run in; typeahead before the PTY exists is held (64 KiB). An overflow discards ALL pre-start input, reports it in the receipt, and the panel logs it and shows a toast. One writer thread per PTY (#882).
 
 - `components/TerminalPanel.svelte` — embedded terminal UI
 - `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)
 - `api/terminal.ts`; `src-tauri/src/terminal.rs` — PTY spawn/write/resize/kill
-- FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync.
+- FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync. Input: xterm `onData`/paste/insertion → `session.write` → input queue → `terminal_write(seq)` → `terminal/input.rs` sequencer → PTY writer thread.
 
 ## Archives, external apps, wallpaper, system
 

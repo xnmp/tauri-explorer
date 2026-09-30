@@ -7,14 +7,14 @@ type VolumeFixture = {
   __mockUDisksUnavailable?: boolean;
   __mockInvokeCounts?: Record<string, number>;
 };
-const usb: Drive = { name: "USB Backup", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdb1" };
-const sd: Drive = { name: "SD Card", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdc1" };
+const usb: Drive = { name: "USB Backup", path: null, kind: "removable", deviceId: "/org/freedesktop/UDisks2/block_devices/sdb1" };
+const sd: Drive = { name: "SD Card", path: null, kind: "removable", deviceId: "/org/freedesktop/UDisks2/block_devices/sdc1" };
 const cloud: Drive = { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", provider: "googledrive" };
 
 test("AC 1 shows startup and inserted volumes with spaces and literal escape text", async ({ page }) => {
   await page.addInitScript(({ usb, cloud }) => {
     (window as unknown as VolumeFixture).__mockLinuxVolumes = [usb,
-      { name: "Raw\\x20", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdd1" }, cloud];
+      { name: "Raw\\x20", path: null, kind: "removable", deviceId: "/org/freedesktop/UDisks2/block_devices/sdd1" }, cloud];
   }, { usb, cloud });
   await page.goto(HOME_URL);
   await waitForEntries(page);

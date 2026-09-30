@@ -1543,16 +1543,16 @@ const mockCommands: Record<string, CommandHandler> = {
     // Model the native mount-table/cloud fallback when the optional service
     // disappears. Only mounted paths survive, without a UDisks identity.
     return fixture.__mockUDisksUnavailable
-      ? drives.filter(d => d.path).map(d => ({ ...d, device_id: undefined }))
+      ? drives.filter(d => d.path !== null).map(d => ({ ...d, deviceId: undefined }))
       : drives;
   },
   mount_drive: (args) => {
     const fixture = linuxVolumeFixture();
     if (fixture.__mockUDisksUnavailable) throw new Error("Linux storage service (UDisks2) unavailable");
     if (fixture.__mockMountError) throw new Error(fixture.__mockMountError);
-    const drive = fixture.__mockLinuxVolumes?.find(d => d.device_id === args?.deviceId);
+    const drive = fixture.__mockLinuxVolumes?.find(d => d.deviceId === args?.deviceId);
     if (!drive) throw new Error("Linux storage service (UDisks2) unavailable");
-    drive.path ||= "/media/user/USB_DRIVE";
+    drive.path ??= "/media/user/USB_DRIVE";
     return drive.path;
   },
   log_startup_timing: () => undefined,
@@ -2024,7 +2024,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // but never emits output. Real terminal behavior is covered by e2e-tauri.
   terminal_reserve_id: () => 1,
   terminal_spawn: () => ({ id: 1, shellKind: "posix", wslDistro: null }),
-  terminal_write: () => {},
+  terminal_write: () => ({ droppedBytes: 0 }),
   terminal_resize: () => {},
   terminal_kill: () => {},
   terminal_status: () => ({ busy: false, cwd: null }),

@@ -393,21 +393,18 @@ fn an_emptied_directory_replaced_before_its_unlink_is_kept() {
     assert!(base.join("tree/sub").is_dir());
 }
 
-/// Mount-boundary decisions without a mount: a directory on another device, or
-/// any entry on another known mount, is refused. A non-directory may report a
-/// lower layer's device (overlayfs), so only its mount id counts.
+fn at(device: u64, id: Option<u64>) -> Mount {
+    Mount { device, id }
+}
+
+/// Mount-boundary decisions without a mount: below the root, a directory on
+/// another device, or any entry on another known mount, is refused. A
+/// non-directory may report a lower layer's device (overlayfs), so only its
+/// mount id counts.
 #[test]
 fn the_fence_refuses_other_devices_for_directories_and_other_mounts_for_all() {
-    let fence = |evidence| Fence {
-        mount: Mount {
-            device: 1,
-            id: Some(10),
-        },
-        evidence,
-    };
     for evidence in [MountEvidence::Required, MountEvidence::DeviceFallback] {
-        let fence = fence(evidence);
-        let at = |device, id| Mount { device, id };
+        let fence = Fence::for_root(at(1, Some(10)), evidence).below(at(1, Some(10)));
         assert!(fence.check(at(1, Some(10)), true).is_ok());
         assert!(fence.check(at(2, Some(10)), true).is_err());
         assert!(fence.check(at(2, Some(10)), false).is_ok());
@@ -416,24 +413,98 @@ fn the_fence_refuses_other_devices_for_directories_and_other_mounts_for_all() {
     }
 }
 
+/// A btrfs subvolume root has its own device on its container's mount, so the
+/// root is fenced by mount id alone and its own device bounds what is below.
+#[test]
+fn the_root_may_have_its_own_device_but_never_its_own_mount() {
+    for evidence in [MountEvidence::Required, MountEvidence::DeviceFallback] {
+        let container = at(1, Some(10));
+        let root = Fence::for_root(container, evidence);
+        assert!(root.check(at(7, Some(10)), true).is_ok());
+        assert!(root.check(at(7, Some(11)), true).is_err());
+        assert!(root.check(at(1, Some(11)), true).is_err());
+
+        let below = root.below(at(7, Some(10)));
+        assert!(below.check(at(7, Some(10)), true).is_ok());
+        // A nested subvolume, or the container's own device, is another
+        // filesystem from inside the root.
+        assert!(below.check(at(8, Some(10)), true).is_err());
+        assert!(below.check(at(1, Some(10)), true).is_err());
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn missing_mount_identity_refuses_only_when_it_is_required() {
-    let at = |id| Mount { device: 1, id };
     for (reference, observed) in [(Some(10), None), (None, Some(10)), (None, None)] {
-        let fence = |evidence| Fence {
-            mount: at(reference),
-            evidence,
-        };
+        let fence = |evidence| Fence::for_root(at(1, reference), evidence).below(at(1, reference));
         assert!(fence(MountEvidence::Required)
-            .check(at(observed), true)
+            .check(at(1, observed), true)
             .is_err());
         assert!(fence(MountEvidence::DeviceFallback)
-            .check(at(observed), true)
+            .check(at(1, observed), true)
             .is_ok());
     }
 }
 
+/// A name that stays listed but can never be observed must not spin the walk
+/// forever; progress, or a pass that lists nothing, ends the fruitless count.
+#[test]
+fn passes_that_only_meet_vanished_names_are_bounded() {
+    let fruitless = Pass {
+        seen: true,
+        progressed: false,
+    };
+    let progressed = Pass {
+        seen: true,
+        progressed: true,
+    };
+    let mut passes = Passes::default();
+    for _ in 1..MAX_FRUITLESS_PASSES {
+        assert!(passes.another(fruitless).unwrap());
+    }
+    assert!(
+        passes.another(progressed).unwrap(),
+        "progress resets the count"
+    );
+    for _ in 1..MAX_FRUITLESS_PASSES {
+        assert!(passes.another(fruitless).unwrap());
+    }
+    let error = passes.another(fruitless).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(!Passes::default().another(Pass::default()).unwrap());
+}
+
+/// Names a pass listed before another remover took them are skipped, not
+/// errors: the walk finishes once a pass lists nothing.
+#[test]
+fn names_removed_concurrently_during_a_pass_are_skipped() {
+    let (_guard, base) = temp();
+    fs::create_dir(base.join("tree")).unwrap();
+    let names: Vec<String> = (0..32).map(|index| format!("file-{index:02}")).collect();
+    for name in &names {
+        fs::write(base.join("tree").join(name), b"x").unwrap();
+    }
+    let tree = base.join("tree");
+    let mut first = true;
+    let mut removal = probe().on_unlink(move |unlinking, _| {
+        if std::mem::take(&mut first) {
+            // Another remover takes every other name after the listing.
+            for name in &names {
+                if OsStr::new(name) != unlinking {
+                    let _ = fs::remove_file(tree.join(name));
+                }
+            }
+        }
+        Ok(())
+    });
+
+    run(&base, "tree", STRICT, &mut removal).unwrap_or_else(|p| panic!("{}", p.error));
+
+    assert!(!exists(&base.join("tree")));
+}
+
+#[cfg(target_os = "linux")]
 const DESCRIPTOR_ROOT: &str = "EXPLORER_TREE_REMOVAL_DESCRIPTOR_ROOT";
 
 /// Deeper than PATH_MAX and wider than the descriptor limit the removal runs
@@ -549,6 +620,64 @@ fn a_bind_mount_inside_the_tree_is_never_entered() {
                 b"foreign"
             );
             assert!(exists(&point));
+        }
+    }
+}
+
+/// A directory bound onto itself after it was observed keeps its device and
+/// inode, so only the opened handle's mount id shows the walk would enter
+/// another mount. The per-entry fence would still refuse anything inside it;
+/// the handle check keeps the walk from treating that directory as its own at
+/// all, which an empty directory makes visible through `emptied`.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn a_mount_appearing_between_admission_and_entry_is_never_entered() {
+    use crate::files::mount_namespace::{require_private_namespace, BindMount};
+    use std::cell::Cell;
+    require_private_namespace();
+    for evidence in [MountEvidence::Required, MountEvidence::DeviceFallback] {
+        for empty in [false, true] {
+            let (_guard, base) = temp();
+            let sub = base.join("tree/sub");
+            fs::create_dir_all(&sub).unwrap();
+            if !empty {
+                fs::write(sub.join("retained"), b"retained").unwrap();
+            }
+            let mut mount: Option<BindMount> = None;
+            let emptied = Cell::new(0);
+            let mut removal = probe()
+                .on_admit(|entry| {
+                    if entry.relative == Path::new("tree/sub") && mount.is_none() {
+                        mount = Some(BindMount::new(&sub, &sub));
+                    }
+                    Ok(())
+                })
+                .on_emptied(|| {
+                    emptied.set(emptied.get() + 1);
+                    Ok(())
+                });
+            let policy = Policy {
+                mount_evidence: evidence,
+                ..STRICT
+            };
+
+            let partial = run(&base, "tree", policy, &mut removal).unwrap_err();
+            drop(removal);
+
+            let case = format!("{evidence:?} empty={empty}");
+            assert!(
+                partial.error.to_string().contains("mount"),
+                "{case}: {}",
+                partial.error
+            );
+            assert!(mount.is_some(), "{case}: the self-bind was never made");
+            assert_eq!(emptied.get(), 0, "{case}: a mounted directory was entered");
+            drop(mount);
+            assert!(sub.is_dir(), "{case}");
+            if !empty {
+                assert_eq!(fs::read(sub.join("retained")).unwrap(), b"retained");
+            }
         }
     }
 }

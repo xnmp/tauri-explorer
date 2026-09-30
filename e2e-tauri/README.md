@@ -476,6 +476,9 @@ for what they never do: `a_bind_mount_inside_the_tree_is_never_entered`
 `replacement_retirement_never_descends_into_a_mount_inside_its_root` and
 `move_cleanup_never_descends_into_a_mount_inside_its_payload`. Each bind-mounts
 a directory of the same filesystem, so only mount identity reveals it, and
-checks the refusal plus every byte the mount exposes. Run them with the command
+checks the refusal plus every byte the mount exposes.
+`a_mount_appearing_between_admission_and_entry_is_never_entered` bind-mounts a
+directory onto itself after the walk observed it, which keeps its device and
+inode, and checks that the walk never enters it. Run them with the command
 above, replacing the test name with the filter `mount_inside` (which also
-selects the two older move-retirement mount tests).
+selects the two older move-retirement mount tests) and then `never_entered`.

@@ -9,10 +9,14 @@
 //! - **Constant descriptors.** Ascending reopens `..` and requires the recorded
 //!   parent identity, and a directory is unlinked only while its name still
 //!   refers to the object that was emptied. Depth never costs a descriptor.
-//! - **One mount.** Every directory shares its container's device, and on Linux
-//!   every entry shares its container's mount id, so a bind mount of the same
-//!   filesystem is refused as well. A non-directory may report a lower layer's
-//!   device (overlayfs), so only its mount id is compared.
+//! - **One mount.** On Linux every entry shares its container's mount id, so
+//!   the root is never a mount point and a bind mount of the same filesystem
+//!   is refused. Every directory below the root also shares the root's device.
+//!   The root itself may have its own device on its container's mount (a btrfs
+//!   subvolume), and a non-directory may report a lower layer's device
+//!   (overlayfs), so neither is compared by device.
+//! - **Progress.** A pass over a directory that only meets names which can no
+//!   longer be observed is retried a bounded number of times, never forever.
 //! - **Bounded.** Depth counts the named root as 1, and every observed entry
 //!   spends one unit of the caller's entry budget.
 //! - **Caller authority.** [`Removal::admit`] sees every entry, from the same
@@ -33,6 +37,11 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
+
+/// Consecutive passes over one directory that list names but observe none of
+/// them. A concurrent remover empties a directory within a pass or two; a name
+/// that stays listed yet is never found is refused instead of spun on.
+const MAX_FRUITLESS_PASSES: usize = 16;
 
 /// Bounds and resumption for one removal. The guarantees above are fixed.
 #[derive(Clone, Copy, Debug)]
@@ -137,11 +146,8 @@ struct Walk<'a, R> {
 
 impl<R: Removal> Walk<'_, R> {
     fn run(&mut self, container: &Directory, name: &OsStr) -> Result<(), R::Error> {
-        let fence = Fence {
-            mount: directory_mount(container)?,
-            evidence: self.policy.mount_evidence,
-        };
-        let Some(root) = self.observe(container, name, &fence, 1)? else {
+        let root_fence = Fence::for_root(directory_mount(container)?, self.policy.mount_evidence);
+        let Some(root) = self.observe(container, name, &root_fence, 1)? else {
             return match self.policy.absent_root {
                 AbsentRoot::Removed => Ok(()),
                 AbsentRoot::Refused => Err(missing_root().into()),
@@ -150,7 +156,8 @@ impl<R: Removal> Walk<'_, R> {
         if !root.directory {
             return self.unlink(container, name, false);
         }
-        let mut current = enter(container, name, &root, &fence)?;
+        let mut current = enter(container, name, &root, &root_fence)?;
+        let fence = root_fence.below(directory_mount(&current)?);
         let mut current_object = root.object;
         self.path.push(name);
         // Each frame is the parent's identity and this directory's name in it.
@@ -170,7 +177,7 @@ impl<R: Removal> Walk<'_, R> {
             self.path.pop();
             let Some((parent_object, child)) = stack.pop() else {
                 drop(current);
-                return self.unlink_emptied(container, name, current_object, &fence, true);
+                return self.unlink_emptied(container, name, current_object, &root_fence, true);
             };
             let parent = current.open_parent()?;
             if of_file(&parent.file)? != parent_object {
@@ -184,21 +191,19 @@ impl<R: Removal> Walk<'_, R> {
     }
 
     /// Unlink every non-directory in `directory` until it holds none, and
-    /// return its first admitted subdirectory. Unlinking during enumeration can
-    /// hide later entries on some filesystems, so a directory holds no more
-    /// work only after a whole pass observes nothing.
+    /// return its first admitted subdirectory; [`Passes`] decides when to stop.
     fn next_directory(
         &mut self,
         directory: &Directory,
         fence: &Fence,
         depth: usize,
     ) -> Result<Option<(OsString, EntryVersion)>, R::Error> {
-        let mut seen = true;
-        while seen {
-            seen = false;
+        let mut passes = Passes::default();
+        loop {
+            let mut pass = Pass::default();
             for name in directory.entries()? {
                 let name = name?;
-                seen = true;
+                pass.seen = true;
                 let Some(version) = self.observe(directory, &name, fence, depth)? else {
                     continue;
                 };
@@ -206,9 +211,12 @@ impl<R: Removal> Walk<'_, R> {
                     return Ok(Some((name, version)));
                 }
                 self.unlink(directory, &name, false)?;
+                pass.progressed = true;
+            }
+            if !passes.another(pass)? {
+                return Ok(None);
             }
         }
-        Ok(None)
     }
 
     /// Spend the bounds for a newly visited entry, then inspect it.
@@ -309,6 +317,42 @@ fn enter(
     Ok(opened)
 }
 
+/// What one pass over a directory observed.
+#[derive(Clone, Copy, Debug, Default)]
+struct Pass {
+    /// It listed at least one name.
+    seen: bool,
+    /// It unlinked at least one entry.
+    progressed: bool,
+}
+
+/// Whether a directory needs another pass: unlinking during enumeration can
+/// hide later entries on some filesystems, so a directory holds no more work
+/// only after a whole pass lists nothing.
+#[derive(Debug, Default)]
+struct Passes {
+    fruitless: usize,
+}
+
+impl Passes {
+    fn another(&mut self, pass: Pass) -> io::Result<bool> {
+        if !pass.seen {
+            return Ok(false);
+        }
+        if pass.progressed {
+            self.fruitless = 0;
+            return Ok(true);
+        }
+        self.fruitless += 1;
+        if self.fruitless >= MAX_FRUITLESS_PASSES {
+            return Err(invalid(
+                "Removal keeps listing entries that can no longer be found",
+            ));
+        }
+        Ok(true)
+    }
+}
+
 /// Where an observation lives. `id` is `None` wherever no mount id is known.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Mount {
@@ -319,16 +363,39 @@ struct Mount {
 /// The mount a removal may not leave.
 #[derive(Clone, Copy, Debug)]
 struct Fence {
-    mount: Mount,
+    /// Device every directory must share; `None` only for the root itself.
+    device: Option<u64>,
+    /// The container's mount id.
+    mount: Option<u64>,
     evidence: MountEvidence,
 }
 
 impl Fence {
+    /// The root must be on its container's mount, so it is never a mount
+    /// point, but it may be a filesystem root of its own there: a btrfs
+    /// subvolume has its own device on the same mount.
+    fn for_root(container: Mount, evidence: MountEvidence) -> Self {
+        Self {
+            device: None,
+            mount: container.id,
+            evidence,
+        }
+    }
+
+    /// Below the root, directories also share the root's device, so a nested
+    /// filesystem (another btrfs subvolume included) is refused.
+    fn below(self, root: Mount) -> Self {
+        Self {
+            device: Some(root.device),
+            ..self
+        }
+    }
+
     fn check(&self, observed: Mount, directory: bool) -> io::Result<()> {
-        if directory && observed.device != self.mount.device {
+        if directory && self.device.is_some_and(|device| device != observed.device) {
             return Err(invalid("Removal does not cross a filesystem boundary"));
         }
-        match (self.mount.id, observed.id) {
+        match (self.mount, observed.id) {
             (Some(expected), Some(actual)) if expected != actual => {
                 Err(invalid("Removal does not cross a mount boundary"))
             }

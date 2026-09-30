@@ -24,7 +24,6 @@
     "core:window:allow-is-visible",
     "core:window:allow-is-minimized",
     "opener:default",
-    "clipboard-x:default",
     "core:webview:allow-create-webview-window",
     "log:default",
     "drag:default"

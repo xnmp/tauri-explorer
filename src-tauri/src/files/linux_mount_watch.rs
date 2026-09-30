@@ -21,9 +21,10 @@ use tokio::io::{unix::AsyncFd, Interest};
 /// settle briefly so one re-read covers the burst.
 const SETTLE: Duration = Duration::from_millis(50);
 
-/// The production projection: drives the host's mount table yields.
-#[doc(hidden)]
-pub fn host_mount_table_drives(mountinfo: &str) -> Vec<Drive> {
+/// The production projection: drives the host's mount table yields. Visible
+/// to `linux_volumes`, which registers it as the watch's projection, and to
+/// the privileged real-kernel test in `test_support/linux_mount_watch.rs`.
+pub(super) fn host_mount_table_drives(mountinfo: &str) -> Vec<Drive> {
     linux_mount_table_drives(
         mountinfo,
         Path::new("/sys/block"),
@@ -178,3 +179,10 @@ mod tests {
         assert!(MountTableWatch::spawn(plain.path(), host_mount_table_drives, || {}).is_err());
     }
 }
+
+/// Opt-in real-kernel coverage requiring a private mount namespace. Moved in
+/// from Cargo's auto-discovered `tests/linux_mount_watch.rs` (#926); see its
+/// module docs for the `unshare` invocation.
+#[cfg(test)]
+#[path = "../../test_support/linux_mount_watch.rs"]
+mod privileged_tests;

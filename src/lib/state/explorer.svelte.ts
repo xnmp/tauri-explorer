@@ -37,6 +37,7 @@ import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
+import { selectPasteSource } from "$lib/domain/paste-source";
 import { createDirectoryListing } from "./directory-listing";
 import { createPaneWatch } from "./pane-watch";
 import { createPaneRefresh } from "./pane-refresh";
@@ -617,32 +618,25 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // The native snapshot waits behind every accepted file clipboard job,
     // including jobs from other windows. Paste never bypasses this order.
-    const { content: osContent, error: osReadError, snapshot } = await clipboardStore.readOsFiles();
-    const internal = snapshot?.entries && snapshot.operation
-      ? { entries: snapshot.entries, operation: snapshot.operation }
-      : null;
-    const useInternal = internal !== null &&
-      ((snapshot !== null && snapshot.paths.length > 0) ||
-        (osReadError !== null && internal.operation === "copy"));
+    const { error: osReadError, snapshot } = await clipboardStore.readOsFiles();
+    const source = selectPasteSource(snapshot, osReadError);
 
-    if (useInternal) {
-      const { entries, operation } = internal!;
-      const isCut = operation === "cut";
-      const cutRevision = snapshot?.revision;
+    if (source.kind === "internal") {
+      const isCut = source.operation === "cut";
       const error = await pasteEntries(
-        entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
+        source.entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
         context,
-        () => { if (isCut && cutRevision !== undefined) void clipboardStore.clearIfRevision(cutRevision); },
+        () => { if (isCut) void clipboardStore.clearIfRevision(source.revision); },
       );
       if (origin.current()) pasteResult = { error, timestamp: Date.now() };
       return error;
     }
 
     // OS clipboard (files copied from external apps like Explorer/Finder)
-    if (osContent && osContent.paths.length > 0) {
+    if (source.kind === "external") {
       const error = await pasteEntries(
-        osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
+        source.paths.map((p) => ({ path: p, name: basename(p) })),
         false,
         context,
       );

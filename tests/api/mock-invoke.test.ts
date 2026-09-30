@@ -3,30 +3,20 @@ import { mockInvoke } from "../../src/lib/api/mock-invoke";
 import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
 
 describe("mockInvoke — clipboard file round-trip", () => {
-  it("writes then reads back the same file list", async () => {
-    const paths = ["/home/user/notes.md", "/home/user/readme.txt"];
+  type Snapshot = { revision: number; paths: string[]; operation: string | null };
 
-    const wrote = await mockInvoke<boolean>("clipboard_write_files", { paths });
-    expect(wrote).toBe(true);
-
-    expect(await mockInvoke<boolean>("clipboard_has_files")).toBe(true);
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual(paths);
-  });
-
-  it("reports no files after writing an empty list", async () => {
-    await mockInvoke<boolean>("clipboard_write_files", { paths: [] });
-
-    expect(await mockInvoke<boolean>("clipboard_has_files")).toBe(false);
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual([]);
+  it("publishes entries that a later snapshot reads back", async () => {
+    const entries = [{ name: "notes.md", path: "/home/user/notes.md" }, { name: "readme.txt", path: "/home/user/readme.txt" }];
+    const published = await mockInvoke<Snapshot>("clipboard_publish", { entries, operation: "copy" });
+    const snapshot = await mockInvoke<Snapshot>("clipboard_snapshot");
+    expect(snapshot).toMatchObject({ revision: published.revision, operation: "copy", paths: entries.map((e) => e.path) });
   });
 
   it("returns an independent copy so callers cannot mutate the clipboard", async () => {
-    await mockInvoke<boolean>("clipboard_write_files", { paths: ["/a", "/b"] });
-
-    const read = await mockInvoke<string[]>("clipboard_read_files");
-    read.push("/hacked");
-
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual(["/a", "/b"]);
+    await mockInvoke("clipboard_publish", { entries: [{ name: "a", path: "/a" }, { name: "b", path: "/b" }], operation: "copy" });
+    const read = await mockInvoke<Snapshot>("clipboard_snapshot");
+    read.paths.push("/hacked");
+    expect((await mockInvoke<Snapshot>("clipboard_snapshot")).paths).toEqual(["/a", "/b"]);
   });
 });
 
@@ -64,7 +54,7 @@ describe("mockInvoke — revisioned clipboard", () => {
     });
     expect(renamed.paths).toEqual(["/new.txt"]);
     expect(await mockInvoke<boolean>("clipboard_compare_and_clear", { revision: initial.revision })).toBe(false);
-    expect(await mockInvoke<string[]>("clipboard_read_files")).toEqual(["/new.txt"]);
+    expect((await mockInvoke<{ paths: string[] }>("clipboard_snapshot")).paths).toEqual(["/new.txt"]);
   });
 
   it("can simulate a platform without native Cut ownership", async () => {

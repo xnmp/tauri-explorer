@@ -294,6 +294,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
 - `path.ts` — path normalization/join/parent/relative helpers.
+- `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
 - `platform.ts` — isMac/isWindows/isLinux detection.
 - `wsl.ts` — WSL path recognition.
 - `virtual-path.ts` — virtual (plugin-provided) path parsing.

@@ -41,9 +41,6 @@ vi.mock("$lib/state/directory-listing", () => ({
 }));
 
 vi.mock("$lib/api/os-clipboard", () => ({
-  osClipboardHasFiles: vi.fn(async () => false),
-  osClipboardReadFiles: mocks.osReadFiles,
-  osClipboardWriteFiles: mocks.osWriteFiles,
   osClipboardPublish: (entries: FileEntry[], operation: "copy" | "cut") => {
     const publish = mocks.native.pending.then(async () => {
     const written = await mocks.osWriteFiles(entries.map((entry) => entry.path));

@@ -12,7 +12,6 @@ const native = vi.hoisted(() => ({
 }));
 
 vi.mock("$lib/api/os-clipboard", () => ({
-  osClipboardHasFiles: vi.fn(async () => native.paths.length > 0),
   osClipboardPublish: (entries: FileEntry[], operation: "copy" | "cut") => {
     const job = native.tail.then(() => new Promise<void>((resolve) => {
       native.writes.push({ paths: entries.map((entry) => entry.path), finish: resolve });
@@ -123,7 +122,6 @@ it("an older local completion cannot replace a newer pending Copy", async () => 
     native.writes[0].finish();
     await vi.waitFor(() => expect(native.writes).toHaveLength(2));
     expect(store.content?.entries[0].path).toBe("/newer.txt");
-    expect(store.hasPendingLocalCopy).toBe(true);
     native.writes[1].finish();
     await Promise.all([older, newer]);
     expect(store.content?.entries[0].path).toBe("/newer.txt");

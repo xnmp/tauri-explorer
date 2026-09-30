@@ -17,8 +17,6 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
 }));
 vi.mock("$lib/api/os-clipboard", () => ({
-  errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
-  osClipboardHasFiles: vi.fn(async () => native.paths.length > 0),
   osClipboardPublish: async (entries: FileEntry[], operation: "copy" | "cut") => {
     if (native.failWrite && operation === "cut") throw new Error("native ownership unavailable");
     native.revision++;

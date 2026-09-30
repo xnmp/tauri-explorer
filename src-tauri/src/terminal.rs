@@ -1694,15 +1694,17 @@ mod tests {
         write_terminal(id, OWNER, 0, b"printf 'RT:%s:%s\\n' round trip\n".to_vec()).unwrap();
         expect_output("RT:round:trip");
 
-        write_terminal(id, OWNER, 1, b"stty size | sed 's/^/SIZE=/'\n".to_vec()).unwrap();
-        expect_output("SIZE=24 80");
+        // Each write prints its own marker, so a repeated or lost write cannot
+        // pass for a stale size (#929).
+        write_terminal(id, OWNER, 1, b"stty size | sed 's/^/SIZE1=/'\n".to_vec()).unwrap();
+        expect_output("SIZE1=24 80");
         assert!(
             resize_terminal(id, "another-window", 100, 30).is_err(),
             "only the owning window may resize its terminal"
         );
         resize_terminal(id, OWNER, 132, 40).unwrap();
-        write_terminal(id, OWNER, 2, b"stty size | sed 's/^/SIZE=/'\n".to_vec()).unwrap();
-        expect_output("SIZE=40 132");
+        write_terminal(id, OWNER, 2, b"stty size | sed 's/^/SIZE2=/'\n".to_vec()).unwrap();
+        expect_output("SIZE2=40 132");
 
         write_terminal(id, OWNER, 3, b"exit 7\n".to_vec()).unwrap();
         let status = exit_rx

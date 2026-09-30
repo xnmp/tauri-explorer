@@ -139,3 +139,7 @@ async fn retire<O: Settle>(mut outcome: O, admission: super::recovery::MutationA
     }
     outcome
 }
+
+#[cfg(test)]
+#[path = "../../test_support/admission.rs"]
+mod tests;

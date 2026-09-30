@@ -105,13 +105,14 @@ jobs:
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
   webkit-tests:
     runs-on: ubuntu-latest
-    # The full 777-test suite exceeded 40m. Keep one worker on each runner
-    # and preserve the existing per-runner bound while partitioning the work.
+    # The full 777-test suite exceeded 40m, and two shards still ran 24-38m,
+    # so runner contention pushed them past the bound (#932). Keep one worker
+    # on each runner and the per-runner bound; partition four ways for headroom.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -128,7 +129,7 @@ jobs:
       - name: E2E tests (WebKit)
         env:
           WEBKIT: "1"
-        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/2 --reporter=line,html
+        run: npx playwright test --project=webkit --shard=${{ matrix.shard }}/4 --reporter=line,html
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -138,7 +139,7 @@ jobs:
           path: playwright-report/
           if-no-files-found: ignore
 
-  # WebKit is also a protected context: both shards must complete successfully.
+  # WebKit is also a protected context: every shard must complete successfully.
   webkit:
     if: always()
     needs: [webkit-tests]

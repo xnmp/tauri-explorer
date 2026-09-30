@@ -48,6 +48,7 @@ async function switchToLabel(label: string): Promise<void> {
     await selectWindowByLabel({
       listHandles: () => browser.getWindowHandles(),
       switchTo: (handle) => browser.switchToWindow(handle),
+      currentUrl: () => browser.getUrl(),
       currentLabel: () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel),
       pause: (ms) => browser.pause(ms),
       now: () => Date.now(),
@@ -311,7 +312,6 @@ describe("native window transfer ownership", function () {
       await listingHas("destination.txt");
       if (closeCase.kind === "native") {
         await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-window-close.png");
-        await captureDiagnostics("qualification-complete");
       }
       console.info(`[window-transfer-phase] ${closeCase.kind} close completed`);
     });

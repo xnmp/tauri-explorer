@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  isWarmWindowUrl,
+  mayHostLabel,
   selectWindowByLabel,
   waitForListingEntry,
   waitForWindowOperation,
@@ -62,6 +64,7 @@ describe("native window-label scan", () => {
     await selectWindowByLabel({
       listHandles: async () => ["main", "parked-warm", "target"],
       switchTo: async (handle) => { selected = handle; visited.push(handle); },
+      currentUrl: async () => "tauri://localhost/",
       currentLabel: async () => {
         elapsed += 11_000;
         return selected === "target" ? "requested-child" : undefined;
@@ -80,6 +83,7 @@ describe("native window-label scan", () => {
     await expect(selectWindowByLabel({
       listHandles: async () => ["main", "parked-warm"],
       switchTo: async (handle) => { visited.push(handle); },
+      currentUrl: async () => "tauri://localhost/",
       currentLabel: async () => { elapsed += 11_000; return undefined; },
       pause: async () => { throw new Error("expired scan must not repeat"); },
       now: () => elapsed,
@@ -96,6 +100,7 @@ describe("native window-label scan", () => {
     await selectWindowByLabel({
       listHandles: async () => (++scans === 1 ? ["main"] : ["main", "child"]),
       switchTo: async (handle) => { selected = handle; },
+      currentUrl: async () => "tauri://localhost/",
       currentLabel: async () => selected === "child" ? "requested-child" : undefined,
       pause: async (ms) => { elapsed += ms; },
       now: () => elapsed,
@@ -116,6 +121,7 @@ describe("native window-label scan", () => {
         }
         selected = handle;
       },
+      currentUrl: async () => "tauri://localhost/",
       currentLabel: async () => selected === "child" ? "requested-child" : undefined,
       pause: async () => { throw new Error("child was in the first scan"); },
       now: () => 0,
@@ -128,10 +134,62 @@ describe("native window-label scan", () => {
     await expect(selectWindowByLabel({
       listHandles: async () => ["main", "child"],
       switchTo: async () => { throw driverError; },
+      currentUrl: async () => "tauri://localhost/",
       currentLabel: async () => undefined,
       pause: async () => {},
       now: () => 0,
     }, "requested-child", 20_000)).rejects.toBe(driverError);
+  });
+});
+
+describe("owned-page scan (#885, #931)", () => {
+  const urls: Record<string, string> = {
+    main: "tauri://localhost/",
+    warm: "tauri://localhost/?warm=1&path=%2Fhome%2Frunner&home=%2Fhome%2Frunner",
+    child: "tauri://localhost/?path=%2Fhome%2Frunner%2Fsource",
+  };
+
+  it("never scripts a warm page while looking for an ordinary window", async () => {
+    let selected = "";
+    const scripted: string[] = [];
+    await selectWindowByLabel({
+      listHandles: async () => ["main", "warm", "child"],
+      switchTo: async (handle) => { selected = handle; },
+      currentUrl: async () => urls[selected],
+      currentLabel: async () => {
+        scripted.push(selected);
+        if (selected === "warm") throw new Error("session deleted because of page crash or hang");
+        return selected === "child" ? "explorer-child" : "main";
+      },
+      pause: async () => { throw new Error("child was in the first scan"); },
+      now: () => 0,
+    }, "explorer-child", 20_000);
+    expect(scripted).toEqual(["main", "child"]);
+    expect(selected).toBe("child");
+  });
+
+  it("still finds a requested warm window, which the test then owns", async () => {
+    let selected = "";
+    await selectWindowByLabel({
+      listHandles: async () => ["main", "warm"],
+      switchTo: async (handle) => { selected = handle; },
+      currentUrl: async () => urls[selected],
+      currentLabel: async () => selected === "warm" ? "explorer-warm-1" : "main",
+      pause: async () => { throw new Error("warm was in the first scan"); },
+      now: () => 0,
+    }, "explorer-warm-1", 20_000);
+    expect(selected).toBe("warm");
+  });
+
+  it("classifies warm pages by their launch parameter only", () => {
+    expect(isWarmWindowUrl(urls.warm)).toBe(true);
+    expect(isWarmWindowUrl(urls.child)).toBe(false);
+    expect(isWarmWindowUrl("tauri://localhost/?path=%2Fwarm%3D1")).toBe(false);
+    expect(isWarmWindowUrl("not a url")).toBe(false);
+    expect(isWarmWindowUrl("")).toBe(false);
+    expect(mayHostLabel(urls.warm, "explorer-child")).toBe(false);
+    expect(mayHostLabel(urls.warm, "explorer-warm-1")).toBe(true);
+    expect(mayHostLabel(urls.child, "explorer-child")).toBe(true);
   });
 });
 

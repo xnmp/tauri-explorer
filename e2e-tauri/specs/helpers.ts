@@ -2,6 +2,7 @@ import { browser, $, $$ } from "@wdio/globals";
 // Keep command types available to standalone fixture-contract tests too.
 import type {} from "webdriverio";
 import { beginFreshWindowLookup, beginFreshWindowSelection } from "../diagnostics/fresh-window";
+import { mayHostLabel } from "../window-transfer-waits";
 
 /** Exact entry selector for native paths, including Windows `\` and quotes. */
 export function entryPathSelector(
@@ -53,6 +54,8 @@ export async function switchToFreshWindow(
       for (const handle of await browser.getWindowHandles()) {
         if (existing.has(handle)) continue;
         await browser.switchToWindow(handle);
+        // A warm window spawned meanwhile is new but not the test's (#931).
+        if (!mayHostLabel(await browser.getUrl(), label)) continue;
         if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
           selected = handle;
           return true;

@@ -5,6 +5,7 @@ const driver = vi.hoisted(() => ({
   getWindowHandles: vi.fn(),
   switchToWindow: vi.fn(),
   execute: vi.fn(),
+  getUrl: vi.fn(),
   waitUntil: vi.fn(),
 }));
 vi.mock("@wdio/globals", () => ({ browser: driver, $: vi.fn(), $$: vi.fn() }));
@@ -28,6 +29,7 @@ describe("fresh native window selection", () => {
       }
       throw new Error("window did not become ready");
     });
+    driver.getUrl.mockResolvedValue("tauri://localhost/?path=%2Fhome");
   });
 
   it("finds the newly launched child without executing script in an unresponsive existing page", async () => {
@@ -42,6 +44,21 @@ describe("fresh native window selection", () => {
 
     await expect(switchToFreshWindow("explorer-child", ["parked", "main"]))
       .resolves.toBe("child");
+  });
+
+  it("does not script a warm window spawned while the child launches (#931)", async () => {
+    let current = "main";
+    driver.getWindowHandles.mockResolvedValue(["main", "warm", "child"]);
+    driver.switchToWindow.mockImplementation(async (handle: string) => { current = handle; });
+    driver.getUrl.mockImplementation(async () => current === "warm"
+      ? "tauri://localhost/?warm=1&path=%2Fhome"
+      : "tauri://localhost/?path=%2Fhome");
+    driver.execute.mockImplementation(async () => {
+      if (current === "warm") throw new Error("session deleted because of page crash or hang");
+      return "explorer-child";
+    });
+
+    await expect(switchToFreshWindow("explorer-child", ["main"])).resolves.toBe("child");
   });
 
   it("does not accept an existing page as evidence of a fresh launch", async () => {

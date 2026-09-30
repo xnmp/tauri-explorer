@@ -39,6 +39,19 @@ export function userReportAttachmentBytes(data: string): number {
   return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
 }
 
+/** Current count/byte usage of an attachment list, for validating an addition against it. */
+export function userReportAttachmentUsage(
+  attachments: readonly UserReportAttachment[],
+): UserReportAttachmentUsage {
+  return {
+    count: attachments.length,
+    bytes: attachments.reduce(
+      (total, attachment) => total + userReportAttachmentBytes(attachment.data),
+      0,
+    ),
+  };
+}
+
 export function validateUserReportAttachmentFiles(
   files: readonly UserReportAttachmentFile[],
   existing: UserReportAttachmentUsage = { count: 0, bytes: 0 },

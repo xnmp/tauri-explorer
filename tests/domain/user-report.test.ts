@@ -7,6 +7,7 @@ import {
   MAX_USER_REPORT_DESCRIPTION_UNITS,
   MAX_USER_REPORT_TITLE_UNITS,
   userReportAttachmentFailureMessage,
+  userReportAttachmentUsage,
   userReportFallbackNotice,
   userReportFallbackUrl,
   validateUserReportAttachmentFiles,
@@ -134,6 +135,21 @@ describe("definite network failure (#889)", () => {
       .toBe("Could not submit in-app — opening GitHub instead");
     expect(userReportFallbackNotice(undefined))
       .toBe("Could not submit in-app — opening GitHub instead");
+  });
+});
+
+describe("userReportAttachmentUsage", () => {
+  it("returns zero usage for an empty attachment list", () => {
+    expect(userReportAttachmentUsage([])).toEqual({ count: 0, bytes: 0 });
+  });
+
+  it("sums decoded byte size across attachments", () => {
+    const usage = userReportAttachmentUsage([
+      { name: "a.png", mediaType: "image/png", data: "iVBORw0KGgo=" },
+      { name: "b.png", mediaType: "image/png", data: "iVBORw0KGgo=" },
+    ]);
+    expect(usage.count).toBe(2);
+    expect(usage.bytes).toBe(16);
   });
 });
 

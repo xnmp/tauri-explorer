@@ -36,10 +36,21 @@ Gotchas:
   compare the derived drives, not the raw table. Regular files cannot join
   epoll, so the registration error doubles as the degrade signal. Real mounts
   need an `unshare --user --map-root-user --mount` namespace to test.
+- GVfs FUSE entries (`$XDG_RUNTIME_DIR/gvfs/google-drive:...`) do not raise
+  inotify events on mount or unmount: `inotifywait` on the directory stays
+  silent while `gio mount` adds or removes one. Subscribe to the session
+  bus `org.gtk.vfs.MountTracker` `Mounted`/`Unmounted` signals instead (sender
+  `org.gtk.vfs.Daemon`). The former frontend watch on that directory never ran
+  either: it read `process.env`, which does not exist in the webview.
 - Only slow the poll while pushes are live. macOS, Windows, browser mode, and
   Linux without UDisks have no push source; the frontend asks
   `drive_updates_live` after it starts listening, and the event's `live` flag
   switches the cadence afterwards.
+- Keep one liveness reporter. When mount-table pushes also carried `live`, a
+  mount-table event computed before a UDisks outage could arrive after the
+  monitor's `live: false` and restore the 30 s poll with no subscription behind
+  it. Only the UDisks monitor sets `live`; other sources send `{}` and just
+  refresh.
 - After a mount, resync the monitor before returning. The mount reply can
   overtake the monitor's processing of its `PropertiesChanged` signal, so the
   sidebar's immediate refresh would otherwise show "Not mounted".

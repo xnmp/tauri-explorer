@@ -251,6 +251,17 @@ impl Bus {
         )
         .await;
     }
+    /// A PropertiesChanged for an object no snapshot contains.
+    async fn touch_unknown_object(&self) {
+        let invalidated: Vec<String> = vec![];
+        self.emit(
+            "/org/freedesktop/UDisks2/block_devices/unknown",
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            &(BLOCK, HashMap::<String, OwnedValue>::new(), invalidated),
+        )
+        .await;
+    }
     async fn remove_volume(&self) {
         self.state.store(REMOVED, Ordering::SeqCst);
         self.emit(
@@ -525,20 +536,46 @@ async fn backstop_resync_corrects_a_change_no_signal_described() {
 
 #[tokio::test]
 async fn a_slow_service_reply_keeps_the_last_volumes_and_retries_soon() {
+    // No backstop within the test: only the timeout retry (50 ms here) can
+    // pick up the change that lands during the stalled refetch.
     let bus = Bus::start().await;
-    let mut h = harness(&bus, Duration::from_millis(100));
+    let mut h = harness(&bus, QUIET);
     assert_eq!(h.discover("").await.len(), 1);
     assert!(h.changed().await);
     bus.stall_next_reply.store(true, Ordering::SeqCst);
-    // The backstop refetch times out; the volume must not vanish meanwhile.
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(3_000);
+    bus.touch_unknown_object().await;
+    // The refetch this forces outlasts its deadline; meanwhile the volume
+    // mounts without any signal.
+    bus.state.store(MOUNTED, Ordering::SeqCst);
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(1_800);
     while tokio::time::Instant::now() < deadline {
         assert_eq!(h.discover("").await.len(), 1, "a timeout is not an outage");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    h.assert_quiet().await;
-    bus.set_mounted(true).await;
-    assert!(h.changed().await, "the feed recovered after the slow reply");
+    assert!(
+        h.changed().await,
+        "the retry after the timeout finds the mount"
+    );
+    assert_eq!(
+        h.discover(MOUNTED_TABLE).await[0].path.as_deref(),
+        Some("/media/USB Backup")
+    );
+}
+
+#[tokio::test]
+async fn a_signal_for_an_object_the_cache_lacks_forces_a_refetch() {
+    // The volume exists but its InterfacesAdded was never delivered; the first
+    // PropertiesChanged naming it is the cue to refetch.
+    let bus = Bus::start().await;
+    bus.state.store(REMOVED, Ordering::SeqCst);
+    let mut h = harness(&bus, QUIET);
+    assert!(h.discover("").await.is_empty());
+    assert!(h.changed().await);
+    bus.state.store(UNMOUNTED, Ordering::SeqCst);
+    bus.set_mounted(false).await;
+    assert!(h.changed().await, "the unknown object triggers a refetch");
+    assert_eq!(h.discover("").await[0].device_id.as_deref(), Some(ID));
+    assert_eq!(bus.snapshots.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

@@ -98,14 +98,7 @@ pub async fn list_drives() -> Result<Vec<Drive>, AppError> {
 fn enumerate_drives() -> (Vec<Drive>, String) {
     let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
 
-    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            // SAFETY: geteuid has no preconditions and does not mutate memory.
-            let uid = unsafe { libc::geteuid() };
-            std::path::PathBuf::from(format!("/run/user/{uid}"))
-        });
-    let cloud_drives = linux_gvfs_google_drives(&runtime_dir.join("gvfs"))
+    let cloud_drives = linux_gvfs_google_drives(&linux_gvfs_dir())
         .into_iter()
         .chain(linux_rclone_drives());
 
@@ -339,8 +332,23 @@ fn decode_udev_label(label: &str) -> String {
 /// GVFS exposes each connected account as a child of its FUSE mount rather
 /// than as a separate entry in `/proc/self/mountinfo`. A Google account looks
 /// like `google-drive:host=user@example.com` below `$XDG_RUNTIME_DIR/gvfs`.
+/// GVfs's FUSE directory, where each user-visible GVfs mount is an entry.
 #[cfg(target_os = "linux")]
-fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
+pub(super) fn linux_gvfs_dir() -> std::path::PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: geteuid has no preconditions and does not mutate memory.
+            let uid = unsafe { libc::geteuid() };
+            std::path::PathBuf::from(format!("/run/user/{uid}"))
+        })
+        .join("gvfs")
+}
+
+/// Google Drive accounts GVfs exposes as `google-drive:host=…` entries.
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
     let Ok(entries) = std::fs::read_dir(base) else {
         return Vec::new();
     };
@@ -863,6 +871,28 @@ mod linux_tests {
     }
 
     #[test]
+    fn gvfs_derivation_ignores_other_backends_and_plain_files() {
+        let gvfs = tempfile::tempdir().unwrap();
+        std::fs::create_dir(
+            gvfs.path()
+                .join("archive:host=file%253A%252F%252F%252Fa.zip"),
+        )
+        .unwrap();
+        std::fs::create_dir(gvfs.path().join("sftp:host=example.com")).unwrap();
+        std::fs::write(gvfs.path().join("google-drive:host=file@example.com"), "").unwrap();
+        assert!(linux_gvfs_google_drives(gvfs.path()).is_empty());
+        assert!(linux_gvfs_google_drives(&gvfs.path().join("missing")).is_empty());
+        std::fs::create_dir(
+            gvfs.path()
+                .join("google-drive:host=user@example.com,user=user"),
+        )
+        .unwrap();
+        let drives = linux_gvfs_google_drives(gvfs.path());
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].detail.as_deref(), Some("user@example.com"));
+    }
+
+    #[test]
     fn discovers_gvfs_google_account_with_account_detail() {
         let gvfs = tempfile::tempdir().expect("temporary GVFS directory");
         let mount = gvfs.path().join("google-drive:host=user@example.com");
@@ -934,13 +964,13 @@ mod linux_tests {
 /// Only Linux has a push source (the UDisks2 subscription); elsewhere, and on
 /// Linux without a system bus or UDisks, discovery relies on polling.
 #[tauri::command]
-pub async fn drive_updates_live() -> bool {
+pub async fn drive_updates_live() -> Result<bool, AppError> {
     #[cfg(target_os = "linux")]
     {
-        super::linux_volumes::updates_live()
+        Ok(super::linux_volumes::updates_live())
     }
     #[cfg(not(target_os = "linux"))]
-    false
+    Ok(false)
 }
 
 #[tauri::command]

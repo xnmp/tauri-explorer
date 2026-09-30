@@ -7,7 +7,15 @@
 //!   unshare --user --map-root-user --mount \
 //!   cargo test --test linux_mount_watch -- --ignored
 //! ```
-use std::{path::Path, process::Command, time::Duration};
+use std::{
+    path::Path,
+    process::Command,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tauri_explorer_lib::files::linux_mount_watch::{host_mount_table_drives, MountTableWatch};
 use tokio::sync::mpsc;
 
@@ -50,9 +58,14 @@ async fn pushed(pushes: &mut mpsc::UnboundedReceiver<()>, within: Duration) -> b
 async fn drive_mounts_are_pushed_promptly_and_irrelevant_mounts_are_silent() {
     require_private_namespace();
     let (notify, mut pushes) = mpsc::unbounded_channel();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = reads.clone();
     let _watch = MountTableWatch::spawn(
         Path::new("/proc/self/mountinfo"),
-        host_mount_table_drives,
+        move |table: &str| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            host_mount_table_drives(table)
+        },
         move || {
             let _ = notify.send(());
         },
@@ -92,5 +105,13 @@ async fn drive_mounts_are_pushed_promptly_and_irrelevant_mounts_are_silent() {
     assert!(
         !pushed(&mut pushes, Duration::from_millis(500)).await,
         "tmpfs removal is silent"
+    );
+    // Once the table is quiet the watch must sleep, not keep re-reading.
+    let settled = reads.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        settled,
+        "no re-reads without a mount change"
     );
 }

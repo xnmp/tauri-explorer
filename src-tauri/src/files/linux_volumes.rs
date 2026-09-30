@@ -3,6 +3,7 @@
 //! Discovery reads the cached snapshot of one long-lived subscription
 //! (`linux_volume_monitor`), so polling `list_drives` never touches the bus.
 use super::drives::{Drive, DriveKind};
+use super::linux_gvfs_watch::GvfsWatch;
 use super::linux_mount_watch::{host_mount_table_drives, MountTableWatch};
 use super::linux_volume_monitor::{Discovery, MonitorConfig, VolumeMonitor};
 use crate::error::AppError;
@@ -146,6 +147,12 @@ async fn objects(connection: &Connection) -> Result<ManagedObjects, AppError> {
         }
     })
 }
+async fn session_connection() -> Result<Connection, AppError> {
+    tokio::time::timeout(Duration::from_secs(2), Connection::session())
+        .await
+        .map_err(|_| AppError::Other("Session bus connection timed out".into()))?
+        .map_err(|e| AppError::Other(format!("Session bus unavailable: {e}")))
+}
 async fn system_connection() -> Result<Connection, AppError> {
     tokio::time::timeout(Duration::from_secs(2), Connection::system())
         .await
@@ -193,32 +200,47 @@ static MONITOR: OnceLock<VolumeMonitor> = OnceLock::new();
 
 #[derive(Clone, Serialize)]
 struct DrivesChanged {
-    /// True while changes are pushed by a live UDisks subscription.
-    live: bool,
+    /// Set only by the UDisks monitor, the sole liveness reporter: true while
+    /// its subscription pushes changes. Other sources omit it, so a push they
+    /// race with a liveness transition can never report a stale value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live: Option<bool>,
 }
 
 static MOUNT_WATCH: OnceLock<MountTableWatch> = OnceLock::new();
+static GVFS_WATCH: OnceLock<GvfsWatch> = OnceLock::new();
 
-fn announce<R: Runtime>(app: &AppHandle<R>, live: bool) {
+fn announce<R: Runtime>(app: &AppHandle<R>, live: Option<bool>) {
     if let Err(error) = app.emit(DRIVES_CHANGED_EVENT, DrivesChanged { live }) {
         log::warn!("Failed to announce drive changes: {error}");
     }
 }
 
 /// Register the process-wide change sources, which emit `drives-changed` to
-/// every window: the UDisks monitor (connected on the first discovery request)
-/// and the mount-table watch for mounts UDisks never reports.
+/// every window: the UDisks monitor (connected on the first discovery
+/// request), the mount-table watch for mounts UDisks never reports, and the
+/// GVfs mount tracker for GVfs entries no mount table shows.
 pub fn init_monitor<R: Runtime>(app: &AppHandle<R>) {
     let handle = app.clone();
     let monitor = VolumeMonitor::new(MonitorConfig::default(), system_connection, move |live| {
-        announce(&handle, live)
+        announce(&handle, Some(live))
     });
     if MONITOR.set(monitor).is_err() {
         log::warn!("Linux volume monitor initialized more than once");
     }
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        let notify = move || announce(&handle, updates_live());
+        let dir = super::drives::linux_gvfs_dir();
+        match GvfsWatch::start(session_connection(), dir, move || announce(&handle, None)).await {
+            Ok(watch) => {
+                let _ = GVFS_WATCH.set(watch);
+            }
+            Err(error) => log::warn!("GVfs mount changes will not be pushed: {error}"),
+        }
+    });
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let notify = move || announce(&handle, None);
         match MountTableWatch::spawn(
             Path::new("/proc/self/mountinfo"),
             host_mount_table_drives,

@@ -31,21 +31,19 @@ pub fn host_mount_table_drives(mountinfo: &str) -> Vec<Drive> {
     )
 }
 
-/// Change detection over successive mount-table snapshots.
-pub struct MountTableState<T, P> {
-    project: P,
+/// Change detection over successive derivations of a drive source: a push is
+/// due only when what the sidebar would show differs from the last one.
+pub struct Derived<T> {
     last: T,
 }
 
-impl<T: PartialEq, P: Fn(&str) -> T> MountTableState<T, P> {
-    pub fn new(project: P, mountinfo: &str) -> Self {
-        let last = project(mountinfo);
-        Self { project, last }
+impl<T: PartialEq> Derived<T> {
+    pub fn new(initial: T) -> Self {
+        Self { last: initial }
     }
 
-    /// Record a new snapshot; true when its projection differs from the last.
-    pub fn observe(&mut self, mountinfo: &str) -> bool {
-        let next = (self.project)(mountinfo);
+    /// Record the next derivation; true when it differs from the last.
+    pub fn observe(&mut self, next: T) -> bool {
         let changed = next != self.last;
         self.last = next;
         changed
@@ -71,7 +69,7 @@ impl MountTableWatch {
         N: Fn() + Send + 'static,
     {
         let fd = AsyncFd::with_interest(File::open(mountinfo)?, Interest::PRIORITY)?;
-        let mut state = MountTableState::new(project, &read(fd.get_ref())?);
+        let mut state = Derived::new(project(&read(fd.get_ref())?));
         Ok(Self(tokio::spawn(async move {
             loop {
                 let mut guard = match fd.ready(Interest::PRIORITY).await {
@@ -87,7 +85,7 @@ impl MountTableWatch {
                 guard.clear_ready();
                 drop(guard);
                 match read(fd.get_ref()) {
-                    Ok(table) if state.observe(&table) => notify(),
+                    Ok(table) if state.observe(project(&table)) => notify(),
                     Ok(_) => {}
                     Err(error) => log::warn!("Cannot re-read the mount table: {error}"),
                 }
@@ -112,15 +110,24 @@ mod tests {
     const USB: &str = "42 22 8:17 / /mnt/USB\\040Stick rw - vfat /dev/sdb1 rw\n";
     const RCLONE: &str = "43 22 0:60 / /home/u/Remote rw - fuse.rclone backup: rw\n";
 
-    fn state<'a>(
+    /// The production derivation over fixture sysfs, fed one table at a time.
+    struct State<'a> {
         sys_block: &'a Path,
-        table: &str,
-    ) -> MountTableState<Vec<Drive>, impl Fn(&str) -> Vec<Drive> + 'a> {
+        derived: Derived<Vec<Drive>>,
+    }
+    impl State<'_> {
+        fn observe(&mut self, table: &str) -> bool {
+            let labels = self.sys_block.join("no-labels");
+            self.derived
+                .observe(linux_mount_table_drives(table, self.sys_block, &labels))
+        }
+    }
+    fn state<'a>(sys_block: &'a Path, table: &str) -> State<'a> {
         let labels = sys_block.join("no-labels");
-        MountTableState::new(
-            move |text: &str| linux_mount_table_drives(text, sys_block, &labels),
-            table,
-        )
+        State {
+            sys_block,
+            derived: Derived::new(linux_mount_table_drives(table, sys_block, &labels)),
+        }
     }
 
     fn sys_block_with_usb() -> tempfile::TempDir {

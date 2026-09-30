@@ -5,35 +5,19 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createDirectoryWatch } from "./directory-watch";
 import { directoryKey } from "$lib/domain/path";
 
-// Change sources, in order: the backend's `drives-changed` push (Linux UDisks2
-// subscription, #888), fs-watcher events on mount-base directories, and a poll.
-// While the backend pushes, the poll is only a backstop for sources it cannot
-// observe (e.g. rclone/FUSE mounts). Without a push (browser mode, macOS,
-// Windows, Linux without UDisks) the poll is the primary source and stays fast.
+// Change sources: the backend's `drives-changed` push, fs-watcher events on
+// macOS's `/Volumes`, and a poll. On Linux the backend pushes UDisks2, mount
+// table and GVfs changes itself (#888), so no directory is watched here. While
+// the UDisks subscription is live the poll is only a backstop. Without it
+// (browser mode, macOS, Windows, Linux without UDisks) the poll is the primary
+// source and stays fast.
 export const PUSHED_POLL_INTERVAL_MS = 30_000;
 export const UNPUSHED_POLL_INTERVAL_MS = 1500;
 
-const LINUX_MOUNT_BASES = (user: string) => [
-  `/run/media/${user}`,
-  `/media/${user}`,
-  "/media",
-  ...(
-    typeof process !== "undefined" && process.env?.XDG_RUNTIME_DIR
-      ? [`${process.env.XDG_RUNTIME_DIR}/gvfs`]
-      : []
-  ),
-];
-
+/** Directories whose entries track mounts, where no backend push covers them. */
 function detectMountBases(): string[] {
   if (typeof navigator === "undefined") return [];
-  const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes("linux")) {
-    const user = (typeof process !== "undefined" && process.env?.USER) || "";
-    if (!user) return ["/media"];
-    return LINUX_MOUNT_BASES(user);
-  }
-  if (ua.includes("mac")) return ["/Volumes"];
-  return [];
+  return navigator.userAgent.toLowerCase().includes("mac") ? ["/Volumes"] : [];
 }
 
 /** Normalised mount roots of drives that have one (unmounted volumes do not). */
@@ -46,7 +30,7 @@ function createDrivesStore() {
   interface Session {
     timer: ReturnType<typeof setInterval> | null;
     pushed: boolean;
-    /** Push notifications seen; a stale liveness query must not override one. */
+    /** Liveness pushes seen; a stale liveness query must not override one. */
     pushes: number;
     watches: Map<string, ReturnType<typeof createDirectoryWatch>>;
     unlisten: UnlistenFn[];
@@ -105,8 +89,12 @@ function createDrivesStore() {
     session.unlisten.push(unlistenDirs);
     const unlistenDrives = await listen<DrivesChanged>(DRIVES_CHANGED_EVENT, (event) => {
       if (active !== session) return;
-      session.pushes++;
-      schedule(session, event.payload.live);
+      // Only the UDisks monitor reports liveness; other sources just refresh.
+      const { live } = event.payload ?? {};
+      if (typeof live === "boolean") {
+        session.pushes++;
+        schedule(session, live);
+      }
       void refresh().catch(console.error);
     });
     if (active !== session) { unlistenDrives(); return; }

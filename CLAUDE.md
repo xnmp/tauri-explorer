@@ -202,7 +202,10 @@ UDisks2 filesystem objects (`files/linux_volumes.rs`), read from one cached
 subscription (`files/linux_volume_monitor.rs`) that pushes `drives-changed`;
 never reconnect or refetch per `list_drives` poll. Mount-table drives UDisks never
 reports (rclone FUSE, bind and manual mounts) are pushed by the POLLPRI watch on `/proc/self/mountinfo`
-(`files/linux_mount_watch.rs`), so the 30 s poll stays a backstop (#888). UDisks object identity
+(`files/linux_mount_watch.rs`), and GVfs Google Drive mounts by session-bus
+MountTracker signals (`files/linux_gvfs_watch.rs`; gvfsd-fuse raises no inotify
+events), so the 30 s poll stays a backstop. Only the UDisks monitor reports
+`live`; the other sources' pushes omit it (#888). UDisks object identity
 (`deviceId`) is separate from `Drive.path`: a null path means unmounted and must
 never enter navigation or mounted-root tracking. Mount only on explicit opening, through
 `state/drive-opening.ts` and `mount_drive`; discovery itself is read-only.

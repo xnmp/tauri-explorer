@@ -4,13 +4,13 @@ import type { Drive } from "$lib/api/drives";
 // Backend-pushed drive changes (#888): push-driven updates, the slow backstop
 // poll while pushes are live, and fast polling whenever nothing is pushed.
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), live: vi.fn(), listen: vi.fn(),
+  list: vi.fn(), live: vi.fn(), listen: vi.fn(), watch: vi.fn(),
   handlers: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("$lib/api/drives", () => ({
   listDrives: mocks.list, driveUpdatesLive: mocks.live, DRIVES_CHANGED_EVENT: "drives-changed",
 }));
-vi.mock("$lib/api/files", () => ({ watchDirectory: vi.fn(), unwatchDirectory: vi.fn() }));
+vi.mock("$lib/api/files", () => ({ watchDirectory: mocks.watch, unwatchDirectory: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 import {
   drivesStore, PUSHED_POLL_INTERVAL_MS, UNPUSHED_POLL_INTERVAL_MS,
@@ -22,6 +22,10 @@ const usb = (path: string | null): Drive => ({
 let backend: Drive[] = [];
 function push(live: boolean) {
   mocks.handlers.get("drives-changed")!({ payload: { live } });
+}
+/** A mount-table or GVfs change: no liveness, which only UDisks reports. */
+function pushChange() {
+  mocks.handlers.get("drives-changed")!({ payload: {} });
 }
 async function settle() {
   await vi.advanceTimersByTimeAsync(0);
@@ -138,6 +142,50 @@ it("a change before the push listener existed is read once the feed is live", as
   });
   await drivesStore.startPolling();
   expect(drivesStore.removable[0].path).toBe("/media/USB Backup");
+});
+
+it("a push without liveness refreshes at once but keeps the cadence", async () => {
+  mocks.live.mockResolvedValue(true);
+  await drivesStore.startPolling();
+  backend = [usb("/media/USB Backup")];
+  pushChange();
+  await settle();
+  expect(drivesStore.removable[0].path).toBe("/media/USB Backup");
+  backend = [];
+  await vi.advanceTimersByTimeAsync(UNPUSHED_POLL_INTERVAL_MS * 4);
+  expect(drivesStore.removable).toHaveLength(1);
+});
+
+it("a mount-table push racing a UDisks outage cannot restore the slow poll", async () => {
+  mocks.live.mockResolvedValue(true);
+  await drivesStore.startPolling();
+  // The monitor falls back, then a mount-table change is pushed right after.
+  push(false);
+  pushChange();
+  await settle();
+  backend = [];
+  await vi.advanceTimersByTimeAsync(UNPUSHED_POLL_INTERVAL_MS);
+  expect(drivesStore.removable).toHaveLength(0);
+});
+
+it("a push without liveness does not invalidate the pending liveness query", async () => {
+  let answer!: (live: boolean) => void;
+  mocks.live.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+  const starting = drivesStore.startPolling();
+  await vi.waitFor(() => expect(answer).toBeDefined());
+  pushChange();
+  answer(true);
+  await starting;
+  backend = [];
+  await vi.advanceTimersByTimeAsync(UNPUSHED_POLL_INTERVAL_MS * 4);
+  expect(drivesStore.removable).toHaveLength(1);
+});
+
+it("Linux watches no mount directories: the backend pushes mount changes", async () => {
+  vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (X11; Linux x86_64)" });
+  mocks.live.mockResolvedValue(true);
+  await drivesStore.startPolling();
+  expect(mocks.watch).not.toHaveBeenCalled();
 });
 
 it("stopping removes the push listener", async () => {

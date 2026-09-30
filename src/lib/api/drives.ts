@@ -17,8 +17,12 @@ export interface Drive {
 /** Backend event announcing that discovered drives, or their liveness, changed. */
 export const DRIVES_CHANGED_EVENT = "drives-changed";
 export interface DrivesChanged {
-  /** True while changes are pushed by a live subscription (Linux UDisks2). */
-  live: boolean;
+  /**
+   * Set only by the Linux UDisks2 monitor, the sole liveness reporter: true
+   * while its subscription pushes changes. Other change sources (mount table,
+   * GVfs) omit it, so they never alter the poll cadence.
+   */
+  live?: boolean;
 }
 
 export async function listDrives(): Promise<ApiResult<Drive[]>> {

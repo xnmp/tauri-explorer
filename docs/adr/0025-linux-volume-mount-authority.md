@@ -80,11 +80,25 @@ separate contracts.
   so unrelated mounts such as tmpfs stay silent. If the file cannot be opened
   or registered for polling, no watch starts and the backstop poll covers the
   mount table.
-- A change from either source emits `drives-changed { live }` to every window,
-  where `live` reports the UDisks subscription. While `live`, the frontend polls
-  `list_drives` only every 30 seconds as a backstop. Without a push source
-  (browser mode, macOS, Windows, Linux without a system bus or UDisks) it keeps
-  the 1.5-second poll.
+- GVfs Google Drive entries under `$XDG_RUNTIME_DIR/gvfs` have a third source.
+  The gvfsd-fuse directory raises no inotify events when a GVfs mount appears
+  or disappears, so a directory watch cannot observe it. Instead one task
+  subscribes on the session bus to `org.gtk.vfs.MountTracker`
+  `Mounted`/`Unmounted` (sender `org.gtk.vfs.Daemon`, path
+  `/org/gtk/vfs/mounttracker`), re-derives the Google Drive entries after a
+  short settle, and notifies only when they change. Without a session bus no
+  watch starts and the backstop poll covers GVfs.
+- Every source emits `drives-changed` to every window. Only the UDisks monitor
+  reports liveness (`{ live }`); mount-table and GVfs pushes carry no `live`
+  field, so an older liveness value cannot overwrite a newer one when events
+  from different sources interleave. While `live`, the frontend polls
+  `list_drives` only every 30 seconds as a backstop. Without a UDisks
+  subscription (browser mode, macOS, Windows, Linux without a system bus or
+  UDisks) it keeps the 1.5-second poll. The frontend reads the initial state
+  from `drive_updates_live` (`Result<bool, AppError>`) after it starts
+  listening, and ignores that answer if a liveness push has arrived since.
+- Linux has no frontend mount-directory watches; the backend sources above
+  replace them. macOS still watches `/Volumes`.
 - Mount requests reuse the subscription's connection and resynchronize it
   before returning, so the caller's next discovery reflects the outcome. Mount
   authority still comes from a fresh snapshot, never the cache.

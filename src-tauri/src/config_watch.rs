@@ -157,8 +157,6 @@ pub struct ConfigWatchHarness {
     stop: Arc<(Mutex<bool>, Condvar)>,
     worker: Option<JoinHandle<()>>,
     _watcher: Arc<Mutex<RecommendedWatcher>>,
-    #[cfg(all(test, unix))]
-    watch_state: Arc<Mutex<WatchState>>,
 }
 
 impl Drop for ConfigWatchHarness {
@@ -252,8 +250,6 @@ where
     let stop = Arc::new((Mutex::new(false), Condvar::new()));
     let refresh_stop = Arc::clone(&stop);
     let refresh_watcher = Arc::clone(&watcher);
-    #[cfg(all(test, unix))]
-    let test_watch_state = Arc::clone(&watch_state);
     let worker = std::thread::spawn(move || loop {
         let (lock, wake) = &*refresh_stop;
         let Ok(stopped) = lock.lock() else {
@@ -274,8 +270,6 @@ where
         stop,
         worker: Some(worker),
         _watcher: watcher,
-        #[cfg(all(test, unix))]
-        watch_state: test_watch_state,
     })
 }
 
@@ -762,8 +756,12 @@ mod tests {
         let new_source = new_root.join(SETTINGS_FILE);
         let configured = config.join(SETTINGS_FILE);
         symlink(&old_file, &configured).expect("initial settings symlink");
+        let sentinel_source = std::fs::canonicalize(&config)
+            .expect("canonical config dir")
+            .join(BOOKMARKS_FILE);
 
         let (sent, received) = mpsc::channel();
+        let config_dir = config.clone();
         let harness = super::watch_config_changes_with_source(config, move |name, source| {
             // Normalize only the parent: canonicalizing the symlink leaf
             // would mistake a config-entry event for a target-file event.
@@ -817,19 +815,30 @@ mod tests {
             attempt += 1;
         }
         assert!(new_target_observed, "replacement target was not observed");
-        // The real watcher has completed both the new registration and the
-        // old unregistration. Delayed config-entry events cannot substitute
-        // for the sourced new-file receipt above.
-        let state = harness.watch_state.lock().expect("watch state");
-        assert_eq!(
-            state.registered_external_roots.len(),
-            1,
-            "handover retained an unexpected external registration"
-        );
-        assert!(state.registered_external_roots.contains_key(&new_root));
-        assert!(!state.registered_external_roots.contains_key(&old_root));
-        assert_eq!(state.plan.watched_config_name(&old_source), None);
-        drop(state);
+
+        // The sourced new-file receipt proves the handover completed; delayed
+        // config-entry events cannot substitute for it. The watcher delivers
+        // one ordered event stream, so a retired-target write followed by a
+        // first-ever write to another watched file needs no silence window:
+        // any report of the retired write arrives before the sentinel's.
+        std::fs::write(&old_file, "old-2").expect("retired target write");
+        std::fs::write(config_dir.join(BOOKMARKS_FILE), "[]").expect("sentinel write");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "sentinel write was not observed");
+            match received.recv_timeout(remaining) {
+                Ok((_, source)) if source == old_source => {
+                    panic!("a write to the retired symlink target was still reported")
+                }
+                Ok((name, source)) if source == sentinel_source => {
+                    assert_eq!(name, BOOKMARKS_FILE);
+                    break;
+                }
+                Ok(_) => continue,
+                Err(error) => panic!("sentinel write was not observed: {error:?}"),
+            }
+        }
 
         let drop_started = Instant::now();
         drop(harness);

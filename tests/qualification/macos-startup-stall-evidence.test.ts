@@ -155,6 +155,36 @@ describe("stall evidence capture", () => {
     }
   });
 
+  it("flags reports that appeared only while the profiles ran", async () => {
+    oldAndNewReports();
+    const induced = path.join(reports, "Kernel_2026-09-30.gpuRestart");
+    const { run } = scriptedRunner((command, args) => {
+      if (command === "/bin/ps") return { stdout: PS_TABLE };
+      // Suspending WebContent for a profile can itself trigger a GPU reset.
+      if (command === "/usr/bin/sample" && args[0] === "5002") {
+        fs.writeFileSync(induced, "GPU Reset");
+      }
+      return { report: "profile" };
+    });
+    const result = await captureMacStartupStallEvidence({
+      pid: APP_PID,
+      binary: "tauri-explorer",
+      outputDir: root,
+      directoryName: "sample-05-stall",
+      sampleStartedAtMs: SAMPLE_STARTED,
+      run,
+      now: () => CAPTURED,
+      diagnosticReportDirectories: [reports],
+    });
+    const { copied, duringCapture } = result.summary.diagnosticReports;
+    expect(copied).toHaveLength(3);
+    expect(duringCapture).toEqual([
+      path.join("sample-05-stall", "diagnostic-reports", "0-Kernel_2026-09-30.gpuRestart"),
+    ]);
+    const error = await withStallEvidence(new Error("timeout"), root, async () => result);
+    expect(error.message).toContain("3 new diagnostic report(s) (1 written during capture)");
+  });
+
   it("bounds copied diagnostic reports and profile files by size", async () => {
     oldAndNewReports();
     const { run } = scriptedRunner((command) =>
@@ -199,7 +229,7 @@ describe("stall evidence capture", () => {
     });
     expect(summary.captures.every((record) => record.status === "failed")).toBe(true);
     expect(summary.webContentPids).toEqual([]);
-    expect(summary.diagnosticReports).toEqual({ copied: [], omitted: 0, errors: [] });
+    expect(summary.diagnosticReports).toEqual({ copied: [], duringCapture: [], omitted: 0, errors: [] });
   });
 
   it("stops waiting at the overall deadline", async () => {

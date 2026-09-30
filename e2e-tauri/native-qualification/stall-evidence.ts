@@ -66,7 +66,18 @@ export interface StallEvidenceSummary {
   incomplete: boolean;
   webContentPids: number[];
   captures: EvidenceCaptureRecord[];
-  diagnosticReports: { copied: string[]; omitted: number; errors: string[] };
+  diagnosticReports: {
+    copied: string[];
+    /**
+     * Copied reports that appeared only while the profiles ran. `sample`
+     * suspends its target, and on CI's paravirtualized GPU that can itself
+     * trigger a WebContent GPU reset report, so these may be capture artifacts
+     * rather than evidence of the stall.
+     */
+    duringCapture: string[];
+    omitted: number;
+    errors: string[];
+  };
   errors: string[];
 }
 
@@ -319,7 +330,7 @@ export async function captureMacStartupStallEvidence(options: {
     incomplete: false,
     webContentPids: [],
     captures: [],
-    diagnosticReports: { copied: [], omitted: 0, errors: [] },
+    diagnosticReports: { copied: [], duringCapture: [], omitted: 0, errors: [] },
     errors: [],
   };
   const relative = (file: string): string => path.relative(options.outputDir, file);
@@ -417,6 +428,10 @@ export async function captureMacStartupStallEvidence(options: {
     const predicate =
       'process BEGINSWITH "com.apple.WebKit" OR subsystem BEGINSWITH "com.apple.WebKit" ' +
       `OR process == ${JSON.stringify(processName)}`;
+    const reportDirectories =
+      options.diagnosticReportDirectories ?? defaultDiagnosticReportDirectories();
+    const reportsSince = options.sampleStartedAtMs - 1_000;
+    const reportsBeforeCapture = new Set(newDiagnosticReports(reportDirectories, reportsSince));
     await Promise.all([
       ...(pid !== null ? [profile("app", pid)] : []),
       ...selected.webContentPids.map((target) => profile("webcontent", target)),
@@ -428,10 +443,7 @@ export async function captureMacStartupStallEvidence(options: {
       ),
     ]);
 
-    const reports = newDiagnosticReports(
-      options.diagnosticReportDirectories ?? defaultDiagnosticReportDirectories(),
-      options.sampleStartedAtMs - 1_000,
-    );
+    const reports = newDiagnosticReports(reportDirectories, reportsSince);
     const reportDirectory = path.join(directory, "diagnostic-reports");
     for (const [index, report] of reports.entries()) {
       if (index >= limits.maxDiagnosticReports) {
@@ -450,6 +462,9 @@ export async function captureMacStartupStallEvidence(options: {
           fs.closeSync(source);
         }
         summary.diagnosticReports.copied.push(relative(destination));
+        if (!reportsBeforeCapture.has(report)) {
+          summary.diagnosticReports.duringCapture.push(relative(destination));
+        }
       } catch (reason) {
         summary.diagnosticReports.errors.push(`${report}: ${String(reason)}`);
       }
@@ -511,10 +526,12 @@ export function describeStallEvidence(result: StallEvidenceResult, outputDir: st
   const captures = summary.captures
     .map((record) => `${record.id} ${record.status}${record.truncated ? " (truncated)" : ""}`)
     .join(", ");
-  const reports = summary.diagnosticReports.copied.length + summary.diagnosticReports.omitted;
+  const { copied, omitted, duringCapture } = summary.diagnosticReports;
+  const reports = copied.length + omitted;
   return (
     `stall evidence in ${path.relative(outputDir, result.directory) || "."}: ${captures || "no captures"}` +
     `; ${reports} new diagnostic report(s)` +
+    `${duringCapture.length > 0 ? ` (${duringCapture.length} written during capture)` : ""}` +
     `${summary.incomplete ? "; incomplete (overall deadline)" : ""}` +
     `${summary.errors.length > 0 ? `; errors: ${summary.errors.join("; ")}` : ""}`
   );

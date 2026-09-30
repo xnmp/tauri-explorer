@@ -69,6 +69,16 @@ runner image did not change. The rate change is not attributed to any commit.
   and this sample's WebContent processes, 60 s of WebKit unified log, new
   DiagnosticReports, and `evidence.json` recording each capture's outcome.
 
+The capture path was verified on a real runner by forcing a 1.5 s bound. There,
+`sample` worked on WebContent directly, so the spindump fallback was not
+needed. While WebContent was being sampled, the paravirtualized GPU logged
+WebContent `GPU Reset` (`.gpuRestart`) reports with incomplete submissions.
+Suspending a GPU client can cause these, so reports that appear only during
+capture are listed under `duringCapture` and should not be read as stall
+evidence. Direct-binary launches also register as `ApplicationType =
+BackgroundOnly` in Launch Services; that holds for every sample, so on its own
+it does not explain the stall.
+
 Keep evidence capture bounded, and keep the timeout first in the message. A
 capture that fails or hangs adds a clause; it never replaces the reason the
 sample failed (ADR 0021).

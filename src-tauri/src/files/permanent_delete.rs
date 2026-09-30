@@ -81,18 +81,18 @@ mod unix {
         error::AppError,
         files::{
             entry_version::EntryVersion,
-            file_identity::{of_file, version_at, version_from_metadata},
+            file_identity::{of_file, version_at},
             native_directory::Directory,
             object_id::ObjectId,
-            recovery::resources::{self, Access, Scope, SelectionIndex, SelectionRole},
+            prepared_selection::{self, Preparation, SelectionItem, MAX_PLAN_BYTES},
+            recovery::resources::{self, Access, Scope, SelectionRole},
             trash_artifact::TrashSuccess,
             tree_removal::{self, AbsentRoot, MountEvidence, Policy, Removal},
         },
     };
     use std::{
-        collections::{HashSet, VecDeque},
         ffi::{OsStr, OsString},
-        fs, io,
+        io,
         os::unix::fs::MetadataExt,
         path::{Path, PathBuf},
         sync::Arc,
@@ -142,15 +142,20 @@ mod unix {
         }
     }
 
-    pub(crate) struct PreparedSelection {
-        paths: Arc<Vec<String>>,
-        next: usize,
-        items: VecDeque<Result<Item, String>>,
-        resources: Vec<resources::Resource>,
+    pub(crate) type PreparedSelection = prepared_selection::PreparedSelection<Item>;
+
+    impl SelectionItem for Item {
+        const NOUN: &'static str = "Deletion";
+        const EXECUTION: &'static str = "Deletion";
+
+        fn retained_bytes(&self) -> usize {
+            self.parent.capacity() + self.name.capacity() + self.container.capacity()
+        }
     }
 
     /// One observed physical entry and its planned private staging sibling.
-    pub(super) struct Item {
+    /// Crate-visible only because the shared prepared-selection type names it.
+    pub(crate) struct Item {
         parent: PathBuf,
         parent_object: ObjectId,
         name: OsString,
@@ -161,7 +166,7 @@ mod unix {
         container: OsString,
     }
 
-    type Birth = (i64, u32);
+    pub(super) type Birth = (i64, u32);
 
     /// Birth time of `name` relative to `directory` (or an absolute path with
     /// `AT_FDCWD`), without following a final symlink. `None` when the
@@ -237,8 +242,10 @@ mod unix {
 
     /// A native path keeps non-Unicode names exact; there is no receipt key.
     pub(super) fn delete_native(path: &Path) -> Result<TrashSuccess, AppError> {
-        let (mut items, _) = prepare_items(std::iter::once(path), &mut random)?;
-        items
+        let mut preparation = Preparation::new(MAX_PLAN_BYTES);
+        prepare_item(&mut preparation, path, &mut random, &mut birth_of_path)?;
+        preparation
+            .into_items()
             .pop_front()
             .expect("one prepared item per path")
             .map_err(AppError::Other)?
@@ -252,110 +259,69 @@ mod unix {
         paths: Arc<Vec<String>>,
         random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
     ) -> Result<PreparedSelection, AppError> {
-        let (items, resources) = prepare_items(paths.iter().map(Path::new), random)?;
-        Ok(PreparedSelection {
-            paths,
-            next: 0,
-            items,
-            resources,
+        prepare_observed(paths, random, MAX_PLAN_BYTES, &mut birth_of_path)
+    }
+
+    /// [`prepare_with`] under an explicit budget and birth-time reader, the
+    /// seams tests use to pin what a prepared deletion retains and captures.
+    pub(super) fn prepare_observed(
+        paths: Arc<Vec<String>>,
+        random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
+        maximum: usize,
+        birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
+    ) -> Result<PreparedSelection, AppError> {
+        PreparedSelection::prepare(paths, maximum, |preparation, paths| {
+            for path in paths {
+                prepare_item(preparation, Path::new(path), random, birth_of)?;
+            }
+            Ok(())
         })
     }
 
-    type Prepared = (VecDeque<Result<Item, String>>, Vec<resources::Resource>);
-
-    fn prepare_items<'a>(
-        paths: impl ExactSizeIterator<Item = &'a Path>,
+    fn prepare_item(
+        preparation: &mut Preparation<Item>,
+        path: &Path,
         random: &mut impl FnMut(&mut [u8]) -> io::Result<()>,
-    ) -> Result<Prepared, AppError> {
-        let mut index = SelectionIndex::default();
-        let mut claims = HashSet::new();
-        let mut insert = |resource: resources::Resource, role| -> io::Result<()> {
-            index.insert(&resource, role)?;
-            claims.insert(resource);
-            Ok(())
-        };
-        let mut items = VecDeque::with_capacity(paths.len());
-        for path in paths {
-            let mut captured = resources::capture_requests(&[resources::Request {
-                path: path.to_owned(),
-                access: Access::Write,
-                scope: Scope::Subtree,
-            }])?
-            .into_iter();
-            let source = captured
-                .next()
-                .expect("capture retains the primary request first");
-            let version = match fs::symlink_metadata(&source.path.0) {
-                Ok(metadata) => Some(version_from_metadata(&metadata)?),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            if source.object != version.as_ref().map(|version| version.object) {
-                return Err(AppError::Other(
-                    "Deletion source changed during namespace capture".into(),
-                ));
-            }
-            let physical = source.path.0.clone();
-            let birth = match version {
-                Some(_) => birth_of_path(&physical)?,
+        birth_of: &mut impl FnMut(&Path) -> io::Result<Option<Birth>>,
+    ) -> Result<(), AppError> {
+        // Birth time is read right after the version, before any claim.
+        let (source, birth) = preparation.observe_with(path, |physical, version| {
+            Ok(match version {
+                Some(_) => birth_of(physical)?,
                 None => None,
-            };
-            let parent_object = *source
-                .ancestors
-                .first()
-                .expect("validated source has a parent identity");
-            insert(
-                source,
-                SelectionRole::Source {
-                    directory: version.as_ref().is_some_and(|version| version.directory),
-                },
-            )?;
-            for dependency in captured {
-                insert(dependency, SelectionRole::Shared)?;
-            }
-            let Some(version) = version else {
-                items.push_back(Err(
-                    AppError::NotFound(path.display().to_string()).to_string()
-                ));
-                continue;
-            };
-            let (Some(parent), Some(name)) = (physical.parent(), physical.file_name()) else {
-                return Err(AppError::InvalidPath(path.display().to_string()));
-            };
-            let mut nonce = [0u8; 16];
-            random(&mut nonce)?;
-            let container: OsString = format!(
-                "{CONTAINER_PREFIX}{}",
-                nonce
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>()
-            )
-            .into();
-            insert(
-                resources::capture(&parent.join(&container), Access::Write, Scope::Subtree)?,
-                SelectionRole::Exclusive,
-            )?;
-            items.push_back(Ok(Item {
-                parent: parent.to_owned(),
-                parent_object,
-                name: name.to_owned(),
-                version,
-                birth,
-                container,
-            }));
-        }
-        Ok((items, claims.into_iter().collect()))
+            })
+        })?;
+        let Some(version) = source.version else {
+            return preparation.push(Err(AppError::NotFound(path.display().to_string())));
+        };
+        let (Some(parent), Some(name)) = (source.path.parent(), source.path.file_name()) else {
+            return Err(AppError::InvalidPath(path.display().to_string()));
+        };
+        let mut nonce = [0u8; 16];
+        random(&mut nonce)?;
+        let container: OsString = format!(
+            "{CONTAINER_PREFIX}{}",
+            nonce
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        )
+        .into();
+        preparation.claim(
+            &resources::capture(&parent.join(&container), Access::Write, Scope::Subtree)?,
+            SelectionRole::Exclusive,
+        )?;
+        preparation.push(Ok(Item {
+            parent: parent.to_owned(),
+            parent_object: source.parent,
+            name: name.to_owned(),
+            version,
+            birth,
+            container,
+        }))
     }
 
     impl PreparedSelection {
-        /// Plan and claims come from one observation; callers must not rebind
-        /// paths while retaining these prepared effects.
-        pub(crate) fn into_admission(mut self) -> (Self, Vec<resources::Resource>) {
-            let resources = std::mem::take(&mut self.resources);
-            (self, resources)
-        }
-
         pub(crate) fn execute_next(&mut self, requested: &str) -> Result<TrashSuccess, AppError> {
             self.execute_next_with(requested, &mut Native)
         }
@@ -365,16 +331,7 @@ mod unix {
             requested: &str,
             operations: &mut impl Operations,
         ) -> Result<TrashSuccess, AppError> {
-            if self.paths.get(self.next).map(String::as_str) != Some(requested) {
-                return Err(AppError::WorkerFailed(
-                    "Deletion does not match its prepared selection".into(),
-                ));
-            }
-            let item = self.items.pop_front().ok_or_else(|| {
-                AppError::WorkerFailed("Deletion exceeded its prepared selection".into())
-            })?;
-            self.next += 1;
-            item.map_err(AppError::Other)?.execute(operations)
+            self.run_next(requested, |item| item.execute(operations))
         }
     }
 

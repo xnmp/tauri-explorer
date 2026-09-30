@@ -2,6 +2,7 @@
 
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 function evidencePath(name: string): string {
   return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
@@ -29,7 +30,7 @@ test("report fallback keeps a solid toast over contrasting app content", async (
   await selectedRow.click();
   await expect(selectedRow).toHaveClass(/selected/);
 
-  await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
+  await page.evaluate((key) => localStorage.setItem(key, "network_unreachable"), MOCK_LOCAL_KEYS.reportError);
 
   await runPaletteCommand(page, "Report Issue");
   const dialog = page.getByRole("dialog", { name: "Report Issue" });
@@ -54,7 +55,7 @@ test("report fallback keeps a solid toast over contrasting app content", async (
   await page.screenshot({ path: evidencePath("ac-2-report-fallback-toast.png") });
 
   if (!process.env.CAPTURE_EVIDENCE) return;
-  const url = await page.evaluate(() => localStorage.getItem("mock-opened-url"));
+  const url = await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl);
   expect(url).not.toBeNull();
   const github = await page.context().newPage();
   await github.goto(url!, { waitUntil: "domcontentloaded" });

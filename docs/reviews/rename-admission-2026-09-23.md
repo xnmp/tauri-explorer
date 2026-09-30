@@ -44,3 +44,7 @@ path: such a confirmed rename warns and does not offer an unsafe lossy opposite.
 One diagnostic limit remains: a cleanup failure during pre-effect path-binding
 rejection does not replace the original rejection; no filesystem effect is hidden.
 Permanent deletion's external identity protection remains tracked in #739.
+
+The machine-readable JSON companion (SHA-256
+`13ee0bc231680ee5b231dc6a14c17046755a83e3ae9f22ee66716e292758d361`) was removed
+per #894/#895 repo-artifact-and-docs-hygiene.

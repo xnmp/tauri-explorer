@@ -62,7 +62,7 @@ The high-load Vite server reported that its worktree-linked
 Inter font file was outside the serving allow list; the seven load assertions
 passed under that local font-loading limit.
 
-The [report-dialog screenshot](../../screenshots/fix/report-dialog-focus/report-draft-preserved.png)
+The [report-dialog screenshot](../../../screenshots/fix/report-dialog-focus/report-draft-preserved.png)
 was visually checked: Title and Description retain separate input values while
 an invalid-image warning is displayed. It accompanies the local WebKit focus
 fix; a matching GitHub issue and PR remain unpublished.

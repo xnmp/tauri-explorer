@@ -411,6 +411,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
 - `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593). Hot.
 - `palette.rs` — dominant-color extraction for themes (#203).
+- `src-tauri/src/platform.rs` — host capabilities that shape recorded history: `TRASH_RESTORE_SUPPORTED` and the `TrashRestore` value passed to history admission (macOS has no trash restore).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
 - `archive.rs` — zip compress/extract; both commands are admitted mutations (renderer owner, Linux recovery claim on the output, forward history position) whose blocking job is cancelled when its renderer retires.
 - `clipboard/` — OS clipboard commands, the ordered file-clipboard worker and per-platform backends; see the `src-tauri/src/clipboard/` section below.
@@ -508,7 +509,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/files/move_plan.rs` — bounded move intent supplies source/target claims, admitted execution bindings and physical/requested refresh parents.
 - `src-tauri/src/files/move_execution.rs` — forward/inverse move reservation, retained worker context and warning-preserving ownership settlement.
 - `src-tauri/src/files/entry_plan.rs` — pure owned targets/requests for directory/file creation, rename, new text and symlink creation; forward history and the owned worker consume the same plan; Linux admission binds execution paths while retaining stable alias presentation and both refresh parents.
-- `src-tauri/src/files/entry_execution.rs` — shared entry admission, bound worker execution and completion/retirement for forward commands and rename inverses.
+- `src-tauri/src/files/admission.rs` — the one admit → bind → execute → retire seam (`admitted_execute`, `admitted_prepared`), its `Plan`/`Settle` traits, the shared retirement warning and `changed`; the only Linux/other-host admission fork. Contracts in `src-tauri/test_support/admission.rs`.
+- `src-tauri/src/files/entry_execution.rs` — entry outcome settlement through the admission seam, bound worker execution and completion/retirement for forward commands and rename inverses.
 - `mutation.rs` — committed-path receipt with optional FileEntry metadata and a native-only ordinary-copy PublishedEntry (physical path, parent identity, entry version); metadata cannot revoke a committed mutation.
 - `replacement.rs` — explicit retained ownership of overwritten destinations; no-replace rollback shared by copy/move, retained-original reporting after partial source cleanup.
 - `publication.rs` — owns unpublished copy/write payloads in an exclusive physical staging directory; observed Linux ordinary-copy publication retains the staged version and uses opened-parent no-replace rename. Generic publication remains path-based.

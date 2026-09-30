@@ -191,8 +191,10 @@ jobs:
       # Keep the deferred recovery policies verified without enabling them in
       # release artifacts. Default-policy capacity coverage runs above.
       # durable-move-recovery is Linux-only, like this runner (#760).
+      # e2e-hooks (#884) rides along so the hook-build branches are linted
+      # and unit-tested on Linux too; it is absent from release artifacts.
       - name: Opt-in recovery Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-copy-recovery,durable-move-recovery,e2e-renderer-recovery -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features avif,durable-copy-recovery,durable-move-recovery,e2e-renderer-recovery,e2e-hooks -- -D warnings
 
       - name: Opt-in recovery tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-copy-recovery,durable-move-recovery
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features avif,durable-copy-recovery,durable-move-recovery,e2e-hooks

@@ -57,7 +57,8 @@ describe("external plugin job timeout", () => {
         if (!encoded) return false;
         const reply = JSON.parse(encoded) as { token: string; error?: string };
         if (reply.token !== token) return false;
-        // The probe reports a rejected acceptance instead of timing out.
+        // The probe reports a rejected acceptance; surface its message when
+        // waitUntil gives up instead of a bare timeout.
         if (reply.error !== undefined) throw new Error(`plugin job was not accepted: ${reply.error}`);
         return true;
       },

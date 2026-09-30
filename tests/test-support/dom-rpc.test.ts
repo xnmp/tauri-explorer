@@ -47,6 +47,14 @@ describe("createDomRpc", () => {
     }));
   });
 
+  it("does not resolve an op through the handler object's prototype", async () => {
+    start({ default: () => "wrong" });
+    send({ token: "proto", op: "toString" });
+    await vi.waitFor(() => expect(reply()).toEqual({
+      token: "proto", error: "Error: Unknown probe-op operation: toString",
+    }));
+  });
+
   it("settles a request whose result cannot be serialized", async () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;

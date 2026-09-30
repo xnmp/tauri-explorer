@@ -19,6 +19,9 @@ static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 pub const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CANCEL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Native acceptance shortens the timeout through the environment. Builds
+/// without the `e2e-hooks` feature never read the variable at all.
+#[cfg(feature = "e2e-hooks")]
 fn job_timeout() -> std::time::Duration {
     job_timeout_with_override(
         std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
@@ -27,19 +30,17 @@ fn job_timeout() -> std::time::Duration {
     )
 }
 
-/// Native acceptance shortens the timeout through the environment; builds
-/// without the `e2e-hooks` feature ignore the override entirely.
+#[cfg(not(feature = "e2e-hooks"))]
+fn job_timeout() -> std::time::Duration {
+    JOB_TIMEOUT
+}
+
+#[cfg(feature = "e2e-hooks")]
 fn job_timeout_with_override(override_ms: Option<&str>) -> std::time::Duration {
-    #[cfg(feature = "e2e-hooks")]
-    if let Some(milliseconds) = override_ms
+    override_ms
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
-    {
-        return std::time::Duration::from_millis(milliseconds);
-    }
-    #[cfg(not(feature = "e2e-hooks"))]
-    let _ = override_ms;
-    JOB_TIMEOUT
+        .map_or(JOB_TIMEOUT, std::time::Duration::from_millis)
 }
 
 #[derive(Clone)]
@@ -251,16 +252,24 @@ fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<
 mod tests {
     use super::*;
 
+    #[cfg(feature = "e2e-hooks")]
     #[test]
-    fn e2e_timeout_override_applies_only_with_the_e2e_hooks_feature() {
-        let expected = if cfg!(feature = "e2e-hooks") {
+    fn hook_builds_honour_a_positive_timeout_override() {
+        assert_eq!(
+            job_timeout_with_override(Some("100")),
             std::time::Duration::from_millis(100)
-        } else {
-            JOB_TIMEOUT
-        };
-        assert_eq!(job_timeout_with_override(Some("100")), expected);
+        );
     }
 
+    #[cfg(not(feature = "e2e-hooks"))]
+    #[test]
+    fn builds_without_hooks_ignore_the_timeout_override() {
+        // The variable is never read (it is absent from release binaries), so
+        // the production timeout is fixed regardless of the environment.
+        assert_eq!(job_timeout(), JOB_TIMEOUT);
+    }
+
+    #[cfg(feature = "e2e-hooks")]
     #[test]
     fn malformed_or_zero_e2e_timeout_overrides_keep_the_default() {
         for value in [

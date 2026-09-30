@@ -63,7 +63,8 @@ export function createDomRpc<R extends DomRpcRequest>(options: DomRpcOptions<R>)
   window.addEventListener(options.event, ((event: CustomEvent<unknown>) => {
     const request = event.detail;
     if (!isRequest(request)) return; // No token: nothing the spec could correlate.
-    const handler = handlers[request.op ?? "default"];
+    const op = request.op ?? "default";
+    const handler = Object.hasOwn(handlers, op) ? handlers[op] : undefined;
     void (async () => {
       if (!handler) throw new Error(`Unknown ${options.event} operation: ${request.op ?? "(none)"}`);
       return await handler(request as R);

@@ -22,8 +22,9 @@ lifecycle claim:
 through the page-owned plugin-jobs controller, lets the production timeout
 cancel and drain the child, then checks that the child PID is gone, the chosen
 output was never published, and the Jobs panel reports `timed out`. The short
-deadline override is available only in debug binaries compiled with
-`VITE_E2E_HOOKS=1`; ordinary debug and release builds retain ten minutes.
+deadline override is available only in binaries built with the `e2e-hooks`
+Cargo feature (#884; formerly debug builds with `VITE_E2E_HOOKS=1`); builds
+without it never read the variable and retain ten minutes.
 
 The issue plan described a user cancel action, but the product has no plugin-job
 cancel command or Jobs-panel cancel control. This acceptance covers the existing

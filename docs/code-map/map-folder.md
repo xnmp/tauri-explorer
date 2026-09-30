@@ -159,7 +159,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/state/undo-helpers.test.ts` — completion labels for native replacement history and recursive batch presentation; executable renderer input remains the separate UndoAction contract.
 - `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
 - `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
-- `user-report-draft.svelte.ts` — debounced localStorage store for Report Issue's text-only unsent draft; attachments stay in the dialog's in-session retry state.
+- `user-report-draft.svelte.ts` — debounced localStorage text drafts, window-lifetime image selections, and exclusive Report Issue submission ownership; accepted reports clear only the unchanged draft they submitted.
 - `context-menu.svelte.ts` — context menu open state + position.
 - `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
 - `command-definitions.ts` — command palette command definitions (assembles command modules).
@@ -450,7 +450,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 - `package.json` — website-project runtime dependencies, including Vercel Blob hosting for report images.
 - `api/report.js` — POST-only user-report relay, public Blob storage adapter, and GitHub Issues client.
-- `api/report-core.js` — pure validation, attachment delivery/cleanup, issue shaping, honeypot, and atomic burst/hour/day limit logic.
+- `api/_report-core.js` — pure validation, attachment delivery/cleanup, issue shaping, honeypot, and atomic burst/hour/day limit logic; underscore excludes this helper from Vercel function discovery.
 - `vercel.json` — response cache policy; API routes are explicitly `no-store`.
 
 ### src-tauri/src/files/ — file operations module.

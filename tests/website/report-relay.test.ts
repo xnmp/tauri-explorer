@@ -7,7 +7,7 @@ import {
   processReport,
   ReportError,
   validateReport,
-} from "../../website/api/report-core.js";
+} from "../../website/api/_report-core.js";
 import reportHandler, { createGitHubIssue, reporterIp } from "../../website/api/report.js";
 
 const valid = {
@@ -319,6 +319,62 @@ describe("report attachment delivery", () => {
 });
 
 describe("report relay rate limits", () => {
+  it.each([
+    {}, { result: null }, { result: 0 }, { result: false },
+    { result: [] }, { result: {} }, { result: "unknown" },
+    { result: "", error: "Redis failure" }, null, [],
+  ].map((payload) => ({ payload })))("rejects malformed shared-store reply $payload before any publication", async ({ payload }) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify(payload), { status: 200 }),
+    );
+    const createIssue = vi.fn();
+    const attachmentStore = { upload: vi.fn(), remove: vi.fn() };
+    try {
+      await expect(processReport(
+        { ...valid, attachments: [{ name: "proof.png", mediaType: "image/png", data: pngData }] },
+        "198.51.100.21",
+        createRestRateLimitStore("https://kv.example", "token"),
+        createIssue,
+        attachmentStore,
+      )).rejects.toMatchObject({ code: "server_rejected", status: 503 });
+      expect(createIssue).not.toHaveBeenCalled();
+      expect(attachmentStore.upload).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("creates a report only after acknowledged shared-store allowance", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ result: "" }), { status: 200 }),
+    );
+    const createIssue = vi.fn().mockResolvedValue({ url: "https://github.com/xnmp/tauri-explorer/issues/900", number: 900 });
+    try {
+      await expect(processReport(valid, "198.51.100.21", createRestRateLimitStore("https://kv.example", "token"), createIssue))
+        .resolves.toMatchObject({ number: 900 });
+      expect(createIssue).toHaveBeenCalledOnce();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it.each([
+    { name: "invalid JSON", reply: () => Promise.resolve(new Response("not JSON", { status: 200 })) },
+    { name: "HTTP rejection", reply: () => Promise.resolve(new Response(JSON.stringify({ result: "" }), { status: 503 })) },
+    { name: "transport failure", reply: () => Promise.reject(new Error("private transport detail")) },
+    { name: "unsubmitted scope", reply: () => Promise.resolve(new Response(JSON.stringify({ result: "day" }), { status: 200 })) },
+  ])("rejects $name without creating a report", async ({ reply }) => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(reply);
+    const createIssue = vi.fn();
+    try {
+      await expect(processReport(valid, "198.51.100.21", createRestRateLimitStore("https://kv.example", "token"), createIssue))
+        .rejects.toMatchObject({ code: "server_rejected", status: 503 });
+      expect(createIssue).not.toHaveBeenCalled();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it.each(["burst", "hour", "day"])(
     "preserves the %s scope returned by the atomic REST store",
     async (scope) => {
@@ -447,7 +503,7 @@ describe("report relay HTTP contract", () => {
     expect(res.state.body).toBeUndefined();
   });
 
-  it("logs unexpected relay failures and returns a sanitized error", async () => {
+  it("returns a typed unavailable response without exposing store transport errors", async () => {
     const previous = {
       vercel: process.env.VERCEL,
       url: process.env.KV_REST_API_URL,
@@ -479,13 +535,10 @@ describe("report relay HTTP contract", () => {
       else process.env.KV_REST_API_TOKEN = previous.token;
     }
 
-    expect(consoleError).toHaveBeenCalledWith(
-      "Unexpected user report relay failure",
-      expect.any(Error),
-    );
-    expect(res.state.status).toBe(500);
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(res.state.status).toBe(503);
     expect(res.state.body).toEqual({
-      error: { code: "server_rejected", message: "Unable to submit report" },
+      error: { code: "server_rejected", message: "Rate limit store unavailable" },
     });
     consoleError.mockRestore();
   });

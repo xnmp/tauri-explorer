@@ -3,11 +3,11 @@
 //!
 //! * a same-filesystem move without an overwrite is one no-replace rename;
 //! * an overwritten destination is parked in private storage before publication;
-//! * a cross-filesystem source is parked only after its destination exists,
-//!   and its parked copy is removed only after that parking is durable.
+//! * a cross-filesystem source is parked only after its destination exists.
 //!
-//! No method here deletes a user entry outside `remove_source`, which requires
-//! an already-durable park, so no boundary can leave both endpoints absent.
+//! No method here deletes a user entry; parked sources are discarded only by
+//! explicit retirement (`move_retirement`), so no boundary can leave both
+//! endpoints absent.
 use super::{
     coordinator::DurableOperation,
     model::{EntryVersion, ObjectId, StagedPayload},
@@ -520,60 +520,6 @@ impl MoveExecution {
         self.operation.advance_move(MoveTransition::ParkCompleted)
     }
 
-    /// Discard the parked source. This is the only deletion in this executor,
-    /// it is reachable only from a durable `Parked` checkpoint, and it is never
-    /// part of the forward move or of restoration. It has no production caller
-    /// yet — finishing a parked move belongs with durable retirement (#687) —
-    /// but the crash boundary tests exercise the ordering it enforces.
-    #[allow(dead_code)]
-    pub(super) fn remove_source(&mut self) -> Result<(), AppError> {
-        self.operation
-            .advance_move(MoveTransition::BeginSourceRemoval)?;
-        let result = (|| {
-            self.verify_authority()?;
-            let spec = self.spec()?.clone();
-            let root = Self::require(&self.source_root, "source")?;
-            let target = self.target()?;
-            let published = target
-                .probe()?
-                .ok_or_else(|| uncertain("Move destination is absent; the source is retained"))?;
-            let expected = match spec.strategy {
-                Strategy::CopyParked => self
-                    .operation
-                    .state()
-                    .move_state()?
-                    .staged
-                    .as_ref()
-                    .ok_or_else(|| invalid("Move removal lacks its staged payload"))?
-                    .published_version()?,
-                Strategy::Rename => spec.source_version.clone(),
-            };
-            if published != expected {
-                return Err(uncertain(
-                    "Move destination differs from the published payload; the source is retained",
-                ));
-            }
-            match probe(root.directory(), OsStr::new(PARKED))? {
-                None => Ok(()),
-                Some(parked) if parked == spec.source_version => {
-                    remove_tree(root.directory(), OsStr::new(PARKED), parked.directory, 0)?;
-                    root.directory().sync()?;
-                    if probe(root.directory(), OsStr::new(PARKED))?.is_some() {
-                        return Err(uncertain("Move parked source was not removed"));
-                    }
-                    self.at("remove")
-                }
-                Some(_) => Err(uncertain(
-                    "Move parked source differs from its recorded identity; it is retained",
-                )),
-            }
-        })();
-        if let Err(error) = result {
-            return Err(self.retain_failure(error));
-        }
-        self.operation.advance_move(MoveTransition::SourceRemoved)
-    }
-
     /// The record's own exact inverse. Nothing is deleted before the source
     /// exists again at its original name.
     pub(super) fn restore_move(&mut self) -> Result<(), AppError> {
@@ -841,33 +787,6 @@ fn relocate(
             "Move has conflicting source or destination evidence",
         )),
     }
-}
-
-/// Remove one entry through its retained parent handle. Every descendant is
-/// reached relative to an opened directory, so no path component can be
-/// substituted between the decision to remove and the removal itself.
-fn remove_tree(
-    parent: &Directory,
-    name: &OsStr,
-    directory: bool,
-    depth: usize,
-) -> Result<(), AppError> {
-    const MAX_DEPTH: usize = 256;
-    if depth > MAX_DEPTH {
-        return Err(invalid(
-            "Move parked source exceeds its removal depth budget",
-        ));
-    }
-    if directory {
-        let child = parent.open_existing(name)?;
-        for entry in child.entries()? {
-            let entry = entry?;
-            let is_directory = version_at(&child, &entry)?.directory;
-            remove_tree(&child, &entry, is_directory, depth + 1)?;
-        }
-    }
-    parent.unlink(name, directory)?;
-    Ok(())
 }
 
 fn probe(directory: &Directory, name: &OsStr) -> Result<Option<EntryVersion>, AppError> {

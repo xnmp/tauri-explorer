@@ -262,15 +262,10 @@ fn every_move_publishes_before_it_parks_or_removes_its_source() {
         MoveTransition::DisplacementCompleted,
         MoveTransition::BeginPublication,
     ] {
-        for forbidden in [
-            MoveTransition::BeginPark,
-            MoveTransition::ParkCompleted,
-            MoveTransition::BeginSourceRemoval,
-            MoveTransition::SourceRemoved,
-        ] {
+        for forbidden in [MoveTransition::BeginPark, MoveTransition::ParkCompleted] {
             assert!(
                 transition(&intent, &state, forbidden).is_err(),
-                "parking or removal was legal at {:?}",
+                "parking was legal at {:?}",
                 state_of(&state).phase
             );
         }
@@ -279,28 +274,9 @@ fn every_move_publishes_before_it_parks_or_removes_its_source() {
     let state = advance(&intent, state, MoveTransition::PublicationCompleted);
     assert_eq!(state_of(&state).phase, MovePhase::Published);
 
-    // Removal is legal only after parking is durably recorded.
-    assert!(transition(&intent, &state, MoveTransition::BeginSourceRemoval).is_err());
     let state = advance(&intent, state, MoveTransition::BeginPark);
-    assert!(transition(&intent, &state, MoveTransition::BeginSourceRemoval).is_err());
     let state = advance(&intent, state, MoveTransition::ParkCompleted);
-    let state = advance(&intent, state, MoveTransition::BeginSourceRemoval);
-    let state = advance(&intent, state, MoveTransition::SourceRemoved);
-    assert_eq!(state_of(&state).phase, MovePhase::Removed);
-}
-
-#[test]
-fn a_removed_source_has_no_exact_original_left_to_restore() {
-    let (intent, state) = cross_volume();
-    let state = to_published(&intent, state);
-    let state = advance(&intent, state, MoveTransition::BeginPark);
-    let parked = advance(&intent, state, MoveTransition::ParkCompleted);
-    // Restoration is offered while the parked source still exists.
-    assert!(transition(&intent, &parked, MoveTransition::BeginRestoration).is_ok());
-
-    let removed = advance(&intent, parked, MoveTransition::BeginSourceRemoval);
-    let removed = advance(&intent, removed, MoveTransition::SourceRemoved);
-    assert!(transition(&intent, &removed, MoveTransition::BeginRestoration).is_err());
+    assert_eq!(state_of(&state).phase, MovePhase::Parked);
 }
 
 #[test]
@@ -327,22 +303,6 @@ fn the_restoration_origin_survives_an_interrupted_restoration() {
     assert_eq!(
         restoration_source(rename.operation.move_spec().unwrap()),
         RestorationSource::Published
-    );
-}
-
-#[test]
-fn source_removal_advances_the_revision_so_a_position_names_one_state() {
-    let (intent, state) = cross_volume();
-    let state = to_published(&intent, state);
-    let state = advance(&intent, state, MoveTransition::BeginPark);
-    let parked = advance(&intent, state, MoveTransition::ParkCompleted);
-    let completed = state_of(&parked).effect_revision;
-
-    let removing = advance(&intent, parked, MoveTransition::BeginSourceRemoval);
-    let removed = advance(&intent, removing, MoveTransition::SourceRemoved);
-    assert!(
-        state_of(&removed).effect_revision > completed,
-        "a caller holding the completed move's revision must not match a removed record"
     );
 }
 

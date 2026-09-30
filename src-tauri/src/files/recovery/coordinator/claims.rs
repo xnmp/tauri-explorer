@@ -110,7 +110,7 @@ fn completed(intent: &DurableIntent, state: &OperationState) -> bool {
                 .is_ok_and(|spec| spec.strategy == super::super::move_model::Strategy::Rename);
             match state.phase {
                 MovePhase::Published => published_is_terminal,
-                MovePhase::Parked | MovePhase::Removed | MovePhase::Restored => true,
+                MovePhase::Parked | MovePhase::Restored => true,
                 _ => false,
             }
         }

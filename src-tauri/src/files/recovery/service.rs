@@ -653,9 +653,6 @@ fn relocation(
             Ok(MovePhase::Staged) => {
                 "A copy was staged but never published; both original locations are unchanged"
             }
-            Ok(MovePhase::Removed) => {
-                "This move completed and its source was discarded; nothing remains to restore"
-            }
             Ok(MovePhase::Restored) => {
                 "The moved entry has been returned to its source; retained artifacts still require cleanup"
             }

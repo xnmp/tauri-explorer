@@ -531,7 +531,6 @@ fn copy_entry_inner(
     dest_dir_path: &Path,
     source_name: &str,
     overwrite: Option<bool>,
-    _source: &str,
     tracker: &mut ProgressTracker,
 ) -> Result<FileMutationReceipt, AppError> {
     copy_entry_inner_with(
@@ -1686,15 +1685,8 @@ mod tests {
         let flag = AtomicBool::new(true);
         let mut tracker =
             ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, Some(&flag));
-        let err = copy_entry_inner(
-            &src_dir,
-            &dest_dir,
-            "src",
-            None,
-            &src_dir.to_string_lossy(),
-            &mut tracker,
-        )
-        .expect_err("cancelled copy must fail");
+        let err = copy_entry_inner(&src_dir, &dest_dir, "src", None, &mut tracker)
+            .expect_err("cancelled copy must fail");
         assert!(err.to_string().contains("cancelled"));
         assert!(
             !dest_dir.join("src").exists(),

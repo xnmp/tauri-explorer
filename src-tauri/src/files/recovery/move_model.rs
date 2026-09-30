@@ -54,8 +54,6 @@ pub(crate) enum MovePhase {
     Published,
     ParkIntent,
     Parked,
-    RemoveIntent,
-    Removed,
     RestoreIntent,
     Restored,
 }
@@ -79,8 +77,6 @@ impl MovePhase {
                 | Self::Published
                 | Self::ParkIntent
                 | Self::Parked
-                | Self::RemoveIntent
-                | Self::Removed
                 | Self::RestoreIntent
                 | Self::Restored
         )

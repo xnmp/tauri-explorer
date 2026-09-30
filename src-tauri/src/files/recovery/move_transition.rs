@@ -26,12 +26,6 @@ pub(super) enum MoveTransition {
     PublicationCompleted,
     BeginPark,
     ParkCompleted,
-    /// Reachable only from a durable park. No production caller yet: finishing
-    /// a parked move belongs with durable retirement (#687).
-    #[allow(dead_code)]
-    BeginSourceRemoval,
-    #[allow(dead_code)]
-    SourceRemoved,
     BeginRestoration,
     RestorationCompleted,
     RetentionMeasured(u64),
@@ -182,24 +176,7 @@ pub(super) fn transition(
             state.phase = MovePhase::Parked;
             state.error = None;
         }
-        // Removal destroys the last exact original identity, so it is reachable
-        // only from a durable park and never from restoration.
-        MoveTransition::BeginSourceRemoval
-            if matches!(state.phase, MovePhase::Parked | MovePhase::RemoveIntent) =>
-        {
-            next_effect_revision(state.effect_revision)?;
-            state.phase = MovePhase::RemoveIntent;
-        }
-        // Removal advances the revision so that a history position plus a
-        // revision names exactly one state: a caller holding the completed
-        // move's revision can never claim a record whose source is gone.
-        MoveTransition::SourceRemoved if state.phase == MovePhase::RemoveIntent => {
-            state.effect_revision = next_effect_revision(state.effect_revision)?;
-            state.phase = MovePhase::Removed;
-            state.error = None;
-        }
-        // Restoration is the record's own inverse. `Removed` is deliberately
-        // absent: once the parked source is gone there is no exact original.
+        // Restoration is the record's own inverse.
         MoveTransition::BeginRestoration
             if matches!(
                 state.phase,

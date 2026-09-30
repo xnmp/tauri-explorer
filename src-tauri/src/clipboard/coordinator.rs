@@ -62,7 +62,7 @@ struct AppSelection {
 /// observed change means another program acted later, and its list wins.
 struct FailedMirror {
     error: String,
-    baseline_paths: Option<Vec<String>>,
+    baseline_paths: Vec<String>,
     baseline_owner: SelectionOwner,
 }
 
@@ -111,7 +111,7 @@ impl FileClipboardCoordinator {
         };
         let unchanged_since_failure = self
             .failed_copy_mirror()
-            .filter(|failed| failed.baseline_paths.as_ref() == Some(&observed))
+            .filter(|failed| failed.baseline_paths == observed)
             .map(|failed| failed.baseline_owner);
         if let Some(baseline_owner) = unchanged_since_failure {
             if baseline_owner.unchanged_at(self.backend.selection_owner()) {
@@ -281,12 +281,18 @@ impl FileClipboardCoordinator {
             Mirror::Owned(token) => (Some(token), None),
             Mirror::Unproven => (None, None),
             // Observed only after a failure, so a successful Copy costs no
-            // extra OS read (a PowerShell spawn on Windows).
+            // extra OS read (a PowerShell spawn on Windows). Failures
+            // cluster: when this read fails too, the list last observed
+            // before the write stands in, so recovering reads cannot let
+            // that older list displace the accepted Copy.
             Mirror::Failed(error) => (
                 None,
                 Some(FailedMirror {
                     error: error.to_string(),
-                    baseline_paths: self.backend.read_files().ok(),
+                    baseline_paths: self
+                        .backend
+                        .read_files()
+                        .unwrap_or_else(|_| self.paths.clone()),
                     baseline_owner: self.backend.selection_owner(),
                 }),
             ),
@@ -508,6 +514,11 @@ mod coordinator_tests {
         let observed = clipboard.snapshot().unwrap();
         assert_eq!(paths(&observed), vec!["/tmp/a.txt"]);
         assert!(is_external(&observed), "paths alone never prove our Cut");
+        assert_eq!(
+            clipboard.snapshot().unwrap(),
+            observed,
+            "the adopted external list is stable"
+        );
         assert!(!clipboard.claim_cut(cut.revision).unwrap());
         assert!(!clipboard.claim_cut(observed.revision).unwrap());
         assert!(!clipboard.clear(cut.revision).unwrap());
@@ -768,6 +779,79 @@ mod coordinator_tests {
         let observed = clipboard.snapshot().unwrap();
         assert!(is_external(&observed));
         assert_eq!(paths(&observed), vec!["/tmp/baseline.txt"]);
+    }
+
+    #[test]
+    fn an_unreadable_clipboard_after_a_failed_write_keeps_the_accepted_copy() {
+        // Failures cluster: the read right after a failed write can fail too.
+        // The older OS list must not displace the Copy once reads recover.
+        for capabilities in [Capabilities::OWNED, Capabilities::COPY_ONLY] {
+            let (os, mut clipboard) = coordinator(capabilities);
+            os.external_copy(&["/tmp/older.txt"]);
+            clipboard.snapshot().unwrap();
+            os.fail_writes(true);
+            os.fail_reads(true);
+            let copy = clipboard
+                .publish(vec![entry("/tmp/accepted.txt")], "copy")
+                .unwrap();
+            assert!(copy.mirror_error.is_some());
+            os.fail_reads(false);
+            assert_eq!(clipboard.snapshot().unwrap(), copy);
+
+            os.external_copy(&["/tmp/newer.txt"]);
+            let observed = clipboard.snapshot().unwrap();
+            assert!(is_external(&observed), "a later external Copy still wins");
+            assert_eq!(paths(&observed), vec!["/tmp/newer.txt"]);
+        }
+    }
+
+    #[test]
+    fn an_unknown_owner_never_proves_a_failed_mirror_unchanged() {
+        let (os, mut clipboard) = coordinator(Capabilities::OWNED);
+        os.external_copy(&["/tmp/baseline.txt"]);
+        os.fail_writes(true);
+        os.owner_unknown(true);
+        clipboard
+            .publish(vec![entry("/tmp/failed.txt")], "copy")
+            .unwrap();
+        let observed = clipboard.snapshot().unwrap();
+        assert!(is_external(&observed), "fail toward the OS list");
+        assert_eq!(paths(&observed), vec!["/tmp/baseline.txt"]);
+    }
+
+    #[test]
+    fn a_rename_of_a_copy_survives_a_failed_mirror_write() {
+        let (os, mut clipboard) = coordinator(Capabilities::COPY_ONLY);
+        let copy = clipboard
+            .publish(vec![entry("/tmp/a.txt")], "copy")
+            .unwrap();
+        os.fail_writes(true);
+        let renamed = clipboard
+            .rekey(copy.revision, "/tmp/a.txt", entry("/tmp/b.txt"))
+            .unwrap()
+            .expect("a Copy follows the rename in-app");
+        assert_eq!(paths(&renamed), vec!["/tmp/b.txt"]);
+        assert!(renamed.mirror_error.is_some());
+        assert_eq!(os.paths(), vec!["/tmp/a.txt"]);
+        assert_eq!(clipboard.snapshot().unwrap(), renamed);
+    }
+
+    #[test]
+    fn a_renamed_cut_whose_write_cannot_be_proven_is_refused() {
+        let (os, mut clipboard) = coordinator(Capabilities::OWNED);
+        let cut = clipboard.publish(vec![entry("/tmp/a.txt")], "cut").unwrap();
+        os.withhold_tokens(true);
+        let error = clipboard
+            .rekey(cut.revision, "/tmp/a.txt", entry("/tmp/b.txt"))
+            .unwrap_err();
+        assert!(error.to_string().contains("after rename"), "{error}");
+        let observed = clipboard.snapshot().unwrap();
+        assert_ne!(
+            observed.operation,
+            Some(ClipboardOperation::Cut),
+            "an unproven write never leaves a Cut behind"
+        );
+        assert!(!clipboard.claim_cut(observed.revision).unwrap());
     }
 
     #[test]

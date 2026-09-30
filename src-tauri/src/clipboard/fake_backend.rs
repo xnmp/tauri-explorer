@@ -20,6 +20,10 @@ struct OsClipboard {
     reads: usize,
     fail_reads: bool,
     fail_writes: bool,
+    /// Writes succeed but leave no readable token (ownership lost at once).
+    withhold_tokens: bool,
+    /// Owner observations fail.
+    owner_unknown: bool,
 }
 
 /// What the simulated platform can prove about its writes.
@@ -81,6 +85,14 @@ impl FakeOs {
         self.with(|os| os.fail_reads = fail);
     }
 
+    pub fn withhold_tokens(&self, withhold: bool) {
+        self.with(|os| os.withhold_tokens = withhold);
+    }
+
+    pub fn owner_unknown(&self, unknown: bool) {
+        self.with(|os| os.owner_unknown = unknown);
+    }
+
     pub fn paths(&self) -> Vec<String> {
         self.with(|os| os.paths.clone())
     }
@@ -120,7 +132,7 @@ impl ClipboardBackend for FakeBackend {
             }
             os.paths = paths.to_vec();
             os.owner = APP_OWNER;
-            os.token = proves_ownership.then(|| token.to_string());
+            os.token = (proves_ownership && !os.withhold_tokens).then(|| token.to_string());
             Ok(())
         })
     }
@@ -133,7 +145,13 @@ impl ClipboardBackend for FakeBackend {
         if !self.capabilities.tracks_owner {
             return SelectionOwner::Untracked;
         }
-        self.os.with(|os| SelectionOwner::Known(os.owner))
+        self.os.with(|os| {
+            if os.owner_unknown {
+                SelectionOwner::Unknown
+            } else {
+                SelectionOwner::Known(os.owner)
+            }
+        })
     }
 
     fn cut_unavailable_reason(&self) -> Option<&'static str> {

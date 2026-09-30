@@ -48,8 +48,11 @@ fn ps_lines(stdout: &[u8]) -> Vec<String> {
 }
 
 impl ClipboardBackend for WindowsClipboard {
+    /// A clipboard held open by another process makes `GetFileDropList`
+    /// throw; stop on it so that reads as a failure, not as "no files".
     fn read_files(&mut self) -> Result<Vec<String>, AppError> {
         let script = r#"
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $files = [System.Windows.Forms.Clipboard]::GetFileDropList()
 if ($files) { $files -join "`n" }

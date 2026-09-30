@@ -313,11 +313,16 @@ mod worker_tests {
     #[test]
     fn an_accepted_job_completes_after_its_caller_is_cancelled() {
         let (os, queue) = worker(Capabilities::COPY_ONLY);
-        let (reply, received) = oneshot::channel();
-        queue
-            .send(publish_job("/tmp/survives.txt", "copy")(reply))
-            .unwrap();
-        drop(received);
+        // Poll the command's request once, then drop it: the renderer
+        // cancelled while the job was already queued.
+        block_on(async {
+            tokio::select! {
+                biased;
+                // The worker may win the race and reply within that poll.
+                _ = request(&queue, publish_job("/tmp/survives.txt", "copy")) => {}
+                _ = std::future::ready(()) => {}
+            }
+        });
 
         let observed = block_on(request(&queue, |reply| FileClipboardJob::Snapshot {
             reply,
@@ -368,6 +373,22 @@ mod worker_tests {
         }))
         .unwrap();
         assert!(released);
+
+        // A finished move consumes the Cut; it cannot be claimed again.
+        let cleared = block_on(request(&queue, |reply| FileClipboardJob::Clear {
+            revision: cut.revision,
+            reply,
+        }))
+        .unwrap()
+        .unwrap();
+        assert!(cleared);
+        let reclaimed = block_on(request(&queue, |reply| FileClipboardJob::ClaimCut {
+            revision: cut.revision,
+            reply,
+        }))
+        .unwrap()
+        .unwrap();
+        assert!(!reclaimed);
     }
 
     #[test]

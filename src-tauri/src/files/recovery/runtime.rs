@@ -23,9 +23,10 @@ struct Initialized {
 }
 
 impl Runtime {
-    /// Production replacement policy. Retention is deliberately opt-in until
-    /// durable retirement exists. Discovery/history for existing records stays
-    /// available in either build, and transient copies still obey their claims.
+    /// Production replacement policy. Retention stays opt-in until durable
+    /// recovery is enabled by default (#880). Discovery/history for existing
+    /// records stays available in either build, and transient copies still
+    /// obey their claims.
     pub(crate) fn copy_overwriting(
         &self,
         path: PathBuf,
@@ -102,9 +103,10 @@ impl Runtime {
     }
 
     /// Production move policy. Durable records park cross-filesystem sources
-    /// and retain displaced originals indefinitely until retirement exists
-    /// (#687), so creating them is opt-in. Discovery, restoration and history
-    /// for existing records stay available in either build.
+    /// and retain displaced originals until explicit retirement, so creating
+    /// them stays opt-in until durable recovery is enabled by default (#880).
+    /// Discovery, restoration and history for existing records stay available
+    /// in either build.
     pub(crate) fn move_entry(
         &self,
         path: PathBuf,

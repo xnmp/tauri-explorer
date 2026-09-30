@@ -150,7 +150,7 @@ pub(super) fn expected_payload(
         (RootSide::Source, MovePhase::Parked) => {
             Some(("parked", vec![spec.source_version.clone()]))
         }
-        (RootSide::Target, MovePhase::Published | MovePhase::Parked | MovePhase::Removed) => spec
+        (RootSide::Target, MovePhase::Published | MovePhase::Parked) => spec
             .target_original
             .clone()
             .map(|version| ("original", vec![version])),
@@ -176,11 +176,6 @@ pub(super) fn disposal(spec: &MoveSpec, phase: MovePhase) -> Option<Disposal> {
         (Strategy::Rename, MovePhase::Published) | (Strategy::CopyParked, MovePhase::Parked) => {
             Some(ExplicitOnly)
         }
-        (Strategy::CopyParked, MovePhase::Removed) => Some(if spec.target_original.is_some() {
-            ExplicitOnly
-        } else {
-            AutomaticWhenSourceIntact
-        }),
         (_, MovePhase::Restored) => Some(
             if spec.strategy == Strategy::CopyParked
                 && (spec.source_version.directory || spec.source_version.symlink)

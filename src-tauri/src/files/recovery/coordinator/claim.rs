@@ -24,10 +24,9 @@ impl Expected {
                         && state.error.is_none()
                         && state.effect_revision == *revision
                         && match phase {
-                            Phase::Published => matches!(
-                                state.phase,
-                                MovePhase::Published | MovePhase::Parked | MovePhase::Removed
-                            ),
+                            Phase::Published => {
+                                matches!(state.phase, MovePhase::Published | MovePhase::Parked)
+                            }
                             Phase::Restored => state.phase == MovePhase::Restored,
                             _ => false,
                         }

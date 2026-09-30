@@ -607,7 +607,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ### Native qualification tooling
 
-- `e2e-tauri/native-qualification.ts` — native process lifetime, verified build identity, bounded artifacts and foreground-ready/warm startup log parsing.
+- `e2e-tauri/native-qualification.ts` — thin barrel re-exporting `e2e-tauri/native-qualification/*` (#886); import from it or the sibling modules interchangeably.
+- `e2e-tauri/native-qualification/types.ts` — shared qualification type/interface declarations and the soak scenario list.
+- `e2e-tauri/native-qualification/matrix.ts` — the pairwise `NATIVE_QUALIFICATION_MATRIX` plus fresh/warm native-window-state helpers.
+- `e2e-tauri/native-qualification/stats.ts` — percentile/duration summary helpers shared by resource, timing and macOS phase reporting.
+- `e2e-tauri/native-qualification/artifacts.ts` — bounded qualification artifact path resolution, atomic report writes and verified build-manifest reads.
+- `e2e-tauri/native-qualification/soak.ts` — soak configuration resolution (env/diagnostic overrides) and per-seed soak artifact paths.
+- `e2e-tauri/native-qualification/report.ts` — native qualification report assembly and late-sample RSS/WebKit-fd growth checks.
+- `e2e-tauri/native-qualification/process.ts` — process-tree RSS sampling, logged qualification process execution, and native process start/stop/fixture-cleanup lifecycle (SIGKILL-rejection-vs-exit race per #910/#911).
+- `e2e-tauri/native-qualification/readiness.ts` — the single macOS startup log marker parser used by both the readiness predicate and the report (#696), plus the direct-process readiness wait.
+- `e2e-tauri/native-qualification/attribution.ts` — macOS startup/interactive-evidence report assembly, phase-attribution summaries and half-bounce qualification.
 - `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
 - `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.

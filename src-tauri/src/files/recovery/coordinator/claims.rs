@@ -1,5 +1,6 @@
 //! Effective durable ownership used by ordinary admission and recovery claims.
 use super::*;
+use crate::files::recovery::artifact_layout::{ORIGINAL, PUBLICATION};
 use crate::files::recovery::model::{NativePath, OperationState, Phase, ReplacementState};
 use crate::files::recovery::move_model::MovePhase;
 
@@ -182,10 +183,10 @@ pub(super) fn known_artifacts(
         access: resources::Access::Write,
         scope: resources::Scope::Subtree,
     };
-    let original = child("original", spec.original.object);
+    let original = child(ORIGINAL, spec.original.object);
     let publication = published
         .as_ref()
-        .map(|payload| child("publication", payload.version.object));
+        .map(|payload| child(PUBLICATION, payload.version.object));
     Some(ArtifactClaims {
         root,
         original,

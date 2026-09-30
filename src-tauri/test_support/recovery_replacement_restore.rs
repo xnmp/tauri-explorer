@@ -1,6 +1,7 @@
 use super::*;
 use crate::files::{
-    file_identity::{of_file, version_from_metadata},
+    file_identity::{of_file, version_at, version_from_metadata},
+    native_directory::Directory,
     recovery::{
         model::{LockIdentity, NativePath},
         replacement_artifact::Anchor,

@@ -7,10 +7,8 @@ use super::super::{
     retention::Retained,
 };
 use super::Root;
-use crate::{
-    error::AppError,
-    files::{file_identity::version_at, native_directory::Directory},
-};
+use crate::files::recovery::artifact_layout::{probe, ORIGINAL, PUBLICATION};
+use crate::{error::AppError, files::native_directory::Directory};
 use std::{ffi::OsStr, io};
 
 /// Recovery roots are our own private storage; these bounds exist so a
@@ -49,14 +47,8 @@ impl Root {
             .ok_or_else(|| invalid("Recovery replacement target has no name"))?;
         let finalized = staged.published_version()?;
         let target = probe(&self.parent, target_name)?;
-        let original = probe(
-            &self.directory,
-            OsStr::new(super::super::retention::ORIGINAL),
-        )?;
-        let publication = probe(
-            &self.directory,
-            OsStr::new(super::super::retention::PUBLICATION),
-        )?;
+        let original = probe(&self.directory, OsStr::new(ORIGINAL))?;
+        let publication = probe(&self.directory, OsStr::new(PUBLICATION))?;
         // The copy is recorded either as staged or with its final permissions;
         // both are the same object, and restoration may have parked either.
         let is_copy = |entry: &EntryVersion| *entry == staged.version || *entry == finalized;
@@ -90,14 +82,8 @@ impl Root {
     ) -> Result<bool, AppError> {
         let spec = intent.operation.replacement()?;
         let finalized = staged.published_version()?;
-        let original = probe(
-            &self.directory,
-            OsStr::new(super::super::retention::ORIGINAL),
-        )?;
-        let publication = probe(
-            &self.directory,
-            OsStr::new(super::super::retention::PUBLICATION),
-        )?;
+        let original = probe(&self.directory, OsStr::new(ORIGINAL))?;
+        let publication = probe(&self.directory, OsStr::new(PUBLICATION))?;
         Ok(match (original, publication) {
             (Some(held), None) => held == spec.original,
             (None, Some(held)) => held == staged.version || held == finalized,
@@ -317,14 +303,6 @@ impl Root {
             ));
         }
         Ok(())
-    }
-}
-
-fn probe(directory: &Directory, name: &OsStr) -> Result<Option<EntryVersion>, AppError> {
-    match version_at(directory, name) {
-        Ok(version) => Ok(Some(version)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
     }
 }
 

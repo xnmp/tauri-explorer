@@ -1,5 +1,6 @@
 //! Pure disposal authority for moves. A completed move's journal is its Undo
 //! authority even when no private bytes remain; only explicit discard consumes it.
+use super::artifact_layout::{ORIGINAL, PARKED, PUBLICATION};
 use super::{
     move_model::{MovePhase, MoveSpec, MoveState, Strategy},
     retention::Disposal,
@@ -147,20 +148,18 @@ pub(super) fn expected_payload(
     side: RootSide,
 ) -> io::Result<Option<(&'static str, Vec<super::model::EntryVersion>)>> {
     Ok(match (side, state.phase) {
-        (RootSide::Source, MovePhase::Parked) => {
-            Some(("parked", vec![spec.source_version.clone()]))
-        }
+        (RootSide::Source, MovePhase::Parked) => Some((PARKED, vec![spec.source_version.clone()])),
         (RootSide::Target, MovePhase::Published | MovePhase::Parked) => spec
             .target_original
             .clone()
-            .map(|version| ("original", vec![version])),
+            .map(|version| (ORIGINAL, vec![version])),
         (RootSide::Target, MovePhase::Restored) if spec.strategy == Strategy::CopyParked => {
             let staged = state
                 .staged
                 .as_ref()
                 .ok_or_else(|| invalid("Move has no staged evidence"))?;
             Some((
-                "publication",
+                PUBLICATION,
                 vec![staged.version.clone(), staged.published_version()?],
             ))
         }

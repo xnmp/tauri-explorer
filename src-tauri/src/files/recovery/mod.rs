@@ -1,4 +1,6 @@
 //! Durable recovery infrastructure; Linux simple-entry admission is connected.
+#[cfg(unix)]
+mod artifact_layout;
 pub(crate) mod commands;
 #[cfg(unix)]
 mod context;

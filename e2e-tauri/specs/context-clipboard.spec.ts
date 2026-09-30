@@ -37,6 +37,57 @@ async function clickMenuItem(label: string): Promise<void> {
   throw new Error(`context-menu item "${label}" not found`);
 }
 
+/** Right-click the listed entry named `name`. */
+async function openEntryMenu(name: string): Promise<void> {
+  const rows = await $$(".entry-item").getElements();
+  for (const row of rows) {
+    const text = ((await row.$(".entry-name").getProperty("textContent")) as string | null)?.trim();
+    if (text === name) {
+      await row.click({ button: "right" });
+      return;
+    }
+  }
+  throw new Error(`entry "${name}" not listed`);
+}
+
+/** Paste through the background context menu of the current directory. */
+async function pasteHere(): Promise<void> {
+  const content = $(".file-list .content");
+  await content.click({ button: "right", x: 40, y: 200 });
+  await clickMenuItem("Paste");
+}
+
+/**
+ * Another program copies `file` natively: a new clipboard owner with the
+ * identical path and none of the app's ownership proof (#835, #877).
+ */
+function externalCopyOf(file: string): void {
+  if (process.platform === "win32") {
+    execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-STA", "-Command",
+      "Set-Clipboard -LiteralPath $env:CLIP_PATH"], {
+      env: { ...process.env, CLIP_PATH: file },
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    return;
+  }
+  const payload = `copy\n${pathToFileURL(file).href}\n`;
+  const [tool, args] = process.env.WAYLAND_DISPLAY
+    ? ["wl-copy", ["--type", "x-special/gnome-copied-files"]]
+    : ["xclip", ["-selection", "clipboard", "-t", "x-special/gnome-copied-files", "-i"]];
+  execFileSync(tool, args, { input: payload, stdio: ["pipe", "ignore", "ignore"] });
+}
+
+/** Where this run keeps images of the native clipboard outcome. */
+function evidencePath(name: string): string {
+  const directory = process.platform === "win32"
+    ? "e2e-tauri/logs"
+    : "screenshots/feat/native-cut-ownership";
+  fs.mkdirSync(directory, { recursive: true });
+  const session = process.platform === "linux" && process.env.WAYLAND_DISPLAY ? "wayland"
+    : process.platform === "linux" ? "x11" : process.platform;
+  return `${directory}/${session}-${name}.png`;
+}
+
 describe("context-menu clipboard round-trip on the real backend", () => {
   before(() => {
     fs.writeFileSync(path.join(scratchDir, "original.txt"), "clipboard payload\n");
@@ -100,33 +151,64 @@ describe("context-menu clipboard round-trip on the real backend", () => {
     }
   });
 
+  it("Cut + Paste in another directory moves the file (#877)", async function () {
+    const source = path.join(scratchDir, "moved.txt");
+    const destination = path.join(scratchDir, "destination");
+    fs.writeFileSync(source, "moved payload\n");
+    fs.mkdirSync(destination, { recursive: true });
+    await navigateTo(scratchDir);
+    const listed = await browser.executeAsync<RendererWaitResult<true>, [ListingWaitRequest]>(
+      waitForListingEntry,
+      { name: "moved.txt", match: "exact", minCount: 1, timeoutMs: 15_000 },
+    );
+    if (!listed.ok) throw new Error(listed.reason);
+    await openEntryMenu("moved.txt");
+    await clickMenuItem("Cut");
+    // A refused Cut reports "Cut failed"; an admitted one is claimable.
+    await browser.waitUntil(async () => (await $$(".entry-item.cut").length) > 0, {
+      timeout: 10_000,
+      timeoutMsg: "Cut was not admitted (no entry is marked cut)",
+    });
+
+    await navigateTo(destination);
+    await pasteHere();
+    const observed = await browser.executeAsync<RendererWaitResult<true>, [ListingWaitRequest]>(
+      waitForListingEntry,
+      { name: "moved.txt", match: "exact", minCount: 1, timeoutMs: 15_000 },
+    );
+    if (!observed.ok) {
+      await captureDiagnostics("clipboard-cut-move", {
+        sourceEntries: fs.readdirSync(scratchDir),
+        destinationEntries: fs.readdirSync(destination),
+        renderedEntries: await entryNames(),
+      });
+      throw new Error(observed.reason);
+    }
+    await browser.waitUntil(() => !fs.existsSync(source), {
+      timeout: 10_000,
+      timeoutMsg: "the Cut source still exists after Paste",
+    });
+    expect(fs.readFileSync(path.join(destination, "moved.txt"), "utf8")).toBe("moved payload\n");
+    await browser.saveScreenshot(evidencePath("cut-paste-moves"))
+      .catch((error) => console.warn(`[clipboard-smoke] cut screenshot unavailable: ${error}`));
+  });
+
   it("external Copy of the same path overrides app Cut and duplicates the file", async function () {
-    if (process.platform !== "linux" || process.env.WAYLAND_DISPLAY) this.skip();
     await navigateTo(scratchDir);
     const source = path.join(scratchDir, "original.txt");
     const before = fs.readdirSync(scratchDir).filter((name) => name.includes("original") && name.endsWith(".txt"));
-    const rows = await $$(".entry-item").getElements();
-    let selected = false;
-    for (const row of rows) {
-      const name = ((await row.$(".entry-name").getProperty("textContent")) as string | null)?.trim();
-      if (name === "original.txt") {
-        await row.click({ button: "right" });
-        selected = true;
-        break;
-      }
-    }
-    expect(selected).toBe(true);
+    await openEntryMenu("original.txt");
     await clickMenuItem("Cut");
-
-    // New X11 owner, identical URI, no app token. The native snapshot must
-    // demote this selection to Copy despite matching the previous Cut paths.
-    execFileSync("xclip", ["-selection", "clipboard", "-t", "x-special/gnome-copied-files", "-i"], {
-      input: `copy\n${pathToFileURL(source).href}\n`,
-      stdio: ["pipe", "ignore", "ignore"],
+    await browser.waitUntil(async () => (await $$(".entry-item.cut").length) > 0, {
+      timeout: 10_000,
+      timeoutMsg: "Cut was not admitted (no entry is marked cut)",
     });
-    const content = $(".file-list .content");
-    await content.click({ button: "right", x: 40, y: 200 });
-    await clickMenuItem("Paste");
+
+    // New native owner, identical path, no app ownership proof. The native
+    // snapshot must demote this selection to Copy despite matching the
+    // previous Cut paths.
+    externalCopyOf(source);
+    await pasteHere();
 
     const observed = await browser.executeAsync<RendererWaitResult<true>, [ListingWaitRequest]>(
       waitForListingEntry,

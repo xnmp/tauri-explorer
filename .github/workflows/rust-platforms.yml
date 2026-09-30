@@ -74,6 +74,16 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      # Cut ownership against the real clipboard (#877): Windows' sequence
+      # number and macOS' change count. Ignored by default because it replaces
+      # the clipboard; the runner's is disposable. Require exactly one test so
+      # a renamed test cannot pass by matching nothing.
+      - name: Native clipboard Cut ownership
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib native_clipboard_ownership -- --ignored --nocapture 2>&1 | tee clipboard-ownership.log
+          grep -q 'test result: ok\. 1 passed; 0 failed;' clipboard-ownership.log
+
       # GitHub-hosted Windows jobs own a fresh administrator VM. Temporarily
       # enable 8.3 creation only for this dedicated test; restore the runner's
       # original setting even when the assertion or Cargo fails (#799).

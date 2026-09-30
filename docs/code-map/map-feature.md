@@ -155,7 +155,7 @@ backend for E2E/browser).
 
 ## Copy / paste / file-ops & progress
 
-- `state/clipboard.svelte.ts` — revisioned native file clipboard snapshot and in-app cut/copy path set; cross-window events invalidate and reconcile, while Rust `clipboard/coordinator.rs` (driven by the worker in `clipboard/mod.rs`) orders commands and admits Cut only on backend ownership proof (`clipboard/backend.rs`; X11 today)
+- `state/clipboard.svelte.ts` — revisioned native file clipboard snapshot and in-app cut/copy path set; cross-window events invalidate and reconcile, while Rust `clipboard/coordinator.rs` (driven by the worker in `clipboard/mod.rs`) orders commands and admits Cut only on backend ownership proof (`clipboard/backend.rs`: X11 token target, held Wayland `wl-copy`, Windows/macOS change counter in `clipboard/change_counter.rs`, #877)
 - `state/paste-operations.ts` — paste orchestration (conflict, dest); explorer captures destination before clipboard waits and guards pane callbacks by navigation/lifetime.
 - `state/pane-mutations.ts` — `createPaneMutations`: durable affected-parent/undo effects; navigation/lifetime-owned entry updates and exact editor-session completion
 - Native history lifetime acceptance: `src/test-support/file-history-probe.ts` observes the production summary channel and dispatches real IPC; `src-tauri/test_support/file_history_gate.rs` holds accepted native work before filesystem execution only in opt-in recovery builds. `e2e-tauri/specs/file-history-lifetime.spec.ts` verifies actual shared inverse outcomes across windows; `e2e-tauri/specs/file-forward-history.spec.ts` verifies native rename history before renderer completion and accepted forward work after native window destruction.

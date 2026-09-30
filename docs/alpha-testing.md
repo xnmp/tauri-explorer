@@ -16,8 +16,10 @@ first session. Install on the OS, CPU architecture, desktop environment, and
 display scale named in your invitation; tell us if yours differs.
 For Linux AppImage, install `xclip` on X11 or `wl-clipboard` on Wayland so
 file Copy/Paste and terminal Paste can use the desktop clipboard.
-File Cut is enabled on X11 only; on Wayland, Windows, and macOS, it refuses
-the action until native clipboard ownership can be verified. Use Copy there.
+File Cut verifies native clipboard ownership on X11, Wayland, Windows, and
+macOS. If another program changes the clipboard between Cut and Paste, Paste
+copies instead of moving. When ownership cannot be proven, Cut refuses the
+action; use Copy there.
 
 The current downloadable builds are unsigned. Windows may show a SmartScreen
 warning. The macOS DMG is Apple Silicon only and is not notarized; the

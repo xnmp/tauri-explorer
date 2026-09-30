@@ -30,7 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_instal
 
 Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them; after installing the downloaded Apple Silicon DMG, run `xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app` to clear quarantine. The release page is the supported binary install route; the repository-root `PKGBUILD` provides an Arch source build. The older Homebrew cask and `packaging/aur` binary recipe are not current release channels.
 
-File Cut is available on X11, where the app can verify native clipboard ownership before moving the source. On Wayland, Windows, and macOS, file Copy remains available but Cut reports that ownership cannot yet be verified.
+File Cut verifies native clipboard ownership before moving the source, on X11, Wayland (with `wl-clipboard`), Windows, and macOS. If another program changes the clipboard between Cut and Paste, Paste copies instead of moving. Where ownership cannot be proven (for example, a remote-desktop session that re-renders every clipboard change), Cut reports it and Copy remains available.
 
 ## Use as system file picker
 

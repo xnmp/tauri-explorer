@@ -28,15 +28,15 @@ impl ClipboardOperation {
 /// with an identical file list while our own mirror write had failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SelectionOwner {
-    /// The platform exposes no owner identity; paths are the only evidence.
+    /// The platform exposes no owner identity; paths are the only evidence
+    /// (Wayland: another client's selection has no observable identity).
     Untracked,
     /// The platform tracks owners but this observation failed.
-    // Only owner-tracking backends construct these (X11 today; #877 plans
-    // Windows sequence numbers and the macOS change count).
-    #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+    // The macOS change count is always observable.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Unknown,
-    /// An opaque owner identity (an X11 window, a sequence number, ...).
-    #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+    /// An opaque identity of the clipboard's current content: an X11 owner
+    /// window, a Windows sequence number, the macOS change count.
     Known(u64),
 }
 
@@ -62,9 +62,10 @@ pub(super) const CUT_NEEDS_NATIVE_OWNERSHIP: &str =
 /// Ownership contract: after `write_files(.., token)` succeeds, the backend
 /// reports `owner_token() == Some(token)` for exactly as long as it can
 /// prove that write still owns the OS clipboard. The coordinator admits a Cut
-/// only on that proof, so every default here fails closed. A backend that
-/// gains ownership proof (#877) overrides `owner_token` and
-/// `cut_unavailable_reason`; the coordinator needs no change.
+/// only on that proof, so every default here fails closed. Each platform
+/// backend overrides `owner_token` and `cut_unavailable_reason` with its own
+/// proof (#835, #877): an X11 token target, a held Wayland `wl-copy` owner,
+/// and a private token type plus change counter on Windows and macOS.
 pub(super) trait ClipboardBackend {
     /// File paths the OS clipboard currently offers. `Ok(vec![])` means no
     /// file list; `Err` means the clipboard tooling itself is unusable.

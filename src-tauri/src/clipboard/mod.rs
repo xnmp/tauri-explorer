@@ -8,16 +8,22 @@
 //!
 //! Platform code sits behind `backend::ClipboardBackend` (file lists) and
 //! `backend::ClipboardReader` (text/images), selected once per process:
-//! - Linux/freedesktop (`linux/`): `wl-clipboard` on Wayland; on X11,
-//!   `clipboard-rs` owns multi-target file writes with a Cut ownership token,
-//!   `xclip` reads, and `x11rb` identifies the selection owner.
-//! - macOS (`macos.rs`): `clipboard-rs`, `pbpaste` and `osascript`.
-//! - Windows (`windows.rs`): a PowerShell shell-out per operation.
+//! - Linux/freedesktop (`linux/`): on Wayland, a held `wl-copy --foreground`
+//!   child owns each file write and `wl-paste` reads; on X11, `clipboard-rs`
+//!   owns multi-target file writes with a Cut ownership token, `xclip` reads,
+//!   and `x11rb` identifies the selection owner.
+//! - macOS (`macos.rs`): `NSPasteboard` file writes with a private token
+//!   type, `clipboard-rs` file reads, `pbpaste` and `osascript`.
+//! - Windows (`windows.rs`): a PowerShell shell-out per operation, plus the
+//!   native clipboard sequence number and private token format.
 //!
-//! Cut needs proof that our write still owns the OS clipboard; backends that
-//! cannot prove it (all but X11 for now, see #877) fail Cut closed.
+//! Cut needs proof that our write still owns the OS clipboard (#835, #877).
+//! Windows and macOS prove it with a change counter (`change_counter.rs`).
+//! Whenever a backend cannot prove it, Cut fails closed.
 
 mod backend;
+#[cfg(any(windows, target_os = "macos", test))]
+mod change_counter;
 mod content;
 mod coordinator;
 #[cfg(test)]

@@ -1,4 +1,5 @@
 //! Trash operations publish confirmed outcomes per path, even on partial failure.
+use super::admission::Runtime;
 use super::batch::{self, BatchPlan};
 pub use super::batch::{FileBatchOutcome, FileFailure};
 use super::mutation::PublishedEntry;
@@ -93,64 +94,80 @@ pub(crate) async fn run_batch(plan: BatchPlan) -> Result<FileBatchOutcome, AppEr
     }
 }
 
-/// Accepted forward deletion holds admission until the actual batch worker and
-/// its captures finish. Renderer retirement does not abandon native-owned work.
-#[cfg(target_os = "linux")]
-pub(crate) async fn run_admitted_batch(
+/// Forward deletion and trash Redo. Linux holds whole-selection admission
+/// until the actual batch worker and its captures finish; renderer retirement
+/// does not abandon native-owned work.
+pub(crate) async fn delete(
     plan: BatchPlan,
-    recovery: (super::recovery::Runtime, std::path::PathBuf),
+    runtime: &Runtime,
     permanent: bool,
 ) -> Result<FileBatchOutcome, AppError> {
-    if plan.paths.is_empty() {
-        return Ok(FileBatchOutcome::default());
-    }
-    let paths = Arc::new(plan.paths.clone());
-    if permanent {
-        // Claims, physical parents and staging names come from one fenced
-        // observation; execution binds each receipt to its prepared item.
-        return run_prepared(
+    #[cfg(target_os = "linux")]
+    {
+        let paths = Arc::new(plan.paths.clone());
+        if permanent {
+            // Claims, physical parents and staging names come from one fenced
+            // observation; execution binds each receipt to its prepared item.
+            return run_prepared(
+                plan,
+                runtime,
+                move || {
+                    super::permanent_delete::prepare_selection(Arc::clone(&paths))
+                        .map(|selection| selection.into_admission())
+                },
+                |selection, path, _| selection.execute_next(path),
+            )
+            .await;
+        }
+        run_prepared(
             plan,
-            recovery,
+            runtime,
             move || {
-                super::permanent_delete::prepare_selection(Arc::clone(&paths))
+                super::freedesktop_trash::Context::new()?
+                    .prepare_selection(Arc::clone(&paths))
                     .map(|selection| selection.into_admission())
             },
             |selection, path, _| selection.execute_next(path),
         )
-        .await;
+        .await
     }
-    run_prepared(
-        plan,
-        recovery,
-        move || {
-            super::freedesktop_trash::Context::new()?
-                .prepare_selection(Arc::clone(&paths))
-                .map(|selection| selection.into_admission())
-        },
-        |selection, path, _| selection.execute_next(path),
-    )
-    .await
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = runtime;
+        if permanent {
+            Ok(
+                batch::run_with_receipts(plan, |path, _| {
+                    super::file_ops::delete_path_receipt(path)
+                })
+                .await,
+            )
+        } else {
+            run_batch(plan).await
+        }
+    }
 }
 
-#[cfg(target_os = "linux")]
-async fn finish_admitted(
-    mut result: FileBatchOutcome,
-    admission: super::recovery::MutationAdmission,
-) -> Result<FileBatchOutcome, AppError> {
-    if let Err(error) = super::run_blocking(move || admission.finish()).await {
-        let cleanup = format!("File operation finished, but ownership cleanup failed: {error}");
-        result.worker_error = Some(match result.worker_error {
-            Some(previous) => format!("{previous}; {cleanup}"),
-            None => cleanup,
-        });
+impl super::admission::Settle for Result<FileBatchOutcome, AppError> {
+    fn refused(error: AppError) -> Self {
+        Err(error)
     }
-    Ok(result)
+
+    // Only a completed batch holds an admission to retire.
+    fn unretired(&mut self, error: AppError) {
+        if let Ok(result) = self {
+            let cleanup = format!("File operation finished, but ownership cleanup failed: {error}");
+            result.worker_error = Some(match result.worker_error.take() {
+                Some(previous) => format!("{previous}; {cleanup}"),
+                None => cleanup,
+            });
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
 async fn run_prepared<T: Send + 'static>(
     plan: BatchPlan,
-    recovery: (super::recovery::Runtime, std::path::PathBuf),
+    runtime: &Runtime,
     prepare: impl FnMut() -> Result<(T, Vec<super::recovery::resources::Resource>), AppError>
         + Send
         + 'static,
@@ -165,46 +182,14 @@ async fn run_prepared<T: Send + 'static>(
     if plan.paths.is_empty() {
         return Ok(FileBatchOutcome::default());
     }
-    let (mut prepared, admission) = recovery.0.admit_prepared(recovery.1, prepare).await?;
-    let result = batch::run_with_receipts_owned(admission.context(), plan, move |path, effects| {
-        execute(&mut prepared, path, effects)
+    super::admission::admitted_prepared(runtime, prepare, |mut prepared, owner| async move {
+        Ok(
+            batch::run_with_receipts_owned(owner, plan, move |path, effects| {
+                execute(&mut prepared, path, effects)
+            })
+            .await,
+        )
     })
-    .await;
-    finish_admitted(result, admission).await
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) async fn trash_publication_admitted(
-    publication: Arc<PublishedEntry>,
-    recovery: (super::recovery::Runtime, std::path::PathBuf),
-) -> Result<FileBatchOutcome, AppError> {
-    let paths = Arc::new(vec![publication.path.to_string_lossy().into_owned()]);
-    let plan = BatchPlan::new(paths.as_ref().clone()).map_err(AppError::InvalidPath)?;
-    run_prepared(
-        plan,
-        recovery,
-        move || {
-            super::freedesktop_trash::Context::new()?
-                .prepare_publication(Arc::clone(&paths), Arc::clone(&publication))
-                .map(|selection| selection.into_admission())
-        },
-        |selection, path, _| selection.execute_next(path),
-    )
-    .await
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) async fn restore_entries_admitted(
-    requests: Vec<RestoreRequest>,
-    recovery: (super::recovery::Runtime, std::path::PathBuf),
-) -> Result<FileBatchOutcome, AppError> {
-    let plan = restore_plan(&requests)?;
-    run_prepared(
-        plan,
-        recovery,
-        move || super::freedesktop_trash::restoration::prepare(&requests),
-        |selection, path, effects| selection.execute_next(path, effects),
-    )
     .await
 }
 
@@ -227,20 +212,21 @@ fn restore_plan(requests: &[RestoreRequest]) -> Result<BatchPlan, AppError> {
 /// Trash only the exact native object published by an ordinary copy. This
 /// inverse is native-owned: callers provide neither a path-only fallback nor a
 /// replacement identity reconstructed from presentation metadata.
-#[cfg(any(not(target_os = "linux"), test))]
 pub(crate) async fn trash_publication(
     publication: Arc<PublishedEntry>,
+    runtime: &Runtime,
 ) -> Result<FileBatchOutcome, AppError> {
-    let path = publication.path.to_string_lossy().into_owned();
-    let plan = BatchPlan::new(vec![path]).map_err(AppError::InvalidPath)?;
+    let paths = Arc::new(vec![publication.path.to_string_lossy().into_owned()]);
+    let plan = BatchPlan::new(paths.as_ref().clone()).map_err(AppError::InvalidPath)?;
     #[cfg(target_os = "linux")]
     {
-        let worker_owner = Arc::clone(&publication);
-        batch::run_with_setup_owned(
-            worker_owner,
+        run_prepared(
             plan,
-            move |paths| {
-                super::freedesktop_trash::Context::new()?.prepare_publication(paths, publication)
+            runtime,
+            move || {
+                super::freedesktop_trash::Context::new()?
+                    .prepare_publication(Arc::clone(&paths), Arc::clone(&publication))
+                    .map(|selection| selection.into_admission())
             },
             |selection, path, _| selection.execute_next(path),
         )
@@ -248,7 +234,7 @@ pub(crate) async fn trash_publication(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (publication, plan);
+        let _ = (publication, plan, runtime);
         Err(AppError::Other(
             "Exact ordinary-copy Undo is unsupported on this platform".into(),
         ))
@@ -257,7 +243,29 @@ pub(crate) async fn trash_publication(
 
 /// Restore only artifacts captured by an accepted native deletion. No inventory
 /// or timestamp lookup participates in an inverse.
-#[cfg(any(not(target_os = "linux"), test))]
+pub(crate) async fn restore(
+    requests: Vec<RestoreRequest>,
+    runtime: &Runtime,
+) -> Result<FileBatchOutcome, AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        let plan = restore_plan(&requests)?;
+        run_prepared(
+            plan,
+            runtime,
+            move || super::freedesktop_trash::restoration::prepare(&requests),
+            |selection, path, effects| selection.execute_next(path, effects),
+        )
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = runtime;
+        restore_entries(requests).await
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
 pub(crate) async fn restore_entries(
     requests: Vec<RestoreRequest>,
 ) -> Result<FileBatchOutcome, AppError> {
@@ -280,14 +288,7 @@ pub(crate) async fn restore_entries(
         )
         .await
     }
-    #[cfg(target_os = "linux")]
-    {
-        Ok(batch::run_with_receipts(plan, move |path, effects| {
-            super::freedesktop_trash::restore_receipt(&requests[path], effects)
-        })
-        .await)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(target_os = "windows"))]
     {
         let _ = (plan, requests);
         Err(AppError::Other(

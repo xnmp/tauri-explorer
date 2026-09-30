@@ -15,8 +15,6 @@ use super::{
     WorkerCompletion,
 };
 use crate::{error::AppError, files, progress::ProgressTracker};
-#[cfg(target_os = "linux")]
-use std::path::PathBuf;
 use std::{fs, path::Path, sync::Arc};
 
 #[derive(Clone)]
@@ -25,7 +23,7 @@ pub(crate) struct MoveWork {
     /// global job events; `job_id` only labels the tracker's cancel reason.
     pub job_id: u64,
     #[cfg(target_os = "linux")]
-    pub recovery: (files::recovery::Runtime, PathBuf),
+    pub runtime: files::recovery::Runtime,
 }
 
 impl Work for MoveWork {
@@ -173,14 +171,8 @@ impl RelocateWork {
             }
             return self
                 .native
-                .recovery
-                .0
-                .move_entry(
-                    self.native.recovery.1.clone(),
-                    source,
-                    &target,
-                    &mut tracker,
-                )
+                .runtime
+                .move_entry(source, &target, &mut tracker)
                 .map(|receipt| present(receipt, &self.inspection));
         }
         let _ = &mut tracker;

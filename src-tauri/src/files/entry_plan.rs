@@ -111,9 +111,19 @@ impl EntryPlan {
         }
     }
 
+    pub(crate) fn target(&self) -> &Path {
+        &self.target
+    }
+
+    pub(super) fn into_parts(self) -> (PathBuf, Request, Option<PathBuf>) {
+        (self.target, self.request, self.presentation)
+    }
+}
+
+impl super::admission::Plan for EntryPlan {
     /// The same owned request determines execution and recovery ownership.
     #[cfg(target_os = "linux")]
-    pub(crate) fn resources(&self) -> Vec<super::recovery::ResourceRequest> {
+    fn resources(&self) -> Vec<super::recovery::ResourceRequest> {
         use super::recovery::{Access, ResourceRequest, Scope};
         let mut resources = vec![ResourceRequest {
             path: self.target.clone(),
@@ -136,17 +146,10 @@ impl EntryPlan {
         resources
     }
 
-    pub(crate) fn target(&self) -> &Path {
-        &self.target
-    }
-
     /// Bind execution to the exact ordered resources returned by admission.
     /// Keep link text literal; its existence probe uses the captured target.
     #[cfg(target_os = "linux")]
-    pub(crate) fn resolve(
-        mut self,
-        paths: impl Iterator<Item = PathBuf>,
-    ) -> Result<Self, AppError> {
+    fn resolve(mut self, paths: impl Iterator<Item = PathBuf>) -> Result<Self, AppError> {
         let mut paths = paths;
         let missing =
             || AppError::Other("Entry admission returned incomplete path bindings".into());
@@ -179,10 +182,6 @@ impl EntryPlan {
         }
         self.presentation = Some(std::mem::replace(&mut self.target, target));
         Ok(self)
-    }
-
-    pub(super) fn into_parts(self) -> (PathBuf, Request, Option<PathBuf>) {
-        (self.target, self.request, self.presentation)
     }
 }
 

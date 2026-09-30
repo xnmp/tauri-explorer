@@ -3,8 +3,10 @@
 use crate::{
     error::AppError,
     file_history::{self, Action, ForwardEffect, MutationOutcome, MutationReply, Recovery},
-    files::{batch::FileBatchOutcome, entry_plan::EntryPlan, mutation::FileMutationReceipt},
-    renderer_owner,
+    files::{
+        admission, batch::FileBatchOutcome, entry_plan::EntryPlan, mutation::FileMutationReceipt,
+    },
+    platform, renderer_owner,
 };
 use std::path::Path;
 use tauri::Manager;
@@ -64,7 +66,7 @@ fn delete_outcome(
     mut result: FileBatchOutcome,
     permanent: bool,
 ) -> MutationOutcome<FileBatchOutcome> {
-    if !permanent && !cfg!(target_os = "macos") {
+    if !permanent && platform::TRASH_RESTORE_SUPPORTED {
         for path in &result.succeeded {
             if !result.artifacts.contains_key(path)
                 && !result.warnings.iter().any(|warning| &warning.path == path)
@@ -101,24 +103,12 @@ pub(crate) async fn delete_entries(
     use crate::files::{batch, trash};
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let plan = batch::BatchPlan::new(paths).map_err(AppError::InvalidPath)?;
-    #[cfg(target_os = "linux")]
-    let recovery = crate::files::recovery::commands::owner(&window)?;
+    let runtime = admission::runtime(&window)?;
     let mut directories: Vec<_> = plan.paths.iter().flat_map(|path| parent(path)).collect();
     directories.sort_unstable();
     directories.dedup();
     file_history::run_forward(owner, false, directories, async move {
-        #[cfg(target_os = "linux")]
-        let result = trash::run_admitted_batch(plan, recovery, permanent).await;
-        #[cfg(not(target_os = "linux"))]
-        let result = if permanent {
-            Ok(batch::run_with_receipts(plan, |path, _| {
-                crate::files::file_ops::delete_path_receipt(path)
-            })
-            .await)
-        } else {
-            trash::run_batch(plan).await
-        };
-        match result {
+        match trash::delete(plan, &runtime, permanent).await {
             Ok(result) => delete_outcome(result, permanent),
             // Dedicated-worker setup is explicitly nonmutating. Once an item
             // starts, the external ledger returns its per-path outcome instead.
@@ -158,7 +148,7 @@ pub(crate) fn copy_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
     Some(Action::Copy {
         copied_path: publication.path.to_string_lossy().into_owned(),
         parent_dir: publication.path.parent()?.to_string_lossy().into_owned(),
-        restore_supported: !cfg!(target_os = "macos"),
+        restore_supported: platform::TRASH_RESTORE_SUPPORTED,
         recovery: Recovery::Capture,
         publication: Some(publication.clone()),
     })
@@ -188,7 +178,7 @@ pub(crate) async fn copy_entries(
         app: Some(window.app_handle().clone()),
         job_id,
         #[cfg(target_os = "linux")]
-        recovery: crate::files::recovery::commands::owner(&window)?,
+        runtime: admission::runtime(&window)?,
     };
     file_history::run_forward(owner, shared, vec![dest_dir.clone()], async move {
         let result = copy_session::run(request, registration.control.clone(), work, move |event| {
@@ -228,7 +218,7 @@ pub(crate) fn copy_session_outcome(
                 actions.push(Action::Copy {
                     copied_path: receipt.path.clone(),
                     parent_dir: destination.clone(),
-                    restore_supported: !cfg!(target_os = "macos"),
+                    restore_supported: platform::TRASH_RESTORE_SUPPORTED,
                     recovery: Recovery::Capture,
                     publication: None,
                 });
@@ -286,7 +276,7 @@ pub(crate) async fn move_entries(
     let work = MoveWork {
         job_id,
         #[cfg(target_os = "linux")]
-        recovery: crate::files::recovery::commands::owner(&window)?,
+        runtime: admission::runtime(&window)?,
     };
     // A relocation changes two directories per item. The source parents are
     // only known per item, so the reservation names the destination and the
@@ -420,14 +410,9 @@ pub(crate) async fn move_entry(
     let plan =
         crate::files::move_plan::MovePlan::new(source, dest_dir, overwrite.unwrap_or(false))?;
     let directories = plan.affected_dirs();
-    #[cfg(target_os = "linux")]
-    let (runtime, storage) = crate::files::recovery::commands::owner(&window)?;
+    let runtime = admission::runtime(&window)?;
     file_history::run_forward(owner, false, directories, async move {
-        #[cfg(target_os = "linux")]
-        let outcome = crate::files::move_execution::execute(plan, runtime, storage).await;
-        #[cfg(not(target_os = "linux"))]
-        let outcome = crate::files::move_execution::execute_owned(plan, ()).await;
-        move_outcome(outcome)
+        move_outcome(crate::files::move_execution::execute(plan, &runtime).await)
     })
     .await
 }
@@ -448,10 +433,7 @@ pub(crate) fn move_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
 fn move_outcome(
     outcome: crate::files::move_execution::Outcome,
 ) -> MutationOutcome<FileMutationReceipt> {
-    let changed = matches!(
-        &outcome.completion.result,
-        Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
-    );
+    let changed = admission::changed(&outcome.completion.result);
     let inverse = outcome
         .completion
         .result
@@ -499,18 +481,17 @@ fn rename_effect(committed_path: String, old_name: String, new_name: String) -> 
     }))
 }
 
-#[cfg(any(test, not(target_os = "linux")))]
-async fn entry_outcome(plan: EntryPlan) -> MutationOutcome<FileMutationReceipt> {
-    settle_entry(crate::files::entry_execution::execute_owned(plan, ()).await)
+async fn entry_outcome(
+    plan: EntryPlan,
+    runtime: &admission::Runtime,
+) -> MutationOutcome<FileMutationReceipt> {
+    settle_entry(crate::files::entry_execution::execute(plan, runtime).await)
 }
 
 fn settle_entry(
     outcome: crate::files::entry_execution::Outcome,
 ) -> MutationOutcome<FileMutationReceipt> {
-    let changed = matches!(
-        &outcome.completion.result,
-        Ok(_) | Err(AppError::MutationUncertain(_) | AppError::WorkerFailed(_))
-    );
+    let changed = admission::changed(&outcome.completion.result);
     let mut warning = outcome.completion.warning;
     let effect = if outcome.completion.result.is_ok() {
         match outcome.rename {
@@ -544,15 +525,6 @@ fn settle_entry(
     }
 }
 
-#[cfg(target_os = "linux")]
-async fn entry_with_recovery(
-    plan: EntryPlan,
-    runtime: crate::files::recovery::Runtime,
-    storage: std::path::PathBuf,
-) -> MutationOutcome<FileMutationReceipt> {
-    settle_entry(crate::files::entry_execution::execute(plan, runtime, storage).await)
-}
-
 async fn entry(
     window: tauri::Window,
     session_id: String,
@@ -560,23 +532,11 @@ async fn entry(
 ) -> Result<MutationReply<FileMutationReceipt>, AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     let directories = plan.affected_dirs();
-    #[cfg(target_os = "linux")]
-    let work = {
-        use tauri::Manager;
-        let runtime = window
-            .state::<crate::files::recovery::Runtime>()
-            .inner()
-            .clone();
-        let storage = window
-            .path()
-            .app_local_data_dir()
-            .map_err(|error| AppError::Other(error.to_string()))?
-            .join("file-recovery");
-        entry_with_recovery(plan, runtime, storage)
-    };
-    #[cfg(not(target_os = "linux"))]
-    let work = entry_outcome(plan);
-    file_history::run_forward(owner, false, directories, work).await
+    let runtime = admission::runtime(&window)?;
+    file_history::run_forward(owner, false, directories, async move {
+        entry_outcome(plan, &runtime).await
+    })
+    .await
 }
 
 #[tauri::command]

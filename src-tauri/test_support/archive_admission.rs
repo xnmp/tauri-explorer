@@ -7,6 +7,7 @@
 //! blocking work leaves partial output behind.
 #![cfg(target_os = "linux")]
 use super::*;
+use crate::files::admission::Plan;
 use crate::files::recovery::{Access, MutationAdmission, ResourceRequest, Runtime, Scope};
 use crate::renderer_owner::Owner;
 use std::io::Write as _;
@@ -23,7 +24,6 @@ struct Fixture {
     _directory: tempfile::TempDir,
     _storage_root: tempfile::TempDir,
     base: PathBuf,
-    storage: PathBuf,
     runtime: Runtime,
 }
 
@@ -39,14 +39,13 @@ fn fixture() -> Fixture {
         _directory: directory,
         _storage_root: storage_root,
         base,
-        storage,
-        runtime: Runtime::default(),
+        runtime: Runtime::new(storage),
     }
 }
 
 impl Fixture {
     fn request(&self, requests: Vec<ResourceRequest>) -> Result<MutationAdmission, AppError> {
-        tauri::async_runtime::block_on(self.runtime.admit(self.storage.clone(), requests))
+        tauri::async_runtime::block_on(self.runtime.admit(requests))
     }
 
     /// A separate managed operation holding `path`, as a move or copy session
@@ -287,25 +286,27 @@ fn a_cleanup_failure_warns_without_discarding_the_committed_result() {
     let source = fixture.base.join("docs");
     fs::create_dir(&source).unwrap();
     let plan = compress_plan(&[source], fixture.base.join("docs.zip"));
-    let admission = fixture.admit(&plan).unwrap();
     // An outstanding worker context makes retirement fail, exactly as it does
     // when a blocking worker outlives its supervisor.
-    let outstanding = admission.context();
-
-    let outcome = tauri::async_runtime::block_on(settle(
-        MutationOutcome {
-            result: Ok("/tmp/docs.zip".to_owned()),
-            effect: ForwardEffect::Changed(None),
-            warning: None,
-            affected: vec!["/tmp".to_owned()],
+    let outstanding = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let keep = outstanding.clone();
+    let Archived(outcome) = tauri::async_runtime::block_on(admission::admitted_execute(
+        plan,
+        &fixture.runtime,
+        |_plan, owner| async move {
+            *keep.lock().unwrap() = Some(owner);
+            Archived(MutationOutcome {
+                result: Ok("/tmp/docs.zip".to_owned()),
+                effect: ForwardEffect::Changed(None),
+                warning: None,
+                affected: vec!["/tmp".to_owned()],
+            })
         },
-        admission,
     ));
     assert_eq!(outcome.result.unwrap(), "/tmp/docs.zip");
-    assert!(outcome
-        .warning
-        .unwrap()
-        .contains("ownership record could not be retired"));
+    assert!(outcome.warning.unwrap().starts_with(
+        "Archive operation finished, but its ownership record could not be retired: "
+    ));
     drop(outstanding);
 }
 

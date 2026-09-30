@@ -56,7 +56,7 @@ pub(crate) async fn run_forward<T: Send + 'static>(
             },
         };
         let (effect, warning) = match outcome.effect {
-            ForwardEffect::Changed(Some(action)) => match action::prepare_forward(action, !cfg!(target_os = "macos")) {
+            ForwardEffect::Changed(Some(action)) => match action::prepare_forward(action, crate::platform::TrashRestore::HOST) {
                 Ok(retained) => (ForwardEffect::Changed(retained.action), retained.warning),
                 Err(error) => {
                     let warning = format!("File operation completed, but its Undo history could not be recorded: {error}");

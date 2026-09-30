@@ -1,6 +1,6 @@
 //! Move admission and worker lifetime, shared by forward commands and inverses.
 //! This is ownership reservation, not a durable move journal or exact inverse.
-use super::{move_plan::MovePlan, mutation::FileMutationReceipt, WorkerCompletion};
+use super::{admission, move_plan::MovePlan, mutation::FileMutationReceipt, WorkerCompletion};
 use crate::error::AppError;
 
 pub(crate) struct Outcome {
@@ -65,7 +65,6 @@ pub(crate) async fn execute_owned<O: Send + 'static>(plan: MovePlan, owner: O) -
 struct DurableWork {
     plan: MovePlan,
     runtime: super::recovery::Runtime,
-    storage: std::path::PathBuf,
 }
 
 #[cfg(target_os = "linux")]
@@ -81,66 +80,43 @@ impl DurableWork {
                 Ok(())
             }
         }
-        self.runtime.move_entry(
-            self.storage.clone(),
-            &self.plan.source,
-            &self.plan.target,
-            &mut Uninterrupted,
-        )
+        self.runtime
+            .move_entry(&self.plan.source, &self.plan.target, &mut Uninterrupted)
     }
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) async fn execute(
-    plan: MovePlan,
-    runtime: super::recovery::Runtime,
-    storage: std::path::PathBuf,
-) -> Outcome {
+pub(crate) async fn execute(plan: MovePlan, runtime: &admission::Runtime) -> Outcome {
+    #[cfg(target_os = "linux")]
     if cfg!(feature = "durable-move-recovery") {
         let affected = plan.affected_dirs();
-        let completion = super::run_blocking_context(
-            DurableWork {
-                plan,
-                runtime,
-                storage,
-            },
-            DurableWork::execute,
-        )
-        .await;
+        let runtime = runtime.clone();
+        let completion =
+            super::run_blocking_context(DurableWork { plan, runtime }, DurableWork::execute).await;
         return Outcome {
             completion,
             affected,
         };
     }
-    let admission = match runtime.admit(storage, plan.resources()).await {
-        Ok(admission) => admission,
-        Err(error) => return unchanged(error),
-    };
-    let plan = plan.resolve(admission.paths().map(std::path::Path::to_path_buf));
-    let mut outcome = match plan {
-        Ok(plan) => execute_owned(plan, admission.context()).await,
-        Err(error) => unchanged(error),
-    };
-    // The real worker has returned and dropped its context before settlement.
-    // A cleanup failure cannot erase a confirmed destination or become a retry.
-    if let Err(error) = super::run_blocking(move || admission.finish()).await {
-        let mut warnings: crate::diagnostics::Warnings =
-            outcome.completion.warning.take().into_iter().collect();
-        warnings.push(format!(
-            "Move finished, but its ownership record could not be retired: {error}"
-        ));
-        outcome.completion.warning = Some(warnings.into_vec().join("\n"));
-    }
-    outcome
+    admission::admitted_execute(plan, runtime, execute_owned).await
 }
 
-#[cfg(target_os = "linux")]
-fn unchanged(error: AppError) -> Outcome {
-    Outcome {
-        completion: WorkerCompletion {
-            result: Err(error),
-            warning: None,
-        },
-        affected: Vec::new(),
+impl admission::Settle for Outcome {
+    fn refused(error: AppError) -> Self {
+        Outcome {
+            completion: WorkerCompletion {
+                result: Err(error),
+                warning: None,
+            },
+            affected: Vec::new(),
+        }
+    }
+
+    // The real worker has returned and dropped its context before settlement.
+    // A cleanup failure cannot erase a confirmed destination or become a retry.
+    fn unretired(&mut self, error: AppError) {
+        let mut warnings: crate::diagnostics::Warnings =
+            self.completion.warning.take().into_iter().collect();
+        warnings.push(admission::unretired_warning("Move", &error));
+        self.completion.warning = Some(warnings.into_vec().join("\n"));
     }
 }

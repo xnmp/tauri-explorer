@@ -6,6 +6,7 @@
 // paths call them until a macOS adapter is connected (#772). Their dead-code
 // allowance is scoped to these modules so macOS still reports dead code
 // everywhere else (#870).
+pub(crate) mod admission;
 #[cfg(unix)]
 #[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 mod anchored_copy;

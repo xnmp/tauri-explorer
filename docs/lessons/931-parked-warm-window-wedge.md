@@ -15,14 +15,17 @@ and was followed by `session deleted because of page crash or hang`.
 - The script that stalled came from harness loops that script **every**
   handle: `selectWindowByLabel` (via `switchToLabel`) and the success-path
   `captureDiagnostics("qualification-complete")`. The one pre-#921 occurrence
-  (run 36433792218) had the same signature. `warm-window.spec.ts` also lost a
-  session once the same way, on an activated warm page.
-- **The drive feed is not the cause.** With every drive read, subscription and
-  poll deferred until activation, a parked page still wedged during boot: the
-  app log showed its `window tab seed` line (boot start) and never its
-  `warm parked` line (registration). A parked page can stop answering script
-  before it finishes booting, independently of #921; what raised the failure
-  rate is not established.
+  (run 36433792218) had the same signature.
+- **The drive feed is not the cause.** With every drive listener and poll
+  deferred until activation, a parked page still stopped answering script:
+  in run 36780672273 a parked page that had logged `warm parked` (so it had
+  finished booting and registered) hung a `findElement` for 28 s. What makes a
+  hidden, never-shown page stop answering WebDriver is not established, nor
+  what raised the rate after #921.
+- `warm-window.spec.ts` produced that case itself: the warm label is readable
+  before the page registers with the pool, so Ctrl+N in that gap correctly
+  opened a fresh window, and the spec then scripted the still-parked page as if
+  it had been activated. Wait for `e2eWarmReady` before claiming.
 - No WebKitWebProcess stderr or crash signal was retained, and 33 local runs
   (GPU and `LIBGL_ALWAYS_SOFTWARE=1`) did not reproduce it.
 
@@ -53,4 +56,6 @@ and was followed by `session deleted because of page crash or hang`.
    needed.
 5. To tell whether a parked page finished booting without scripting it, pair
    its `[window tab seed]` app-log line with `[warm parked]`
-   (`Retire-when: #931 closed`).
+   (`Retire-when: #931 closed`). A missing `[warm parked]` line is only
+   meaningful if the app kept running: a spec that ends within a second of
+   priming kills the page before it registers.

@@ -52,3 +52,9 @@ milestones, and a final local process
 sample, without making another WebDriver call. These samples do not establish
 which WebView owned a renderer; compare the failing artifact with the driver
 log before attributing cause. No real recurrence has been classified yet.
+
+The sampler and both record types live in `e2e-tauri/diagnostics/`
+(`process-timeline.ts`, `fresh-window.ts`, `warm-claim.ts`), each tagged
+`Retire-when: #781 closed`. When #781 closes, delete them, unwrap
+`monitorFreshWindowOpen`/`monitorWarmClaimExpiry` in their specs and reduce
+`switchToFreshWindow`/`waitForFreshWindowElement` to their WebDriver waits.

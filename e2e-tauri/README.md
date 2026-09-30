@@ -95,8 +95,20 @@ Mac2 4.2 driver, build with `bun run tauri build --bundles app`, start Appium
 on port 4723, then run `bun run e2e-tauri/macos-ui-smoke.ts`. The pilot remains
 unqualified until the hosted test demonstrates the app outcome.
 
-## Fresh-window failure evidence
+## Session-loss failure evidence (`diagnostics/`)
 
+Investigation-only scaffolding lives in `e2e-tauri/diagnostics/`; each module
+names the open issue that justifies it with a `Retire-when: #NNN closed` line
+(see CONTRIBUTING.md). `artifact.ts` is the shared best-effort writer: it
+digests untrusted labels into file names (ADR 0021) and never lets a failed
+write replace the error being documented. `process-timeline.ts` is the
+process-only `/proc` sampler shared by the fresh-window and warm-claim records
+(#781); `window-transfer.ts` retains per-window evidence for transfer and
+clipboard failures (#710).
+
+Launch, selection and first lookup of a fresh child are all sampled:
+`monitorFreshWindowOpen` and a failed `switchToFreshWindow` keep the requested
+label and a process timeline even when no page was ever selected. On success,
 `switchToFreshWindow` records one atomic renderer sample (label, hook readiness,
 `.file-list` count, status path, URL, ready/visibility state) plus a `/proc` scan
 of the application, its WebKit auxiliary processes and the drivers, every time a

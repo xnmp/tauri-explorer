@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
 import { navigateTo, entryNames, domTexts } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
-import { captureDiagnostics } from "../window-transfer-diagnostics";
+import { captureDiagnostics } from "../diagnostics/window-transfer";
 import {
   waitForListingEntry,
   type ListingWaitRequest,

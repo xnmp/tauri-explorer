@@ -1,14 +1,30 @@
+/**
+ * Per-window evidence for a failed native window-transfer or clipboard step.
+ *
+ * Retire-when: #710 closed
+ *
+ * The JSON record is persisted before and after every driver request, so a
+ * request that never returns still leaves the evidence gathered so far. The
+ * failing window is screenshotted before any unrelated window is inspected.
+ * See `docs/lessons/710-window-transfer-webview2-polling.md`.
+ */
 import { browser } from "@wdio/globals";
-import fs from "node:fs";
 import path from "node:path";
+import { NATIVE_LOG_DIRECTORY, writeDiagnosticArtifact } from "./artifact";
 
+/**
+ * Capture every window's state into `e2e-tauri/logs/window-transfer-<reason>.json`
+ * plus a screenshot of the current window. `reason` is spec-authored and
+ * reduced to `[a-z0-9-]`. Persistence is best-effort; the caller rethrows
+ * its own failure.
+ */
 export async function captureDiagnostics(
   reason: string,
   context: Record<string, unknown> = {},
 ): Promise<void> {
   const diagnostics: unknown[] = [];
   const slug = reason.replace(/[^a-z0-9-]/gi, "-");
-  const logDirectory = path.resolve("e2e-tauri", "logs");
+  const logDirectory = NATIVE_LOG_DIRECTORY;
   const artifact = {
     reason,
     capturedAt: new Date().toISOString(),
@@ -18,11 +34,7 @@ export async function captureDiagnostics(
     context,
     windows: diagnostics,
   };
-  fs.mkdirSync(logDirectory, { recursive: true });
-  const persist = () => fs.writeFileSync(
-    path.join(logDirectory, `window-transfer-${slug}.json`),
-    JSON.stringify(artifact, null, 2),
-  );
+  const persist = () => writeDiagnosticArtifact(logDirectory, `window-transfer-${slug}.json`, artifact);
   // Leave metadata behind even if a later driver request never returns.
   persist();
   const original = await browser.getWindowHandle().catch(() => null);

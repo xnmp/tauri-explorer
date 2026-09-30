@@ -124,6 +124,9 @@ impl<I: SelectionItem> Preparation<I> {
     /// Capture `path` as a writable subtree source together with the alias
     /// dependencies that resolve it, then observe the physical entry. The
     /// claim and the observation must name the same object.
+    // Trash (Linux-only) observes without inspection; permanent deletion
+    // uses `observe_with` on every Unix platform.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(in crate::files) fn observe(&mut self, path: &Path) -> Result<ObservedSource, AppError> {
         self.observe_with(path, |_, _| Ok(()))
             .map(|(source, ())| source)
@@ -285,7 +288,7 @@ impl<I: SelectionItem> PreparedSelection<I> {
     }
 
     /// Slots not yet executed, in execution order.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(in crate::files) fn pending(&self) -> impl Iterator<Item = &Result<I, String>> {
         self.items.iter()
     }

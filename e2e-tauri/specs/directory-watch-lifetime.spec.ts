@@ -10,7 +10,8 @@ import {
   type InotifyWatch,
   type NativeProcessIdentity,
 } from "../native-resources";
-import { domTexts, monitorFreshWindowOpen, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { domTexts, navigateTo, switchToFreshWindow, waitForFreshWindowElement } from "./helpers";
+import { monitorFreshWindowOpen } from "../diagnostics/fresh-window";
 import { createNativeFixtureDirectory } from "../native-qualification";
 
 const scratch = createNativeFixtureDirectory("tauri-explorer-e2e-directory-owner-");

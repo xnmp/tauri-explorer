@@ -1160,3 +1160,37 @@ fn completed_move_discard_reclaims_its_overwritten_original() {
     assert!(!root.exists());
     assert!(coordinator.inventory().unwrap().entries.is_empty());
 }
+
+/// A mount inside a private artifact root is someone else's filesystem, never
+/// retained evidence: retirement refuses it and keeps every byte it exposes.
+/// A bind mount of the same filesystem keeps its device, so this needs mount
+/// identity, not a device comparison (#875). Run as documented in
+/// `e2e-tauri/README.md` for the other ignored mount-namespace tests.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn replacement_retirement_never_descends_into_a_mount_inside_its_root() {
+    use crate::files::mount_namespace::{require_private_namespace, BindMount};
+    require_private_namespace();
+    let fixture = published_directories();
+    let outside = fixture.base.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("foreign.txt"), b"foreign bytes").unwrap();
+    let nested = fixture.root().join("original/nested");
+    let mount = BindMount::new(&outside, &nested);
+
+    let result = fixture.retirement().retire();
+
+    assert!(result.is_err(), "retirement crossed a mount: {result:?}");
+    assert_eq!(
+        fs::read(outside.join("foreign.txt")).unwrap(),
+        b"foreign bytes"
+    );
+    assert_eq!(
+        fs::read(nested.join("foreign.txt")).unwrap(),
+        b"foreign bytes"
+    );
+    drop(mount);
+    assert!(fixture.root().join("original/nested/deep.txt").is_file());
+    assert!(fixture.indexed());
+}

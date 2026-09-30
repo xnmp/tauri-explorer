@@ -95,8 +95,20 @@ Mac2 4.2 driver, build with `bun run tauri build --bundles app`, start Appium
 on port 4723, then run `bun run e2e-tauri/macos-ui-smoke.ts`. The pilot remains
 unqualified until the hosted test demonstrates the app outcome.
 
-## Fresh-window failure evidence
+## Session-loss failure evidence (`diagnostics/`)
 
+Investigation-only scaffolding lives in `e2e-tauri/diagnostics/`; each module
+names the open issue that justifies it with a `Retire-when: #NNN closed` line
+(see CONTRIBUTING.md). `artifact.ts` is the shared best-effort writer: it
+digests untrusted labels into file names (ADR 0021) and never lets a failed
+write replace the error being documented. `process-timeline.ts` is the
+process-only `/proc` sampler shared by the fresh-window and warm-claim records
+(#781); `window-transfer.ts` retains per-window evidence for transfer and
+clipboard failures (#710).
+
+Launch, selection and first lookup of a fresh child are all sampled:
+`monitorFreshWindowOpen` and a failed `switchToFreshWindow` keep the requested
+label and a process timeline even when no page was ever selected. On success,
 `switchToFreshWindow` records one atomic renderer sample (label, hook readiness,
 `.file-list` count, status path, URL, ready/visibility state) plus a `/proc` scan
 of the application, its WebKit auxiliary processes and the drivers, every time a
@@ -468,3 +480,17 @@ that the move is refused before any record instead of meeting `EBUSY` after
 journaling. `a_payload_that_crosses_into_another_mount_is_refused_before_any_record`
 mounts a tmpfs inside a payload the move would retain, whose discard could never
 traverse it, and checks the same refusal.
+
+The shared tree removal (#875) has one bind-mount test per caller, all named
+for what they never do: `a_bind_mount_inside_the_tree_is_never_entered`
+(the primitive, under both mount-evidence policies and for a mounted file),
+`deletion_never_descends_into_a_mount_inside_the_selection` (permanent delete),
+`replacement_retirement_never_descends_into_a_mount_inside_its_root` and
+`move_cleanup_never_descends_into_a_mount_inside_its_payload`. Each bind-mounts
+a directory of the same filesystem, so only mount identity reveals it, and
+checks the refusal plus every byte the mount exposes.
+`a_mount_appearing_between_admission_and_entry_is_never_entered` bind-mounts a
+directory onto itself after the walk observed it, which keeps its device and
+inode, and checks that the walk never enters it. Run them with the command
+above, replacing the test name with the filter `mount_inside` (which also
+selects the two older move-retirement mount tests) and then `never_entered`.

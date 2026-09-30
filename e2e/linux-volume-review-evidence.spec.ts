@@ -4,8 +4,8 @@ import type { Drive } from "../src/lib/api/drives";
 import type { MockControl } from "../src/lib/api/mock-control";
 
 type VolumeFixture = { __mockControl?: MockControl };
-const usb: Drive = { name: "USB Backup", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdb1" };
-const sd: Drive = { name: "SD Card", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdc1" };
+const usb: Drive = { name: "USB Backup", path: null, kind: "removable", deviceId: "/org/freedesktop/UDisks2/block_devices/sdb1" };
+const sd: Drive = { name: "SD Card", path: null, kind: "removable", deviceId: "/org/freedesktop/UDisks2/block_devices/sdc1" };
 const cloud: Drive = { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", provider: "googledrive" };
 
 test("AC 1 shows startup and inserted volumes with spaces and literal escape text", async ({ page }) => {
@@ -13,7 +13,7 @@ test("AC 1 shows startup and inserted volumes with spaces and literal escape tex
   // every writer here must create it (`??=`) rather than assume it exists.
   await page.addInitScript(({ usb, cloud }) => {
     ((window as unknown as VolumeFixture).__mockControl ??= {}).linuxVolumes = [usb,
-      { name: "Raw\\x20", path: "", kind: "removable", device_id: "/org/freedesktop/UDisks2/block_devices/sdd1" }, cloud];
+      { name: "Raw\\x20", path: null, kind: "removable", deviceId: "/org/freedesktop/UDisks2/block_devices/sdd1" }, cloud];
   }, { usb, cloud });
   await page.goto(HOME_URL);
   await waitForEntries(page);

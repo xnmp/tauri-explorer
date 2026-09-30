@@ -2391,3 +2391,41 @@ fn undo_says_why_it_cannot_keep_the_destination() {
     assert!(grown.contains("grown too large"), "{grown}");
     assert!(grown.contains("Nothing was changed"), "{grown}");
 }
+
+/// A mount inside a planned payload is never entered by cleanup, whether it
+/// exposes a foreign directory or re-exposes the planned directory itself
+/// (same device and inode, so only mount identity differs) (#875).
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires an isolated user/mount namespace; see e2e-tauri/README.md"]
+fn move_cleanup_never_descends_into_a_mount_inside_its_payload() {
+    use crate::files::{
+        mount_namespace::{require_private_namespace, BindMount},
+        recovery::move_cleanup::Plan,
+    };
+    require_private_namespace();
+    for foreign in [true, false] {
+        let base = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(base.path()).unwrap().join("root");
+        let planned = root.join("payload/nested");
+        fs::create_dir_all(&planned).unwrap();
+        fs::write(planned.join("retained"), OLD).unwrap();
+        let outside = root.with_file_name("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("foreign"), b"foreign bytes").unwrap();
+        let directory = Directory::open(&root).unwrap();
+        let plan = Plan::capture(&directory, &root, Some("payload")).unwrap();
+        let source = if foreign { &outside } else { &planned };
+        let mount = BindMount::new(source, &planned);
+
+        let result = plan.remove(&directory, &root, &mut |_| Ok(()));
+
+        assert!(
+            result.is_err(),
+            "cleanup crossed a mount (foreign={foreign})"
+        );
+        assert_eq!(fs::read(outside.join("foreign")).unwrap(), b"foreign bytes");
+        drop(mount);
+        assert_eq!(fs::read(planned.join("retained")).unwrap(), OLD);
+    }
+}

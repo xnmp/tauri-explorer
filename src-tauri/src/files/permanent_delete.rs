@@ -72,15 +72,11 @@ struct Native;
 #[cfg(unix)]
 impl Operations for Native {}
 
-#[cfg(unix)]
-#[path = "permanent_delete/tree.rs"]
-mod tree;
-
 // Selections are admitted on Linux only; other Unix platforms delete one path.
 #[cfg(unix)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod unix {
-    use super::{tree, Native, Operations};
+    use super::{Native, Operations};
     use crate::{
         error::AppError,
         files::{
@@ -90,6 +86,7 @@ mod unix {
             object_id::ObjectId,
             recovery::resources::{self, Access, Scope, SelectionIndex, SelectionRole},
             trash_artifact::TrashSuccess,
+            tree_removal::{self, AbsentRoot, MountEvidence, Policy, Removal},
         },
     };
     use std::{
@@ -103,6 +100,47 @@ mod unix {
 
     const PAYLOAD: &str = "payload";
     const CONTAINER_PREFIX: &str = ".tauri-delete-";
+
+    /// A captured payload was verified just before removal starts. Deeper
+    /// trees stop with retained residue rather than growing without bound.
+    /// Mount ids refine the device boundary where the kernel reports them;
+    /// without them a same-device bind mount stays undetectable, as it does for
+    /// every other device-based check, rather than refusing every deletion.
+    const REMOVAL: Policy = Policy {
+        max_depth: 32_768,
+        mount_evidence: MountEvidence::DeviceFallback,
+        absent_root: AbsentRoot::Refused,
+    };
+
+    /// Removal authority for one captured payload: the walk may start only at
+    /// the object that was captured, and its effects go through `operations`.
+    struct Captured<'a, O> {
+        operations: &'a mut O,
+        object: ObjectId,
+    }
+
+    impl<O: Operations> Removal for Captured<'_, O> {
+        type Error = io::Error;
+
+        fn admit(&mut self, entry: &tree_removal::Entry<'_>) -> io::Result<()> {
+            if entry.depth == 1 && entry.version.object != self.object {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "The captured item changed before it could be deleted",
+                ));
+            }
+            Ok(())
+        }
+
+        fn unlink(
+            &mut self,
+            directory: &Directory,
+            name: &OsStr,
+            is_directory: bool,
+        ) -> io::Result<()> {
+            self.operations.unlink(directory, name, is_directory)
+        }
+    }
 
     pub(crate) struct PreparedSelection {
         paths: Arc<Vec<String>>,
@@ -459,8 +497,14 @@ mod unix {
                     )));
                 }
             }
+            let mut captured = Captured {
+                operations,
+                object: self.version.object,
+            };
+            // The depth limit bounds the walk; a payload's width is its own.
+            let mut unbounded = usize::MAX;
             if let Err(partial) =
-                tree::remove(&container, payload, self.version.directory, operations)
+                tree_removal::remove(&container, payload, REMOVAL, &mut unbounded, &mut captured)
             {
                 return self.restore(
                     &parent,

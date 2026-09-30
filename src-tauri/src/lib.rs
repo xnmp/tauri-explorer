@@ -229,7 +229,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
-        .plugin(tauri_plugin_clipboard_x::init())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 renderer_owner::on_window_destroyed(window);
@@ -397,6 +396,7 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             // Drives / volumes
             files::drives::list_drives,
             files::drives::mount_drive,
+            files::drives::drive_updates_live,
             // Wallpaper
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
@@ -438,6 +438,11 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
 
             // Initialize filesystem watcher for auto-refresh
             files::fs_watcher::init_watcher(app.handle());
+
+            // Removable-volume discovery: one UDisks2 subscription per process,
+            // connected lazily on the first `list_drives` (#888).
+            #[cfg(target_os = "linux")]
+            files::linux_volumes::init_monitor(app.handle());
 
             // Portal-backend mode: no main window — serve the FileChooser
             // D-Bus interface and open picker windows on demand.

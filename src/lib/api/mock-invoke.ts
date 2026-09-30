@@ -1042,18 +1042,21 @@ const mockCommands: Record<string, CommandHandler> = {
     // Model the native mount-table/cloud fallback when the optional service
     // disappears. Only mounted paths survive, without a UDisks identity.
     return control.udisksUnavailable
-      ? drives.filter((d) => d.path).map((d) => ({ ...d, device_id: undefined }))
+      ? drives.filter((d) => d.path !== null).map((d) => ({ ...d, deviceId: undefined }))
       : drives;
   },
   mount_drive: (args) => {
     const control = getMockControl();
     if (control.udisksUnavailable) throw new Error("Linux storage service (UDisks2) unavailable");
     if (control.mountError) throw new Error(control.mountError);
-    const drive = control.linuxVolumes?.find((d) => d.device_id === args?.deviceId);
+    const drive = control.linuxVolumes?.find((d) => d.deviceId === args?.deviceId);
     if (!drive) throw new Error("Linux storage service (UDisks2) unavailable");
-    drive.path ||= "/media/user/USB_DRIVE";
+    drive.path ??= "/media/user/USB_DRIVE";
     return drive.path;
   },
+  // The mock has no UDisks push subscription, so the drive store stays in
+  // poll mode; the volume evidence specs assert on that polling.
+  drive_updates_live: () => false,
   log_startup_timing: () => undefined,
 
   // Crash reporting (#184, #302): a Rust crash is simulated when the e2e test

@@ -16,7 +16,7 @@ fn removable_mount_table_entry_becomes_a_sidebar_drive_and_disappears_after_unmo
 
     assert_eq!(mounted.len(), 1);
     assert_eq!(mounted[0].name, "USB BACKUP");
-    assert_eq!(mounted[0].path, "/mnt/USB BACKUP");
+    assert_eq!(mounted[0].path.as_deref(), Some("/mnt/USB BACKUP"));
     assert_eq!(serde_json::to_value(&mounted[0].kind).unwrap(), "removable");
     assert!(enumerate_linux_drives_for_test("", sys_block.path()).is_empty());
 }

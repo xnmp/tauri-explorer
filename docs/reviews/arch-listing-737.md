@@ -84,7 +84,9 @@ Validation: 2,501 unit tests passed (3 skipped), 29 performance contracts passed
 80 browser navigation/selection/status/publication tests passed across all views,
 Svelte check clean, architecture lint clean, code-map coverage 500/500.
 
-[Machine-readable evidence](arch-listing-737.json) retains executable hashes,
+The machine-readable evidence JSON companion (SHA-256
+`d5a26c3cad7344c8b2b819c485f5b5bc40ca504c37dd7912996a8648331c008f`) was
+removed per #894/#895 repo-artifact-and-docs-hygiene; it retained executable hashes,
 production patch, all startup samples and native interaction results. Baseline
 production source is `822f8751`; candidate is `04258e40` plus the embedded production
 patch. Those two commits differ only in earlier test/evidence artifacts. Build:

@@ -3,6 +3,7 @@
  * rows the assertion observes, so the evidence cannot drift from the test. */
 import { expect, test } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 const evidencePath = process.env.CAPTURE_EVIDENCE
   ? "evidence/ac-2-cached-graph-rows.png"
@@ -71,8 +72,7 @@ test("returning to a cached graph restores rows without another history request 
   await toggleGraph(page);
 
   const historyRequestsBefore = await page.evaluate(
-    () => (window as unknown as { __mockInvokeCounts?: Record<string, number> })
-      .__mockInvokeCounts?.git_log ?? 0,
+    () => (window as unknown as { __mockControl?: MockControl }).__mockControl?.invokeCounts?.git_log ?? 0,
   );
 
   await toggleGraph(page, false);
@@ -96,8 +96,7 @@ test("returning to a cached graph restores rows without another history request 
   await page.screenshot({ path: evidencePath });
 
   const historyRequestsAfter = await page.evaluate(
-    () => (window as unknown as { __mockInvokeCounts?: Record<string, number> })
-      .__mockInvokeCounts?.git_log ?? 0,
+    () => (window as unknown as { __mockControl?: MockControl }).__mockControl?.invokeCounts?.git_log ?? 0,
   );
   expect(historyRequestsAfter).toBe(historyRequestsBefore);
   const placeholders = await page.evaluate(() => {
@@ -128,15 +127,13 @@ test("a cached and refreshed large graph can paginate to its oldest commit", asy
   // Otherwise the pagination helper can see the old tail just before reload
   // removes it, then fail its separate visibility assertion (#836).
   const historyRequestsBeforeRefresh = await page.evaluate(
-    () => (window as unknown as { __mockInvokeCounts?: Record<string, number> })
-      .__mockInvokeCounts?.git_log ?? 0,
+    () => (window as unknown as { __mockControl?: MockControl }).__mockControl?.invokeCounts?.git_log ?? 0,
   );
   const oldest = page.locator('[data-testid="git-graph-view"] .commit-row', { hasText: "(#1)" });
   await page.keyboard.press("F5");
   await expect(page.locator(".toast", { hasText: "Fetched from remotes" })).toBeVisible();
   await expect.poll(() => page.evaluate(
-    () => (window as unknown as { __mockInvokeCounts?: Record<string, number> })
-      .__mockInvokeCounts?.git_log ?? 0,
+    () => (window as unknown as { __mockControl?: MockControl }).__mockControl?.invokeCounts?.git_log ?? 0,
   )).toBeGreaterThan(historyRequestsBeforeRefresh);
   await expect(oldest).toHaveCount(0);
   await scrollToOldestSyntheticCommit(page);

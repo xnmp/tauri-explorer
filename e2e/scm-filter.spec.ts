@@ -8,6 +8,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
@@ -104,7 +105,7 @@ test.describe("SCM sidebar fuzzy filter (#517)", () => {
 
     // Everything committed/discarded elsewhere while the filter is set.
     await page.evaluate(() => {
-      (window as unknown as { __mockGitSetClean: () => void }).__mockGitSetClean();
+      (window as unknown as { __mockControl?: MockControl }).__mockControl?.gitSetClean?.();
     });
 
     await expect(view.locator(".clean-state")).toBeVisible();

@@ -231,7 +231,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate), including typed per-path trash/restore outcomes. Hot.
 - `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `e2e-hooks.ts` — the single frontend E2E hook gate: `E2E_HOOKS_ENABLED` (literal `VITE_E2E_HOOKS === "1"`, not DEV) and `loadE2EHooks()`, the only importer of `src/test-support/`; documents the orphan-chunk rule (#457, #884).
-- `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
+- `mock-invoke.ts` — mock command dispatch/simulation for browser/E2E (no Tauri): stateful git working tree, trash, clipboard, drives. Open when E2E data wrong.
+- `mock-control.ts` — single typed control surface (`MockControl`, `getMockControl()`) e2e specs/tests use to set fixture overrides, failure/latency injection, and call mock-invoke's test hooks, replacing ad hoc `globalThis.__mockXxx` globals; also `MOCK_LOCAL_KEYS`, the named localStorage flag keys mock-invoke reads/writes (#869).
+- `mock-fixtures.ts` — static fixture data for mock-invoke.ts: the seeded fake filesystem tree (`mockFiles`), fake file contents, the fake drives list, and the fake commit graph shape/refs (#869).
 - `mock-file-history.ts` — browser-only fixture history for UI tests; native policy lives in Rust.
 - `mock-file-history-execution.ts` — browser-only fixture inverse execution against mock filesystem commands.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.

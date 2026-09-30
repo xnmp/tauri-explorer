@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import { MOCK_LOCAL_KEYS, type MockControl } from "../src/lib/api/mock-control";
 
 function evidencePath(name: string): string {
   return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
@@ -13,19 +14,21 @@ async function openReportDialog(page: import("@playwright/test").Page) {
 }
 
 async function delayAndCountReports(page: import("@playwright/test").Page) {
-  await page.addInitScript(() => {
-    (globalThis as typeof globalThis & { __MOCK_LATENCY__?: Record<string, number> })
-      .__MOCK_LATENCY__ = { submit_user_report: 8000 };
+  await page.addInitScript((submittedReportKey) => {
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    ((globalThis as typeof globalThis & { __mockControl?: MockControl })
+      .__mockControl ??= {}).latency = { submit_user_report: 8000 };
     const setItem = Storage.prototype.setItem;
     Storage.prototype.setItem = function (key, value) {
-      if (key === "mock-submitted-report") {
+      if (key === submittedReportKey) {
         const completed = JSON.parse(localStorage.getItem("pending-report-completions") ?? "[]");
         completed.push(JSON.parse(value));
         setItem.call(this, "pending-report-completions", JSON.stringify(completed));
       }
       return setItem.call(this, key, value);
     };
-  });
+  }, MOCK_LOCAL_KEYS.submittedReport);
 }
 
 test("reopening a pending report cannot submit it twice and clears only its submitted text", async ({ page }) => {
@@ -81,10 +84,10 @@ test("an already-open failed image report retries with its visible image", async
   await delayAndCountReports(page);
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => {
-    localStorage.setItem("mock-report-error", "network_unreachable");
-    localStorage.setItem("mock-report-clipboard-image", "1");
-  });
+  await page.evaluate(({ reportError, reportClipboardImage }) => {
+    localStorage.setItem(reportError, "network_unreachable");
+    localStorage.setItem(reportClipboardImage, "1");
+  }, { reportError: MOCK_LOCAL_KEYS.reportError, reportClipboardImage: MOCK_LOCAL_KEYS.reportClipboardImage });
   let dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Retry the visible image");
   await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
@@ -93,10 +96,10 @@ test("an already-open failed image report retries with its visible image", async
   dialog = await openReportDialog(page);
   await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await expect(page.locator(".toast.error")).toContainText("Your text is saved", { timeout: 15000 });
-  await page.evaluate(() => localStorage.removeItem("mock-report-error"));
+  await page.evaluate((key) => localStorage.removeItem(key), MOCK_LOCAL_KEYS.reportError);
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
   await expect(page.locator(".toast.success")).toContainText("Report submitted", { timeout: 15000 });
-  const submitted = await page.evaluate(() => JSON.parse(localStorage.getItem("mock-submitted-report")!));
+  const submitted = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), MOCK_LOCAL_KEYS.submittedReport);
   expect(submitted.attachments).toHaveLength(1);
   expect(submitted.attachments[0].name).toBe("Clipboard screenshot.png");
 });
@@ -105,10 +108,10 @@ test("post-failure text and image edits survive closing and reopening", async ({
   await delayAndCountReports(page);
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => {
-    localStorage.setItem("mock-report-error", "network_unreachable");
-    localStorage.setItem("mock-report-clipboard-image", "1");
-  });
+  await page.evaluate(({ reportError, reportClipboardImage }) => {
+    localStorage.setItem(reportError, "network_unreachable");
+    localStorage.setItem(reportClipboardImage, "1");
+  }, { reportError: MOCK_LOCAL_KEYS.reportError, reportClipboardImage: MOCK_LOCAL_KEYS.reportClipboardImage });
   let dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Original image report");
   await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
@@ -150,7 +153,7 @@ test("selected image reads keep Submit disabled across closing and reopening", a
   await expect.poll(() => page.evaluate(() => localStorage.getItem("pending-report-image-read"))).toBe("1");
   await expect(dialog.getByRole("button", { name: "Reading images…", exact: true })).toBeDisabled();
   await page.keyboard.press("Control+Enter");
-  expect(await page.evaluate(() => localStorage.getItem("mock-submitted-report"))).toBeNull();
+  expect(await page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.submittedReport)).toBeNull();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toBeHidden();
   dialog = await openReportDialog(page);
@@ -159,7 +162,7 @@ test("selected image reads keep Submit disabled across closing and reopening", a
   await expect(dialog.getByText("delayed-proof.png")).toBeVisible();
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
   await expect(page.locator(".toast.success")).toContainText("Report submitted");
-  const submitted = await page.evaluate(() => JSON.parse(localStorage.getItem("mock-submitted-report")!));
+  const submitted = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), MOCK_LOCAL_KEYS.submittedReport);
   expect(submitted.attachments).toHaveLength(1);
   expect(submitted.attachments[0].name).toBe("delayed-proof.png");
 });
@@ -217,10 +220,10 @@ test("a successful report clears its saved text", async ({ page }) => {
 test("a failed report keeps its in-session attachment retry draft", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => {
-    localStorage.setItem("mock-report-error", "network_unreachable");
-    localStorage.setItem("mock-report-clipboard-image", "1");
-  });
+  await page.evaluate(({ reportError, reportClipboardImage }) => {
+    localStorage.setItem(reportError, "network_unreachable");
+    localStorage.setItem(reportClipboardImage, "1");
+  }, { reportError: MOCK_LOCAL_KEYS.reportError, reportClipboardImage: MOCK_LOCAL_KEYS.reportClipboardImage });
 
   let dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Retry with image");

@@ -15,6 +15,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { VIEW_MODES, applySettingsAndReload, waitForEntries, type ViewMode } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 const DIR = "/home/preview-containment";
 const LONG_NAME =
@@ -173,7 +174,9 @@ async function installImageFixtures(page: Page): Promise<void> {
       context.fillRect(0, 0, width, height);
       return canvas.toDataURL("image/png");
     };
-    (globalThis as { __mockPreviewReadImage?: (path: string) => string }).__mockPreviewReadImage = (path) =>
+    // addInitScript runs before mock-invoke.ts creates window.__mockControl,
+    // so this writer must create it (`??=`) rather than assume it exists.
+    ((globalThis as { __mockControl?: MockControl }).__mockControl ??= {}).previewReadImage = (path) =>
       path.endsWith("tall.png") ? png(300, 4000) : png(4000, 300);
   });
 }
@@ -589,7 +592,7 @@ for (const dock of DOCKS) {
 
         await test.step("unstaged diff with a long path", async () => {
           await page.evaluate((path) => {
-            (window as unknown as { __mockGitExternalModify: (path: string) => void }).__mockGitExternalModify(path);
+            (window as unknown as { __mockControl?: MockControl }).__mockControl?.gitExternalModify?.(path);
           }, LONG_DIFF_PATH);
           await page.locator('[data-section="changes"] .row', { hasText: "UserAccountServiceImplementation" }).click();
           await expectDiffRendered(page, "UserAccountServiceImplementation.java");

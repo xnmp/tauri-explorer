@@ -7,6 +7,7 @@
  */
 import { test, expect, type Page } from "./fixtures";
 import { applySettingsAndReload } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
@@ -92,8 +93,8 @@ test.describe("SCM inline diff viewer", () => {
     // Keep polling THROUGHOUT the assertion below (not before it): starvation
     // only bites while the refreshes keep coming.
     await page.evaluate(() => {
-      const w = window as unknown as { __mockGitPoll?: () => void; __stormId?: number };
-      w.__stormId = window.setInterval(() => w.__mockGitPoll?.(), 400);
+      const w = window as unknown as { __mockControl?: MockControl; __stormId?: number };
+      w.__stormId = window.setInterval(() => w.__mockControl?.gitPoll?.(), 400);
     });
 
     const previewPane = page.locator(".preview-pane");

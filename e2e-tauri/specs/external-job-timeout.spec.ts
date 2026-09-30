@@ -55,7 +55,11 @@ describe("external plugin job timeout", () => {
           () => document.documentElement.dataset.e2eExternalJobResult ?? "",
         );
         if (!encoded) return false;
-        return (JSON.parse(encoded) as { token: string }).token === token;
+        const reply = JSON.parse(encoded) as { token: string; error?: string };
+        if (reply.token !== token) return false;
+        // The probe reports a rejected acceptance instead of timing out.
+        if (reply.error !== undefined) throw new Error(`plugin job was not accepted: ${reply.error}`);
+        return true;
       },
       {
         timeout: 15_000,

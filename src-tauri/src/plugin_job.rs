@@ -20,16 +20,25 @@ pub const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 *
 const CANCEL_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn job_timeout() -> std::time::Duration {
-    #[cfg(debug_assertions)]
-    if option_env!("VITE_E2E_HOOKS") == Some("1") {
-        if let Some(milliseconds) = std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
+    job_timeout_with_override(
+        std::env::var("TAURI_EXPLORER_E2E_PLUGIN_JOB_TIMEOUT_MS")
             .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .filter(|value| *value > 0)
-        {
-            return std::time::Duration::from_millis(milliseconds);
-        }
+            .as_deref(),
+    )
+}
+
+/// Native acceptance shortens the timeout through the environment; builds
+/// without the `e2e-hooks` feature ignore the override entirely.
+fn job_timeout_with_override(override_ms: Option<&str>) -> std::time::Duration {
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(milliseconds) = override_ms
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+    {
+        return std::time::Duration::from_millis(milliseconds);
     }
+    #[cfg(not(feature = "e2e-hooks"))]
+    let _ = override_ms;
     JOB_TIMEOUT
 }
 
@@ -241,6 +250,30 @@ fn emit_result(app: &AppHandle, event_prefix: &str, job_id: u64, result: Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn e2e_timeout_override_applies_only_with_the_e2e_hooks_feature() {
+        let expected = if cfg!(feature = "e2e-hooks") {
+            std::time::Duration::from_millis(100)
+        } else {
+            JOB_TIMEOUT
+        };
+        assert_eq!(job_timeout_with_override(Some("100")), expected);
+    }
+
+    #[test]
+    fn malformed_or_zero_e2e_timeout_overrides_keep_the_default() {
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("-5"),
+            Some("ten"),
+            Some("99999999999999999999999"),
+        ] {
+            assert_eq!(job_timeout_with_override(value), JOB_TIMEOUT, "{value:?}");
+        }
+    }
 
     #[test]
     fn cancellation_of_a_held_staging_file_removes_it_without_publication() {

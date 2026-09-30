@@ -12,12 +12,16 @@ vi.mock("$lib/api/common", () => ({
 vi.mock("$lib/plugins/fs-providers", () => ({ providerFor: () => undefined }));
 vi.mock("$lib/api/frontend-log", () => ({ logFrontendDiagnostic: vi.fn() }));
 
+vi.stubEnv("VITE_E2E_HOOKS", "1");
 vi.stubGlobal("window", new EventTarget());
 vi.stubGlobal("document", { documentElement: { dataset: {} } });
 
 const { loadDirectory, watchDirectory } = await import("$lib/api/files");
+const { startDirectoryListingProbe } = await import("../../src/test-support/directory-listing-probe");
 
-describe("directory listing Tauri E2E probe", () => {
+describe("directory listing native E2E probe", () => {
+  let session: AbortController;
+
   beforeEach(() => {
     vi.useFakeTimers();
     invokeMock.mockReset();
@@ -28,18 +32,21 @@ describe("directory listing Tauri E2E probe", () => {
     for (const key of Object.keys(document.documentElement.dataset)) {
       delete document.documentElement.dataset[key];
     }
+    session = new AbortController();
+    startDirectoryListingProbe(session.signal);
   });
 
   afterEach(() => {
-    window.dispatchEvent(new CustomEvent("e2e-directory-listing-probe"));
+    session.abort();
     vi.useRealTimers();
   });
 
   afterAll(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
-  it("configures and reports a delayed real listing through DOM state", async () => {
+  it("delays a real listing of the armed path and reports it through DOM state", async () => {
     window.dispatchEvent(
       new CustomEvent("e2e-directory-listing-probe", {
         detail: { targetPath: "/probe", delays: [500] },
@@ -53,12 +60,43 @@ describe("directory listing Tauri E2E probe", () => {
     });
     await vi.advanceTimersByTimeAsync(499);
     expect(completed).not.toHaveBeenCalled();
+    expect(JSON.parse(document.documentElement.dataset.e2eDirectoryListingProbe ?? "null"))
+      .toMatchObject({ calls: 1, completed: 0 });
 
     await vi.advanceTimersByTimeAsync(1);
     await expect(listing).resolves.toMatchObject({ ok: true });
     expect(invokeMock).toHaveBeenCalledWith("list_directory_fresh", { path: "/probe" });
     expect(JSON.parse(document.documentElement.dataset.e2eDirectoryListingProbe ?? "null"))
       .toMatchObject({ calls: 1, completed: 1 });
+  });
+
+  it("leaves listings of other paths untouched", async () => {
+    window.dispatchEvent(
+      new CustomEvent("e2e-directory-listing-probe", { detail: { targetPath: "/probe", delays: [500] } }),
+    );
+    await expect(loadDirectory("/elsewhere")).resolves.toMatchObject({ ok: true });
+    expect(JSON.parse(document.documentElement.dataset.e2eDirectoryListingProbe ?? "null"))
+      .toMatchObject({ calls: 0, completed: 0 });
+  });
+
+  it("disarms on an empty request and when its page session ends", async () => {
+    window.dispatchEvent(
+      new CustomEvent("e2e-directory-listing-probe", { detail: { targetPath: "/probe", delays: [500] } }),
+    );
+    window.dispatchEvent(new CustomEvent("e2e-directory-listing-probe"));
+    expect(document.documentElement.dataset.e2eDirectoryListingProbe).toBeUndefined();
+
+    window.dispatchEvent(
+      new CustomEvent("e2e-directory-listing-probe", { detail: { targetPath: "/probe", delays: [500] } }),
+    );
+    session.abort();
+    expect(document.documentElement.dataset.e2eDirectoryListingProbe).toBeUndefined();
+    // Retired: neither the listener nor the interceptor survives the session.
+    window.dispatchEvent(
+      new CustomEvent("e2e-directory-listing-probe", { detail: { targetPath: "/probe", delays: [500] } }),
+    );
+    await expect(loadDirectory("/probe")).resolves.toMatchObject({ ok: true });
+    expect(document.documentElement.dataset.e2eDirectoryListingProbe).toBeUndefined();
   });
 
   it("publishes a directory watch only after the backend accepts it", async () => {

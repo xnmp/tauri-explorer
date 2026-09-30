@@ -47,6 +47,7 @@ backend for E2E/browser).
 - `state/explorer.svelte.ts` owns each immutable listing revision in `$state.raw`; its entries accessor preserves replacement publication through pane refresh/mutations without creating per-entry signals. Keep `ExplorerCoreState.entries` readonly; selection and other pane fields retain granular reactivity. Browser contracts in `e2e/listing-revisions.spec.ts` verify snapshot identity plus rendered publication in all three views.
 
 - `src/test-support/watcher-listing-probe.ts` — E2E-only real-write/receipt protocol holds a listing without relying on WebDriver mid-flight observations.
+- `src/test-support/directory-listing-probe.ts` — arms per-path listing delays/holds through `api/files.ts` `interceptDirectoryListings` (hook builds only).
 
 - `state/git-repo-watch.ts` — shares ordered native lease acquisition/release across graph and SCM, retaining failed releases for retry.
 - `state/git-graph-coverage.ts` — shares acknowledged observation across graph writers and retained snapshots, independent of mounted views; network polling roots read fresh.
@@ -94,9 +95,10 @@ backend for E2E/browser).
 - `domain/window-input.ts` — validates launch/warm/directory seeds and bounds storage parsing and producer serialization.
 - `state/window-launch.ts` — fresh/warm launch coordination, destination-keyed seeds, created/error ownership, labelled failure diagnostics and late-child retirement.
 - `state/window-handoff.ts` — correlated destination acknowledgement before source tab removal; late listener/timeout cleanup.
+- `state/window-trace.ts` — production log of launch/hand-off/tab-seed failures and timeouts (phase, elapsed ms, window label); success phases only in hook builds (#884).
 - `domain/window-launch-plan.ts` — pure query/cwd/home precedence and restoration policy.
 - `state/window-session.ts` — page subscription/delayed-work ownership, rollback, and post-readiness warm priming; borrows window-scoped stores.
-- `src/test-support/window-session-probe.ts` — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; native target, picker, unready and in-flight close fixtures cover rejected handoffs and duplicate-label creation ownership.
+- `src/test-support/e2e-hooks.ts` (+ `window-operations.ts`, `dom-rpc.ts`) — opt-in page-owned native E2E dispatch and readiness with teardown-safe lazy imports/publication; per-op target, picker, unready and in-flight close fixtures cover rejected handoffs and duplicate-label creation ownership. Loaded only via `api/e2e-hooks.ts` `loadE2EHooks()`.
 - `e2e-tauri/window-transfer-waits.ts`, `e2e-tauri/specs/window-transfer-lifetime.spec.ts` — renderer-side correlated observation for native window-operation results and listing entries. `e2e-tauri/diagnostics/window-transfer.ts` retains window/runtime evidence for transfer and clipboard failures (#710).
 - `e2e-tauri/specs/helpers.ts`, `e2e-tauri/diagnostics/fresh-window.ts`, `e2e-tauri/diagnostics/process-timeline.ts` — bounded process timelines around fresh-window launch, selection and first lookup; retain the requested label even when selection fails before page readiness (#781). Every `e2e-tauri/diagnostics/` module persists through `e2e-tauri/diagnostics/artifact.ts` and carries a `Retire-when: #NNN closed` tag.
 - `state/window-startup.ts` — owns settings → theme/readiness → plugins initialization; teardown revokes late startup.

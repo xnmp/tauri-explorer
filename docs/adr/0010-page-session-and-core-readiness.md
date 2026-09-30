@@ -4,7 +4,7 @@ Status: Accepted
 
 Governs: `src/routes/+page.svelte`, `src/lib/state/window-session.ts`,
 `src/lib/state/window-startup.ts`, `src/lib/domain/window-launch-plan.ts`,
-`src/test-support/window-session-probe.ts`
+`src/test-support/e2e-hooks.ts` (formerly `window-session-probe.ts`; #884)
 
 ## Decision
 

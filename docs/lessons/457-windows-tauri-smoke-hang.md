@@ -92,7 +92,7 @@ server steps deleted, tier 3 now exercises the shipped asset path.
 (`e2e-navigate` / `e2e-reset-view`, `data-e2e-*` markers, listing/watcher
 probes) were gated on DEV, which is what forced the dev-mode binary in the
 first place. They now sit behind `E2E_HOOKS_ENABLED`
-(`src/lib/domain/e2e-hooks.ts`), set by `VITE_E2E_HOOKS=1` only in the smoke
+(now `src/lib/api/e2e-hooks.ts`, with a matching `e2e-hooks` Cargo feature since #884), set by `VITE_E2E_HOOKS=1` only in the smoke
 workflow. Verified in both directions: `e2eHooksReady`/`e2e-navigate` appear 0
 times in a normal `bun run build` output and once each with the flag set.
 

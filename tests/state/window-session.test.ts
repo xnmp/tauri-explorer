@@ -8,7 +8,7 @@ const f = vi.hoisted(() => ({
   setupDrop: vi.fn(), cleanupDrop: vi.fn(), setupWatch: vi.fn(), cleanupWatch: vi.fn(),
   setupLifecycle: vi.fn(), cleanupLifecycle: vi.fn(), stopKeyboard: vi.fn(),
   config: vi.fn(), stopConfig: vi.fn(), transfer: vi.fn(), stopTransfer: vi.fn(),
-  syncSize: vi.fn(), probe: vi.fn(), nativeSession: vi.fn(async () => "session"),
+  syncSize: vi.fn(), nativeSession: vi.fn(async () => "session"),
   recoveryStart: vi.fn(async () => {}), recoveryDispose: vi.fn(async () => {}),
   activate: null as (() => void) | null,
   mode: "off", warmEnabled: true,
@@ -18,7 +18,7 @@ vi.mock("$lib/api/common", () => ({ isTauri: () => true }));
 vi.mock("$lib/api/native-resource-session", () => ({
   getNativeResourceSession: f.nativeSession,
 }));
-vi.mock("$lib/domain/e2e-hooks", () => ({ E2E_WARM_WINDOW_PRIMING_DISABLED: false }));
+vi.mock("$lib/api/e2e-hooks", () => ({ E2E_WARM_WINDOW_PRIMING_DISABLED: false, loadE2EHooks: () => null }));
 vi.mock("$lib/state/theme.svelte", () => ({ themeStore: { initTheme: async () => {}, syncFromSettings() {} } }));
 vi.mock("$lib/state/settings.svelte", () => ({ settingsStore: { init: f.settings, get warmWindow() { return f.warmEnabled; } } }));
 vi.mock("$lib/plugins/registry.svelte", () => ({ pluginRegistry: { initPlugins: f.plugins, dispose: f.disposePlugins } }));
@@ -44,7 +44,6 @@ vi.mock("$lib/state/startup-timing", () => ({ markStartup() {} }));
 vi.mock("$lib/composables/use-native-drop-handler", () => ({ useNativeDropHandler: () => ({ setup: f.setupDrop, cleanup: f.cleanupDrop }) }));
 vi.mock("$lib/composables/use-file-watchers", () => ({ useFileWatchers: () => ({ setup: f.setupWatch, cleanup: f.cleanupWatch }) }));
 vi.mock("$lib/composables/use-window-lifecycle", () => ({ useWindowLifecycle: () => ({ setup: f.setupLifecycle, cleanup: f.cleanupLifecycle }) }));
-vi.mock("../../src/test-support/window-session-probe", () => ({ startWindowSessionProbe: f.probe }));
 
 let resolveSettings: () => void;
 let host: EventTarget;

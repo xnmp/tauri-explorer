@@ -353,6 +353,60 @@ fn relay_error_kind(code: &str) -> Option<&'static str> {
     })
 }
 
+/// Environment override for the report relay. Release builds honour it so the
+/// alpha smoke can exercise rejection and ambiguity against a controlled local
+/// relay (docs/testing/alpha-release-smoke.md). It is restricted to `https://`
+/// or loopback `http://`, so an environment that sets it cannot send a report
+/// in cleartext to a remote host (SECURITY.md).
+const REPORT_URL_OVERRIDE: &str = "TAURI_EXPLORER_REPORT_URL";
+
+/// The relay endpoint for `override_url` (the override's value, if set).
+/// An empty override means unset; any other unacceptable override fails the
+/// submission before anything is sent, rather than silently reporting to the
+/// production relay from what was meant to be a controlled test.
+fn report_endpoint(override_url: Option<&str>) -> Result<String, SubmitReportError> {
+    match override_url.map(str::trim) {
+        None | Some("") => Ok(DEFAULT_REPORT_URL.to_string()),
+        Some(url) if permitted_report_url(url) => Ok(url.to_string()),
+        Some(url) => {
+            log::warn!(
+                "Ignoring {REPORT_URL_OVERRIDE}={url:?}: it must be https:// or loopback http://"
+            );
+            Err(SubmitReportError::new(
+                "server_rejected",
+                format!("{REPORT_URL_OVERRIDE} must be an https:// URL or a loopback http:// URL; nothing was sent"),
+            ))
+        }
+    }
+}
+
+fn permitted_report_url(url: &str) -> bool {
+    let Ok(uri) = url.parse::<ureq::http::Uri>() else {
+        return false;
+    };
+    let Some(host) = uri.host().filter(|host| !host.is_empty()) else {
+        return false;
+    };
+    match uri.scheme_str() {
+        Some(scheme) if scheme.eq_ignore_ascii_case("https") => true,
+        Some(scheme) if scheme.eq_ignore_ascii_case("http") => is_loopback_host(host),
+        _ => false,
+    }
+}
+
+/// `localhost` or a literal loopback address. Names that merely resolve to a
+/// loopback address (`127.0.0.1.nip.io`) are refused: resolution can change.
+fn is_loopback_host(host: &str) -> bool {
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(host);
+    bare.eq_ignore_ascii_case("localhost")
+        || bare
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 fn send_report(
     endpoint: &str,
     payload: RelayRequest,
@@ -423,8 +477,7 @@ pub async fn submit_user_report(
             arch: &info.arch,
         },
     );
-    let endpoint = std::env::var("TAURI_EXPLORER_REPORT_URL")
-        .unwrap_or_else(|_| DEFAULT_REPORT_URL.to_string());
+    let endpoint = report_endpoint(std::env::var(REPORT_URL_OVERRIDE).ok().as_deref())?;
     let payload = RelayRequest {
         title: title.trim().replace(['\n', '\r'], " "),
         body: assembled,
@@ -446,8 +499,63 @@ mod tests {
         MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_NAME_UNITS, MAX_CONTACT_UNITS,
         MAX_REPORT_DESCRIPTION_UNITS, MAX_TITLE_UNITS,
     };
+    use super::{report_endpoint, DEFAULT_REPORT_URL};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};
+
+    #[test]
+    fn report_endpoint_defaults_to_the_production_relay_when_unset_or_empty() {
+        for unset in [None, Some(""), Some("   ")] {
+            assert_eq!(report_endpoint(unset).unwrap(), DEFAULT_REPORT_URL);
+        }
+    }
+
+    #[test]
+    fn report_endpoint_accepts_https_and_loopback_http() {
+        for url in [
+            "https://relay.example.test/api/report",
+            "HTTPS://relay.example.test/api/report",
+            "https://203.0.113.9:8443/report",
+            "http://localhost:3000/api/report",
+            "http://LOCALHOST/report",
+            "http://127.0.0.1:8787/report",
+            "http://127.12.0.1/report",
+            "http://[::1]:8787/report",
+        ] {
+            assert_eq!(report_endpoint(Some(url)).unwrap(), url, "{url}");
+        }
+    }
+
+    #[test]
+    fn report_endpoint_rejects_cleartext_remote_and_non_http_overrides() {
+        for url in [
+            "http://relay.example.test/api/report",
+            "http://203.0.113.9/report",
+            "http://localhost.example.test/report",
+            "http://127.0.0.1.nip.io/report",
+            "http://[::ffff:203.0.113.9]/report",
+            "http://0x7f000001/report",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "ftp://localhost/report",
+            "ws://localhost/report",
+            "localhost:3000/report",
+            "https://",
+            "http:///report",
+            "not a url",
+            "https://exa mple.test/report",
+        ] {
+            let error = report_endpoint(Some(url)).expect_err(url);
+            assert_eq!(error.kind, "server_rejected", "{url}");
+            assert!(error.message.contains("TAURI_EXPLORER_REPORT_URL"), "{url}");
+        }
+    }
+
+    #[test]
+    fn report_endpoint_rejects_an_extremely_long_override_without_panicking() {
+        let url = format!("http://{}.example.test/report", "a".repeat(100_000));
+        assert!(report_endpoint(Some(&url)).is_err());
+    }
 
     /// The limits and error codes the relay (`website/api/_report-core.js`)
     /// enforces; its vitest suite asserts the same fixture.

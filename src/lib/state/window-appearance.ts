@@ -7,6 +7,7 @@
 
 import type { Color } from "@tauri-apps/api/webviewWindow";
 import { isMac, isWindows } from "$lib/domain/platform";
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import { windowsBackdropEffects } from "./window-backdrop";
 import { settingsStore } from "./settings.svelte";
 import { EXPLORER_BG_RGBA_KEY, loadPersisted } from "./persisted";
@@ -27,7 +28,7 @@ export function explorerWindowAppearance(title: string) {
   // deserializes WindowConfig.additionalBrowserArgs. The Windows-only Cargo
   // attach feature injects the exact main-window string into every page.
   // Preserve it for all descendants sharing that WebView2 data directory.
-  const browserArgs = (import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1") &&
+  const browserArgs = E2E_HOOKS_ENABLED &&
     typeof window !== "undefined"
     ? (window as Window & { __E2E_WEBVIEW_BROWSER_ARGS__?: string }).__E2E_WEBVIEW_BROWSER_ARGS__
     : undefined;

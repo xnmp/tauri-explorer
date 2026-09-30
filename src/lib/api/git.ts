@@ -5,7 +5,7 @@
 
 import { invoke, extractError, type ApiResult } from "./common";
 import type { GitFileEntry, GitStatusCode, GitOpState } from "$lib/domain/git";
-import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import { directoryKey } from "$lib/domain/path";
 import { getNativeResourceSession } from "./native-resource-session";
 

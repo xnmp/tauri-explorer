@@ -20,7 +20,7 @@ import { gitLog, type CommitInfo, type RefInfo } from "$lib/api/git-log";
 import { fetchGitSummary } from "$lib/state/git-summary-cache";
 import { subscribeGitChanges } from "$lib/state/git-refresh";
 import { directoryKey } from "$lib/domain/path";
-import { E2E_HOOKS_ENABLED } from "$lib/domain/e2e-hooks";
+import { E2E_HOOKS_ENABLED } from "$lib/api/e2e-hooks";
 import { gitGraphCoverage, type GraphCoverageLease } from "./git-graph-coverage";
 
 export const PAGE_SIZE = 300;

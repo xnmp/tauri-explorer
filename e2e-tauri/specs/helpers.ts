@@ -11,7 +11,7 @@ export function entryPathSelector(
   const escaped = Array.from(entryPath, character => {
     const code = character.charCodeAt(0);
     if (character === "\\" || character === '"') return `\\${character}`;
-    if (code === 0) return "�";
+    if (code === 0) return "\uFFFD";
     if (code <= 0x1f || code === 0x7f) return `\\${code.toString(16)} `;
     return character;
   }).join("");

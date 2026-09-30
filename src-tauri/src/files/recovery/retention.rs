@@ -5,13 +5,12 @@
 //! whether that artifact may be removed automatically or only by an explicit
 //! user decision, and whether retention is within its storage budget.
 
+use super::artifact_layout::{ORIGINAL, PUBLICATION};
 use super::model::{OperationSpec, OperationState, Phase};
 use serde::Serialize;
 
-/// Names of the private children an artifact root may hold. Both are removed
-/// by retirement; only one of them exists in a settled retention phase.
-pub(super) const ORIGINAL: &str = "original";
-pub(super) const PUBLICATION: &str = "publication";
+// Retirement removes both `artifact_layout::ORIGINAL` and `PUBLICATION`; only
+// one of them exists in a settled retention phase.
 
 /// Kept at or below the catalog's 1,024-record cap so retention policy fails
 /// before catalog exhaustion and can explain itself to the user.

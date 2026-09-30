@@ -203,7 +203,7 @@ fn admit_retirement(
     source_parent: &Directory,
     target_parent: &Directory,
 ) -> Result<(), AppError> {
-    use super::move_execution::{ORIGINAL, PARKED, PUBLICATION};
+    use super::artifact_layout::{ORIGINAL, PARKED, PUBLICATION};
     let inside =
         |root: &Option<ArtifactPlan>, name: &str| root.as_ref().map(|root| root.path.0.join(name));
     let refuse = |what: &str, path: &Path, error: AppError| {

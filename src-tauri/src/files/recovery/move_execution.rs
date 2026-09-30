@@ -8,6 +8,7 @@
 //! No method here deletes a user entry; parked sources are discarded only by
 //! explicit retirement (`move_retirement`), so no boundary can leave both
 //! endpoints absent.
+use super::artifact_layout::{probe, ORIGINAL, PARKED, PUBLICATION};
 use super::{
     coordinator::DurableOperation,
     model::{EntryVersion, ObjectId, StagedPayload},
@@ -19,18 +20,11 @@ use super::{
 use crate::{
     error::AppError,
     files::{
-        file_identity::{of_file, version_at, version_from_metadata},
+        file_identity::{of_file, version_from_metadata},
         native_directory::Directory,
     },
 };
 use std::{ffi::OsStr, io, os::unix::fs::PermissionsExt, path::Path};
-
-/// Private names inside an artifact root. `publication` matches the copy
-/// executor's spelling; `original` is a displaced destination; `parked` is a
-/// cross-filesystem source hidden after its destination was published.
-pub(super) const PUBLICATION: &str = "publication";
-pub(super) const ORIGINAL: &str = "original";
-pub(super) const PARKED: &str = "parked";
 
 pub(super) struct MoveExecution {
     pub(super) operation: DurableOperation,
@@ -786,14 +780,6 @@ fn relocate(
         RenamePosition::Conflict => Err(uncertain(
             "Move has conflicting source or destination evidence",
         )),
-    }
-}
-
-fn probe(directory: &Directory, name: &OsStr) -> Result<Option<EntryVersion>, AppError> {
-    match version_at(directory, name) {
-        Ok(version) => Ok(Some(version)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
     }
 }
 

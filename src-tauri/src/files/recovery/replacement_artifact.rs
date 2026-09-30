@@ -317,7 +317,7 @@ impl Root {
             &source_parent,
             source_name,
             &self.directory,
-            std::ffi::OsStr::new("publication"),
+            std::ffi::OsStr::new(super::artifact_layout::PUBLICATION),
             &spec.source.0,
             expected,
             progress,

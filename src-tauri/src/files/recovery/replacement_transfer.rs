@@ -6,6 +6,7 @@ use super::super::{
     rename_outcome::{classify, RenamePosition},
 };
 use super::Root;
+use crate::files::recovery::artifact_layout::{probe, ORIGINAL, PUBLICATION};
 use crate::{
     error::AppError,
     files::{
@@ -14,9 +15,6 @@ use crate::{
     },
 };
 use std::{ffi::OsStr, fs, io, os::unix::fs::PermissionsExt, path::PathBuf};
-
-const ORIGINAL: &str = "original";
-const PUBLICATION: &str = "publication";
 
 struct SourceGuard<'a> {
     directory: Directory,
@@ -495,14 +493,6 @@ fn publication_position(
         RenamePosition::Moved
     } else {
         staged_position
-    }
-}
-
-fn probe(directory: &Directory, name: &OsStr) -> Result<Option<EntryVersion>, AppError> {
-    match version_at(directory, name) {
-        Ok(version) => Ok(Some(version)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
     }
 }
 

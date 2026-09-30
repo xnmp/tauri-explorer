@@ -34,6 +34,8 @@ mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
 #[cfg(target_os = "linux")]
+pub mod linux_mount_watch;
+#[cfg(target_os = "linux")]
 pub mod linux_volume_monitor;
 #[cfg(target_os = "linux")]
 pub mod linux_volumes;

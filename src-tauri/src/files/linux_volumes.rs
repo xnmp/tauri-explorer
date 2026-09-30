@@ -3,6 +3,7 @@
 //! Discovery reads the cached snapshot of one long-lived subscription
 //! (`linux_volume_monitor`), so polling `list_drives` never touches the bus.
 use super::drives::{Drive, DriveKind};
+use super::linux_mount_watch::{host_mount_table_drives, MountTableWatch};
 use super::linux_volume_monitor::{Discovery, MonitorConfig, VolumeMonitor};
 use crate::error::AppError;
 use serde::Serialize;
@@ -196,18 +197,40 @@ struct DrivesChanged {
     live: bool,
 }
 
-/// Register the process-wide monitor. It connects on the first discovery
-/// request and then emits `drives-changed` to every window on change.
+static MOUNT_WATCH: OnceLock<MountTableWatch> = OnceLock::new();
+
+fn announce<R: Runtime>(app: &AppHandle<R>, live: bool) {
+    if let Err(error) = app.emit(DRIVES_CHANGED_EVENT, DrivesChanged { live }) {
+        log::warn!("Failed to announce drive changes: {error}");
+    }
+}
+
+/// Register the process-wide change sources, which emit `drives-changed` to
+/// every window: the UDisks monitor (connected on the first discovery request)
+/// and the mount-table watch for mounts UDisks never reports.
 pub fn init_monitor<R: Runtime>(app: &AppHandle<R>) {
-    let app = app.clone();
+    let handle = app.clone();
     let monitor = VolumeMonitor::new(MonitorConfig::default(), system_connection, move |live| {
-        if let Err(error) = app.emit(DRIVES_CHANGED_EVENT, DrivesChanged { live }) {
-            log::warn!("Failed to announce drive changes: {error}");
-        }
+        announce(&handle, live)
     });
     if MONITOR.set(monitor).is_err() {
         log::warn!("Linux volume monitor initialized more than once");
     }
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let notify = move || announce(&handle, updates_live());
+        match MountTableWatch::spawn(
+            Path::new("/proc/self/mountinfo"),
+            host_mount_table_drives,
+            notify,
+        ) {
+            Ok(watch) => {
+                let _ = MOUNT_WATCH.set(watch);
+            }
+            // The frontend's backstop poll still covers the mount table.
+            Err(error) => log::warn!("Mount-table changes will not be pushed: {error}"),
+        }
+    });
 }
 
 pub(super) async fn supplement(mounted: Vec<Drive>, mountinfo: &str) -> Vec<Drive> {

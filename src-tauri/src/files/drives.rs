@@ -380,6 +380,21 @@ fn linux_rclone_drives() -> Vec<Drive> {
         .unwrap_or_default()
 }
 
+/// Every drive the process mount table alone yields: block-device mounts and
+/// rclone/FUSE cloud mounts. UDisks and GVFS directory entries are separate
+/// sources. The mount-table watch compares this projection between wakes.
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub fn linux_mount_table_drives(
+    mountinfo: &str,
+    sys_block: &std::path::Path,
+    labels: &std::path::Path,
+) -> Vec<Drive> {
+    let mut drives = parse_linux_block_mounts_with_labels(mountinfo, sys_block, labels);
+    drives.extend(parse_linux_rclone_mounts(mountinfo));
+    drives
+}
+
 #[cfg(target_os = "linux")]
 fn parse_linux_rclone_mounts(mountinfo: &str) -> Vec<Drive> {
     mountinfo

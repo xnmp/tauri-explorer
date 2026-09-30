@@ -63,7 +63,8 @@ base64 = "0.23"
 hex = "0.4"
 getrandom = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }
-tokio = { version = "1", features = ["rt", "time", "sync", "process", "macros"] }
+# net: AsyncFd, which the Linux mount-table watch polls for POLLPRI (#888).
+tokio = { version = "1", features = ["rt", "time", "sync", "process", "macros", "net"] }
 notify = "8"
 tempfile = "3"
 portable-pty = "0.9"

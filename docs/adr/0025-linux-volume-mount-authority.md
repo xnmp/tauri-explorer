@@ -3,7 +3,8 @@
 Status: Proposed
 
 Governs: `src-tauri/src/files/linux_volumes.rs`,
-`src-tauri/src/files/linux_volume_monitor.rs`, `src-tauri/src/files/drives.rs`,
+`src-tauri/src/files/linux_volume_monitor.rs`,
+`src-tauri/src/files/linux_mount_watch.rs`, `src-tauri/src/files/drives.rs`,
 `src/lib/api/drives.ts`, `src/lib/state/drive-opening.ts`,
 `src/lib/state/drives.svelte.ts`, `src/lib/components/FilesSidebarView.svelte`
 
@@ -72,11 +73,18 @@ separate contracts.
   otherwise stall the refetch reply behind it. A refetch that times out keeps
   the last snapshot and retries after five seconds; only a definite service
   error or `NameOwnerChanged` owner loss drops it.
-- A change to the derived volume list emits `drives-changed { live }` to every
-  window; unrelated property churn is silent. While `live`, the frontend polls
-  `list_drives` only every 30 seconds for sources outside UDisks (FUSE/rclone
-  mounts). Without a push source (browser mode, macOS, Windows, Linux without a
-  system bus or UDisks) it keeps the 1.5-second poll.
+- Mount-table drives UDisks never reports (rclone FUSE mounts, bind and manual
+  block mounts) have a second change source: one task waits for the kernel's
+  POLLPRI|POLLERR notification on `/proc/self/mountinfo` (proc(5)) and
+  re-reads it, notifying only when the drives derived from the table change,
+  so unrelated mounts such as tmpfs stay silent. If the file cannot be opened
+  or registered for polling, no watch starts and the backstop poll covers the
+  mount table.
+- A change from either source emits `drives-changed { live }` to every window,
+  where `live` reports the UDisks subscription. While `live`, the frontend polls
+  `list_drives` only every 30 seconds as a backstop. Without a push source
+  (browser mode, macOS, Windows, Linux without a system bus or UDisks) it keeps
+  the 1.5-second poll.
 - Mount requests reuse the subscription's connection and resynchronize it
   before returning, so the caller's next discovery reflects the outcome. Mount
   authority still comes from a fresh snapshot, never the cache.
@@ -128,6 +136,10 @@ handling, plus the subscription: pushed mount/unmount/removal/insertion on one
 connection with no refetch, a change racing the first snapshot, a signal burst
 during a refetch, a timed-out refetch, post-mount resync, the backstop, bus
 loss and recovery, and a service restart without reconnecting.
+`src-tauri/tests/linux_mount_watch.rs` (opt-in, in a private user and mount
+namespace) proves a real bind mount and unmount are pushed promptly while tmpfs
+mounts stay silent; unit tests in `linux_mount_watch.rs` cover the change
+detection and the degraded (unpollable) path.
 `tests/state/drives-push.test.ts` covers the frontend's push handling and poll
 cadence. Existing mount-table and cloud unit tests preserve fallback behavior.
 `tests/state/drive-opening.test.ts` and `unmounted-drive-roots.test.ts` assert

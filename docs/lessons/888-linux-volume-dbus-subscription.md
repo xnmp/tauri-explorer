@@ -29,6 +29,13 @@ Gotchas:
 - A slow backstop turns coalesced refreshes into lost updates. A push that
   arrives while a `list_drives` read is in flight must trigger one trailing
   re-read; returning the in-flight promise leaves a stale list for 30 s.
+- UDisks never reports rclone FUSE mounts or bind/manual mounts. Watch `/proc/self/mountinfo`
+  for POLLPRI|POLLERR, as systemd and libmount do, or the slow backstop
+  regresses them from 1.5 s to 30 s. Register it with Tokio's `AsyncFd`
+  (edge-triggered), settle briefly, clear readiness *before* re-reading, and
+  compare the derived drives, not the raw table. Regular files cannot join
+  epoll, so the registration error doubles as the degrade signal. Real mounts
+  need an `unshare --user --map-root-user --mount` namespace to test.
 - Only slow the poll while pushes are live. macOS, Windows, browser mode, and
   Linux without UDisks have no push source; the frontend asks
   `drive_updates_live` after it starts listening, and the event's `live` flag

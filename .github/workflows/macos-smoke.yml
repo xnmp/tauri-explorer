@@ -54,7 +54,7 @@ jobs:
       - name: Measure release foreground startup without a probe window
         env:
           MAC_STARTUP_SAMPLES: "30"
-          MAC_STARTUP_TIMEOUT_MS: "30000"
+          MAC_STARTUP_TIMEOUT_MS: "1500" # TEMP #936: force stall-evidence capture; revert before merge
           MAC_STARTUP_WARM_MEASURE: "0"
           MAC_STARTUP_OUTPUT_DIR: qualification-results/macos-startup/foreground
         run: bun run test:qualify:macos-startup
@@ -66,7 +66,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           MAC_STARTUP_SAMPLES: "30"
-          MAC_STARTUP_TIMEOUT_MS: "30000"
+          MAC_STARTUP_TIMEOUT_MS: "1500" # TEMP #936: force stall-evidence capture; revert before merge
           MAC_STARTUP_WARM_MEASURE: "1"
           MAC_STARTUP_OUTPUT_DIR: qualification-results/macos-startup/warm-probe
         run: bun run test:qualify:macos-startup

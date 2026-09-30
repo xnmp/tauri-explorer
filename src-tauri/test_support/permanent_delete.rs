@@ -818,3 +818,24 @@ fn a_restrictive_umask_cannot_break_permanent_deletion() {
     assert!(fs::symlink_metadata(root.path().join("tree")).is_err());
     assert!(staging(root.path()).is_empty());
 }
+
+/// Permanent deletion retains its prepared selection under the same memory
+/// budget as trash: a selection whose retained keys alone exceed it is refused
+/// before any staging exists.
+#[test]
+fn an_oversized_selection_is_refused_at_the_shared_budget_before_effects() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("selected");
+    fs::write(&source, b"selected").unwrap();
+    let budget = crate::files::prepared_selection::MAX_PLAN_BYTES;
+    let mut keys = Vec::with_capacity(budget / std::mem::size_of::<String>() + 1);
+    keys.push(source.to_str().unwrap().to_owned());
+    let result = unix::prepare_selection(Arc::new(keys));
+    assert!(
+        matches!(result, Err(AppError::InvalidPath(_))),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(fs::read(&source).unwrap(), b"selected");
+    assert!(staging(root.path()).is_empty());
+}

@@ -1,5 +1,7 @@
 use super::*;
-use crate::files::native_directory::Directory;
+use crate::files::{
+    file_identity::version_from_metadata, native_directory::Directory, recovery::resources::Scope,
+};
 use std::{fs, path::PathBuf};
 
 fn publication(path: &Path) -> Arc<PublishedEntry> {
@@ -149,6 +151,24 @@ fn published_copy_identity_trashes_and_restores_the_exact_entry() {
 }
 
 #[test]
+fn trash_and_permanent_deletion_refuse_the_same_oversized_selection() {
+    let (_root, context, source) = fixture();
+    let path = source.join("entry");
+    fs::write(&path, b"retain bytes").unwrap();
+    let oversized = || {
+        let mut keys = Vec::with_capacity(MAX_PLAN_BYTES / std::mem::size_of::<String>() + 1);
+        keys.push(path.to_str().unwrap().to_owned());
+        Arc::new(keys)
+    };
+    let trash = context.prepare_selection(oversized());
+    let deletion = crate::files::permanent_delete::prepare_selection(oversized());
+    assert!(matches!(trash, Err(AppError::InvalidPath(_))));
+    assert!(matches!(deletion, Err(AppError::InvalidPath(_))));
+    assert_eq!(fs::read(path).unwrap(), b"retain bytes");
+    assert!(!context.data_home.exists());
+}
+
+#[test]
 fn preparation_budget_rejects_before_layout_or_source_effects() {
     let (_root, context, source) = fixture();
     let path = source.join("entry");
@@ -244,7 +264,7 @@ fn shared_layout_cost_is_bounded_for_a_large_selection() {
     let selection = context
         .prepare_selection_with(paths.clone(), &mut random_bytes, 256 * 1024, None)
         .unwrap();
-    assert_eq!(selection.items.len(), paths.len());
+    assert_eq!(selection.pending().count(), paths.len());
     assert!(!context.data_home.exists());
     for path in paths {
         assert_eq!(fs::read(path).unwrap(), b"retain");
@@ -423,7 +443,7 @@ fn an_unmanaged_candidate_collision_never_reallocates_unclaimed_trash_names() {
     fs::write(&file, b"source").unwrap();
     let key = file.to_string_lossy().into_owned();
     let (mut selection, owner) = admit(&runtime, &storage, context, vec![key.clone()]).unwrap();
-    let prepared = selection.items.front().unwrap().as_ref().unwrap();
+    let prepared = selection.pending().next().unwrap().as_ref().unwrap();
     let candidate = dirs.root_path.join("files").join(&prepared.name);
     fs::write(&candidate, b"external occupant").unwrap();
     assert!(selection.execute_next(&key).is_err());

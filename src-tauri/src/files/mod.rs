@@ -47,6 +47,10 @@ pub(crate) mod mutation;
 mod native_directory;
 mod object_id;
 mod permanent_delete;
+// Selections are admitted on Linux; other Unix platforms prepare one native
+// permanent deletion through the same observation and budget.
+#[cfg(unix)]
+mod prepared_selection;
 mod publication;
 #[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
 pub(crate) mod recovery;

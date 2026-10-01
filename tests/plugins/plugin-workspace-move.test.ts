@@ -14,8 +14,13 @@ import type { FileEntry, FileMutationReceipt } from "$lib/domain/file";
 
 const moveEntries = vi.hoisted(() => vi.fn());
 const undo = vi.hoisted(() => ({ push: vi.fn(), pushAndBroadcast: vi.fn() }));
+const explorerRefresh = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("$lib/api/move-session", () => ({ moveEntries }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
+vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: {
+  getAllExplorers: () => [{ refresh: explorerRefresh }],
+  getActiveExplorer: () => null,
+} }));
 
 import { createPluginContext } from "$lib/plugins/api";
 
@@ -66,6 +71,47 @@ describe("PluginWorkspace.moveFile", () => {
     const result = await ctx.workspace.moveFile("/src/a.txt", "/dest");
 
     expect(result).toEqual({ ok: false, error: "skipped" });
+    dispose();
+  });
+
+  // Kills the "onRefresh is a no-op" mutant: without this assertion, deleting
+  // the session's refresh callback body (or never wiring `onRefresh` at all)
+  // still leaves every other assertion in this file green.
+  it("refreshes every open explorer pane after the session settles", async () => {
+    const { ctx, dispose } = createPluginContext("test-mover");
+    await ctx.workspace.moveFile("/src/a.txt", "/dest");
+
+    expect(explorerRefresh).toHaveBeenCalledOnce();
+    expect(explorerRefresh).toHaveBeenCalledWith({ silent: true });
+    dispose();
+  });
+
+  it("still refreshes panes when the session reports a conflict skip", async () => {
+    moveEntries.mockResolvedValue(outcome([{ status: "skipped" }]));
+    const { ctx, dispose } = createPluginContext("test-mover");
+    await ctx.workspace.moveFile("/src/a.txt", "/dest");
+
+    expect(explorerRefresh).toHaveBeenCalledOnce();
+    dispose();
+  });
+
+  it("surfaces an uncertain move (incomplete source removal) as a non-skipped error", async () => {
+    moveEntries.mockResolvedValue(outcome([{ status: "failed", error: "Move is uncertain: destination committed but source cleanup did not finish" }]));
+    const { ctx, dispose } = createPluginContext("test-mover");
+    const result = await ctx.workspace.moveFile("/src/a.txt", "/dest");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).not.toBe("skipped");
+    expect(result.error).toContain("uncertain");
+    dispose();
+  });
+
+  it("treats a same-directory relocation as a no-op skip, not a successful move", async () => {
+    const { ctx, dispose } = createPluginContext("test-mover");
+    const result = await ctx.workspace.moveFile("/dest/a.txt", "/dest");
+
+    expect(result).toEqual({ ok: false, error: "skipped" });
+    expect(moveEntries).not.toHaveBeenCalled();
     dispose();
   });
 });

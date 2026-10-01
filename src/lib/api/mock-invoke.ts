@@ -40,11 +40,11 @@ const mockCopyControls = new Map<string, MockCopyControl>();
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 
 /** Relocate one entry's mock listing state. Backs the `move_entries` session
- *  mock's per-item relocation and the mock-only `move_entry` command
- *  `invokeMockCommand` handles directly (see there) — there is no standalone
- *  `move_entry` Rust command since #881 routed plugin moves through the
- *  session too, and `tests/api/mock-invoke-parity.test.ts` enforces that
- *  `mockCommands` never grows a command Rust does not have. */
+ *  mock's per-item relocation, and is injected into `createMockFileHistory`
+ *  (as `relocate`) for undo/redo re-execution of a "move" `UndoAction` —
+ *  there is no standalone `move_entry` Rust command since #881 routed plugin
+ *  moves through the session too, and `tests/api/mock-invoke-parity.test.ts`
+ *  enforces that `mockCommands` never grows a command Rust does not have. */
 function relocateMockEntry(source: string, destDir: string): FileMutationReceipt {
   const name = basename(source);
   const sourcePath = parentDir(source);
@@ -948,6 +948,7 @@ const mockFileHistory = createMockFileHistory(
   (command, args) => invokeMockCommand(command, args),
   broadcastFileChange,
   (paths) => mockBatch(paths, restoreMockEntry),
+  relocateMockEntry,
 );
 
 // --- File Recovery fixture (ADR 0023 retention/retirement) -----------------
@@ -2807,7 +2808,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
             if (control.cancelled) break;
           }
           const receipt = relocating
-            ? await invokeMockCommand<FileMutationReceipt>("move_entry", { source, destDir, overwrite: decision?.choice === "overwrite" })
+            ? relocateMockEntry(source, destDir)
             : copySessionEntry(source, destDir, decision?.choice === "overwrite");
           items.push({ status: "succeeded", receipt });
           send({ type: "completed", item, total: sources.length, entry: receipt.entry });
@@ -2856,7 +2857,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     // history with no undoable action (which discards the redo stack).
     return { result, history: mockFileHistory.push(null).summary } as T;
   }
-  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "move_entry"].includes(cmd)) {
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
       return { result, history: mockFileHistory.summary() } as T;
@@ -2885,16 +2886,6 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
   // { kind, message } (src-tauri/src/error.rs), not as an Error.
   const failure = getMockControl().failures?.[cmd];
   if (failure) throw { kind: "other", message: failure };
-
-  // `move_entry` is not a Rust command (removed in #881; `move_entries` is
-  // the only native relocation IPC, enforced by
-  // `tests/api/mock-invoke-parity.test.ts`). It stays reachable here only as
-  // the browser-only history mock's re-execution primitive for a "move"
-  // UndoAction (`mock-file-history.ts`), so it is handled directly rather
-  // than through the `mockCommands` table the parity test scans.
-  if (cmd === "move_entry") {
-    return relocateMockEntry(args!.source as string, args!.destDir as string) as T;
-  }
 
   const handler = mockCommands[cmd];
   if (!handler) {

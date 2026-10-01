@@ -275,7 +275,6 @@ pub(crate) async fn move_entries(
     let registration = Registration::new(request_id, owner.clone())?;
     let work = MoveWork {
         job_id,
-        #[cfg(target_os = "linux")]
         runtime: admission::runtime(&window)?,
     };
     // A relocation changes two directories per item. The source parents are

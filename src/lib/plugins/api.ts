@@ -25,6 +25,7 @@ import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
+import { parentDir, sameDirectory } from "$lib/domain/path";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginJobsController, type PluginJobKind } from "$lib/state/plugin-jobs";
 import { extractError, type ApiResult } from "$lib/api/common";
@@ -320,6 +321,16 @@ export function createPluginContext(
       // Shares the ordered move session with cut/paste and drag-drop (#881):
       // the same conflict prompt, undo recording, ordering, and refresh.
       moveFile: async (sourcePath, targetDir) => {
+        // The session reports a same-directory relocation as a committed,
+        // "succeeded" item (it legitimately touches nothing, per
+        // move_session.rs), so it toasts "Moved 1 item" and this would
+        // otherwise report `{ok: true}`. That breaks the documented
+        // `PluginMoveResult` no-op contract (`error: "skipped"`), which a
+        // caller like the AI-organize dialog depends on to tell "nothing to
+        // do" apart from "moved". Short-circuit before the session runs.
+        if (sameDirectory(parentDir(sourcePath), targetDir)) {
+          return { ok: false, error: "skipped" };
+        }
         const { moveFiles } = await import("$lib/state/move-operations");
         const { error, complete } = await moveFiles([sourcePath], targetDir, {
           onRefresh: () => {

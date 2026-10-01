@@ -53,13 +53,6 @@ export interface FileMutationRecovery {
   readonly displacedPath?: string;
 }
 
-export function fileMutationRecoveryMessage(recovery: FileMutationRecovery): string {
-  const retained = recovery.displacedPath
-    ? ` The previous destination is retained at ${recovery.displacedPath}.`
-    : "";
-  return `Files were copied to ${recovery.destinationPath}, but removing ${recovery.sourcePath} did not finish: ${recovery.error}. Inspect both locations before continuing.${retained}`;
-}
-
 export type SortField = "name" | "size" | "modified" | "type";
 
 function fileExtension(name: string): string {

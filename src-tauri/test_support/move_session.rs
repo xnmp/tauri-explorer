@@ -402,6 +402,69 @@ fn every_committed_item_contributes_both_of_its_directories_to_the_refresh_set()
     }
 }
 
+/// The non-durable (default/release) move path must admit through the same
+/// recovery coordinator seam the single-item move command and the native
+/// history move adapter use, not bypass it by calling the filesystem effect
+/// directly (#881 follow-up; lesson 680, ADR 0024 level 3). A held reservation
+/// on either endpoint must refuse the session item with no effect, and the
+/// same request must succeed once that reservation is released.
+#[cfg(not(feature = "durable-recovery"))]
+#[test]
+fn a_session_item_refuses_while_its_endpoint_is_claimed_and_succeeds_once_released() {
+    use crate::files::recovery::{Access, ResourceRequest, Scope};
+
+    fn writing(path: &Path) -> Vec<ResourceRequest> {
+        vec![ResourceRequest {
+            path: path.to_owned(),
+            access: Access::Write,
+            scope: Scope::Subtree,
+        }]
+    }
+
+    let fixture = Fixture::new();
+    let file = fixture.source("item.txt", b"payload");
+    let target = fixture.to.join("item.txt");
+    let runtime = Runtime::new(fixture.root.path().join("recovery"));
+    let owner = block(runtime.clone().admit(writing(&target))).unwrap();
+
+    let (outcome, _events) = drive(
+        request(std::slice::from_ref(&file), &fixture.to),
+        MoveWork {
+            job_id: 1,
+            runtime: runtime.clone(),
+        },
+        Vec::new(),
+    );
+    assert_eq!(
+        statuses(&outcome),
+        vec!["failed"],
+        "a live recovery claim on the target must refuse the relocation"
+    );
+    assert!(
+        file.exists(),
+        "a refused relocation must leave the source untouched"
+    );
+    assert!(
+        !target.exists(),
+        "a refused relocation must not have produced any effect at the target"
+    );
+
+    drop(owner);
+
+    let (outcome, _events) = drive(
+        request(std::slice::from_ref(&file), &fixture.to),
+        MoveWork { job_id: 2, runtime },
+        Vec::new(),
+    );
+    assert_eq!(
+        statuses(&outcome),
+        vec!["succeeded"],
+        "the same request must succeed once the claim is released"
+    );
+    assert!(!file.exists());
+    assert!(target.exists());
+}
+
 #[cfg(feature = "durable-recovery")]
 #[test]
 fn a_durable_receipt_is_its_own_inverse_and_never_gains_a_path_only_action() {

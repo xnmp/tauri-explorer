@@ -477,7 +477,7 @@ fn subprocess_promoter() {
 
 #[test]
 fn large_immutable_intents_produce_small_phase_checkpoints() {
-    use crate::files::recovery::replacement_transition::ReplacementTransition;
+    use crate::files::recovery::checkpoint::{Effect, Event};
     let (directory, coordinator, reservation, spec) = fixture();
     let mut requests: Vec<_> = reservation
         .resources
@@ -515,7 +515,7 @@ fn large_immutable_intents_produce_small_phase_checkpoints() {
         initial.payload.len() < 512,
         "initial checkpoint includes the immutable plan"
     );
-    operation.advance(ReplacementTransition::BeginRoot).unwrap();
+    operation.advance(Event::Begin(Effect::Root)).unwrap();
     let advanced = coordinator
         .admitted(|inner| Ok(inner.journal.records()?.remove(0)))
         .unwrap();
@@ -539,18 +539,18 @@ fn large_immutable_intents_produce_small_phase_checkpoints() {
 
 #[test]
 fn lost_phase_commit_reply_can_be_adopted_without_rewriting_the_checkpoint() {
-    use crate::files::recovery::replacement_transition::ReplacementTransition;
+    use crate::files::recovery::checkpoint::{Effect, Event};
     let (directory, coordinator, reservation, spec) = fixture();
     let mut operation = reservation
         .promote(spec)
         .unwrap_or_else(|failure| panic!("{}", failure.error));
     assert!(operation
-        .advance_with(ReplacementTransition::BeginRoot, injected)
+        .advance_with(Event::Begin(Effect::Root), injected)
         .is_err());
     let before = coordinator
         .admitted(|inner| Ok((inner.journal.revision()?, inner.journal.records()?)))
         .unwrap();
-    operation.advance(ReplacementTransition::BeginRoot).unwrap();
+    operation.advance(Event::Begin(Effect::Root)).unwrap();
     let after = coordinator
         .admitted(|inner| Ok((inner.journal.revision()?, inner.journal.records()?)))
         .unwrap();
@@ -561,7 +561,7 @@ fn lost_phase_commit_reply_can_be_adopted_without_rewriting_the_checkpoint() {
 
 #[test]
 fn phase_writes_reject_missing_changed_or_substituted_catalog_evidence() {
-    use crate::files::recovery::replacement_transition::ReplacementTransition;
+    use crate::files::recovery::checkpoint::{Effect, Event};
     for case in ["missing", "corrupt", "substituted"] {
         let (directory, coordinator, reservation, spec) = fixture();
         let mut operation = reservation
@@ -584,7 +584,7 @@ fn phase_writes_reject_missing_changed_or_substituted_catalog_evidence() {
             }
         }
         assert!(
-            operation.advance(ReplacementTransition::BeginRoot).is_err(),
+            operation.advance(Event::Begin(Effect::Root)).is_err(),
             "{case}"
         );
         let after = coordinator
@@ -602,7 +602,7 @@ fn phase_writes_reject_missing_changed_or_substituted_catalog_evidence() {
 
 #[test]
 fn phase_writes_require_the_exact_named_native_owner() {
-    use crate::files::recovery::replacement_transition::ReplacementTransition;
+    use crate::files::recovery::checkpoint::{Effect, Event};
     for case in ["missing", "changed-nonce", "substituted"] {
         let (directory, coordinator, reservation, spec) = fixture();
         let mut operation = reservation
@@ -625,7 +625,7 @@ fn phase_writes_require_the_exact_named_native_owner() {
             }
         }
         assert!(
-            operation.advance(ReplacementTransition::BeginRoot).is_err(),
+            operation.advance(Event::Begin(Effect::Root)).is_err(),
             "{case}"
         );
         let after = coordinator
@@ -638,19 +638,17 @@ fn phase_writes_require_the_exact_named_native_owner() {
 
 #[test]
 fn a_checkpoint_changed_without_its_generation_cannot_be_adopted_as_a_retry() {
-    use crate::files::recovery::replacement_transition::{transition, ReplacementTransition};
+    use crate::files::recovery::checkpoint::{Effect, Event};
     let (directory, coordinator, reservation, spec) = fixture();
     let mut operation = reservation
         .promote(spec)
         .unwrap_or_else(|failure| panic!("{}", failure.error));
     let modified = OperationCheckpoint {
         intent_digest: operation.evidence.digest(),
-        state: transition(
-            operation.intent(),
-            operation.state(),
-            ReplacementTransition::BeginRoot,
-        )
-        .unwrap(),
+        state: operation
+            .intent()
+            .transition(operation.state(), Event::Begin(Effect::Root))
+            .unwrap(),
     };
     let connection =
         rusqlite::Connection::open(directory.path().join("recovery").join(DATABASE)).unwrap();
@@ -666,7 +664,7 @@ fn a_checkpoint_changed_without_its_generation_cannot_be_adopted_as_a_retry() {
     let before = coordinator
         .admitted(|inner| Ok((inner.journal.revision()?, inner.journal.records()?)))
         .unwrap();
-    assert!(operation.advance(ReplacementTransition::BeginRoot).is_err());
+    assert!(operation.advance(Event::Begin(Effect::Root)).is_err());
     assert_eq!(
         coordinator
             .admitted(|inner| Ok((inner.journal.revision()?, inner.journal.records()?)))

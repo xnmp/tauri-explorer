@@ -79,17 +79,21 @@ fn forget_names_the_folders_that_still_hold_files() {
         "{}",
         item.message
     );
-    // A root already in Removing is no longer presented as retained. Its
-    // cleanup owns that location; Forget names only roots still awaiting it.
+    // A root whose removal started but never completed may still hold any
+    // of its files, so Forget names it alongside the root still awaiting it.
     let f = partially_retired(false);
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     let item = &snapshot.items[0];
     assert!(item.actions.contains(&RecoveryChoice::Release));
-    let target_root = f.roots[1].to_string_lossy().into_owned();
-    assert_eq!(item.retained_paths, vec![target_root]);
+    let shown: Vec<_> = f
+        .roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(item.retained_paths, shown);
     assert!(f.roots.iter().all(|root| root.exists()));
     assert!(
-        item.message.contains("the listed folder"),
+        item.message.contains("each listed folder"),
         "{}",
         item.message
     );
@@ -171,7 +175,7 @@ fn a_deferral_recorded_before_its_measurement_still_waits_for_a_retry() {
     // stopped between them, so nothing records the retained size.
     let mut operation = f.claim();
     operation
-        .advance_move(MoveTransition::DeferRetirement(
+        .advance(Event::DeferRetirement(
             "Permission denied (os error 13)".into(),
         ))
         .unwrap();
@@ -234,8 +238,6 @@ fn enforcement_claims_an_unmeasured_settled_move_only_once_it_can_observe_it() {
             f.coordinator.inventory().unwrap().entries[0]
                 .state
                 .as_ref()
-                .unwrap()
-                .move_state()
                 .unwrap()
                 .retained_bytes
                 .is_none()

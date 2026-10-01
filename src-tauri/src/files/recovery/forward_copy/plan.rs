@@ -8,9 +8,12 @@ use crate::{
         file_identity::{of_file, version_from_metadata},
         native_directory::Directory,
         recovery::{
+            artifact_layout::ORIGINAL,
+            checkpoint::DurableKind,
             coordinator::{Coordinator, Reservation},
             journal::MAX_RECORDS,
             model::{NativePath, OperationSpec, ReplacementSpec},
+            move_cleanup::Plan,
             resources::{Access, Request, Scope},
         },
     },
@@ -72,6 +75,26 @@ impl PendingCopy {
             artifact_token: self.token.clone(),
         };
         reservation.validate_operation(OperationSpec::CopyReplacement(spec.clone()))?;
+        // Never admit a record no discard could remove (#874): the original
+        // this replacement displaces must fit the plan its discard captures.
+        let name = spec
+            .target
+            .0
+            .file_name()
+            .ok_or_else(|| AppError::InvalidPath("Copy destination has no name".into()))?;
+        Plan::admit(
+            &directory,
+            name,
+            &[spec.root.0.join(ORIGINAL)],
+            spec.plan_allowance(),
+        )
+        .map_err(|error| {
+            AppError::Other(format!(
+                "File Recovery cannot retain the replaced destination '{}' for a recoverable \
+                 copy, so it could never be discarded ({error}). Nothing was copied.",
+                spec.target.0.display()
+            ))
+        })?;
         Ok(spec)
     }
 }

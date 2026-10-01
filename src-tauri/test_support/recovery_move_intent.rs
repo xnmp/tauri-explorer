@@ -3,9 +3,8 @@ use crate::files::{
     file_identity::{of_file, version_from_metadata},
     native_directory::Directory,
     recovery::{
-        model::{
-            DurableIntent, NativePath, OperationSpec, OperationState, Phase, ReplacementState,
-        },
+        checkpoint::{Sides, State},
+        model::{DurableIntent, NativePath, OperationSpec, StagedPayload, RECORD_VERSION},
         move_model::{MoveSpec, Strategy},
         resources::{Access, Request, Scope},
     },
@@ -82,7 +81,7 @@ fn rootless_same_volume_move_survives_reopen_as_intent_without_user_file_effects
     let expected = operation.intent().clone();
     let generation = operation.generation();
     assert_eq!(expected.operation, OperationSpec::Move(spec));
-    assert_eq!(operation.state(), &OperationState::Move(Default::default()));
+    assert_eq!(operation.state(), &State::default());
     assert_no_user_effects(directory.path());
 
     drop(operation);
@@ -113,30 +112,50 @@ fn rootless_same_volume_move_survives_reopen_as_intent_without_user_file_effects
         .unwrap()
         .expect("abandoned move should be generically claimable");
     assert_eq!(claimed.intent(), &expected);
-    assert_eq!(claimed.state(), &OperationState::Move(Default::default()));
+    assert_eq!(claimed.state(), &State::default());
     assert_no_user_effects(directory.path());
 }
 
 #[test]
-fn move_intent_rejects_a_copy_replacement_checkpoint_kind() {
+fn move_intent_rejects_checkpoint_evidence_its_plan_never_names() {
     let (_directory, _coordinator, reservation, spec) = fixture();
     let intent = DurableIntent {
-        version: 2,
+        version: RECORD_VERSION,
         id: reservation.id.clone(),
         lock: reservation.owner.identity.clone(),
         resources: reservation.resources.clone(),
-        operation: OperationSpec::Move(spec),
+        operation: OperationSpec::Move(spec.clone()),
     };
-    let mismatched = OperationRecord {
-        intent,
-        state: OperationState::Replacement(ReplacementState {
-            effect_revision: 0,
-            retained_bytes: None,
-            root: None,
-            phase: Phase::Planned,
-            published: None,
-            error: None,
+    // A rootless rename never observes an artifact root or stages a copy, so
+    // a checkpoint carrying copy-replacement evidence cannot belong to it.
+    let rooted = State {
+        roots: Sides {
+            source: None,
+            target: Some(spec.source_parent),
+        },
+        ..State::default()
+    };
+    let staged = State {
+        staged: Some(StagedPayload {
+            version: spec.source_version.clone(),
+            final_mode: None,
         }),
+        ..State::default()
     };
-    assert!(mismatched.validate().is_err());
+    for state in [rooted, staged] {
+        let mismatched = OperationRecord {
+            intent: intent.clone(),
+            state,
+        };
+        assert!(mismatched.validate().is_err());
+    }
+    // Earlier record versions are rejected, never migrated (ADR 0026).
+    let legacy = OperationRecord {
+        intent: DurableIntent {
+            version: 2,
+            ..intent
+        },
+        state: State::default(),
+    };
+    assert!(legacy.validate().is_err());
 }

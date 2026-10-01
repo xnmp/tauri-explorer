@@ -305,3 +305,82 @@ fn preflight_rejects_object_substitution_between_reservation_and_binding() {
     assert!(service::list(&f.coordinator).unwrap().items.is_empty());
     f.assert_retired();
 }
+
+/// A replaced destination no discard could ever remove is refused before any
+/// record or effect, exactly as a durable move refuses one (#874).
+#[test]
+fn a_destination_that_could_never_be_discarded_is_refused_before_any_record_or_effect() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = directory.path().canonicalize().unwrap();
+    let source = base.join("source");
+    let target = base.join("target");
+    fs::write(&source, b"new").unwrap();
+    // Deeper than any cleanup plan may record.
+    let mut deepest = target.clone();
+    for _ in 0..=256 {
+        deepest.push("d");
+    }
+    fs::create_dir_all(&deepest).unwrap();
+    fs::write(deepest.join("leaf"), b"original").unwrap();
+    let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+    let error = match super::prepare(&coordinator, &source, &target, &mut progress()) {
+        Ok(_) => panic!("an undiscardable original was admitted"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("could never be discarded"), "{error}");
+    assert!(error.contains("Nothing was copied"), "{error}");
+    assert!(service::list(&coordinator).unwrap().items.is_empty());
+    assert_eq!(fs::read(&source).unwrap(), b"new");
+    assert!(target.join("d").is_dir());
+    let residue: Vec<_> = fs::read_dir(&base)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| {
+            name.to_string_lossy()
+                .starts_with(".tauri-explorer-recovery-")
+        })
+        .collect();
+    assert!(residue.is_empty(), "{residue:?}");
+}
+
+/// An original of many thousands of entries at realistic absolute paths is
+/// admitted and remains discardable (#874 review: 12,000 entries exceeded the
+/// former per-path plan charge).
+#[test]
+fn a_large_replaced_directory_is_admitted_and_discardable() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = directory.path().canonicalize().unwrap();
+    let source = base.join("source");
+    let target = base.join("target");
+    fs::write(&source, b"new").unwrap();
+    fs::create_dir_all(target.join("nested")).unwrap();
+    for index in 0..12_000 {
+        fs::write(
+            target
+                .join("nested")
+                .join(format!("photo-{index:06}-IMG_20260101.jpg")),
+            b"x",
+        )
+        .unwrap();
+    }
+    let coordinator = Coordinator::open(&base.join("recovery")).unwrap();
+    let mut progress = progress();
+    let receipt = super::prepare(&coordinator, &source, &target, &mut progress)
+        .unwrap()
+        .execute(&mut progress)
+        .unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"new");
+    let id = receipt.replacement.unwrap().id;
+    let snapshot = service::inspect(&coordinator, &id).unwrap();
+    let item = snapshot.items.iter().find(|item| item.id == id).unwrap();
+    assert!(
+        item.actions.contains(&RecoveryChoice::Discard),
+        "{:?}",
+        item.actions
+    );
+    let reply =
+        service::resolve(&coordinator, &id, item.generation, RecoveryChoice::Discard).unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert!(service::list(&coordinator).unwrap().items.is_empty());
+    assert_eq!(fs::read(&target).unwrap(), b"new");
+}

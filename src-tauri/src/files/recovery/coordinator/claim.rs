@@ -1,37 +1,35 @@
 //! Reacquire an abandoned indexed operation without changing its immutable owner.
 //! A claim advances the checkpoint generation but grants no inferred file effect.
-use super::super::model::{OperationState, Phase};
-use super::super::move_model::MovePhase;
+use super::super::checkpoint::Phase;
 use super::*;
 
 enum Expected {
     Generation(u64),
-    StableEffect { revision: u64, phase: Phase },
+    StableEffect {
+        revision: u64,
+        position: HistoryPosition,
+    },
 }
 
 impl Expected {
-    fn accepts(&self, generation: u64, checkpoint: &OperationCheckpoint) -> bool {
+    fn accepts(
+        &self,
+        generation: u64,
+        intent: &DurableIntent,
+        checkpoint: &OperationCheckpoint,
+    ) -> bool {
         match self {
             Self::Generation(expected) => generation == *expected,
-            Self::StableEffect { revision, phase } => match &checkpoint.state {
-                OperationState::Replacement(state) => {
-                    state.effect_revision == *revision && state.phase == *phase
-                }
-                // A completed move rests at `Published` (rename) or `Parked`
-                // (cross filesystem); the exact revision pins which one.
-                OperationState::Move(state) => {
-                    state.retirement.is_none()
-                        && state.error.is_none()
-                        && state.effect_revision == *revision
-                        && match phase {
-                            Phase::Published => {
-                                matches!(state.phase, MovePhase::Published | MovePhase::Parked)
-                            }
-                            Phase::Restored => state.phase == MovePhase::Restored,
-                            _ => false,
-                        }
-                }
-            },
+            // A completed forward operation rests at its settled position
+            // (`Published`, or `Parked` for a kind that parks); the exact
+            // revision pins which content the history entry names.
+            Self::StableEffect { revision, position } => {
+                let state = &checkpoint.state;
+                intent.checkpoint(state).completed()
+                    && state.effect_revision == *revision
+                    && (state.phase == Phase::Restored)
+                        == matches!(position, HistoryPosition::Restored)
+            }
         }
     }
 }
@@ -65,11 +63,7 @@ impl Coordinator {
         revision: u64,
         position: HistoryPosition,
     ) -> Result<Option<DurableOperation>, AppError> {
-        let phase = match position {
-            HistoryPosition::Published => Phase::Published,
-            HistoryPosition::Restored => Phase::Restored,
-        };
-        self.claim(id, Expected::StableEffect { revision, phase }, || Ok(()))
+        self.claim(id, Expected::StableEffect { revision, position }, || Ok(()))
     }
 
     fn claim(
@@ -91,14 +85,14 @@ impl Coordinator {
                 ));
             }
             let checkpoint = decode_checkpoint(row, &intents)?;
-            if !expected.accepts(row.generation, &checkpoint) {
+            let entry = intents
+                .get(id)
+                .expect("decoded checkpoint has a catalog entry");
+            if !expected.accepts(row.generation, &entry.intent, &checkpoint) {
                 return Err(invalid(
                     "Recovery checkpoint generation or history position changed",
                 ));
             }
-            let entry = intents
-                .get(id)
-                .expect("decoded checkpoint has a catalog entry");
             let captured = evidence
                 .into_iter()
                 .find(|item| item.id == id)
@@ -121,16 +115,12 @@ impl Coordinator {
                     }
                 }
             }
-            let artifacts = super::claims::known_artifacts(&entry.intent, &checkpoint.state);
+            let artifacts = super::claims::known_artifacts(&entry.intent, &checkpoint.state, false);
             if entry
                 .intent
                 .resources
                 .iter()
-                .chain(
-                    artifacts
-                        .iter()
-                        .flat_map(super::claims::ArtifactClaims::iter),
-                )
+                .chain(&artifacts)
                 .any(|resource| ownership.index.conflicts(resource))
             {
                 return Err(invalid(

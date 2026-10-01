@@ -1,5 +1,7 @@
 //! Immutable relocation authority. A moved source is not an independent copy.
+use super::checkpoint::{DurableKind, Endpoint, Phase, PlannedRoot, Shape, Side, State};
 use super::model::{EntryVersion, NativePath, ObjectId};
+use super::retention::Disposal;
 use serde::{Deserialize, Serialize};
 use std::{ffi::OsStr, io};
 
@@ -32,188 +34,6 @@ pub(crate) struct MoveSpec {
     pub target_root: Option<ArtifactPlan>,
 }
 
-/// A relocation's phases are not a replacement's. Parking and source removal
-/// exist only here, and a same-filesystem rename publishes without any artifact.
-/// Ordering is the crash contract: publication always precedes source parking.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum MovePhase {
-    Planned,
-    Aborted,
-    RootIntent,
-    Rooted,
-    ManifestIntent,
-    Prepared,
-    StageIntent,
-    Staged,
-    DisplaceIntent,
-    Displaced,
-    PublishIntent,
-    Published,
-    ParkIntent,
-    Parked,
-    RestoreIntent,
-    Restored,
-}
-
-impl MovePhase {
-    /// Artifact roots are planned before admission but observed only after
-    /// their exclusive creation. `Planned`/`RootIntent` have no root identity.
-    pub(super) fn roots_observed(self) -> bool {
-        !matches!(self, Self::Planned | Self::Aborted | Self::RootIntent)
-    }
-
-    /// A cross-filesystem payload is captured when staging completes and stays
-    /// recorded for every later phase, including restoration.
-    pub(super) fn payload_staged(self) -> bool {
-        matches!(
-            self,
-            Self::Staged
-                | Self::DisplaceIntent
-                | Self::Displaced
-                | Self::PublishIntent
-                | Self::Published
-                | Self::ParkIntent
-                | Self::Parked
-                | Self::RestoreIntent
-                | Self::Restored
-        )
-    }
-}
-
-/// Mutable relocation evidence. Parked and displaced entries need no recorded
-/// version: their exact identities are already immutable in `MoveSpec`.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MoveState {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rename_probe: Option<super::move_capability_model::Progress>,
-    /// Confirmed public-content transitions, matching the replacement counter.
-    #[serde(default)]
-    pub effect_revision: u64,
-    pub source_root: Option<ObjectId>,
-    pub target_root: Option<ObjectId>,
-    pub phase: MovePhase,
-    /// Only a cross-filesystem move stages an independent copied payload.
-    pub staged: Option<super::durable_model::StagedPayload>,
-    /// Both retirement-era fields are omitted while absent: strict decoders in
-    /// builds that predate them must still read a record that does not use them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retained_bytes: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retirement: Option<super::move_retention::RetirementState>,
-    /// Why an automatic discard could not even be journaled: a removal
-    /// preflight, journal headroom or a changed endpoint. Enforcement leaves
-    /// the record for the user's explicit Discard rather than claiming it on
-    /// every pass (#760). Omitted while absent, like the fields above.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deferred: Option<String>,
-    pub error: Option<String>,
-}
-
-impl Default for MoveState {
-    fn default() -> Self {
-        Self {
-            rename_probe: None,
-            effect_revision: 0,
-            source_root: None,
-            target_root: None,
-            phase: MovePhase::Planned,
-            staged: None,
-            retained_bytes: None,
-            retirement: None,
-            deferred: None,
-            error: None,
-        }
-    }
-}
-
-#[cfg(unix)]
-impl MoveState {
-    pub(super) fn validate(&self, spec: &MoveSpec) -> io::Result<()> {
-        super::move_capability_model::validate(spec, self)?;
-        if let Some(retirement) = &self.retirement {
-            retirement.validate(spec, self)?;
-        }
-        if self.deferred.as_ref().is_some_and(|reason| {
-            reason.len() > super::durable_model::MAX_ERROR_BYTES
-                || self.retirement.is_some()
-                || super::move_retention::disposal(spec, self.phase)
-                    != Some(super::retention::Disposal::AutomaticWhenSourceIntact)
-        }) {
-            return Err(invalid(
-                "Only a settled, automatically retirable move can defer its cleanup",
-            ));
-        }
-        let observed = self.phase.roots_observed();
-        if self.source_root.is_some() != (observed && spec.source_root.is_some())
-            || self.target_root.is_some() != (observed && spec.target_root.is_some())
-            || self
-                .error
-                .as_ref()
-                .is_some_and(|error| error.len() > super::durable_model::MAX_ERROR_BYTES)
-        {
-            return Err(invalid(
-                "Move phase lacks its required artifact evidence or exceeds the error budget",
-            ));
-        }
-        // A rename never stages a payload, and staging evidence must not appear
-        // before its phase or survive a phase that has not observed it.
-        let staged_required = self.phase.payload_staged() && spec.strategy == Strategy::CopyParked;
-        if self.staged.is_some() != staged_required {
-            return Err(invalid(
-                "Move staging evidence disagrees with its strategy and phase",
-            ));
-        }
-        // A move with no planned artifact root can only be the same-filesystem
-        // fast path; it must never reach a phase that needs private storage.
-        if spec.source_root.is_none()
-            && spec.target_root.is_none()
-            && !matches!(
-                self.phase,
-                MovePhase::Planned
-                    | MovePhase::Aborted
-                    | MovePhase::PublishIntent
-                    | MovePhase::Published
-                    | MovePhase::RestoreIntent
-                    | MovePhase::Restored
-            )
-        {
-            return Err(invalid(
-                "Move without private storage cannot reach an artifact-bearing phase",
-            ));
-        }
-        for (identity, plan, parent) in [
-            (self.source_root, &spec.source_root, spec.source_parent),
-            (self.target_root, &spec.target_root, spec.target_parent),
-        ] {
-            let (Some(identity), Some(_)) = (identity, plan.as_ref()) else {
-                continue;
-            };
-            spec.validate_root(parent, identity)?;
-        }
-        if let Some(staged) = &self.staged {
-            staged.validate()?;
-            let version = &staged.version;
-            if !version.object.same_volume(spec.target_parent)
-                || version.object == spec.target_parent
-                || version.object == spec.source_version.object
-                || Some(version.object) == self.target_root
-                || Some(version.object) == self.source_root
-                || spec
-                    .target_original
-                    .as_ref()
-                    .is_some_and(|original| original.object == version.object)
-            {
-                return Err(invalid(
-                    "Move staged payload aliases retained evidence or lies on another device",
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
 impl MoveSpec {
     pub(super) fn probe_plans(
         &self,
@@ -226,42 +46,8 @@ impl MoveSpec {
                 .map(|plan| (plan, &self.target, self.target_parent)),
         )
     }
-    pub(super) fn capability_ready(&self, state: &MoveState) -> bool {
-        state
-            .rename_probe
-            .as_ref()
-            .is_some_and(|progress| progress.supported())
-    }
 
-    pub(super) fn roots(&self) -> impl Iterator<Item = &ArtifactPlan> {
-        self.source_root.iter().chain(&self.target_root)
-    }
-
-    /// An observed artifact root must be a private sibling of its owning user
-    /// entry: same volume as that parent, and never an alias of user data.
-    /// Only the move's subjects are compared. Other intent resources, such as
-    /// the parent-alias entries admission records for traversed symlinks, are
-    /// not kept alive, so a fresh root can reuse a freed inode number from any
-    /// of them (#788).
-    #[cfg(unix)]
-    pub(super) fn validate_root(&self, parent: ObjectId, root: ObjectId) -> io::Result<()> {
-        if !root.same_volume(parent)
-            || root == parent
-            || root == self.source_version.object
-            || self
-                .target_original
-                .as_ref()
-                .is_some_and(|original| original.object == root)
-        {
-            return Err(invalid(
-                "Move artifact root aliases a user object or lies on another device",
-            ));
-        }
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    pub(super) fn validate(&self, resources: &[super::resources::Resource]) -> io::Result<()> {
+    fn validate_spec(&self, resources: &[super::resources::Resource]) -> io::Result<()> {
         use super::resources::{Access, ConflictIndex, Resource, Scope};
         self.source_version.validate()?;
         if let Some(original) = &self.target_original {
@@ -379,6 +165,114 @@ impl MoveSpec {
             index.insert(root);
         }
         Ok(())
+    }
+}
+
+/// A relocation parks no artifact on the same filesystem: one rename publishes
+/// it. Ordering is the crash contract: publication always precedes parking.
+impl DurableKind for MoveSpec {
+    fn shape(&self) -> Shape {
+        let copying = self.strategy == Strategy::CopyParked;
+        Shape {
+            stages: copying,
+            overwrites: self.target_original.is_some(),
+            parks: copying,
+            reapplies: false,
+        }
+    }
+
+    fn root(&self, side: Side) -> Option<PlannedRoot<'_>> {
+        let (plan, user, parent) = match side {
+            Side::Source => (&self.source_root, &self.source, self.source_parent),
+            Side::Target => (&self.target_root, &self.target, self.target_parent),
+        };
+        plan.as_ref().map(|plan| PlannedRoot {
+            path: &plan.path,
+            token: &plan.token,
+            user,
+            parent,
+        })
+    }
+
+    fn probes(&self) -> Vec<PlannedRoot<'_>> {
+        self.probe_plans()
+            .map(|(plan, user, parent)| PlannedRoot {
+                path: &plan.path,
+                token: &plan.token,
+                user,
+                parent,
+            })
+            .collect()
+    }
+
+    fn subjects(&self) -> Vec<ObjectId> {
+        std::iter::once(self.source_version.object)
+            .chain(
+                self.target_original
+                    .as_ref()
+                    .map(|original| original.object),
+            )
+            .collect()
+    }
+
+    fn parents(&self) -> Vec<ObjectId> {
+        vec![self.source_parent, self.target_parent]
+    }
+
+    fn source_version(&self) -> &EntryVersion {
+        &self.source_version
+    }
+
+    fn displaced(&self) -> Option<&EntryVersion> {
+        self.target_original.as_ref()
+    }
+
+    fn validate(&self, resources: &[super::resources::Resource]) -> io::Result<()> {
+        self.validate_spec(resources)
+    }
+
+    /// A restored rename retains only verified residue. A copied directory or
+    /// symlink cannot prove its parked publication redundant.
+    fn restored_disposal(&self) -> Disposal {
+        if self.strategy == Strategy::CopyParked
+            && (self.source_version.directory || self.source_version.symlink)
+        {
+            Disposal::ExplicitOnly
+        } else {
+            Disposal::AutomaticWhenSourceIntact
+        }
+    }
+
+    fn endpoints(&self, state: &State) -> io::Result<Vec<Endpoint<'_>>> {
+        let (source, target) = if state.phase == Phase::Restored {
+            (
+                vec![self.source_version.clone()],
+                self.target_original.iter().cloned().collect(),
+            )
+        } else {
+            let published = match (self.strategy, &state.staged) {
+                (Strategy::Rename, _) => self.source_version.clone(),
+                (Strategy::CopyParked, Some(staged)) => staged.published_version()?,
+                (Strategy::CopyParked, None) => return Err(invalid("Move has no staged evidence")),
+            };
+            (Vec::new(), vec![published])
+        };
+        Ok(vec![
+            Endpoint {
+                path: &self.source,
+                parent: Some(self.source_parent),
+                versions: source,
+            },
+            Endpoint {
+                path: &self.target,
+                parent: Some(self.target_parent),
+                versions: target,
+            },
+        ])
+    }
+
+    fn listed_path(&self) -> &NativePath {
+        &self.source
     }
 }
 

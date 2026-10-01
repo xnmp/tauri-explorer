@@ -58,6 +58,6 @@
     cursor: pointer;
   }
   .close-btn:hover { background: var(--subtle-fill-secondary); }
-  .close-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .close-btn:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
   .dialog-content { min-height: 0; overflow: auto; padding: 20px; }
 </style>

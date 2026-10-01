@@ -8,6 +8,7 @@ import {
   readVerifiedNativeBuildManifest,
   buildInteractiveMacStartupQualificationReport,
   buildMacStartupQualificationReport,
+  MacRendererLossError,
   MacStartupTimeoutError,
   resolveQualificationArtifactPath,
   stopNativeStartupProcess,
@@ -102,16 +103,23 @@ async function runSample(
     });
     return { ...measurement, log: logPath };
   } catch (error) {
-    // A timed-out sample's process is still alive: record what the operating
-    // system can show about it before cleanup stops it (#936).
-    if (error instanceof MacStartupTimeoutError) {
-      throw await withStallEvidence(error, outputDir, () =>
+    // The sample's process is still owned and alive: record what the operating
+    // system can show before cleanup stops it. A stall profiles the live
+    // processes (#936); a renderer loss collects the dead page's crash report
+    // and identity, even when the app has already reloaded it (#942).
+    const reason =
+      error instanceof MacStartupTimeoutError ? "stall"
+        : error instanceof MacRendererLossError ? "renderer-loss"
+        : null;
+    if (reason) {
+      throw await withStallEvidence(error as Error, outputDir, () =>
         captureMacStartupStallEvidence({
           pid: child.pid,
           binary,
           outputDir,
-          directoryName: `${sampleName}-stall`,
+          directoryName: `${sampleName}-${reason}`,
           sampleStartedAtMs,
+          reason,
         }),
       );
     }
@@ -125,6 +133,15 @@ async function runSample(
   }
 }
 
+/** Provenance only: a tool that is missing or fails records null, never fails the run. */
+function readVersion(command: string, args: string[]): string | null {
+  try {
+    return execFileSync(command, args, { encoding: "utf8", timeout: 10_000 }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 const startedAt = new Date().toISOString();
 const platform = {
   os: "macos",
@@ -133,6 +150,13 @@ const platform = {
   hardwareModel,
   cpu: os.cpus()[0]?.model ?? "unknown",
   memoryBytes: os.totalmem(),
+  osProductVersion: readVersion("/usr/bin/sw_vers", ["-productVersion"]),
+  osBuildVersion: readVersion("/usr/bin/sw_vers", ["-buildVersion"]),
+  // The same build string WebContent crash reports carry as `build_version`.
+  webKitVersion: readVersion("/usr/bin/plutil", [
+    "-extract", "CFBundleVersion", "raw", "-o", "-",
+    "/System/Library/Frameworks/WebKit.framework/Resources/Info.plist",
+  ]),
 } as const;
 
 async function runDirectProcessScenario() {
@@ -152,9 +176,9 @@ async function runDirectProcessScenario() {
     .readdirSync(outputDir, { withFileTypes: true })
     .flatMap((entry) => {
       if (entry.isFile() && entry.name.endsWith(".log")) return [entry.name];
-      // Each stalled sample's evidence directory is indexed by its summary.
+      // Each failed sample's evidence directory is indexed by its summary.
       const summary = path.join(entry.name, "evidence.json");
-      return entry.isDirectory() && entry.name.endsWith("-stall") &&
+      return entry.isDirectory() && /-(stall|renderer-loss)$/.test(entry.name) &&
         fs.existsSync(path.join(outputDir, summary))
         ? [summary]
         : [];

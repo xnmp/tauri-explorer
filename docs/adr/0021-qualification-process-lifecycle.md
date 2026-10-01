@@ -72,6 +72,12 @@ captures bounded stall evidence (process table, profiles, unified log, new
 crash reports) into the sample's artifact directory; cleanup then proceeds as
 usual. The timeout, with the parser's last rejection, always leads the failure,
 and a capture that fails or overruns its deadline only adds to it (#936).
+Renderer loss is its own failure class: any `Renderer(web-content-terminated)`
+line fails the sample as soon as it is seen, including during the survival
+interval of a sample whose markers are complete, and a reloaded document's
+markers never qualify it. The still-owned process is kept alive while the
+runner captures renderer-loss evidence (process table, unified log, the dead
+page's crash report and pid); the renderer-loss message leads (#942).
 
 ## Consequences
 

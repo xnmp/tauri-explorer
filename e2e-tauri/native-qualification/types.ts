@@ -229,6 +229,11 @@ export interface MacStartupQualificationReportInput {
     hardwareModel: string;
     cpu: string;
     memoryBytes: number;
+    /** `sw_vers`; the Darwin `release` alone does not name the macOS build. */
+    osProductVersion?: string | null;
+    osBuildVersion?: string | null;
+    /** System WebKit.framework CFBundleVersion, which crash reports cite (#942). */
+    webKitVersion?: string | null;
   };
   scenario: MacStartupQualificationConditions & {
     id: string;

@@ -1,5 +1,7 @@
 //! One native-window resource owns the current renderer incarnation. Resource
 //! services share its cancellation identity, without retaining native windows.
+#[cfg(any(target_os = "macos", test))]
+mod reload;
 mod scope;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod termination;
@@ -113,6 +115,37 @@ pub fn on_page_started<R: Runtime>(window: &Window<R>) {
     retire(retired);
 }
 
+/// macOS reports WebContent loss through Wry's navigation delegate rather than
+/// a per-page signal. Retire the lost generation exactly as a document
+/// boundary does, then recover the window under its reload budget (#942).
+#[cfg(target_os = "macos")]
+pub fn on_web_content_terminated(webview: &tauri::Webview) {
+    // WebKit does not reload a terminated page and Wry adds no log of its own,
+    // so this line is the only record of the loss (#936). The epoch and
+    // app-run times correlate it with the `Startup(...)` markers; the startup
+    // qualifier fails any sample that contains it.
+    let app_run_ms = webview
+        .try_state::<crate::system::StartupClock>()
+        .map(|clock| clock.started.elapsed().as_secs_f64() * 1000.0)
+        .unwrap_or(f64::NAN);
+    let window = webview.window();
+    log::warn!(
+        "Renderer(web-content-terminated): window={} webview={} epoch-ms={:.3} app-run-ms={:.1}",
+        window.label(),
+        webview.label(),
+        crate::system::epoch_ms_now(),
+        app_run_ms,
+    );
+    on_page_started(&window);
+    reload::recover(webview);
+}
+
+/// The committed document a renderer-loss reload restores (macOS, #942).
+#[cfg(target_os = "macos")]
+pub fn on_document_committed<R: Runtime>(window: &Window<R>, url: &tauri::Url) {
+    reload::record_document(window, url);
+}
+
 /// Called with the concrete native window, including windows which never
 /// acquired a watch. A delayed first command therefore sees a retired owner.
 pub fn on_window_destroyed<R: Runtime>(window: &Window<R>) {
@@ -178,3 +211,7 @@ pub(crate) fn release_owner<R: Runtime>(window: &Window<R>, session_id: &str) ->
 #[cfg(test)]
 #[path = "../test_support/renderer_owner.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test_support/renderer_reload.rs"]
+mod reload_tests;

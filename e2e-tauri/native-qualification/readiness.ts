@@ -1,3 +1,4 @@
+import { assertNoRendererLoss, findRendererTerminations, MacRendererLossError } from "./renderer-loss";
 import { describeStartupProgress, summarizeStartupProgress, type StartupProgressSummary } from "./startup-progress";
 import type { AttributedMacStartupMeasurement, MacStartupPhases, NativeStartupChild } from "./types";
 
@@ -75,6 +76,17 @@ export function parseAttributedMacStartupLog(
     inputReadyMs: null,
   },
 ): AttributedMacStartupMeasurement {
+  // Renderer loss disqualifies the sample whatever else the log shows: the
+  // app reloads the page, and the reloaded document's markers must not turn
+  // a lost renderer into a measurement (#942).
+  assertNoRendererLoss(log);
+  for (const marker of ["webview", "native-ready"]) {
+    // Each is logged once per main-window document. Two mean two documents,
+    // and taking the first match would silently mix their clocks.
+    if ((log.match(new RegExp(`Startup\\(${marker}\\):\\s*window=main\\s`, "g")) ?? []).length > 1) {
+      throw new Error(`Startup(${marker}) is recorded by more than one main-window document`);
+    }
+  }
   const duration = "([\\d.]+)(ns|us|µs|μs|ms|s)";
   const nativeWindow = log.match(
     new RegExp(
@@ -281,17 +293,25 @@ export function waitForMacStartupProcess(
     const onError = (error: Error): void => {
       fail(new Error(`application process error: ${error.message}`));
     };
+    // Renderer loss fails at once, including during the survival interval of
+    // a sample whose markers are complete: the app reloads the page, so
+    // waiting would only measure the replacement document (#942).
+    const failOnRendererLoss = (log: string): boolean => {
+      const terminations = findRendererTerminations(log);
+      if (terminations.length === 0) return false;
+      fail(new MacRendererLossError(terminations, log));
+      return true;
+    };
     const succeedAfterSurvival = (
       measurement: AttributedMacStartupMeasurement,
     ): void => {
-      clearInterval(pollTimer);
       clearTimeout(timeoutTimer);
       survivalTimer = setTimeout(() => {
+        if (completed || failOnRendererLoss(readLog())) return;
         if (child.exitCode !== null || child.signalCode !== null) {
           onExit(child.exitCode, child.signalCode);
           return;
         }
-        if (completed) return;
         completed = true;
         cleanup();
         resolve(measurement);
@@ -299,9 +319,11 @@ export function waitForMacStartupProcess(
     };
     let lastRejection: string | null = null;
     const inspectLog = (): void => {
-      if (survivalTimer || completed) return;
+      if (completed) return;
+      const log = readLog();
+      if (failOnRendererLoss(log) || survivalTimer) return;
       try {
-        succeedAfterSurvival(parseDirectProcessStartupLog(readLog(), options));
+        succeedAfterSurvival(parseDirectProcessStartupLog(log, options));
       } catch (error) {
         // Keep collecting the scenario's required native markers until the
         // bound, but remember why so a timeout can say so.
@@ -310,6 +332,7 @@ export function waitForMacStartupProcess(
     };
 
     const timeoutTimer = setTimeout(() => {
+      if (failOnRendererLoss(readLog())) return;
       fail(
         new MacStartupTimeoutError(
           options.timeoutMs,

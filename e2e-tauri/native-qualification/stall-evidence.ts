@@ -1,5 +1,6 @@
 /**
- * Bounded macOS evidence for a startup sample that timed out (#936).
+ * Bounded macOS evidence for a startup sample that timed out (#936) or lost
+ * its renderer (#942).
  *
  * A stalled sample's only artifact used to be its stdout log, which cannot say
  * whether the main WKWebView's WebContent process died, hung, or was merely
@@ -8,15 +9,21 @@
  *
  * - `processes.txt`: the application, its children and every `com.apple.WebKit.*`
  *   process (WebKit's XPC services are launchd children, not app children);
- * - a 3 s `sample` of the application and of each WebContent process started
- *   during the sample, falling back to non-interactive `sudo spindump` when
- *   `sample` cannot inspect a platform binary;
- * - the last 60 s of the unified log for WebKit and the application;
- * - crash, hang and jetsam reports written since the sample started.
+ * - the most recent part of the last 60 s of the unified log for WebKit and the
+ *   application, without WebKit's per-request `Network`/`ResourceLoading` noise
+ *   (half of all lines in #936, which pushed the crash past the size cap);
+ * - for a stall, a 3 s `sample` of the application and of each WebContent
+ *   process started during the sample, pages named in the unified log first,
+ *   falling back to non-interactive `sudo spindump` when `sample` cannot
+ *   inspect a platform binary;
+ * - crash, hang and jetsam reports written since the sample started (for a
+ *   renderer loss, after waiting a bounded time for the crash report);
+ * - the pids of WebContent processes that terminated, from their crash
+ *   reports and the unified log, since a dead page cannot be sampled.
  *
  * Every capture has its own time and size bound, the whole collection has an
  * overall deadline, and nothing here throws: a failed capture is recorded in
- * `evidence.json`, never allowed to replace the original timeout (ADR 0021; the
+ * `evidence.json`, never allowed to replace the original failure (ADR 0021; the
  * same rule as `e2e-tauri/diagnostics/process-timeline.ts`).
  */
 import { spawn } from "node:child_process";
@@ -24,6 +31,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveQualificationArtifactPath } from "./artifacts";
+import { parseCrashReportIdentity, parseWebPageProcesses, type WebPageProcess } from "./renderer-loss";
 
 export interface EvidenceCommandResult {
   exitCode: number | null;
@@ -38,8 +46,31 @@ export interface EvidenceCommandResult {
 export type EvidenceCommandRunner = (
   command: string,
   args: readonly string[],
-  options: { timeoutMs: number; maxBytes: number; outputPath: string },
+  options: {
+    timeoutMs: number;
+    maxBytes: number;
+    outputPath: string;
+    /**
+     * Which end of oversized output to keep. `head` (default) stops the
+     * command at the cap; `tail` lets it finish and keeps the newest bytes,
+     * which for `log show` are the ones nearest the failure.
+     */
+    keep?: "head" | "tail";
+  },
 ) => Promise<EvidenceCommandResult>;
+
+export type EvidenceReason = "stall" | "renderer-loss";
+
+export interface TerminatedWebContent {
+  pid: number;
+  /** Where the termination was found; a crash report is authoritative. */
+  sources: Array<"crash-report" | "unified-log">;
+  /** Artifact-relative copy of its crash report. */
+  report: string | null;
+  webPageIds: number[];
+  buildVersion: string | null;
+  captureTime: string | null;
+}
 
 export interface EvidenceCaptureRecord {
   id: string;
@@ -57,14 +88,19 @@ export interface EvidenceCaptureRecord {
 }
 
 export interface StallEvidenceSummary {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  reason: EvidenceReason;
   pid: number | null;
   sampleStartedAt: string;
   capturedAt: string;
   durationMs: number;
   /** True if the overall deadline expired before every capture finished. */
   incomplete: boolean;
+  /** WebContent processes profiled (stall only), log-identified pages first. */
   webContentPids: number[];
+  /** WebContent pids paired with page IDs in the unified log. */
+  webPages: WebPageProcess[];
+  terminatedWebContent: TerminatedWebContent[];
   captures: EvidenceCaptureRecord[];
   diagnosticReports: {
     copied: string[];
@@ -92,7 +128,8 @@ export interface StallEvidenceResult {
 export type StallEvidenceLimits = Record<
   | "psTimeoutMs" | "psMaxBytes" | "sampleSeconds" | "sampleTimeoutMs" | "spindumpTimeoutMs"
   | "sampleMaxBytes" | "maxWebContentProcesses" | "logTimeoutMs" | "logMaxBytes"
-  | "maxDiagnosticReports" | "diagnosticReportMaxBytes" | "overallTimeoutMs",
+  | "maxDiagnosticReports" | "diagnosticReportMaxBytes" | "overallTimeoutMs"
+  | "crashReportWaitMs" | "crashReportPollMs",
   number
 >;
 
@@ -109,17 +146,24 @@ export const STALL_EVIDENCE_LIMITS: Readonly<StallEvidenceLimits> = {
   maxDiagnosticReports: 5,
   diagnosticReportMaxBytes: 1024 * 1024,
   overallTimeoutMs: 90_000,
+  // ReportCrash writes the `.ips` after the process is gone; in #936 it landed
+  // within a second, so this only bounds a slow or absent report.
+  crashReportWaitMs: 15_000,
+  crashReportPollMs: 250,
 };
 
 /** Spawn a bounded command whose combined output streams into one file. Never rejects. */
 export const runBoundedEvidenceCommand: EvidenceCommandRunner = (
   command,
   args,
-  { timeoutMs, maxBytes, outputPath },
+  { timeoutMs, maxBytes, outputPath, keep = "head" },
 ) =>
   new Promise((resolve) => {
     let bytes = 0;
     let truncated = false;
+    // Tail mode holds at most `maxBytes` (plus one chunk) and writes on exit.
+    const tail: Buffer[] = [];
+    let tailBytes = 0;
     let timedOut = false;
     let settled = false;
     let error: string | undefined;
@@ -140,6 +184,14 @@ export const runBoundedEvidenceCommand: EvidenceCommandRunner = (
       settled = true;
       clearTimeout(timer);
       clearTimeout(guard);
+      if (keep === "tail") {
+        let kept = Buffer.concat(tail);
+        // Start the kept tail on a whole line rather than mid-record.
+        const newline = truncated ? kept.indexOf(0x0a) : -1;
+        if (newline >= 0) kept = kept.subarray(newline + 1);
+        bytes = kept.length;
+        output.write(kept);
+      }
       output.end(() =>
         resolve({ exitCode, signal, timedOut, bytes, truncated, ...(error ? { error } : {}) }),
       );
@@ -165,6 +217,21 @@ export const runBoundedEvidenceCommand: EvidenceCommandRunner = (
       }
     };
     const append = (chunk: Buffer): void => {
+      if (keep === "tail") {
+        tail.push(chunk);
+        tailBytes += chunk.length;
+        while (tailBytes > maxBytes && tail.length > 0) {
+          const excess = tailBytes - maxBytes;
+          truncated = true;
+          if (tail[0].length <= excess) {
+            tailBytes -= tail.shift()!.length;
+          } else {
+            tail[0] = tail[0].subarray(excess);
+            tailBytes -= excess;
+          }
+        }
+        return;
+      }
       if (truncated) return;
       const room = Math.max(0, maxBytes - bytes);
       if (chunk.length > room) {
@@ -244,13 +311,16 @@ function parseProcessTable(text: string): { header: string | null; rows: Process
  * Keep the application, its direct children and WebKit's processes; pick the
  * WebContent processes started during this sample, newest first. WebContent
  * processes are launchd children, so start time is the only local link to the
- * sample; the qualifier runs one application at a time.
+ * sample; the qualifier runs one application at a time. Pages the unified log
+ * names (`preferred`) go first, so the bound never drops the stalled page in
+ * favour of a newer, idle one.
  */
 export function selectStallProcesses(
   psOutput: string,
   pid: number | null,
   sampleAgeSeconds: number,
   maxWebContent: number,
+  preferred: readonly number[] = [],
 ): { lines: string[]; webContentPids: number[] } {
   const { header, rows } = parseProcessTable(psOutput);
   const relevant = rows.filter(
@@ -265,7 +335,9 @@ export function selectStallProcesses(
         row.elapsedSeconds !== null &&
         row.elapsedSeconds <= sampleAgeSeconds + 5,
     )
-    .sort((a, b) => (a.elapsedSeconds ?? 0) - (b.elapsedSeconds ?? 0))
+    .sort((a, b) =>
+      Number(preferred.includes(b.pid)) - Number(preferred.includes(a.pid)) ||
+      (a.elapsedSeconds ?? 0) - (b.elapsedSeconds ?? 0))
     .slice(0, maxWebContent)
     .map((row) => row.pid);
   return {
@@ -326,12 +398,66 @@ export const defaultDiagnosticReportDirectories = (): string[] => [
   "/Library/Logs/DiagnosticReports",
 ];
 
+/** Unified-log predicate: WebKit and the app, without per-request noise. */
+export function unifiedLogPredicate(processName: string): string {
+  return (
+    '(process BEGINSWITH "com.apple.WebKit" OR subsystem BEGINSWITH "com.apple.WebKit" ' +
+    `OR process == ${JSON.stringify(processName)}) ` +
+    'AND NOT (subsystem == "com.apple.WebKit" AND category IN {"Network", "ResourceLoading"})'
+  );
+}
+
+const isWebContentReport = (file: string): boolean =>
+  path.basename(file).includes("com.apple.WebKit.WebContent");
+
+/**
+ * Terminated WebContent processes, merged by pid: crash reports are
+ * authoritative, unified-log page lines add the page IDs and catch a loss
+ * whose report never arrived.
+ */
+export function terminatedWebContentProcesses(
+  reports: ReadonlyArray<{ file: string; text: string }>,
+  pages: readonly WebPageProcess[],
+): TerminatedWebContent[] {
+  const byPid = new Map<number, TerminatedWebContent>();
+  const entry = (pid: number): TerminatedWebContent => {
+    const existing = byPid.get(pid) ?? {
+      pid, sources: [], report: null, webPageIds: [], buildVersion: null, captureTime: null,
+    };
+    byPid.set(pid, existing);
+    return existing;
+  };
+  for (const { file, text } of reports) {
+    const identity = parseCrashReportIdentity(text);
+    const webContent = [identity?.procName, identity?.bundleId]
+      .some((name) => name?.includes("com.apple.WebKit.WebContent"));
+    if (!identity || identity.pid === null || !webContent) continue;
+    const terminated = entry(identity.pid);
+    if (!terminated.sources.includes("crash-report")) terminated.sources.push("crash-report");
+    terminated.report ??= file;
+    terminated.buildVersion ??= identity.buildVersion;
+    terminated.captureTime ??= identity.captureTime;
+  }
+  for (const page of pages) {
+    const known = byPid.get(page.pid);
+    if (!page.terminated && !known) continue;
+    const terminated = entry(page.pid);
+    if (page.terminated && !terminated.sources.includes("unified-log")) terminated.sources.push("unified-log");
+    terminated.webPageIds = [...new Set([...terminated.webPageIds, ...page.webPageIds])].sort((a, b) => a - b);
+  }
+  return [...byPid.values()].sort((a, b) => a.pid - b.pid);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function captureMacStartupStallEvidence(options: {
   pid: number | null | undefined;
   binary: string;
   outputDir: string;
   directoryName: string;
   sampleStartedAtMs: number;
+  /** A stall profiles live processes; a renderer loss waits for the crash report instead. */
+  reason?: EvidenceReason;
   run?: EvidenceCommandRunner;
   now?: () => number;
   diagnosticReportDirectories?: readonly string[];
@@ -340,17 +466,21 @@ export async function captureMacStartupStallEvidence(options: {
   const limits = { ...STALL_EVIDENCE_LIMITS, ...options.limits };
   const run = options.run ?? runBoundedEvidenceCommand;
   const now = options.now ?? Date.now;
+  const reason = options.reason ?? "stall";
   const started = now();
   const pid = options.pid ?? null;
   const directory = resolveQualificationArtifactPath(options.outputDir, options.directoryName);
   const summary: StallEvidenceSummary = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    reason,
     pid,
     sampleStartedAt: new Date(options.sampleStartedAtMs).toISOString(),
     capturedAt: new Date(started).toISOString(),
     durationMs: 0,
     incomplete: false,
     webContentPids: [],
+    webPages: [],
+    terminatedWebContent: [],
     captures: [],
     diagnosticReports: { copied: [], duringCapture: [], omitted: 0, omittedDuringCapture: 0, errors: [] },
     errors: [],
@@ -361,7 +491,13 @@ export async function captureMacStartupStallEvidence(options: {
     id: string,
     command: string,
     args: string[],
-    bounds: { timeoutMs: number; maxBytes: number; outputPath: string; reportPath?: string },
+    bounds: {
+      timeoutMs: number;
+      maxBytes: number;
+      outputPath: string;
+      reportPath?: string;
+      keep?: "head" | "tail";
+    },
   ): Promise<EvidenceCaptureRecord> => {
     const began = now();
     let result: EvidenceCommandResult;
@@ -374,9 +510,9 @@ export async function captureMacStartupStallEvidence(options: {
     const reportBytes = bounds.reportPath ? fileSize(bounds.reportPath) : null;
     const outputFile = bounds.reportPath && reportBytes ? bounds.reportPath : bounds.outputPath;
     const bytes = reportBytes ?? result.bytes;
-    // Hitting the size cap kills the command by design; what it wrote is kept.
+    // Hitting a head cap kills the command by design; what it wrote is kept.
     const succeeded =
-      (result.exitCode === 0 || result.truncated) &&
+      (result.exitCode === 0 || (result.truncated && bounds.keep !== "tail")) &&
       !result.timedOut &&
       !result.error &&
       (!bounds.reportPath || (reportBytes ?? 0) > 0);
@@ -434,8 +570,24 @@ export async function captureMacStartupStallEvidence(options: {
     } catch (reason) {
       summary.errors.push(`ps output unreadable: ${String(reason)}`);
     }
-    const selected = selectStallProcesses(psOutput, pid, sampleAgeSeconds, limits.maxWebContentProcesses);
-    summary.webContentPids = selected.webContentPids;
+    fs.rmSync(fullTable, { force: true });
+
+    // The log comes first: its page lines name the pids worth profiling.
+    const logPath = path.join(directory, "unified-log.txt");
+    await capture(
+      "log-show",
+      "/usr/bin/log",
+      ["show", "--last", "60s", "--info", "--style", "compact", "--predicate",
+        unifiedLogPredicate(path.basename(options.binary))],
+      { timeoutMs: limits.logTimeoutMs, maxBytes: limits.logMaxBytes, outputPath: logPath, keep: "tail" },
+    );
+    try {
+      summary.webPages = parseWebPageProcesses(fs.readFileSync(logPath, "utf8"));
+    } catch {
+      // A missing log is already recorded as a failed capture.
+    }
+    const livePages = summary.webPages.filter((page) => !page.terminated).map((page) => page.pid);
+    const selected = selectStallProcesses(psOutput, pid, sampleAgeSeconds, limits.maxWebContentProcesses, livePages);
     const processes = path.join(directory, "processes.txt");
     fs.writeFileSync(processes, `${selected.lines.join("\n")}\n`);
     const psRecord = summary.captures.find((record) => record.id === "ps");
@@ -443,55 +595,59 @@ export async function captureMacStartupStallEvidence(options: {
       psRecord.file = relative(processes);
       psRecord.bytes = fileSize(processes) ?? 0;
     }
-    fs.rmSync(fullTable, { force: true });
 
-    const logPath = path.join(directory, "unified-log.txt");
-    const processName = path.basename(options.binary);
-    const predicate =
-      'process BEGINSWITH "com.apple.WebKit" OR subsystem BEGINSWITH "com.apple.WebKit" ' +
-      `OR process == ${JSON.stringify(processName)}`;
     const reportDirectories =
       options.diagnosticReportDirectories ?? defaultDiagnosticReportDirectories();
     const reportsSince = options.sampleStartedAtMs - 1_000;
     const reportsBeforeCapture = new Set(newDiagnosticReports(reportDirectories, reportsSince));
-    await Promise.all([
-      ...(pid !== null ? [profile("app", pid)] : []),
-      ...selected.webContentPids.map((target) => profile("webcontent", target)),
-      capture(
-        "log-show",
-        "/usr/bin/log",
-        ["show", "--last", "60s", "--info", "--style", "compact", "--predicate", predicate],
-        { timeoutMs: limits.logTimeoutMs, maxBytes: limits.logMaxBytes, outputPath: logPath },
-      ),
-    ]);
+    const profiled = reason === "stall";
+    if (profiled) {
+      // A renderer that died cannot be profiled; a hung one can.
+      summary.webContentPids = selected.webContentPids;
+      await Promise.all([
+        ...(pid !== null ? [profile("app", pid)] : []),
+        ...selected.webContentPids.map((target) => profile("webcontent", target)),
+      ]);
+    } else {
+      // ReportCrash writes the dead process's report shortly after it exits.
+      for (let waited = 0; waited < limits.crashReportWaitMs; waited += limits.crashReportPollMs) {
+        if (newDiagnosticReports(reportDirectories, reportsSince).some(isWebContentReport)) break;
+        await sleep(limits.crashReportPollMs);
+      }
+    }
 
     const reports = newDiagnosticReports(reportDirectories, reportsSince);
     const reportDirectory = path.join(directory, "diagnostic-reports");
+    const copiedReports: Array<{ file: string; text: string }> = [];
     for (const [index, report] of reports.entries()) {
+      // Reports written while profiles ran may be induced by them (#936).
+      const induced = profiled && !reportsBeforeCapture.has(report);
       if (index >= limits.maxDiagnosticReports) {
         summary.diagnosticReports.omitted += 1;
-        if (!reportsBeforeCapture.has(report)) summary.diagnosticReports.omittedDuringCapture += 1;
+        if (induced) summary.diagnosticReports.omittedDuringCapture += 1;
         continue;
       }
       try {
         fs.mkdirSync(reportDirectory, { recursive: true });
         const destination = path.join(reportDirectory, `${index}-${path.basename(report)}`);
         const source = fs.openSync(report, "r");
+        let copied: Buffer;
         try {
           const buffer = Buffer.alloc(limits.diagnosticReportMaxBytes);
           const length = fs.readSync(source, buffer, 0, buffer.length, 0);
-          fs.writeFileSync(destination, buffer.subarray(0, length));
+          copied = buffer.subarray(0, length);
+          fs.writeFileSync(destination, copied);
         } finally {
           fs.closeSync(source);
         }
         summary.diagnosticReports.copied.push(relative(destination));
-        if (!reportsBeforeCapture.has(report)) {
-          summary.diagnosticReports.duringCapture.push(relative(destination));
-        }
+        copiedReports.push({ file: relative(destination), text: copied.toString("utf8") });
+        if (induced) summary.diagnosticReports.duringCapture.push(relative(destination));
       } catch (reason) {
         summary.diagnosticReports.errors.push(`${report}: ${String(reason)}`);
       }
     }
+    summary.terminatedWebContent = terminatedWebContentProcesses(copiedReports, summary.webPages);
   };
 
   let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -525,12 +681,13 @@ export async function captureMacStartupStallEvidence(options: {
 }
 
 /**
- * Attach captured evidence to a startup timeout. The timeout's own message
- * always leads, and a capture that throws adds a clause instead of replacing
- * it, so evidence collection can never hide why the sample failed.
+ * Attach captured evidence to a sample failure (a timeout or renderer loss).
+ * The failure's own message always leads, and a capture that throws adds a
+ * clause instead of replacing it, so evidence collection can never hide why
+ * the sample failed.
  */
 export async function withStallEvidence(
-  timeout: Error,
+  failure: Error,
   outputDir: string,
   capture: () => Promise<StallEvidenceResult>,
 ): Promise<Error> {
@@ -538,9 +695,9 @@ export async function withStallEvidence(
   try {
     evidence = describeStallEvidence(await capture(), outputDir);
   } catch (error) {
-    evidence = `stall evidence capture failed: ${error instanceof Error ? error.message : String(error)}`;
+    evidence = `evidence capture failed: ${error instanceof Error ? error.message : String(error)}`;
   }
-  return new Error(`${timeout.message}; ${evidence}`, { cause: timeout });
+  return new Error(`${failure.message}; ${evidence}`, { cause: failure });
 }
 
 /** One clause for the failure message; the details live in `evidence.json`. */
@@ -552,10 +709,14 @@ export function describeStallEvidence(result: StallEvidenceResult, outputDir: st
   const { copied, omitted, duringCapture, omittedDuringCapture } = summary.diagnosticReports;
   const reports = copied.length + omitted;
   const induced = duringCapture.length + omittedDuringCapture;
+  const terminated = summary.terminatedWebContent
+    .map(({ pid, sources }) => `${pid} (${sources.join("+")})`)
+    .join(", ");
   return (
-    `stall evidence in ${path.relative(outputDir, result.directory) || "."}: ${captures || "no captures"}` +
+    `${summary.reason} evidence in ${path.relative(outputDir, result.directory) || "."}: ${captures || "no captures"}` +
     `; ${reports} new diagnostic report(s)` +
     `${induced > 0 ? ` (${induced} written during capture)` : ""}` +
+    `${terminated ? `; terminated WebContent pid(s): ${terminated}` : ""}` +
     `${summary.incomplete ? "; incomplete (overall deadline)" : ""}` +
     `${summary.errors.length > 0 ? `; errors: ${summary.errors.join("; ")}` : ""}`
   );

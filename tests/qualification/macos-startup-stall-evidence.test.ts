@@ -294,7 +294,7 @@ describe("attaching evidence to a timeout", () => {
       }),
     );
     expect(error.message).toMatch(
-      /^startup markers missing after 30000ms; main progress: last mark settings-ready; stall evidence capture failed: artifact path resolves outside qualification root/,
+      /^startup markers missing after 30000ms; main progress: last mark settings-ready; evidence capture failed: artifact path resolves outside qualification root/,
     );
     expect(error.cause).toBe(timeout);
   });
@@ -314,7 +314,7 @@ describe("attaching evidence to a timeout", () => {
       }),
     );
     expect(error.message.startsWith(timeout.message)).toBe(true);
-    expect(error.message).toContain("stall evidence in sample-04-stall: ps captured, sample:app:4242 captured");
+    expect(error.message).toContain("stall evidence in sample-04-stall: ps captured, log-show captured, sample:app:4242 captured");
     expect(error.message).toContain("0 new diagnostic report(s)");
   });
 });

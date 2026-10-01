@@ -39,7 +39,15 @@ When a Tauri upgrade requires a newer Wry:
 
 ## Upstream
 
-As of 2026-09-30 upstream `dev` and the 0.57.0 release still capture a strong
-`webview` in `connect_script_message_received`, and no upstream issue or pull
-request exists. Record its links here once filed; the reproduction and root
-cause are in `docs/lessons/817-linux-webkit-ipc-retention.md`.
+Reported upstream on 2026-10-01:
+[tauri-apps/wry#1871](https://github.com/tauri-apps/wry/issues/1871).
+The report includes the ownership cycle, direct Wry reproduction instructions,
+our executed diagnostic results, and the equivalent weak-capture diff against
+upstream `dev` revision `cab3eace983007a16f132c14a34d0a220c707bea`.
+That revision and the 0.57.0 release still capture a strong `webview` in
+`connect_script_message_received`.
+
+Keep the local patch and guard until an upstream release includes the fix
+and passes the native Linux window-churn qualification described above.
+The diagnostic root cause is recorded in
+`docs/lessons/817-linux-webkit-ipc-retention.md`.

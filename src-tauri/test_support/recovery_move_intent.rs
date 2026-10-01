@@ -41,10 +41,10 @@ fn fixture() -> (tempfile::TempDir, Arc<Coordinator>, Reservation, MoveSpec) {
         ])
         .unwrap();
     let spec = MoveSpec {
-        rename_probes: Some(super::super::move_capability_model::Plans {
+        rename_probes: super::super::move_capability_model::Plans {
             source: probe,
             target: None,
-        }),
+        },
         source: NativePath(source),
         source_parent: parent,
         source_version,

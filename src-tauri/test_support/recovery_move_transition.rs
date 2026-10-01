@@ -1,6 +1,7 @@
 use super::*;
 use crate::files::recovery::{
     model::{EntryVersion, LockIdentity, NativePath, OperationRecord, OperationSpec},
+    move_capability_model::{Event as ProbeEvent, Plans},
     move_model::{ArtifactPlan, MoveState},
     resources::{Access, Resource, Scope},
 };
@@ -9,6 +10,10 @@ use std::path::Path;
 const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SOURCE_TOKEN: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const TARGET_TOKEN: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+const PROBE_TOKENS: [&str; 2] = [
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+];
 
 fn object(device: u64, inode: u64) -> ObjectId {
     ObjectId::unix(device, inode)
@@ -55,9 +60,23 @@ fn plan(path: &str, token: &str) -> ArtifactPlan {
     }
 }
 
+/// Rename probes beside each endpoint: a target probe exactly when the move
+/// crosses volumes.
+fn probes(source: &str, target: Option<&str>) -> Plans {
+    let beside = |user: &str, token: &str| {
+        let parent = Path::new(user).parent().unwrap();
+        let path = parent.join(format!(".tauri-explorer-recovery-{token}"));
+        plan(&path.to_string_lossy(), token)
+    };
+    Plans {
+        source: beside(source, PROBE_TOKENS[0]),
+        target: target.map(|target| beside(target, PROBE_TOKENS[1])),
+    }
+}
+
 fn intent(spec: MoveSpec, resources: Vec<Resource>) -> DurableIntent {
     DurableIntent {
-        version: 1,
+        version: 2,
         id: ID.into(),
         lock: LockIdentity {
             name: format!("{ID}.lock"),
@@ -74,7 +93,7 @@ fn fast_path() -> (DurableIntent, OperationState) {
     let parent = object(7, 10);
     let source_version = version(7, 11);
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: probes("/volume/source", None),
         source: NativePath("/volume/source".into()),
         source_parent: parent,
         source_version: source_version.clone(),
@@ -99,7 +118,7 @@ fn same_volume_overwrite() -> (DurableIntent, OperationState) {
     let original = version(7, 12);
     let root_path = format!("/volume/.tauri-explorer-recovery-{TARGET_TOKEN}");
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: probes("/volume/source", None),
         source: NativePath("/volume/source".into()),
         source_parent: parent,
         source_version: source_version.clone(),
@@ -127,7 +146,7 @@ fn cross_volume() -> (DurableIntent, OperationState) {
     let source_root = format!("/source-volume/.tauri-explorer-recovery-{SOURCE_TOKEN}");
     let target_root = format!("/target-volume/.tauri-explorer-recovery-{TARGET_TOKEN}");
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: probes("/source-volume/source", Some("/target-volume/target")),
         source: NativePath("/source-volume/source".into()),
         source_parent,
         source_version: source_version.clone(),
@@ -155,12 +174,41 @@ fn cross_volume() -> (DurableIntent, OperationState) {
     start(spec, resources)
 }
 
-fn start(spec: MoveSpec, resources: Vec<Resource>) -> (DurableIntent, OperationState) {
+/// A planned move whose endpoint volumes have already proved exclusive rename,
+/// which every move must do before any effect.
+fn start(spec: MoveSpec, mut resources: Vec<Resource>) -> (DurableIntent, OperationState) {
+    resources.extend(
+        spec.probe_plans()
+            .map(|(plan, _, parent)| resource(&plan.path.0.to_string_lossy(), None, parent)),
+    );
     let intent = intent(spec, resources);
     intent.validate().unwrap();
     let record = OperationRecord::planned(intent);
     record.validate().unwrap();
-    (record.intent, record.state)
+    let (intent, mut state) = (record.intent, record.state);
+    let count = intent.operation.move_spec().unwrap().probe_plans().count();
+    for index in 0..count {
+        // The source probe shares volume 7; a target probe exists only on 8.
+        let device = 7 + index as u64;
+        let root = object(device, 40 + 2 * index as u64);
+        let file = EntryVersion {
+            size: 0,
+            ..version(device, 41 + 2 * index as u64)
+        };
+        for event in [
+            ProbeEvent::BeginRoot,
+            ProbeEvent::RootObserved(root),
+            ProbeEvent::FileObserved(file),
+            ProbeEvent::BeginCleanup {
+                renamed: true,
+                supported: true,
+            },
+            ProbeEvent::Removed,
+        ] {
+            state = advance(&intent, state, MoveTransition::Probe(index, event));
+        }
+    }
+    (intent, state)
 }
 
 fn advance(intent: &DurableIntent, state: OperationState, event: MoveTransition) -> OperationState {
@@ -408,14 +456,13 @@ fn root_observations_must_match_the_immutable_plan() {
 /// artifact root (#788). Only the move's subjects may disqualify a root.
 #[test]
 fn a_reused_parent_alias_identity_does_not_disqualify_an_observed_root() {
-    let (mut intent, _) = same_volume_overwrite();
+    let (mut intent, state) = same_volume_overwrite();
     let reused = object(7, 51);
     let mut link = resource("/volume/retargeted-link", Some(reused), object(7, 10));
     link.access = Access::Read;
     link.scope = Scope::Entry;
     intent.resources.push(link);
     intent.validate().unwrap();
-    let state = OperationRecord::planned(intent.clone()).state;
     let state = advance(&intent, state, MoveTransition::BeginRoots);
 
     transition(

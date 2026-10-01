@@ -87,7 +87,7 @@ impl DurableWork {
 
 pub(crate) async fn execute(plan: MovePlan, runtime: &admission::Runtime) -> Outcome {
     #[cfg(target_os = "linux")]
-    if cfg!(feature = "durable-move-recovery") {
+    if super::recovery::Runtime::DURABLE {
         let affected = plan.affected_dirs();
         let runtime = runtime.clone();
         let completion =

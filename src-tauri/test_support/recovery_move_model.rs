@@ -4,6 +4,7 @@ use crate::files::{
     native_directory::Directory,
     recovery::{
         model::{EntryVersion, NativePath, ObjectId},
+        move_capability_model::Plans,
         resources::{capture_requests, Access, Request, Resource, Scope},
     },
 };
@@ -11,6 +12,10 @@ use std::{fs, path::Path};
 
 const SOURCE_TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TARGET_TOKEN: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const PROBE_TOKENS: [&str; 2] = [
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+];
 
 fn object(device: u64, inode: u64) -> ObjectId {
     ObjectId::unix(device, inode)
@@ -50,11 +55,36 @@ fn root(path: &str, token: &str) -> ArtifactPlan {
     }
 }
 
+fn probe_beside(user: &Path, token: &str) -> ArtifactPlan {
+    let path = user
+        .parent()
+        .unwrap()
+        .join(format!(".tauri-explorer-recovery-{token}"));
+    root(&path.to_string_lossy(), token)
+}
+
+/// Rename probes beside each endpoint: a target probe exactly when the move
+/// crosses volumes.
+fn probes(source: &str, target: Option<&str>) -> Plans {
+    Plans {
+        source: probe_beside(Path::new(source), PROBE_TOKENS[0]),
+        target: target.map(|target| probe_beside(Path::new(target), PROBE_TOKENS[1])),
+    }
+}
+
+/// Probe roots are claimed like any other private artifact. Appended last so
+/// the fixtures' positional resources keep their indices.
+fn claim_probes(spec: &MoveSpec, resources: &mut Vec<Resource>) {
+    resources.extend(spec.probe_plans().map(|(plan, _, parent)| {
+        resource(&plan.path.0.to_string_lossy(), None, parent, Access::Write)
+    }));
+}
+
 fn rootless() -> (MoveSpec, Vec<Resource>) {
     let parent = object(7, 10);
     let source_version = version(7, 11);
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: probes("/volume/source", None),
         source: NativePath("/volume/source".into()),
         source_parent: parent,
         source_version: source_version.clone(),
@@ -65,7 +95,7 @@ fn rootless() -> (MoveSpec, Vec<Resource>) {
         source_root: None,
         target_root: None,
     };
-    let resources = vec![
+    let mut resources = vec![
         resource(
             "/volume/source",
             Some(source_version.object),
@@ -74,6 +104,7 @@ fn rootless() -> (MoveSpec, Vec<Resource>) {
         ),
         resource("/volume/target", None, parent, Access::Write),
     ];
+    claim_probes(&spec, &mut resources);
     (spec, resources)
 }
 
@@ -103,7 +134,7 @@ fn cross_volume() -> (MoveSpec, Vec<Resource>) {
     let source_root_path = format!("/source-volume/.tauri-explorer-recovery-{SOURCE_TOKEN}");
     let target_root_path = format!("/target-volume/.tauri-explorer-recovery-{TARGET_TOKEN}");
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: probes("/source-volume/source", Some("/target-volume/target")),
         source: NativePath("/source-volume/source".into()),
         source_parent,
         source_version: source_version.clone(),
@@ -114,7 +145,7 @@ fn cross_volume() -> (MoveSpec, Vec<Resource>) {
         source_root: Some(root(&source_root_path, SOURCE_TOKEN)),
         target_root: Some(root(&target_root_path, TARGET_TOKEN)),
     };
-    let resources = vec![
+    let mut resources = vec![
         resource(
             "/source-volume/source",
             Some(source_version.object),
@@ -130,6 +161,7 @@ fn cross_volume() -> (MoveSpec, Vec<Resource>) {
         resource(&source_root_path, None, source_parent, Access::Write),
         resource(&target_root_path, None, target_parent, Access::Write),
     ];
+    claim_probes(&spec, &mut resources);
     (spec, resources)
 }
 
@@ -233,7 +265,10 @@ fn source_target_overlap_and_real_hardlink_alias_are_rejected() {
     .unwrap();
     let parent = of_file(&Directory::open(&base).unwrap().file).unwrap();
     let spec = MoveSpec {
-        rename_probes: None,
+        rename_probes: Plans {
+            source: probe_beside(&source, PROBE_TOKENS[0]),
+            target: None,
+        },
         source: NativePath(source.clone()),
         source_parent: parent,
         source_version: version_from_metadata(&fs::symlink_metadata(&source).unwrap()).unwrap(),
@@ -252,12 +287,16 @@ fn source_target_overlap_and_real_hardlink_alias_are_rejected() {
         )),
     };
     let mut resources = resources;
+    let artifacts = [
+        &spec.target_root.as_ref().unwrap().path.0,
+        &spec.rename_probes.source.path.0,
+    ];
     resources.extend(
-        capture_requests(&[Request {
-            path: spec.target_root.as_ref().unwrap().path.0.clone(),
+        capture_requests(&artifacts.map(|path| Request {
+            path: path.clone(),
             access: Access::Write,
             scope: Scope::Subtree,
-        }])
+        }))
         .unwrap(),
     );
     assert!(spec.validate(&resources).is_err());

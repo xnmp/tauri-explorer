@@ -6,8 +6,8 @@ use super::{
 use serde::{Deserialize, Serialize};
 use std::io;
 
-/// Absence identifies legacy intents. New intents always contain a source plan
-/// and contain a target plan exactly when the endpoints use different volumes.
+/// Every move intent contains a source plan, and a target plan exactly when
+/// the endpoints use different volumes.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Plans {
@@ -169,18 +169,13 @@ pub(super) fn validate(
     state: &super::move_model::MoveState,
 ) -> io::Result<()> {
     use super::move_model::MovePhase;
-    if state.phase == MovePhase::Aborted && spec.rename_probes.is_none() {
-        return Err(invalid(
-            "Legacy move cannot infer aborted preflight authority",
-        ));
-    }
     let Some(progress) = &state.rename_probe else {
-        if spec.rename_probes.is_some() && state.phase != MovePhase::Planned {
+        if state.phase != MovePhase::Planned {
             return Err(invalid("Move has no completed rename capability evidence"));
         }
         return Ok(());
     };
-    if spec.rename_probes.is_none() || progress.steps.len() != spec.probe_plans().count() {
+    if progress.steps.len() != spec.probe_plans().count() {
         return Err(invalid(
             "Rename probe progress differs from its immutable plans",
         ));

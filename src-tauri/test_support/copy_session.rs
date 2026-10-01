@@ -112,9 +112,9 @@ fn real_ordinary_prefix_and_replacement_commit_in_order() {
     };
     assert_eq!(
         receipt.replacement.is_some(),
-        cfg!(feature = "durable-copy-recovery")
+        cfg!(feature = "durable-recovery")
     );
-    if !cfg!(feature = "durable-copy-recovery") {
+    if !cfg!(feature = "durable-recovery") {
         assert!(
             receipt.publication.is_some(),
             "staged overwrite retains exact ordinary-copy Undo authority"
@@ -130,7 +130,7 @@ fn real_ordinary_prefix_and_replacement_commit_in_order() {
     assert_eq!(order, [0, 1]);
 }
 
-#[cfg(not(feature = "durable-copy-recovery"))]
+#[cfg(not(feature = "durable-recovery"))]
 #[test]
 fn repeated_native_overwrites_retire_transient_recovery_records_and_keep_one_inverse() {
     use crate::file_history::{Action, ForwardEffect};
@@ -178,7 +178,7 @@ fn repeated_native_overwrites_retire_transient_recovery_records_and_keep_one_inv
     assert!(inventory.items.is_empty());
 }
 
-#[cfg(not(feature = "durable-copy-recovery"))]
+#[cfg(not(feature = "durable-recovery"))]
 #[test]
 fn native_overwrite_obeys_a_competing_runtime_admission() {
     use crate::files::recovery::{Access, ResourceRequest, Scope};

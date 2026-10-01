@@ -1,13 +1,13 @@
 # ADR 0020: Durable file recovery
 
 Status: Proposed for default enablement and cross-platform support. Durable
-copy and move recovery are implemented on Linux behind independent opt-in
-features; Windows/macOS recovery adapters and final platform acceptance remain
+copy and move recovery are implemented on Linux behind one opt-in feature;
+Windows/macOS recovery adapters and final platform acceptance remain
 outstanding.
 
-Release policy (2026-09-09): creation of durable copy and move records remains
-opt-in through `durable-copy-recovery` and `durable-move-recovery`. Default builds
-keep transient admission and staged overwrites. Existing recovery discovery,
+Release policy (2026-09-09, amended 2026-10-01 by the decision below): creation
+of durable copy and move records remains opt-in through `durable-recovery`.
+Default builds keep transient admission and staged overwrites. Existing recovery discovery,
 restore and history remain available. [ADR 0023](0023-recovery-artifact-retention.md)
 defines bounded retention and journaled retirement for replacement and move
 records. Linux implementation and targeted native acceptance exist; default
@@ -15,6 +15,71 @@ enablement is a release-owner decision (plan D1), and non-Linux adapters remain
 outside the implemented scope (plan D2).
 The frozen release scope in `docs/review-completion.md` supersedes broader
 implementation prerequisites below.
+
+## Default-enablement decision (D1/D2, 2026-10-01, #880)
+
+**Decision.** Durable copy and move recovery stay opt-in and Linux-only. This
+confirms the D1/D2 defaults recorded in
+`docs/archive/execution-plans/architecture-overhaul-remaining.md`, and this ADR
+stays Proposed. Revisit by **2027-01-01**.
+
+**Why not enable by default.** No shipped build has exercised these features:
+every release and PKGBUILD build leaves them off. Yet they sit in the core of
+every copy-overwrite and every move on Linux: the per-volume rename probe, the
+journaled phases, and source parking. Enabling untested-in-the-field code on the
+hottest mutation path trades a known, bounded behaviour for an unknown one.
+
+**What would justify default enablement on Linux:**
+- A build that real users run with the feature enabled, such as a prerelease
+  channel, for at least one release cycle with no data-loss or
+  stuck-`MutationUncertain` reports.
+- `native-recovery.yml` green on every `dev` merge over that period.
+- Measured probe and journal overhead per move and copy within the perf suite's
+  budgets.
+- Evidence of power-loss ordering (fsync points), not only process-kill tests.
+- ADR 0023 retention verified on real volumes, including storage accounting.
+
+Non-Linux enablement is a separate decision. It needs admission adapters for
+Windows and macOS (D2, #772).
+
+If none of this has started by the revisit date, weigh deleting record
+creation rather than carrying it further.
+
+**One switch.** The two features are merged into `durable-recovery`:
+- One decision governs both features.
+- No CI job or native suite ever built one without the other, so the
+  "either may ship first" combinations were never tested.
+- Production reads the feature in exactly one place,
+  `recovery::Runtime::DURABLE`. Copy and move call sites branch on that
+  constant. `Runtime::move_entry` still refuses when it is false, so a
+  misrouted default build cannot create a record.
+- Platform `cfg(target_os = "linux")` gates stay where the code cannot compile
+  elsewhere.
+- Tests read the feature directly (`cfg!`/`#[cfg]`) rather than the constant,
+  so a wrong constant fails them.
+
+Every feature read is in Linux-only code, so the former macOS opt-in CI step
+compiled the same code as macOS default and was removed. CI now covers four
+configurations: Linux default, Linux `durable-recovery`, macOS default and
+Windows default. The `cfg(unix)` recovery modules still build and test in the
+macOS default job.
+
+**Record formats.** Copy-replacement intents are version 1 and move intents are
+version 2. Each operation kind accepts exactly its own version; any other
+version, including a future one, fails validation instead of being guessed at.
+Version-1 move intents, which had no `rename_probes`, came only from
+pre-#736 development builds. Their compatibility paths and fixtures are
+removed, and `rename_probes` is now required.
+
+A leftover version-1 move record no longer decodes, because `rename_probes` is
+missing. `Coordinator::open` still succeeds, but inventory, catalog discovery
+and every reservation fail with "Recovery record cannot be decoded; evidence is
+preserved". That fences all Linux admission until the record is dealt with; it
+is never executed or deleted.
+
+Manual recovery for a development profile: inspect or remove
+`file-recovery/catalog/<id>.intent`. Parked artifacts remain in the
+`.tauri-explorer-recovery-*` directories beside the moved entries.
 
 Governs: `src-tauri/src/files/replacement.rs`,
 `src-tauri/src/files/publication.rs`, `src-tauri/src/files/file_ops.rs`,
@@ -1037,9 +1102,7 @@ Recovery; cleanup never resumes the user's move. A crash between creation and
 identity recording leaves unknown evidence for attention, not inferred ownership.
 
 Terminal removal checkpoints retain historical root/file identities and whether
-the real rename succeeded. Version-1 moves omit the new optional fields exactly,
-so existing manifest digests remain valid; they do not acquire a new preflight
-requirement during recovery. Version 2 cannot omit its plans. Literal old catalog
-and manifest fixtures exercise byte compatibility, and native tests exercise
-unsupported errors, exact cleanup, external substitution and process termination
+the real rename succeeded. Every move intent is version 2 and carries its probe
+plans; version-1 compatibility was removed (see the 2026-10-01 decision above).
+Native tests exercise unsupported errors, exact cleanup, external substitution and process termination
 on both endpoint volumes. Process-kill tests do not establish power-loss behavior.

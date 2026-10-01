@@ -116,13 +116,3 @@ jobs:
             & fsutil.exe 8dot3name set $policy
             if ($LASTEXITCODE -ne 0) { throw "Could not restore original NTFS 8.3 policy $policy" }
           }
-
-      # The opt-in durable policies are `cfg(unix)` code; macOS is the only
-      # non-Linux platform where they compile to anything.
-      - name: Opt-in recovery Clippy
-        if: runner.os == 'macOS'
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features durable-copy-recovery,durable-move-recovery -- -D warnings
-
-      - name: Opt-in recovery tests
-        if: runner.os == 'macOS'
-        run: cargo test --manifest-path src-tauri/Cargo.toml --features durable-copy-recovery,durable-move-recovery

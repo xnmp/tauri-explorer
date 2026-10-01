@@ -74,15 +74,9 @@ tauri-plugin-log = "2"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "json"] }
 
 [features]
-# Durable copy retirement exists on Linux; native crash acceptance and other
-# platform adapters remain required before ordinary release enablement.
-durable-copy-recovery = []
-
-# Durable moves retain exact Undo authority until explicit discard. Keep opt-in
-# until platform qualification permits default enablement. Linux retirement and
-# per-volume exclusive-rename preflight are covered by #736 native contracts.
-# Independent of durable-copy-recovery: either policy may ship first.
-durable-move-recovery = []
+# Creates durable copy and move recovery records (Linux only). Opt-in until the
+# ADR 0020 decision is revisited; read only through `recovery::Runtime::DURABLE`.
+durable-recovery = []
 
 # The single Rust gate for native E2E test hooks (#884); the frontend's is
 # VITE_E2E_HOOKS=1 (src/lib/api/e2e-hooks.ts). Hook builds enable both. It adds

@@ -312,7 +312,7 @@ fn a_publication_whose_source_removal_failed_is_uncertain_and_offers_no_inverse(
     let ItemOutcome::Uncertain { error } = &outcome.items[0] else {
         unreachable!()
     };
-    if cfg!(feature = "durable-move-recovery") {
+    if cfg!(feature = "durable-recovery") {
         assert!(error.contains("File Recovery"), "{error}");
     } else {
         assert!(error.contains("did not finish"), "{error}");
@@ -402,7 +402,7 @@ fn every_committed_item_contributes_both_of_its_directories_to_the_refresh_set()
     }
 }
 
-#[cfg(feature = "durable-move-recovery")]
+#[cfg(feature = "durable-recovery")]
 #[test]
 fn a_durable_receipt_is_its_own_inverse_and_never_gains_a_path_only_action() {
     let fixture = Fixture::new();

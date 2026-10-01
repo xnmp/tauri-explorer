@@ -453,17 +453,10 @@ fn relocation(
     use super::move_model::MovePhase;
     use super::move_transition::{transition as move_transition, MoveTransition};
     let generation = operation.generation();
-    if operation
-        .intent()
-        .operation
-        .move_spec()?
-        .rename_probes
-        .is_some()
-        && matches!(
-            operation.state().move_state()?.phase,
-            MovePhase::Planned | MovePhase::Aborted
-        )
-    {
+    if matches!(
+        operation.state().move_state()?.phase,
+        MovePhase::Planned | MovePhase::Aborted
+    ) {
         let intent = operation.intent().clone();
         let observation = super::move_capability::inspect(&operation);
         if matches!(request, Request::Discard(_)) && observation.is_ok() {

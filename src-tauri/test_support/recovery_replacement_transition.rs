@@ -147,6 +147,23 @@ fn published() -> (DurableIntent, OperationState) {
 }
 
 #[test]
+fn copy_replacement_intents_accept_only_version_one() {
+    // The fixture itself validates at version 1. Version 2 belongs to moves;
+    // every other version, including a future one, is unknown.
+    let (intent, _) = fixture();
+    for version in [0, 2, 3, u32::MAX] {
+        let other = DurableIntent {
+            version,
+            ..intent.clone()
+        };
+        assert!(
+            other.validate().is_err(),
+            "copy replacement version {version} must be rejected"
+        );
+    }
+}
+
+#[test]
 fn publication_and_discard_follow_the_complete_legal_sequence() {
     let (intent, mut current) = fixture();
     let original_intent = intent.clone();

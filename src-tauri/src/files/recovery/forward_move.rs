@@ -174,7 +174,7 @@ impl PendingMove {
             return Err(invalid());
         }
         let spec = MoveSpec {
-            rename_probes: Some(rename_probes),
+            rename_probes,
             source_version: version_from_metadata(&fs::symlink_metadata(&source)?)?,
             source: NativePath(source),
             source_parent: source_identity,

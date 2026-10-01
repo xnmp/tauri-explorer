@@ -159,7 +159,7 @@ impl RelocateWork {
         // final cancellation check. Fence the native effect at worker entry.
         tracker.check_cancelled()?;
         #[cfg(target_os = "linux")]
-        if cfg!(feature = "durable-move-recovery") {
+        if files::recovery::Runtime::DURABLE {
             // The durable path decides overwriting from the target it observes,
             // so an un-prompted conflict must fail closed here. A target that
             // appears after this check is still safe: the durable overwrite

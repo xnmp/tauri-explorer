@@ -34,6 +34,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
 - `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
+- `VideoIndicator.svelte` — passive, contrast-backed video type badge shared by Tiles and Preview Pane; remains present during loading and frame extraction failure (#823).
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.

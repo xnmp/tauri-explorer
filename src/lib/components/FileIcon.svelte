@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
-  import { getFileIconCategory, getFileExtensionLabel, isGitRepoFolder } from "$lib/domain/file-types";
+  import { getFileIconCategory, getFileExtensionLabel, isGitRepoFolder, isVideoMediaFile } from "$lib/domain/file-types";
   import { getNerdIcon } from "$lib/domain/nerd-icons";
   import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -76,7 +76,14 @@
   const gitRepoFolder = $derived(isGitRepoFolder(entry) && !linkedFolder);
 </script>
 
-{#if linkedFolder}
+{#if isVideoMediaFile(entry)}
+  <span class="icon-cat icon-video" role="img" aria-label="Video">
+    <svg width={size === "small" ? 16 : 64} height={size === "small" ? 16 : 64} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="2.5" y="3.5" width="19" height="17" rx="2.5" stroke="currentColor" stroke-width="1.5" />
+      <path d="M9 7.5L16 12L9 16.5V7.5Z" fill="currentColor" />
+    </svg>
+  </span>
+{:else if linkedFolder}
   <!-- Symlinked directory: folder with a link arrow (all themes) -->
   {#if size === "small"}
     <span class="icon-cat linked-folder">
@@ -373,7 +380,7 @@
   .icon-image      { color: var(--icon-file-tint, var(--icon-image)); }
   .icon-archive    { color: var(--icon-file-tint, var(--icon-archive)); }
   .icon-code       { color: var(--icon-file-tint, var(--icon-code)); }
-  .icon-media      { color: var(--icon-file-tint, var(--icon-media)); }
+  .icon-media, .icon-video { color: var(--icon-file-tint, var(--icon-media)); }
   .icon-executable { color: var(--icon-file-tint, var(--icon-executable)); }
   .icon-document   { color: var(--icon-file-tint, var(--icon-document)); }
   /* Linked folder uses the folder colour; the arrow is drawn in --icon-link-arrow. */

@@ -319,6 +319,11 @@ export function isVideoFile(entry: FileEntry): boolean {
   return VIDEO_THUMBNAIL_EXTENSIONS.has(ext) || AUDIO_THUMBNAIL_EXTENSIONS.has(ext);
 }
 
+/** Video identity, excluding audio cover art that shares the thumbnail API. */
+export function isVideoMediaFile(entry: FileEntry): boolean {
+  return entry.kind === "file" && VIDEO_THUMBNAIL_EXTENSIONS.has(getExtension(entry.name));
+}
+
 /** Labels for well-known extensionless files */
 const EXTENSIONLESS_LABELS: Record<string, string> = {
   "Dockerfile": "DOCK",

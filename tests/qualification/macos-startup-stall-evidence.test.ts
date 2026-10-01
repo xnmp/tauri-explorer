@@ -132,7 +132,9 @@ describe("stall evidence capture", () => {
       path.join(result.directory, "spindump-webcontent-5001.txt"),
     ]);
     const logShow = calls.find(([command]) => command === "/usr/bin/log")!;
-    expect(logShow).toEqual(expect.arrayContaining(["show", "--last", "60s"]));
+    // The window starts with the sample (31 s ago, plus margin), and drops per-request noise.
+    expect(logShow).toEqual(expect.arrayContaining(["show", "--last", "36s"]));
+    expect(logShow.at(-1)).toContain('NOT (subsystem == "com.apple.WebKit" AND category IN {"Network", "ResourceLoading"})');
     expect(logShow.at(-1)).toContain('process == "tauri-explorer"');
 
     const processes = fs.readFileSync(path.join(result.directory, "processes.txt"), "utf8");
@@ -314,7 +316,7 @@ describe("attaching evidence to a timeout", () => {
       }),
     );
     expect(error.message.startsWith(timeout.message)).toBe(true);
-    expect(error.message).toContain("stall evidence in sample-04-stall: ps captured, log-show captured, sample:app:4242 captured");
+    expect(error.message).toContain("stall evidence in sample-04-stall: ps captured, sample:app:4242 captured");
     expect(error.message).toContain("0 new diagnostic report(s)");
   });
 });

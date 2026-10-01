@@ -10,11 +10,13 @@ import {
   buildMacStartupQualificationReport,
   MacRendererLossError,
   MacStartupTimeoutError,
+  MAX_RECOVERED_RENDERER_LOSSES,
   resolveQualificationArtifactPath,
   stopNativeStartupProcess,
   waitForMacStartupProcess,
   writeQualificationArtifact,
   type AttributedMacStartupMeasurement,
+  type RendererLossRecord,
 } from "../e2e-tauri/native-qualification";
 import {
   captureMacStartupStallEvidence,
@@ -79,11 +81,12 @@ const sampleEnvironment: NodeJS.ProcessEnv = {
 delete sampleEnvironment.WARM_MEASURE;
 if (measureWarm) sampleEnvironment.WARM_MEASURE = "1";
 
+const sampleName = (index: number): string => `sample-${String(index).padStart(2, "0")}`;
+
 async function runSample(
   index: number,
 ): Promise<AttributedMacStartupMeasurement & { log: string }> {
-  const sampleName = `sample-${String(index).padStart(2, "0")}`;
-  const logPath = resolveQualificationArtifactPath(outputDir, `${sampleName}.log`);
+  const logPath = resolveQualificationArtifactPath(outputDir, `${sampleName(index)}.log`);
   let log = "";
   const sampleStartedAtMs = Date.now();
   const child = spawn(binary, [], {
@@ -117,7 +120,7 @@ async function runSample(
           pid: child.pid,
           binary,
           outputDir,
-          directoryName: `${sampleName}-${reason}`,
+          directoryName: `${sampleName(index)}-${reason}`,
           sampleStartedAtMs,
           reason,
         }),
@@ -162,16 +165,34 @@ const platform = {
 async function runDirectProcessScenario() {
   const samples: Array<AttributedMacStartupMeasurement & { log: string }> = [];
   const errors: string[] = [];
-  for (let index = 1; index <= sampleCount; index += 1) {
+  const rendererLosses: RendererLossRecord[] = [];
+  // A recovered renderer loss is recorded and replaced by another launch; the
+  // report fails an unrecovered loss or more than the allowed number (#942).
+  for (let index = 1; samples.length < sampleCount; index += 1) {
     try {
       samples.push(await runSample(index));
     } catch (error) {
-      errors.push(
-        `sample ${index}: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const description = error instanceof Error ? error.message : String(error);
+      const loss = error instanceof Error ? error.cause : undefined;
+      if (loss instanceof MacRendererLossError) {
+        rendererLosses.push({
+          sample: index,
+          recovered: loss.recovered,
+          description,
+          log: resolveQualificationArtifactPath(outputDir, `${sampleName(index)}.log`),
+          evidence: resolveQualificationArtifactPath(outputDir, `${sampleName(index)}-renderer-loss`),
+        });
+        console.log(`::warning title=Renderer loss::sample ${index}: ${description}`);
+        const recovered = rendererLosses.filter((record) => record.recovered).length;
+        if (loss.recovered && recovered <= MAX_RECOVERED_RENDERER_LOSSES) continue;
+        break;
+      }
+      errors.push(`sample ${index}: ${description}`);
       break;
     }
   }
+  const recovered = rendererLosses.filter((record) => record.recovered).length;
+  console.log(`renderer losses: ${rendererLosses.length} (${recovered} recovered and replaced)`);
   const artifacts = fs
     .readdirSync(outputDir, { withFileTypes: true })
     .flatMap((entry) => {
@@ -208,6 +229,7 @@ async function runDirectProcessScenario() {
     samples,
     artifacts,
     errors,
+    rendererLosses,
     halfBounceDeadlineMs,
   });
 }

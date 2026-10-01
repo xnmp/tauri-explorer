@@ -1,4 +1,4 @@
-import { assertNoRendererLoss, findRendererTerminations, MacRendererLossError } from "./renderer-loss";
+import { assessRendererLoss, findRendererTerminations, MacRendererLossError } from "./renderer-loss";
 import { describeStartupProgress, summarizeStartupProgress, type StartupProgressSummary } from "./startup-progress";
 import type { AttributedMacStartupMeasurement, MacStartupPhases, NativeStartupChild } from "./types";
 
@@ -76,13 +76,14 @@ export function parseAttributedMacStartupLog(
     inputReadyMs: null,
   },
 ): AttributedMacStartupMeasurement {
-  // Renderer loss disqualifies the sample whatever else the log shows: the
-  // app reloads the page, and the reloaded document's markers must not turn
-  // a lost renderer into a measurement (#942).
-  assertNoRendererLoss(log);
+  // A sample that lost a renderer is never a measurement, even when the
+  // reloaded document completed its markers (#942).
+  const terminations = findRendererTerminations(log);
+  if (terminations.length > 0) {
+    throw new MacRendererLossError(terminations, log, "a sample with a renderer loss is not a measurement");
+  }
   for (const marker of ["webview", "native-ready"]) {
-    // Each is logged once per main-window document. Two mean two documents,
-    // and taking the first match would silently mix their clocks.
+    // Logged once per main-window document; taking the first of two would mix clocks.
     if ((log.match(new RegExp(`Startup\\(${marker}\\):\\s*window=main\\s`, "g")) ?? []).length > 1) {
       throw new Error(`Startup(${marker}) is recorded by more than one main-window document`);
     }
@@ -267,8 +268,10 @@ export function waitForMacStartupProcess(
   return new Promise((resolve, reject) => {
     let completed = false;
     let survivalTimer: ReturnType<typeof setTimeout> | undefined;
+    let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
     const cleanup = (): void => {
       clearTimeout(timeoutTimer);
+      clearTimeout(recoveryTimer);
       clearInterval(pollTimer);
       if (survivalTimer) clearTimeout(survivalTimer);
       child.removeListener("exit", onExit);
@@ -293,13 +296,24 @@ export function waitForMacStartupProcess(
     const onError = (error: Error): void => {
       fail(new Error(`application process error: ${error.message}`));
     };
-    // Renderer loss fails at once, including during the survival interval of
-    // a sample whose markers are complete: the app reloads the page, so
-    // waiting would only measure the replacement document (#942).
-    const failOnRendererLoss = (log: string): boolean => {
-      const terminations = findRendererTerminations(log);
-      if (terminations.length === 0) return false;
-      fail(new MacRendererLossError(terminations, log));
+    // A renderer loss (seen at any point, including the survival interval)
+    // ends the measurement. The sample then settles as a recovered or failed
+    // loss once the app's recovery is visible, within the sample bound (#942).
+    const settleRendererLoss = (log: string, expired = false): boolean => {
+      const outcome = assessRendererLoss(log);
+      if (outcome.status === "none") return false;
+      if (outcome.status === "pending" && !expired) {
+        if (!recoveryTimer) {
+          clearTimeout(timeoutTimer);
+          clearTimeout(survivalTimer);
+          recoveryTimer = setTimeout(() => settleRendererLoss(readLog(), true), options.timeoutMs);
+        }
+        return true;
+      }
+      const failure = outcome.status === "recovered" ? null
+        : outcome.status === "failed" ? outcome.reason
+        : `no recovery within ${options.timeoutMs}ms`;
+      fail(new MacRendererLossError(outcome.terminations, log, failure));
       return true;
     };
     const succeedAfterSurvival = (
@@ -307,7 +321,7 @@ export function waitForMacStartupProcess(
     ): void => {
       clearTimeout(timeoutTimer);
       survivalTimer = setTimeout(() => {
-        if (completed || failOnRendererLoss(readLog())) return;
+        if (completed || settleRendererLoss(readLog())) return;
         if (child.exitCode !== null || child.signalCode !== null) {
           onExit(child.exitCode, child.signalCode);
           return;
@@ -321,7 +335,7 @@ export function waitForMacStartupProcess(
     const inspectLog = (): void => {
       if (completed) return;
       const log = readLog();
-      if (failOnRendererLoss(log) || survivalTimer) return;
+      if (settleRendererLoss(log) || survivalTimer) return;
       try {
         succeedAfterSurvival(parseDirectProcessStartupLog(log, options));
       } catch (error) {
@@ -332,7 +346,7 @@ export function waitForMacStartupProcess(
     };
 
     const timeoutTimer = setTimeout(() => {
-      if (failOnRendererLoss(readLog())) return;
+      if (settleRendererLoss(readLog())) return;
       fail(
         new MacStartupTimeoutError(
           options.timeoutMs,

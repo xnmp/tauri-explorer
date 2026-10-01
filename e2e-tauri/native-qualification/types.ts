@@ -249,6 +249,18 @@ export interface MacStartupQualificationReportInput {
   artifacts: readonly string[];
   errors: readonly string[];
   halfBounceDeadlineMs: number | null;
+  /** Samples that lost a renderer; never measurements (#942). */
+  rendererLosses?: readonly RendererLossRecord[];
+}
+
+export interface RendererLossRecord {
+  /** 1-based launch attempt; a recovered loss is replaced by a later attempt. */
+  sample: number;
+  recovered: boolean;
+  description: string;
+  log: string;
+  /** Evidence directory, when one was captured. */
+  evidence: string | null;
 }
 
 export interface NativeStartupChild {

@@ -72,12 +72,17 @@ captures bounded stall evidence (process table, profiles, unified log, new
 crash reports) into the sample's artifact directory; cleanup then proceeds as
 usual. The timeout, with the parser's last rejection, always leads the failure,
 and a capture that fails or overruns its deadline only adds to it (#936).
-Renderer loss is its own failure class: any `Renderer(web-content-terminated)`
-line fails the sample as soon as it is seen, including during the survival
-interval of a sample whose markers are complete, and a reloaded document's
-markers never qualify it. The still-owned process is kept alive while the
-runner captures renderer-loss evidence (process table, unified log, the dead
-page's crash report and pid); the renderer-loss message leads (#942).
+A `Renderer(web-content-terminated)` line ends a sample's measurement whenever
+it appears, survival interval included; the sample is never a timing sample.
+It is a recovered loss when every recovery decision is a reload or
+parked-window retirement and the main window reaches `native-ready` exactly
+once after its last loss, within the sample timeout: the runner records it in
+`rendererLosses`, warns, and launches a replacement. An exhausted or failed
+reload, no recovery within the bound, unattributable second-boot markers, or
+more than 3 recovered losses fail the run. Either way the still-owned process
+stays alive while the runner captures renderer-loss evidence (process table,
+unified log, the WebContent crash report's pid and build), and the loss
+message leads (#942).
 
 ## Consequences
 

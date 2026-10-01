@@ -1,193 +1,122 @@
 /**
  * Renderer loss in a macOS startup sample (#942).
  *
- * The app logs `Renderer(web-content-terminated)` whenever a WKWebView's
- * WebContent process dies, then logs its `Renderer(recovery)` decision and
- * usually reloads the page. A reload hides the loss from the user, so it must
- * not hide it from qualification: any termination line fails the sample, even
- * one whose startup markers had already completed (#936 found 2 of 3 crashes
- * in "passing" samples). The reloaded document boots a second time, so marks
- * logged after the first loss belong to a different document; failure
- * summaries describe only the document that was lost.
- *
- * This module also reads the evidence that identifies the dead page: the
- * crash report (`.ips`) WebKit's process writes, and unified-log lines that
- * pair a WebContent `PID=` with its `webPageID=`.
+ * The app logs `Renderer(web-content-terminated)` when a WebContent process
+ * dies, then `Renderer(recovery): … decision=…`, and reloads the main window
+ * (parked warm windows are retired). A sample with a loss is never a timing
+ * measurement. It is a recovered loss when every decision is a recovery and
+ * the main window reaches `native-ready` exactly once after its last loss;
+ * otherwise (exhausted or failed reload, no decision, no recovery within the
+ * bound, unattributable second boot) the sample fails.
  */
-import { describeStartupProgress, summarizeStartupProgress, type StartupProgressSummary } from "./startup-progress";
+import { describeStartupProgress, summarizeStartupProgress } from "./startup-progress";
 
-export const RENDERER_TERMINATED_MARKER = "Renderer(web-content-terminated)";
-const RECOVERY_MARKER = "Renderer(recovery)";
+/**
+ * Recovered losses a run may replace before it fails. CI measured 6 losses in
+ * 409 launches (~1.5%), so a 30-sample run expects ~0.5: P(more than 3) is
+ * ~0.2%, while a 10% loss rate exceeds it ~40% of the time.
+ */
+export const MAX_RECOVERED_RENDERER_LOSSES = 3;
+
+const TERMINATED = "Renderer(web-content-terminated)";
+const RECOVERY = "Renderer(recovery)";
+const FAILED_DECISION = /decision=(exhausted|reload-failed)\b/;
 
 export interface RendererTermination {
   window: string | null;
-  webview: string | null;
-  epochMs: number | null;
-  /** Time since app run on the `native-ready` clock. */
   appRunMs: number | null;
-  /** WebKitGTK's termination reason (`crashed`, …); macOS reports none. */
+  /** WebKitGTK's reason (`crashed`, …); macOS reports none. */
   reason: string | null;
-  /** The app's `Renderer(recovery)` decision for this window, if logged after it. */
-  recovery: string | null;
-  /** The line as logged, so format drift can never hide a loss. */
-  line: string;
+  /** The app's first recovery decision for this window after the loss. */
+  decision: string | null;
 }
 
-function field(line: string, name: string): string | null {
-  return new RegExp(`(?:^|\\s)${name}=(\\S+)`).exec(line)?.[1] ?? null;
-}
+export type RendererLossOutcome =
+  | { status: "none" }
+  | { status: "pending" | "recovered"; terminations: RendererTermination[] }
+  | { status: "failed"; terminations: RendererTermination[]; reason: string };
 
-function finiteField(line: string, name: string): number | null {
-  const raw = field(line, name);
-  const value = Number(raw);
-  return raw !== null && Number.isFinite(value) ? value : null;
-}
+const field = (line: string, name: string): string | null =>
+  new RegExp(`\\s${name}=(\\S+)`).exec(line)?.[1] ?? null;
 
-/** Every renderer termination in log order. Any line naming the marker counts. */
+/** Every loss in log order. Any line naming the marker counts, whatever its fields. */
 export function findRendererTerminations(log: string): RendererTermination[] {
   const lines = log.split("\n");
-  const terminations: RendererTermination[] = [];
-  lines.forEach((line, index) => {
-    const at = line.indexOf(RENDERER_TERMINATED_MARKER);
-    if (at < 0) return;
-    const body = line.slice(at + RENDERER_TERMINATED_MARKER.length).replace(/^:\s*/, " ");
-    const window = field(body, "window");
-    const recoveryLine = lines.slice(index + 1).find((candidate) =>
-      candidate.includes(RECOVERY_MARKER) && field(candidate, "window") === window);
-    terminations.push({
+  return lines.flatMap((line, index) => {
+    if (!line.includes(TERMINATED)) return [];
+    const window = field(line, "window");
+    const appRun = Number(field(line, "app-run-ms"));
+    const recovery = lines.slice(index + 1)
+      .find((later) => later.includes(RECOVERY) && field(later, "window") === window);
+    return [{
       window,
-      webview: field(body, "webview"),
-      epochMs: finiteField(body, "epoch-ms"),
-      appRunMs: finiteField(body, "app-run-ms"),
-      reason: field(body, "reason"),
-      recovery: recoveryLine ? (/decision=.*$/.exec(recoveryLine.trim())?.[0] ?? null) : null,
-      line: line.trim(),
-    });
+      appRunMs: Number.isFinite(appRun) && field(line, "app-run-ms") !== null ? appRun : null,
+      reason: field(line, "reason"),
+      decision: recovery ? field(recovery, "decision") : null,
+    }];
   });
-  return terminations;
 }
 
-/** The log up to (not including) the first renderer termination. */
+const count = (lines: readonly string[], marker: string): number =>
+  lines.filter((line) => new RegExp(`${marker}:\\s*window=main\\s`).test(line)).length;
+
+/** Pure: where a sample's renderer losses stand. */
+export function assessRendererLoss(log: string): RendererLossOutcome {
+  const terminations = findRendererTerminations(log);
+  if (terminations.length === 0) return { status: "none" };
+  const lines = log.split("\n");
+  const failed = lines.find((line) => line.includes(RECOVERY) && FAILED_DECISION.test(line));
+  if (failed) {
+    return { status: "failed", terminations, reason: `recovery ${FAILED_DECISION.exec(failed)![0]}` };
+  }
+  if (terminations.some(({ decision }) => decision === null)) return { status: "pending", terminations };
+  const lastMainLoss = lines.reduce(
+    (last, line, index) => (line.includes(TERMINATED) && field(line, "window") === "main" ? index : last), -1);
+  const after = lines.slice(lastMainLoss + 1);
+  const ready = count(after, "Startup\\(native-ready\\)");
+  if (ready === 0) return { status: "pending", terminations };
+  if (ready > 1 || count(after, "Startup\\(webview\\)") !== 1) {
+    return { status: "failed", terminations, reason: "the recovered main document's markers cannot be attributed" };
+  }
+  return { status: "recovered", terminations };
+}
+
+/** The log up to the first loss: what the lost document reported. */
 export function logBeforeRendererLoss(log: string): string {
-  const at = log.indexOf(RENDERER_TERMINATED_MARKER);
-  if (at < 0) return log;
-  const lineStart = log.lastIndexOf("\n", at) + 1;
-  return log.slice(0, lineStart);
+  const at = log.indexOf(TERMINATED);
+  return at < 0 ? log : log.slice(0, log.lastIndexOf("\n", at) + 1);
 }
 
-function describeTermination(termination: RendererTermination): string {
-  const when = termination.appRunMs === null
-    ? "at an unrecorded time"
-    : `at app-run ${termination.appRunMs.toFixed(1)}ms`;
-  return (
-    `window=${termination.window ?? "unknown"} WebContent terminated` +
-    `${termination.reason ? ` (${termination.reason})` : ""} ${when}` +
-    `${termination.recovery ? ` (${termination.recovery})` : " (no recovery decision logged)"}`
-  );
+export function describeRendererLoss(terminations: readonly RendererTermination[]): string {
+  return terminations.map(({ window, appRunMs, reason, decision }) =>
+    `window=${window ?? "unknown"} WebContent terminated${reason ? ` (${reason})` : ""} ` +
+      `${appRunMs === null ? "at an unrecorded time" : `at app-run ${appRunMs.toFixed(1)}ms`}` +
+      ` (${decision ? `decision=${decision}` : "no recovery decision"})`).join("; ");
 }
 
 /**
- * A sample whose log records renderer loss. Fatal on sight: the qualifier
- * neither waits for the timeout nor lets a completed marker set or a
- * successful reload turn it into a pass.
+ * A sample that lost a renderer. `recovered` samples are recorded and replaced
+ * rather than measured; the others fail the run.
  */
 export class MacRendererLossError extends Error {
-  readonly progress: StartupProgressSummary;
+  readonly recovered: boolean;
 
-  constructor(readonly terminations: readonly RendererTermination[], log: string) {
-    const progress = summarizeStartupProgress(logBeforeRendererLoss(log));
+  constructor(readonly terminations: readonly RendererTermination[], log: string, failure: string | null) {
     super(
-      `renderer lost: ${terminations.map(describeTermination).join("; ")}` +
-        `; before the loss, ${describeStartupProgress(progress)}`,
+      `renderer lost${failure === null ? " and recovered" : ""}: ${describeRendererLoss(terminations)}` +
+        `${failure === null ? "" : `; ${failure}`}` +
+        `; before the loss, ${describeStartupProgress(summarizeStartupProgress(logBeforeRendererLoss(log)))}`,
     );
     this.name = "MacRendererLossError";
-    this.progress = progress;
+    this.recovered = failure === null;
   }
 }
 
-/** Throw if the log records renderer loss. */
-export function assertNoRendererLoss(log: string): void {
-  const terminations = findRendererTerminations(log);
-  if (terminations.length > 0) throw new MacRendererLossError(terminations, log);
-}
-
-export interface CrashReportIdentity {
-  pid: number | null;
-  procName: string | null;
-  bundleId: string | null;
-  /** WebKit's bundle build, e.g. 21624.5.1.11.3. */
-  buildVersion: string | null;
-  osVersion: string | null;
-  captureTime: string | null;
-  bugType: string | null;
-}
-
-/**
- * Identify the process a `.ips` crash report describes. The first line is a
- * JSON header; the body is JSON too but may have been truncated by the copy
- * bound, so its fields are read by pattern rather than parsed.
- */
-export function parseCrashReportIdentity(text: string): CrashReportIdentity | null {
-  const newline = text.indexOf("\n");
-  const headerText = newline < 0 ? text : text.slice(0, newline);
-  let header: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = JSON.parse(headerText);
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      header = parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Not an .ips header; the body patterns below may still identify it.
-  }
-  const body = newline < 0 ? "" : text.slice(newline + 1);
-  const bodyString = (name: string): string | null =>
-    new RegExp(`"${name}"\\s*:\\s*"([^"]*)"`).exec(body)?.[1] ?? null;
-  const pidMatch = /"pid"\s*:\s*(\d+)/.exec(body);
-  const headerString = (name: string): string | null =>
-    typeof header[name] === "string" ? (header[name] as string) : null;
-  const identity: CrashReportIdentity = {
-    pid: pidMatch ? Number(pidMatch[1]) : null,
-    procName: bodyString("procName") ?? headerString("name"),
-    bundleId: headerString("bundleID"),
-    buildVersion: headerString("build_version"),
-    osVersion: headerString("os_version"),
-    captureTime: bodyString("captureTime") ?? headerString("timestamp"),
-    bugType: headerString("bug_type"),
-  };
-  return Object.values(identity).every((value) => value === null) ? null : identity;
-}
-
-export interface WebPageProcess {
-  pid: number;
-  webPageIds: number[];
-  /** A line pairing this pid with a page also reported its termination. */
-  terminated: boolean;
-}
-
-/**
- * WebKit's UI-process log prefixes page activity with
- * `[pageProxyID=…, webPageID=…, PID=…]`, which ties a WebContent pid to a
- * page even after the process is gone. Termination wording varies between
- * WebKit releases, so any paired line that mentions termination or a crash
- * marks the pid; this is evidence for a reader, never a qualification gate.
- */
-export function parseWebPageProcesses(unifiedLog: string): WebPageProcess[] {
-  const pages = new Map<number, { webPageIds: Set<number>; terminated: boolean }>();
-  for (const line of unifiedLog.split("\n")) {
-    const pid = /\bPID=(\d+)/.exec(line);
-    const page = /\bwebPageID=(\d+)/.exec(line);
-    // PID=0 tags a page whose process has not launched yet.
-    if (!pid || !page || Number(pid[1]) === 0) continue;
-    const entry = pages.get(Number(pid[1])) ?? { webPageIds: new Set<number>(), terminated: false };
-    entry.webPageIds.add(Number(page[1]));
-    if (/terminat|crash/i.test(line)) entry.terminated = true;
-    pages.set(Number(pid[1]), entry);
-  }
-  return [...pages.entries()]
-    .map(([pid, { webPageIds, terminated }]) => ({
-      pid,
-      webPageIds: [...webPageIds].sort((a, b) => a - b),
-      terminated,
-    }))
-    .sort((a, b) => a.pid - b.pid);
+/** Identify a WebContent crash report (`.ips`): its pid and WebKit build. */
+export function webContentCrashReport(text: string): { pid: number; buildVersion: string | null } | null {
+  if (!text.includes("com.apple.WebKit.WebContent")) return null;
+  const pid = /"pid"\s*:\s*(\d+)/.exec(text);
+  return pid
+    ? { pid: Number(pid[1]), buildVersion: /"build_version"\s*:\s*"([^"]*)"/.exec(text)?.[1] ?? null }
+    : null;
 }

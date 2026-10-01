@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { resolveQualificationArtifactPath } from "./artifacts";
 import { parseAttributedMacStartupLog } from "./readiness";
+import { assessRendererLoss, MacRendererLossError, MAX_RECOVERED_RENDERER_LOSSES } from "./renderer-loss";
 import { compactSummary, summarizeDurations } from "./stats";
 import type { CompactDurationSummary } from "./stats";
 import type {
@@ -9,6 +10,7 @@ import type {
   InteractiveMacStartupEvidence,
   MacStartupPhases,
   MacStartupQualificationReportInput,
+  RendererLossRecord,
   VerifiedNativeBuild,
 } from "./types";
 
@@ -146,16 +148,32 @@ export function buildInteractiveMacStartupQualificationReport(input: {
     input.platform.hardwareModel,
     input.requestedSamples,
   );
-  const samples = evidence.samples.map((sample) => ({
-    ...parseAttributedMacStartupLog(fs.readFileSync(sample.log, "utf8"), {
-      firstFunctionalFrame: "observed",
-      firstFunctionalFrameMs: sample.firstFunctionalFrameMs,
-      inputOutcome: "verified",
-      inputReadyMs: sample.inputReadyMs,
-      measureWarm: false,
-    }),
-    log: sample.log,
-  }));
+  // A recorded launch cannot be replaced, so a renderer loss in one fails the
+  // report (with the loss recorded) instead of aborting it (#942).
+  const errors: string[] = [];
+  const rendererLosses: RendererLossRecord[] = [];
+  const samples = evidence.samples.flatMap((sample, index) => {
+    const log = fs.readFileSync(sample.log, "utf8");
+    const loss = assessRendererLoss(log);
+    if (loss.status !== "none") {
+      const failure = loss.status === "failed" ? loss.reason : loss.status === "pending" ? "no recovery recorded" : null;
+      const description = new MacRendererLossError(loss.terminations, log, failure).message;
+      rendererLosses.push({ sample: index + 1, recovered: failure === null, description, log: sample.log, evidence: null });
+      // The report fails an unrecovered loss itself; a recovered one is still not a measurement.
+      if (failure === null) errors.push(`sample ${index + 1}: a recorded launch lost its renderer and cannot be replaced`);
+      return [];
+    }
+    return [{
+      ...parseAttributedMacStartupLog(log, {
+        firstFunctionalFrame: "observed",
+        firstFunctionalFrameMs: sample.firstFunctionalFrameMs,
+        inputOutcome: "verified",
+        inputReadyMs: sample.inputReadyMs,
+        measureWarm: false,
+      }),
+      log: sample.log,
+    }];
+  });
   const artifacts = evidence.samples.flatMap((sample) => [
     sample.log,
     sample.launchRecording,
@@ -182,7 +200,8 @@ export function buildInteractiveMacStartupQualificationReport(input: {
     finishedAt: input.finishedAt,
     samples,
     artifacts,
-    errors: [],
+    errors,
+    rendererLosses,
     halfBounceDeadlineMs: evidence.halfBounceDeadlineMs,
   });
 }
@@ -191,7 +210,16 @@ export function buildMacStartupQualificationReport(
   input: MacStartupQualificationReportInput,
 ) {
   const samples = [...input.samples];
-  const errors = [...input.errors];
+  const rendererLosses = [...(input.rendererLosses ?? [])];
+  const errors = [
+    ...input.errors,
+    ...rendererLosses.filter(({ recovered }) => !recovered)
+      .map(({ sample, description }) => `sample ${sample}: ${description}`),
+  ];
+  const recovered = rendererLosses.filter(({ recovered }) => recovered).length;
+  if (recovered > MAX_RECOVERED_RENDERER_LOSSES) {
+    errors.push(`renderer lost in ${recovered} recovered samples (limit ${MAX_RECOVERED_RENDERER_LOSSES})`);
+  }
   const halfBounce = qualifyHalfBounce(samples, input.halfBounceDeadlineMs);
   // An explicitly measured deadline that the evidence misses is a failed run,
   // not a green one with a footnote. `unqualified` (no deadline, or incomplete
@@ -213,6 +241,7 @@ export function buildMacStartupQualificationReport(
     phaseAttribution: summarizeMacStartupPhases(samples),
     halfBounce,
     samples,
+    rendererLosses,
     artifacts: [...input.artifacts],
     failureArtifacts: errors.length > 0 ? [...input.artifacts] : [],
     errors,

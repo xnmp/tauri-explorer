@@ -11,13 +11,20 @@
     isChordShortcut,
     parseChord,
     parseShortcut,
+    formatShortcut,
   } from "$lib/domain/keybinding-parser";
+  import { chordPrefixFallbackLabel } from "$lib/domain/window-keys";
+  import { planShortcutImport } from "$lib/domain/shortcut-import";
+  import { createShortcutRecorder } from "$lib/state/shortcut-recorder";
+  import type { RecordingMode, ShortcutRecording } from "$lib/domain/shortcut-recording";
 
   /** Currently recording shortcut for this command ID */
-  let recordingCommandId = $state<string | null>(null);
+  let recording = $state<ShortcutRecording | null>(null);
+  let recordingStatus = $state<string | null>(null);
+  const recorder = createShortcutRecorder((value) => { recording = value; }, () => { recordingStatus = "Chord recording timed out. Try again."; });
 
   /** Conflict info when recording */
-  let conflictInfo = $state<{ commandId: string; label: string; shortcut: string } | null>(null);
+  let conflictInfo = $state<{ targetId: string; commandIds: string[]; labels: string[]; shortcut: string; mode: RecordingMode } | null>(null);
 
   /** Search filter */
   let searchQuery = $state("");
@@ -50,14 +57,15 @@
   const filteredCount = $derived([...groupedCommands.values()].reduce((sum, cmds) => sum + cmds.length, 0));
 
   /** Start recording a new shortcut */
-  function startRecording(commandId: string): void {
-    recordingCommandId = commandId;
+  function startRecording(commandId: string, mode: RecordingMode = "single"): void {
+    recorder.start(commandId, mode);
     conflictInfo = null;
+    recordingStatus = null;
   }
 
   /** Cancel recording */
   function cancelRecording(): void {
-    recordingCommandId = null;
+    recorder.cancel();
     conflictInfo = null;
   }
 
@@ -66,8 +74,10 @@
    * Uses capture phase to intercept events before they reach other handlers.
    */
   function handleRecordKeydown(event: KeyboardEvent): void {
-    if (!recordingCommandId) return;
+    if (!recording && !conflictInfo) return;
 
+    // Capture stops the page handler: update its shared Super overlay here.
+    keybindingsStore.trackModifierKey(event, true);
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
@@ -77,64 +87,80 @@
       cancelRecording();
       return;
     }
+    if (event.repeat) return;
 
     // Convert event to shortcut string
-    const shortcutString = eventToShortcutString(event);
+    const shortcutString = eventToShortcutString(event, { metaHeld: keybindingsStore.trackedMetaHeld });
     if (!shortcutString) return; // Modifier-only press
 
+    if (!recording && conflictInfo) startRecording(conflictInfo.targetId, conflictInfo.mode);
+    const mode = recording!.mode;
+    const completed = recorder.capture(shortcutString);
+    if (!completed) return;
+
     // Check for conflicts
-    const conflicts = keybindingsStore.findConflicts(shortcutString, recordingCommandId);
-    if (conflicts.length > 0) {
-      const conflictCmd = getAllCommands().find(c => c.id === conflicts[0]);
-      conflictInfo = conflictCmd
-        ? { commandId: conflicts[0], label: conflictCmd.label, shortcut: shortcutString }
-        : null;
+    const conflicts = keybindingsStore.findConflicts(completed.shortcut, completed.commandId);
+    const fallbackLabel = chordPrefixFallbackLabel(completed.shortcut);
+    const labels = [...new Set([
+      ...conflicts.map((id) => getAllCommands().find((command) => command.id === id)?.label ?? id),
+      ...(fallbackLabel ? [fallbackLabel] : []),
+    ])];
+    if (labels.length > 0) {
+      conflictInfo = { targetId: completed.commandId, commandIds: conflicts,
+        labels, shortcut: completed.shortcut, mode };
       return;
     }
 
     // Apply the new shortcut
-    applyShortcut(recordingCommandId, shortcutString);
+    applyShortcut(completed.commandId, completed.shortcut);
   }
 
   /** Apply a shortcut and end recording */
   function applyShortcut(commandId: string, shortcut: string): void {
     keybindingsStore.setShortcut(commandId, shortcut);
-    recordingCommandId = null;
+    recorder.cancel();
     conflictInfo = null;
   }
 
-  /** Override a conflicting shortcut: unbind the conflict, then assign to current command */
+  /** Explicit override displaces every overlapping binding, including all prefixes. */
   function overrideConflict(): void {
-    if (!conflictInfo || !recordingCommandId) return;
-    keybindingsStore.setShortcut(conflictInfo.commandId, null); // Unbind conflicting command
-    applyShortcut(recordingCommandId, conflictInfo.shortcut);
+    if (!conflictInfo) return;
+    const { commandIds, targetId, shortcut } = conflictInfo;
+    keybindingsStore.setShortcuts({ ...Object.fromEntries(commandIds.map((id) => [id, null])), [targetId]: shortcut });
+    cancelRecording();
   }
 
   /** Get shortcut display parts (e.g., ["Ctrl", "P"]) */
-  function getShortcutParts(commandId: string): string[] {
+  function getShortcutSteps(commandId: string): string[][] {
     const shortcut = keybindingsStore.getDisplayShortcut(commandId);
-    return shortcut ? shortcut.split("+") : [];
+    return shortcut ? shortcut.split(" ").map((step) => step.split("+")) : [];
   }
 
   /** Cancel recording when the window loses focus (keys would otherwise stay swallowed app-wide). */
   function handleWindowBlur(): void {
-    if (recordingCommandId) cancelRecording();
+    if (recording || conflictInfo) cancelRecording();
   }
 
   /** Cancel recording on pointer-down outside the recording row. */
-  function handleWindowPointerDown(event: PointerEvent): void {
-    if (!recordingCommandId) return;
+  function handleOutsideRecordingRow(event: Event): void {
+    if (!recording && !conflictInfo) return;
     const target = event.target as Element | null;
     if (target?.closest(".shortcut-row.recording")) return;
     cancelRecording();
+  }
+
+  function handleRecordKeyup(event: KeyboardEvent): void {
+    keybindingsStore.trackModifierKey(event, false);
   }
 
   // Use window-level event listeners in capture phase when recording
   // This ensures we intercept events before any other handler
   onMount(() => {
     window.addEventListener("keydown", handleRecordKeydown, true);
+    window.addEventListener("keyup", handleRecordKeyup, true);
     window.addEventListener("blur", handleWindowBlur);
-    window.addEventListener("pointerdown", handleWindowPointerDown, true);
+    window.addEventListener("pointerdown", handleOutsideRecordingRow, true);
+    window.addEventListener("focusin", handleOutsideRecordingRow);
   });
 
   let importInput: HTMLInputElement;
@@ -172,7 +198,7 @@
 
     const knownIds = new Set(getAllCommands().map((c) => c.id));
     const invalid: string[] = [];
-    let applied = 0;
+    const entries: Array<[string, string | null]> = [];
     for (const [commandId, shortcut] of Object.entries(parsed as Record<string, unknown>)) {
       const valid =
         knownIds.has(commandId) &&
@@ -181,12 +207,21 @@
         invalid.push(commandId);
         continue;
       }
-      keybindingsStore.setShortcut(commandId, shortcut as string | null);
-      applied++;
+      entries.push([commandId, shortcut as string | null]);
     }
-    importStatus = invalid.length > 0
-      ? `Imported ${applied} shortcuts, skipped invalid entries: ${invalid.join(", ")}`
-      : `Imported ${applied} shortcuts`;
+    const current = Object.fromEntries(keybindingsStore.getAllBindings().map(({ commandId }) => [commandId, keybindingsStore.getShortcut(commandId)]));
+    const { accepted, conflicts } = planShortcutImport(current, Object.fromEntries(entries));
+    keybindingsStore.setShortcuts(accepted);
+    const applied = Object.keys(accepted).length;
+    const fallbackOverrides = [...new Set(Object.values(accepted).flatMap((shortcut) => {
+      const label = shortcut ? chordPrefixFallbackLabel(shortcut) : undefined;
+      return label ? [label] : [];
+    }))];
+    importStatus = [`Imported ${applied} shortcuts`,
+      ...(invalid.length ? [`skipped invalid entries: ${invalid.join(", ")}`] : []),
+      ...(conflicts.length ? [`skipped conflicting entries: ${conflicts.join(", ")}`] : []),
+      ...(fallbackOverrides.length ? [`overrides window shortcuts: ${fallbackOverrides.join(", ")}`] : []),
+    ].join("; ");
   }
 
   function handleImport(event: Event): void {
@@ -201,9 +236,12 @@
   }
 
   onDestroy(() => {
+    recorder.cancel();
     window.removeEventListener("keydown", handleRecordKeydown, true);
+    window.removeEventListener("keyup", handleRecordKeyup, true);
     window.removeEventListener("blur", handleWindowBlur);
-    window.removeEventListener("pointerdown", handleWindowPointerDown, true);
+    window.removeEventListener("pointerdown", handleOutsideRecordingRow, true);
+    window.removeEventListener("focusin", handleOutsideRecordingRow);
   });
 </script>
 
@@ -232,6 +270,7 @@
   {#if importStatus}
     <div class="import-status">{importStatus}</div>
   {/if}
+  {#if recordingStatus}<div class="import-status" role="status">{recordingStatus}</div>{/if}
 
   <div class="keybindings-list">
     {#each [...groupedCommands] as [category, commands] (category)}
@@ -239,8 +278,8 @@
         <h4 class="category-title">{getCategoryLabel(category)}</h4>
 
         {#each commands as cmd (cmd.id)}
-          {@const parts = getShortcutParts(cmd.id)}
-          {@const isRecording = recordingCommandId === cmd.id}
+          {@const steps = getShortcutSteps(cmd.id)}
+          {@const isRecording = recording?.commandId === cmd.id || conflictInfo?.targetId === cmd.id}
           {@const hasCustom = keybindingsStore.hasCustomShortcut(cmd.id)}
 
           <div class="shortcut-row" class:recording={isRecording} class:customized={hasCustom}>
@@ -249,28 +288,32 @@
             <div class="shortcut-controls">
               {#if isRecording}
                 <div class="recording-indicator">
-                  <span class="recording-text">Press keys...</span>
+                  <span class="recording-text" role="status">{recording?.mode === "chord" ? recording.prefix ? `${formatShortcut(recording.prefix)} — Press second key…` : "Press first key…" : "Press keys..."}</span>
                   <button class="cancel-btn" onclick={cancelRecording}>Cancel</button>
                 </div>
                 {#if conflictInfo}
                   <div class="conflict-warning">
-                    <span>Conflicts with "{conflictInfo.label}"</span>
+                    <span>Conflicts with {conflictInfo.labels.join(", ")}</span>
                     <button class="override-btn" onclick={overrideConflict}>
-                      Override
+                      Override{conflictInfo.labels.length > 1 ? ` ${conflictInfo.labels.length} bindings` : ""}
                     </button>
                   </div>
                 {/if}
               {:else}
                 <button class="shortcut-btn" onclick={() => startRecording(cmd.id)}>
-                  {#if parts.length > 0}
-                    {#each parts as part, i}
-                      {#if i > 0}<span class="plus">+</span>{/if}
-                      <kbd>{part}</kbd>
+                  {#if steps.length > 0}
+                    {#each steps as parts, step}
+                      {#if step > 0}<span class="plus">then</span>{/if}
+                      {#each parts as part, i}
+                        {#if i > 0}<span class="plus">+</span>{/if}
+                        <kbd>{part}</kbd>
+                      {/each}
                     {/each}
                   {:else}
                     <span class="unbound">Not set</span>
                   {/if}
                 </button>
+                <button class="header-btn chord-btn" onclick={() => startRecording(cmd.id, "chord")} aria-label="Record chord">Chord</button>
 
                 {#if hasCustom}
                   <button
@@ -412,6 +455,16 @@
 
   .shortcut-row.recording {
     background: var(--subtle-fill-tertiary);
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .shortcut-row.recording .shortcut-action { flex-basis: 100%; }
+  .shortcut-row.recording .shortcut-controls {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    min-width: 0;
+    width: 100%;
   }
 
   .shortcut-row.customized .shortcut-action {
@@ -436,6 +489,7 @@
   }
 
   .shortcut-btn {
+    flex-wrap: wrap;
     display: flex;
     align-items: center;
     gap: 2px;
@@ -530,6 +584,9 @@
   }
 
   .conflict-warning {
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 8px;

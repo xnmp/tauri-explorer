@@ -82,3 +82,8 @@ export const SPECIAL_KEYS = {
   ARROW_LEFT: "ArrowLeft",
   ARROW_RIGHT: "ArrowRight",
 } as const;
+
+/** Modifier keydowns are not chord steps; the next non-modifier key completes a step. */
+export function isModifierKey(key: string): boolean {
+  return ["Control", "Shift", "Alt", "Meta", "Super", "OS"].includes(key);
+}

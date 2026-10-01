@@ -105,6 +105,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-coverage.ts` — repository observation leases shared by pending graph reads and retained snapshots; listener/watch acknowledgement precedes reads, final release drains acquisition, and UNC polling roots stay uncached.
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
+- `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
@@ -174,6 +175,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
 - `commands/system-actions.ts` — system actions not touching pane state (open terminal, reveal).
 - `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
+- `shortcut-recorder.ts` — owned shortcut recording timer, cancellation and completion callbacks.
 - `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
 - `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
 - `tab-transfer.ts` — window-local pointer marker identity and acknowledged native tab transfer.
@@ -314,7 +316,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `breadcrumb-truncation.ts` — breadcrumb width/truncation math.
 - `content-search-flatten.ts` — flatten/paginate grep results.
 - `keyboard.ts` — keyboard shortcut normalization utils.
-- `keybinding-parser.ts` — parse/format keybinding chords.
+- `keybinding-parser.ts` — parse/format/capture keybinding chords with shared key identity.
+- `shortcut-conflicts.ts` — overlapping complete bindings and single-prefix ambiguity.
+- `shortcut-import.ts` — validate the prospective imported map, permitting swaps and rejecting final-state ambiguity.
+- `shortcut-recording.ts` — pure two-step recording transitions and shared chord deadline.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
 - `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).

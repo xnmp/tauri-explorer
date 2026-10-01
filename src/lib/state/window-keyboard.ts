@@ -1,9 +1,10 @@
+import { isModifierKey } from "$lib/domain/keyboard";
 import { getTerminalCommand } from "$lib/domain/terminal-keys";
 import { resolveWindowKey } from "$lib/domain/window-keys";
 import type { keybindingsStore as bindingsType } from "./keybindings.svelte";
 
 export interface WindowKeyboardDependencies {
-  bindings: Pick<typeof bindingsType, "trackModifierKey" | "trackedMetaHeld" | "resetTrackedModifiers" | "matchesAnyBinding" | "matchesChordPrefixForCommand" | "isChordActiveForCommand" | "isChordActive" | "cancelChord" | "findMatchingCommand">;
+  bindings: Pick<typeof bindingsType, "trackModifierKey" | "trackedMetaHeld" | "resetTrackedModifiers" | "matchesAnyBinding" | "matchesAnyChordPrefix" | "matchesChordPrefixForCommand" | "isChordActiveForCommand" | "isChordActive" | "cancelChord" | "findMatchingCommand">;
   getCommand(id: string): { when?: () => boolean } | undefined;
   executeCommand(id: string): Promise<unknown>;
   dialogs: { readonly hasModalOpen: boolean; closeAll(): void; openJobsPanel(): void; openSettings(): void };
@@ -44,9 +45,12 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     if ((separator || customButton || fileEntry) && event.defaultPrevented) { bindings.cancelChord(); return; }
     const terminalCommand = terminalFocus ? getTerminalCommand(event, bindings, isAvailable) : undefined;
     const explorer = dependencies.getActiveExplorer();
+    const chord = terminalFocus
+      ? terminalCommand !== undefined && (bindings.isChordActiveForCommand(event, terminalCommand) || bindings.matchesChordPrefixForCommand(event, terminalCommand))
+      : bindings.isChordActive || bindings.matchesAnyChordPrefix(event, isAvailable);
     const action = resolveWindowKey(event, {
       input, nativeButton, fileEntry, trackedMetaHeld: bindings.trackedMetaHeld, terminal: terminalFocus, terminalCommand,
-      modal: dialogs.hasModalOpen, filterOpen: explorer?.showFilter ?? false,
+      chord, modal: dialogs.hasModalOpen, filterOpen: explorer?.showFilter ?? false,
       terminalEnabled: terminal.enabled,
     });
     if (action === "native-activation") {
@@ -59,13 +63,17 @@ export function startWindowKeyboard(target: EventTarget, dependencies: WindowKey
     }
     if (action === "terminal") {
       // A mismatching terminal suffix must not leave an Explorer chord alive.
-      if (bindings.isChordActive) bindings.cancelChord();
+      if (bindings.isChordActive && !isModifierKey(event.key) && !event.repeat) bindings.cancelChord();
       return;
     }
     if (action === "command") {
+      const pending = bindings.isChordActive;
       const command = bindings.findMatchingCommand(event, (id) =>
         (!terminalFocus || id === terminalCommand) && isAvailable(id));
-      if (!command) return;
+      if (!command) {
+        if (pending && !isModifierKey(event.key)) event.preventDefault();
+        return;
+      }
       event.preventDefault();
       if (command !== "chord:waiting") {
         void dependencies.executeCommand(command).catch((error) => console.error("Keyboard command failed:", error));

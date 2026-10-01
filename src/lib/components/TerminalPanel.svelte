@@ -29,7 +29,8 @@
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { getTerminalCommand, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { createTerminalKeyHandler } from "$lib/state/terminal-key-handler";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -324,58 +325,24 @@
     // The focused terminal keeps every key except the explicit core-navigation
     // allowlist. Returning false makes xterm ignore one of those keys so the
     // window handler in +page.svelte can run its matching Explorer command.
-    term.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown") return true;
-      // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
-  // — Cmd+C/V while the terminal is focused must copy/paste terminal
-      // text, never fall through to the explorer's file clipboard.
-      const primaryOnly = isMac
-        ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-        : event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-      // Ctrl/Cmd+C with a selection copies it (VS Code parity, #374): the
-      // user is copying terminal text, not interrupting the shell — and
-      // definitely not copying files in the explorer.
-      if (primaryOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
-        const text = term.getSelection();
-        term.clearSelection();
-        void navigator.clipboard.writeText(text).catch(() => {
-          toastStore.error("Could not copy selection");
-        });
-        event.preventDefault();
-        return false;
-      }
-      // Ctrl/Cmd+V pastes explicitly through xterm (bracketed-paste aware):
-      // native paste into xterm's hidden textarea is unreliable in some
-      // WebViews (#374), and the explorer's file-paste must never fire here.
-      if (primaryOnly && event.key.toLowerCase() === "v") {
-        // Holds its place in the input queue while the clipboard is read.
-        terminalSession.write(pasteInput());
-        event.preventDefault();
-        return false;
-      }
-      // Line-editing shortcuts (#375, #404): inject the mapped readline
-      // control byte. Platform defaults (mac Home/End/word-nav) overlaid
-      // with the user's bindings from Settings → Terminal.
-      const sequence = resolveTerminalShortcut(
-        event,
-        effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac),
-      );
-      if (sequence !== null) {
-        terminalSession.write(sequence);
-        event.preventDefault();
-        return false;
-      }
-      // Availability-aware: an unavailable core command does not claim the
-      // key, so the terminal application still receives it.
-      const shellReserved = getTerminalCommand(event, keybindingsStore, (id) => {
+    term.attachCustomKeyEventHandler(createTerminalKeyHandler({
+      bindings: keybindingsStore,
+      isAvailable: (id) => {
         const command = getCommand(id);
         return command !== undefined && (!command.when || command.when());
-      }) === undefined;
-      // xterm keeps terminal-owned keys from reaching the page handler, so
-      // consume a pending Explorer chord here when its suffix did not match.
-      if (shellReserved && keybindingsStore.isChordActive) keybindingsStore.cancelChord();
-      return shellReserved;
-    });
+      },
+      isMac,
+      hasSelection: () => term?.hasSelection() ?? false,
+      getSelection: () => term?.getSelection() ?? "",
+      clearSelection: () => term?.clearSelection(),
+      copySelection: (text) => {
+        void navigator.clipboard.writeText(text).catch(() => toastStore.error("Could not copy selection"));
+      },
+      paste: () => { terminalSession.write(pasteInput()); },
+      write: (sequence) => { terminalSession.write(sequence); },
+      lineEditingSequence: (event) => resolveTerminalShortcut(event,
+        effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac)),
+    }));
 
     term.open(termEl!);
     // Initial effects can precede onMount; the plain xterm reference does not

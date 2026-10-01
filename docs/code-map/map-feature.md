@@ -156,6 +156,8 @@ backend for E2E/browser).
 
 ## Copy / paste / file-ops & progress
 
+- `state/clipboard-image-progress.svelte.ts` — image-paste progress independent of transient generic toasts; `Explorer.pasteImage` shares captured-destination orchestration with normal Paste's image fallback. `ToastOverlay` renders honest indeterminate bars; checked clipboard availability/read APIs preserve platform-tool failures. Native `clipboard/content.rs` validates PNG and publishes through a temporary file with collision-refusing persistence (#722).
+
 - `state/clipboard.svelte.ts` — revisioned native file clipboard snapshot and in-app cut/copy path set; cross-window events invalidate and reconcile, while Rust `clipboard/coordinator.rs` (driven by the worker in `clipboard/mod.rs`) orders commands and admits Cut only on backend ownership proof (`clipboard/backend.rs`: X11 token target, held Wayland `wl-copy`, Windows/macOS change counter in `clipboard/change_counter.rs`, #877)
 - `state/paste-operations.ts` — paste orchestration (conflict, dest); explorer captures destination before clipboard waits and guards pane callbacks by navigation/lifetime.
 - `state/pane-mutations.ts` — `createPaneMutations`: durable affected-parent/undo effects; navigation/lifetime-owned entry updates and exact editor-session completion

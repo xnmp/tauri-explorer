@@ -101,7 +101,7 @@ list, ends it.
   Windows remote-desktop redirection, some Windows managers) ends ownership
   at once, so Cut is refused.
 - Windows: if another process holds the clipboard open for more than about
-  100 ms (10 retries at 10 ms), the token read-back fails and that write is
+  1 s (100 retries at 10 ms; #912), the token read-back fails and that write is
   unproven.
 - Wayland: a `wl-copy` that stays alive but never publishes blocks each
   Copy/Cut for the 2 s publish timeout before failing. That happens when the

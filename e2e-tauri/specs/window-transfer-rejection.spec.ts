@@ -143,8 +143,12 @@ describe("native window transfer rejection", () => {
     expect(await operation("transfer", missing)).toEqual({ moved: false, target: missing });
     await verifySourceOwnsTab("after-missing.txt");
 
+    // A warm window is scripted only once activated, and found by handle (#931).
+    const target = await parkedWarmWindow();
     const opened = await operation("warm-open", warmDirectory) as { label: string };
-    const destroyedHandle = await switchToWindowLabel(opened.label);
+    expect(opened.label).toBe(target.label);
+    const destroyedHandle = target.handle;
+    await browser.switchToWindow(destroyedHandle);
     await browser.execute(() => {
       window.dispatchEvent(new CustomEvent("e2e-window-operation", {
         detail: { token: "destroy-transfer-target", op: "native-destroy" },

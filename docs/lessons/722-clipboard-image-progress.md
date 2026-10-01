@@ -26,6 +26,12 @@ file, and show progress before the file appears. Navigation and a permission
 refusal verify captured destinations and cleanup. The hook-only two-second
 hold makes progress observable and is not a throughput measurement.
 
-All fourteen Linux screenshots were inspected independently. Actual Windows
-clipboard execution remains unverified; portable native tests include decoded
-pixel assertions, but Linux and browser mocks cannot satisfy that criterion.
+All fourteen Linux screenshots were inspected independently. A subsequent real
+Windows hosted CI run passed seven native clipboard-image cases using an
+external PowerShell STA clipboard owner and WebView2. Both shortcuts across
+all three views assert progress before publication, exact decoded quadrant
+samples and dimensions, and a usable preview; navigation retains the original
+destination. The Linux-only permission-refused-write case is explicitly
+skipped on Windows. See the dated Windows review receipt for commit provenance
+and the thirteen Windows screenshots; Linux and browser mocks alone cannot
+satisfy this platform criterion.

@@ -5,6 +5,7 @@
 //! `Published` checkpoint, so an error or crash while preparing leaves the
 //! user's source exactly where it was.
 use super::{
+    checkpoint::DurableKind,
     coordinator::{Coordinator, Reservation},
     model::{NativePath, OperationSpec},
     move_execution::MoveExecution,
@@ -227,13 +228,23 @@ fn admit_retirement(
         .into_iter()
         .flatten()
         .collect();
-        super::move_cleanup::Plan::admit(source_parent, &name(&spec.source.0)?, &destinations)
-            .map_err(|error| refuse("the moved entry", &spec.source.0, error))?;
+        super::move_cleanup::Plan::admit(
+            source_parent,
+            &name(&spec.source.0)?,
+            &destinations,
+            spec.plan_allowance(),
+        )
+        .map_err(|error| refuse("the moved entry", &spec.source.0, error))?;
     }
     if spec.target_original.is_some() {
         let destinations: Vec<_> = inside(&spec.target_root, ORIGINAL).into_iter().collect();
-        super::move_cleanup::Plan::admit(target_parent, &name(&spec.target.0)?, &destinations)
-            .map_err(|error| refuse("the replaced destination", &spec.target.0, error))?;
+        super::move_cleanup::Plan::admit(
+            target_parent,
+            &name(&spec.target.0)?,
+            &destinations,
+            spec.plan_allowance(),
+        )
+        .map_err(|error| refuse("the replaced destination", &spec.target.0, error))?;
     }
     Ok(())
 }

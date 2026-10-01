@@ -505,8 +505,8 @@ impl MoveExecution {
     /// Walk the destination under exactly the bounds `Plan::capture` will
     /// apply to it inside the target root.
     fn admit_publication(&self, target: &Endpoint) -> Result<(), AppError> {
-        let root = self
-            .spec()?
+        let spec = self.spec()?;
+        let root = spec
             .target_root
             .as_ref()
             .ok_or_else(|| invalid("Move has no target artifact root"))?;
@@ -514,6 +514,7 @@ impl MoveExecution {
             &target.directory,
             &target.name,
             &[root.path.0.join(PUBLICATION)],
+            spec.plan_allowance(),
         )
     }
 

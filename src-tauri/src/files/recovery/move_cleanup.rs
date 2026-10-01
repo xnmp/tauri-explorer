@@ -1,15 +1,18 @@
-//! Bounded, durable entry identities for one move artifact payload. Resumption
-//! may observe missing planned children; it may never adopt a new child or file.
+//! Bounded, durable entry identities for one retained artifact payload, shared
+//! by every recovery kind. Resumption may observe missing planned children; it
+//! may never adopt a new child or file.
 use super::model::{EntryVersion, NativePath};
 use crate::{
     error::AppError,
     files::{
         file_identity::{of_file, version_at},
         native_directory::Directory,
+        object_id::ObjectId,
         tree_removal::{self, AbsentRoot, MountEvidence, Policy, Removal},
     },
 };
-use serde::{Deserialize, Serialize};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -21,8 +24,19 @@ use std::{
 
 const MAX_ENTRIES: usize = 65_536;
 const MAX_DEPTH: usize = 256;
-// Conservative encoded-size bound, leaving journal space for immutable authority.
-const MAX_PLAN_BYTES: usize = 8 * 1024 * 1024;
+/// Journal bytes one discard decision's plans may occupy together: a quarter
+/// of the journal, so at most three maximal decisions fit while ordinary
+/// operations keep the rest (ADR 0023, ADR 0026).
+pub(super) const DECISION_BYTES: usize = super::journal::MAX_TOTAL_BYTES / 4;
+
+/// The share of one decision each of a record's planned roots may encode. A
+/// single-root kind (copy replacement) receives the whole decision: 256 bytes
+/// for each of `MAX_ENTRIES` entries, which fits the full entry cap whenever
+/// names average under about 130 bytes (an entry costs roughly 80 bytes plus
+/// 4/3 of its name). Two roots receive half each.
+pub(super) fn allowance(roots: usize) -> usize {
+    DECISION_BYTES / roots.max(1)
+}
 
 /// A resumed cleanup may find planned entries already gone. Linux cleanup
 /// requires positive mount identity (see [`mount_ids_match`]).
@@ -32,24 +46,197 @@ const REMOVAL: Policy = Policy {
     absent_root: AbsentRoot::Removed,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Entry {
     pub path: NativePath,
     pub version: EntryVersion,
 }
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+
+/// Preorder entries with absolute paths in memory. The journal encodes the
+/// payload path once and each descendant as its parent's index plus its own
+/// name, so a plan's size is independent of depth and root location.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Plan {
     entries: Vec<Entry>,
+}
+
+/// `EntryVersion` as one positional row: object device and inode, size,
+/// modification time, kind (bit 0 directory, bit 1 symlink), mode, uid, gid.
+#[derive(Serialize, Deserialize)]
+struct Version(u64, u64, u64, i64, u32, u8, u32, u32, u32);
+
+impl Version {
+    fn of(version: &EntryVersion) -> io::Result<Self> {
+        let (device, inode) = version
+            .object
+            .unix_parts()
+            .ok_or_else(|| invalid("Recovery cleanup entry has a foreign identity"))?;
+        Ok(Self(
+            device,
+            inode,
+            version.size,
+            version.modified_seconds,
+            version.modified_nanos,
+            u8::from(version.directory) | (u8::from(version.symlink) << 1),
+            version.mode,
+            version.uid,
+            version.gid,
+        ))
+    }
+
+    fn decode(self) -> io::Result<EntryVersion> {
+        let Self(device, inode, size, seconds, nanos, kind, mode, uid, gid) = self;
+        if kind > 0b11 {
+            return Err(invalid("Recovery cleanup entry has an unknown kind"));
+        }
+        let version = EntryVersion {
+            object: ObjectId::unix(device, inode),
+            size,
+            modified_seconds: seconds,
+            modified_nanos: nanos,
+            directory: kind & 1 != 0,
+            symlink: kind & 0b10 != 0,
+            mode,
+            uid,
+            gid,
+        };
+        version.validate()?;
+        Ok(version)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Wire {
+    top: Option<(NativePath, Version)>,
+    children: Vec<(usize, String, Version)>,
+}
+
+/// The exact encoded size of a plan holding only `top`.
+fn top_cost(top: &Path, version: &EntryVersion) -> io::Result<usize> {
+    encoded_len(&Wire {
+        top: Some((NativePath(top.to_owned()), Version::of(version)?)),
+        children: Vec::new(),
+    })
+}
+
+/// An upper bound on one descendant's encoded size, including its separator:
+/// the parent index is charged at the largest index a plan can hold.
+fn child_cost(name: &OsStr, version: &EntryVersion) -> io::Result<usize> {
+    let row = (MAX_ENTRIES, encode_name(name), Version::of(version)?);
+    Ok(encoded_len(&row)? + 1)
+}
+
+fn encoded_len(value: &impl Serialize) -> io::Result<usize> {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .map_err(|error| invalid(&error.to_string()))
+}
+
+fn encode_name(name: &OsStr) -> String {
+    STANDARD.encode(name.as_encoded_bytes())
+}
+
+/// Exactly one normal path component: never empty, `.`, `..` or a separator.
+fn decode_name(encoded: &str) -> io::Result<std::ffi::OsString> {
+    use std::os::unix::ffi::OsStringExt;
+    let name = std::ffi::OsString::from_vec(
+        STANDARD
+            .decode(encoded)
+            .map_err(|_| invalid("Recovery cleanup entry has an invalid name"))?,
+    );
+    let mut components = Path::new(&name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(part)), None)
+            if part == name.as_os_str() && !name.as_encoded_bytes().contains(&0) =>
+        {
+            Ok(name)
+        }
+        _ => Err(invalid("Recovery cleanup entry has an invalid name")),
+    }
+}
+
+impl Serialize for Plan {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::Error;
+        let wire = (|| {
+            let mut indices: HashMap<&Path, usize> = HashMap::new();
+            let mut children = Vec::new();
+            let mut top = None;
+            for (index, entry) in self.entries.iter().enumerate() {
+                let path = entry.path.0.as_path();
+                let version = Version::of(&entry.version)?;
+                if index == 0 {
+                    top = Some((entry.path.clone(), version));
+                } else {
+                    let parent = path
+                        .parent()
+                        .and_then(|parent| indices.get(parent))
+                        .ok_or_else(|| invalid("Recovery cleanup entry has no planned parent"))?;
+                    let name = path
+                        .file_name()
+                        .ok_or_else(|| invalid("Recovery cleanup entry has no name"))?;
+                    children.push((*parent, encode_name(name), version));
+                }
+                indices.insert(path, index);
+            }
+            Ok::<_, io::Error>(Wire { top, children })
+        })()
+        .map_err(S::Error::custom)?;
+        wire.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Plan {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let Wire { top, children } = Wire::deserialize(deserializer)?;
+        let Some((path, version)) = top else {
+            return if children.is_empty() {
+                Ok(Self::default())
+            } else {
+                Err(D::Error::custom(
+                    "Recovery cleanup descendants have no payload",
+                ))
+            };
+        };
+        if children.len() >= MAX_ENTRIES {
+            return Err(D::Error::custom(
+                "Recovery cleanup exceeds its entry budget",
+            ));
+        }
+        let mut entries = vec![Entry {
+            path,
+            version: version.decode().map_err(D::Error::custom)?,
+        }];
+        for (parent, name, version) in children {
+            // Preorder: a parent always precedes its children.
+            let parent = entries
+                .get(parent)
+                .ok_or_else(|| D::Error::custom("Recovery cleanup entry precedes its parent"))?;
+            let path = parent
+                .path
+                .0
+                .join(decode_name(&name).map_err(D::Error::custom)?);
+            entries.push(Entry {
+                path: NativePath(path),
+                version: version.decode().map_err(D::Error::custom)?,
+            });
+        }
+        Ok(Self { entries })
+    }
 }
 
 impl Plan {
     #[cfg(test)]
     pub(super) fn single(path: NativePath, version: EntryVersion) -> Self {
-        Self {
-            entries: vec![Entry { path, version }],
-        }
+        Self::of(vec![Entry { path, version }])
+    }
+
+    /// Test seam: any entry list, including ones no capture would produce.
+    #[cfg(test)]
+    pub(super) fn of(entries: Vec<Entry>) -> Self {
+        Self { entries }
     }
 
     /// Preorder makes parent authority explicit and keeps validation linear.
@@ -57,9 +244,10 @@ impl Plan {
         &self,
         root: &Path,
         payload: Option<(&str, &[EntryVersion])>,
+        allowance: usize,
     ) -> io::Result<()> {
         if self.entries.len() > MAX_ENTRIES {
-            return Err(invalid("Move cleanup exceeds its entry budget"));
+            return Err(invalid("Recovery cleanup exceeds its entry budget"));
         }
         let Some((name, versions)) = payload else {
             return if self.entries.is_empty() {
@@ -75,20 +263,28 @@ impl Plan {
             .is_some_and(|entry| entry.path.0 == top && versions.contains(&entry.version))
         {
             return Err(invalid(
-                "Move cleanup payload differs from immutable move evidence",
+                "Recovery cleanup payload differs from immutable move evidence",
             ));
         }
         let mut parents: HashMap<&Path, &EntryVersion> = HashMap::new();
-        let mut bytes = MAX_PLAN_BYTES;
+        let mut budget = Budget::new(allowance);
+        budget.top(&top, &self.entries[0].version)?;
         for entry in &self.entries {
-            spend_bytes(&entry.path.0, &mut bytes)?;
+            if entry.path.0 != top {
+                let name = entry
+                    .path
+                    .0
+                    .file_name()
+                    .ok_or_else(|| invalid("Recovery cleanup entry has no name"))?;
+                budget.child(name, &entry.version)?;
+            }
             entry.version.validate()?;
             on_payload_volume(&entry.version, &versions[0])?;
             let relative = entry
                 .path
                 .0
                 .strip_prefix(root)
-                .map_err(|_| invalid("Move cleanup escaped its root"))?;
+                .map_err(|_| invalid("Recovery cleanup escaped its root"))?;
             if relative.components().count() > MAX_DEPTH
                 || relative
                     .components()
@@ -104,7 +300,7 @@ impl Plan {
                 || parents.insert(&entry.path.0, &entry.version).is_some()
             {
                 return Err(invalid(
-                    "Move cleanup has invalid or duplicate child authority",
+                    "Recovery cleanup has invalid or duplicate child authority",
                 ));
             }
         }
@@ -115,11 +311,12 @@ impl Plan {
         directory: &Directory,
         root: &Path,
         payload: Option<&str>,
+        allowance: usize,
     ) -> Result<Self, AppError> {
         let mut plan = Self::default();
         if let Some(name) = payload {
             let top = root.join(name);
-            let mut budget = Budget::new(1);
+            let mut budget = Budget::new(allowance);
             let payload_mount = payload_mount_id(directory, OsStr::new(name))?;
             walk(
                 directory,
@@ -128,8 +325,8 @@ impl Plan {
                 1,
                 payload_mount,
                 &mut |relative, version| {
+                    budget.spend(&[top.as_path()], relative, version)?;
                     let path = located(&top, relative);
-                    budget.spend(std::slice::from_ref(&path))?;
                     plan.entries.push(Entry {
                         path: NativePath(path),
                         version: version.clone(),
@@ -141,7 +338,7 @@ impl Plan {
         Ok(plan)
     }
 
-    /// Admission of a payload a move is about to retain: at the move's start,
+    /// Admission of a payload a record is about to retain: at its start,
     /// and for the destination an Undo parks. Walk the live payload under
     /// exactly the rules a plan must satisfy: `capture`'s depth, entry and byte
     /// bounds, charging each entry at every private path it may later occupy,
@@ -151,8 +348,10 @@ impl Plan {
         parent: &Directory,
         name: &OsStr,
         destinations: &[std::path::PathBuf],
+        allowance: usize,
     ) -> Result<(), AppError> {
-        let mut budget = Budget::new(destinations.len());
+        let destinations: Vec<&Path> = destinations.iter().map(|path| path.as_path()).collect();
+        let mut budget = Budget::new(allowance);
         let mut payload: Option<EntryVersion> = None;
         let payload_mount = payload_mount_id(parent, name)?;
         walk(
@@ -164,11 +363,7 @@ impl Plan {
             &mut |relative, version| {
                 // Preorder: the first entry visited is the payload itself.
                 on_payload_volume(version, payload.get_or_insert_with(|| version.clone()))?;
-                let paths: Vec<_> = destinations
-                    .iter()
-                    .map(|top| located(top, relative))
-                    .collect();
-                budget.spend(&paths)
+                Ok(budget.spend(&destinations, relative, version)?)
             },
         )
     }
@@ -191,7 +386,7 @@ impl Plan {
             .path
             .0
             .file_name()
-            .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
+            .ok_or_else(|| invalid("Recovery cleanup payload has no name"))?;
         let mut budget = MAX_ENTRIES;
         let payload_mount = if removing {
             existing_payload_mount_id(directory, name)?
@@ -213,7 +408,7 @@ impl Plan {
         )?;
         if !removing && MAX_ENTRIES - budget != self.entries.len() {
             return Err(
-                invalid("Move cleanup descendants disappeared before removal intent").into(),
+                invalid("Recovery cleanup descendants disappeared before removal intent").into(),
             );
         }
         Ok(())
@@ -237,7 +432,7 @@ impl Plan {
             .path
             .0
             .file_name()
-            .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
+            .ok_or_else(|| invalid("Recovery cleanup payload has no name"))?;
         removable_in(directory, root, root)?;
         let mut budget = MAX_ENTRIES;
         let payload_mount = existing_payload_mount_id(directory, name)?;
@@ -275,7 +470,7 @@ impl Plan {
                 .path
                 .0
                 .file_name()
-                .ok_or_else(|| invalid("Move cleanup payload has no name"))?;
+                .ok_or_else(|| invalid("Recovery cleanup payload has no name"))?;
             let mut budget = MAX_ENTRIES;
             let mut planned = Planned {
                 root,
@@ -290,28 +485,57 @@ impl Plan {
 }
 
 /// The per-plan bounds shared by capture, admission and validation: entry
-/// count and encoded bytes, charged independently for every destination root.
+/// count and encoded bytes. Only the payload path depends on where the plan
+/// will live, so admission charges the longest of its possible locations.
 struct Budget {
     entries: usize,
-    bytes: Vec<usize>,
+    bytes: usize,
 }
 
 impl Budget {
-    fn new(destinations: usize) -> Self {
+    fn new(allowance: usize) -> Self {
         Self {
             entries: MAX_ENTRIES,
-            bytes: vec![MAX_PLAN_BYTES; destinations],
+            bytes: allowance,
         }
     }
 
-    fn spend(&mut self, paths: &[std::path::PathBuf]) -> Result<(), AppError> {
+    /// Charge one walked entry: the payload itself at `relative == ""`.
+    fn spend(
+        &mut self,
+        destinations: &[&Path],
+        relative: &Path,
+        version: &EntryVersion,
+    ) -> io::Result<()> {
+        match relative.file_name() {
+            None => {
+                let mut cost = 0;
+                for top in destinations {
+                    cost = cost.max(top_cost(top, version)?);
+                }
+                self.charge(cost)
+            }
+            Some(name) => self.child(name, version),
+        }
+    }
+
+    fn top(&mut self, top: &Path, version: &EntryVersion) -> io::Result<()> {
+        self.charge(top_cost(top, version)?)
+    }
+
+    fn child(&mut self, name: &OsStr, version: &EntryVersion) -> io::Result<()> {
+        self.charge(child_cost(name, version)?)
+    }
+
+    fn charge(&mut self, cost: usize) -> io::Result<()> {
         self.entries = self
             .entries
             .checked_sub(1)
-            .ok_or_else(|| invalid("Move cleanup exceeds its entry budget"))?;
-        for (path, bytes) in paths.iter().zip(&mut self.bytes) {
-            spend_bytes(path, bytes)?;
-        }
+            .ok_or_else(|| invalid("Recovery cleanup exceeds its entry budget"))?;
+        self.bytes = self
+            .bytes
+            .checked_sub(cost)
+            .ok_or_else(|| invalid("Recovery cleanup exceeds its byte budget"))?;
         Ok(())
     }
 }
@@ -336,7 +560,7 @@ fn walk(
     visit: &mut impl FnMut(&Path, &EntryVersion) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     if depth > MAX_DEPTH {
-        return Err(invalid("Move cleanup exceeds its depth budget").into());
+        return Err(invalid("Recovery cleanup exceeds its depth budget").into());
     }
     let version = version_at(parent, name)?;
     on_payload_mount(parent, name, relative, payload_mount)?;
@@ -358,7 +582,7 @@ fn walk(
             }
         })?;
         if of_file(&directory.file)? != version.object {
-            return Err(invalid("Move cleanup directory changed during capture").into());
+            return Err(invalid("Recovery cleanup directory changed during capture").into());
         }
         let children = directory.names(MAX_ENTRIES).map_err(|error| {
             if error.kind() == io::ErrorKind::PermissionDenied {
@@ -387,7 +611,7 @@ fn walk(
         }
     }
     if version_at(parent, name)? != version {
-        return Err(invalid("Move cleanup entry changed during capture").into());
+        return Err(invalid("Recovery cleanup entry changed during capture").into());
     }
     Ok(())
 }
@@ -402,7 +626,7 @@ fn observed(
     // An unplanned name is refused even when it is already gone.
     index
         .get(path)
-        .ok_or_else(|| invalid("Move cleanup found an unplanned descendant"))?;
+        .ok_or_else(|| invalid("Recovery cleanup found an unplanned descendant"))?;
     let actual = match version_at(parent, name) {
         Ok(actual) => actual,
         Err(error) if removing && error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -423,7 +647,7 @@ fn planned(
 ) -> Result<(), AppError> {
     let expected = index
         .get(path)
-        .ok_or_else(|| invalid("Move cleanup found an unplanned descendant"))?;
+        .ok_or_else(|| invalid("Recovery cleanup found an unplanned descendant"))?;
     let matches = if expected.directory && removing {
         actual.directory
             && !actual.symlink
@@ -435,20 +659,21 @@ fn planned(
         actual == *expected
     };
     if !matches {
-        return Err(
-            invalid("Move cleanup descendant changed; remaining evidence is preserved").into(),
-        );
+        return Err(invalid(
+            "Recovery cleanup descendant changed; remaining evidence is preserved",
+        )
+        .into());
     }
     Ok(())
 }
 
 fn walk_budget(depth: usize, budget: &mut usize) -> Result<(), AppError> {
     if depth > MAX_DEPTH {
-        return Err(invalid("Move cleanup exceeds its depth budget").into());
+        return Err(invalid("Recovery cleanup exceeds its depth budget").into());
     }
     *budget = budget
         .checked_sub(1)
-        .ok_or_else(|| invalid("Move cleanup exceeds its entry budget"))?;
+        .ok_or_else(|| invalid("Recovery cleanup exceeds its entry budget"))?;
     Ok(())
 }
 
@@ -474,7 +699,7 @@ fn verify_tree(
     if actual.directory {
         let directory = parent.open_existing(name)?;
         if of_file(&directory.file)? != actual.object {
-            return Err(invalid("Move cleanup directory identity changed").into());
+            return Err(invalid("Recovery cleanup directory identity changed").into());
         }
         for child in directory.names(MAX_ENTRIES)? {
             verify_tree(
@@ -526,7 +751,7 @@ fn preflight_tree(
     if actual.directory {
         let directory = parent.open_existing(name)?;
         if of_file(&directory.file)? != actual.object {
-            return Err(invalid("Move cleanup directory identity changed").into());
+            return Err(invalid("Recovery cleanup directory identity changed").into());
         }
         let children = directory.names(MAX_ENTRIES)?;
         if !children.is_empty() {
@@ -565,7 +790,7 @@ fn refusal(path: &Path, root: &Path, error: io::Error) -> AppError {
     };
     AppError::PermissionDenied(format!(
         "Discard cannot remove the retained contents of {shown} ({error}). \
-         Nothing was removed and this move's recovery record is unchanged; make it writable and retry."
+         Nothing was removed and this recovery record is unchanged; make it writable and retry."
     ))
 }
 
@@ -612,7 +837,7 @@ fn on_payload_volume(entry: &EntryVersion, payload: &EntryVersion) -> io::Result
         Ok(())
     } else {
         Err(invalid(
-            "Move cleanup cannot traverse another mounted volume",
+            "Recovery cleanup cannot traverse another mounted volume",
         ))
     }
 }
@@ -625,7 +850,7 @@ fn payload_mount_id(parent: &Directory, name: &OsStr) -> io::Result<Option<u64>>
         Ok(payload_mount)
     } else {
         Err(invalid(&format!(
-            "Move cleanup payload root '{}' is a mount point or its mount identity is unavailable",
+            "Recovery cleanup payload root '{}' is a mount point or its mount identity is unavailable",
             Path::new(name).display()
         )))
     }
@@ -659,7 +884,7 @@ fn on_payload_mount(
         path
     };
     Err(invalid(&format!(
-        "Move cleanup cannot cross mount point '{}'",
+        "Recovery cleanup cannot cross mount point '{}'",
         shown.display()
     )))
 }
@@ -681,19 +906,6 @@ pub(super) fn mount_ids_match(payload: Option<u64>, entry: Option<u64>) -> bool 
     matches!((payload, entry), (Some(payload), Some(entry)) if payload == entry)
 }
 
-fn spend_bytes(path: &Path, budget: &mut usize) -> io::Result<()> {
-    let cost = path
-        .as_os_str()
-        .as_encoded_bytes()
-        .len()
-        .checked_mul(2)
-        .and_then(|size| size.checked_add(512))
-        .ok_or_else(|| invalid("Move cleanup path exceeds its byte budget"))?;
-    *budget = budget
-        .checked_sub(cost)
-        .ok_or_else(|| invalid("Move cleanup exceeds its byte budget"))?;
-    Ok(())
-}
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }

@@ -77,6 +77,17 @@ pub(super) enum Effect {
 }
 
 impl Effect {
+    const ALL: [Self; 8] = [
+        Self::Root,
+        Self::Manifest,
+        Self::Stage,
+        Self::Displace,
+        Self::Publish,
+        Self::Park,
+        Self::Restore,
+        Self::Reapply,
+    ];
+
     fn phases(self) -> (Phase, Phase) {
         use Phase::*;
         match self {
@@ -319,6 +330,8 @@ pub(super) trait DurableKind {
     fn probes(&self) -> Vec<PlannedRoot<'_>>;
     /// User objects an artifact may never alias: the source and any original.
     fn subjects(&self) -> Vec<ObjectId>;
+    /// The user directories holding the endpoints; a probe may alias none.
+    fn parents(&self) -> Vec<ObjectId>;
     fn source_version(&self) -> &EntryVersion;
     /// The destination entry an overwrite displaces into the target root.
     fn displaced(&self) -> Option<&EntryVersion>;
@@ -333,6 +346,16 @@ pub(super) trait DurableKind {
     }
     /// The user path a recovery item is listed under.
     fn listed_path(&self) -> &NativePath;
+
+    /// The encoded bytes each planned root's cleanup plan may use: one
+    /// discard decision's allowance shared by every planned root.
+    fn plan_allowance(&self) -> usize {
+        let roots = [Side::Source, Side::Target]
+            .into_iter()
+            .filter(|side| self.root(*side).is_some())
+            .count();
+        super::move_cleanup::allowance(roots)
+    }
 }
 
 /// A checkpoint interpreted under its immutable kind evidence.
@@ -423,27 +446,54 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
                 .is_some_and(Progress::supported)
     }
 
+    fn rooted(&self) -> bool {
+        self.spec.root(Side::Source).is_some() || self.spec.root(Side::Target).is_some()
+    }
+
+    /// Whether this kind ever performs `effect`. Every artifact effect needs
+    /// private storage; the shape removes the rest a kind never takes.
+    fn takes(&self, effect: Effect) -> bool {
+        let shape = self.spec.shape();
+        let rooted = self.rooted();
+        match effect {
+            Effect::Publish | Effect::Restore => true,
+            Effect::Root | Effect::Manifest => rooted,
+            Effect::Stage => rooted && shape.stages,
+            Effect::Displace => rooted && shape.overwrites,
+            Effect::Park => rooted && shape.parks,
+            Effect::Reapply => rooted && shape.reapplies,
+        }
+    }
+
+    /// Whether any record of this kind can rest at `phase`.
+    fn reaches(&self, phase: Phase) -> bool {
+        matches!(phase, Phase::Planned | Phase::Aborted)
+            || Effect::ALL.into_iter().any(|effect| {
+                let (intent, completion) = effect.phases();
+                self.takes(effect) && (phase == intent || phase == completion)
+            })
+    }
+
     /// The one legal-transition graph. Reasserting a transfer intent lets the
     /// executor reconcile a lost effect or reply from native endpoints.
     fn may_begin(&self, effect: Effect) -> bool {
         use Phase::*;
         let shape = self.spec.shape();
-        let rooted =
-            self.spec.root(Side::Source).is_some() || self.spec.root(Side::Target).is_some();
+        let rooted = self.rooted();
         let phase = self.state.phase;
+        if !self.takes(effect) {
+            return false;
+        }
         match effect {
-            Effect::Root => phase == Planned && rooted && self.ready(),
+            Effect::Root => phase == Planned && self.ready(),
             Effect::Manifest => phase == Rooted,
-            Effect::Stage => phase == Prepared && shape.stages,
-            Effect::Displace => {
-                shape.overwrites
-                    && match phase {
-                        Prepared => !shape.stages,
-                        Staged => shape.stages,
-                        DisplaceIntent => true,
-                        _ => false,
-                    }
-            }
+            Effect::Stage => phase == Prepared,
+            Effect::Displace => match phase {
+                Prepared => !shape.stages,
+                Staged => shape.stages,
+                DisplaceIntent => true,
+                _ => false,
+            },
             Effect::Publish => match phase {
                 // A rootless kind publishes with one atomic no-replace rename.
                 Planned => !rooted && self.ready(),
@@ -453,7 +503,7 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
                 _ => false,
             },
             // Parking follows a published destination, never precedes it.
-            Effect::Park => shape.parks && matches!(phase, Published | ParkIntent),
+            Effect::Park => matches!(phase, Published | ParkIntent),
             Effect::Restore => matches!(
                 phase,
                 DisplaceIntent
@@ -465,7 +515,7 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
                     | RestoreIntent
                     | ReapplyIntent
             ),
-            Effect::Reapply => shape.reapplies && matches!(phase, Restored | ReapplyIntent),
+            Effect::Reapply => matches!(phase, Restored | ReapplyIntent),
         }
     }
 
@@ -499,6 +549,7 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
             }
             Event::Complete(effect)
                 if state.phase == effect.phases().0
+                    && self.takes(effect)
                     && !matches!(effect, Effect::Root | Effect::Stage) =>
             {
                 complete(&mut state, effect)?;
@@ -650,20 +701,11 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
                 self.validate_root(planned.parent, *identity)?;
             }
         }
-        let rooted = spec.root(Side::Source).is_some() || spec.root(Side::Target).is_some();
-        if !rooted
-            && !matches!(
-                state.phase,
-                Phase::Planned
-                    | Phase::Aborted
-                    | Phase::PublishIntent
-                    | Phase::Published
-                    | Phase::RestoreIntent
-                    | Phase::Restored
-            )
-        {
+        // A rootless kind reaches no artifact phase, and no kind reaches the
+        // phases of effects its shape never takes.
+        if !self.reaches(state.phase) {
             return Err(invalid(
-                "A record without private storage cannot reach an artifact-bearing phase",
+                "Recovery phase belongs to an effect this kind never takes",
             ));
         }
         // Staging evidence must not appear before its phase or survive a phase
@@ -739,6 +781,7 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
                     expected
                         .as_ref()
                         .map(|(name, versions)| (*name, versions.as_slice())),
+                    self.spec.plan_allowance(),
                 )?;
             }
         }
@@ -758,7 +801,7 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
             }
             return Ok(());
         };
-        if progress.steps.len() != probes.len() {
+        if probes.is_empty() || progress.steps.len() != probes.len() {
             return Err(invalid(
                 "Capability probe progress differs from its immutable plans",
             ));
@@ -781,6 +824,7 @@ impl<K: DurableKind + ?Sized> Checkpoint<'_, K> {
         let mut objects: std::collections::HashSet<ObjectId> =
             probes.iter().map(|probe| probe.parent).collect();
         objects.extend(self.spec.subjects());
+        objects.extend(self.spec.parents());
         // Removed probe identities may be reused by later artifact creation;
         // they cannot be compared against newly created root identities.
         let mut prior_removed = true;

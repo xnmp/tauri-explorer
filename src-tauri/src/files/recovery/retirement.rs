@@ -22,11 +22,9 @@ use crate::{
 };
 use std::{io, sync::Arc};
 
-/// Journal bytes a new discard decision must leave free. Each decision can
-/// hold two cleanup plans of up to 8 MiB until it completes, so at most three
-/// maximal decisions fit while ordinary operations keep a quarter of the
-/// journal (ADR 0023).
-const RETIREMENT_HEADROOM: usize = super::journal::MAX_TOTAL_BYTES / 4;
+/// Journal bytes a new discard decision must leave free: the most its cleanup
+/// plans can occupy together until it completes (ADR 0023).
+const RETIREMENT_HEADROOM: usize = super::move_cleanup::DECISION_BYTES;
 
 /// What the observed record permits. `Preserved` always carries a reason the
 /// user can read; it is never a silent refusal.

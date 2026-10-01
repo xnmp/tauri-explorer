@@ -479,8 +479,9 @@ fn item(
 
 /// The artifact folders a record may still hold, from durable evidence alone:
 /// inventory never probes them or grants renderer-owned authority. The source
-/// root is listed first; a root its journaled discard already started removing
-/// is omitted, so a stopped discard names exactly the folders it left behind.
+/// root is listed first. Only a root whose removal completed is omitted: a
+/// stopped discard may have left any of a root it started removing, so it
+/// still names every folder that can hold retained files.
 fn retained_folders(intent: &DurableIntent, state: Option<&State>) -> Vec<String> {
     let kind = intent.operation.kind();
     let retirement = state.and_then(|state| state.retirement.as_ref());
@@ -489,7 +490,7 @@ fn retained_folders(intent: &DurableIntent, state: Option<&State>) -> Vec<String
         .filter(|side| {
             retirement
                 .and_then(|retirement| *retirement.steps.get(*side))
-                .is_none_or(|step| step == Step::Pending)
+                .is_none_or(|step| step != Step::Removed)
         })
         .filter_map(|side| kind.root(side))
         .map(|root| root.path.0.to_string_lossy().into_owned())

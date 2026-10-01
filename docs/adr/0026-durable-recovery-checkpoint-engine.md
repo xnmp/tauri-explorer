@@ -7,6 +7,7 @@ Governs: `src-tauri/src/files/recovery/checkpoint.rs`,
 `src-tauri/src/files/recovery/retirement.rs`,
 `src-tauri/src/files/recovery/durable_model.rs`,
 `src-tauri/src/files/recovery/move_model.rs`,
+`src-tauri/src/files/recovery/move_cleanup.rs`,
 `src-tauri/src/files/recovery/service.rs`.
 
 Amends [ADR 0020](0020-durable-file-recovery.md) (record formats) and
@@ -79,7 +80,9 @@ A kind's `Shape` only removes edges that kind never takes. The shape says
 whether the kind stages a copy, overwrites a destination, parks its source, or
 can be reapplied. Rootedness comes from the kind's planned roots. Copy
 replacement is `{stages, overwrites, reapplies}`. A move derives its shape from
-its strategy and whether it overwrites.
+its strategy and whether it overwrites. Validation applies the same shape to
+decoded checkpoints: a record resting at a phase of an effect its kind never
+takes, or carrying probe evidence its kind never plans, is rejected.
 
 **Content effects** (`Publish`, `Park`, `Restore` and `Reapply`) advance
 `effect_revision` when they complete. They check that the revision has headroom
@@ -144,6 +147,32 @@ One `Retirement` implementation serves every kind. It covers:
 - measurement;
 - Forget.
 
+### Cleanup plans fit the entry cap at realistic names
+
+A plan records every descendant it may remove, so its size bounds what a record
+can retain and still discard. Plans are journaled compactly: the payload's
+absolute path once, then one positional row per descendant holding its parent's
+row index, its base64 name and its version. A row costs about 80 bytes plus
+4/3 of its name, independent of depth or root location. Capture, admission and
+decoding charge each row's exact encoded size (its parent index at the largest
+possible width), so the charge bounds the journal bytes.
+
+One decision's plans share `DECISION_BYTES`, a quarter of the journal (16 MiB),
+which is also the headroom a new decision must leave free. Each planned root
+receives an equal share. A copy replacement, with one root, receives all of it:
+256 bytes for each of the 65,536 entries the plan's entry cap allows, so an
+original at the full cap fits whenever its names average under about 130 bytes.
+The former root sweep removed up to 65,536 entries; a plan now reaches the same
+cap at realistic names. A move's two roots receive 8 MiB each, as before, at a
+far lower cost per entry than the earlier `2 × absolute path + 512` charge.
+
+Admission enforces the invariant that no record is created that could never be
+discarded. Copy replacement now walks the original it will displace under the
+plan's depth, entry, byte and no-cross-mount rules before any reservation is
+promoted, as moves already did, and refuses an unplannable one with nothing
+copied. An original over the entry or depth cap was accepted before and could
+then never be discarded; it is now refused instead.
+
 ### Behaviour changes for copy replacement
 
 Each of these is the existing move contract, now applied to replacement:
@@ -165,9 +194,13 @@ Each of these is the existing move contract, now applied to replacement:
 - **Deferral.** An automatic replacement discard whose root cannot be observed
   is deferred until the user retries it. This replaces re-claiming it on every
   pass.
+- **Admission.** An original no cleanup plan could record is refused before
+  anything is copied, as above.
 
 The user sees a different view only in situations that are new: a stopped
-discard (with Forget) and a deferred automatic discard.
+discard (with Forget), a deferred automatic discard, and a refused overwrite of
+an undiscardable original. A stopped discard of either kind lists every root
+whose removal has not completed, including one it had started removing.
 
 ### Record version 3, no migration
 
@@ -189,11 +222,3 @@ version-1 move intent does; ADR 0020's manual-recovery note applies.
   adapter, and the move relocation adapter.
 - Durable development profiles must discard or manually remove records written
   before ADR 0026.
-
-## Follow-up
-
-- **Bound replacement's retained payload at admission.** Copy replacement does
-  not yet check, before promotion, that the original it will displace fits the
-  bounds of a cleanup plan. A tree too large to plan makes its record
-  undiscardable until it shrinks. The old root sweep had the same depth and
-  entry bounds, so this is not a regression.

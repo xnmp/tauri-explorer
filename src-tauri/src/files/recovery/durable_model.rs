@@ -258,6 +258,10 @@ impl DurableKind for ReplacementSpec {
         vec![self.source_version.object, self.original.object]
     }
 
+    fn parents(&self) -> Vec<ObjectId> {
+        vec![self.parent]
+    }
+
     fn source_version(&self) -> &EntryVersion {
         &self.source_version
     }

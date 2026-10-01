@@ -79,17 +79,21 @@ fn forget_names_the_folders_that_still_hold_files() {
         "{}",
         item.message
     );
-    // A root already in Removing is no longer presented as retained. Its
-    // cleanup owns that location; Forget names only roots still awaiting it.
+    // A root whose removal started but never completed may still hold any
+    // of its files, so Forget names it alongside the root still awaiting it.
     let f = partially_retired(false);
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     let item = &snapshot.items[0];
     assert!(item.actions.contains(&RecoveryChoice::Release));
-    let target_root = f.roots[1].to_string_lossy().into_owned();
-    assert_eq!(item.retained_paths, vec![target_root]);
+    let shown: Vec<_> = f
+        .roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(item.retained_paths, shown);
     assert!(f.roots.iter().all(|root| root.exists()));
     assert!(
-        item.message.contains("the listed folder"),
+        item.message.contains("each listed folder"),
         "{}",
         item.message
     );

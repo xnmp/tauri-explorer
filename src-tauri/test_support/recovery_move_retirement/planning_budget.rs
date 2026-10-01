@@ -4,17 +4,17 @@ use super::fixtures::*;
 use super::readonly_umask::tree;
 use super::*;
 
-/// A tree whose retirement plan cannot fit the per-root byte budget: long
-/// nested names make each recorded path several KiB, so ~2k entries suffice.
-fn unplannable_tree(root: &std::path::Path) {
+/// A tree no retirement plan can record: deeper than any plan's depth
+/// bound. (Plan byte and entry bounds are exercised directly in
+/// `recovery_checkpoint.rs`; trees that exceed them take tens of thousands
+/// of files.)
+pub(super) fn unplannable_tree(root: &std::path::Path) {
     let mut deepest = root.to_owned();
-    for level in 0..8 {
-        deepest.push(format!("{level}{}", "d".repeat(200)));
+    for _ in 0..=256 {
+        deepest.push("d");
     }
     fs::create_dir_all(&deepest).unwrap();
-    for index in 0..2_100 {
-        fs::write(deepest.join(format!("{index:05}{}", "f".repeat(200))), b"x").unwrap();
-    }
+    fs::write(deepest.join("leaf"), b"x").unwrap();
 }
 
 pub(super) fn private_residue(parent: &std::path::Path) -> Vec<std::ffi::OsString> {

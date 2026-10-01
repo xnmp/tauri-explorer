@@ -7,8 +7,8 @@ use crate::files::recovery::{
         DurableIntent, LockIdentity, OperationCheckpoint, OperationRecord, OperationSpec,
         ReplacementSpec, RECORD_VERSION,
     },
-    move_capability_model::Plans,
-    move_cleanup::Plan,
+    move_capability_model::{Plans, Step as ProbeStep},
+    move_cleanup::{allowance, Entry, Plan},
     move_model::{ArtifactPlan, MoveSpec, Strategy},
     resources::{Access, Scope},
 };
@@ -1104,22 +1104,139 @@ fn cleanup_plan_rejects_duplicate_foreign_and_non_directory_child_authority() {
         ..
     } = case.intent.operation.move_spec().unwrap().clone();
     let root = &source_root.unwrap().path.0;
+    let payload = Some(("parked", std::slice::from_ref(&source_version)));
+    plan.validate(root, payload, allowance(2)).unwrap();
+    let entry = |path: &str| Entry {
+        path: NativePath(root.join(path)),
+        version: source_version.clone(),
+    };
     for suffix in ["parked", "foreign", "parked/child"] {
-        let mut encoded = serde_json::to_value(&plan).unwrap();
-        let entries = encoded["entries"].as_array_mut().unwrap();
-        let mut extra = entries[0].clone();
-        extra["path"] = serde_json::to_value(NativePath(root.join(suffix))).unwrap();
-        entries.push(extra);
-        let forged: Plan = serde_json::from_value(encoded).unwrap();
+        let forged = Plan::of(vec![entry("parked"), entry(suffix)]);
         assert!(
-            forged
-                .validate(
-                    root,
-                    Some(("parked", std::slice::from_ref(&source_version)))
-                )
-                .is_err(),
+            forged.validate(root, payload, allowance(2)).is_err(),
             "{suffix}"
         );
+    }
+}
+
+/// The journal stores each descendant as its parent's index and its own name.
+/// A decoded plan is only ever one that capture could have produced.
+#[test]
+fn cleanup_plan_encoding_roundtrips_and_rejects_forged_rows() {
+    let root = Path::new("/volume/private");
+    let mut top = version(7, 10);
+    top.directory = true;
+    top.mode = 0o40700;
+    let mut nested = version(7, 11);
+    nested.directory = true;
+    nested.mode = 0o40700;
+    let plan = Plan::of(vec![
+        Entry {
+            path: NativePath(root.join("original")),
+            version: top.clone(),
+        },
+        Entry {
+            path: NativePath(root.join("original/nested")),
+            version: nested,
+        },
+        Entry {
+            path: NativePath(root.join("original/nested/leaf")),
+            version: version(7, 12),
+        },
+    ]);
+    let encoded = serde_json::to_value(&plan).unwrap();
+    assert_eq!(encoded["children"][1][0], 1, "a child names its parent row");
+    assert_eq!(
+        serde_json::from_value::<Plan>(encoded.clone()).unwrap(),
+        plan
+    );
+    let forge = |row: usize, column: usize, value: serde_json::Value| {
+        let mut forged = encoded.clone();
+        forged["children"][row][column] = value;
+        serde_json::from_value::<Plan>(forged)
+    };
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    for name in ["", ".", "..", "a/b", "a\0b"] {
+        assert!(
+            forge(0, 1, STANDARD.encode(name).into()).is_err(),
+            "{name:?}"
+        );
+    }
+    // A parent must precede its child; a row cannot name itself or later rows.
+    for parent in [2, 3, 99] {
+        assert!(forge(1, 0, parent.into()).is_err(), "{parent}");
+    }
+    assert!(forge(0, 1, "not base64!".into()).is_err());
+    // Unknown kinds and impossible versions never decode.
+    assert!(forge(1, 2, serde_json::json!([7, 12, 0, 0, 0, 4, 33152, 0, 0])).is_err());
+    assert!(forge(1, 2, serde_json::json!([7, 12, 0, 0, 0, 3, 33152, 0, 0])).is_err());
+    // Descendants without a payload are not a plan.
+    let mut orphaned = encoded.clone();
+    orphaned["top"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<Plan>(orphaned).is_err());
+    let empty = serde_json::to_value(Plan::default()).unwrap();
+    assert_eq!(
+        serde_json::from_value::<Plan>(empty).unwrap(),
+        Plan::default()
+    );
+}
+
+/// A decision's plans are part of its checkpoint, so a plan granting removal
+/// of anything but the exact expected payload makes the checkpoint invalid.
+#[test]
+fn a_decision_cannot_journal_a_plan_its_payload_evidence_does_not_grant() {
+    for case in cases().into_iter().filter(rooted) {
+        let settled = case.settled();
+        let honest = case.plans(&settled);
+        for (side, plan) in honest.iter() {
+            let (Some(_), Some(root)) = (plan, case.kind().root(side)) else {
+                continue;
+            };
+            let Some((name, versions)) = case
+                .intent
+                .checkpoint(&settled)
+                .expected_payload(side)
+                .unwrap()
+            else {
+                continue;
+            };
+            let top = Entry {
+                path: NativePath(root.path.0.join(name)),
+                version: versions[0].clone(),
+            };
+            let mut other = versions[0].clone();
+            other.object = object(other.object.unix_parts().unwrap().0, 999);
+            let forgeries = [
+                // Another payload version.
+                Plan::of(vec![Entry {
+                    version: other,
+                    ..top.clone()
+                }]),
+                // A sibling outside the payload.
+                Plan::of(vec![
+                    top.clone(),
+                    Entry {
+                        path: NativePath(root.path.0.join("foreign")),
+                        ..top.clone()
+                    },
+                ]),
+                // A different payload name.
+                Plan::of(vec![Entry {
+                    path: NativePath(root.path.0.join("foreign")),
+                    ..top.clone()
+                }]),
+            ];
+            for forged in forgeries {
+                let mut plans = honest.clone();
+                *plans.get_mut(side) = Some(forged);
+                assert!(
+                    case.attempt(&settled, Event::BeginRetirement(Decision::Explicit, plans))
+                        .is_err(),
+                    "{} {side:?}",
+                    case.name
+                );
+            }
+        }
     }
 }
 
@@ -1143,26 +1260,41 @@ fn cleanup_plan_budget_bounds_encoded_checkpoint_and_completed_roots_release_it(
     .unwrap();
     assert!(bytes.len() < crate::files::recovery::journal::MAX_RECORD_BYTES);
 
-    // Entry count alone is not a byte bound: long native paths must exhaust
-    // the plan budget well before reaching 65,536 entries.
+    // Entry count alone is not a byte bound: maximal names exhaust a
+    // two-root plan's share well before 65,536 entries. The same plan fits a
+    // single-root kind, which receives the whole decision.
     let root = Path::new("/volume/private");
     let mut top = version(7, 10);
     top.directory = true;
     top.mode = 0o40700;
-    let mut encoded =
-        serde_json::to_value(Plan::single(NativePath(root.join("parked")), top.clone())).unwrap();
-    let entries = encoded["entries"].as_array_mut().unwrap();
-    let long = "x".repeat(2000);
-    for index in 0..4200 {
-        let child = Plan::single(
-            NativePath(root.join("parked").join(format!("{long}{index}"))),
-            version(7, 20 + index),
-        );
-        entries.push(serde_json::to_value(child).unwrap()["entries"][0].clone());
-    }
-    let plan: Plan = serde_json::from_value(encoded).unwrap();
-    let error = plan.validate(root, Some(("parked", &[top]))).unwrap_err();
+    let flat = |count: u64, name: &dyn Fn(u64) -> String| {
+        let mut entries = vec![Entry {
+            path: NativePath(root.join("parked")),
+            version: top.clone(),
+        }];
+        entries.extend((0..count).map(|index| Entry {
+            path: NativePath(root.join("parked").join(name(index))),
+            version: version(7, 20 + index),
+        }));
+        Plan::of(entries)
+    };
+    let payload = Some(("parked", std::slice::from_ref(&top)));
+    let long = flat(22_000, &|index| format!("{index:05}{}", "x".repeat(250)));
+    let error = long.validate(root, payload, allowance(2)).unwrap_err();
     assert!(error.to_string().contains("byte budget"), "{error}");
+    long.validate(root, payload, allowance(1)).unwrap();
+    // The full entry cap fits one root's allowance at realistic names, and
+    // the charge bounds the exact encoding.
+    let full = flat(65_535, &|index| {
+        format!("photo-{index:06}-IMG_20260101.jpg")
+    });
+    full.validate(root, payload, allowance(1)).unwrap();
+    let encoded = serde_json::to_vec(&full).unwrap();
+    assert!(encoded.len() <= allowance(1), "{}", encoded.len());
+    assert_eq!(serde_json::from_slice::<Plan>(&encoded).unwrap(), full);
+    let over = flat(65_536, &|index| format!("{index}"));
+    let error = over.validate(root, payload, allowance(1)).unwrap_err();
+    assert!(error.to_string().contains("entry budget"), "{error}");
 }
 
 #[test]
@@ -1269,5 +1401,97 @@ fn measurement_is_accounting_for_settled_records_only_and_any_phase_change_clear
             let restoring = case.advance(measured, Event::Begin(Effect::Restore));
             assert_eq!(restoring.retained_bytes, None);
         }
+    }
+}
+
+/// A decoded checkpoint may only rest at a phase its kind's shape can reach:
+/// no parking for a replacement, no reapplication for a move, no capability
+/// evidence for a kind that plans no probes.
+#[test]
+fn checkpoints_at_phases_their_kind_never_takes_are_rejected() {
+    let at = |case: &Case, phase: Phase| State {
+        phase,
+        ..case.settled()
+    };
+    let forgeries = [
+        (replacement(), Phase::ParkIntent, Some(Effect::Park)),
+        (replacement(), Phase::Parked, None),
+        (cross_volume(), Phase::ReapplyIntent, Some(Effect::Reapply)),
+        (
+            same_volume_overwrite(),
+            Phase::ReapplyIntent,
+            Some(Effect::Reapply),
+        ),
+        (fast_path(), Phase::DisplaceIntent, Some(Effect::Displace)),
+        (fast_path(), Phase::Displaced, None),
+        (fast_path(), Phase::StageIntent, Some(Effect::Stage)),
+    ];
+    for (case, phase, effect) in forgeries {
+        let forged = at(&case, phase);
+        assert!(
+            case.intent.checkpoint(&forged).validate().is_err(),
+            "{} at {phase:?}",
+            case.name
+        );
+        if let Some(effect) = effect {
+            assert!(case.attempt(&forged, Event::Complete(effect)).is_err());
+            assert!(case
+                .attempt(&forged, Event::Begin(Effect::Restore))
+                .is_err());
+        }
+    }
+    let case = replacement();
+    let probed = State {
+        preflight: Some(crate::files::recovery::move_capability_model::Progress::new(0)),
+        ..case.planned.clone()
+    };
+    assert!(case.intent.checkpoint(&probed).validate().is_err());
+    assert!(case.attempt(&probed, Event::Begin(Effect::Root)).is_err());
+}
+
+/// A probe root may alias neither endpoint's directory, including a target
+/// directory that holds no probe of its own (same volume, another folder).
+#[test]
+fn a_probe_root_may_not_alias_either_endpoint_directory() {
+    let (source_parent, target_parent) = (object(7, 10), object(7, 20));
+    let spec = MoveSpec {
+        rename_probes: probes("/volume/a/source", None),
+        source: NativePath("/volume/a/source".into()),
+        source_parent,
+        source_version: version(7, 11),
+        target: NativePath("/volume/b/target".into()),
+        target_parent,
+        target_original: None,
+        strategy: Strategy::Rename,
+        source_root: None,
+        target_root: None,
+    };
+    let resources = vec![
+        resource(
+            "/volume/a/source",
+            Some(object(7, 11)),
+            source_parent,
+            Access::Write,
+        ),
+        resource("/volume/b/target", None, target_parent, Access::Write),
+    ];
+    let case = moved(
+        "across folders",
+        spec,
+        resources,
+        Sides::default(),
+        vec![Phase::PublishIntent, Phase::Published],
+    );
+    case.intent.checkpoint(&case.planned).validate().unwrap();
+    for aliased in [source_parent, target_parent, object(7, 11)] {
+        let mut forged = case.planned.clone();
+        match &mut forged.preflight.as_mut().unwrap().steps[0] {
+            ProbeStep::Removed { root, .. } => *root = aliased,
+            step => panic!("unexpected probe step {step:?}"),
+        }
+        assert!(
+            case.intent.checkpoint(&forged).validate().is_err(),
+            "{aliased:?}"
+        );
     }
 }

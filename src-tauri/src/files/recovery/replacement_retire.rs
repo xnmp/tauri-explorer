@@ -103,10 +103,17 @@ impl Root {
         expected: Option<&(&str, Vec<EntryVersion>)>,
     ) -> Result<Plan, AppError> {
         self.verify_retirement(intent, expected, None, false)?;
-        let plan = Plan::capture(&self.directory, &self.path, expected.map(|(name, _)| *name))?;
+        let allowance = intent.operation.kind().plan_allowance();
+        let plan = Plan::capture(
+            &self.directory,
+            &self.path,
+            expected.map(|(name, _)| *name),
+            allowance,
+        )?;
         plan.validate(
             &self.path,
             expected.map(|(name, versions)| (*name, versions.as_slice())),
+            allowance,
         )?;
         self.verify_retirement(intent, expected, None, false)?;
         plan.verify(&self.directory, &self.path, false)?;

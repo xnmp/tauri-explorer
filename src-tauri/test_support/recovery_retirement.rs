@@ -1237,3 +1237,89 @@ fn replacement_retirement_never_descends_into_a_mount_inside_its_root() {
     assert!(fixture.root().join("original/nested/deep.txt").is_file());
     assert!(fixture.indexed());
 }
+
+/// A discard stopped after it began removing the root still names that
+/// folder, which can hold the whole original, and Forget releases the record
+/// while leaving those files on disk (#874).
+#[test]
+fn a_stopped_replacement_discard_names_its_folder_and_can_be_forgotten() {
+    use crate::files::recovery::{model::RecoveryChoice, service};
+    let fixture = published();
+    let root = fixture.root();
+    // A settled replacement still holds its Undo, so it cannot be forgotten.
+    let refused = service::resolve(
+        &fixture.coordinator,
+        &fixture.id,
+        fixture.current_generation(),
+        RecoveryChoice::Release,
+    )
+    .unwrap();
+    assert!(refused.error.is_some());
+    assert!(fixture.indexed());
+    let stopped = fixture.retirement().retire_with(|checkpoint| {
+        if checkpoint == "target-intent" {
+            Err(AppError::Other("injected removal failure".into()))
+        } else {
+            Ok(())
+        }
+    });
+    assert!(stopped.is_err());
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    let snapshot = service::inspect(&fixture.coordinator, &fixture.id).unwrap();
+    let item = &snapshot.items[0];
+    assert_eq!(
+        item.retained_paths,
+        vec![root.to_string_lossy().into_owned()]
+    );
+    assert!(
+        item.actions.contains(&RecoveryChoice::Release),
+        "{:?}",
+        item.actions
+    );
+    assert!(
+        item.message.contains("the listed folder"),
+        "{}",
+        item.message
+    );
+    let reply = service::resolve(
+        &fixture.coordinator,
+        &fixture.id,
+        item.generation,
+        RecoveryChoice::Release,
+    )
+    .unwrap();
+    assert!(reply.error.is_none(), "{:?}", reply.error);
+    assert!(!fixture.indexed());
+    assert!(fixture.claims_released());
+    // Forget removes only the record; the files stay where it said they are.
+    assert_eq!(fs::read(root.join("original")).unwrap(), ORIGINAL_BYTES);
+    assert_eq!(fs::read(fixture.target()).unwrap(), NEW_BYTES);
+}
+
+/// Removal deletes exactly what the discard planned: a child that appears in
+/// the retained original after planning is never removed, nor anything else.
+#[test]
+fn an_unplanned_child_in_a_retained_original_preserves_every_file() {
+    let fixture = published_directories();
+    let root = fixture.root();
+    let foreign = root.join("original/nested/foreign");
+    let error = fixture
+        .retirement()
+        .retire_with(|checkpoint| {
+            if checkpoint == "target-intent" {
+                fs::write(&foreign, b"written after planning").unwrap();
+            }
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("unplanned"), "{error}");
+    assert_eq!(fs::read(&foreign).unwrap(), b"written after planning");
+    assert!(root.join("original/nested/deep.txt").is_file());
+    assert!(root.join("manifest.intent").is_file());
+    assert!(fixture.indexed());
+    // Once the foreign child is gone, the same discard completes.
+    fs::remove_file(&foreign).unwrap();
+    fixture.retirement().retire().unwrap();
+    assert!(!root.exists());
+    assert!(!fixture.indexed());
+}

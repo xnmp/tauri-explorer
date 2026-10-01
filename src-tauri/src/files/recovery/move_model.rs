@@ -215,6 +215,10 @@ impl DurableKind for MoveSpec {
             .collect()
     }
 
+    fn parents(&self) -> Vec<ObjectId> {
+        vec![self.source_parent, self.target_parent]
+    }
+
     fn source_version(&self) -> &EntryVersion {
         &self.source_version
     }

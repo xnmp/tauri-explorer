@@ -5,8 +5,7 @@ use super::planning_budget::effect_revision;
 use super::readonly_umask::{running_as_root, set_mode};
 use super::*;
 
-/// Eight nested 200-byte directory names: each recorded path below this costs
-/// several KiB of a retirement plan's byte budget, so ~2k entries exhaust it.
+/// Eight nested directories holding the moved files.
 fn deep(root: &std::path::Path) -> PathBuf {
     let mut deepest = root.to_owned();
     for level in 0..8 {
@@ -21,10 +20,14 @@ fn populate_deep(deepest: &std::path::Path, files: std::ops::Range<usize>) {
     }
 }
 
-fn trim_deep(deepest: &std::path::Path, files: std::ops::Range<usize>) {
-    for index in files {
-        fs::remove_file(deepest.join(format!("{index:05}{}", "f".repeat(200)))).unwrap();
-    }
+/// The user keeps working inside the destination until it is deeper than any
+/// retirement plan may record.
+fn grow_past_plan(deepest: &std::path::Path) {
+    super::planning_budget::unplannable_tree(&deepest.join("grown"));
+}
+
+fn trim_growth(deepest: &std::path::Path) {
+    fs::remove_dir_all(deepest.join("grown")).unwrap();
 }
 
 /// A cross-volume move of a tree that fits its retirement plans at admission.
@@ -56,13 +59,13 @@ fn undo_refuses_a_destination_grown_past_any_retirement_plan_and_keeps_it() {
     let f = plannable_deep_move();
     let revision = effect_revision(&f);
     // The user keeps working deep inside the moved destination.
-    populate_deep(&deep(&f.target), 1_200..2_600);
+    grow_past_plan(&deep(&f.target));
     let error = history_undo(&f, revision)
         .expect_err("Undo retained a destination no discard could ever remove");
     // A refusal before any durable effect keeps the Undo entry itself.
     assert!(!matches!(error, AppError::MutationUncertain(_)), "{error}");
     assert!(error.to_string().contains("Nothing was changed"), "{error}");
-    assert_eq!(fs::read_dir(deep(&f.target)).unwrap().count(), 2_600);
+    assert_eq!(fs::read_dir(deep(&f.target)).unwrap().count(), 1_201);
     assert!(!f.source.exists(), "the source stayed parked");
     assert!(f
         .coordinator
@@ -71,7 +74,7 @@ fn undo_refuses_a_destination_grown_past_any_retirement_plan_and_keeps_it() {
         .is_some());
     // Once the destination fits again, the same Undo succeeds, and the
     // publication it retains can still be discarded.
-    trim_deep(&deep(&f.target), 1_200..2_600);
+    trim_growth(&deep(&f.target));
     history_undo(&f, revision).unwrap();
     assert_eq!(fs::read_dir(deep(&f.source)).unwrap().count(), 1_200);
     assert!(!f.target.exists());
@@ -91,7 +94,7 @@ fn undo_refuses_a_destination_grown_past_any_retirement_plan_and_keeps_it() {
 fn a_refused_undo_leaves_discard_able_to_keep_the_grown_destination() {
     let f = plannable_deep_move();
     let revision = effect_revision(&f);
-    populate_deep(&deep(&f.target), 1_200..2_600);
+    grow_past_plan(&deep(&f.target));
     assert!(history_undo(&f, revision).is_err());
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     assert!(
@@ -108,7 +111,7 @@ fn a_refused_undo_leaves_discard_able_to_keep_the_grown_destination() {
     .unwrap();
     assert!(reply.error.is_none(), "{:?}", reply.error);
     f.assert_retired();
-    assert_eq!(fs::read_dir(deep(&f.target)).unwrap().count(), 2_600);
+    assert_eq!(fs::read_dir(deep(&f.target)).unwrap().count(), 1_201);
     assert!(!f.source.exists());
 }
 
@@ -122,15 +125,15 @@ fn a_destination_grown_while_undo_runs_is_kept_public_and_retryable() {
         .unwrap()
         .with_boundary(Box::new(move |label| {
             if label == "restore-intent" {
-                populate_deep(&grown, 1_200..2_600);
+                grow_past_plan(&grown);
             }
             Ok(())
         }))
         .restore_move();
     assert!(result.is_err(), "a grown destination was parked");
-    assert_eq!(fs::read_dir(&deepest).unwrap().count(), 2_600);
+    assert_eq!(fs::read_dir(&deepest).unwrap().count(), 1_201);
     // The retry File Recovery offers succeeds once the destination fits.
-    trim_deep(&deepest, 1_200..2_600);
+    trim_growth(&deepest);
     let snapshot = service::inspect(&f.coordinator, &f.id).unwrap();
     assert!(
         snapshot.items[0].actions.contains(&RecoveryChoice::Restore),
@@ -184,7 +187,7 @@ fn undo_says_why_it_cannot_keep_the_destination() {
     // Grown past any retirement plan.
     let f = plannable_deep_move();
     let revision = effect_revision(&f);
-    populate_deep(&deep(&f.target), 1_200..2_600);
+    grow_past_plan(&deep(&f.target));
     let grown = history_undo(&f, revision).unwrap_err().to_string();
     assert!(grown.contains("grown too large"), "{grown}");
     assert!(grown.contains("Nothing was changed"), "{grown}");
@@ -212,7 +215,13 @@ fn move_cleanup_never_descends_into_a_mount_inside_its_payload() {
         fs::create_dir(&outside).unwrap();
         fs::write(outside.join("foreign"), b"foreign bytes").unwrap();
         let directory = Directory::open(&root).unwrap();
-        let plan = Plan::capture(&directory, &root, Some("payload")).unwrap();
+        let plan = Plan::capture(
+            &directory,
+            &root,
+            Some("payload"),
+            crate::files::recovery::move_cleanup::allowance(2),
+        )
+        .unwrap();
         let source = if foreign { &outside } else { &planned };
         let mount = BindMount::new(source, &planned);
 

@@ -467,21 +467,20 @@ fn foreign_descendant_in_later_root_is_preserved_after_cross_root_crash() {
 
 #[test]
 fn pending_tree_requires_every_planned_child_even_when_parent_metadata_matches() {
-    use crate::files::recovery::{model::NativePath, move_cleanup::Plan};
+    use crate::files::recovery::move_cleanup::{allowance, Plan};
+    use base64::{engine::general_purpose::STANDARD, Engine};
     let f = Fixture::new(true, true, true);
     let root = &f.roots[1];
     let directory = Directory::open(root).unwrap();
-    let plan = Plan::capture(&directory, root, Some("original")).unwrap();
+    let plan = Plan::capture(&directory, root, Some("original"), allowance(2)).unwrap();
     let mut encoded = serde_json::to_value(plan).unwrap();
-    let entries = encoded["entries"].as_array_mut().unwrap();
-    let mut missing = entries
-        .iter()
-        .find(|entry| entry["version"]["directory"] == false)
-        .unwrap()
-        .clone();
-    missing["path"] =
-        serde_json::to_value(NativePath(root.join("original/missing-planned-file"))).unwrap();
-    entries.push(missing);
+    let children = encoded["children"].as_array_mut().unwrap();
+    // A planned regular file (kind 0), recorded again under a name directly
+    // inside the payload that was never there.
+    let mut missing = children.iter().find(|row| row[2][5] == 0).unwrap().clone();
+    missing[0] = 0.into();
+    missing[1] = STANDARD.encode("missing-planned-file").into();
+    children.push(missing);
     let plan: Plan = serde_json::from_value(encoded).unwrap();
     // No directory metadata changed; only complete membership can catch this.
     let error = plan.verify(&directory, root, false).unwrap_err();
@@ -493,4 +492,51 @@ fn pending_tree_requires_every_planned_child_even_when_parent_metadata_matches()
         plan.verify(&directory, root, true).is_ok(),
         "removing may have already unlinked a planned child"
     );
+}
+
+/// Endpoints are observed through their recorded parent directory: an empty
+/// folder replacing the source's folder at the same path is not evidence that
+/// the recorded location is still vacated.
+#[test]
+fn a_replaced_endpoint_folder_preserves_the_record_until_it_returns() {
+    let base = tempfile::tempdir().unwrap();
+    let base_path = fs::canonicalize(base.path()).unwrap();
+    for folder in ["a", "b"] {
+        fs::create_dir(base_path.join(folder)).unwrap();
+    }
+    let source = base_path.join("a/source");
+    let target = base_path.join("b/target");
+    fs::write(&source, MOVED).unwrap();
+    fs::write(&target, OLD).unwrap();
+    let coordinator = Coordinator::open(&base_path.join("recovery")).unwrap();
+    let mut progress = crate::progress::ProgressTracker::new(None, "move", "cancelled", 0, 0, None);
+    PreparedMove::prepare(&coordinator, &source, &target)
+        .unwrap()
+        .execute(&mut progress)
+        .unwrap();
+    let claim = || {
+        let entry = coordinator.inventory().unwrap().entries.remove(0);
+        coordinator
+            .try_claim(&entry.intent.id, entry.generation.unwrap())
+            .unwrap()
+            .unwrap()
+    };
+    let away = base_path.join("a.away");
+    fs::rename(base_path.join("a"), &away).unwrap();
+    fs::create_dir(base_path.join("a")).unwrap();
+    let retirement = Retirement::open(claim()).unwrap();
+    assert!(
+        matches!(retirement.eligibility(), Eligibility::Preserved(_)),
+        "{:?}",
+        retirement.eligibility()
+    );
+    assert!(retirement.retire().is_err());
+    assert_eq!(fs::read(&target).unwrap(), MOVED);
+    assert_eq!(coordinator.inventory().unwrap().entries.len(), 1);
+    // With the recorded folder back in place, the discard proceeds.
+    fs::remove_dir(base_path.join("a")).unwrap();
+    fs::rename(&away, base_path.join("a")).unwrap();
+    Retirement::open(claim()).unwrap().retire().unwrap();
+    assert!(coordinator.inventory().unwrap().entries.is_empty());
+    assert_eq!(fs::read(&target).unwrap(), MOVED);
 }

@@ -287,10 +287,10 @@ but rejects newly added descendants and changed files before deleting anything.
 Directory size/mtime may differ after the application's own child removals;
 its native identity, ownership, mode and complete remaining child set must still
 match the recorded plan. Every leaf is rechecked before unlink and each parent
-is synced. Plans have depth, entry-count and conservative 8 MiB per-root encoded-byte
-bounds (16 MiB aggregate, below the 32 MiB checkpoint limit). With long paths
-the byte bound admits far fewer entries than the 65,536-entry bound (roughly
-12,000 when each entry costs 2·path+512 bytes). Forward moves therefore apply the same walk, budgets
+is synced. Plans have depth, entry-count and exact encoded-byte bounds: one
+decision's plans share a quarter of the journal (16 MiB, below the 32 MiB
+checkpoint limit), split evenly across the record's planned roots (ADR 0026
+gives the encoding and its sizing). Forward moves therefore apply the same walk, budgets
 and no-cross-mount rule to every payload they would retain *before* any record
 exists, and refuse a payload that could never be discarded (#760). The parked source and a displaced
 original live in private storage from then on. The one retained payload a user

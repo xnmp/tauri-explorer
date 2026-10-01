@@ -1676,9 +1676,15 @@ mod tests {
             .expect("the PTY reports its shell's pid") as libc::pid_t;
 
         let mut transcript = String::new();
+        // Markers match in order: each search starts after the previous match.
+        let mut seen = 0;
         let mut expect_output = |marker: &str| {
             let deadline = std::time::Instant::now() + Duration::from_secs(15);
-            while !transcript.contains(marker) {
+            loop {
+                if let Some(at) = transcript[seen..].find(marker) {
+                    seen += at + marker.len();
+                    break;
+                }
                 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                 assert!(
                     !remaining.is_zero(),
@@ -1691,18 +1697,25 @@ mod tests {
             }
         };
 
-        write_terminal(id, OWNER, 0, b"printf 'RT:%s:%s\\n' round trip\n".to_vec()).unwrap();
+        let command = b"PS1='READY> '; printf 'RT:%s:%s\\n' round trip\n";
+        write_terminal(id, OWNER, 0, command.to_vec()).unwrap();
         expect_output("RT:round:trip");
 
-        write_terminal(id, OWNER, 1, b"stty size | sed 's/^/SIZE=/'\n".to_vec()).unwrap();
-        expect_output("SIZE=24 80");
+        // Each write prints its own marker, so a repeated or lost write cannot
+        // pass for a stale size (#929).
+        write_terminal(id, OWNER, 1, b"stty size | sed 's/^/SIZE1=/'\n".to_vec()).unwrap();
+        expect_output("SIZE1=24 80");
+        // Resize at the next prompt. Readline writes back the size it read
+        // while preparing each line (TIOCGWINSZ, then TIOCSWINSZ), so a resize
+        // between the two is lost to the stale size, in any terminal (#929).
+        expect_output("READY> ");
         assert!(
             resize_terminal(id, "another-window", 100, 30).is_err(),
             "only the owning window may resize its terminal"
         );
         resize_terminal(id, OWNER, 132, 40).unwrap();
-        write_terminal(id, OWNER, 2, b"stty size | sed 's/^/SIZE=/'\n".to_vec()).unwrap();
-        expect_output("SIZE=40 132");
+        write_terminal(id, OWNER, 2, b"stty size | sed 's/^/SIZE2=/'\n".to_vec()).unwrap();
+        expect_output("SIZE2=40 132");
 
         write_terminal(id, OWNER, 3, b"exit 7\n".to_vec()).unwrap();
         let status = exit_rx

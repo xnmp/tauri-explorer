@@ -10,6 +10,7 @@
   import ShortcutCheatsheet from "./ShortcutCheatsheet.svelte";
   import ProgressDialog from "./ProgressDialog.svelte";
   import ToastOverlay from "./ToastOverlay.svelte";
+  import { openWithStore } from "$lib/state/open-with.svelte";
 
   let { pickerInfo = null, recovery = null, onFilesChanged }: {
     pickerInfo?: PickerInfo | null;
@@ -37,6 +38,11 @@
     label: "Keyboard Shortcuts", isOpen: () => !pickerInfo && dialogStore.isKeybindingsOpen,
     load: () => import("$lib/components/KeybindingsDialog.svelte"),
     onFailure: () => dialogStore.closeKeybindings(),
+  }, notifyError);
+  const OpenWithDialog = useLazyDialog({
+    label: "Open with", isOpen: () => !pickerInfo && openWithStore.isOpen,
+    load: () => import("$lib/components/OpenWithDialog.svelte"),
+    onFailure: () => openWithStore.close(),
   }, notifyError);
   const WorkspaceDialog = useLazyDialog({
     label: "Workspaces", isOpen: () => !pickerInfo && dialogStore.isWorkspaceOpen,
@@ -105,6 +111,11 @@
 {#if KeybindingsDialog.component}
   <svelte:boundary onerror={dialogCrash("Keyboard Shortcuts", () => dialogStore.closeKeybindings())}>
     <KeybindingsDialog.component open={dialogStore.isKeybindingsOpen} onClose={() => dialogStore.closeKeybindings()} />
+  </svelte:boundary>
+{/if}
+{#if OpenWithDialog.component}
+  <svelte:boundary onerror={dialogCrash("Open with", openWithStore.close)}>
+    <OpenWithDialog.component />
   </svelte:boundary>
 {/if}
 {#if QuickOpen.component}

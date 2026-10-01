@@ -22,6 +22,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src/lib/components/FileRecoveryDialog.svelte`, `src/lib/components/FileRecoveryNotice.svelte` — page-owned recovery inspection/choices, stable async-action focus and persistent attention notice; deferred mounting uses WindowDialogs and the status-bar snippet or standalone attention row.
 
 - `WindowDialogs.svelte` — typed lazy dialog host, crash boundaries, plugin dialogs and window-level feedback, including portal mode.
+- `OpenWithDialog.svelte` — accessible installed-application choice with captured filename, loading/empty/error feedback and unchanged-default messaging.
 
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
@@ -114,6 +115,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
 - `ordered-registry.ts` — owned contributions sorted by plugin list position, then registration; shared by context-menu items and plugin settings sections.
 - `modal-ownership.svelte.ts` — shared input ownership for mounted and contributed modals; closing releases only the corresponding registration.
+- `open-with.svelte.ts` — captured application-choice sessions, late-result rejection and single launch lifecycle.
 
 - `recycle-bin.ts` — turns the native Recycle Bin IPC result into a user-visible failure toast; called by `FilesSidebarView.svelte`.
 - `git-graph-component.ts` — resolved lazy graph component cache with an injected importer; coalesces first loads and preserves synchronous cached remounts.
@@ -301,6 +303,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-reconciliation.ts` — complete-listing three-way merge and selection identity reconciliation after concurrent mutations.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
+- `open-with.ts` — single-file selection eligibility and explicit Linux-only application-choice availability.
 - `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
 - `path.ts` — path normalization/join/parent/relative helpers.
 - `paste-source.ts` — pure file-list Paste source selection: the app's own Copy/Cut while the system clipboard mirrors it (or, for Copy only, when it cannot be read), otherwise an external file list (#865).
@@ -549,6 +552,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `linux_mount_watch.rs` — POLLPRI watch on `/proc/self/mountinfo` that pushes `drives-changed` when mount-table-derived drives (rclone FUSE, bind/manual mounts) change. The opt-in real-kernel/namespace test moved to `src-tauri/test_support/linux_mount_watch.rs` (#926); run via `cargo test --lib files::linux_mount_watch::privileged_tests -- --ignored` under the documented `unshare`.
 - `linux_volume_monitor.rs` — one long-lived UDisks2 subscription (ObjectManager + PropertiesChanged + NameOwnerChanged) feeding a cached snapshot, 30 s backstop resync, reconnect/fallback, and `drives-changed` notifications.
 - `external_apps.rs` — open files / image viewers / terminals externally.
+- `open_with.rs` — Linux suitable GIO application catalogue and revalidated desktop-ID launch for regular files, without association changes.
 - `shortcuts.rs` — Windows `.lnk` shortcut resolution.
 
 ## src/test-support/ — opt-in E2E fixtures; loaded only by `loadE2EHooks()` in hook builds (`VITE_E2E_HOOKS=1`).

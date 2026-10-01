@@ -294,6 +294,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             files::external_apps::open_file,
             files::external_apps::open_file_at_line,
             files::external_apps::open_file_with,
+            files::open_with::list_open_with_applications,
+            files::open_with::open_file_with_application,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,
             files::external_apps::list_installed_terminals,

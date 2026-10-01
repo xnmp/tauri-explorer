@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import { renameEntry, deleteEntry, deleteEntryPermanent, readTextFile, createDirectory, createSymlink } from "$lib/api/files";
-import { openFile, openFileWith } from "$lib/api/open";
+import { openFile, openFileWith, listOpenWithApplications, openFileWithApplication } from "$lib/api/open";
 import { compressToZip, extractArchive } from "$lib/api/archive";
 import { getThumbnailData } from "$lib/api/thumbnails";
 
@@ -38,6 +38,8 @@ describe("virtual path guards", () => {
   it("rejects opening/reading virtual paths via the OS backend", async () => {
     await expectRejected(openFile(V));
     await expectRejected(openFileWith(V, "gimp"));
+    await expectRejected(listOpenWithApplications(V));
+    await expectRejected(openFileWithApplication(V, "editor.desktop"));
     await expectRejected(readTextFile(V));
     await expectRejected(getThumbnailData(V, 64) as never);
   });

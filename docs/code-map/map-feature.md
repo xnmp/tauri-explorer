@@ -457,6 +457,7 @@ backend for E2E/browser).
 
 - `api/archive.ts`, `src-tauri/src/archive.rs`, `src-tauri/src/files/archive_plan.rs` — zip compress/extract, list contents. Per ADR 0024 archive writes take the shared mutation admission: `api/archive.ts` goes through `api/file-mutations.ts`, the command acquires the renderer owner, claims its output subtree and input reads through `files/recovery/runtime.rs`, binds the worker to the resolved paths, and retires the claim after the blocking job joins. `src-tauri/test_support/archive_admission.rs` covers competing-operation exclusion, cancellation, renderer detach and cleanup failure on a real filesystem.
 - `src-tauri/src/files/external_apps.rs`, `api/files.ts` (openFileWith, openImageWithSiblings) — open-with
+- `domain/open-with.ts`, `state/open-with.svelte.ts`, `components/OpenWithDialog.svelte`, `components/ContextMenu.svelte`, `api/open.ts`, `src-tauri/src/files/open_with.rs` — Linux Open with lists suitable installed GIO applications, captures the chosen file and revalidates desktop IDs before launching without association changes. Cancellation discards late catalogue results; Windows/macOS and ineligible selections show a disabled action with a reason (#822).
 - `src-tauri/src/wallpaper.rs` (setAsWallpaper), `system.rs` (get_app_info, dirs), `portal.rs` (Linux portals)
 - `src-tauri/src/files/shortcuts.rs` — .lnk/.desktop resolution
 

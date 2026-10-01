@@ -115,7 +115,6 @@ export function createDrivesStore(foreground: ForegroundGate) {
 
   /** The session's feeds: first read, mount-base watches, pushes and poll. */
   async function begin(session: Session): Promise<void> {
-    if (active !== session) return;
     schedule(session, false);
     await refresh();
     if (active !== session) return;

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startWindowSession } from "$lib/state/window-session";
+import { createForegroundGate, type ForegroundGate } from "$lib/state/page-foreground";
 
 const f = vi.hoisted(() => ({
   settings: vi.fn<() => Promise<void>>(), initTabs: vi.fn(() => ({})), view: vi.fn(),
@@ -10,7 +11,7 @@ const f = vi.hoisted(() => ({
   config: vi.fn(), stopConfig: vi.fn(), transfer: vi.fn(), stopTransfer: vi.fn(),
   syncSize: vi.fn(), nativeSession: vi.fn(async () => "session"),
   recoveryStart: vi.fn(async () => {}), recoveryDispose: vi.fn(async () => {}),
-  activate: null as (() => void) | null,
+  gate: null as unknown as ForegroundGate,
   mode: "off", warmEnabled: true,
 }));
 vi.mock("$lib/state/file-recovery-session.svelte", () => ({ createFileRecoverySession: () => ({ start: f.recoveryStart, dispose: f.recoveryDispose }) }));
@@ -26,7 +27,11 @@ vi.mock("$lib/state/window-tabs.svelte", () => ({ windowTabsManager: { init: f.i
   getActiveExplorer: () => ({ currentPath: "/work", setViewMode: f.view }) } }));
 vi.mock("$lib/state/window-title.svelte", () => ({ startWindowTitleSync: f.title }));
 vi.mock("$lib/state/warm-window", () => ({ warmMode: () => f.mode, spawnWarmWindow: f.spawn,
-  runWarmWindow: (_measure: boolean, activate: () => void) => { f.activate = activate; return { ready: Promise.resolve(true), dispose() {} }; } }));
+  runWarmWindow: () => ({ ready: Promise.resolve(true), dispose() {} }) }));
+// The page's one foreground notion; each test decides whether it starts open.
+vi.mock("$lib/state/page-foreground", async (actual) => ({
+  ...await actual<typeof import("$lib/state/page-foreground")>(), get pageForeground() { return f.gate; },
+}));
 vi.mock("$lib/state/bookmarks.svelte", () => ({ bookmarksStore: { init: async () => {} } }));
 vi.mock("$lib/state/folder-views.svelte", () => ({ folderViewsStore: { init: async () => {} } }));
 vi.mock("$lib/state/manual-hidden.svelte", () => ({ manualHiddenStore: { init: async () => {} } }));
@@ -50,7 +55,7 @@ let host: EventTarget;
 const options = () => ({ picker: false, homePath: "/home/me", settingsReady: vi.fn(), commandsReady: vi.fn() });
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks();
-  f.mode = "off"; f.warmEnabled = true; f.activate = null;
+  f.mode = "off"; f.warmEnabled = true; f.gate = createForegroundGate(true);
   f.settings.mockImplementation(() => new Promise(resolve => { resolveSettings = resolve; }));
   f.title.mockReturnValue(f.stopTitle); f.nativeClose.mockReturnValue(f.stopNativeClose);
   f.config.mockReturnValue(f.stopConfig); f.transfer.mockReturnValue(f.stopTransfer);
@@ -182,14 +187,23 @@ it("permits recovery after an initial listing error without priming a warm windo
   session.dispose();
 });
 
-it.each(["park", "measure"])("waits for successful %s activation and foreground readiness before recovery", async (mode) => {
+it.each(["park", "measure"])("waits for the %s page to enter the foreground before recovery", async (mode) => {
   f.mode = mode;
+  f.gate = createForegroundGate(false);
   const session = startWindowSession(options());
   session.markCoreReady();
   expect(f.recoveryStart).not.toHaveBeenCalled();
-  f.activate!();
+  await f.gate.enterForeground();
   expect(f.recoveryStart).toHaveBeenCalledOnce();
   session.dispose();
-  f.activate!();
-  expect(f.recoveryStart).toHaveBeenCalledOnce();
+});
+
+it("never starts recovery for a parked session disposed before activation", async () => {
+  f.mode = "park";
+  f.gate = createForegroundGate(false);
+  const session = startWindowSession(options());
+  session.markCoreReady();
+  session.dispose();
+  await f.gate.enterForeground();
+  expect(f.recoveryStart).not.toHaveBeenCalled();
 });

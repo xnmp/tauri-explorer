@@ -288,19 +288,29 @@ describe("warm-window reveal contract", () => {
       expect.objectContaining({ type: "explorer:focus-address-bar" }),
     );
   });
-  it("starts feeds deferred while parked on activation without waiting for them to reveal (#931)", async () => {
-    // A feed whose first read never settles (e.g. slow PowerShell drive
-    // enumeration on Windows) must not hold back the claimed window.
-    const enter = vi.spyOn(pageForeground, "enterForeground").mockImplementation(() => {
-      currentWindow.calls.push("foreground");
-      return new Promise<void>(() => {});
-    });
+  it("enters the page foreground only once a revealed activation has committed (#931)", async () => {
+    const enter = vi.spyOn(pageForeground, "enterForeground").mockResolvedValue();
     await runWarmWindow(false).ready;
+    expect(enter).not.toHaveBeenCalled();
     await evt.listener!({
       payload: { path: "/work/gamma", handoff: { sourceWindow: "main", requestId: "gamma" } },
     });
     expect(currentWindow.calls).toContain("show");
-    expect(currentWindow.calls.indexOf("foreground")).toBeLessThan(currentWindow.calls.indexOf("show"));
+    expect(enter).toHaveBeenCalledOnce();
     enter.mockRestore();
+  });
+  it("keeps the page parked when its activation lease expires before commit (#931)", async () => {
+    const enter = vi.spyOn(pageForeground, "enterForeground").mockResolvedValue();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pooled = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation(async (cmd, args) => cmd === "warm_pool_activate" ? false : pooled(cmd, args));
+    await runWarmWindow(false).ready;
+    await evt.listener!({
+      payload: { path: "/work/delta", handoff: { sourceWindow: "main", requestId: "delta" } },
+    });
+    expect(currentWindow.calls).toContain("show");
+    expect(enter).not.toHaveBeenCalled();
+    invokeMock.mockImplementation(pooled);
+    enter.mockRestore(); error.mockRestore();
   });
 });

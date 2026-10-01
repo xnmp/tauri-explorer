@@ -14,6 +14,7 @@ import { startWindowStartup } from "./window-startup";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { startWindowTitleSync } from "./window-title.svelte";
 import { warmMode, runWarmWindow, spawnWarmWindow } from "./warm-window";
+import { pageForeground } from "./page-foreground";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { folderViewsStore } from "./folder-views.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
@@ -74,15 +75,12 @@ export function startWindowSession(options: WindowSessionOptions) {
     if (isTauri()) stops.push(windowTabsManager.observeNativeClose());
     const mode = warmMode();
     let backgroundReady = false;
-    let foreground = mode === "off";
     const startRecovery = () => {
-      if (backgroundReady && foreground && !lifetime.signal.aborted) void recovery?.start();
+      if (backgroundReady && pageForeground.isForeground && !lifetime.signal.aborted) void recovery?.start();
     };
     const markBackgroundReady = () => { backgroundReady = true; startRecovery(); };
-    const warmWindow = mode !== "off" ? runWarmWindow(mode === "measure", () => {
-      foreground = true;
-      startRecovery();
-    }) : null;
+    stops.push(pageForeground.whenForeground(startRecovery));
+    const warmWindow = mode !== "off" ? runWarmWindow(mode === "measure") : null;
     if (warmWindow) stops.push(() => warmWindow.dispose());
 
     const plan = planWindowLaunch(window.location.search,

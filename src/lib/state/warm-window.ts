@@ -185,7 +185,7 @@ export async function consumeWarmWindow(
  * so activation latency is captured headlessly (and skip pool registration —
  * a self-activated window must never be claimable).
  */
-export function runWarmWindow(measure: boolean, onActivated?: () => void): { ready: Promise<boolean>; dispose(): void } {
+export function runWarmWindow(measure: boolean): { ready: Promise<boolean>; dispose(): void } {
   let started = 0;
   const self = getCurrentWindow();
   const owner = createWarmActivation({
@@ -202,13 +202,7 @@ export function runWarmWindow(measure: boolean, onActivated?: () => void): { rea
       const explorer = windowTabsManager.getActiveExplorer();
       if (!explorer) throw new Error("Warm destination has no active explorer");
       if (viewMode) explorer.setViewMode(viewMode);
-      // Feeds deferred while parked (#931) start now but never gate the
-      // reveal: the parked page already shows its boot-time drive list, and a
-      // slow backend read (PowerShell on Windows) must not delay activation.
-      void pageForeground.enterForeground();
-      if (!await explorer.navigateTo(path, { autoEnterSingleSubdir: false })) {
-        throw new Error("Warm navigation failed or was superseded");
-      }
+      if (!await explorer.navigateTo(path, { autoEnterSingleSubdir: false })) throw new Error("Warm navigation failed or was superseded");
     },
     prepare: async ({ path, x, y, width, height }, current) => {
       try {
@@ -235,7 +229,9 @@ export function runWarmWindow(measure: boolean, onActivated?: () => void): { rea
     shown: () => {
       void logStartupTiming(`Startup(warm-activate): show=${(performance.now() - started).toFixed(1)}ms`).catch(() => {});
     },
-    activated: onActivated,
+    // Only a committed activation makes this a user's window: the page's
+    // deferred services start here, never for a window that may be retired.
+    activated: () => { void pageForeground.enterForeground(); },
     reportError: (error) => console.error("Warm window activation failed:", error),
   });
   if (measure) {

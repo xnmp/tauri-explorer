@@ -1,13 +1,19 @@
 /**
- * Whether this page is a foreground window or a parked warm window (#931).
+ * Whether this page is a foreground window or a parked warm window: the one
+ * foreground notion every page-lifetime service consults.
  *
- * A parked warm window is a hidden, fully booted page that waits to be
- * claimed. It must not run background feeds a user can only see once it is
- * shown: on Linux CI such a page wedged (its WebKitWebProcess stopped
- * answering) after #921 gave every page a live drive subscription. Feeds that
- * only matter to a visible window defer their start through this gate, and
- * activation opens it before the window is revealed, so a claimed window
- * never shows the parked page's absent or stale state.
+ * A parked warm window is a hidden, fully booted page that may wait for the
+ * app's whole lifetime to be claimed. Work that only a visible window needs
+ * starts through this gate, which a parked or measuring page opens only once
+ * its activation has committed. Before the gate, a parked page ran its own
+ * drive feed for its whole life: a PowerShell enumeration every 1.5 s on
+ * Windows, a 1.5 s poll and a `/Volumes` watch on macOS, and a 30 s poll plus
+ * evaluated `drives-changed` pushes on Linux. File-operation recovery is the
+ * other consumer: a page that may still be retired must not claim it.
+ *
+ * Deferred work starts after the window is already shown. A claimed window
+ * therefore shows the drive list it read while parked until its activation
+ * re-read lands, which takes seconds on Windows (#931).
  */
 
 export type WarmMode = "off" | "park" | "measure";
@@ -43,7 +49,8 @@ export function createForegroundGate(foreground: boolean): ForegroundGate {
   let open = foreground;
   const deferred = new Set<Start>();
   let entered: Promise<void> | null = foreground ? Promise.resolve() : null;
-  const run = (start: Start) => Promise.resolve().then(start);
+  // Synchronous, so a start runs before anything can stop its owner.
+  const run = (start: Start) => new Promise<void>((resolve) => resolve(start()));
 
   return {
     get isForeground() { return open; },
@@ -70,5 +77,5 @@ export function createForegroundGate(foreground: boolean): ForegroundGate {
   };
 }
 
-/** This page's gate: closed in a parked or measuring warm window until activated. */
+/** This page's gate: closed in a parked or measuring warm window until its activation commits. */
 export const pageForeground = createForegroundGate(warmMode() === "off");

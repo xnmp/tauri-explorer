@@ -79,3 +79,12 @@ it("a foreground page starts its feeds immediately, with one first read", async 
   expect(mocks.live).toHaveBeenCalled();
   expect(mocks.list).toHaveBeenCalledTimes(2); // first read + the post-subscribe re-read
 });
+
+it("a foreground session stopped as soon as it starts leaks no poll", async () => {
+  store = createDrivesStore(createForegroundGate(true));
+  void store.startPolling();
+  await store.stopPolling();
+  await vi.advanceTimersByTimeAsync(UNPUSHED_POLL_INTERVAL_MS * 4);
+  expect(vi.getTimerCount()).toBe(0);
+  expect(mocks.list).toHaveBeenCalledTimes(1);
+});

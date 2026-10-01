@@ -64,3 +64,14 @@ it("a cancelled deferred start never runs", async () => {
   await gate.enterForeground();
   expect(start).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["?warm=1&path=%2Fhome", false],
+  ["?path=%2Fhome", true],
+])("a page launched with %s starts with the foreground open: %s", async (search, open) => {
+  vi.resetModules();
+  vi.stubGlobal("window", { location: { search } });
+  const { pageForeground } = await import("$lib/state/page-foreground");
+  expect(pageForeground.isForeground).toBe(open);
+  vi.unstubAllGlobals();
+});

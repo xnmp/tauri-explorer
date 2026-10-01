@@ -212,6 +212,8 @@
     <input
       type="text"
       class="search-input"
+      data-autofocus
+      aria-label="Search shortcuts"
       placeholder="Search shortcuts..."
       bind:value={searchQuery}
     />
@@ -301,12 +303,14 @@
 
   .keybindings-header {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
     align-items: center;
   }
 
   .search-input {
     flex: 1;
+    min-width: 120px;
     padding: 8px 12px;
     background: var(--control-fill);
     border: 1px solid var(--control-stroke);

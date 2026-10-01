@@ -33,6 +33,11 @@
     load: () => import("$lib/components/SettingsDialog.svelte"),
     onFailure: () => dialogStore.closeSettings(),
   }, notifyError);
+  const KeybindingsDialog = useLazyDialog({
+    label: "Keyboard Shortcuts", isOpen: () => !pickerInfo && dialogStore.isKeybindingsOpen,
+    load: () => import("$lib/components/KeybindingsDialog.svelte"),
+    onFailure: () => dialogStore.closeKeybindings(),
+  }, notifyError);
   const WorkspaceDialog = useLazyDialog({
     label: "Workspaces", isOpen: () => !pickerInfo && dialogStore.isWorkspaceOpen,
     load: () => import("$lib/components/WorkspaceDialog.svelte"),
@@ -97,6 +102,11 @@
   {/if}
 {:else}
 <ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
+{#if KeybindingsDialog.component}
+  <svelte:boundary onerror={dialogCrash("Keyboard Shortcuts", () => dialogStore.closeKeybindings())}>
+    <KeybindingsDialog.component open={dialogStore.isKeybindingsOpen} onClose={() => dialogStore.closeKeybindings()} />
+  </svelte:boundary>
+{/if}
 {#if QuickOpen.component}
   <svelte:boundary onerror={dialogCrash("Quick Open", () => dialogStore.closeQuickOpen())}>
     <QuickOpen.component open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />

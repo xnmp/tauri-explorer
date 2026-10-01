@@ -312,7 +312,7 @@ fn a_publication_whose_source_removal_failed_is_uncertain_and_offers_no_inverse(
     let ItemOutcome::Uncertain { error } = &outcome.items[0] else {
         unreachable!()
     };
-    if Runtime::DURABLE {
+    if cfg!(feature = "durable-recovery") {
         assert!(error.contains("File Recovery"), "{error}");
     } else {
         assert!(error.contains("did not finish"), "{error}");

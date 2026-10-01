@@ -109,13 +109,19 @@ impl Runtime {
 
     /// Durable move: parks a cross-filesystem source and retains a displaced
     /// original until explicit retirement. Callers dispatch here only when
-    /// [`Self::DURABLE`].
+    /// [`Self::DURABLE`]; this refusal keeps a misrouted default build from
+    /// creating records.
     pub(crate) fn move_entry(
         &self,
         source: &std::path::Path,
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
+        if !Self::DURABLE {
+            return Err(AppError::Other(
+                "Durable move recovery is not enabled in this build".into(),
+            ));
+        }
         let coordinator = self.coordinator()?;
         let prepared = super::forward_move::PreparedMove::prepare(&coordinator, source, target)?;
         let result = prepared.execute(progress);

@@ -110,8 +110,11 @@ fn real_ordinary_prefix_and_replacement_commit_in_order() {
     let ItemOutcome::Succeeded { receipt } = &outcome.items[1] else {
         panic!("replacement must succeed")
     };
-    assert_eq!(receipt.replacement.is_some(), Runtime::DURABLE);
-    if !Runtime::DURABLE {
+    assert_eq!(
+        receipt.replacement.is_some(),
+        cfg!(feature = "durable-recovery")
+    );
+    if !cfg!(feature = "durable-recovery") {
         assert!(
             receipt.publication.is_some(),
             "staged overwrite retains exact ordinary-copy Undo authority"

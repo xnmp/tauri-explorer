@@ -51,11 +51,12 @@ creation rather than carrying it further.
   "either may ship first" combinations were never tested.
 - Production reads the feature in exactly one place,
   `recovery::Runtime::DURABLE`. Copy and move call sites branch on that
-  constant, and the durable executors do not re-check it.
+  constant. `Runtime::move_entry` still refuses when it is false, so a
+  misrouted default build cannot create a record.
 - Platform `cfg(target_os = "linux")` gates stay where the code cannot compile
   elsewhere.
-- Test-only items still use `#[cfg(feature = "durable-recovery")]`, because an
-  attribute cannot read a constant.
+- Tests read the feature directly (`cfg!`/`#[cfg]`) rather than the constant,
+  so a wrong constant fails them.
 
 Every feature read is in Linux-only code, so the former macOS opt-in CI step
 compiled the same code as macOS default and was removed. CI now covers four
@@ -70,9 +71,15 @@ Version-1 move intents, which had no `rename_probes`, came only from
 pre-#736 development builds. Their compatibility paths and fixtures are
 removed, and `rename_probes` is now required.
 
-A leftover version-1 move record fails catalog validation. Like any
-unreadable record, it fences the coordinator rather than being executed or
-deleted.
+A leftover version-1 move record no longer decodes, because `rename_probes` is
+missing. `Coordinator::open` still succeeds, but inventory, catalog discovery
+and every reservation fail with "Recovery record cannot be decoded; evidence is
+preserved". That fences all Linux admission until the record is dealt with; it
+is never executed or deleted.
+
+Manual recovery for a development profile: inspect or remove
+`file-recovery/catalog/<id>.intent`. Parked artifacts remain in the
+`.tauri-explorer-recovery-*` directories beside the moved entries.
 
 Governs: `src-tauri/src/files/replacement.rs`,
 `src-tauri/src/files/publication.rs`, `src-tauri/src/files/file_ops.rs`,

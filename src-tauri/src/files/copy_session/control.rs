@@ -44,7 +44,7 @@ impl Control {
         }
         // Process-wide, never reused even when a client reuses its request ID.
         static NEXT_NONCE: AtomicU64 = AtomicU64::new(1);
-        let Ok(nonce) = NEXT_NONCE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+        let Ok(nonce) = NEXT_NONCE.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
             next.checked_add(1)
         }) else {
             return stop;

@@ -13,6 +13,7 @@ import { cancelPendingRefreshes } from "$lib/state/refresh-manager";
 import { settingsStore } from "$lib/state/settings.svelte";
 import { gitStatusStore } from "$lib/state/git-status.svelte";
 import { repoRootCache } from "$lib/state/repo-root-cache.svelte";
+import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
 import { subscribeGitChanges } from "$lib/state/git-refresh";
 
 export interface FileWatcherDeps {
@@ -57,8 +58,9 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     });
 
     // Pane owners receive the same event before their first scan. This window
-    // subscription owns repository invalidation and badge refresh only.
+    // subscription invalidates window-owned directory-derived cues as well.
     directorySubscription = directoryEvents.subscribe(({ path }) => {
+      emptyFolderResolver.invalidate([path]);
       repoRootCache.invalidate(path);
       if (settingsStore.showGitStatus && gitStatusStore.currentPath === path) {
         gitStatusStore.refresh();

@@ -7,7 +7,7 @@ import { createDomRpc } from "./dom-rpc";
 
 interface RecoveryRequest {
   token: string;
-  op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many" | "cancel-copy" | "cancel-move" | "complete-copy" | "complete-move";
+  op: "subscribe" | "unsubscribe" | "inspect" | "list" | "copy" | "move" | "copy-many" | "move-many" | "cancel-copy" | "cancel-move" | "complete-copy" | "complete-move";
   sessionId?: string;
   subscriptionId?: string;
   id?: string;
@@ -71,6 +71,14 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
     signal,
     formatError: extractError,
     handlers: {
+      "move-many": async (request) => {
+        await session(request);
+        const { moveFiles } = await import("../lib/state/move-operations");
+        signal.throwIfAborted();
+        return moveFiles(request.sources!, request.destination!, {
+          onRefresh: () => {}, broadcastToOtherWindows: request.shared,
+        });
+      },
       "copy-many": async (request) => {
         await session(request);
         const { copyFiles } = await import("../lib/state/copy-operations");

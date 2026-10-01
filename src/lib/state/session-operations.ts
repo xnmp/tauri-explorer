@@ -17,6 +17,7 @@ import { conflictResolver } from "./conflict-resolver.svelte";
 import { operationsManager } from "./operations.svelte";
 import { toastStore } from "./toast.svelte";
 import { broadcastFileChange } from "./file-events";
+import { emptyFolderResolver } from "./empty-folders.svelte";
 import { frecencyStore } from "./frecency.svelte";
 
 export interface SessionContext {
@@ -62,6 +63,7 @@ export async function runSession(
   const cancellation = new AbortController();
   const deliveredEntries = new Set<string>();
   const unsubscribe = operationsManager.subscribeCancellation(operation.id, () => cancellation.abort());
+  let changedDirs: string[] | undefined;
   try {
     const result = await kind.run(sources, destination, {
       signal: cancellation.signal,
@@ -95,11 +97,11 @@ export async function runSession(
     if (committed.length) {
       const entries = committed.flatMap((receipt) => receipt.entry && !deliveredEntries.has(receipt.entry.path) ? [receipt.entry] : []);
       if (entries.length) context.onEntriesAdded?.(entries);
-      broadcastFileChange([...new Set([
+      changedDirs = [...new Set([
         destination,
         ...kind.vacated(sources),
         ...committed.map((receipt) => parentDir(receipt.path)),
-      ])]);
+      ])];
       frecencyStore.pruneNonExistent();
     }
     if (error) operationsManager.failOperation(operation.id, error);
@@ -121,6 +123,10 @@ export async function runSession(
     return { error, complete: !error && !cancelled && committed.length === sources.length };
   } finally {
     unsubscribe();
+    if (changedDirs) broadcastFileChange(changedDirs);
+    else emptyFolderResolver.invalidate([destination, ...kind.vacated(sources)]);
+    // A missing/uncertain receipt does not prove that no bytes arrived. Recheck
+    // local folder cues without announcing an unconfirmed filesystem effect.
     // Refresh even when IPC failed: native settlement may have committed a
     // prefix which the renderer did not receive. History remains native-owned.
     await context.onRefresh();

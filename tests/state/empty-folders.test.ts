@@ -52,15 +52,15 @@ describe("EmptyFolderResolver", () => {
     expect(resolveEmpty).toHaveBeenCalledTimes(1);
   });
 
-  it("trusts a backend-provided is_empty without a round-trip", async () => {
+  it("rechecks metadata hints under the current visibility rule", async () => {
     const resolveEmpty = vi.fn(async () => false);
     const resolver = new EmptyFolderResolver({ resolveEmpty, includeHidden: () => false });
 
     resolver.request(dirEntry("/a/seeded", true));
     await flush();
 
-    expect(resolveEmpty).not.toHaveBeenCalled();
-    expect(resolver.isEmpty("/a/seeded")).toBe(true);
+    expect(resolveEmpty).toHaveBeenCalledOnce();
+    expect(resolver.isEmpty("/a/seeded")).toBe(false);
   });
 
   it("caps concurrency at maxConcurrent", async () => {

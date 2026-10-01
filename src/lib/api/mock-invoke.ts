@@ -1,3 +1,4 @@
+import pdfFixtureUrl from "./fixtures/preview-landmarks.pdf?url";
 /**
  * Mock Tauri invoke for browser-based E2E testing.
  * Provides realistic fake data when running outside of Tauri webview.
@@ -1475,6 +1476,15 @@ const mockCommands: Record<string, CommandHandler> = {
       "data:image/jpeg;base64,/9j//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgUFBcUFxsbGxsbGyAeICEhISAgICAhISEkJCQqKiokJCQhISQkKCgqKi4vLisrKisvLzIyMjw8OTlGRkhWVmf/xABiAAEBAQAAAAAAAAAAAAAAAAAGAwUBAQAAAAAAAAAAAAAAAAAAAAQQAAIBAwQCAwEAAAAAAAAAAAECAxESACExIgRxYRNBUTIRAQACAwEBAAAAAAAAAAAAAAEhADFBAoED/8AAEQgAEAAQAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AjOYesy3q4rUW2Vq3o4en70YNEis21Ycq+M3WvdI7ecjm0En+PwA/VddsDTjrpGx+UO9RooLbb8mpp4GN4UJZKn6Zjfl//9k="
     );
   },
+
+  read_pdf_bytes: async (args) => {
+    const hook = getMockControl().previewReadPdf;
+    if (hook) return hook(String(args.path));
+    const response = await fetch(pdfFixtureUrl);
+    if (!response.ok) throw new Error(`PDF fixture transport failed: ${response.status}`);
+    return response.arrayBuffer();
+  },
+  open_pdf_link: (args) => { getMockControl().openedPdfUrl = String(args.url); },
 
   read_image_data_url: (args) => {
     const hook = getMockControl().previewReadImage;

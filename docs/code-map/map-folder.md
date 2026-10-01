@@ -67,6 +67,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ThemePicker.svelte` — theme selection UI.
 - `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax/CSV table); CSV rows use the shared VirtualList with one shared column template and an outer horizontal scroll surface (#666).
+- `PdfPreview.svelte` — lazy canvas PDF surface with centered fit/zoom, pointer-captured pan, annotation links, compact page controls and fullscreen keyboard ownership (#728–#730).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
 - `TitleBar.svelte` — window title bar + tab strip host + window controls.
@@ -109,6 +110,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `directory-watch.ts` — generic ordered path-lease ownership plus the directory adapter; retains exact release authority across failed teardown and drains late acquisition; reused by Git, thumbnails, Miller columns and drives.
 - `preview-lifetime.ts` — full-revision preview request and object-URL ownership; stale results cannot publish or revoke a replacement.
 - `terminal-key-handler.ts` — xterm key adapter: eligible command ownership precedes clipboard/readline effects, with modifier tracking and chord retirement.
+- `pdf-preview.svelte.ts` — latest-document/page intent and detached-canvas render lifetimes; releases departed pages and cancels owned PDF workers (#728–#730).
 - `terminal-session.ts` — frontend terminal reservation/listener/spawn lifetime; drains late resources and serializes restart/stop. Owns the session's only input path (`domain/terminal-input-queue.ts`): opened at start/restart so typeahead is kept, attached at reservation, closed on stop/exit; `insert` builds text (path insertions) in the spawned shell's dialect and holds it across an exited shell for the next start (#709, #882).
 - `repo-root-cache.svelte.ts` — bounded reactive repository discovery with positive/negative TTL, shared probes and invalidation-safe publication.
 - `owned-registry.ts` — framework-free contribution registration identity; old disposers cannot remove replacements even when values are reused.
@@ -219,6 +221,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
+
+- `pdf-preview.ts` — bounded native PDF bytes, lazy PDF.js worker/readiness, cancellable page rendering and validated native annotation-link dispatch (#728–#730).
 
 - `src/lib/api/file-recovery.ts` — recovery IPC facade with exact renderer/subscription identities and failed-ack cleanup; list/inspect/restore and renderer-bound subscription commands are registered; page-owned UI activation is deferred until foreground readiness or explicit demand.
 
@@ -352,6 +356,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `csv-preview.ts` — quoted CSV parser for PreviewPane table data, bounded to the preview's data-row limit (#666).
+- `pdf-preview.ts` — pure PDF fit, zoom-anchor, measured pointer coordinates, pan bounds and safe-link policy (#728–#730).
 - `markdown.ts` — safe markdown render for preview.
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
@@ -487,6 +492,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/clipboard/windows.rs` — Windows backend: native Win32 `CF_HDROP` file-list reads/writes (no process start on the ordered Copy/Cut/Paste path, #912) with `GetClipboardSequenceNumber` and private-token-format read-back for Cut ownership (#877); PowerShell `System.Windows.Forms.Clipboard` text/image reader; ignored real-clipboard test run by rust-platforms CI.
 
 ### src-tauri/src/files/ — file operations module.
+
+- `pdf_preview.rs` — bounded regular-file PDF reads on blocking workers and native HTTP/HTTPS/mailto annotation-link dispatch (#728–#730).
 
 - `src-tauri/src/files/native_directory.rs` — shared owned directory handle and platform implementation boundary; Unix trash/recovery reuse the same relative-access contract.
 - `src-tauri/src/files/native_directory/unix.rs` — Unix no-follow relative access, exclusive rename, no-follow existence, typed removal and independent bounded enumeration; Linux mount ids (with a device fallback when `statx` is rejected) and mount-point detection.

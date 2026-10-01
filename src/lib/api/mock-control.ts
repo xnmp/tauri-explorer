@@ -66,6 +66,10 @@ export interface MockControl {
   previewReadText?: (path: string) => string | Promise<string>;
   /** Overrides `read_image_data_url` for the path under test. */
   previewReadImage?: (path: string) => string | Promise<string>;
+  /** Overrides bounded binary PDF transport for cancellation/revision tests. */
+  previewReadPdf?: (path: string) => ArrayBuffer | Promise<ArrayBuffer>;
+  /** Most recent PDF annotation URI sent to the mock native opener. */
+  openedPdfUrl?: string;
   /** Overrides `get_video_thumbnail_data`. */
   videoThumbnail?: (path: string, size?: number) => string | Promise<string>;
   /** Action hook: bump the mtime/size of a previewed file to simulate an

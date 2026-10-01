@@ -118,8 +118,8 @@ impl Work for MoveWork {
         }
 
         // Non-durable: admit the resolved source/target through the same
-        // seam the native history move adapter uses (`move_execution::execute`
-        // -> `admission::admitted_execute`), so a session item can never run
+        // seam the native history move adapter uses (`admission::admitted_execute`
+        // plus the shared `move_execution` worker), so a session item can never run
         // while a recovery claim on either path is held (lesson 680; ADR 0024
         // level 3). Plugin moves used to lose this admission when they went
         // through the single-item `move_entry` command's own plan instead of
@@ -137,7 +137,22 @@ impl Work for MoveWork {
                 }
             }
         };
-        let outcome = move_execution::execute(plan, &self.runtime).await;
+        let job_id = self.job_id;
+        let bytes = inspection.bytes;
+        let outcome = admission::admitted_execute(plan, &self.runtime, move |plan, owner| {
+            move_execution::execute_owned_checked(plan, owner, move || {
+                ProgressTracker::new(
+                    None,
+                    "move-progress",
+                    "Move cancelled",
+                    job_id,
+                    bytes,
+                    Some(control.cancelled.cancellation_flag()),
+                )
+                .check_cancelled()
+            })
+        })
+        .await;
         map_completion(outcome.completion, &inspection)
     }
 }

@@ -8,12 +8,16 @@ pub(crate) struct Outcome {
     pub affected: Vec<String>,
 }
 
-struct Work<O> {
+struct Work<O, C> {
     plan: MovePlan,
+    before_effect: C,
     _owner: O,
 }
-impl<O> Work<O> {
+impl<O, C: FnMut() -> Result<(), AppError>> Work<O, C> {
     fn execute(&mut self) -> Result<FileMutationReceipt, AppError> {
+        // Admission and worker dispatch can both wait after the caller's check.
+        // Fence cancellation at the actual effect while retaining its owner.
+        (self.before_effect)()?;
         let destination = self
             .plan
             .target
@@ -44,10 +48,25 @@ impl<O> Work<O> {
 }
 
 pub(crate) async fn execute_owned<O: Send + 'static>(plan: MovePlan, owner: O) -> Outcome {
+    execute_owned_checked(plan, owner, || Ok(())).await
+}
+
+/// Ordered sessions carry their cancellation check into the admitted worker;
+/// native history uses `execute_owned` for uninterrupted inverse execution.
+pub(crate) async fn execute_owned_checked<O, C>(
+    plan: MovePlan,
+    owner: O,
+    before_effect: C,
+) -> Outcome
+where
+    O: Send + 'static,
+    C: FnMut() -> Result<(), AppError> + Send + 'static,
+{
     let affected = plan.affected_dirs();
     let completion = super::run_blocking_context(
         Work {
             plan,
+            before_effect,
             _owner: owner,
         },
         Work::execute,

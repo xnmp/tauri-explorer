@@ -144,6 +144,8 @@ describe("native window transfer rejection", () => {
     await verifySourceOwnsTab("after-missing.txt");
 
     // A warm window is scripted only once activated, and found by handle (#931).
+    // Prime explicitly: Windows has not parked one by this point on its own.
+    await operation("warm-prime");
     const target = await parkedWarmWindow();
     const opened = await operation("warm-open", warmDirectory) as { label: string };
     expect(opened.label).toBe(target.label);

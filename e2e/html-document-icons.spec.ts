@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { test, expect } from "./fixtures";
-import { ALL_VIEW_MODES, seedSettings, waitForEntries, switchViewMode } from "./helpers";
+import { ALL_VIEW_MODES, focusBeforeFileList, seedSettings, waitForEntries, switchViewMode } from "./helpers";
 
 const root = "/html-icon-proof";
 const names = ["index.html", "about.htm", "UPPER.HTML", "script.js", "scene.svg", "notes.txt", "Folder"];
@@ -53,9 +53,11 @@ for (const theme of ["light", "dark"] as const) {
         await expect(page.locator(`.entry-item[data-path="${root}/about.htm"] .symlink-badge`)).toBeVisible();
         await selected.click();
         await expect(selected).toHaveClass(/selected/);
-        await page.keyboard.press("Shift+Tab");
+        await focusBeforeFileList(page);
         await page.keyboard.press("Tab");
         await expect(selected).toBeFocused();
+        expect(await selected.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+        await expect(selected).toHaveCSS("outline-style", "solid");
         for (const name of htmlNames) {
           await expect(page.locator(`.entry-item[data-path="${root}/${name}"] .icon-html svg`)).toBeInViewport();
         }

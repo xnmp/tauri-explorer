@@ -12,3 +12,9 @@ The browser contract uses actual file-list entries in Details/List/Tiles,
 checks aliases, icon containment and neighboring type separation, and captures
 selection/hover at light 100% and dark 150% zoom for all three icon themes. The
 same test fails against the original component after fixtures are visible.
+
+WebKit does not traverse backward identically from a pointer-focused row (#692).
+For focus evidence, start at the preceding sequential target and press actual
+Tab; assert selected row focus, :focus-visible and the computed outline. Share
+that helper with the existing file-list focus contract. This passes all three
+views on both Chromium and WebKit; do not weaken it to programmatic row focus.

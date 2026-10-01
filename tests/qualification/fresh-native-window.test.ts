@@ -1,12 +1,12 @@
 import fs from "node:fs";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const driver = vi.hoisted(() => ({
   getWindowHandles: vi.fn(),
   switchToWindow: vi.fn(),
   execute: vi.fn(),
   getUrl: vi.fn(),
-  waitUntil: vi.fn(),
+  pause: vi.fn(),
 }));
 vi.mock("@wdio/globals", () => ({ browser: driver, $: vi.fn(), $$: vi.fn() }));
 
@@ -23,14 +23,12 @@ import { switchToFreshWindow } from "../../e2e-tauri/specs/helpers";
 describe("fresh native window selection", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    driver.waitUntil.mockImplementation(async (ready: () => Promise<boolean>) => {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        if (await ready()) return;
-      }
-      throw new Error("window did not become ready");
-    });
+    // Each pause between scans spends a third of the 20 s selection budget.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    driver.pause.mockImplementation(async () => { vi.setSystemTime(Date.now() + 7_000); });
     driver.getUrl.mockResolvedValue("tauri://localhost/?path=%2Fhome");
   });
+  afterEach(() => { vi.useRealTimers(); });
 
   it("finds the newly launched child without executing script in an unresponsive existing page", async () => {
     let current = "main";
@@ -66,7 +64,7 @@ describe("fresh native window selection", () => {
     driver.execute.mockResolvedValue("explorer-child");
 
     await expect(switchToFreshWindow("explorer-child", ["old"]))
-      .rejects.toThrow("window did not become ready");
+      .rejects.toThrow("fresh native window explorer-child did not become ready");
   });
 });
 

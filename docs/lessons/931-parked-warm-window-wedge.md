@@ -1,61 +1,82 @@
-# #931 — Tests must not script parked warm windows, and parked pages run no feeds
+# #931 — Never script a parked warm window; a parked page runs no foreground work
 
 After #921 (one UDisks2 subscription, pushed `drives-changed`), Ubuntu native
 smoke lost its WebDriver session in `window-transfer-lifetime.spec.ts` in about
 5 of 11 suite runs containing #921. Before that it happened once in about 190
-jobs. The command stalled for 12–23 s, returned `Could not parse script result`,
-and was followed by `session deleted because of page crash or hang`.
+jobs. The command stalled, returned `Could not parse script result`, and was
+followed by `session deleted because of page crash or hang`.
+
+**Root cause: unknown.** What is established is narrower: the session ends
+when a test runs script in a page that has stopped answering, and the page
+was almost always a parked warm window that the test did not own.
 
 ## What the logs established
 
-- The stalled page was always the **parked warm window** (`explorer-warm-*`,
-  launched hidden with `?warm=1`). Its handle had only ever reported a `null`
-  `e2eWindowLabel`, it had booted a few seconds earlier, and in successful runs
-  the same kind of page answers a script in about 2 ms.
-- The script that stalled came from harness loops that script **every**
-  handle: `selectWindowByLabel` (via `switchToLabel`) and the success-path
-  `captureDiagnostics("qualification-complete")`. The one pre-#921 occurrence
-  (run 36433792218) had the same signature.
+- The stalled page was a **parked warm window** (`explorer-warm-*`, hidden,
+  `?warm=1`). It had booted seconds earlier; the same kind of page answers a
+  script in about 2 ms when healthy.
+- The stalling script came from harness loops that scripted **every** handle
+  (label scans, `captureDiagnostics`, parked-window finders, teardown loops).
 - **The drive feed is not the cause.** With every drive listener and poll
-  deferred until activation, a parked page still stopped answering script:
-  in run 36780672273 a parked page that had logged `warm parked` (so it had
-  finished booting and registered) hung a `findElement` for 28 s. What makes a
-  hidden, never-shown page stop answering WebDriver is not established, nor
-  what raised the rate after #921.
-- `warm-window.spec.ts` produced that case itself: the warm label is readable
-  before the page registers with the pool, so Ctrl+N in that gap correctly
-  opened a fresh window, and the spec then scripted the still-parked page as if
-  it had been activated. Wait for `e2eWarmReady` before claiming.
-- No WebKitWebProcess stderr or crash signal was retained, and 33 local runs
-  (GPU and `LIBGL_ALWAYS_SOFTWARE=1`) did not reproduce it.
+  deferred until activation, parked pages still stopped answering: 2 sessions
+  lost in 5 product-only runs, and one more on a parked page in run
+  36780672273, where `warm-window.spec.ts` still scripted parked pages itself.
+- Circumstantial evidence of renderer death, not a slow script (review of
+  #934):
+  - the stall before `page crash or hang` is uniformly 19–28 s;
+  - ordinary main pages that hit the same failure went completely silent
+    about 0.7–0.9 s after their `ui-ready` mark, the shape of #936's macOS JSC
+    garbage-collection crash;
+  - in each warm-page hang, another window had closed about 2 s earlier.
+- Nothing records a WebKitGTK renderer's death today. The Linux
+  `web-process-terminated` handler (`renderer_owner/termination.rs`) logs
+  nothing, and it is installed only on pages that request native ownership.
+  Termination logging is #942's work.
+- 33 local runs (GPU and `LIBGL_ALWAYS_SOFTWARE=1`) did not reproduce it.
+
+## CI A/B (`smoke (ubuntu-latest)`, full suite)
+
+| Build | Runs | Sessions lost on a warm page | Other sessions lost |
+|---|---|---|---|
+| baseline with #921 | 11 | ~5 | — |
+| product gate only | 5 | 2 | 0 |
+| + first harness exclusion (label scans, diagnostics) | 8 | 1 (`warm-window.spec.ts`, not yet guarded) | 2 (`terminal-resize`, `directory-identity`, main pages) |
+
+The renderer losses on ordinary pages still happen, at roughly the pre-#921
+background rate.
 
 ## Rules
 
-1. **Never script a page the test does not own** (#885). A warm window keeps its
-   `?warm=1` launch URL, and only a warm window carries an `explorer-warm-`
-   label. Label scans (`selectWindowByLabel`, `switchToFreshWindow`) read each
-   handle's URL through the driver — WebDriver answers `getUrl` without running
-   page script — and skip warm pages unless the requested label is a warm
-   label. `captureDiagnostics` records warm pages by URL without scripting them,
-   and success paths do not capture every window. This is what stops the
-   session loss.
-2. **A parked page runs no ongoing feeds.** Foreground-only feeds start through
-   `state/page-foreground.ts`: a parked (or measuring) warm window starts with
-   the gate closed, and `enterForeground` runs the deferred starts. The drive
-   store reads the list once while parked, so a claimed window is revealed with
-   its drives, but it registers no `drives-changed`/`directory-changed`
-   listeners and keeps no poll timer until activation, which re-reads.
-3. **Never await a feed before reveal.** Activation starts the deferred feeds
-   and does not wait for them. Windows enumerates drives through PowerShell
-   (`windows_volume_info`), which took longer than the 10 s activation
-   acknowledgement on a CI runner: the Windows bounded soak failed with
-   `Ctrl+N did not reveal the ready warm window` while `show` waited on it.
-4. **Tauri 2 only evaluates an emit in webviews that have a JS listener** for
-   that event (`emit_js_filter`). Not subscribing while parked is enough to
-   keep backend `drives-changed` pushes out of parked pages; no Rust filter is
-   needed.
+1. **Never script a page the test does not own** (#885). Every native handle
+   scan goes through `e2e-tauri/owned-windows.ts`: it reads each handle's URL
+   through the driver (no page script) and scripts only a page whose URL is
+   known and not `?warm=1`. It fails closed: an empty or unparseable URL is a
+   page that has not committed its document, possibly a warm one, so the scan
+   retries it later. Teardown loops (`closeOtherWindows`) leave warm windows
+   alone.
+2. **Find a parked warm window without scripting it.** `parkedWarmWindow`
+   asks an owned page for registered hidden warm labels (`warm-ready`: the
+   parked page's E2E probe records its registration in shared `localStorage`)
+   and takes the handle from the one warm URL the test does not already know.
+   A test reaches an activated warm window by that handle, and checks that
+   Ctrl+N revealed the claimed window (not a fresh fallback) through
+   `target-state` from the main window.
+3. **One foreground notion per page.** `state/page-foreground.ts` owns it. A
+   parked or measuring page keeps it closed until its activation commits
+   (after reveal, commit and acknowledgement), never at navigation: a window
+   can still be retired before commit, and it must not claim file-operation
+   recovery or start long-lived feeds. Before the gate, a parked page ran its
+   own drive feed for its whole life — a PowerShell enumeration every 1.5 s on
+   Windows, a 1.5 s poll and `/Volumes` watch on macOS, a 30 s poll plus push
+   evaluation on Linux. Starts run synchronously so no stop can slip between
+   scheduling a start and running it.
+4. **Never await a feed before reveal.** Windows enumerates drives through
+   PowerShell, which outlasted the 10 s activation acknowledgement in the
+   Windows bounded soak when the reveal awaited it. A claimed window therefore
+   shows the drive list it read while parked until its activation re-read
+   lands.
 5. To tell whether a parked page finished booting without scripting it, pair
    its `[window tab seed]` app-log line with `[warm parked]`
-   (`Retire-when: #931 closed`). A missing `[warm parked]` line is only
-   meaningful if the app kept running: a spec that ends within a second of
-   priming kills the page before it registers.
+   (`Retire-when: #931 closed`). A missing `[warm parked]` line is meaningful
+   only if the app kept running: a spec that ends within a second of priming
+   kills the page before it registers.

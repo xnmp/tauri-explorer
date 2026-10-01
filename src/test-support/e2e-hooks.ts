@@ -15,7 +15,7 @@ import { startExternalJobProbe } from "./external-job-probe";
 import { startFileHistoryProbe } from "./file-history-probe";
 import { startFileMutationProbe } from "./file-mutation-probe";
 import { startFileRecoveryProbe } from "./file-recovery-probe";
-import { childReadyKey, windowOperationHandlers, type WindowOperationRequest } from "./window-operations";
+import { childReadyKey, WARM_READY_PREFIX, windowOperationHandlers, type WindowOperationRequest } from "./window-operations";
 
 export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise<boolean>): void {
   if (signal.aborted) return;
@@ -30,7 +30,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   signal.addEventListener("abort", () => {
     capturedDelete = null;
     if (windowTabsManager.windowLabel !== "main") localStorage.removeItem(readyKey);
-    for (const key of ["e2eHooksReady", "e2eWarmReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eFileOperationResult"]) {
+    for (const key of ["e2eHooksReady", "e2eWindowLabel", "e2eNavigationComplete", "e2eFileOperationResult"]) {
       delete document.documentElement.dataset[key];
     }
   }, { once: true });
@@ -121,7 +121,7 @@ export function startWindowSessionProbe(signal: AbortSignal, warmReady?: Promise
   });
   document.documentElement.dataset.e2eWindowLabel = windowTabsManager.windowLabel;
   void warmReady?.then((ready) => {
-    if (ready && !signal.aborted) document.documentElement.dataset.e2eWarmReady = "1";
+    if (ready && !signal.aborted) localStorage.setItem(WARM_READY_PREFIX + windowTabsManager.windowLabel, "1");
   });
 
   // WebKitWebDriver can execute injected scripts before these listeners

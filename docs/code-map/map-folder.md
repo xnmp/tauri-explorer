@@ -181,7 +181,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
 - `warm-activation.ts` — owns parked-window observation, reveal/navigation admission, acknowledged activation and retirement.
 - `warm-window.ts` — native warm-pool adapters and acknowledged reuse; integrates the activation owner.
-- `page-foreground.ts` — `warmMode()` and the page foreground gate: a parked warm window defers foreground-only feeds (drive pushes/poll) until activation opens it; the reveal never waits for them (#931).
+- `page-foreground.ts` — `warmMode()` and the page's one foreground gate: a parked or measuring warm window defers drive pushes/poll and file-operation recovery until its activation commits (#931).
 - `window-appearance.ts` — shared window creation options, including exact feature-injected WebView2 environment arguments in Windows E2E.
 - `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-close.ts` — owns synchronous close admission, native close requests, terminal destruction and failure recovery.
@@ -665,6 +665,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/qualification/warm-claim-process-timeline.test.ts` — contract for native warm-claim failure artifact, bounded late sample and no artifact on success.
 - `tests/qualification/fresh-native-window.test.ts` — fresh-window selection skips pre-existing handles without executing script in them.
 - `e2e-tauri/window-transfer-waits.ts` — renderer-side token and listing observers for a single asynchronous native WebDriver command.
+- `e2e-tauri/owned-windows.ts` — the one handle scan: reads each URL through the driver and scripts only known, non-warm pages (fails closed on empty URLs; #885, #931). `specs/helpers.ts` binds it to the browser (`switchToWindowLabel`, `closeOtherWindows`, `parkedWarmWindow`).
 - `e2e-tauri/diagnostics/window-transfer.ts` — incrementally persisted native runtime and per-window failure evidence (`Retire-when: #710 closed`).
 - `e2e-tauri/specs/window-transfer-diagnostics.spec.ts` — real-native negative control for retained JSON and screenshot artifacts.
 - `e2e-tauri/soak/native-soak.spec.ts` — opt-in native window, plugin, preview, theme, DPI and input scenarios.
@@ -681,5 +682,6 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/qualification/macos-startup-stall-evidence.test.ts` — stall evidence selection, bounds, spindump fallback, overall deadline and timeout-first error composition (#936).
 - `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
 - `tests/e2e-tauri/window-transfer-waits.test.ts` — stale-token, delayed-listing and duplicate-name contracts for renderer observers.
+- `tests/e2e-tauri/owned-windows.test.ts` — complete-pass deadlines, closing handles, and never scripting warm or uncommitted pages.
 - `tests/e2e-tauri/window-transfer-diagnostics.test.ts` — native-spec call-site coverage for partial failure artifacts and failing-window capture.
 - `docs/testing/interactive-mac-startup-runbook.md` — operator procedure for producing the interactive Mac startup evidence JSON the qualification report ingests.

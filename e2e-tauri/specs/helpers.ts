@@ -2,7 +2,10 @@ import { browser, $, $$ } from "@wdio/globals";
 // Keep command types available to standalone fixture-contract tests too.
 import type {} from "webdriverio";
 import { beginFreshWindowLookup, beginFreshWindowSelection } from "../diagnostics/fresh-window";
-import { mayHostLabel } from "../window-transfer-waits";
+import { isWarmWindowUrl, scanWindows, selectWindowByLabel, type WindowScanDriver } from "../owned-windows";
+import {
+  waitForWindowOperation, type RendererWaitResult, type WindowOperationResponse, type WindowOperationWaitRequest,
+} from "../window-transfer-waits";
 
 /** Exact entry selector for native paths, including Windows `\` and quotes. */
 export function entryPathSelector(
@@ -39,30 +42,85 @@ export async function waitForFreshWindowElement(
   }
 }
 
+const windows: WindowScanDriver = {
+  listHandles: () => browser.getWindowHandles(),
+  switchTo: (handle) => browser.switchToWindow(handle),
+  currentUrl: () => browser.getUrl(),
+  pause: (ms) => browser.pause(ms),
+  now: () => Date.now(),
+};
+const pageLabel = () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel);
+
+/** Run one `e2e-window-operation` in the current page and return its result. */
+export async function windowOperation(op: string, target?: string): Promise<unknown> {
+  const observed = await browser.executeAsync<
+    RendererWaitResult<WindowOperationResponse>, [WindowOperationWaitRequest]
+  >(waitForWindowOperation, { token: crypto.randomUUID(), op, target, timeoutMs: 20_000 });
+  if (!observed.ok) throw new Error(observed.reason);
+  if (observed.value.error) throw new Error(observed.value.error);
+  return observed.value.result;
+}
+
+/** Select the owned window labelled `label` and return its handle; warm pages are never scripted. */
+export function switchToWindowLabel(label: string, timeoutMs = 20_000): Promise<string> {
+  return selectWindowByLabel({ ...windows, currentLabel: pageLabel }, label, timeoutMs);
+}
+
+/** Select the window whose URL matches, without running script in any page. */
+export function switchToWindowUrl(matches: (url: string) => boolean, timeoutMsg: string): Promise<string> {
+  return scanWindows(windows, async (handle) => handle, { timeoutMs: 20_000, timeoutMsg }, matches);
+}
+
+/** Close every window except `keep` and the application's warm windows, then select `keep`. */
+export async function closeOtherWindows(keep: string): Promise<void> {
+  for (const handle of await browser.getWindowHandles()) {
+    if (handle === keep) continue;
+    await browser.switchToWindow(handle);
+    if (!isWarmWindowUrl(await browser.getUrl())) await browser.closeWindow();
+  }
+  if ((await browser.getWindowHandles()).includes(keep)) await browser.switchToWindow(keep);
+}
+
+/**
+ * The registered parked warm window, found without scripting it (#931): the
+ * current page reports registered hidden warm labels, and the handle is the
+ * one warm URL outside `exclude` (activated warm windows the test knows).
+ */
+export async function parkedWarmWindow(exclude: Iterable<string> = []): Promise<{ label: string; handle: string }> {
+  const owner = await browser.getWindowHandle();
+  const known = new Set([owner, ...exclude]);
+  let parked: { label: string; handle: string } | undefined;
+  await browser.waitUntil(async () => {
+    const labels = await windowOperation("warm-ready") as string[];
+    const handles: string[] = [];
+    try {
+      for (const handle of await browser.getWindowHandles()) {
+        if (known.has(handle)) continue;
+        await browser.switchToWindow(handle);
+        if (isWarmWindowUrl(await browser.getUrl())) handles.push(handle);
+      }
+    } finally {
+      await browser.switchToWindow(owner);
+    }
+    if (labels.length === 1 && handles.length === 1) parked = { label: labels[0], handle: handles[0] };
+    return parked !== undefined;
+  }, { timeout: 20_000, timeoutMsg: "no registered parked warm window" });
+  return parked!;
+}
+
 /** A fresh launch must introduce a new handle and expose its requested label. */
 export async function switchToFreshWindow(
   label: string,
   existingHandles: readonly string[],
 ): Promise<string> {
   const evidence = beginFreshWindowSelection(label, existingHandles);
-  // Existing pages cannot satisfy fresh-open. Avoid probing their renderers:
-  // a parked/retiring WebKit page can block script execution indefinitely.
+  // Existing pages cannot satisfy fresh-open; only new, owned pages are scripted.
   const existing = new Set(existingHandles);
-  let selected = "";
+  let selected: string;
   try {
-    await browser.waitUntil(async () => {
-      for (const handle of await browser.getWindowHandles()) {
-        if (existing.has(handle)) continue;
-        await browser.switchToWindow(handle);
-        // A warm window spawned meanwhile is new but not the test's (#931).
-        if (!mayHostLabel(await browser.getUrl(), label)) continue;
-        if (await browser.execute(() => document.documentElement.dataset.e2eWindowLabel) === label) {
-          selected = handle;
-          return true;
-        }
-      }
-      return false;
-    }, { timeout: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
+    selected = await scanWindows(windows, async (handle) =>
+      !existing.has(handle) && await pageLabel() === label ? handle : undefined,
+    { timeoutMs: 20_000, timeoutMsg: `fresh native window ${label} did not become ready` });
   } catch (error) {
     evidence.failed(error);
     throw error;

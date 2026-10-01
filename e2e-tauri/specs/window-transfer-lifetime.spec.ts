@@ -3,13 +3,12 @@ import { browser, $ } from "@wdio/globals";
 import { expect } from "expect-webdriverio";
 import fs from "node:fs";
 import path from "node:path";
-import { navigateTo, domTexts } from "./helpers";
+import { closeOtherWindows, navigateTo, domTexts, switchToWindowLabel } from "./helpers";
 import { createNativeFixtureDirectory } from "../native-qualification";
 import { captureDiagnostics } from "../diagnostics/window-transfer";
 import {
   waitForListingEntry,
   waitForWindowOperation,
-  selectWindowByLabel,
   type ListingWaitRequest,
   type RendererWaitResult,
   type WindowOperationResponse,
@@ -45,14 +44,7 @@ async function operation(op: string, target?: string): Promise<unknown> {
 
 async function switchToLabel(label: string): Promise<void> {
   try {
-    await selectWindowByLabel({
-      listHandles: () => browser.getWindowHandles(),
-      switchTo: (handle) => browser.switchToWindow(handle),
-      currentUrl: () => browser.getUrl(),
-      currentLabel: () => browser.execute(() => document.documentElement.dataset.e2eWindowLabel),
-      pause: (ms) => browser.pause(ms),
-      now: () => Date.now(),
-    }, label, 20_000);
+    await switchToWindowLabel(label);
   } catch (error) {
     await captureDiagnostics(`switch-${label}`);
     throw error;
@@ -112,14 +104,7 @@ describe("native window transfer ownership", function () {
     fs.writeFileSync(path.join(destinationDirectory, "destination.txt"), "destination");
   });
   after(async () => {
-    if (mainHandle) {
-      for (const handle of await browser.getWindowHandles()) {
-        if (handle === mainHandle) continue;
-        await browser.switchToWindow(handle);
-        await browser.closeWindow();
-      }
-      await browser.switchToWindow(mainHandle);
-    }
+    if (mainHandle) await closeOtherWindows(mainHandle);
   });
 
   it("concurrent same-path children each become functional and keep independent navigation", async () => {

@@ -23,65 +23,6 @@ export type RendererWaitResult<T> =
   // WDIO interprets a top-level `error` as a WebDriver protocol failure.
   | { ok: false; reason: string };
 
-export interface WindowLabelScanDriver {
-  listHandles(): Promise<string[]>;
-  switchTo(handle: string): Promise<void>;
-  /** The selected page's URL, answered by the driver without running page script. */
-  currentUrl(): Promise<string>;
-  currentLabel(): Promise<string | undefined>;
-  pause(ms: number): Promise<void>;
-  now(): number;
-}
-
-/** Label prefix of every warm window (`WARM_LABEL_PREFIX` in `src/lib/state/warm-window.ts`). */
-const WARM_LABEL_PREFIX = "explorer-warm-";
-
-/** A warm window, parked or activated: launched with `?warm=1`, which it keeps. */
-export function isWarmWindowUrl(url: string): boolean {
-  try {
-    return new URL(url).searchParams.get("warm") === "1";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Whether a scan looking for `label` may run script in the page at `url`.
- * Never script a page the test does not own (#885, #931): a parked warm window
- * belongs to the application, and a script it cannot answer ends the whole
- * WebDriver session. Only a warm window carries a warm label, so a scan for
- * any other label skips every warm page.
- */
-export function mayHostLabel(url: string, label: string): boolean {
-  return label.startsWith(WARM_LABEL_PREFIX) || !isWarmWindowUrl(url);
-}
-
-/** Let each complete handle scan finish before testing the overall deadline. */
-export async function selectWindowByLabel(
-  driver: WindowLabelScanDriver,
-  label: string,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = driver.now() + timeoutMs;
-  for (;;) {
-    for (const handle of await driver.listHandles()) {
-      try {
-        await driver.switchTo(handle);
-        if (!mayHostLabel(await driver.currentUrl(), label)) continue;
-        if (await driver.currentLabel() === label) return;
-      } catch (error) {
-        // A window can close while the handle list is being scanned. Preserve
-        // real driver failures when that handle still exists.
-        if ((await driver.listHandles()).includes(handle)) throw error;
-      }
-    }
-    if (driver.now() >= deadline) {
-      throw new Error(`window ${label} did not become ready`);
-    }
-    await driver.pause(250);
-  }
-}
-
 export function waitForWindowOperation(
   request: WindowOperationWaitRequest,
   done: (result?: RendererWaitResult<WindowOperationResponse>) => void,

@@ -17,7 +17,11 @@ const files = vi.hoisted(() => ({
 vi.mock("@wdio/globals", () => ({ browser: driver, $: vi.fn() }));
 vi.mock("expect-webdriverio", async () => ({ expect: (await import("vitest")).expect }));
 vi.mock("node:fs", () => ({ default: files }));
-vi.mock("../../e2e-tauri/specs/helpers", () => ({ navigateTo: vi.fn(), domTexts: vi.fn() }));
+vi.mock("../../e2e-tauri/specs/helpers", () => ({
+  navigateTo: vi.fn(), domTexts: vi.fn(), closeOtherWindows: vi.fn(),
+  // Fixture handles are named after their labels.
+  switchToWindowLabel: async (label: string) => { await driver.switchToWindow(label); return label; },
+}));
 
 const cases = new Map<string, () => Promise<void>>();
 let currentWindow: string;

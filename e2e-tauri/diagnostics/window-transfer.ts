@@ -11,7 +11,7 @@
 import { browser } from "@wdio/globals";
 import path from "node:path";
 import { NATIVE_LOG_DIRECTORY, writeDiagnosticArtifact } from "./artifact";
-import { isWarmWindowUrl } from "../window-transfer-waits";
+import { mayScriptPage } from "../owned-windows";
 
 /**
  * Capture every non-warm window's state into `e2e-tauri/logs/window-transfer-<reason>.json`
@@ -51,12 +51,12 @@ export async function captureDiagnostics(
   for (const handle of handles) {
     try {
       await browser.switchToWindow(handle);
-      // A warm window (parked or not) belongs to the application: scripting
-      // one it cannot answer ends the session this record exists to explain
-      // (#931). Its URL comes from the driver without page script.
+      // A warm or not-yet-loaded page is not the test's: scripting one it
+      // cannot answer ends the session this record exists to explain (#931).
+      // Its URL comes from the driver without page script.
       const url = await browser.getUrl();
-      if (isWarmWindowUrl(url)) {
-        diagnostics.push({ reason, handle, url, skipped: "warm window is not scripted (#931)" });
+      if (!mayScriptPage(url)) {
+        diagnostics.push({ reason, handle, url, skipped: "page is not scripted (#931)" });
         persist();
         continue;
       }

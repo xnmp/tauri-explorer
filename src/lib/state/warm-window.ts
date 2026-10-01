@@ -63,6 +63,7 @@ import { normalizeWarmActivation, type WarmActivatePayload } from "$lib/domain/w
 export type { WarmActivatePayload } from "$lib/domain/window-input";
 import { formatWindowTitle } from "../domain/tab-title";
 import { resolveLaunchHomePath } from "./window-title.svelte";
+import { pageForeground } from "./page-foreground";
 
 // Reuse the "explorer-" label prefix so warm windows inherit the same Tauri
 // capability/ACL scope as normal child windows (capabilities/default.json lists
@@ -74,15 +75,9 @@ const WARM_LABEL_PREFIX = "explorer-warm-";
 export const WARM_ACTIVATE_EVENT = "warm-activate";
 const WARM_ACTIVATED_EVENT = "explorer://warm-activated";
 
-/** "1" = normal parked warm window; "measure" = self-firing measurement run
- *  (Rust-spawned via WARM_MEASURE=1, flagged with the __WARM_MEASURE__
- *  global since its URL is fixed by WebviewUrl::App). */
-export function warmMode(): "off" | "park" | "measure" {
-  if (typeof window === "undefined") return "off";
-  if ((window as { __WARM_MEASURE__?: boolean }).__WARM_MEASURE__) return "measure";
-  if (new URLSearchParams(window.location.search).get("warm") === "1") return "park";
-  return "off";
-}
+/** "park" = normal parked warm window; "measure" = self-firing measurement
+ *  run (Rust-spawned via WARM_MEASURE=1). Owned by the page foreground gate. */
+export { warmMode } from "./page-foreground";
 
 /**
  * Create a hidden, parked warm window if the global pool wants one. The Rust
@@ -190,7 +185,7 @@ export async function consumeWarmWindow(
  * so activation latency is captured headlessly (and skip pool registration —
  * a self-activated window must never be claimable).
  */
-export function runWarmWindow(measure: boolean, onActivated?: () => void): { ready: Promise<boolean>; dispose(): void } {
+export function runWarmWindow(measure: boolean): { ready: Promise<boolean>; dispose(): void } {
   let started = 0;
   const self = getCurrentWindow();
   const owner = createWarmActivation({
@@ -234,12 +229,22 @@ export function runWarmWindow(measure: boolean, onActivated?: () => void): { rea
     shown: () => {
       void logStartupTiming(`Startup(warm-activate): show=${(performance.now() - started).toFixed(1)}ms`).catch(() => {});
     },
-    activated: onActivated,
+    // Only a committed activation makes this a user's window: the page's
+    // deferred services start here, never for a window that may be retired.
+    activated: () => { void pageForeground.enterForeground(); },
     reportError: (error) => console.error("Warm window activation failed:", error),
   });
   if (measure) {
     void owner.ready.then((ready) => ready ? owner.activate({ path: resolveLaunchHomePath() ?? "/", x: 100, y: 100, measure: true }) : undefined);
     started = performance.now();
+  } else {
+    // Retire-when: #931 closed. Brackets a parked page's boot in the app log
+    // (its "window tab seed" line marks the start), so a page that wedges
+    // before registering is visible without scripting it through WebDriver.
+    void owner.ready.then(
+      (registered) => logFrontendDiagnostic("warm parked", { label: self.label, registered, bootMs: Math.round(performance.now()) }),
+      (error) => logFrontendDiagnostic("warm parked", { label: self.label, registered: false, error: String(error) }),
+    );
   }
   return owner;
 }

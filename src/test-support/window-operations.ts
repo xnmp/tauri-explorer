@@ -8,7 +8,7 @@ import { spawnWarmWindow } from "../lib/state/warm-window";
 import type { TabSnapshot } from "../lib/state/window-tabs.svelte";
 
 export type WindowOperation =
-  | "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim"
+  | "open-pair" | "tear-off" | "transfer" | "native-close" | "warm-prime" | "warm-open" | "warm-claim" | "warm-ready"
   | "watch-acquire" | "directory-watch-acquire" | "directory-watch-release" | "native-session"
   | "native-destroy" | "target-state" | "target-readiness" | "window-states" | "open-picker"
   | "open-unready" | "arm-transfer-close" | "fresh-open" | "collision-transfer";
@@ -22,6 +22,8 @@ export interface WindowOperationRequest {
 type Handler = (request: WindowOperationRequest) => Promise<unknown>;
 
 export const childReadyKey = (label: string) => `e2e-child-ready:${label}`;
+/** Set by a parked warm page once it registered, so tests never script it (#931). */
+export const WARM_READY_PREFIX = "e2e-warm-ready:";
 
 async function createFixtureWindow(label: string, url: string, title: string): Promise<void> {
   const [{ WebviewWindow }, { explorerWindowAppearance }] = await Promise.all([
@@ -146,6 +148,19 @@ export function windowOperationHandlers(signal: AbortSignal): Record<WindowOpera
     "warm-claim": async () => {
       const { warmPoolClaim } = await whileActive(import("$lib/api/warm-pool"));
       return warmPoolClaim();
+    },
+
+    "warm-ready": async () => {
+      // Labels of registered warm windows that still exist and are hidden.
+      const { Window } = await whileActive(import("@tauri-apps/api/window"));
+      const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? "")
+        .filter(key => key.startsWith(WARM_READY_PREFIX));
+      const parked = await Promise.all(keys.map(async (key) => {
+        const window = await Window.getByLabel(key.slice(WARM_READY_PREFIX.length));
+        if (!window) localStorage.removeItem(key);
+        return window && !await window.isVisible() ? window.label : null;
+      }));
+      return parked.filter(label => label !== null);
     },
 
     "warm-prime": async () => {

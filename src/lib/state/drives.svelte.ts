@@ -4,6 +4,7 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createDirectoryWatch } from "./directory-watch";
 import { directoryKey } from "$lib/domain/path";
+import { pageForeground, type ForegroundGate } from "./page-foreground";
 
 // Change sources: the backend's `drives-changed` push, fs-watcher events on
 // macOS's `/Volumes`, and a poll. On Linux the backend pushes UDisks2, mount
@@ -25,7 +26,8 @@ function mountRoots(drives: readonly Drive[]): string[] {
   return drives.flatMap((d) => (d.path === null ? [] : [directoryKey(d.path)]));
 }
 
-function createDrivesStore() {
+/** A page drive store whose feeds start only while `foreground` is open. */
+export function createDrivesStore(foreground: ForegroundGate) {
   let drives = $state<Drive[]>([]);
   interface Session {
     timer: ReturnType<typeof setInterval> | null;
@@ -35,6 +37,8 @@ function createDrivesStore() {
     watches: Map<string, ReturnType<typeof createDirectoryWatch>>;
     unlisten: UnlistenFn[];
     ready: Promise<void>;
+    /** Drop a start still deferred by the foreground gate. */
+    cancelStart(): void;
   }
   interface PendingRefresh { owner: Session | null; task: Promise<void>; rerun: boolean }
   let active: Session | null = null;
@@ -109,26 +113,42 @@ function createDrivesStore() {
     if (live) await refresh();
   }
 
+  /** The session's feeds: first read, mount-base watches, pushes and poll. */
+  async function begin(session: Session): Promise<void> {
+    schedule(session, false);
+    await refresh();
+    if (active !== session) return;
+    for (const base of detectMountBases()) {
+      if (active !== session) return;
+      const watch = createDirectoryWatch();
+      session.watches.set(base, watch);
+      try { await watch.update(base); } catch { /* Mount base may not exist. */ }
+    }
+    if (active !== session) return;
+    try { await subscribe(session); } catch { /* Browser mode relies on polling. */ }
+  }
+
+  /**
+   * Start this page's drive feeds. A parked warm window reads the list once
+   * and defers the feeds (re-read, watches, pushes, poll) until it is
+   * activated (#931); the returned promise settles once they have started, or
+   * once the session stops before that.
+   */
   function startPolling(): Promise<void> {
     if (active) return active.ready;
     const session: Session = {
       timer: null, pushed: false, pushes: 0,
-      watches: new Map(), unlisten: [], ready: Promise.resolve(),
+      watches: new Map(), unlisten: [], ready: Promise.resolve(), cancelStart: () => {},
     };
     active = session;
-    schedule(session, false);
-    session.ready = (async () => {
-      await refresh();
-      if (active !== session) return;
-      for (const base of detectMountBases()) {
-        if (active !== session) return;
-        const watch = createDirectoryWatch();
-        session.watches.set(base, watch);
-        try { await watch.update(base); } catch { /* Mount base may not exist. */ }
-      }
-      if (active !== session) return;
-      try { await subscribe(session); } catch { /* Browser mode relies on polling. */ }
-    })();
+    // A parked page still reads the list once, so a claimed window is revealed
+    // with its drives; only the ongoing feeds wait for the foreground. Windows
+    // enumerates drives through PowerShell, far too slow to await on reveal.
+    if (!foreground.isForeground) void refresh().catch(console.error);
+    session.ready = new Promise<void>((resolve) => {
+      const cancel = foreground.whenForeground(() => begin(session).finally(resolve));
+      session.cancelStart = () => { cancel(); resolve(); };
+    });
     return session.ready;
   }
 
@@ -136,6 +156,7 @@ function createDrivesStore() {
     const session = active;
     if (session) {
       active = null;
+      session.cancelStart();
       if (session.timer !== null) clearInterval(session.timer);
       const task = (async () => {
         try {
@@ -191,4 +212,4 @@ function createDrivesStore() {
   };
 }
 
-export const drivesStore = createDrivesStore();
+export const drivesStore = createDrivesStore(pageForeground);

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  selectWindowByLabel,
   waitForListingEntry,
   waitForWindowOperation,
   type ListingWaitRequest,
@@ -52,87 +51,6 @@ class FakeCustomEvent {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-});
-
-describe("native window-label scan", () => {
-  it("accepts a ready target reached after a slow complete handle scan", async () => {
-    let elapsed = 0;
-    let selected = "";
-    const visited: string[] = [];
-    await selectWindowByLabel({
-      listHandles: async () => ["main", "parked-warm", "target"],
-      switchTo: async (handle) => { selected = handle; visited.push(handle); },
-      currentLabel: async () => {
-        elapsed += 11_000;
-        return selected === "target" ? "requested-child" : undefined;
-      },
-      pause: async () => { throw new Error("a complete scan already found the target"); },
-      now: () => elapsed,
-    }, "requested-child", 20_000);
-
-    expect(visited).toEqual(["main", "parked-warm", "target"]);
-    expect(elapsed).toBe(33_000);
-  });
-
-  it("reports a missing target only after checking every current handle", async () => {
-    let elapsed = 0;
-    const visited: string[] = [];
-    await expect(selectWindowByLabel({
-      listHandles: async () => ["main", "parked-warm"],
-      switchTo: async (handle) => { visited.push(handle); },
-      currentLabel: async () => { elapsed += 11_000; return undefined; },
-      pause: async () => { throw new Error("expired scan must not repeat"); },
-      now: () => elapsed,
-    }, "requested-child", 20_000)).rejects.toThrow(
-      "window requested-child did not become ready",
-    );
-    expect(visited).toEqual(["main", "parked-warm"]);
-  });
-
-  it("rescans when the child handle appears after the first pass", async () => {
-    let elapsed = 0;
-    let selected = "";
-    let scans = 0;
-    await selectWindowByLabel({
-      listHandles: async () => (++scans === 1 ? ["main"] : ["main", "child"]),
-      switchTo: async (handle) => { selected = handle; },
-      currentLabel: async () => selected === "child" ? "requested-child" : undefined,
-      pause: async (ms) => { elapsed += ms; },
-      now: () => elapsed,
-    }, "requested-child", 20_000);
-    expect(scans).toBe(2);
-    expect(selected).toBe("child");
-  });
-
-  it("skips a handle that closed during the scan and selects the remaining child", async () => {
-    let selected = "";
-    let handles = ["closing", "child"];
-    await selectWindowByLabel({
-      listHandles: async () => handles,
-      switchTo: async (handle) => {
-        if (handle === "closing") {
-          handles = ["child"];
-          throw new Error("no such window");
-        }
-        selected = handle;
-      },
-      currentLabel: async () => selected === "child" ? "requested-child" : undefined,
-      pause: async () => { throw new Error("child was in the first scan"); },
-      now: () => 0,
-    }, "requested-child", 20_000);
-    expect(selected).toBe("child");
-  });
-
-  it("keeps driver errors visible when the failing handle still exists", async () => {
-    const driverError = new Error("driver session lost");
-    await expect(selectWindowByLabel({
-      listHandles: async () => ["main", "child"],
-      switchTo: async () => { throw driverError; },
-      currentLabel: async () => undefined,
-      pause: async () => {},
-      now: () => 0,
-    }, "requested-child", 20_000)).rejects.toBe(driverError);
-  });
 });
 
 describe("native transfer renderer waits", () => {

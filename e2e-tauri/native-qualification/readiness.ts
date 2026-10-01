@@ -287,11 +287,17 @@ export function waitForMacStartupProcess(
       code: number | null,
       signal: NodeJS.Signals | null,
     ): void => {
-      fail(
-        new Error(
-          `application exited before startup qualification completed (code ${code}, signal ${signal ?? "none"})`,
-        ),
-      );
+      const status = `(code ${code}, signal ${signal ?? "none"})`;
+      const exit = `application exited ${status}`;
+      // An exit during a loss is that loss's failure: its message leads (ADR 0021).
+      const log = readLog();
+      const loss = assessRendererLoss(log);
+      if (loss.status !== "none") {
+        const failure = loss.status === "failed" ? `${loss.reason}; ${exit}` : `${exit} before the loss recovered`;
+        fail(new MacRendererLossError(loss.terminations, log, failure));
+        return;
+      }
+      fail(new Error(`application exited before startup qualification completed ${status}`));
     };
     const onError = (error: Error): void => {
       fail(new Error(`application process error: ${error.message}`));

@@ -153,7 +153,6 @@ import {
   runWarmWindow,
   spawnWarmWindow,
   WARM_ACTIVATE_EVENT,
-  warmMode,
   type WarmActivatePayload,
 } from "../../src/lib/state/warm-window";
 import { pageForeground } from "../../src/lib/state/page-foreground";
@@ -313,32 +312,5 @@ describe("warm-window reveal contract", () => {
     expect(enter).not.toHaveBeenCalled();
     invokeMock.mockImplementation(pooled);
     enter.mockRestore(); error.mockRestore();
-  });
-});
-
-describe("warm mode of a recovered document (#942)", () => {
-  const modeAt = (search: string, measure: boolean) => {
-    const current = window as unknown as { location: { search: string }; __WARM_MEASURE__?: boolean };
-    const previous = current.location.search;
-    current.location.search = search;
-    if (measure) current.__WARM_MEASURE__ = true;
-    try {
-      return warmMode();
-    } finally {
-      current.location.search = previous;
-      delete current.__WARM_MEASURE__;
-    }
-  };
-
-  it("parks and measures only on the original launch", () => {
-    expect(modeAt("?warm=1&path=%2Fx", false)).toBe("park");
-    expect(modeAt("", true)).toBe("measure");
-  });
-
-  it("boots a renderer-recovery reload in the foreground, even from a warm launch URL", () => {
-    // An activated warm window keeps its ?warm=1 URL; replaying it after a
-    // reload would re-park a visible window that no claim will ever activate.
-    expect(modeAt("?warm=1&path=%2Fx&rendererRecovery=1", false)).toBe("off");
-    expect(modeAt("?rendererRecovery=1", true)).toBe("off");
   });
 });

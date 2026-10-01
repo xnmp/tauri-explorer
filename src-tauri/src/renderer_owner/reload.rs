@@ -202,6 +202,10 @@ pub(super) fn recover(webview: &tauri::Webview) {
             log::warn!("{line} document={document}");
             let webview = webview.clone();
             tauri::async_runtime::spawn(async move {
+                // The lost document's PTYs are window-label scoped and the new
+                // document cannot reattach them; end them as a closing window
+                // does, before the new document can reserve its own.
+                crate::terminal::on_window_destroyed(&label);
                 // Without a committed document only WebKit's own reload of
                 // its back-forward item is possible; it lacks the marker.
                 let outcome = match target {

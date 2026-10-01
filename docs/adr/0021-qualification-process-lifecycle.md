@@ -76,14 +76,15 @@ A `Renderer(web-content-terminated)` line ends a sample's measurement whenever
 it appears, survival interval included; the sample is never a timing sample.
 It is a recovered loss when every recovery decision is a reload or
 parked-window retirement and exactly one main document booted after the last
-loss (by boot epoch, not log order) reaches `native-ready` once, within the
-sample timeout: the runner records it in
+loss (by boot epoch, not log order) reaches `native-ready` once, within one
+sample timeout of the loss: the runner records it in
 `rendererLosses`, warns, and launches a replacement. An exhausted or failed
-reload, no recovery within the bound, unattributable second-boot markers, or
-more than 3 recovered losses fail the run. Either way the still-owned process
-stays alive while the runner captures renderer-loss evidence (process table,
-unified log, the WebContent crash report's pid and build), and the loss
-message leads (#942).
+reload, no recovery within the bound, an application exit first,
+unattributable second-boot markers, or more than 3 recovered losses fail the
+run. Either way the runner captures renderer-loss evidence (process table,
+unified log, the WebContent crash report's pid and build) before cleanup,
+with the process still alive unless it already exited, and the loss message
+leads (#942).
 
 ## Consequences
 

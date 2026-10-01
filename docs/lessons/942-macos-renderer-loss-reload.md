@@ -28,8 +28,15 @@ Traps:
    and `launchRequest` returns nothing for a recovered document.
 
 The new document starts a new renderer generation, so the lost page's watches
-and sessions stay retired. Terminal PTYs are label scoped and are not
-reattached.
+and sessions stay retired. Terminal PTYs are label scoped and cannot be
+reattached, so a reload ends them through `terminal::on_window_destroyed`
+(whose label scoping is unit-tested; the WebKit-driven adapter itself is not).
+
+Known gap: if the renderer dies after `warm_pool_activate` commits but before
+the page acknowledges activation, the window counts as activated and is
+reloaded, but the claimant's acknowledgement timeout later discards it and
+opens a fresh window instead. The user still gets one window; the recovered
+one is wasted.
 
 Linux logs every webview's loss in the same line format with WebKitGTK's
 reason, but does not reload: the `e2e-renderer-recovery` harness reloads its
@@ -54,15 +61,19 @@ runs, so the qualifier now tests what the product guarantees: recovery.
   `report.json`'s `rendererLosses` (with its evidence directory), excluded
   from the percentiles, announced as a `::warning`, and replaced by another
   launch.
-- It fails on `exhausted`/`reload-failed`, no recovery within the sample
-  timeout, unattributable second-boot markers, or more than 3 recovered losses
-  (P ≈ 0.2% at the measured rate; ~40% at a 10% crash rate).
+- It fails on `exhausted`/`reload-failed`, no recovery within one sample
+  timeout of the loss (so a lost sample can take about twice the timeout),
+  the app exiting first (the loss leads the message), unattributable
+  second-boot markers, or more than 3 recovered losses (P ≈ 0.2% at the
+  measured rate; ~40% at a 10% crash rate).
 - Interactive evidence cannot replace a recorded launch, so a loss there
   fails the report with the loss recorded rather than throwing.
 
 Evidence (`sample-NN-renderer-loss/`, before the app is stopped, ADR 0021)
 skips the profiles, waits up to 15 s for the WebContent `.ips`, and records its
-pid and WebKit build. `log show` now covers only the sample's own window and
+pid and WebKit build. A main window that fails to become ready after only a
+warm window's loss gets stall evidence (with profiles) instead, since the
+problem is then a live, stuck main page. `log show` now covers only the sample's own window and
 drops WebKit's `Network`/`ResourceLoading` lines, which were half of #936's log
 and pushed the crash past the size cap. `report.json` records `sw_vers` and the
 system WebKit `CFBundleVersion`, the build crash reports cite.

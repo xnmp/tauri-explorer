@@ -83,6 +83,18 @@ if (measureWarm) sampleEnvironment.WARM_MEASURE = "1";
 
 const sampleName = (index: number): string => `sample-${String(index).padStart(2, "0")}`;
 
+/**
+ * Which evidence a failed sample gets. A main window stuck after only a warm
+ * window's loss is still a stall: profile it rather than wait for the warm
+ * page's crash report.
+ */
+function evidenceReason(error: unknown): "stall" | "renderer-loss" | null {
+  if (error instanceof MacStartupTimeoutError) return "stall";
+  if (!(error instanceof MacRendererLossError)) return null;
+  const mainLost = error.terminations.some(({ window }) => window === "main");
+  return error.recovered || mainLost ? "renderer-loss" : "stall";
+}
+
 async function runSample(
   index: number,
 ): Promise<AttributedMacStartupMeasurement & { log: string }> {
@@ -110,10 +122,7 @@ async function runSample(
     // system can show before cleanup stops it. A stall profiles the live
     // processes (#936); a renderer loss collects the dead page's crash report
     // and identity, even when the app has already reloaded it (#942).
-    const reason =
-      error instanceof MacStartupTimeoutError ? "stall"
-        : error instanceof MacRendererLossError ? "renderer-loss"
-        : null;
+    const reason = evidenceReason(error);
     if (reason) {
       throw await withStallEvidence(error as Error, outputDir, () =>
         captureMacStartupStallEvidence({
@@ -180,7 +189,7 @@ async function runDirectProcessScenario() {
           recovered: loss.recovered,
           description,
           log: resolveQualificationArtifactPath(outputDir, `${sampleName(index)}.log`),
-          evidence: resolveQualificationArtifactPath(outputDir, `${sampleName(index)}-renderer-loss`),
+          evidence: resolveQualificationArtifactPath(outputDir, `${sampleName(index)}-${evidenceReason(loss)}`),
         });
         console.log(`::warning title=Renderer loss::sample ${index}: ${description}`);
         const recovered = rendererLosses.filter((record) => record.recovered).length;

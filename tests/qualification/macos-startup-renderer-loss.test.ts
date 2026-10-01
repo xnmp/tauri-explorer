@@ -114,6 +114,7 @@ describe("assessing a sample's renderer losses", () => {
     ["no recovery decision is logged yet", [...COMPLETED_THEN_LOST, LOST]],
     ["the reloaded document has not reached readiness", [...COMPLETED_THEN_LOST, LOST, RELOADED, SECOND_BOOT[0]]],
     ["a warm window is retired before main is ready", [COMPLETED_THEN_LOST[0], ...WARM_LOST]],
+    ["a warm window's loss has no decision yet, though main is ready", [...COMPLETED_THEN_LOST, WARM_LOST[0]]],
   ])("is pending while %s", (_case, log) => {
     expect(assessRendererLoss(join(log)).status).toBe("pending");
   });
@@ -239,6 +240,19 @@ describe("waiting for a startup sample", () => {
     expect((state.error as Error).message).toContain("; recovery decision=exhausted;");
   });
 
+  it("fails with the pending loss, not a bare exit, when the app exits before recovering", async () => {
+    vi.useFakeTimers();
+    const child = new FakeStartupChild();
+    const state = settle(waitForMacStartupProcess(child, () => join([...LOST_BEFORE_READY, RELOADED]), options));
+    await vi.advanceTimersByTimeAsync(30);
+    child.exitCode = 1;
+    child.emit("exit", 1, null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect((state.error as MacRendererLossError).recovered).toBe(false);
+    expect((state.error as Error).message).toMatch(
+      /^renderer lost: window=main .*; application exited \(code 1, signal none\) before the loss recovered; before the loss/);
+  });
+
   it("still passes a healthy sample after the survival interval", async () => {
     vi.useFakeTimers();
     const result = waitForMacStartupProcess(new FakeStartupChild(), () => join(COMPLETED_THEN_LOST), options);
@@ -276,7 +290,9 @@ describe("the qualification report", () => {
 
   it("fails an unrecovered loss, and more recovered losses than the limit", () => {
     expect(report([loss(1, false)])).toMatchObject({ passed: false, errors: ["sample 1: renderer lost in 1"] });
-    const many = Array.from({ length: MAX_RECOVERED_RENDERER_LOSSES + 1 }, (_, index) => loss(index + 1));
+    const losses = (count: number) => Array.from({ length: count }, (_, index) => loss(index + 1));
+    expect(report(losses(MAX_RECOVERED_RENDERER_LOSSES)).passed).toBe(true);
+    const many = losses(MAX_RECOVERED_RENDERER_LOSSES + 1);
     expect(report(many).errors).toEqual([`renderer lost in 4 recovered samples (limit ${MAX_RECOVERED_RENDERER_LOSSES})`]);
   });
 });

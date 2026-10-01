@@ -46,8 +46,11 @@ runs, so the qualifier now tests what the product guarantees: recovery.
   timing sample, and two main-window `Startup(webview)`/`(native-ready)`
   markers are rejected rather than mixing clocks.
 - A loss at any point, survival interval included, holds the sample until
-  every decision is a recovery and the main window reaches `native-ready`
-  exactly once after its last loss. That sample is recorded in
+  every decision is a recovery and one main document booted after the last
+  loss (its `boot-epoch-ms` is later than the loss's `epoch-ms`) reaches
+  `native-ready` once. Log order alone is not enough: on the final CI run the
+  dying document's in-flight ready IPC was logged 2 ms after the termination
+  line, and an order-based check took it for the recovery. That sample is recorded in
   `report.json`'s `rendererLosses` (with its evidence directory), excluded
   from the percentiles, announced as a `::warning`, and replaced by another
   launch.

@@ -49,7 +49,7 @@ const RELOADED = line("WARN", RELOAD_TARGET,
   "Renderer(recovery): window=main webview=main decision=reload attempt=1 limit=3 period-s=60 document=recorded");
 /** What the reloaded document logs on its second boot. */
 const SECOND_BOOT = [
-  line("INFO", SYSTEM, "Startup(webview): window=main boot-epoch-ms=1790811796200.000 bundle-exec=120.0ms mount=200.0ms commands-ready=210.0ms settings-ready=230.0ms list-ready=260.0ms app-ready=261.0ms ui-ready=300.0ms total=300.0ms"),
+  line("INFO", SYSTEM, "Startup(webview): window=main boot-epoch-ms=1790812009000.000 bundle-exec=120.0ms mount=200.0ms commands-ready=210.0ms settings-ready=230.0ms list-ready=260.0ms app-ready=261.0ms ui-ready=300.0ms total=300.0ms"),
   line("INFO", SYSTEM, "Startup(native-ready): window=main app-run-to-ready=3100.0ms receipt-epoch-ms=1790811796501.000"),
 ];
 /** Warm-probe sample 9: lost after app-ready, before ui-ready. */
@@ -127,11 +127,23 @@ describe("assessing a sample's renderer losses", () => {
     expect(assessRendererLoss(join(log))).toMatchObject({ status: "failed", reason });
   });
 
+  it("does not take the lost document's late markers for its recovery", () => {
+    // CI run 36799110398 sample 9: the dying document's ready IPC was logged
+    // 2 ms after the termination line, before the reloaded document booted.
+    const [nativeWindow, progress, webview, ready] = COMPLETED_THEN_LOST;
+    const inFlight = [nativeWindow, progress, LOST, RELOADED, webview, ready];
+    expect(assessRendererLoss(join(inFlight)).status).toBe("pending");
+    expect(assessRendererLoss(join([...inFlight, ...SECOND_BOOT])).status).toBe("recovered");
+    // Without the loss's clock its documents cannot be told apart.
+    const unclocked = join([...inFlight, ...SECOND_BOOT]).replace(/ epoch-ms=\S+/, "");
+    expect(assessRendererLoss(unclocked)).toMatchObject({ status: "failed" });
+  });
+
   it("fails when the recovered document's markers cannot be attributed to one boot", () => {
     const unattributable = "the recovered main document's markers cannot be attributed";
     for (const log of [
       recovered([...COMPLETED_THEN_LOST, LOST]).concat(SECOND_BOOT[1]),
-      [...COMPLETED_THEN_LOST, LOST, RELOADED, SECOND_BOOT[1]],
+      recovered([...COMPLETED_THEN_LOST, LOST]).concat(SECOND_BOOT),
     ]) {
       expect(assessRendererLoss(join(log))).toMatchObject({ status: "failed", reason: unattributable });
     }

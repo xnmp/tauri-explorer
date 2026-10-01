@@ -5,7 +5,8 @@
  * dies, then `Renderer(recovery): … decision=…`, and reloads the main window
  * (parked warm windows are retired). A sample with a loss is never a timing
  * measurement. It is a recovered loss when every decision is a recovery and
- * the main window reaches `native-ready` exactly once after its last loss;
+ * exactly one main document booted after the last main loss and reached
+ * `native-ready` once;
  * otherwise (exhausted or failed reload, no decision, no recovery within the
  * bound, unattributable second boot) the sample fails.
  */
@@ -57,8 +58,10 @@ export function findRendererTerminations(log: string): RendererTermination[] {
   });
 }
 
-const count = (lines: readonly string[], marker: string): number =>
-  lines.filter((line) => new RegExp(`${marker}:\\s*window=main\\s`).test(line)).length;
+const isMain = (marker: string) => (line: string): boolean =>
+  new RegExp(`Startup\\(${marker}\\):\\s*window=main\\s`).test(line);
+const isMainWebview = isMain("webview");
+const isMainReady = isMain("native-ready");
 
 /** Pure: where a sample's renderer losses stand. */
 export function assessRendererLoss(log: string): RendererLossOutcome {
@@ -72,13 +75,20 @@ export function assessRendererLoss(log: string): RendererLossOutcome {
   if (terminations.some(({ decision }) => decision === null)) return { status: "pending", terminations };
   const lastMainLoss = lines.reduce(
     (last, line, index) => (line.includes(TERMINATED) && field(line, "window") === "main" ? index : last), -1);
+  // The lost document's in-flight IPC can log its own markers after the loss
+  // (seen in CI, #942), so the recovery is the document booted after it. Its
+  // `native-ready` follows its `Startup(webview)` line from the same command.
+  // An unparseable epoch counts every later document as new, so the lost
+  // document's late markers make the sample ambiguous rather than recovered.
+  const lossEpoch = lastMainLoss < 0 ? -Infinity : Number(field(lines[lastMainLoss], "epoch-ms") ?? NaN);
   const after = lines.slice(lastMainLoss + 1);
-  const ready = count(after, "Startup\\(native-ready\\)");
-  if (ready === 0) return { status: "pending", terminations };
-  if (ready > 1 || count(after, "Startup\\(webview\\)") !== 1) {
+  const booted = after.flatMap((line, index) =>
+    isMainWebview(line) && !(Number(field(line, "boot-epoch-ms") ?? NaN) <= lossEpoch) ? [index] : []);
+  const ready = booted.length === 1 ? after.slice(booted[0] + 1).filter(isMainReady).length : 0;
+  if (booted.length > 1 || ready > 1) {
     return { status: "failed", terminations, reason: "the recovered main document's markers cannot be attributed" };
   }
-  return { status: "recovered", terminations };
+  return { status: ready === 1 ? "recovered" : "pending", terminations };
 }
 
 /** The log up to the first loss: what the lost document reported. */

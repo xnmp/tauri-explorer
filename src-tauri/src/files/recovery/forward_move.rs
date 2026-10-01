@@ -364,7 +364,7 @@ impl PreparedMove {
                 // Only now may the source stop being reachable at its name.
                 execution.park_source()?;
             }
-            Ok::<_, AppError>(execution.operation.state().move_state()?.effect_revision)
+            Ok::<_, AppError>(execution.operation.state().effect_revision)
         })();
         let revision = result.map_err(retained)?;
         let mut receipt = FileMutationReceipt::committed(&committed);

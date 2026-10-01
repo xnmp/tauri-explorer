@@ -103,7 +103,7 @@ fn edited_endpoints_foreign_children_and_missing_roots_preserve_everything() {
             }
             _ => unreachable!(),
         }
-        match MoveRetirement::open(f.claim()) {
+        match Retirement::open(f.claim()) {
             Ok(retirement) => {
                 assert!(
                     matches!(retirement.eligibility(), Eligibility::Preserved(_)),
@@ -234,7 +234,7 @@ fn subprocess_retirement() {
         .unwrap()
         .unwrap();
     let mut seen = 0;
-    MoveRetirement::open(operation)
+    Retirement::open(operation)
         .unwrap()
         .retire_with(|label| {
             if label == boundary {
@@ -279,7 +279,7 @@ fn killed_process_cleanup_resumes_both_roots_from_durable_evidence() {
             let mut child = Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "files::recovery::move_retirement::tests::lifecycle::subprocess_retirement",
+                    "files::recovery::retirement::move_tests::lifecycle::subprocess_retirement",
                     "--ignored",
                     "--nocapture",
                 ])
@@ -387,7 +387,7 @@ fn measured_moves_still_execute_their_exact_history_inverse() {
         for overwrite in [false, true] {
             let f = Fixture::new(cross, overwrite, false);
             let entry = f.coordinator.inventory().unwrap().entries.remove(0);
-            let revision = entry.state.unwrap().move_state().unwrap().effect_revision;
+            let revision = entry.state.unwrap().effect_revision;
             retirement::enforce(&f.coordinator).unwrap();
             retirement::enforce(&f.coordinator).unwrap();
             let operation = f
@@ -419,8 +419,6 @@ fn partial_cleanup_fences_history_and_managed_mutations_until_completion() {
     let revision = f.coordinator.inventory().unwrap().entries[0]
         .state
         .as_ref()
-        .unwrap()
-        .move_state()
         .unwrap()
         .effect_revision;
     crash_at(&f, "source-completed", || {});

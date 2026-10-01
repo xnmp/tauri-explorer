@@ -4,9 +4,9 @@ use super::*;
 use crate::files::{
     file_identity::version_from_metadata,
     recovery::{
+        checkpoint::{Effect, Event},
         model::{NativePath, OperationSpec, ReplacementSpec},
         replacement_execution::ReplacementExecution,
-        replacement_transition::ReplacementTransition,
         resources::{Access, Request, Scope},
     },
 };
@@ -129,14 +129,12 @@ fn transfer_intent_and_terminal_error_keep_full_declared_authority() {
         if terminal_error {
             execution
                 .operation
-                .advance(ReplacementTransition::ReportError(
-                    "terminal transfer failure".into(),
-                ))
+                .advance(Event::ReportError("terminal transfer failure".into()))
                 .unwrap();
         } else {
             execution
                 .operation
-                .advance(ReplacementTransition::BeginRestoration)
+                .advance(Event::Begin(Effect::Restore))
                 .unwrap();
         }
         drop(execution);

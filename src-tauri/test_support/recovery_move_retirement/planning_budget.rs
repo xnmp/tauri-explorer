@@ -58,9 +58,7 @@ fn a_payload_that_could_never_be_discarded_is_refused_before_any_record_or_effec
                     .try_claim(&entry.intent.id, entry.generation.unwrap())
                     .unwrap()
                     .unwrap();
-                let discard = MoveRetirement::open(operation)
-                    .unwrap()
-                    .retire_with(|_| Ok(()));
+                let discard = Retirement::open(operation).unwrap().retire_with(|_| Ok(()));
                 panic!("an unplannable payload was admitted; its discard returned {discard:?}");
             }
             Err(error) => error.to_string(),
@@ -78,8 +76,6 @@ pub(super) fn effect_revision(f: &Fixture) -> u64 {
     f.coordinator.inventory().unwrap().entries[0]
         .state
         .as_ref()
-        .unwrap()
-        .move_state()
         .unwrap()
         .effect_revision
 }

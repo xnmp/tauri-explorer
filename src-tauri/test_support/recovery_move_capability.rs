@@ -1,6 +1,25 @@
 use super::*;
-use crate::files::recovery::{coordinator::Coordinator, forward_move::PreparedMove};
+use crate::files::recovery::{
+    checkpoint::Effect, coordinator::Coordinator, forward_move::PreparedMove, model::DurableIntent,
+};
 use std::{fs, path::PathBuf, sync::Arc};
+
+struct ProbeRoot {
+    root: PathBuf,
+}
+
+/// The planned probe roots, in execution order.
+fn plans(intent: &DurableIntent) -> Result<Vec<ProbeRoot>, AppError> {
+    Ok(intent
+        .operation
+        .kind()
+        .probes()
+        .iter()
+        .map(|probe| ProbeRoot {
+            root: probe.path.0.clone(),
+        })
+        .collect())
+}
 
 struct Fixture {
     _directory: tempfile::TempDir,
@@ -38,7 +57,7 @@ impl Fixture {
 fn real_rename_is_required_before_move_roots_and_leaves_no_probe_artifact() {
     let f = Fixture::new();
     let mut operation = f.operation();
-    assert!(operation.advance_move(MoveTransition::BeginRoots).is_err());
+    assert!(operation.advance(Transition::Begin(Effect::Root)).is_err());
     let probe_paths: Vec<_> = plans(operation.intent())
         .unwrap()
         .into_iter()
@@ -97,7 +116,7 @@ fn rootless_publication_also_requires_a_real_probe() {
     fs::remove_file(&f.target).unwrap();
     let mut operation = f.operation();
     assert!(operation
-        .advance_move(MoveTransition::BeginPublication)
+        .advance(Transition::Begin(Effect::Publish))
         .is_err());
     let operation = qualify(operation, None).unwrap();
     let mut execution =
@@ -364,11 +383,11 @@ fn process_death_at_every_probe_boundary_preserves_user_bytes_and_exact_cleanup_
             assert_eq!(inventory.entries.len(), 1, "{boundary}");
             let entry = &inventory.entries[0];
             assert_eq!(
-                entry.state.as_ref().unwrap().move_state().unwrap().phase,
+                entry.state.as_ref().unwrap().phase,
                 if boundary == "probe-aborted" {
-                    MovePhase::Aborted
+                    Phase::Aborted
                 } else {
-                    MovePhase::Planned
+                    Phase::Planned
                 }
             );
             let roots: Vec<_> = plans(&entry.intent)
@@ -413,7 +432,7 @@ fn process_death_at_every_probe_boundary_preserves_user_bytes_and_exact_cleanup_
 fn move_intents_must_be_version_two_and_carry_probe_plans() {
     let f = Fixture::new();
     let operation = f.operation();
-    assert_eq!(operation.intent().version, 2);
+    assert_eq!(operation.intent().version, 3);
     // A move record without probe plans (never written by a shipped build)
     // does not decode at all.
     let mut value = serde_json::to_value(operation.intent()).unwrap();
@@ -428,7 +447,7 @@ fn move_intents_must_be_version_two_and_carry_probe_plans() {
         spec.rename_probes.target = Some(spec.rename_probes.source.clone());
     }
     assert!(intent.validate().is_err());
-    for version in [0, 1, 3, u32::MAX] {
+    for version in [0, 1, 2, 4, u32::MAX] {
         let mut other = operation.intent().clone();
         other.version = version;
         assert!(
@@ -443,24 +462,14 @@ fn cleaned_checkpoint_requires_the_actual_probe_identity_and_file_evidence() {
     let f = Fixture::new();
     let operation = qualify(f.operation(), None).unwrap();
     let mut state = operation.state().clone();
-    let progress = state
-        .move_state_mut()
-        .unwrap()
-        .rename_probe
-        .as_mut()
-        .unwrap();
+    let progress = state.preflight.as_mut().unwrap();
     let Step::Removed { file, .. } = &mut progress.steps[0] else {
         panic!("not cleaned");
     };
     *file = None;
-    assert!(state.validate(operation.intent()).is_err());
+    assert!(operation.intent().checkpoint(&state).validate().is_err());
     let mut state = operation.state().clone();
-    let progress = state
-        .move_state_mut()
-        .unwrap()
-        .rename_probe
-        .as_mut()
-        .unwrap();
+    let progress = state.preflight.as_mut().unwrap();
     let Step::Removed { root, .. } = &mut progress.steps[0] else {
         panic!("not cleaned");
     };
@@ -471,7 +480,7 @@ fn cleaned_checkpoint_requires_the_actual_probe_identity_and_file_evidence() {
         .unwrap()
         .source_version
         .object;
-    assert!(state.validate(operation.intent()).is_err());
+    assert!(operation.intent().checkpoint(&state).validate().is_err());
 }
 
 #[test]

@@ -171,7 +171,7 @@ fn a_deferral_recorded_before_its_measurement_still_waits_for_a_retry() {
     // stopped between them, so nothing records the retained size.
     let mut operation = f.claim();
     operation
-        .advance_move(MoveTransition::DeferRetirement(
+        .advance(Event::DeferRetirement(
             "Permission denied (os error 13)".into(),
         ))
         .unwrap();
@@ -234,8 +234,6 @@ fn enforcement_claims_an_unmeasured_settled_move_only_once_it_can_observe_it() {
             f.coordinator.inventory().unwrap().entries[0]
                 .state
                 .as_ref()
-                .unwrap()
-                .move_state()
                 .unwrap()
                 .retained_bytes
                 .is_none()

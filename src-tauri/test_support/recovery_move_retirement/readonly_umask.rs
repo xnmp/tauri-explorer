@@ -255,7 +255,7 @@ fn restrictive_umask_cannot_break_probes_roots_or_retirement() {
     let status = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "files::recovery::move_retirement::tests::readonly_umask::subprocess_restrictive_umask",
+            "files::recovery::retirement::move_tests::readonly_umask::subprocess_restrictive_umask",
             "--ignored",
             "--nocapture",
         ])

@@ -37,11 +37,14 @@ Three implementation traps:
    thread they run synchronously, re-entering WebKit while it is still
    reporting the termination. The adapter spawns them onto the async runtime.
 3. **A plain reload replays the launch URL.** That URL carries one-shot
-   requests: `warm=1` would re-park a visible, activated warm window that no
-   claim will ever activate; `path=` makes a child skip its saved tabs; the
-   main window would jump back to its CLI cwd; `focusAddressBar=1` would steal
-   focus again. The recovery document is the last committed URL plus
-   `rendererRecovery=1`. `domain/window-launch-plan.ts` then restores the
+   requests: `warm=1` would re-park a visible, activated warm window (closing
+   its foreground gate and re-registering it with the pool) that no claim will
+   ever activate; `path=` makes a child skip its saved tabs; the main window
+   would jump back to its CLI cwd; `focusAddressBar=1` would steal focus
+   again. The recovery document is the last committed URL without `warm` and
+   with `rendererRecovery=1`; removing `warm` outright means no parking check
+   can read it, and the marker covers the rest. `domain/window-launch-plan.ts`
+   then restores the
    window's own persisted tabs (the label-keyed `explorer-tabs` entry, written
    within 150 ms of any change and kept by WebKit outside the WebContent
    process), and every one-shot request is read through `launchRequest`,
@@ -53,9 +56,28 @@ session IDs are still rejected. Terminal PTYs are window-label scoped, not
 generation scoped: they keep running until the window closes and the
 recovered page does not reattach them.
 
-Linux and Windows keep their existing behaviour (retire only). The Linux
-`e2e-renderer-recovery` harness reloads the retained WebView itself after
-each crash; an automatic product reload there would race it.
+Verified on a macos-latest runner (WebKit 21624.5.1.11.3, macOS 26.6.2) by
+`kill -9` of the WebContent processes after `native-ready`: the main window
+logged `decision=reload attempt=1 … document=recorded`, booted a second
+document to `native-ready` 4.2 s later at the same directory, and the parked
+warm window logged `decision=retire-parked`.
+
+## Linux logs every renderer loss, but does not reload
+
+Ubuntu CI shows a similar signature (pages silent ~0.8 s after `ui-ready`,
+then WebDriver's "page crash or hang"), but WebKitGTK's `web-process-terminated`
+listener was installed only on pages that requested native ownership, and it
+logged nothing. A `renderer-termination-log` plugin now connects to that signal
+for every webview from `on_webview_ready` and logs the same
+`Renderer(web-content-terminated)` line with WebKitGTK's reason
+(`reason=crashed`, `exceeded-memory-limit`, `terminated-by-api`), so the
+qualifier's parser and CI log greps match both platforms. The ownership
+listener in `termination.rs` still retires generations.
+
+Linux does not reload. The `e2e-renderer-recovery` harness reloads its
+retained WebView itself after asserting that native retirement and the
+file-recovery channel drop happened first; an automatic product reload would
+race those assertions. Windows (WebView2 `ProcessFailed`) is unchanged.
 
 ## Qualification passed samples that lost their renderer
 

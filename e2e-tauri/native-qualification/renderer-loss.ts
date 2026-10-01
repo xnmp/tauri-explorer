@@ -25,6 +25,8 @@ export interface RendererTermination {
   epochMs: number | null;
   /** Time since app run on the `native-ready` clock. */
   appRunMs: number | null;
+  /** WebKitGTK's termination reason (`crashed`, …); macOS reports none. */
+  reason: string | null;
   /** The app's `Renderer(recovery)` decision for this window, if logged after it. */
   recovery: string | null;
   /** The line as logged, so format drift can never hide a loss. */
@@ -57,6 +59,7 @@ export function findRendererTerminations(log: string): RendererTermination[] {
       webview: field(body, "webview"),
       epochMs: finiteField(body, "epoch-ms"),
       appRunMs: finiteField(body, "app-run-ms"),
+      reason: field(body, "reason"),
       recovery: recoveryLine ? (/decision=.*$/.exec(recoveryLine.trim())?.[0] ?? null) : null,
       line: line.trim(),
     });
@@ -77,7 +80,8 @@ function describeTermination(termination: RendererTermination): string {
     ? "at an unrecorded time"
     : `at app-run ${termination.appRunMs.toFixed(1)}ms`;
   return (
-    `window=${termination.window ?? "unknown"} WebContent terminated ${when}` +
+    `window=${termination.window ?? "unknown"} WebContent terminated` +
+    `${termination.reason ? ` (${termination.reason})` : ""} ${when}` +
     `${termination.recovery ? ` (${termination.recovery})` : " (no recovery decision logged)"}`
   );
 }
@@ -172,7 +176,8 @@ export function parseWebPageProcesses(unifiedLog: string): WebPageProcess[] {
   for (const line of unifiedLog.split("\n")) {
     const pid = /\bPID=(\d+)/.exec(line);
     const page = /\bwebPageID=(\d+)/.exec(line);
-    if (!pid || !page) continue;
+    // PID=0 tags a page whose process has not launched yet.
+    if (!pid || !page || Number(pid[1]) === 0) continue;
     const entry = pages.get(Number(pid[1])) ?? { webPageIds: new Set<number>(), terminated: false };
     entry.webPageIds.add(Number(page[1]));
     if (/terminat|crash/i.test(line)) entry.terminated = true;

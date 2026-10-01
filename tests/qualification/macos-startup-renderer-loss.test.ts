@@ -88,9 +88,20 @@ describe("renderer termination lines", () => {
       webview: "main",
       epochMs: 1790811795993.919,
       appRunMs: 2439.9,
+      reason: null,
       recovery: "decision=reload attempt=1 limit=3 period-s=60",
       line: LOST,
     }]);
+  });
+
+  it("carry WebKitGTK's termination reason in the same format on Linux", () => {
+    const linux = line("WARN", "tauri_explorer_lib::renderer_owner",
+      "Renderer(web-content-terminated): window=explorer-1 webview=explorer-1 epoch-ms=1790811795993.919 app-run-ms=812.5 reason=crashed");
+    const [termination] = findRendererTerminations(linux);
+    expect(termination).toMatchObject({ window: "explorer-1", appRunMs: 812.5, reason: "crashed", recovery: null });
+    expect(new MacRendererLossError([termination], linux).message).toMatch(
+      /^renderer lost: window=explorer-1 WebContent terminated \(crashed\) at app-run 812\.5ms \(no recovery decision logged\)/,
+    );
   });
 
   it("count even when their fields drift from the expected format", () => {
@@ -232,6 +243,8 @@ describe("dead page identity", () => {
       "2026-09-30 23:46:47.4 Df com.apple.WebKit[42629:1] [com.apple.WebKit:Loading] [pageProxyID=37, webPageID=38, PID=42634] WebPageProxy::didCommitLoadForFrame",
       "2026-09-30 23:46:48.4 E  com.apple.WebKit[42629:1] [com.apple.WebKit:Process] [pageProxyID=8, webPageID=9, PID=42633] WebPageProxy::processDidTerminate: (pid 42633), reason=Crash",
       "2026-09-30 23:46:48.4 Df com.apple.WebKit[42629:1] PID=1 without a page",
+      // Seen on CI: a page logged before its process launched carries PID=0.
+      "2026-10-01 00:37:57.1 Df com.apple.WebKit[11598:1] [pageProxyID=8, webPageID=9, PID=0] WebPageProxy::loadRequest",
     ].join("\n");
     expect(parseWebPageProcesses(log)).toEqual([
       { pid: 42633, webPageIds: [9], terminated: true },

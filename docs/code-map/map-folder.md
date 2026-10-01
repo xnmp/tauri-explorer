@@ -446,10 +446,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `file_history/retention.rs` — complete history-entry budget for forward and inverse recovery; preserves unfinished work and a dependency-safe prefix of the opposite execution with explicit warnings.
 - `src-tauri/src/diagnostics.rs` — bounded, ordered completion diagnostics, independent of batch failures; lazy formatting stops at the output limit; bounded panic descriptions are shared by worker and replacement execution.
-- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
+- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement; the shared `Renderer(web-content-terminated)` log line (macOS hook, Linux all-webview plugin with reason).
 - `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
-- `renderer_owner/reload.rs` — macOS WebContent-loss recovery (#942): pure per-window reload budget (3 per 60 s) and `rendererRecovery=1` document URL, plus the adapter that reloads the last committed document, retires parked warm windows and logs `Renderer(recovery)`.
+- `renderer_owner/reload.rs` — macOS WebContent-loss recovery (#942): pure per-window reload budget (3 per 60 s) and recovery document URL (`warm` removed, `rendererRecovery=1` added), plus the adapter that reloads the last committed document, retires parked warm windows and logs `Renderer(recovery)`.
 - `git_watch/service.rs` — dedicated worker owns window-scoped leases, shared observers, cancellation/reclamation, coalesced event flags, debounce/recovery deadlines and invalidation delivery retries.
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).

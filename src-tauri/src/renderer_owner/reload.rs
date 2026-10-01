@@ -14,6 +14,13 @@ use tauri::Manager as _;
 /// one-shot launch requests (`src/lib/domain/window-launch-plan.ts`).
 pub(crate) const RECOVERY_QUERY_KEY: &str = "rendererRecovery";
 
+/// A warm window's parking request (`src/lib/state/warm-window.ts`). Only an
+/// activated warm window is ever reloaded, and it keeps this parameter in its
+/// URL for life; a document loaded with it would park a visible window and
+/// re-register it with the pool. Removed rather than merely overridden by the
+/// marker, so no parking check can read it.
+const PARKED_QUERY_KEY: &str = "warm";
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReloadLimit {
     pub max_reloads: usize,
@@ -85,17 +92,17 @@ pub(crate) fn plan(
     (Recovery::Reload { attempt }, ReloadHistory(next))
 }
 
-/// The document to load in place of the lost one: the same URL with the
-/// recovery marker set once. `None` for a URL with no hierarchy to carry a
-/// query (`about:blank` before the first commit), where a plain reload is all
-/// that is possible.
+/// The document to load in place of the lost one: the same URL without its
+/// parking request and with the recovery marker set once. `None` for a URL
+/// with no hierarchy to carry a query (`about:blank` before the first
+/// commit), where a plain reload is all that is possible.
 pub(crate) fn recovery_url(current: &tauri::Url) -> Option<tauri::Url> {
     if current.cannot_be_a_base() {
         return None;
     }
     let retained: Vec<(String, String)> = current
         .query_pairs()
-        .filter(|(key, _)| key != RECOVERY_QUERY_KEY)
+        .filter(|(key, _)| key != RECOVERY_QUERY_KEY && key != PARKED_QUERY_KEY)
         .map(|(key, value)| (key.into_owned(), value.into_owned()))
         .collect();
     let mut next = current.clone();

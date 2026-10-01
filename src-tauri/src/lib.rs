@@ -184,6 +184,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
     let builder = builder.on_web_content_process_terminate(|webview| {
         renderer_owner::on_web_content_terminated(webview);
     });
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(renderer_owner::termination_log());
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.

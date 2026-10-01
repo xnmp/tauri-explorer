@@ -130,9 +130,9 @@ fn the_recovery_document_keeps_the_launch_url_and_marks_it_once() {
         Some("tauri://localhost/?rendererRecovery=1")
     );
     assert_eq!(
-        recovered("tauri://localhost/index.html?warm=1&path=%2FUsers%2Fme%2Fa+b&home=%2FUsers%2Fme")
+        recovered("tauri://localhost/index.html?path=%2FUsers%2Fme%2Fa+b&home=%2FUsers%2Fme")
             .as_deref(),
-        Some("tauri://localhost/index.html?warm=1&path=%2FUsers%2Fme%2Fa+b&home=%2FUsers%2Fme&rendererRecovery=1")
+        Some("tauri://localhost/index.html?path=%2FUsers%2Fme%2Fa+b&home=%2FUsers%2Fme&rendererRecovery=1")
     );
     // A second loss of an already recovered document does not stack markers,
     // and a fragment from in-page navigation is not replayed.
@@ -140,6 +140,18 @@ fn the_recovery_document_keeps_the_launch_url_and_marks_it_once() {
         recovered("http://localhost:1420/?rendererRecovery=1&path=%2Fx#frag").as_deref(),
         Some("http://localhost:1420/?path=%2Fx&rendererRecovery=1")
     );
+}
+
+#[test]
+fn an_activated_warm_window_reloads_with_its_non_warm_identity() {
+    // Only activated warm windows are reloaded (parked ones are retired), and
+    // they keep `warm=1` in their URL for life. Loading it again would park a
+    // visible window and re-register it with the pool.
+    let reloaded =
+        recovered("tauri://localhost/?warm=1&path=%2Fpark&home=%2FUsers%2Fme&warm=1").unwrap();
+    let url = tauri::Url::parse(&reloaded).unwrap();
+    let keys: Vec<String> = url.query_pairs().map(|(key, _)| key.into_owned()).collect();
+    assert_eq!(keys, ["path", "home", "rendererRecovery"]);
 }
 
 #[test]

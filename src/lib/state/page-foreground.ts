@@ -16,13 +16,18 @@
  * re-read lands, which takes seconds on Windows (#931).
  */
 
+import { isRendererRecovery, launchRequest } from "$lib/domain/window-launch-plan";
+
 export type WarmMode = "off" | "park" | "measure";
 
 /** The page's warm-window role, read from its launch URL and globals. */
 export function warmMode(): WarmMode {
   if (typeof window === "undefined") return "off";
+  // A recovered document replaces a window that was already in the
+  // foreground; parked windows are retired, never recovered (#942).
+  if (isRendererRecovery(window.location.search)) return "off";
   if ((window as { __WARM_MEASURE__?: boolean }).__WARM_MEASURE__) return "measure";
-  if (new URLSearchParams(window.location.search).get("warm") === "1") return "park";
+  if (launchRequest(window.location.search, "warm") === "1") return "park";
   return "off";
 }
 

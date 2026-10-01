@@ -132,7 +132,9 @@ describe("stall evidence capture", () => {
       path.join(result.directory, "spindump-webcontent-5001.txt"),
     ]);
     const logShow = calls.find(([command]) => command === "/usr/bin/log")!;
-    expect(logShow).toEqual(expect.arrayContaining(["show", "--last", "60s"]));
+    // The window starts with the sample (31 s ago, plus margin), and drops per-request noise.
+    expect(logShow).toEqual(expect.arrayContaining(["show", "--last", "36s"]));
+    expect(logShow.at(-1)).toContain('NOT (subsystem == "com.apple.WebKit" AND category IN {"Network", "ResourceLoading"})');
     expect(logShow.at(-1)).toContain('process == "tauri-explorer"');
 
     const processes = fs.readFileSync(path.join(result.directory, "processes.txt"), "utf8");
@@ -294,7 +296,7 @@ describe("attaching evidence to a timeout", () => {
       }),
     );
     expect(error.message).toMatch(
-      /^startup markers missing after 30000ms; main progress: last mark settings-ready; stall evidence capture failed: artifact path resolves outside qualification root/,
+      /^startup markers missing after 30000ms; main progress: last mark settings-ready; evidence capture failed: artifact path resolves outside qualification root/,
     );
     expect(error.cause).toBe(timeout);
   });

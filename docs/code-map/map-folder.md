@@ -446,9 +446,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `file_history/execution.rs` — injected native inverse execution with ordered completed/opposite/remaining partitions.
 - `file_history/retention.rs` — complete history-entry budget for forward and inverse recovery; preserves unfinished work and a dependency-safe prefix of the opposite execution with explicit warnings.
 - `src-tauri/src/diagnostics.rs` — bounded, ordered completion diagnostics, independent of batch failures; lazy formatting stops at the output limit; bounded panic descriptions are shared by worker and replacement execution.
-- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement.
+- `renderer_owner.rs` — concrete-window resource identity and acknowledged sessions shared by directory/Git leases; nonblocking lifecycle retirement; the shared `Renderer(web-content-terminated)` log line (macOS hook, Linux all-webview plugin with reason).
 - `renderer_owner/termination.rs` — lazy acknowledged native renderer termination listeners; weak ownership, cancellation-safe installation and main-renderer-only WebView2 filtering.
 - `renderer_owner/scope.rs` — pure renderer generation and terminal native-window retirement; obsolete session IDs cannot resolve an owner.
+- `renderer_owner/reload.rs` — macOS WebContent-loss recovery (#942): pure per-window reload budget (3 per 60 s) and recovery document URL (`warm` removed, `rendererRecovery=1` added), plus the adapter that reloads the last committed document, retires parked warm windows and logs `Renderer(recovery)`.
 - `git_watch/service.rs` — dedicated worker owns window-scoped leases, shared observers, cancellation/reclamation, coalesced event flags, debounce/recovery deadlines and invalidation delivery retries.
 - `git_watch/target.rs` — repository/private/shared-metadata discovery, non-overlapping watch roots, non-recursive parent coverage and metadata-only temporary-file filtering.
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
@@ -558,6 +559,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ## src-tauri/test_support/ — opt-in native recovery acceptance
 
+- `src-tauri/test_support/renderer_reload.rs` — renderer-loss reload budget, parked-window retirement decision and recovery URL contracts (#942).
 - `src-tauri/test_support/renderer_recovery.rs` — Linux controller retaining one GTK WebView across real renderer crashes; bounded ownership/recovery/navigation assertions and native snapshot.
 - `src-tauri/test_support/file_history_gate.rs` — opt-in bounded barrier after real native forward or inverse admission; an external runner releases work independently of its invoking renderer.
 - `src-tauri/test_support/git_observation_probe.rs` — feature-only backend observation timestamps and paths attached to actual Git events for causal recovery acceptance.
@@ -651,7 +653,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `e2e-tauri/native-qualification/readiness.ts` — the single macOS startup log marker parser used by both the readiness predicate and the report (#696), plus the direct-process readiness wait.
 - `e2e-tauri/native-qualification/attribution.ts` — macOS startup/interactive-evidence report assembly, phase-attribution summaries and half-bounce qualification.
 - `e2e-tauri/native-qualification/startup-progress.ts` — diagnostic summary of streamed `Startup(webview-progress)` lines (last mark, heartbeats after it); never used to qualify readiness (#936).
-- `e2e-tauri/native-qualification/stall-evidence.ts` — bounded macOS capture for a timed-out startup sample: `ps`, `sample`/`spindump`, unified log and new DiagnosticReports into `sample-NN-stall/` (#936).
+- `e2e-tauri/native-qualification/stall-evidence.ts` — bounded macOS capture for a timed-out (`sample-NN-stall/`, profiles live processes) or renderer-loss (`sample-NN-renderer-loss/`, waits for the WebContent crash report) startup sample: `ps`, `sample`/`spindump`, the sample's noise-filtered unified log and new DiagnosticReports (#936, #942).
+- `e2e-tauri/native-qualification/renderer-loss.ts` — pure renderer-loss assessment (none/pending/recovered/failed), the recovered-loss limit, the `MacRendererLossError` message and WebContent crash-report identity (#942).
 - `e2e-tauri/macos-ui-smoke.ts` — standalone Appium Mac2/XCTest pilot: exact bundled binary, unique listing fixture, native accessibility navigation outcome and retained evidence.
 - `e2e-tauri/native-process-group.ts` — bounded Linux cleanup of a native test session's detached driver/application process group, plus the exit-time reaper for a group whose session never started (WDIO skips `afterSession`).
 - `e2e-tauri/gated-suites.ts` — run/skip/fail decision for native suites that need an opt-in build or fixture directory; `TAURI_E2E_REQUIRE_GATED=1` turns a missing prerequisite into a named failure (#774). Contracts in `tests/qualification/gated-suites.test.ts`.
@@ -680,6 +683,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tests/qualification/macos-startup-phase-attribution.test.ts` — correlated macOS startup phase decomposition, retained unattributed residual (bound scaled with launch length) and half-bounce verdicts.
 - `tests/qualification/macos-startup-progress.test.ts` — progress lines never change attributed parsing; timeout reports the last parser rejection and last streamed mark (#936).
 - `tests/qualification/macos-startup-stall-evidence.test.ts` — stall evidence selection, bounds, spindump fallback, overall deadline and timeout-first error composition (#936).
+- `tests/qualification/macos-startup-renderer-loss.test.ts` — retained #936 logs: recovered, pending, exhausted and unattributable losses; losses are never measured; the wait's recovery bound; report limit; renderer-loss evidence (#942).
 - `tests/qualification/interactive-mac-startup-evidence.test.ts` — untrusted interactive Mac evidence ingestion: provenance, stated conditions, outcome timings and retained artifact containment.
 - `tests/e2e-tauri/window-transfer-waits.test.ts` — stale-token, delayed-listing and duplicate-name contracts for renderer observers.
 - `tests/e2e-tauri/owned-windows.test.ts` — complete-pass deadlines, closing handles, and never scripting warm or uncommitted pages.

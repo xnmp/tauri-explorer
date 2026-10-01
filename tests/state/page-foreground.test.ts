@@ -68,6 +68,9 @@ it("a cancelled deferred start never runs", async () => {
 it.each([
   ["?warm=1&path=%2Fhome", false],
   ["?path=%2Fhome", true],
+  // A renderer-loss reload keeps an activated warm window's ?warm=1 URL; it
+  // replaces a visible window, so its feeds must start (#942).
+  ["?warm=1&path=%2Fhome&rendererRecovery=1", true],
 ])("a page launched with %s starts with the foreground open: %s", async (search, open) => {
   vi.resetModules();
   vi.stubGlobal("window", { location: { search } });

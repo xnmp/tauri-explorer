@@ -180,24 +180,12 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .unwrap_or(log::LevelFilter::Info);
 
     let builder = tauri::Builder::default();
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(target_os = "macos")]
     let builder = builder.on_web_content_process_terminate(|webview| {
-        // WebKit does not reload a terminated page and Wry adds no log of its
-        // own, so without this line a renderer loss is indistinguishable from
-        // a page that silently stopped making progress (#936). The epoch and
-        // app-run times correlate it with the `Startup(...)` markers.
-        let app_run_ms = tauri::Manager::try_state::<system::StartupClock>(webview)
-            .map(|clock| clock.started.elapsed().as_secs_f64() * 1000.0)
-            .unwrap_or(f64::NAN);
-        log::warn!(
-            "Renderer(web-content-terminated): window={} webview={} epoch-ms={:.3} app-run-ms={:.1}",
-            webview.window().label(),
-            webview.label(),
-            system::epoch_ms_now(),
-            app_run_ms,
-        );
-        renderer_owner::on_page_started(&webview.window());
+        renderer_owner::on_web_content_terminated(webview);
     });
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(renderer_owner::termination_log());
     // Every WebView sharing Windows' data directory must use the exact same
     // environment options. Inject the main window's attach-build arguments
     // into every spawning page so fresh and warm descendants preserve them.
@@ -250,6 +238,8 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 renderer_owner::on_page_started(&webview.window());
+                #[cfg(target_os = "macos")]
+                renderer_owner::on_document_committed(&webview.window(), payload.url());
             }
         })
         .invoke_handler(tauri::generate_handler![

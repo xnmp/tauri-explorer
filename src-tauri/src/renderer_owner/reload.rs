@@ -27,7 +27,7 @@ pub(crate) struct ReloadLimit {
     pub period: Duration,
 }
 
-/// The CI crash (#936) hit about 5% of boots, so four consecutive losses of a
+/// The CI crash (#936) hit about 1.5% of launches, so four consecutive losses of a
 /// healthy page are vanishingly rare, while a page that dies on every boot
 /// stops after three short-lived attempts instead of flashing indefinitely.
 pub(crate) const RELOAD_LIMIT: ReloadLimit = ReloadLimit {
@@ -186,25 +186,20 @@ pub(super) fn recover(webview: &tauri::Webview) {
     );
     match decision {
         Recovery::Exhausted { .. } => log::error!("{line}"),
-        Recovery::RetireParked => log::warn!("{line}"),
-        Recovery::Reload { .. } => log::warn!(
-            "{line} document={}",
-            if target.is_some() {
-                "recorded"
-            } else {
-                "unrecorded"
-            }
-        ),
-    }
-    match decision {
-        Recovery::Exhausted { .. } => {}
         Recovery::RetireParked => {
+            log::warn!("{line}");
             let app = tauri::Manager::app_handle(webview).clone();
             tauri::async_runtime::spawn(async move {
                 crate::warm_pool::retire_parked(&app, &label);
             });
         }
         Recovery::Reload { .. } => {
+            let document = if target.is_some() {
+                "recorded"
+            } else {
+                "unrecorded"
+            };
+            log::warn!("{line} document={document}");
             let webview = webview.clone();
             tauri::async_runtime::spawn(async move {
                 // Without a committed document only WebKit's own reload of

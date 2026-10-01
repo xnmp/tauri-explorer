@@ -913,6 +913,19 @@ mod linux_tests {
     }
 
     #[test]
+    fn sidebar_recording_matches_production_discovery_serialization() {
+        // Shared with renderer startup/refresh acceptance tests. Derive the
+        // recording through the production parser and actual IPC serializer.
+        let input = include_str!("../../../tests/fixtures/sidebar-cloud-mounts.mountinfo");
+        let recorded: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/sidebar-cloud-mounts.json"
+        ))
+        .unwrap();
+        let discovered = parse_linux_rclone_mounts(input);
+        assert_eq!(serde_json::to_value(discovered).unwrap(), recorded);
+    }
+
+    #[test]
     fn parses_non_google_rclone_mount_as_generic_cloud_storage() {
         let mountinfo = "123 45 0:99 / /home/user/Dropbox rw - fuse.rclone dropbox: rw";
 

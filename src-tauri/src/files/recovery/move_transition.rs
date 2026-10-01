@@ -79,9 +79,7 @@ pub(super) fn transition(
         ));
     }
     match event {
-        MoveTransition::Probe(index, event)
-            if state.phase == MovePhase::Planned && spec.rename_probes.is_some() =>
-        {
+        MoveTransition::Probe(index, event) if state.phase == MovePhase::Planned => {
             let progress = state.rename_probe.get_or_insert_with(|| {
                 super::move_capability_model::Progress::new(spec.probe_plans().count())
             });

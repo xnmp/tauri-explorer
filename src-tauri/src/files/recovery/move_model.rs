@@ -20,9 +20,7 @@ pub(crate) struct ArtifactPlan {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MoveSpec {
-    /// Omit legacy absence when reserializing: artifact manifests bind this digest.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rename_probes: Option<super::move_capability_model::Plans>,
+    pub rename_probes: super::move_capability_model::Plans,
     pub source: NativePath,
     pub source_parent: ObjectId,
     pub source_version: EntryVersion,
@@ -220,21 +218,19 @@ impl MoveSpec {
     pub(super) fn probe_plans(
         &self,
     ) -> impl Iterator<Item = (&ArtifactPlan, &NativePath, ObjectId)> {
-        self.rename_probes.iter().flat_map(|plans| {
-            std::iter::once((&plans.source, &self.source, self.source_parent)).chain(
-                plans
-                    .target
-                    .iter()
-                    .map(|plan| (plan, &self.target, self.target_parent)),
-            )
-        })
+        let plans = &self.rename_probes;
+        std::iter::once((&plans.source, &self.source, self.source_parent)).chain(
+            plans
+                .target
+                .iter()
+                .map(|plan| (plan, &self.target, self.target_parent)),
+        )
     }
     pub(super) fn capability_ready(&self, state: &MoveState) -> bool {
-        self.rename_probes.is_none()
-            || state
-                .rename_probe
-                .as_ref()
-                .is_some_and(|progress| progress.supported())
+        state
+            .rename_probe
+            .as_ref()
+            .is_some_and(|progress| progress.supported())
     }
 
     pub(super) fn roots(&self) -> impl Iterator<Item = &ArtifactPlan> {
@@ -278,11 +274,7 @@ impl MoveSpec {
         {
             return Err(invalid("Move strategy or artifact layout disagrees with its native volumes and overwrite intent"));
         }
-        if self
-            .rename_probes
-            .as_ref()
-            .is_some_and(|plans| plans.target.is_some() != cross_volume)
-        {
+        if self.rename_probes.target.is_some() != cross_volume {
             return Err(invalid("Rename probe coverage disagrees with move volumes"));
         }
         let mut unique = std::collections::BTreeSet::new();

@@ -266,7 +266,7 @@ fn mixed_copy_session_history_fixture() {
             let undo = execute(action, &operations, Direction::Undo).await;
             assert!(undo.error.is_none(), "{:?}", undo.error);
             assert!(!ordinary_target.exists());
-            if cfg!(feature = "durable-copy-recovery") {
+            if crate::files::recovery::Runtime::DURABLE {
                 assert_eq!(
                     fs::read(&replacement_target).unwrap(),
                     b"replacement original bytes"

@@ -20,6 +20,12 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
+    /// Whether this build creates durable copy and move records: the one
+    /// reading of the opt-in `durable-recovery` feature (ADR 0020, #880). Call
+    /// sites branch on this; discovery, restore and history of existing
+    /// records stay available either way.
+    pub(crate) const DURABLE: bool = cfg!(feature = "durable-recovery");
+
     /// Construction performs no filesystem work; the coordinator opens on
     /// first use inside a blocking worker.
     pub(crate) fn new(storage: PathBuf) -> Self {
@@ -30,10 +36,7 @@ impl Runtime {
         }
     }
 
-    /// Production replacement policy. Retention stays opt-in until durable
-    /// recovery is enabled by default (#880). Discovery/history for existing
-    /// records stays available in either build, and transient copies still
-    /// obey their claims.
+    /// Production replacement policy. Transient copies obey their claims.
     pub(crate) fn copy_overwriting(
         &self,
         source: &std::path::Path,
@@ -41,9 +44,7 @@ impl Runtime {
         expected: Option<&crate::files::mutation::CopyObservation>,
         progress: &mut crate::progress::ProgressTracker,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        // Both policies compile against the same recovery contracts. This
-        // constant removes the opt-in branch from ordinary optimized builds.
-        if cfg!(feature = "durable-copy-recovery") {
+        if Self::DURABLE {
             match expected {
                 Some(expected) => self.replace_copy_observed(source, target, expected, progress),
                 None => self.replace_copy(source, target, progress),
@@ -106,24 +107,15 @@ impl Runtime {
         }
     }
 
-    /// Production move policy. Durable records park cross-filesystem sources
-    /// and retain displaced originals until explicit retirement, so creating
-    /// them stays opt-in until durable recovery is enabled by default (#880).
-    /// Discovery, restoration and history for existing records stay available
-    /// in either build.
+    /// Durable move: parks a cross-filesystem source and retains a displaced
+    /// original until explicit retirement. Callers dispatch here only when
+    /// [`Self::DURABLE`].
     pub(crate) fn move_entry(
         &self,
         source: &std::path::Path,
         target: &std::path::Path,
         progress: &mut impl crate::files::anchored_copy::CopyProgress,
     ) -> Result<crate::files::mutation::FileMutationReceipt, AppError> {
-        // Both policies compile against the same recovery contracts. This
-        // constant removes the opt-in branch from ordinary optimized builds.
-        if !cfg!(feature = "durable-move-recovery") {
-            return Err(AppError::Other(
-                "Durable move recovery is not enabled in this build".into(),
-            ));
-        }
         let coordinator = self.coordinator()?;
         let prepared = super::forward_move::PreparedMove::prepare(&coordinator, source, target)?;
         let result = prepared.execute(progress);

@@ -132,15 +132,6 @@ fn qualify_with(
     hook: Option<&Boundary>,
     mut rename: impl FnMut(&Directory, &OsStr, &Directory, &OsStr) -> io::Result<()>,
 ) -> Result<DurableOperation, Failure> {
-    if operation
-        .intent()
-        .operation
-        .move_spec()?
-        .rename_probes
-        .is_none()
-    {
-        return Ok(operation);
-    }
     let state = operation.state().move_state()?;
     if state.phase != MovePhase::Planned || state.rename_probe.is_some() {
         return Err(invalid("Interrupted capability checks require explicit recovery").into());
@@ -223,14 +214,7 @@ fn unsupported(error: &io::Error) -> bool {
 /// windows are intentionally preserved; private names alone never prove ownership.
 pub(super) fn inspect(operation: &DurableOperation) -> Result<(), AppError> {
     let state = operation.state().move_state()?;
-    if !matches!(state.phase, MovePhase::Planned | MovePhase::Aborted)
-        || operation
-            .intent()
-            .operation
-            .move_spec()?
-            .rename_probes
-            .is_none()
-    {
+    if !matches!(state.phase, MovePhase::Planned | MovePhase::Aborted) {
         return Err(invalid("Move is not in capability preflight"));
     }
     for index in 0..plans(operation.intent())?.len() {

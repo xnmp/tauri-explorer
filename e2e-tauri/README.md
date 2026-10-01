@@ -263,7 +263,7 @@ show that exact listing transition. It retains the local-owner retirement
 policy; this is not evidence of process durability or transferable child Undo.
 
 `file-recovery.spec.ts` requires both the `e2e-renderer-recovery` and
-`durable-copy-recovery` build features and
+`durable-recovery` build features and
 `VITE_E2E_HOOKS=1`. Run it with an isolated XDG profile and a fresh, existing
 `TAURI_E2E_FILE_RECOVERY_DIR` directory, then select it using
 `bun run test:e2e:tauri --spec e2e-tauri/specs/file-recovery.spec.ts` under the
@@ -344,21 +344,20 @@ failure. `native-admitted-move-redone.png` records the successful final Redo. Th
 Xvfb run may report an unavailable host clipboard provider; these operations use
 the application's clipboard and do not qualify platform clipboard integration.
 
-### Durable copy release policy
+### Durable recovery release policy
 
-Ordinary release builds leave `durable-copy-recovery` disabled until native
-artifact retirement is implemented (#687). Staged overwrite copies retain their
-previous replacement behavior and exact Linux publication receipts; they do not
-retain the displaced original for durable Undo. Existing journal discovery and
-explicit recovery stay available.
+Ordinary release builds leave `durable-recovery` disabled (ADR 0020). Staged
+overwrite copies retain their previous replacement behavior and exact Linux
+publication receipts; they do not retain the displaced original for durable
+Undo. Existing journal discovery and explicit recovery stay available.
 
 The recovery-copy acceptance build must explicitly opt in:
 
 ```sh
-VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks,e2e-renderer-recovery,durable-copy-recovery
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-hooks,e2e-renderer-recovery,durable-recovery
 ```
 
-Keep ordinary native smoke builds without `durable-copy-recovery` so the default
+Keep ordinary native smoke builds without `durable-recovery` so the default
 shipping path is also exercised. `e2e-renderer-recovery` does not imply the feature.
 ## Extended native qualification soak
 
@@ -442,7 +441,7 @@ Dock half-bounce target.
 recovery dialog to discard retained files/directories. It verifies both private
 roots disappear, destination bytes survive, storage counters decrease, and an
 externally changed destination preserves both recovery copies after Reclaim space.
-It requires `VITE_E2E_HOOKS=1` frontend assets and `durable-move-recovery` in a
+It requires `VITE_E2E_HOOKS=1` frontend assets and `durable-recovery` in a
 custom-protocol native build. `e2e-renderer-recovery` is not needed unless also
 running the seeded replacement/channel tests.
 
@@ -470,7 +469,7 @@ Linux user/mount namespaces and `mount`/`umount`. Run it from the repository roo
 EXPLORER_MOUNT_TEST_PARENT_NS="$(readlink /proc/self/ns/mnt)" \
   unshare --user --map-root-user --mount --propagation private \
   cargo test --manifest-path src-tauri/Cargo.toml --lib \
-    --features durable-copy-recovery,durable-move-recovery \
+    --features durable-recovery \
     unmounted_endpoint_preserves_both_roots_until_same_volume_returns \
     -- --ignored --nocapture
 ```

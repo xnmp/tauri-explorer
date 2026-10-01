@@ -284,25 +284,20 @@ impl LockIdentity {
 impl DurableIntent {
     /// Validate durable data without probing a possibly missing user volume.
     pub(super) fn validate(&self) -> std::io::Result<()> {
-        if !matches!(self.version, 1 | 2)
-            || !valid_token(&self.id)
-            || self.lock.name != format!("{}.lock", self.id)
-        {
+        if !valid_token(&self.id) || self.lock.name != format!("{}.lock", self.id) {
             return Err(invalid(
-                "Recovery intent has an unsupported version, ID or owner binding",
+                "Recovery intent has an invalid ID or owner binding",
             ));
         }
         self.lock.validate()?;
         super::resources::validate(&self.resources)?;
-        match &self.operation {
-            OperationSpec::CopyReplacement(spec) if self.version == 1 => {
-                spec.validate(&self.resources)
-            }
-            OperationSpec::Move(spec) if (self.version == 2) == spec.rename_probes.is_some() => {
-                spec.validate(&self.resources)
-            }
+        // Each operation kind has exactly one format; any other version,
+        // including a future one, is rejected rather than guessed at.
+        match (&self.operation, self.version) {
+            (OperationSpec::CopyReplacement(spec), 1) => spec.validate(&self.resources),
+            (OperationSpec::Move(spec), 2) => spec.validate(&self.resources),
             _ => Err(invalid(
-                "Recovery intent version disagrees with its required capability policy",
+                "Recovery intent has an unsupported version for its operation",
             )),
         }
     }

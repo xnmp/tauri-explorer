@@ -6,7 +6,7 @@
  *
  * The contract depends on the build's move policy, which the job declares:
  * - Default build: an ordinary path inverse, so Undo and Redo cycle.
- * - `durable-move-recovery` (TAURI_E2E_DURABLE_MOVE_RECOVERY=1): the move is
+ * - `durable-recovery` (TAURI_E2E_DURABLE_RECOVERY=1): the move is
  *   journaled and its record is the inverse. Undo consumes the record, so no
  *   Redo is offered (ADR 0020, lesson 685).
  *
@@ -21,7 +21,7 @@ import type { FileRecoverySnapshot } from "../../src/lib/domain/file-recovery";
 import { gatedDescribe } from "./gated-describe";
 import { entryNames, navigateTo } from "./helpers";
 
-const durable = process.env.TAURI_E2E_DURABLE_MOVE_RECOVERY === "1";
+const durable = process.env.TAURI_E2E_DURABLE_RECOVERY === "1";
 
 interface HistorySummary {
   undoId: number | null;

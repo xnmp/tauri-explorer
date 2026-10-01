@@ -113,7 +113,7 @@ fn rename(root: &Path, path: &Path, name: &str) -> entry_execution::Outcome {
 }
 
 /// The executor `move_entry` dispatches to on this host. With
-/// `durable-move-recovery`, Linux journals the move instead.
+/// `durable-recovery`, Linux journals the move instead.
 fn move_entry(
     root: &Path,
     source: &Path,

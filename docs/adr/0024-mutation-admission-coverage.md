@@ -7,7 +7,7 @@ deferrals are decisions, not omissions.
 
 Governs: `src-tauri/src/file_mutation.rs`, `src-tauri/src/archive.rs`,
 `src-tauri/src/files/archive_plan.rs`, `src-tauri/src/git_actions.rs`,
-`src/lib/plugins/api.ts`, `src/lib/state/file-transfer.ts`.
+`src/lib/plugins/api.ts`, `src/lib/state/move-operations.ts`.
 
 ## Problem
 
@@ -46,12 +46,31 @@ footprint is not derivable without an unbounded prewalk, the family defers.
 | Archive extract | `archive.rs::extract_archive` | Extract-here: the archive's containing directory (write, subtree — the archive chooses its own entry names). Extract-to-folder: one chosen sibling directory (write, subtree). The archive itself (read). | Yes — the same directories panes and sessions operate in. | **Migrated** |
 | Deletion / trash | `file_mutation.rs::delete_entries` | Selected paths plus Linux trash auxiliary namespaces: layout directories, `.trashinfo` metadata, exact artifact names and prepared fallback layouts (lesson 680, *Trash preparation includes its auxiliary namespaces*). | Yes. | **Migrated on Linux for forward `delete_entries` and native Trash Undo/Redo**, including permanent forward deletion. Trash claims its full prepared source/layout/artifact set; permanent deletion binds its source paths. See below. |
 | Grouped / bulk rename | `BulkRenameDialog.svelte` → N × `rename_entry` | Each call: old path + new path (write, subtree), plus traversed parent-symlink reads. | Yes, per item. | **No gap** — every item already takes all three through the `entry()` path (`files/entry_plan.rs`). The batch is a renderer loop with no grouped inverse; that is a history-grouping question, not an admission one. |
-| Plugin-driven mutations | `plugins/api.ts::moveFile` → `state/file-transfer.ts::performFileTransfer` → `move_entry` | Source + destination (write, subtree). | Yes. | **No gap** — `performFileTransfer` dispatches through `api/files.ts`, which goes through `api/file-mutations.ts` and therefore carries a session id; `move_entry` already takes all three. `PluginWorkspace` exposes no other mutating method. The remaining difference is that plugins use the per-item path rather than the ordered session (#685); that is ordering, not admission. |
+| Plugin-driven mutations | `plugins/api.ts::moveFile` → `state/move-operations.ts::moveFiles` → `move_entries` | Destination plus every source parent (write, subtree). | Yes. | **No gap, and no longer a separate per-item path (#881)** — plugin moves now call the same ordered move session as cut/paste and drag-drop, so they share its admission, conflict handling, undo recording, ordering and refresh/broadcast behaviour. The single-item `move_entry` command and its renderer-owned `state/file-transfer.ts` dispatcher were deleted; `PluginWorkspace` exposes no other mutating method. |
 | Ordered copy session | `file_mutation.rs::copy_entries` → `files/copy_session.rs` | Each ordered child binds its source read and destination write through live inspection. Overwrite also enters runtime recovery admission; the selection has one native reservation and one history effect. | Yes. | **Converged in #813** — paste, drop, and the native recovery overwrite probe use `copy_entries`; the standalone `copy_entry` IPC and unreachable frontend copy branch were removed. Branch acceptance still depends on the existing copy-session Rust, browser, and native suites. |
 | Git working-tree mutations | `git_actions.rs` — `git_checkout`, `git_create_branch(checkout)`, `git_cherry_pick`, `git_revert`, `git_merge`, `git_rebase`(+`_continue`/`_abort`), `git_stash_apply`/`_pop`, `git_reset --hard`, `git_merge_abort`, `git_cherry_pick_abort`, `git_revert_abort`, `git_checkout_tracking`, `git_sync_local_branches` (checked-out branch), `git_undo` → `HeadMove` | Every working-tree path that differs between two trees, plus `.git` internals. Not derivable without diffing the two trees — an unbounded prewalk — and the operation runs in a subprocess that chooses its own paths. | Yes, in principle. | **Deferred** — the only capturable footprint is a write claim on the whole worktree root, which would serialize *all* file operations in the repository against any git action. That is a blanket lock, not the footprint, and #686 explicitly does not authorize a blanket rewrite of Git operations. Git's own `index.lock` arbitrates git-vs-git. None of these commands acquires (1) either; adding (1) alone would give renderer-lifetime ownership without filesystem exclusion, which is the misleading half. |
 
 `git_watch.rs`'s lease is an observation lifetime, not filesystem admission; it
 is not evidence of Git coverage.
+
+## Plugin moves use the session's conflict policy, not their own (#881)
+
+`PluginWorkspace.moveFile` takes no conflict-policy parameter. It calls
+`state/move-operations.ts::moveFiles` exactly as cut/paste/drop do, so a
+plugin-initiated move prompts the user through the same `conflictResolver`
+dialog on a name collision, rather than silently skipping, overwriting, or
+accepting a bespoke policy from the plugin.
+
+The alternative — letting a plugin pass `overwrite`/`skip`/`prompt` — was
+rejected: it would reintroduce a second, plugin-specific conflict surface
+that the ordinary session does not have, which is exactly the kind of
+divergence lesson 685 warns a second hand-written loop eventually acquires. A
+plugin move is indistinguishable from a user-initiated move once it reaches
+`moveEntries`: same ordering, same per-item native conflict inspection, same
+undo (the durable record when there is one, `Action::Move` otherwise), same
+cut/refresh/broadcast behaviour. If a future plugin genuinely needs
+unattended moves (no prompt), that is a new, explicit capability to design —
+not a parameter threaded through the existing shared path.
 
 ## Deletion admission contract (#735)
 

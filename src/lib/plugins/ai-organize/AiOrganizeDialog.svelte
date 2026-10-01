@@ -7,8 +7,7 @@
 -->
 <script lang="ts">
   import Modal from "$lib/components/Modal.svelte";
-  import type { PluginToast, PluginMoveResult } from "$lib/plugins/api";
-  import { fileMutationRecoveryMessage } from "$lib/domain/file";
+  import type { PluginMoveResult } from "$lib/plugins/api";
   import { suggestDestination } from "$lib/api/ai-organize";
 
   interface Props {
@@ -19,7 +18,6 @@
     candidates: string[];
     count: number;
     apiKey: string;
-    toast: PluginToast;
     onOpenSettings: () => void;
     /** Move the file into a destination dir via the plugin workspace seam
      *  (conflict prompt, undo, toast, pane refresh all handled upstream). */
@@ -35,7 +33,6 @@
     candidates,
     count,
     apiKey,
-    toast,
     onOpenSettings,
     moveFile,
     onClose,
@@ -74,19 +71,13 @@
   async function moveTo(destDir: string): Promise<void> {
     if (applying) return;
     applying = true;
-    // The shared transfer flow handles conflicts, undo, toast, and broadcast.
+    // The shared ordered move session handles conflicts, undo, toast, and
+    // broadcast; it already reports failures through its own toast, so this
+    // only needs to close on success and stay open (without re-toasting) on
+    // skip/cancel/failure.
     const result = await moveFile(filePath, destDir);
-    if (result.recovery) {
-      applying = false;
-      error = fileMutationRecoveryMessage(result.recovery);
-    } else if (result.ok) {
-      onClose();
-    } else {
-      applying = false;
-      if (result.error && result.error !== "skipped") {
-        toast.error(`Move failed: ${result.error}`);
-      }
-    }
+    applying = false;
+    if (result.ok) onClose();
   }
 </script>
 

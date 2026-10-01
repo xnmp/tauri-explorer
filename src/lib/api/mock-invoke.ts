@@ -39,6 +39,29 @@ const mockCopyControls = new Map<string, MockCopyControl>();
 
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 
+/** Relocate one entry's mock listing state. Backs the `move_entries` session
+ *  mock's per-item relocation and the mock-only `move_entry` command
+ *  `invokeMockCommand` handles directly (see there) — there is no standalone
+ *  `move_entry` Rust command since #881 routed plugin moves through the
+ *  session too, and `tests/api/mock-invoke-parity.test.ts` enforces that
+ *  `mockCommands` never grows a command Rust does not have. */
+function relocateMockEntry(source: string, destDir: string): FileMutationReceipt {
+  const name = basename(source);
+  const sourcePath = parentDir(source);
+  const sourceEntries = mockFiles[sourcePath] || [];
+  const entryIndex = sourceEntries.findIndex((e) => e.path === source);
+  if (entryIndex < 0) throw new Error("Source not found");
+
+  const entry = sourceEntries[entryIndex];
+  sourceEntries.splice(entryIndex, 1);
+
+  const newPath = `${destDir}/${name}`;
+  const newEntry: FileEntry = { ...entry, path: newPath };
+  if (!mockFiles[destDir]) mockFiles[destDir] = [];
+  mockFiles[destDir].push(newEntry);
+  return mutationReceipt(newEntry);
+}
+
 interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][] }
 const mockTrash = new Map<string, MockTrashItem[]>();
 
@@ -1244,25 +1267,6 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   delete_entries: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, !args.permanent)),
-
-  move_entry: (args) => {
-    const source = args.source as string;
-    const destDir = args.destDir as string;
-    const name = basename(source);
-    const sourcePath = parentDir(source);
-    const sourceEntries = mockFiles[sourcePath] || [];
-    const entryIndex = sourceEntries.findIndex((e) => e.path === source);
-    if (entryIndex < 0) throw new Error("Source not found");
-
-    const entry = sourceEntries[entryIndex];
-    sourceEntries.splice(entryIndex, 1);
-
-    const newPath = `${destDir}/${name}`;
-    const newEntry: FileEntry = { ...entry, path: newPath };
-    if (!mockFiles[destDir]) mockFiles[destDir] = [];
-    mockFiles[destDir].push(newEntry);
-    return mutationReceipt(newEntry);
-  },
 
   write_text_file: (args) => {
     const path = args.path as string;
@@ -2881,6 +2885,16 @@ async function invokeMockCommand<T>(cmd: string, args?: Record<string, unknown>)
   // { kind, message } (src-tauri/src/error.rs), not as an Error.
   const failure = getMockControl().failures?.[cmd];
   if (failure) throw { kind: "other", message: failure };
+
+  // `move_entry` is not a Rust command (removed in #881; `move_entries` is
+  // the only native relocation IPC, enforced by
+  // `tests/api/mock-invoke-parity.test.ts`). It stays reachable here only as
+  // the browser-only history mock's re-execution primitive for a "move"
+  // UndoAction (`mock-file-history.ts`), so it is handled directly rather
+  // than through the `mockCommands` table the parity test scans.
+  if (cmd === "move_entry") {
+    return relocateMockEntry(args!.source as string, args!.destDir as string) as T;
+  }
 
   const handler = mockCommands[cmd];
   if (!handler) {

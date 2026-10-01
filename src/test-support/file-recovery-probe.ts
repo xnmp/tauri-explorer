@@ -100,11 +100,18 @@ export function startFileRecoveryProbe(signal: AbortSignal): void {
       },
       move: async (request) => {
         await session(request);
-        const { performFileTransfer } = await import("../lib/state/file-transfer");
+        const { runOrderedSession } = await import("../lib/api/copy-session");
         signal.throwIfAborted();
-        return performFileTransfer(request.source!, request.destination!, {
-          overwrite: true, skipConflictCheck: true, onRefresh: () => {},
+        const result = await runOrderedSession("move_entries", [request.source!], request.destination!, {
+          signal,
+          jobId: Number(++next),
+          onConflict: async () => ({ choice: "overwrite", applyToAll: true }),
         });
+        if (!result.ok) return result;
+        const item = result.data.items[0];
+        return item?.status === "succeeded"
+          ? { ok: true, ...item.receipt }
+          : { ok: false, error: item?.status === "failed" || item?.status === "uncertain" ? item.error : "Move did not complete" };
       },
       list: async (request) => invoke<FileRecoverySnapshot>("file_recovery_list", {
         sessionId: await session(request),

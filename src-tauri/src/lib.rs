@@ -281,7 +281,6 @@ pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::
             file_mutation::move_entries,
             file_mutation::resolve_copy_conflict,
             file_mutation::cancel_copy_session,
-            file_mutation::move_entry,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
             file_mutation::write_text_file,

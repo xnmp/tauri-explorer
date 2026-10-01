@@ -137,11 +137,8 @@ fn move_session(
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&prompts);
     let session = Arc::clone(&control);
-    #[cfg(not(target_os = "linux"))]
-    let _ = root;
     let work = MoveWork {
         job_id: 798,
-        #[cfg(target_os = "linux")]
         runtime: runtime(root),
     };
     let request = Request::new(vec![native(source)], native(destination)).unwrap();

@@ -3,6 +3,7 @@
 import type { HistoryDirection, HistoryReply, HistorySummary, UndoAction } from "$lib/domain/file-history";
 import { executeUndo, executeRedo, type UndoApiDeps } from "./mock-file-history-execution";
 import { fileBatchError, type FileBatchOutcome } from "$lib/domain/file-batch-outcome";
+import type { FileMutationReceipt } from "$lib/domain/file";
 import { parentDir } from "$lib/domain/path";
 
 type Entry = { id: number; action: UndoAction };
@@ -12,6 +13,13 @@ type Invoke = (command: string, args: Record<string, unknown>) => Promise<unknow
  * separate wire command, so the mock does the same restore work directly
  * rather than dispatching a mock-only IPC command. */
 type RestoreFromTrash = (paths: string[]) => FileBatchOutcome;
+/** Re-executes a "move" UndoAction in place. There is no standalone
+ * `move_entry` Rust command (removed in #881; `move_entries` is the only
+ * native relocation IPC), so undo/redo of a move cannot round-trip through
+ * `invoke()` without reintroducing a mock-only command that
+ * `tests/api/mock-invoke-parity.test.ts` would reject. The mock instead gets
+ * this dependency injected, exactly like `restoreFromTrash` above. */
+type Relocate = (source: string, destDir: string) => FileMutationReceipt;
 
 function recoverable(action: UndoAction): UndoAction | null {
   if (action.type === "copy" && action.restoreSupported === false) return null;
@@ -41,6 +49,7 @@ export function createMockFileHistory(
   invoke: Invoke,
   publishEffects: (directories: string[]) => void,
   restoreFromTrash: RestoreFromTrash,
+  relocate: Relocate,
 ) {
   let undo: Entry[] = [];
   let redo: Entry[] = [];
@@ -77,7 +86,10 @@ export function createMockFileHistory(
   };
   const files: UndoApiDeps = {
     renameEntry: (path, newName) => call("rename_entry", { path, newName }),
-    moveEntry: (source, destDir) => call("move_entry", { source, destDir, overwrite: false }),
+    moveEntry: async (source, destDir) => {
+      try { relocate(source, destDir); return { ok: true }; }
+      catch (error) { return { ok: false, error: String(error) }; }
+    },
     deleteEntry: deleteOne,
     deleteMultipleEntries: (paths) => batch("delete_entries", { paths, permanent: false }),
     restoreFromTrash: async (paths) => ({ ok: true, data: restoreFromTrash(paths) }),

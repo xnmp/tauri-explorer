@@ -19,7 +19,6 @@ const mocks = vi.hoisted(() => ({
   osReadFiles: vi.fn(),
   osWriteFiles: vi.fn(async (_paths: string[]): Promise<{ ok: true; data: null } | { ok: false; error: string }> => ({ ok: true, data: null })),
   native: { revision: 0, entries: null as FileEntry[] | null, operation: null as "copy" | "cut" | null, paths: [] as string[], pending: Promise.resolve() as Promise<unknown>, lease: null as number | null },
-  transfer: vi.fn(),
   copyEntries: vi.fn(),
   moveEntries: vi.fn(),
   estimateSize: vi.fn(async () => ({ ok: true, data: { totalBytes: 1 } })),
@@ -102,10 +101,6 @@ vi.mock("$lib/api/os-clipboard", () => ({
 vi.mock("$lib/api/clipboard-image", () => ({
   clipboardHasImage: mocks.clipboardHasImage,
   clipboardPasteImage: mocks.clipboardPasteImage,
-}));
-
-vi.mock("$lib/state/file-transfer", () => ({
-  performFileTransfer: mocks.transfer,
 }));
 
 vi.mock("$lib/api/copy-session", async (importOriginal) => ({

@@ -39,6 +39,29 @@ const mockCopyControls = new Map<string, MockCopyControl>();
 
 const mutationReceipt = (entry: FileEntry): FileMutationReceipt => ({ path: entry.path, entry });
 
+/** Relocate one entry's mock listing state. Backs the `move_entries` session
+ *  mock's per-item relocation, and is injected into `createMockFileHistory`
+ *  (as `relocate`) for undo/redo re-execution of a "move" `UndoAction` —
+ *  there is no standalone `move_entry` Rust command since #881 routed plugin
+ *  moves through the session too, and `tests/api/mock-invoke-parity.test.ts`
+ *  enforces that `mockCommands` never grows a command Rust does not have. */
+function relocateMockEntry(source: string, destDir: string): FileMutationReceipt {
+  const name = basename(source);
+  const sourcePath = parentDir(source);
+  const sourceEntries = mockFiles[sourcePath] || [];
+  const entryIndex = sourceEntries.findIndex((e) => e.path === source);
+  if (entryIndex < 0) throw new Error("Source not found");
+
+  const entry = sourceEntries[entryIndex];
+  sourceEntries.splice(entryIndex, 1);
+
+  const newPath = `${destDir}/${name}`;
+  const newEntry: FileEntry = { ...entry, path: newPath };
+  if (!mockFiles[destDir]) mockFiles[destDir] = [];
+  mockFiles[destDir].push(newEntry);
+  return mutationReceipt(newEntry);
+}
+
 interface MockTrashItem { entry: FileEntry; listings: [string, FileEntry[]][] }
 const mockTrash = new Map<string, MockTrashItem[]>();
 
@@ -925,6 +948,7 @@ const mockFileHistory = createMockFileHistory(
   (command, args) => invokeMockCommand(command, args),
   broadcastFileChange,
   (paths) => mockBatch(paths, restoreMockEntry),
+  relocateMockEntry,
 );
 
 // --- File Recovery fixture (ADR 0023 retention/retirement) -----------------
@@ -1244,25 +1268,6 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   delete_entries: (args) => mockBatch(args.paths as string[], (path) => removeMockEntry(path, !args.permanent)),
-
-  move_entry: (args) => {
-    const source = args.source as string;
-    const destDir = args.destDir as string;
-    const name = basename(source);
-    const sourcePath = parentDir(source);
-    const sourceEntries = mockFiles[sourcePath] || [];
-    const entryIndex = sourceEntries.findIndex((e) => e.path === source);
-    if (entryIndex < 0) throw new Error("Source not found");
-
-    const entry = sourceEntries[entryIndex];
-    sourceEntries.splice(entryIndex, 1);
-
-    const newPath = `${destDir}/${name}`;
-    const newEntry: FileEntry = { ...entry, path: newPath };
-    if (!mockFiles[destDir]) mockFiles[destDir] = [];
-    mockFiles[destDir].push(newEntry);
-    return mutationReceipt(newEntry);
-  },
 
   write_text_file: (args) => {
     const path = args.path as string;
@@ -2803,7 +2808,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
             if (control.cancelled) break;
           }
           const receipt = relocating
-            ? await invokeMockCommand<FileMutationReceipt>("move_entry", { source, destDir, overwrite: decision?.choice === "overwrite" })
+            ? relocateMockEntry(source, destDir)
             : copySessionEntry(source, destDir, decision?.choice === "overwrite");
           items.push({ status: "succeeded", receipt });
           send({ type: "completed", item, total: sources.length, entry: receipt.entry });
@@ -2852,7 +2857,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     // history with no undoable action (which discards the redo stack).
     return { result, history: mockFileHistory.push(null).summary } as T;
   }
-  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink", "move_entry"].includes(cmd)) {
+  if (["create_directory", "create_empty_file", "rename_entry", "write_text_file", "create_symlink"].includes(cmd)) {
     const receipt = result as FileMutationReceipt;
     if (cmd === "rename_entry" && basename(args!.path as string) === args!.newName) {
       return { result, history: mockFileHistory.summary() } as T;

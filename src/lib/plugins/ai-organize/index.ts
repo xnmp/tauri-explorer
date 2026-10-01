@@ -135,7 +135,6 @@ export const aiOrganizePlugin: Plugin = {
         candidates,
         count: SUGGESTION_COUNT,
         apiKey,
-        toast: ctx.toast,
         onOpenSettings: () => ctx.openSettings(),
         moveFile: (src: string, destDir: string) => ctx.workspace.moveFile(src, destDir),
       });

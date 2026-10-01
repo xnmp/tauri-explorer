@@ -275,7 +275,6 @@ pub(crate) async fn move_entries(
     let registration = Registration::new(request_id, owner.clone())?;
     let work = MoveWork {
         job_id,
-        #[cfg(target_os = "linux")]
         runtime: admission::runtime(&window)?,
     };
     // A relocation changes two directories per item. The source parents are
@@ -394,78 +393,6 @@ pub(crate) async fn cancel_copy_session(
 ) -> Result<(), AppError> {
     let owner = renderer_owner::acquire_owner(&window, &session_id)?;
     crate::files::copy_session::lookup(&request_id, &owner)?.cancel(&owner)
-}
-
-/// Native lifetime and recovery admission precede the filesystem worker. The
-/// existing paste/drop callers still group Move inverses until session migration.
-#[tauri::command]
-pub(crate) async fn move_entry(
-    window: tauri::Window,
-    session_id: String,
-    source: String,
-    dest_dir: String,
-    overwrite: Option<bool>,
-) -> Result<MutationReply<FileMutationReceipt>, AppError> {
-    let owner = renderer_owner::acquire_owner(&window, &session_id)?;
-    let plan =
-        crate::files::move_plan::MovePlan::new(source, dest_dir, overwrite.unwrap_or(false))?;
-    let directories = plan.affected_dirs();
-    let runtime = admission::runtime(&window)?;
-    file_history::run_forward(owner, false, directories, async move {
-        move_outcome(crate::files::move_execution::execute(plan, &runtime).await)
-    })
-    .await
-}
-
-/// The durable record IS the inverse. Never derive a Move inverse from paths:
-/// replaying one can destroy the last copy of the user's data.
-pub(crate) fn move_inverse(receipt: &FileMutationReceipt) -> Option<Action> {
-    if receipt.recovery.is_some() {
-        return None;
-    }
-    let relocation = receipt.relocation.as_ref()?;
-    Some(Action::Replacement {
-        path: receipt.path.clone(),
-        recovery: Some(relocation.history.clone()),
-    })
-}
-
-fn move_outcome(
-    outcome: crate::files::move_execution::Outcome,
-) -> MutationOutcome<FileMutationReceipt> {
-    let changed = admission::changed(&outcome.completion.result);
-    let inverse = outcome
-        .completion
-        .result
-        .as_ref()
-        .ok()
-        .and_then(move_inverse);
-    let mut affected = outcome.affected;
-    if let Ok(receipt) = outcome.completion.result.as_ref() {
-        if let Some(relocation) = &receipt.relocation {
-            affected.extend(relocation.history.refresh_dirs.iter().cloned());
-            affected.sort_unstable();
-            affected.dedup();
-        }
-    }
-    let outcome = crate::files::move_execution::Outcome {
-        completion: outcome.completion,
-        affected,
-    };
-    MutationOutcome {
-        result: outcome.completion.result,
-        effect: if changed {
-            ForwardEffect::Changed(inverse)
-        } else {
-            ForwardEffect::Unchanged
-        },
-        warning: outcome.completion.warning,
-        affected: if changed {
-            outcome.affected
-        } else {
-            Vec::new()
-        },
-    }
 }
 
 fn rename_effect(committed_path: String, old_name: String, new_name: String) -> ForwardEffect {

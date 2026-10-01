@@ -987,12 +987,17 @@ execution and presentation metadata live in `files::move_execution`. The actual
 blocking context owns the reservation until work and context cleanup finish.
 
 The forward command owns native history settlement before replying and invalidates
-Redo after a confirmed or uncertain effect. Existing frontend paste/drop code still
-groups path-based Move inverses; this is not ordered move-session completion.
-The inverse adapter uses the same recovery runtime and returns additional physical
-refresh parents and cleanup warnings to its existing history supervisor. Cleanup
-warnings do not revoke a completed move or its opposite; incomplete source removal
-continues to consume the inverse without offering a destructive retry.
+Redo after a confirmed or uncertain effect. Cut/paste, drag-drop, and plugin moves
+all go through the ordered move session (`files/move_session.rs`) instead of a
+path-based Move inverse grouped by frontend code; its non-durable item builds the
+same `MovePlan` and runs it through `move_execution::execute` /
+`admission::admitted_execute` that the native history move adapter uses, so a
+session item can never commit while a recovery claim on its source or target is
+held (#881 follow-up). The inverse adapter uses the same recovery runtime and
+returns additional physical refresh parents and cleanup warnings to its existing
+history supervisor. Cleanup warnings do not revoke a completed move or its
+opposite; incomplete source removal continues to consume the inverse without
+offering a destructive retry.
 
 These reservations coordinate managed application operations. They do not pin the
 source/parent objects against external replacement. A copy replacement record

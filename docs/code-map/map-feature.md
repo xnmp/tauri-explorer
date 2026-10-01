@@ -20,7 +20,7 @@ backend for E2E/browser).
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers); `domain/detail-columns.ts` + `composables/use-column-resize.svelte.ts` project session-local widths through one keyed scalar resize owner
 - `components/ListView.svelte` — CSS-grid columns view
 - `components/TilesView.svelte` — auto-fill tile grid
-- `components/VirtualList.svelte` — windowing engine (visible-range calc, spacers)
+- `components/VirtualList.svelte` — windowing engine (visible-range calc, spacers); its settled-scroll callback keeps stationary marquees aligned with current virtual rows
 - `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
 - `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles

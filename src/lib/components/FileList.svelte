@@ -427,6 +427,7 @@
         {explorer}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        onviewportscroll={updateMarqueeSelection}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
@@ -437,6 +438,7 @@
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        onviewportscroll={updateMarqueeSelection}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}
@@ -447,6 +449,7 @@
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        onviewportscroll={updateMarqueeSelection}
         {fallbackTabStop}
         bind:containsIndex={viewContainsIndex}
         bind:scrollToIndex={viewScrollToIndex}

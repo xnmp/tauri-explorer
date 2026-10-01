@@ -9,32 +9,39 @@
  *  - navigation commits path + entries and auto-selects the first row;
  *  - navigation pushes exactly one history entry (Back/Forward wiring);
  *  - the error path surfaces the error and leaves the current path untouched;
- *  - streaming ingest: post-return onEntries batches accumulate and onDone
- *    commits + clears loading;
+ *  - snapshot publication: complete results clear loading and publish entries;
  *  - the navGeneration race documented in lessons_learnt (async A→B navigation:
  *    the slower first result must be discarded, never clobbering B).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { FileEntry } from "$lib/domain/file";
-import type { DirectoryListingCallbacks, DirectoryListingResult } from "$lib/state/directory-listing";
+import type { DirectoryListingResult } from "$lib/state/directory-listing";
 
 // Controllable directory-listing: every explorer instance gets a `load` we
 // drive per test. This is the only seam mocked — all navigation/history/
 // selection logic under test is the real module.
-type LoadFn = (path: string, cbs: DirectoryListingCallbacks) => Promise<DirectoryListingResult>;
-const { loadImpl, cleanupMock } = vi.hoisted(() => ({
+type LoadFn = (path: string) => Promise<DirectoryListingResult>;
+const { loadImpl, cleanupMock, deleteEntriesMock } = vi.hoisted(() => ({
   loadImpl: { current: (async () => ({ ok: false, error: "unset" })) as LoadFn },
   cleanupMock: vi.fn(async () => {}),
+  deleteEntriesMock: vi.fn(),
 }));
 
 vi.mock("$lib/state/directory-listing", () => ({
   createDirectoryListing: () => ({
-    load: (path: string, cbs: DirectoryListingCallbacks) => loadImpl.current(path, cbs),
+    load: (path: string) => loadImpl.current(path),
     cleanup: cleanupMock,
   }),
 }));
 
+vi.mock("$lib/api/files", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("$lib/api/files")>()),
+  deleteEntries: deleteEntriesMock,
+}));
+
 import { createExplorerState } from "$lib/state/explorer.svelte";
+import { settingsStore } from "$lib/state/settings.svelte";
+import { toastStore } from "$lib/state/toast.svelte";
 
 function entry(name: string, dir = "/root"): FileEntry {
   return { name, path: `${dir}/${name}`, kind: "file", size: 1, modified: "2026-01-01T00:00:00Z" };
@@ -45,17 +52,22 @@ function staticLoad(map: Record<string, FileEntry[]>): LoadFn {
   return async (path) => {
     const entries = map[path];
     if (!entries) return { ok: false, error: `no such dir: ${path}` };
-    return { ok: true, path, entries, streaming: false };
+    return { ok: true, path, entries };
   };
 }
 
 beforeEach(() => {
   localStorage.clear();
   loadImpl.current = (async () => ({ ok: false, error: "unset" })) as LoadFn;
+  deleteEntriesMock.mockReset();
+  settingsStore.reset();
+  toastStore.clear();
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  settingsStore.reset();
+  toastStore.clear();
 });
 
 describe("navigation commits path, entries and selection", () => {
@@ -111,11 +123,11 @@ describe("navigation error path", () => {
     loadImpl.current = staticLoad({ "/good": [entry("f", "/good")] });
     const explorer = createExplorerState();
 
-    await explorer.navigateTo("/good");
+    expect(await explorer.navigateTo("/good")).toBe(true);
     expect(explorer.currentPath).toBe("/good");
 
     // /missing is not in the map -> load returns ok:false.
-    await explorer.navigateTo("/missing");
+    expect(await explorer.navigateTo("/missing")).toBe(false);
     expect(explorer.error).toContain("no such dir");
     expect(explorer.loading).toBe(false);
     // A failed navigation must not move the pane off the last good directory.
@@ -124,34 +136,53 @@ describe("navigation error path", () => {
   });
 });
 
-describe("streaming ingest", () => {
-  it("accumulates post-return onEntries batches and commits on done", async () => {
-    vi.useFakeTimers();
-    let captured: DirectoryListingCallbacks | null = null;
-
-    loadImpl.current = async (path, cbs) => {
-      captured = cbs;
-      // Initial batch arrives with the (streaming) result.
-      return { ok: true, path, entries: [entry("a")], streaming: true };
-    };
-
+describe("snapshot publication", () => {
+  it("keeps loading until the complete snapshot arrives, then publishes once", async () => {
+    let complete!: (result: DirectoryListingResult) => void;
+    loadImpl.current = () => new Promise((resolve) => { complete = resolve; });
     const explorer = createExplorerState();
-    await explorer.navigateTo("/root");
-
-    expect(explorer.currentPath).toBe("/root");
-    expect(explorer.displayEntries.map((e) => e.name)).toEqual(["a"]);
-    // Still loading: streaming continuation is outstanding.
+    const pending = explorer.navigateTo("/root");
     expect(explorer.loading).toBe(true);
-
-    // A continuation batch streams in; commit is throttled behind a timer.
-    captured!.onEntries([entry("b"), entry("c")]);
-    vi.advanceTimersByTime(100);
-    expect(explorer.displayEntries.map((e) => e.name)).toEqual(["a", "b", "c"]);
-
-    // Done flushes any remainder and drops the loading flag.
-    captured!.onDone();
+    complete({ ok: true, path: "/root", entries: [entry("a"), entry("b"), entry("c")] });
+    await pending;
     expect(explorer.loading).toBe(false);
     expect(explorer.displayEntries.map((e) => e.name)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("refresh selection reconciliation", () => {
+  it("removes externally deleted selections from public Explorer state", async () => {
+    const removed = entry("removed.txt");
+    const survivor = entry("survivor.txt");
+    const external = entry("external.txt");
+    const explorer = createExplorerState({
+      currentPath: "/root",
+      entries: [removed, survivor],
+      sortBy: "name",
+      sortAscending: true,
+      viewMode: "details",
+    });
+
+    try {
+      explorer.selectEntry(survivor);
+      explorer.selectEntry(removed, { ctrlKey: true });
+      expect(explorer.selectedPaths.size).toBe(2);
+      expect(explorer.getSelectedEntries().map(({ path }) => path).sort()).toEqual(
+        [removed.path, survivor.path].sort(),
+      );
+      expect(explorer.state.cursorPath).toBe(removed.path);
+      expect(explorer.state.selectionAnchorPath).toBe(removed.path);
+
+      loadImpl.current = staticLoad({ "/root": [survivor, external] });
+      await explorer.refresh({ silent: true });
+
+      expect(explorer.selectedPaths.size).toBe(1);
+      expect(explorer.getSelectedEntries().map(({ path }) => path)).toEqual([survivor.path]);
+      expect(explorer.state.cursorPath).toBeNull();
+      expect(explorer.state.selectionAnchorPath).toBeNull();
+    } finally {
+      await explorer.destroy();
+    }
   });
 });
 
@@ -174,8 +205,59 @@ describe("inline new-entry creation kind (#436)", () => {
 
     explorer.cancelInlineNewFolder();
     expect(explorer.isCreatingFolder).toBe(false);
-    // Kind sticks at its last value; only the active flag is cleared.
-    expect(explorer.newEntryKind).toBe("file");
+    // A later opening chooses its own kind; cancellation retires the editor.
+    explorer.startInlineNewFolder();
+    expect(explorer.isCreatingFolder).toBe(true);
+    expect(explorer.newEntryKind).toBe("folder");
+  });
+});
+
+describe("delete without confirmation", () => {
+  it("surfaces an incomplete native batch while removing only confirmed successes", async () => {
+    const removed = entry("removed.txt");
+    const uncertain = entry("uncertain.txt");
+    const unstarted = entry("unstarted.txt");
+    deleteEntriesMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        succeeded: [removed.path],
+        failed: [],
+        uncertain: [{ path: uncertain.path, error: "worker exited" }],
+        unstarted: [unstarted.path],
+      },
+    });
+    settingsStore.toggleConfirmDelete();
+    const explorer = createExplorerState({
+      currentPath: "/root",
+      entries: [removed, uncertain, unstarted],
+      sortBy: "name",
+      sortAscending: true,
+      viewMode: "details",
+    });
+
+    try {
+      await explorer.startDelete([removed, uncertain, unstarted]);
+
+      expect(deleteEntriesMock).toHaveBeenCalledExactlyOnceWith(
+        [removed.path, uncertain.path, unstarted.path],
+        false,
+      );
+      expect(explorer.displayEntries.map(({ path }) => path)).toEqual([
+        uncertain.path,
+        unstarted.path,
+      ]);
+      expect(toastStore.toasts).toEqual([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining(
+            `${uncertain.path}: outcome is uncertain; inspect the affected files before continuing: worker exited`,
+          ),
+        }),
+      ]);
+      expect(toastStore.toasts[0].message).toContain("1 items were not started");
+    } finally {
+      await explorer.destroy();
+    }
   });
 });
 
@@ -189,11 +271,11 @@ describe("navGeneration race (documented in lessons_learnt)", () => {
       if (path === "/A") {
         // /A resolves only when we release it — simulating the slow request.
         return new Promise<DirectoryListingResult>((resolve) => {
-          resolveA = () => resolve({ ok: true, path, entries: entriesA, streaming: false });
+          resolveA = () => resolve({ ok: true, path, entries: entriesA });
         });
       }
       // /B resolves immediately.
-      return { ok: true, path, entries: entriesB, streaming: false };
+      return { ok: true, path, entries: entriesB };
     };
 
     const explorer = createExplorerState();
@@ -202,17 +284,62 @@ describe("navGeneration race (documented in lessons_learnt)", () => {
     const pA = explorer.navigateTo("/A");
     const pB = explorer.navigateTo("/B");
 
-    await pB;
+    expect(await pB).toBe(true);
     expect(explorer.currentPath).toBe("/B");
     expect(explorer.displayEntries.map((e) => e.name)).toEqual(["b-only"]);
 
     // Now release the stale /A result — it must be discarded, not applied.
     resolveA!();
-    await pA;
+    expect(await pA).toBe(false);
 
     expect(explorer.currentPath).toBe("/B");
     expect(explorer.displayEntries.map((e) => e.name)).toEqual(["b-only"]);
     // Only B's navigation should be in history.
     expect(explorer.canGoBack).toBe(false);
+  });
+});
+
+describe("per-pane numeric preferences", () => {
+  it("uses whole bounded Miller layer counts and ignores non-finite input", async () => {
+    const explorer = createExplorerState();
+    try {
+      explorer.setMillerLayers(1.4);
+      expect(explorer.millerLayers).toBe(1);
+      explorer.setMillerLayers(Number.NaN);
+      expect(explorer.millerLayers).toBe(1);
+      explorer.setMillerLayers(100);
+      expect(explorer.millerLayers).toBe(3);
+      explorer.setMillerLayers(-1);
+      expect(explorer.millerLayers).toBe(0);
+    } finally {
+      await explorer.destroy();
+    }
+  });
+});
+
+describe("immutable listing revisions", () => {
+  it("publishes refreshed metadata and resolves the cursor to the new entry", async () => {
+    const original = entry("a.txt");
+    let listing = [original];
+    loadImpl.current = async (path) => ({ ok: true, path, entries: listing });
+    const explorer = createExplorerState();
+    try {
+      await explorer.navigateTo("/root");
+      const previous = explorer.state.entries;
+      const changed = { ...original, size: 4096, modified: "2026-09-23T00:00:00Z", is_symlink: true, symlink_target: "/other" };
+      listing = [changed, entry("b.txt")];
+      await explorer.refresh({ silent: true });
+      expect(explorer.displayEntries).toEqual(listing);
+      expect(explorer.focusedEntry).toEqual(changed);
+      expect(explorer.displayEntries.indexOf(explorer.focusedEntry!)).toBe(0);
+      expect([...explorer.selectedPaths]).toEqual([original.path]);
+      expect(previous).toEqual([original]);
+      const unchanged = explorer.state.entries;
+      listing = listing.map((item) => ({ ...item }));
+      await explorer.refresh({ silent: true });
+      expect(explorer.state.entries).toBe(unchanged);
+    } finally {
+      await explorer.destroy();
+    }
   });
 });

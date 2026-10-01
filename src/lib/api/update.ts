@@ -3,7 +3,7 @@
  * the latest version; this module throttles checks to once per day.
  */
 
-import { invoke } from "./files";
+import { invoke } from "./common";
 
 export interface UpdateInfo {
   version: string;

@@ -12,12 +12,12 @@
   import { getScmStore } from "$lib/state/scm.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { gitInit, gitAddToGitignore, gitArchiveUntracked, gitTrashUntracked } from "$lib/api/files";
+  import { gitInit, gitAddToGitignore, gitArchiveUntracked, gitTrashUntracked } from "$lib/api/git";
   import { toastStore } from "$lib/state/toast.svelte";
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { showFileHistoryInPane } from "$lib/state/git-graph-file-history";
-  import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
+  import type { GitFileEntry, GitStatusCode } from "$lib/api/git";
   import { gitOpStateLabel } from "$lib/domain/git";
   import Modal from "./Modal.svelte";
 
@@ -1042,7 +1042,7 @@
 
   .view-toggle[aria-pressed="true"] {
     background: color-mix(in srgb, var(--accent) 18%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     border-color: var(--accent);
   }
 
@@ -1115,7 +1115,7 @@
 
   .commit-error {
     font-size: 11px;
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
     padding: 2px 4px;
   }
 
@@ -1175,12 +1175,12 @@
 
   .op-banner-btn.abort {
     border-color: color-mix(in srgb, var(--system-critical, #dc2626) 50%, var(--divider));
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
   }
 
   .op-banner-btn.continue {
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .op-banner-btn:disabled {
@@ -1439,8 +1439,8 @@
   }
 
   .row-btn.destructive:hover {
-    color: var(--error, #e5534b);
-    background: color-mix(in srgb, var(--error, #e5534b) 15%, transparent);
+    color: var(--system-critical-text, var(--system-critical));
+    background: color-mix(in srgb, var(--system-critical) 15%, transparent);
   }
 
   .loading-state {

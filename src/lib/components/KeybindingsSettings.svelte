@@ -315,7 +315,7 @@
     font-size: 13px;
     color: var(--text-primary);
     outline: none;
-    transition: all var(--transition-fast);
+    transition: border-color var(--transition-fast);
   }
 
   .search-input:focus {
@@ -335,7 +335,6 @@
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
     white-space: nowrap;
   }
 
@@ -353,7 +352,6 @@
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
     white-space: nowrap;
   }
 
@@ -413,7 +411,7 @@
   }
 
   .shortcut-row.customized .shortcut-action {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .shortcut-action {
@@ -442,7 +440,6 @@
     border: 1px solid var(--control-stroke);
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .shortcut-btn:hover {
@@ -489,12 +486,11 @@
     color: var(--text-tertiary);
     cursor: pointer;
     font-size: 14px;
-    transition: all var(--transition-fast);
   }
 
   .reset-btn:hover {
     background: var(--subtle-fill-secondary);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .recording-indicator {
@@ -505,7 +501,7 @@
 
   .recording-text {
     font-size: 12px;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     animation: pulse 1s ease-in-out infinite;
   }
 
@@ -523,7 +519,6 @@
     font-size: 11px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .cancel-btn:hover {
@@ -535,7 +530,7 @@
     align-items: center;
     gap: 8px;
     font-size: 11px;
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     background: rgba(255, 0, 0, 0.1);
     padding: 4px 8px;
     border-radius: var(--radius-sm);

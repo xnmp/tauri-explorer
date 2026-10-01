@@ -1,0 +1,513 @@
+{
+  "date": "2026-09-09",
+  "scope": "Production Linux copy overwrite journal integration, native command ownership/settlement, retained-original restoration and truthful frontend inverse handling",
+  "contracts": [
+    "copy_entry acquires an acknowledged renderer owner and runs native forward settlement in an independently owned task; reply loss does not shorten copy work",
+    "Existing Linux targets use captured source/target/artifact-root claims and verified versions before exclusive durable promotion, staging, displacement and publication",
+    "Ordinary copy naming remains intact and does not initialize durable recovery storage",
+    "Cancellation before durable work can report Copy cancelled; after promotion failure retains evidence and reports uncertainty; no cancellation point interrupts publication after displacement",
+    "Owned task registration releases after success, error or worker panic",
+    "Prepared physical refresh authority survives failure/panic; distinct physical parent invalidation shares the existing watcher boundary while history publishes the requested spelling",
+    "Inventory publication belongs to the actual worker after native ownership drops, including lost reply waiters and panics; list errors log and warn without replay or fabricated revisions",
+    "Replacement receipts cannot be recorded as ordinary path-only Copy inverses in single, paste or drop flows; successful replacements remain committed with explicit Undo limitation",
+    "Real production transfer/API/command execution creates a new durable operation and exact-ID dialog restoration preserves original/source/independent copied bytes"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: --test-threads=1",
+      "passed": 417,
+      "failed": 0,
+      "ignored": 10,
+      "exit_code": 0
+    },
+    "frontend": {
+      "command": "bunx vitest run tests/state/file-transfer.test.ts tests/state/paste-progress.test.ts tests/state/drop-operations.test.ts tests/api/file-mutations.test.ts tests/api/files-instrumentation.test.ts tests/api/mock-file-history-execution.test.ts",
+      "passed": 79,
+      "files": 6,
+      "exit_code": 0
+    },
+    "regression_before": {
+      "frontend_failed": 4,
+      "frontend_reasons": [
+        "single replacement recorded ordinary Copy inverse",
+        "paste replacement recorded ordinary Copy inverse",
+        "mixed drop included replacement in ordinary Copy batch",
+        "uncertain cancellation was silently treated as clean cancellation"
+      ],
+      "native_alias_failed": 1,
+      "native_alias_reason": "cached physical listing reported old14byte metadata after12byte replacement"
+    },
+    "native": {
+      "command": "bash /tmp/run-file-recovery-native.sh",
+      "passed": 4,
+      "exit_code": 0,
+      "profile": "/tmp/explorer-file-recovery-native-ZFCiy3",
+      "launch_fixture": {
+        "id": "a4fde96daf5ca1a48e11b94b8cad3970a47bb38d23858b7dd6f2e729c2aff3a5",
+        "pid": 1296802,
+        "root": "/tmp/explorer-file-recovery-native-ZFCiy3/fixture/replacement/.tauri-explorer-recovery-077a8cd1adb6e5245e5bf2dc9f26fdd1a89f0faa723bdddf6a34a8046f41a799",
+        "source": "/tmp/explorer-file-recovery-native-ZFCiy3/fixture/replacement/source.txt",
+        "target": "/tmp/explorer-file-recovery-native-ZFCiy3/fixture/replacement/target.txt"
+      },
+      "production_operation_id": "d60a7f9fe98729f593f62f3332d1a845b24c4215836c58b93f6730d6aa5f3311",
+      "production_target": "/tmp/explorer-file-recovery-native-ZFCiy3/fixture/replacement/forward-target/live-copy.txt",
+      "production_root": "/tmp/explorer-file-recovery-native-ZFCiy3/fixture/replacement/forward-target/.tauri-explorer-recovery-de50cb2e338c77026f2f20d86ccc23a3e5e2df528e1d58412cf191b291f4ed6c",
+      "manifest_sha256": "ed5624f4367eab7929178ebe6821df11432e458ff41130910f1bfc99a13898ca",
+      "source_sha256": "a517dc3f703ac1606bc87ab3d98b86d957dc3c6db65e2f100d18a4e88e0b83a3",
+      "target_sha256": "0e3f053c704b0d5769c49b1f8e4fd7087001c319f6df7723fd2b1c0927c1d25e",
+      "private_publication_sha256": "a517dc3f703ac1606bc87ab3d98b86d957dc3c6db65e2f100d18a4e88e0b83a3",
+      "receipts": [
+        {
+          "channel": 435939416,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "1",
+          "session": "0",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "1",
+          "revision": "12"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "1",
+          "revision": "13"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "1",
+          "revision": "16"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "1",
+          "revision": "17"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "1",
+          "revision": "33"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "1",
+          "revision": "34"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "1",
+          "revision": "37"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "1"
+        },
+        {
+          "channel": 1881853600,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "2",
+          "session": "1",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "2",
+          "revision": "37"
+        },
+        {
+          "channel": 409716192,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "3",
+          "session": "1",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "2"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "3",
+          "revision": "37"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "3"
+        },
+        {
+          "channel": 1669637747,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "4",
+          "session": "2",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "4",
+          "revision": "37"
+        },
+        {
+          "channel": 2575658086,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "5",
+          "session": "2",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "4"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "5",
+          "revision": "37"
+        },
+        {
+          "event": "unsubscribe",
+          "label": "main",
+          "pid": 1296802,
+          "session": "1",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "5",
+          "revision": "38"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "5"
+        },
+        {
+          "channel": 3037857484,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "6",
+          "session": "3",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "6",
+          "revision": "38"
+        },
+        {
+          "channel": 1806417554,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "7",
+          "session": "3",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "6"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "7",
+          "revision": "38"
+        },
+        {
+          "event": "unsubscribe",
+          "label": "main",
+          "pid": 1296802,
+          "session": "2",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "7",
+          "revision": "39"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "7"
+        },
+        {
+          "channel": 2255607122,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "8",
+          "session": "4",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "8",
+          "revision": "39"
+        },
+        {
+          "channel": 248897226,
+          "event": "received",
+          "label": "main",
+          "pid": 1296802,
+          "registration": "9",
+          "session": "4",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "8"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "9",
+          "revision": "39"
+        },
+        {
+          "channel": 560647389,
+          "event": "received",
+          "label": "explorer-6db90de2-174c-49cc-b6cf-c8a68f0cf35a",
+          "pid": 1296802,
+          "registration": "10",
+          "session": "0",
+          "token": "1"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "9",
+          "revision": "39"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "10",
+          "revision": "39"
+        },
+        {
+          "channel": 2784389817,
+          "event": "received",
+          "label": "explorer-6db90de2-174c-49cc-b6cf-c8a68f0cf35a",
+          "pid": 1296802,
+          "registration": "11",
+          "session": "0",
+          "token": "9000000000000001"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "10"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "9",
+          "revision": "39"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "11",
+          "revision": "39"
+        },
+        {
+          "event": "dropped",
+          "pid": 1296802,
+          "registration": "11"
+        },
+        {
+          "event": "send",
+          "pid": 1296802,
+          "registration": "9",
+          "revision": "40"
+        }
+      ]
+    },
+    "browser": {
+      "command": "ALL_VIEW_MODES=1 PW_WORKERS=2 bunx playwright test e2e/clipboard-paste.spec.ts e2e/paste-copy-same-folder.spec.ts e2e/multi-item-dnd-undo.spec.ts e2e/jobs-panel.spec.ts --reporter=line",
+      "passed": 6,
+      "exit_code": 0,
+      "scope": "Chromium clipboard paste, same-folder copy, grouped multi-item drop Undo, progress and cancellation against browser mock; these six specs do not expand into all3views despite the environment flag"
+    },
+    "typecheck": {
+      "errors": 0,
+      "warnings": 0,
+      "exit_code": 0
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "library_dead_code_warnings": 8,
+      "new_interface_warning_fixed": true
+    },
+    "architecture": {
+      "exit_code": 0
+    },
+    "maps": {
+      "exit_code": 0,
+      "source_coverage": "415/415",
+      "unresolved_references": 0
+    },
+    "format": {
+      "exit_code": 0
+    },
+    "diff_whitespace": {
+      "exit_code": 0
+    },
+    "bundle": {
+      "command": "bun run check:bundle",
+      "exit_code": 0,
+      "main_raw": 308672,
+      "main_gzip": 91686,
+      "startup_chunks": 45,
+      "startup_raw": 671203,
+      "startup_gzip": 219122
+    },
+    "build": {
+      "command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "binary": "src-tauri/target/debug/tauri-explorer",
+      "sha256": "a30db667ebff22a6d04f04493cdfc8deaee08fc85e8a7b0675acd131d7aeeb6c"
+    }
+  },
+  "independent_review": {
+    "agent": "recovery_native_review_sol",
+    "model": "gpt-5.6-sol",
+    "verdict": "CONFIRMED after fixes; no additional safety blocker found",
+    "found_and_corrected": [
+      "silent inventory failure after retained operation",
+      "physical directory cache left stale when presentation used symlink alias"
+    ],
+    "reviewed": [
+      "production command/runtime source",
+      "real failing-before listing regression and417pass corrective run",
+      "actual native command/UI acceptance log and filesystem bytes",
+      "native-production-copy-restored screenshot"
+    ],
+    "frontend_implementer": "effective_claims_adversary_sol",
+    "frontend_model": "gpt-5.6-sol"
+  },
+  "limitations": [
+    "Linux existing-target copy replacements only; ordinary-copy recovery admission and non-Linux overwrite adapters remain incomplete",
+    "Overwrite Undo is explicitly unavailable; ordinary copy grouping remains frontend-owned and requires whole-intent native batch migration",
+    "No discard/retirement or retention quotas yet; retained records/artifacts remain bounded by existing admission caps and require further lifecycle work before release",
+    "Pre-copy recursive progress sizing remains non-cancellable; full cancellation and cross-filesystem qualification remain open",
+    "Runtime inventory delivery is best-effort if listing fails; successful IPC warns and native logging survives lost caller, but no fabricated revision or automatic replay occurs",
+    "Native production test bypasses clipboard and conflict UI via real transfer hook; cancellation/panic/waiter loss are Rust-worker contracts, not production native IPC interruption acceptance",
+    "Successful alias-copy cache invalidation is directly tested; alias error/panic projection is established by source structure rather than a separate native acceptance scenario",
+    "Browser fixture cannot prove backend timing or actual retained recovery; real native test supplies successful overwrite/restoration proof",
+    "No power-loss, hours-long soak, Windows/macOS qualification, full product matrix or measured macOS half-bounce latency claim",
+    "Full review and final integration remain incomplete; changes local; no commit, push or merge attempted"
+  ],
+  "source_sha256": {
+    "e2e-tauri/specs/file-recovery.spec.ts": "63dc794fc3a9d8277278b378380a5b84bd02449bd2a7eb33d46ca439aac86fec",
+    "src/lib/api/file-mutations.ts": "7d6a88c5d02ecdd1a6030e15424dedb8ee55c7a3d65f717e8dc0e9c7cf9cd380",
+    "src/lib/api/files.ts": "7fd055db8512707e50b15db2d073e99bac80cc60e8505ecd2bb1efe2ad8ae6a6",
+    "src/lib/api/mock-invoke.ts": "d2944dd04ef3e6e7541081490422711893e735c7d0f34747e66fd4e72f1cfc81",
+    "src/lib/domain/file.ts": "8a9e7c8283a1718554334b9874ffddcade291924ae16749405a23c6135ab51ab",
+    "src/lib/state/drop-operations.ts": "10faebdc81547929e0eb033604efc9944c2100d0f9659abfe88f01ffb4e569da",
+    "src/lib/state/file-transfer.ts": "14fe1c0e0416e3e73027c486a4ee06e25bf76bfbb497d5724bd5a7a651b6f67d",
+    "src/lib/state/paste-operations.ts": "686d67dfbb26681194410ed9db4b982d6bd80db9e0ea6f75bc66241f890c239b",
+    "src/test-support/file-recovery-probe.ts": "98687ad53f959dc0027a90691e36687265483fb7f62ecfaaa9c2fbcc6d265285",
+    "src-tauri/src/file_history/forward.rs": "fb6c42acdc800a93ce0ef9b6c67d86ecbcdc205e87567939bb4eea5e91c1b842",
+    "src-tauri/src/file_mutation.rs": "469168ec6ec9941e331b60ce5e6b34deae0efdc954dac1e90587b11b8881604c",
+    "src-tauri/src/files/anchored_copy.rs": "b377db4d7e4100450a5f00e1917e666725b5cd015b71e6448e4576e91ace4288",
+    "src-tauri/src/files/file_ops.rs": "c456eed2b525d943b33717d926d79b17c2a9ec59d223d8b5364ed21ea406cdad",
+    "src-tauri/src/files/mutation.rs": "afc226d8f0da066bdffc21c974744f9273e1a5976074dbd05814ead0a416f34f",
+    "src-tauri/src/files/recovery/commands.rs": "adedb1ba2a3285d694096c5fb50db36a03142db4182e8379918a562c6f203fbc",
+    "src-tauri/src/files/recovery/context.rs": "16a55c6b04d3cb24b79b57f7e00168c4ec8d3c0c23fb25f5d14960c2f3171a0e",
+    "src-tauri/src/files/recovery/coordinator/claim.rs": "f16186d06e518db96e4fcf57fe7c13c0d3a796ef751e28e0974f9205dde764b8",
+    "src-tauri/src/files/recovery/coordinator/claims.rs": "7a5527b3bbcef9985e3972dccdbac630cf3ea04d46ef1491bbbf238f9369a59d",
+    "src-tauri/src/files/recovery/coordinator/inventory.rs": "a120aff814ad33fa0d45982b01f14ce98ce9c11d85ea459bbea9a1fbc307eb30",
+    "src-tauri/src/files/recovery/coordinator/promotion.rs": "6843fd925f6864a1dffc5719c8ce3412fc4c07d6242480c58b5043f5183fb453",
+    "src-tauri/src/files/recovery/coordinator.rs": "fb5a6a89aa44444df67599f931efa58515a167d4d0e7f15e1d12b2729cd410d6",
+    "src-tauri/src/files/recovery/file_lock/windows.rs": "ee48f66b682240173498926040e29cd82701623ee45793d240cad84ff7de46a4",
+    "src-tauri/src/files/recovery/file_lock.rs": "aa5676a600713b6df835379b9165546f84f6c5de9a504666ec98e4a6e46cf74c",
+    "src-tauri/src/files/recovery/forward_copy.rs": "1c83d6e3eb638e453fdc40aa2d9746236c3e310edfe6c700c3ff5bf74b32c4d7",
+    "src-tauri/src/files/recovery/journal.rs": "02989b9a066b1508775253c430d47128188fd4b3b4527c10188cbf71cf1e2f6e",
+    "src-tauri/src/files/recovery/locks.rs": "f9e5fc375fbf19dadd2fccfb0605c81426bce6eefb040b2c720394e3730c0b20",
+    "src-tauri/src/files/recovery/mod.rs": "f92ed59dc93c3c9039632675d99dcd4a3e7cc6bcde088f2223fd89357e8324f0",
+    "src-tauri/src/files/recovery/model.rs": "cc9e3e02c2e73a56dbe9cc5638b0026822daada008e0e90410bc8c258b8b1243",
+    "src-tauri/src/files/recovery/native_path.rs": "a628af6838dd198c23fd6b2a169ad4344e3ca6b3c107511610f48549db07e68b",
+    "src-tauri/src/files/recovery/private_storage/windows.rs": "130567c0633f4658914842ae697db8564941561fa8fdac8ac94e40a26f2b19dc",
+    "src-tauri/src/files/recovery/private_storage.rs": "7accc3b77652428f25639be5687c56dab5381f5c037463db4d616d61fc6ccf2e",
+    "src-tauri/src/files/recovery/rename_outcome.rs": "f1c6ac22e4c8c631ff00809a2e1d9635fb22f176b1435de57b849b3cda9b3178",
+    "src-tauri/src/files/recovery/replacement_artifact.rs": "608aa81aba3ed84e5c50786616d856c066019368357da91bc89fd8f85573edd1",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "e8f4f7a46ccc3a303b5fd52cdf38b9526ddda67e31879c54642d0bdf3e23bb5a",
+    "src-tauri/src/files/recovery/replacement_restoration.rs": "a4587b47eaffd13a97fef16f9b5201170261fe2609c1779fab5f384ee7bf3bce",
+    "src-tauri/src/files/recovery/replacement_restore.rs": "c0d65b5f1c17542de4441438c5a98c83c34736ce8c76bab945c840edd0fd93e0",
+    "src-tauri/src/files/recovery/replacement_transfer.rs": "59a6e14f89fe1ea340e6b1c6f769af8a35afe184d935e86559e5b900392a81d2",
+    "src-tauri/src/files/recovery/replacement_transition.rs": "b4010d5944f59d5fe52519b7e125c1410888dbd75a91530a32116313d4cd1bc9",
+    "src-tauri/src/files/recovery/resources.rs": "0cdc4d1eec1d7828e0d2704e625c9fc4be5f08f4c9fd0bf837691cfa54321b12",
+    "src-tauri/src/files/recovery/runtime.rs": "1cd0993bb5569089cef38fb2daf84886e1c9b5190abd237c42b8dded7b0d77d1",
+    "src-tauri/src/files/recovery/service.rs": "5a1f6157630fdf8d00798b3a61e46ec068ea7a0c772947e916cf831f44d0cfd8",
+    "src-tauri/src/files/recovery/storage.rs": "6db448cf143d8d4d40885e23673e1014fc10d8f7f2f2090b84756e182e3bf65d",
+    "src-tauri/src/files/recovery/subscriptions.rs": "344dfd2bab75606454bd8a44564cf02904eb357841fad889e239976a8202015f",
+    "src-tauri/src/lib.rs": "6ed579c0adeaa5c94f856dbe8bc6e1992972f13e696bf25713cb511410411d43",
+    "src-tauri/src/task_registry.rs": "702e0cc6b3c117cd533e0819cd0a49581e3f40c68e11d1091ec1db6e195cf27f",
+    "src-tauri/test_support/recovery_forward_copy.rs": "83369c9e565d0343071e29c97ef6017a632678a3f0e038126875a5109d58cfb8",
+    "src-tauri/test_support/recovery_runtime.rs": "7a6d000f0729c4e1a5213e0640324788cabb7b15d92510b1a3507ee6ee51b909",
+    "tests/state/drop-operations.test.ts": "ccce0b37ca0ed99f028df281199529e1d9c70882cf1fd24aa4ef4d2636e8ae1e",
+    "tests/state/file-transfer.test.ts": "daeea6ba3a9086578a9a34835dd7650d39bfd61a056d934c53d2a1ec6602d2ae",
+    "tests/state/paste-progress.test.ts": "0a6671ec51a645c636bec547ea94e7d5b7157f77b5ba445b794e65c69b960a18"
+  },
+  "log_sha256": {
+    "/tmp/effective-claims-frontend-after.log": "e13bdc1f572e5e4feba09ae2b0eeabe9868580edbb7bb9d298d436eef27a3d9f",
+    "/tmp/effective-claims-frontend-before.log": "58b380c91d2efff17859d585ff744577201c03c817743c7b19a41dc101bfccb9",
+    "/tmp/effective-claims-frontend-focused.log": "094995890c5d51e359f6b0837b4a184cf4288ee81876e353fb54857ed7e156b0",
+    "/tmp/recovery-production-copy-acceptance.log": "9f74f8432bdadef77f81a73b8e2553d7ecfabf7615f080330a0d3189667a3b70",
+    "/tmp/recovery-production-copy-alias-before.log": "449cfcc3937694b485a2b7116d32ee9930c8046cbb8f89bff55d0a632a378ac1",
+    "/tmp/recovery-production-copy-architecture.log": "1e330b86131f7a41ccf1555229bd888748995d86d259cab06218b0c469ea22ae",
+    "/tmp/recovery-production-copy-browser.log": "1ac05d17acf91366d22e413df3f93e66a801499c0c02288b21d3ac1240d73138",
+    "/tmp/recovery-production-copy-build.log": "a1d0030b5fdb282959e39a337150fcb191e5fcf240f64a54859693a6856beca0",
+    "/tmp/recovery-production-copy-bundle.log": "e58949dfc353b7aca2f01dae3d3864765ca55deb61192847c5155e974f2c9949",
+    "/tmp/recovery-production-copy-check.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/recovery-production-copy-clippy.log": "46a0d3c202fa8ec5cb7ecaa402119987bd4725f1456c70186a339d53768099f4",
+    "/tmp/recovery-production-copy-diff.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/recovery-production-copy-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/recovery-production-copy-frontend.log": "e8adec2f67082759e904454bfdbe8b48b29e28c233fa4ce1941b07c180a0ae89",
+    "/tmp/recovery-production-copy-maps.log": "5b62f9bec522f5b078e5505ac5560e8f58c8e7b9eeca6807e6db6caf247926fc",
+    "/tmp/recovery-production-copy-native-ui-final.log": "aded8244a092b30f078e67849a6859576ef3e1b285a473b2f0e4593951e3f4c1",
+    "/tmp/recovery-production-copy-native-ui.log": "0bba4b9c4a28ba5d1f28fb2c23f0af872ce0569d69c07f6a48e8e63294b089b9",
+    "/tmp/recovery-production-copy-rust.log": "67a9d5e4362fcc876ecb67a19cf4d58486bdd96e45f0e0ee76f484de806b02ee"
+  },
+  "harness_sha256": {
+    "/tmp/run-file-recovery-native.sh": "a2418b43a417d1ce7de3c06ba91ae17976178aa07fd76afb2976dbf2ac2dd54d"
+  },
+  "screenshot_sha256": {
+    "screenshots/refactor/repo-health-cleanup/native-production-copy-restored.png": "33e89e4b85d95869ad25b069b48e9b13f3e466820fd937a2044a64c5ff8b80c9",
+    "screenshots/refactor/repo-health-cleanup/native-file-recovery-restored.png": "cea716d030bad92ae35444587d84c495e8b301e3fe6f01a69e6735ff14e90cc0",
+    "screenshots/refactor/repo-health-cleanup/native-recovery-restored-editable.png": "fc4264f566aedd3b56180e11085271b1e89538b219f4b6f0f4c02d0a1f199031"
+  }
+}

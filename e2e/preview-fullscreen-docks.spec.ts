@@ -5,7 +5,8 @@
  * cover the viewport despite that docked value, then restore the exact dock
  * geometry when it closes.
  */
-import { test, expect, type Locator, type Page } from "./fixtures";
+import { test, expect, type Page } from "./fixtures";
+import type { Locator } from "@playwright/test";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 async function openPicturesWithPreview(page: Page): Promise<void> {
@@ -45,7 +46,7 @@ async function expectFullscreenViewport(page: Page, pane: Locator): Promise<void
 }
 
 test.describe("Fullscreen preview dock geometry", () => {
-  test("right dock covers the viewport and restores its original geometry", async ({ page }) => {
+  test("right dock covers the viewport and restores its original geometry", async ({ page }, testInfo) => {
     await openPicturesWithPreview(page);
     const pane = page.locator(".preview-pane");
     const dockedBox = await pane.boundingBox();
@@ -55,7 +56,7 @@ test.describe("Fullscreen preview dock geometry", () => {
     await image.click();
     await expect(pane).toHaveClass(/fullscreen/);
     await expectFullscreenViewport(page, pane);
-    await page.screenshot({ path: "evidence/ac-4-right-fullscreen.png" });
+    await page.screenshot({ path: testInfo.outputPath("ac-4-right-fullscreen.png") });
 
     await page.locator(".preview-image").click();
     await expect(pane).not.toHaveClass(/fullscreen/);
@@ -66,7 +67,7 @@ test.describe("Fullscreen preview dock geometry", () => {
     ["bottom", "Dock Preview Pane Bottom", "evidence/ac-1-bottom-fullscreen.png"],
     ["top", "Dock Preview Pane Top", "evidence/ac-2-top-fullscreen.png"],
   ] as const) {
-    test(`${dock} dock covers the viewport and restores its original geometry`, async ({ page }) => {
+    test(`${dock} dock covers the viewport and restores its original geometry`, async ({ page }, testInfo) => {
       await openPicturesWithPreview(page);
       await dockPreview(page, command);
       const pane = page.locator(".preview-pane");
@@ -78,13 +79,13 @@ test.describe("Fullscreen preview dock geometry", () => {
       await image.click();
       await expect(pane).toHaveClass(/fullscreen/);
       await expectFullscreenViewport(page, pane);
-      await page.screenshot({ path: fullscreenEvidence });
+      await page.screenshot({ path: testInfo.outputPath(fullscreenEvidence) });
 
       await page.locator(".preview-image").click();
       await expect(pane).not.toHaveClass(/fullscreen/);
       expect(await pane.boundingBox()).toEqual(dockedBox);
       if (dock === "top") {
-        await page.screenshot({ path: "evidence/ac-3-restored-top-dock.png" });
+        await page.screenshot({ path: testInfo.outputPath("ac-3-restored-top-dock.png") });
       }
     });
   }

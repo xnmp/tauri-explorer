@@ -4,7 +4,8 @@
  * lanes/edges and refs decoration, and the tab closes back to the explorer.
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries } from "./helpers";
+import { applySettingsAndReload, waitForEntries } from "./helpers";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {
   await page.keyboard.press("Control+Shift+p");
@@ -138,7 +139,7 @@ test.describe("Git graph tab", () => {
     await expect(detail).toContainText("feature"); // head branch
     // No browser navigation happened on the plain badge click.
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
       .toBeNull();
     await expect(featureRow).not.toHaveClass(/selected/);
     await expect(page.locator('[data-testid="git-graph-detail"]')).toHaveCount(0);
@@ -147,7 +148,7 @@ test.describe("Git graph tab", () => {
     // stays in-app.
     await detail.locator(".pr-detail-open").click();
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
       .toBe("https://github.com/mock/project/pull/7");
     await expect(page).toHaveURL(/\/\?path=/);
     await expect(view).toBeVisible();
@@ -189,7 +190,7 @@ test.describe("Git graph tab", () => {
     await expect(log).toContainText("AssertionError: expected true to be false");
     await page.screenshot({ path: "evidence/ac-1-failed-ci-check-log.png" });
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .poll(() => page.evaluate((key) => localStorage.getItem(key), MOCK_LOCAL_KEYS.openedUrl))
       .toBeNull();
 
     await log.getByRole("button", { name: "Close CI check log" }).click();
@@ -347,7 +348,7 @@ test.describe("Git graph tab", () => {
     const main = popover.locator("label.bf-row:not(.bf-author-row):not(.bf-local-only):not(.bf-all)", { hasText: "main" }).first();
     await expect(main.locator("input")).not.toBeChecked();
     // The graph now shows experiment's + origin/legacy-import's ancestry.
-    expect(await view.locator(".commit-row").count()).toBeGreaterThan(0);
+    await expect(view.locator(".commit-row .summary", { hasText: "Try alternative parser" })).toBeVisible();
 
     // Unticking Bob deselects his branches again.
     await bob.locator("input").click();
@@ -397,14 +398,7 @@ test.describe("Git graph tab", () => {
 
   test("SCM panel stays visible alongside the graph (#333)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const s = raw ? JSON.parse(raw) : {};
-      s.showGitStatus = true;
-      s.showScmPanel = true;
-      localStorage.setItem("explorer-settings", JSON.stringify(s));
-    });
-    await page.reload();
+    await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
     await waitForEntries(page);
     await expect(page.locator(".scm-panel")).toBeVisible();
 

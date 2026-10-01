@@ -1,0 +1,118 @@
+{
+  "date": "2026-09-09",
+  "scope": "Atomic native admission of independent child reservations; existing single-item admission delegates to the same implementation",
+  "contracts": [
+    "All child reservation rows commit in one SQLite Immediate transaction with distinct owner locks and unique sequential CAS generations",
+    "No child authority is returned on conflict, count/byte overflow, generation exhaustion or a failed insertion",
+    "All ordered child paths and alias dependencies are recaptured after any coordinator-managed revision change",
+    "Aggregate request and resource budgets cover all children; write/read and write/write conflicts across independent children are rejected, while read/read sharing is allowed",
+    "Children independently promote or finish; releasing one ordinary child preserves its promoted sibling and durable catalog evidence",
+    "Unpromoted children from a process that exits without destructors are reclaimed by native OS owner state",
+    "Failed commit drops live handles; a later healthy admission reclaims unreferenced owner files"
+  ],
+  "verification": {
+    "rust": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: files::batch:: --test-threads=1",
+      "passed": 477,
+      "failed": 0,
+      "ignored": 12,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/batch-admission-rust-qualified.log",
+        "sha256": "1f01d817bdc94446f7614f9713256c109816e0d23f7985440b2f0b0b7d9cbcb4"
+      }
+    },
+    "recovery_scope": {
+      "passed": 273,
+      "failed": 0,
+      "ignored": 9,
+      "log": {
+        "path": "/tmp/batch-admission-recovery-qualified.log",
+        "sha256": "033d60639047f4ae1016d1f1f0f6c101e64ce9b78ff16328f45a1ff22f480c28"
+      }
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": {
+        "path": "/tmp/batch-admission-native-build.log",
+        "sha256": "59c62170462ec84e992e9add71739cb92f5bcadeed0982e099be5130877c6cff"
+      },
+      "command": "bash /tmp/run-file-recovery-native.sh",
+      "passed": 5,
+      "failed": 0,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/batch-admission-native-ui.log",
+        "sha256": "ffbb87970034e3530007e3104caa055dcb882cc8bf3f889f6a37f0fd8f62d738"
+      },
+      "profile": "/tmp/explorer-file-recovery-native-gTHr65",
+      "binary_sha256_before": "02fc11f1728b108890cdae18a051516e23686d98fe03baa9a2eef3b4cc7c2368",
+      "binary_sha256_after": "02fc11f1728b108890cdae18a051516e23686d98fe03baa9a2eef3b4cc7c2368",
+      "scope": "Regression of actual single-operation recovery, overwrite Undo/Redo, reload and detached-window settlement using the shared admission implementation; grouped copy execution is not wired"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "existing_dead_code_warnings": 8,
+      "log": {
+        "path": "/tmp/batch-admission-clippy.log",
+        "sha256": "5a3e5773eca596e38316d2fcc2657485827f6536e09a663e5f1f616cf93afa19"
+      }
+    },
+    "format": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/batch-admission-format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "maps": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/batch-admission-maps.log",
+        "sha256": "a94b3ed9b232f6b83c669be669cde2a08ec2cf7bcb3ded12f52b1f2083881ab1"
+      },
+      "including_untracked": {
+        "covered": 471,
+        "total": 471,
+        "log": {
+          "path": "/tmp/batch-admission-maps-untracked.log",
+          "sha256": "59b45c360116bd5b35b71e9c57ac091776f913ccd4e4de36876674114cd770ab"
+        }
+      }
+    },
+    "production_bundle": {
+      "exit_code": 0,
+      "startup_chunks": 45,
+      "startup_raw_bytes": 671703,
+      "startup_gzip_bytes": 219260,
+      "log": {
+        "path": "/tmp/batch-admission-bundle.log",
+        "sha256": "67a9e3e73b9dd7d95607b7994ecee986e35ad410e7ef336650304be92cd41a36"
+      }
+    },
+    "frontend_scope": "No frontend source changed in this checkpoint; the preceding warning/refresh acceptance records frontend behavior and typechecking. The production frontend was rebuilt for the bundle check."
+  },
+  "independent_review": {
+    "reviewer": "recovery_native_review_sol",
+    "verdict": "CONFIRMED for independent-child atomic admission; reviewed current source, added rollback/promotion/process-exit tests and passing recovery log",
+    "limits": "Unreferenced lock cleanup is eventual and depends on a later healthy admission. No Nth lock-create IO injection was added; the production post-create commit-failure path and owner unwinding were verified."
+  },
+  "limitations": [
+    "This prerequisite does not implement the full copy-batch executor, immutable exact-target planning, ordered overlapping targets, partial-result ledger, batch cancellation or paste/drop integration",
+    "Existing repeated-name and overwrite UI semantics still require an ordered higher-level plan; this independent-child primitive must not silently replace those semantics with rejection",
+    "Ordinary Copy inverses still need exact published-object identity; atomic forward admission does not protect later inverse execution against a substituted object",
+    "Journal revision detects managed admission/effect changes, not arbitrary external filesystem writes after capture; native version/identity checks remain required",
+    "Atomic reservation is not atomic filesystem execution or a power-loss proof",
+    "Windows/macOS qualification, startup measurements, artifact retirement/quotas and full architectural review/release acceptance remain incomplete",
+    "Native binary contains E2E flags; production frontend assets were rebuilt afterward. No publication attempted."
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/coordinator.rs": "da5e72ad6cee0ae791ece0d2c5a8815d004b0891c0fb4002a32df201d612f254",
+    "src-tauri/src/files/recovery/coordinator/admission.rs": "4d3dd3faf735ef97fe67fe21b727bdc872accb93ec3c96d75f00406dde9559e4",
+    "src-tauri/src/files/recovery/journal.rs": "a78d18f77635b561bb2feda415fe25070e5a6da7935e059896fc527efc42e0f7",
+    "src-tauri/src/files/recovery/resources.rs": "796f8bbe2681dd182fef75465b27662cf45796c40f0072f032796f6b892d0546",
+    "src-tauri/test_support/recovery_batch_admission.rs": "5699ee14b744ed7e54a8dfcae7571fa9eb2997523c2f3dfd01224760c3fa68ca",
+    "src-tauri/test_support/recovery_journal.rs": "bec1dc68766810f0e9b2cd2614632081d08ef619dae630491f45c7f9a588e7a4"
+  }
+}

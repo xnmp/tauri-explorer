@@ -15,7 +15,8 @@
   import { getPaneIdContext } from "$lib/state/pane-context";
 
   const scmStore = getScmStore(getPaneIdContext() ?? "default");
-  import { gitDiff, openFile } from "$lib/api/files";
+  import { gitDiff } from "$lib/api/git";
+import { openFile } from "$lib/api/open";
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import { toastStore } from "$lib/state/toast.svelte";
   import VirtualList from "$lib/components/VirtualList.svelte";
@@ -271,7 +272,7 @@
 
   .badge.unstaged {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .header-actions {
@@ -298,7 +299,7 @@
   }
 
   .action-btn.danger:hover {
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
     border-color: var(--system-critical, #dc2626);
   }
 
@@ -324,7 +325,7 @@
   }
 
   .diff-placeholder.error {
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
   }
 
   .line {

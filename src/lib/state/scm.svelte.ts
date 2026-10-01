@@ -4,7 +4,7 @@
  * Reactive store that tracks the git repo for a pane, fetches the summary
  * (staged / changes / untracked / merge), and coordinates stage / unstage /
  * discard / commit actions. Listens for `git-status-changed` from the Rust
- * watcher (`git.rs`) to refresh without polling.
+ * watcher (`git_watch.rs`) to refresh without polling.
  *
  * Per-pane instances (#334): stores are created per pane via `getScmStore`,
  * so two panes on different repos show independent git panels. The summary
@@ -12,24 +12,7 @@
  * (preview diff, palette commands) resolve `activeScmStore()`.
  */
 
-import {
-  gitCommit,
-  gitApplyPatch,
-  gitDiscard,
-  gitRepoRoot,
-  gitStage,
-  gitUnstage,
-  gitUnwatchRepo,
-  gitWatchRepo,
-  gitMergeAbort,
-  gitRebaseAbort,
-  gitRebaseContinue,
-  gitCherryPickAbort,
-  gitRevertAbort,
-  type GitFileEntry,
-  type GitStatusSummary,
-  type GitPatchAction,
-} from "$lib/api/files";
+import { gitCommit, gitApplyPatch, gitDiscard, gitRepoRoot, gitDirectoryScope, gitStage, gitUnstage, gitMergeAbort, gitRebaseAbort, gitRebaseContinue, gitCherryPickAbort, gitRevertAbort, type GitFileEntry, type GitStatusSummary, type GitPatchAction } from "$lib/api/git";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
 import {
@@ -37,6 +20,8 @@ import {
   releaseGitSummaryConsumer,
 } from "./git-summary-cache";
 import { filterEntriesToDir } from "$lib/domain/scm-tree";
+import { joinPath } from "$lib/domain/path";
+import { createGitRepoWatch } from "./git-repo-watch";
 
 function emptySummary(): GitStatusSummary {
   return {
@@ -107,8 +92,14 @@ export async function warmScmSummaryForRoot(
   }
 }
 
-function createScmStore(consumerId: string) {
+let nextConsumerId = 0;
+
+function createScmStore() {
+  // A persisted pane ID can be reused while its previous component unmounts.
+  // Summary cancellation belongs to the store instance, never to that ID.
+  const consumerId = `scm:${++nextConsumerId}`;
   let activePath = $state<string>("");
+  let relativeDirectory = $state<string | null>(null);
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
   let loading = $state(false);
@@ -125,8 +116,23 @@ function createScmStore(consumerId: string) {
   /** A COMMIT file diff routed to the preview pane from the git graph
    *  (#366); mutually exclusive with `activeDiff` (working-tree). */
   let commitDiff = $state<{ repoPath: string; oid: string; path: string; baseOid?: string } | null>(null);
-  let watcherPath: string | null = null;
-  let subscribed = false;
+  const watchOwner = createGitRepoWatch();
+  let watchedPath: string | null = null;
+  let subscription: Promise<void> | null = null;
+  let unsubscribe: (() => void) | undefined;
+  let destroyed = false;
+  let destruction: Promise<void> | null = null;
+  let pathGeneration = 0;
+  const pendingWork = new Set<Promise<void>>();
+
+  function trackWork(task: Promise<void>): Promise<void> {
+    pendingWork.add(task);
+    void task.then(
+      () => pendingWork.delete(task),
+      () => pendingWork.delete(task),
+    );
+    return task;
+  }
 
   let refreshGeneration = 0;
 
@@ -169,28 +175,36 @@ function createScmStore(consumerId: string) {
     notifyLocalGitChange(repoRoot);
   }
 
-  async function setActivePath(path: string): Promise<void> {
-    if (path === activePath) return;
+  function setActivePath(path: string): Promise<void> {
+    if (destroyed || path === activePath) return Promise.resolve();
+    return trackWork(activatePath(path, ++pathGeneration));
+  }
+
+  async function activatePath(path: string, generation: number): Promise<void> {
     const summaryWasLoading = loading && repoRoot !== null;
     refreshGeneration++;
     releaseGitSummaryConsumer(consumerId);
     activePath = path;
+    relativeDirectory = null;
     // Repo detection is itself an IPC round-trip; without the flag the view
     // renders "not a git repository" during it (#271, #426). Every exit path
     // below ends in refreshSummary (or the competing call's), which clears it.
     detecting = true;
     loading = true;
     const start = performance.now();
-    const detected = await detectRepo(path);
+    const result = path ? await gitDirectoryScope(path) : { ok: true, data: null };
+    const scope = result.ok ? result.data : null;
+    const detected = scope?.repo_root ?? null;
     const elapsedMs = Math.round(performance.now() - start);
     console.info(`[scm] detectRepo for ${path} completed in ${elapsedMs}ms: repoRoot=${detected}`);
-    if (activePath !== path) {
+    if (generation !== pathGeneration) {
       // Superseded by a newer setActivePath — that call owns detecting/loading.
       console.debug(`[scm] discarding stale repo detection for ${path}`);
       return;
     }
     detecting = false;
-    if (detected === repoRoot) {
+    relativeDirectory = scope?.relative_directory ?? null;
+    if (detected === repoRoot && (!detected || watchedPath === detected)) {
       if (summaryWasLoading) {
         // The old path's owned request was cancelled above. A same-repository
         // navigation still needs a replacement request; otherwise the store
@@ -202,10 +216,6 @@ function createScmStore(consumerId: string) {
       return;
     }
 
-    if (watcherPath) {
-      try { await gitUnwatchRepo(watcherPath); } catch { /* non-Tauri */ }
-      watcherPath = null;
-    }
     repoRoot = detected;
     selectedPath = null;
     activeDiff = null;
@@ -213,9 +223,14 @@ function createScmStore(consumerId: string) {
     // fresh/non-repo) while the refresh runs — never another repo's rows.
     summary = (detected && summaryCache.get(detected)) || emptySummary();
 
-    if (repoRoot) {
-      await gitWatchRepo(repoRoot);
-      watcherPath = repoRoot;
+    watchedPath = null;
+    try {
+      await watchOwner.update(detected ?? "");
+      if (generation !== pathGeneration) return;
+      watchedPath = detected;
+    } catch (error) {
+      console.warn("SCM observation unavailable:", error);
+      if (generation !== pathGeneration) return;
     }
     await refreshSummary();
   }
@@ -226,40 +241,61 @@ function createScmStore(consumerId: string) {
    * remount at the same path re-runs detection and re-watches. The shared
    * summaryCache keeps the last summary for an instant repaint.
    */
-  async function release(): Promise<void> {
+  function release(): Promise<void> {
+    if (destruction) return destruction;
+    // releaseResources snapshots earlier work before its own promise enters
+    // the ledger. This includes an unwatch begun by an earlier panel unmount.
+    return trackWork(releaseResources());
+  }
+
+  async function releaseResources(): Promise<void> {
+    pathGeneration++;
     refreshGeneration++;
     releaseGitSummaryConsumer(consumerId);
     activePath = "";
+    relativeDirectory = null;
     repoRoot = null;
     detecting = false;
-    if (watcherPath) {
-      const p = watcherPath;
-      watcherPath = null;
-      try { await gitUnwatchRepo(p); } catch { /* non-Tauri */ }
-    }
+    loading = false;
+    watchedPath = null;
+    const unwatch = watchOwner.update("");
+    // Snapshot now: a subsequent panel mount has a separate activation and
+    // must not be cancelled or waited on by the previous mount's release.
+    await Promise.allSettled([unwatch, ...pendingWork]);
+  }
+
+  function destroy(): Promise<void> {
+    if (destruction) return destruction;
+    destroyed = true;
+    const released = release();
+    unsubscribe?.();
+    unsubscribe = undefined;
+    destruction = Promise.allSettled([released, subscription, watchOwner.destroy()]).then(() => {});
+    return destruction;
   }
 
   // Separator/case-tolerant dir filter — the raw string version matched
   // nothing on Windows (backslash pane paths vs git2's forward-slash root),
   // blanking the whole panel (#380). Pure logic lives in domain/scm-tree.
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
-    return filterEntriesToDir(entries, repoRoot, activePath);
+    if (!repoRoot || relativeDirectory === null) return [];
+    // The displayed path can be an 8.3 alias, junction, or symlink. Native
+    // discovery supplies its location in the repository's identity namespace.
+    return filterEntriesToDir(entries, repoRoot, joinPath(repoRoot, relativeDirectory));
   }
 
-  async function initWatcherListener(): Promise<void> {
-    if (subscribed) return;
-    subscribed = true;
-    // Local changes already refreshed the summary before notifying, so only
-    // watcher events (changes made outside this store) trigger a re-fetch.
-    await subscribeGitChanges((change) => {
-      if (change.source !== "watcher") return;
+  function initWatcherListener(): Promise<void> {
+    if (destroyed) return Promise.resolve();
+    return subscription ??= subscribeGitChanges((change) => {
+      if (destroyed || change.source !== "watcher") return;
       if (repoRoot && change.repoRoot === repoRoot) {
         void refreshSummary();
       } else if (change.repoRoot) {
-        // An inactive repo changed: its cached summary is stale — evict so
-        // the next activation fetches fresh instead of serving it (#271).
         summaryCache.delete(change.repoRoot);
       }
+    }).then((stop) => {
+      if (destroyed) stop();
+      else unsubscribe = stop;
     });
   }
 
@@ -429,6 +465,7 @@ function createScmStore(consumerId: string) {
     // actions
     setActivePath,
     release,
+    destroy,
     refresh,
     stage,
     unstage,
@@ -452,16 +489,16 @@ function createScmStore(consumerId: string) {
 export type ScmStore = ReturnType<typeof createScmStore>;
 
 // One store per pane (#334). Pane ids are minted unique per pane creation and
-// never reused, so the map would grow one entry per pane ever opened without
-// explicit disposal (#439): disposeScmStore() is called from the pane-close
-// paths in window-tabs. A pane's store keeps its commit-message draft across
+// may be restored, so each entry owns a distinct store lifetime. Without
+// explicit disposal the map would grow on every pane close (#439). The
+// pane-session owner calls disposeScmStore. A store keeps its draft across
 // panel toggles, and release() (called on panel unmount) drops its watcher.
 const paneScmStores = new Map<string, ScmStore>();
 
 export function getScmStore(paneId: string): ScmStore {
   let store = paneScmStores.get(paneId);
   if (!store) {
-    store = createScmStore(paneId);
+    store = createScmStore();
     paneScmStores.set(paneId, store);
   }
   return store;
@@ -470,11 +507,11 @@ export function getScmStore(paneId: string): ScmStore {
 /** Fully dispose a pane's store when the pane closes (#439): release its
  *  watcher and drop the map entry so stores don't accumulate one-per-pane
  *  over a session. Safe to call for a pane that never had a store. */
-export function disposeScmStore(paneId: string): void {
+export function disposeScmStore(paneId: string): Promise<void> {
   const store = paneScmStores.get(paneId);
-  if (!store) return;
+  if (!store) return Promise.resolve();
   paneScmStores.delete(paneId);
-  void store.release();
+  return store.destroy();
 }
 
 /** Number of live per-pane scm stores (test/introspection aid, #439). */

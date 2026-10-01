@@ -7,6 +7,7 @@
  * entries.
  */
 
+import { createOrderedRegistry } from "./ordered-registry";
 import type { FileEntry } from "$lib/domain/file";
 
 export type ContextMenuItemGroup = "ai";
@@ -25,19 +26,19 @@ export interface ContextMenuItem {
 
 function createContextMenuItemsRegistry() {
   let items = $state<ContextMenuItem[]>([]);
+  const registrations = createOrderedRegistry<ContextMenuItem>();
 
   return {
     get items() {
       return items;
     },
-    /** Register an item; returns a disposer that removes it. */
-    register(item: ContextMenuItem): () => void {
-      items = [...items, item];
-      // Remove by id, not object reference: Svelte's `$state` array deep-proxies
-      // its elements, so the stored element is a proxy that never `===` the raw
-      // `item` captured here.
+    /** Register an item; returns a disposer that removes it. Items appear by
+     *  `order` (the contributing plugin's list position), then registration. */
+    register(item: ContextMenuItem, order = Number.MAX_SAFE_INTEGER): () => void {
+      const dispose = registrations.register(item.id, item, order);
+      items = registrations.values();
       return () => {
-        items = items.filter((i) => i.id !== item.id);
+        if (dispose()) items = registrations.values();
       };
     },
     /** Items whose `when` predicate passes for the given selection. */
@@ -52,6 +53,7 @@ function createContextMenuItemsRegistry() {
     },
     /** Remove all items. Test helper. */
     clear(): void {
+      registrations.clear();
       items = [];
     },
   };

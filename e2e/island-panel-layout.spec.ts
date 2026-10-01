@@ -12,16 +12,11 @@
  *     left island).
  */
 import { test, expect, type Page } from "./fixtures";
-import { HOME_URL, waitForEntries } from "./helpers";
+import { HOME_URL, applySettingsAndReload, waitForEntries } from "./helpers";
 
 /** Seed localStorage settings, then reload so the app picks them up. */
 async function withSettings(page: Page, settings: Record<string, unknown>): Promise<void> {
-  await page.evaluate((s) => {
-    const raw = localStorage.getItem("explorer-settings");
-    const cur = raw ? JSON.parse(raw) : {};
-    localStorage.setItem("explorer-settings", JSON.stringify({ ...cur, ...s }));
-  }, settings);
-  await page.reload();
+  await applySettingsAndReload(page, settings);
   await waitForEntries(page);
 }
 

@@ -10,7 +10,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { DirectoryListing, FileEntry } from "../../src/lib/domain/file";
+import type { DirectoryListing, FileMutationReceipt } from "../../src/lib/domain/file";
+import { decodeDirectoryListing, type CompactDirectoryListing } from "$lib/api/directory-wire";
 
 vi.stubGlobal("window", {} as unknown as Window & typeof globalThis);
 const { mockInvoke } = await import("../../src/lib/api/mock-invoke");
@@ -27,11 +28,12 @@ const fx = JSON.parse(
 let counter = 0;
 async function freshDir(): Promise<string> {
   const name = `contract-${Date.now()}-${counter++}`;
-  await mockInvoke<FileEntry>("create_directory", { parentPath: "/home/user", name });
+  await mockInvoke<FileMutationReceipt>("create_directory", { parentPath: "/home/user", name });
   return `/home/user/${name}`;
 }
 
-const list = (path: string) => mockInvoke<DirectoryListing>("list_directory", { path });
+const list = async (path: string) =>
+  decodeDirectoryListing(await mockInvoke<CompactDirectoryListing>("list_directory", { path }));
 
 describe("fs-ops contract — mock agrees with real backend (fixtures)", () => {
   it("list_directory: directories first, then case-insensitive by name (dotfiles kept)", async () => {
@@ -47,29 +49,29 @@ describe("fs-ops contract — mock agrees with real backend (fixtures)", () => {
     expect(entries.map((e) => e.name)).toEqual(fx.listing_order.expected_order);
   });
 
-  it("rename_entry: returns the renamed entry and the listing reflects it", async () => {
+  it("rename_entry: returns the committed path and snapshot, and the listing reflects it", async () => {
     const parent = await freshDir();
     await mockInvoke("write_text_file", { path: `${parent}/${fx.rename.original}`, content: "x" });
 
-    const renamed = await mockInvoke<FileEntry>("rename_entry", {
+    const { result: renamed } = await mockInvoke<{ result: FileMutationReceipt }>("rename_entry", {
       path: `${parent}/${fx.rename.original}`,
       newName: fx.rename.new_name,
     });
-    expect(renamed.name).toBe(fx.rename.new_name);
+    expect(renamed.entry?.name).toBe(fx.rename.new_name);
     expect(renamed.path).toBe(`${parent}/${fx.rename.new_name}`);
-    expect(renamed.kind).toBe(fx.rename.expected_kind);
+    expect(renamed.entry?.kind).toBe(fx.rename.expected_kind);
 
     const names = (await list(parent)).entries.map((e) => e.name);
     expect(names).toContain(fx.rename.new_name);
     expect(names).not.toContain(fx.rename.original);
   });
 
-  it("delete_entry_permanent: entry disappears from the listing", async () => {
+  it("delete_entries: permanently removed entry disappears from the listing", async () => {
     const parent = await freshDir();
     await mockInvoke("write_text_file", { path: `${parent}/${fx.delete.target}`, content: "x" });
     expect((await list(parent)).entries.map((e) => e.name)).toContain(fx.delete.target);
 
-    await mockInvoke("delete_entry_permanent", { path: `${parent}/${fx.delete.target}` });
+    await mockInvoke("delete_entries", { paths: [`${parent}/${fx.delete.target}`], permanent: true });
     expect((await list(parent)).entries.map((e) => e.name)).not.toContain(fx.delete.target);
   });
 });

@@ -15,10 +15,12 @@ async function openPicturesTiles(page: import("@playwright/test").Page) {
   await page.keyboard.press("Control+Shift+p");
   await page.locator("input:focus").fill("Tiles View");
   await page.keyboard.press("Enter");
-  // Image thumbnails resolved (micro + full per image file).
-  await expect
-    .poll(() => page.locator(".thumbnail-container img").count())
-    .toBeGreaterThan(0);
+  // All three image files must finish their full-resolution load before a
+  // later image count can tell us whether preview resizing lost a thumbnail.
+  await expect(page.locator(".thumbnail-container .thumbnail-full.loaded")).toHaveCount(3, {
+    timeout: 10_000,
+  });
+  await expect(page.locator(".thumbnail-placeholder")).toHaveCount(0);
 }
 
 test.describe("Thumbnail cache", () => {

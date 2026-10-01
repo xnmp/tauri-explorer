@@ -1,0 +1,106 @@
+{
+  "checkpoint": "Native move reservation and admitted path binding",
+  "date": "2026-09-09",
+  "status": "Accepted locally; full architectural review incomplete",
+  "validation": {
+    "rust": {
+      "passed": 1143,
+      "failed": 0,
+      "ignored": 19,
+      "seconds": 2.71,
+      "log": "/tmp/move-admission-rust-accepted.log",
+      "scope": "Full library suite on final source with isolated XDG profile and local loopback. Earlier full run before final pure-plan relocation also passed 1143/19; post-relocation focused move tests passed 29 before this final full rerun."
+    },
+    "reproduction": "Two real-filesystem tests failed against the former unadmitted move command because it mutated a source/target despite an outstanding reservation; both pass through the production admitted executor.",
+    "frontend": {
+      "unit_passed": 2388,
+      "perf_passed": 30,
+      "skipped": 3,
+      "typecheck": "0 errors, 0 warnings"
+    },
+    "browser": {
+      "passed": 4,
+      "seconds": 7.7,
+      "engine": "Chromium",
+      "scope": "Grouped move/drop Undo plus paste selection across Details/List/Tiles; mock backend."
+    },
+    "native": {
+      "passed": 2,
+      "seconds": 2.1,
+      "platform": "Linux WebKitGTK real binary",
+      "binary_sha256": "379fa315af4cbf9eb4cea410c8ca0b787a1dcaf604787b58e2f2fef8436f1991",
+      "scope": "Real in-app cut/paste tree, source disappearance and byte assertions across two Undo/Redo cycles; real separate-filesystem copy/cleanup failure retains both copies and exposes no unsafe inverse."
+    },
+    "clippy": "All targets/e2e-renderer-recovery PASS; eight warnings match the prior copy-session Clippy baseline by diagnostic text.",
+    "bundle": {
+      "startup_chunks": 48,
+      "startup_raw_bytes": 672842,
+      "startup_gzip_bytes": 220150,
+      "main_raw_bytes": 309384,
+      "main_gzip_bytes": 91836,
+      "budget": "PASS"
+    },
+    "map_sources": 483,
+    "format": "Owned Rust files PASS",
+    "diff_check": "PASS"
+  },
+  "independent_review": {
+    "agent": "effective_claims_adversary_sol",
+    "model": "GPT-5.6 Sol",
+    "verdict": "CONFIRMED reservation, admitted path execution, worker settlement, classification and refresh contracts; no blocker in stated scope",
+    "evidence": "Reviewer confirmed 1143 pre-relocation full run and 29 post-relocation focused tests, frontend/native/browser counts and binary stability. Root subsequently verified another final-source full Rust run, 1143/19."
+  },
+  "limits": [
+    "Recovery reservation coordinates managed operations; physical-parent/source substitution by external writers is not fenced by this path plan.",
+    "Frontend still groups path-based Move inverses; later alias retargeting can redirect Undo/Redo. Exact Move observations and native ordered sessions remain required.",
+    "Move intent/source parking, durable overwrite Undo, source cleanup recovery, artifact retention and remaining mutation-root admission remain open.",
+    "Recovery reservation integration is Linux-only. Windows/macOS runtime qualification remains open.",
+    "Native clipboard acceptance covers the application clipboard; Xvfb reported an unavailable system clipboard provider. Screenshot includes that environment warning.",
+    "No measured startup-time or move-throughput claim. macOS half-bounce remains unmeasured.",
+    "Source hashes identify the final snapshot, not reproducible-build attestation. Temporary logs may expire.",
+    "No new commit, push or merge; full release acceptance remains incomplete."
+  ],
+  "logs": {
+    "/tmp/move-admission-repro.log": "8fb5cf9c751a2fe4ebb535562cf0eb56b73e2a66b1e10e2bdc821084f13b558f",
+    "/tmp/move-admission-focused.log": "ed511d05b9452e1153d84af0ba0846df9d7dca11a7d2459288c5f416b0a862b3",
+    "/tmp/move-admission-rust-final.log": "e55470343d00666b9223cc69147c9744987e214a3b9089467deeddd0269122c2",
+    "/tmp/move-admission-rust-accepted.log": "cfabd7409cfd5faa7830316243b125af20eb08d3b2d4c4035ac8f49f115cd217",
+    "/tmp/move-admission-final-move-tests.log": "c66e6af6d455855b9eed7077f9c4d8fd118d662749ea6d2f02285d4687a36928",
+    "/tmp/move-admission-clippy-final.log": "4ff68a2ac76d5b7e724432ad99d53e1f66525223095250236f302c6c265a1cd3",
+    "/tmp/move-admission-vitest-full.log": "c97fd7246965b3921edf0c4c4f0784ab4f1beada2eff21b1a5d70ff08e5d1347",
+    "/tmp/move-admission-check.log": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd",
+    "/tmp/move-admission-browser.log": "45e450a5fce7d10d31fc199c474d0c7cf265e5adb3ada3becf3e8f81d5f075da",
+    "/tmp/move-admission-native-build.log": "e3af5c04ab4527a3e3ca665e6886977e0e97a72c32316294e769d8d189a5e126",
+    "/tmp/move-admission-native-ui.log": "fa23d28fd42aa255c31188ff22386d21a7eb18c14774323af4dc3d05090250e6",
+    "/tmp/move-admission-bundle.log": "7bf4e23b8e8ffbc94e1a9ee30490bdbaf913fdd9f14c1e1715d8e89fc47aac90",
+    "/tmp/move-admission-maps.log": "2a2fc159983e8fc9d4a1112fd735e6d8f6b566fc7c6b3251273843ad4b2fdbdd",
+    "/tmp/move-admission-map-all.log": "c12d45daea0775cba862472a54666cda7cb5ac7cddf06a13b63fa786372f8448",
+    "/tmp/move-admission-diff.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/move-admission-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/move-admission-native-before.sha256": "2a0d921bb0f8cc1aa2e8e9943a82ba5a8a9afd74499f1a4804cb2b9c8ed41143",
+    "/tmp/move-admission-native-after.sha256": "2a0d921bb0f8cc1aa2e8e9943a82ba5a8a9afd74499f1a4804cb2b9c8ed41143"
+  },
+  "sources": {
+    "src-tauri/src/files/move_plan.rs": "66bd9b0aecbbdcbf8c1876ce561f1b4bad870393ecd74d150cc6e3abe0100f04",
+    "src-tauri/src/files/move_execution.rs": "5d1ee17c4be697a635fa1ad043c48ddd841fa60e8de57b88588526d25b153d09",
+    "src-tauri/src/files/file_ops.rs": "1f8028cd42fce8632709c99ff7006614c306e86d220442ac1e6765e32b55f293",
+    "src-tauri/src/files/mod.rs": "d905d844c3571daf0def8690bfed2540b84f28b1dc8420711f4b64acb01aa13c",
+    "src-tauri/src/file_mutation.rs": "1e77503ce36a70ae1b79545af90594d7e8db3d806604f180fc2dd61784e5d510",
+    "src-tauri/src/file_history/mod.rs": "4447cd85b26a5d1cd66f44d1016eafc07dbc649858d2f14d8b63594988dfac07",
+    "src-tauri/src/file_history/execution.rs": "d6978fd081f5de6f889858a95493487d43a4ef0f322c376d9af947e2bbbf430c",
+    "src-tauri/src/lib.rs": "0d957b16e172956860f69a6e20ef263e8737268d223cd9bc61d74952c2f18526",
+    "src-tauri/test_support/file_move_recovery.rs": "208c03e40e8941e8e3d0f3dc7152f2ff3e4d6d49b02a34afc345ac624249e977",
+    "src-tauri/test_support/file_history_execution.rs": "c83076f2a6bf5f955b540e7554066fae2e55f95ab776c6d7fb01c2e392412bc4",
+    "src-tauri/test_support/file_history_uncertainty.rs": "fecf73653e39519dd0c78cb12b4aa06f1a5d853ebf65d311b6fe1244efe0eeeb",
+    "src/lib/api/files.ts": "a92996d464b4c29c461cdfbf7501b88bf3ab3586dd56b4396600fc1381324f95",
+    "src/lib/api/mock-invoke.ts": "4b1405c9eb5229cf51eca7c0fa41b9241a90396d5456a2ed571103fab28f0f3e",
+    "tests/api/move-entry-admission.test.ts": "8c2f92034f8c2189e14d7adace494447e1427b3971c0096e650bd06a3aa57df7",
+    "tests/api/mock-move-history.test.ts": "62e46aa170539765cad52b35086304c5e5374448b7ce255b9e19d64784cbc940",
+    "e2e-tauri/specs/file-move-recovery.spec.ts": "6ecfd77dd3e01ba621921490784783859731c72ed5e21ced25811467ce677d45",
+    "docs/code-map/validate.py": "74e15d901e74a74e8bffacebf6876a7bc17cf577f5f6eb648c45fb164638762d"
+  },
+  "screenshots": {
+    "screenshots/refactor/repo-health-cleanup/native-admitted-move-redone.png": "d41ab1df12ef78b65d3b08cf71b3c0ad92fb9b540596194b8b3c21bb333f9b7a",
+    "screenshots/refactor/repo-health-cleanup/partial-move-recovery.png": "0b4d00bc6906ee50ca8b1af7aea4e17e10baabc9a01128617f85df166b835741"
+  }
+}

@@ -6,6 +6,11 @@
  */
 
 export type FileKind = "file" | "directory";
+export type ViewMode = "details" | "list" | "tiles";
+
+export function isViewMode(value: unknown): value is ViewMode {
+  return value === "details" || value === "list" || value === "tiles";
+}
 
 export interface FileEntry {
   readonly name: string;
@@ -23,7 +28,29 @@ export interface FileEntry {
 export interface DirectoryListing {
   readonly path: string;
   readonly entries: readonly FileEntry[];
-  readonly listing_id: number | null;
+}
+
+/** A committed mutation and an optional, subsequent presentation snapshot.
+ * Missing metadata never changes whether the filesystem mutation succeeded. */
+export interface FileMutationReceipt {
+  readonly path: string;
+  readonly entry: FileEntry | null;
+  /** Destination exists, but source cleanup is incomplete or uncertain.
+   * Neither a Move nor a Copy inverse is safe: the destination may contain
+   * the only surviving copy of some source children. */
+  readonly recovery?: FileMutationRecovery;
+  /** Displaced original belongs to durable recovery, not a path-only Copy inverse. */
+  readonly replacement?: { readonly id: string };
+  /** A durable move record, already native history's inverse for this move.
+   * A path-only Move action could relocate the last copy of the data. */
+  readonly relocation?: { readonly id: string };
+}
+
+export interface FileMutationRecovery {
+  readonly sourcePath: string;
+  readonly destinationPath: string;
+  readonly error: string;
+  readonly displacedPath?: string;
 }
 
 export type SortField = "name" | "size" | "modified" | "type";

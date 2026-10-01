@@ -1,0 +1,114 @@
+{
+  "checkpoint": "Exact native trash identity and bounded history recovery",
+  "baseCommit": "124728f03c1fde12057b7fc06ea56fbf6dff8743",
+  "sourceSha256": {
+    "e2e-tauri/specs/file-batch-outcome.spec.ts": "a0ed895bd643e9ce0f68d0928057baf19e79602abfab0d58c69353cd3e11da6f",
+    "src-tauri/src/file_history/action.rs": "36095db4d7f7e9d80dce4e7d729dd07dafa88ec40fed122617ff1b2f047f5b74",
+    "src-tauri/src/file_history/execution.rs": "254deabeb678ec710d1592eed8c998b5d4c9d5ebde13625d76ae94e9c6da6c23",
+    "src-tauri/src/file_history/forward.rs": "eb2777555b13504719166c22afebd79e3f9729a7d457fc37237a62df81739b42",
+    "src-tauri/src/file_history/mod.rs": "020ef032df40224537471319445f541321ca8ef6b01d0c530d161e080942ae40",
+    "src-tauri/src/file_history/model.rs": "c17dcda4fc54d90376b9aa76fc114d3e9252bed51de4f1d2a6a033ba30586619",
+    "src-tauri/src/file_history/retention.rs": "bef0b3d43d79aedbbab0df79a76210ef3cc716f004e94aa619b1885d31372327",
+    "src-tauri/src/file_mutation.rs": "93d433bbcc794fe0228a477dbe9c004b63de1664119c6280602c4e20677a8e32",
+    "src-tauri/src/files/batch/mod.rs": "7b0f788dcd4e33a91e14547c08cb15e794fa1cc396dcb96bee02e754bdd32ef7",
+    "src-tauri/src/files/batch/model.rs": "78758ebb363b87b6eb050b3bac127431de7e035b51292ec96715dd97d5c5c9ce",
+    "src-tauri/src/files/freedesktop_trash.rs": "48407cf3edd662fa135eba6adcd398e6a1ee94e067d72e2b05792020d810e1be",
+    "src-tauri/src/files/mod.rs": "2395436e3ed620937e69953e66cf468fdf3f6b15b1386e75d0efe334e8d25df3",
+    "src-tauri/src/files/trash.rs": "406e66a1f328edd9b805df4c00fa7e6ded4b6fc4fa0626def05786c808e26671",
+    "src-tauri/src/files/trash_artifact.rs": "cda58c2f1b870fb64d91d57bd8986dde4044b2adb8da92922e29ec4ffd47f0b0",
+    "src-tauri/src/files/trash_mounts.rs": "673c22a0db21935cb4ab2a9b1675dc7143b34be3ee2810897a7500387cd39c38",
+    "src-tauri/src/files/trash_outcome.rs": "ae7ae9229896a267472a834159a75c54533fe53036aaf6881313ed568dc0dcb6",
+    "src-tauri/src/files/windows_restore.rs": "d59478a91741233f7b608d8d6fb5702dafae24902214f6cc24595719ec280cf7",
+    "src-tauri/test_support/file_batch_dedicated.rs": "cd742f0a390e0a5ef79cbc10e36436922f8692a493fec65109e5645e661a5cc1",
+    "src-tauri/test_support/file_batch_outcomes.rs": "f1bc98a336ac141500f4cf33724959f5272e2f086e048f50548e8daccbc9f711",
+    "src-tauri/test_support/file_batch_worker.rs": "7cc38b81a1437c449d3034a1c0d34f08f8d774795ed7403925c3a7d9b76f351c",
+    "src-tauri/test_support/file_history_action.rs": "6e2e37e0637e7466fef3167f478a587037149228a0ffc9d401b60b0f362e29d8",
+    "src-tauri/test_support/file_history_execution.rs": "f9e0a711940ff83cf191916c19732a9cffe099fec003a55dea5363718b99a425",
+    "src-tauri/test_support/file_history_model.rs": "40ba718294c350e1958bafa128c1bd37b2e8e1ced6cbd533439ebd636a7474b2",
+    "src-tauri/test_support/file_history_retention.rs": "5ffd02e7ae29514c4bf88d89634d7ab5fb3103d8b0237844fe53d5f151136a8f",
+    "src-tauri/test_support/file_history_uncertainty.rs": "39b590c01c32042e993b33087da3aaf1551dd09417810e06822c886bc23f95b5",
+    "src-tauri/test_support/file_mutation.rs": "b8691d174f189efec115f405503aa9b5211cb1722f11c7a95536cb7e94308276",
+    "src-tauri/test_support/freedesktop_trash.rs": "dc39841d5707db40df8cd36179555b1222216a0a428e3fec9433dd822a8e81ac",
+    "src-tauri/test_support/trash_mounts.rs": "c0b29053e8606d616f0c971013f9a2087d73c8984eac539e7c04ecb1b4e9f053",
+    "src-tauri/test_support/trash_outcome.rs": "f7e13942c1403cc6ff20011734d7424b87c1f028ed7dab91e349f18f2275d302",
+    "src-tauri/test_support/windows_restore.rs": "48d56ffb899344eaf703df7c8453dc1124ecf60e01387f4a62b20f52ff0c6003",
+    "src/lib/domain/file-batch-outcome.ts": "2dbf0be7c6c53212f6e486875cb7ff5d7264d551e0aeafba1277a614f9c3244f",
+    "tests/domain/file-batch-outcome.test.ts": "d2940c7e14d0abdf02e02490b0f25b0ac5ec005dcfe0602c9fa5524dc0a9f9ef"
+  },
+  "regressions": {
+    "identityBefore": {
+      "log": "/tmp/trash-identity-before.log",
+      "exitCode": 101,
+      "reason": "Native Undo restored external replacement B instead of application deletion A at the same original path."
+    },
+    "retentionBefore": {
+      "log": "/tmp/trash-budget-before.log",
+      "exitCode": 101,
+      "reason": "Transient receipt batch fits 32MiB but full grouped history action exceeds its budget without warning."
+    },
+    "legacyCompatibilityBefore": {
+      "reason": "Existing mount-local .Trash-1000 and info/files created by trash 5.2.6 were owned uid1000 mode0755; strict private validation rejected the Git trash action."
+    }
+  },
+  "rust": {
+    "libraryPassed": 707,
+    "integrationPassed": 9,
+    "ignored": 7,
+    "exitCode": 0,
+    "serial": true,
+    "isolatedXdg": true,
+    "shell": "/bin/bash",
+    "command": "cargo test --features e2e-renderer-recovery -- --test-threads=1",
+    "log": "/tmp/trash-identity-rust-isolated.log"
+  },
+  "clippy": {
+    "linux": "cargo clippy --all-targets --features e2e-renderer-recovery -- -D warnings: PASS",
+    "windows": "actual-source standalone harness: cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings -A dead-code: PASS",
+    "windowsLimit": "Harness omits unrelated Tauri infrastructure/callers, so dead-code warnings are disabled there. This is compilation evidence, not Windows runtime or whole-application cross-target proof."
+  },
+  "frontend": {
+    "typecheck": "0 errors, 0 warnings",
+    "unitTestsPassed": 4,
+    "build": "VITE_E2E_HOOKS=1 bun run build: PASS"
+  },
+  "linuxNative": {
+    "binarySha256": "652c817aa1f5a22dcac443222e3e39f223c2184b8f70ad7508836efd8b3aa01b",
+    "build": "cargo build --features tauri/custom-protocol,e2e-renderer-recovery after fresh opt-in frontend build",
+    "runnerSession": 42091,
+    "terminalExitCode": 0,
+    "passed": 10,
+    "specFiles": [
+      "file-batch-outcome.spec.ts",
+      "file-history-lifetime.spec.ts",
+      "file-forward-history.spec.ts",
+      "local-mutation-lifetime.spec.ts"
+    ],
+    "durationSeconds": 19,
+    "newCase": "Application trashes A; external gio trashes replacement B at identical path; only B metadata date is advanced to2035. Undo/Redo/Undo restores original A bytes, B remains unchanged, native preview displays original A.",
+    "screenshotSha256": {
+      "screenshots/refactor/repo-health-cleanup/native-exact-trash-identity.png": "d709c1487250176987a8c735b52bbf88e25d1c9cbbb568c8e4e67fe608f07a49"
+    },
+    "log": "/tmp/trash-identity-native.log"
+  },
+  "maps": {
+    "covered": 414,
+    "total": 414
+  },
+  "independentReview": {
+    "model": "GPT-5.6 Sol",
+    "reviewer": "crash_recovery_acceptance_sol",
+    "source": "ACCEPT with documented platform/namespace limitations",
+    "nativeEvidence": "ACCEPT",
+    "image": "Original bytes visible; external B retention is proven by filesystem assertions, not screenshot alone"
+  },
+  "limitations": [
+    "Windows Shell runtime and macOS restoration remain unverified/unavailable respectively.",
+    "Windows batch case-alias and case-aliased ancestor admission remains a confirmed open issue.",
+    "Exact live receipts are not a durable process-crash journal or overwrite recovery.",
+    "Identity checks do not isolate malicious concurrent same-UID namespace or chmod changes.",
+    "Actual Linux cross-mount placement still needs dedicated mounted-filesystem acceptance.",
+    "Forward compatibility migration may narrow infrastructure permissions before a later unchanged file-operation failure; restore never performs migration.",
+    "No startup, half-bounce, deletion-throughput or memory-use performance claim.",
+    "Entire architectural review remains active, including durable journal, remaining whole-intent operations/cancellation, platform acceptance and startup measurement."
+  ]
+}

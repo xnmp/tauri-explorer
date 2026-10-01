@@ -1,0 +1,57 @@
+{
+  "scope": "Windows destructive batch admission and shared callback path parsing",
+  "base_commit": "bca19020",
+  "status": "implementation checkpoint; Windows runtime acceptance outstanding",
+  "changes": [
+    "Validate DOS/UNC case and ordinary/verbatim aliases after stable exact-string deduplication and before admitting filesystem effects.",
+    "Compare path components so intervening sibling names cannot hide selected ancestors.",
+    "Share ambiguity rejection with Shell destination verification; reject reserved DOS names, streams, unsupported namespaces and ambiguous components before alias folding.",
+    "Bound per-path depth at 256 and aggregate comparison components at 524288, preserving 32768 ordinary paths with 16 comparison components each.",
+    "Fail Windows CI when a configured Rust test filter matches no discovered tests."
+  ],
+  "verification": {
+    "linux_batch_tests": {
+      "command": "cargo test --lib files::batch:: -- --test-threads=1",
+      "passed": 20,
+      "includes": "Real case-distinct Linux files both execute independently; existing pre-effect overlap, deduplication and worker settlement contracts."
+    },
+    "linux_clippy": {
+      "command": "cargo clippy --all-targets --features e2e-renderer-recovery -- -D warnings",
+      "result": "pass"
+    },
+    "windows_cross_target": {
+      "command": "cargo clippy --manifest-path /tmp/windows-restore-check/Cargo.toml --target x86_64-pc-windows-gnu --all-targets -- -D warnings -A dead-code",
+      "result": "pass",
+      "log": "/tmp/windows-alias-cross-clippy.log",
+      "scope": "Actual repository batch, Windows adapter, path helper, outcome modules and source-included tests; unrelated Tauri runtime and file helper shims. Dead-code allowance is for the standalone harness. This compiles Windows tests but does not execute them."
+    },
+    "ci_filter_guard": {
+      "method": "Execute the exact AWK command extracted from the workflow against an actual cargo test --lib -- --list result.",
+      "current_files_batch_filter_exit": 0,
+      "removed_windows_index_tests_filter_exit": 1
+    },
+    "format": "cargo fmt --all -- --check passes",
+    "diff": "git diff --check passes",
+    "maps": "415/415 source files; no unresolvable references"
+  },
+  "limitations": [
+    "No Windows host or Wine runtime was available. Windows behavior and maximum-shape latency remain unmeasured.",
+    "Physical aliases through 8.3 names, junctions, hardlinks, mapped drives and shares require native handle identity; lexical validation does not prove those identities.",
+    "Case-sensitive Windows directories are handled conservatively by case-insensitive selection rejection. macOS case-insensitive aliases are outside this change.",
+    "No new startup improvement or half-bounce result is claimed.",
+    "ADR 0020 is proposed design only: no durable journal, source parking, overwrite Undo or recovery UI is implemented by this checkpoint."
+  ],
+  "independent_review": {
+    "model": "GPT-5.6 Sol",
+    "verdict": "ACCEPT static Windows path boundary; CONFIRMED batch integration, CI guard and proposed ADR; Windows maximum-shape wall time only PLAUSIBLE until measured",
+    "remaining": "Physical alias identity, filesystem case/upcase behavior and actual supported-platform acceptance remain open."
+  },
+  "source_sha256": {
+    "src-tauri/src/files/windows_paths.rs": "d0b2f59c1b2c2ebe45ee24de09f24ef7d0fbd2e99b1a10d0de5ca165e276e8a1",
+    "src-tauri/src/files/windows_restore.rs": "c80d8647b5b6eaaae5e20420f87570d1d4b85c458531054516b87803acb7df45",
+    "src-tauri/src/files/batch/model.rs": "2049a70685022801dd4c595237ce098e45983e0d023e9daa188336206562da3d",
+    "src-tauri/test_support/windows_paths.rs": "0b728bebce4b5bba979f54040e540fc322ef4ce2fe1279b88e1e0019788d268d",
+    "src-tauri/test_support/windows_restore.rs": "e4474036d1bacac424aa6ced1880a739d50e4183ce6679fd58a4dfcfe1c412c6",
+    "src-tauri/test_support/file_batch_worker.rs": "9417c0717cbcabd82f1e5338d41b49a27c974ddf50554f45e652e142b276f65e"
+  }
+}

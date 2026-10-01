@@ -34,6 +34,12 @@ export const MULTI_SELECT_MODIFIER: "Meta" | "Control" =
 /** Home URL for most tests */
 export const HOME_URL = "/?path=/home/user";
 
+/** Every built-in theme id (src/lib/themes/*.css). */
+export const BUILT_IN_THEMES = [
+  "aurora", "catppuccin", "dark", "desert", "gruvbox", "hacker",
+  "horizon", "light", "nord", "ocean-blue", "solarized-light", "tahoe",
+] as const;
+
 /** Wait for the file list to be populated with entry items */
 export async function waitForEntries(page: Page) {
   await page.waitForSelector(".file-list");
@@ -118,4 +124,48 @@ export async function pressShortcut(
     },
     { key, ...modifiers },
   );
+}
+
+/**
+ * Seed `explorer-settings` via an init script, so it is re-applied on EVERY
+ * navigation/reload of `page` (not just the next one). Do not use this at a
+ * site where a test changes a setting in-app and then reloads to check that
+ * the change persisted — the init script would clobber the in-app change.
+ *
+ * By default `patch` is merged into whatever `explorer-settings` already
+ * holds at each load. Pass `{ replace: true }` to write `patch` as the
+ * entire settings object instead (for sites that don't need to preserve any
+ * existing value).
+ */
+export async function seedSettings(
+  page: Page,
+  patch: Record<string, unknown>,
+  options?: { replace?: boolean },
+): Promise<void> {
+  await page.addInitScript(
+    ({ patch, replace }) => {
+      const merged = replace
+        ? patch
+        : { ...JSON.parse(localStorage.getItem("explorer-settings") || "{}"), ...patch };
+      localStorage.setItem("explorer-settings", JSON.stringify(merged));
+    },
+    { patch, replace: options?.replace ?? false },
+  );
+}
+
+/**
+ * Merge `patch` into the currently stored `explorer-settings` once, then
+ * reload `page` so the app picks it up. Unlike `seedSettings`, this does not
+ * re-apply on subsequent reloads. Callers keep any post-reload wait (e.g.
+ * `waitForEntries`) at the call site — this helper does not add one.
+ */
+export async function applySettingsAndReload(
+  page: Page,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await page.evaluate((patch) => {
+    const merged = { ...JSON.parse(localStorage.getItem("explorer-settings") || "{}"), ...patch };
+    localStorage.setItem("explorer-settings", JSON.stringify(merged));
+  }, patch);
+  await page.reload();
 }

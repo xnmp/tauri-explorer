@@ -3,12 +3,18 @@
   Issue: tauri-explorer-2c6b, tauri-explorer-xago, tauri-explorer-osjq
 -->
 <script lang="ts">
+  import { onDestroy } from "svelte";
+  import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
+  import { previewResizeSpec } from "$lib/domain/preview-size";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl, openFile } from "$lib/api/files";
+  import { readTextFile, fetchDirectory, readImageAsBlobUrl } from "$lib/api/files";
+import { gitDiff } from "$lib/api/git";
+import { listArchiveContents } from "$lib/api/archive";
+import { openFile } from "$lib/api/open";
   import { toastStore } from "$lib/state/toast.svelte";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isVideoFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
-  import { isTauri } from "$lib/api/mock-invoke";
+  import { isTauri } from "$lib/api/common";
   import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -20,6 +26,7 @@
   import { getVideoThumbnailData } from "$lib/api/thumbnails";
   import VirtualList from "./VirtualList.svelte";
   import { parseCsvPreview, type CsvPreview } from "$lib/domain/csv-preview";
+  import { createPreviewLifetime, type PreviewRequest } from "$lib/state/preview-lifetime";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -50,28 +57,18 @@
     return () => observer.disconnect();
   });
 
-  // Resize handle state
-  const DEFAULT_WIDTH = 280;
-  const MIN_WIDTH = 160;
-  const MAX_WIDTH = 600;
-  const DEFAULT_HEIGHT = 240;
-  const MIN_HEIGHT = 120;
-  const MAX_HEIGHT = 600;
-  // This frame is also the fullscreen source, so keep it separate from the
-  // 96–256px frames requested by the virtualized tile views.
+  // This frame is also the fullscreen source, separate from the tile thumbnails.
   const VIDEO_PREVIEW_SIZE = 1024;
-  let resizing = $state(false);
-  let startX = 0;
-  let startY = 0;
-  let startWidth = 0;
-  let startHeight = 0;
-
-  const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
-  const paneHeight = $derived(settingsStore.previewPaneHeight || DEFAULT_HEIGHT);
-  // Dock edge — resolved concrete edge (settingsStore already resolves "auto"
-  // via window size, #467), read directly like other settings this consumes.
+  const paneId = $props.id();
   const position = $derived(settingsStore.resolvedPreviewPanePosition);
-  const isVertical = $derived(position === "top" || position === "bottom");
+  const isVertical = $derived(position !== "right");
+  // The final write can run after destruction. Read live settings directly;
+  // a derived captured by the destroyed view is not a durable source of truth.
+  const readSizeSpec = () => previewResizeSpec(settingsStore.resolvedPreviewPanePosition);
+  const resize = useControlledSize(() => settingsStore[readSizeSpec().setting], value => {
+    if (readSizeSpec().setting === "previewPaneWidth") settingsStore.setPreviewPaneWidth(value);
+    else settingsStore.setPreviewPaneHeight(value);
+  }, () => readSizeSpec().options);
 
   // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
   // The image fits the screen (object-fit: contain). Zoom with +/- or Ctrl+wheel;
@@ -107,8 +104,17 @@
   }
 
   function toggleFullscreen(): void {
+    resize.cancel();
     fullscreen = !fullscreen;
     resetZoom();
+  }
+
+  function handlePaneDoubleClick(event: MouseEvent): void {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(
+      'button, a, input, textarea, select, [contenteditable], [role="separator"], .preview-image-container, video, audio, iframe',
+    )) return;
+    toggleFullscreen();
   }
 
   /** Step to the previous/next previewable (non-directory) sibling file. */
@@ -250,38 +256,6 @@
     }
   });
 
-  function handleResizeStart(event: MouseEvent): void {
-    event.preventDefault();
-    resizing = true;
-    startX = event.clientX;
-    startY = event.clientY;
-    startWidth = paneWidth;
-    startHeight = paneHeight;
-    document.addEventListener("mousemove", handleResizeMove);
-    document.addEventListener("mouseup", handleResizeEnd);
-  }
-
-  function handleResizeMove(event: MouseEvent): void {
-    if (isVertical) {
-      // Bottom dock: handle on the top edge, dragging up grows the pane.
-      // Top dock: handle on the bottom edge, dragging down grows the pane.
-      const delta = position === "bottom" ? startY - event.clientY : event.clientY - startY;
-      const newHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, startHeight + delta));
-      settingsStore.setPreviewPaneHeight(newHeight);
-    } else {
-      // Right dock: handle on the left edge, dragging left grows the pane.
-      const delta = startX - event.clientX;
-      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
-      settingsStore.setPreviewPaneWidth(newWidth);
-    }
-  }
-
-  function handleResizeEnd(): void {
-    resizing = false;
-    document.removeEventListener("mousemove", handleResizeMove);
-    document.removeEventListener("mouseup", handleResizeEnd);
-  }
-
   /** Currently selected file from the active explorer */
   const selectedFile = $derived.by((): FileEntry | null => {
     const explorer = windowTabsManager.getActiveExplorer();
@@ -329,8 +303,8 @@
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
   let previewTruncatedLabel = $state("lines");
-  let lastPreviewPath: string | null = null;
   let lastPreviewKey: string | null = null;
+  const previewLifetime = createPreviewLifetime((url) => URL.revokeObjectURL(url));
 
   function csvRowHeight(row: string[]): number {
     return Math.max(28, 12 + Math.max(...row.map((cell) => cell.split("\n").length)) * 16);
@@ -539,7 +513,8 @@
     const key = previewKey;
     const file = selectedFile;
     if (!file || !path) {
-      lastPreviewPath = null;
+      previewLifetime.invalidate();
+      previewLifetime.clearBlob();
       lastPreviewKey = null;
       previewImageUrl = null;
       previewText = null;
@@ -555,7 +530,6 @@
       return;
     }
     if (key === lastPreviewKey) return;
-    lastPreviewPath = path;
     lastPreviewKey = key;
     loadPreview(file);
   });
@@ -568,17 +542,11 @@
     return url;
   }
 
-  /** A request is current only while its exact file revision remains selected.
-   * A watcher can refresh a selected video at the same path while ffmpeg is
-   * extracting its previous frame, so path-only checks are insufficient. */
-  function isCurrentPreview(file: FileEntry): boolean {
-    return lastPreviewKey === `${file.path}|${file.modified}|${file.size}`;
-  }
-
   async function loadPreview(file: FileEntry): Promise<void> {
+    const request = previewLifetime.begin(`${file.path}|${file.modified}|${file.size}`);
     // Release any object-URL from a previous backend-fallback image so the
     // bytes aren't pinned in memory across navigations.
-    if (previewImageUrl?.startsWith("blob:")) URL.revokeObjectURL(previewImageUrl);
+    previewLifetime.clearBlob();
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;
@@ -608,7 +576,7 @@
       const chain: string[] = [];
       for (let depth = 0; depth < MAX_DESCENT; depth++) {
         const result = await fetchDirectory(dirPath);
-        if (file.path !== lastPreviewPath) return;
+        if (!previewLifetime.isCurrent(request)) return;
         if (!result.ok) {
           previewError = result.error;
           previewLoading = false;
@@ -636,7 +604,7 @@
     // to a single top-level folder (or chain of them), descend and show its name.
     if (isZipFile(file)) {
       const result = await listArchiveContents(file.path);
-      if (file.path !== lastPreviewPath) return;
+      if (!previewLifetime.isCurrent(request)) return;
       if (result.ok) {
         previewFolderChildrenRaw = result.data.entries;
         if (result.data.rootFolder) {
@@ -658,8 +626,10 @@
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
+          if (!previewLifetime.isCurrent(request)) return;
           previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
         } catch (error) {
+          if (!previewLifetime.isCurrent(request)) return;
           console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
           logFrontendDiagnostic("preview PDF asset URL creation failed", {
             path: file.path,
@@ -682,13 +652,19 @@
       // browser/E2E mode, where the mock serves a data URI.
       const loadViaBackend = async () => {
         const fallback = await readImageAsBlobUrl(file.path);
-        if (file.path !== lastPreviewPath) return; // Stale after fetch
+        if (!previewLifetime.isCurrent(request)) {
+          previewLifetime.adoptBlob(request, fallback.ok ? fallback.data : "");
+          return;
+        }
         if (fallback.ok) {
+          if (!previewLifetime.adoptBlob(request, fallback.data)) return;
           try {
             await decodeImage(fallback.data);
-            if (file.path !== lastPreviewPath) return; // Stale after decode
+            if (!previewLifetime.isCurrent(request)) return;
             previewImageUrl = fallback.data;
           } catch (error) {
+            if (!previewLifetime.isCurrent(request)) return;
+            previewLifetime.releaseBlob(request, fallback.data);
             console.warn("[preview] backend image decode failed", { path: file.path, error });
             logFrontendDiagnostic("preview backend image decode failed", {
               path: file.path,
@@ -709,13 +685,14 @@
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
-          if (file.path !== lastPreviewPath) return; // Stale
+          if (!previewLifetime.isCurrent(request)) return; // Stale
           const url = `${convertFileSrc(file.path)}?v=${bust}`;
           // Decode off-screen — spinner stays visible until ready
           await decodeImage(url);
-          if (file.path !== lastPreviewPath) return; // Stale after decode
+          if (!previewLifetime.isCurrent(request)) return; // Stale after decode
           previewImageUrl = url;
         } catch (assetErr) {
+          if (!previewLifetime.isCurrent(request)) return;
           console.warn("[preview] asset image decode failed; using backend fallback", {
             path: file.path,
             error: assetErr,
@@ -733,21 +710,19 @@
       // Reuse the ffmpeg-backed thumbnail seam from TilesView. The pane shows
       // its extracted still frame rather than attempting inline playback.
       const result = await getVideoThumbnailData(file.path, VIDEO_PREVIEW_SIZE);
-      if (!isCurrentPreview(file)) {
-        if (result.ok && result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
+      if (!previewLifetime.isCurrent(request)) {
+        if (result.ok) previewLifetime.adoptBlob(request, result.data);
         return;
       }
       if (result.ok) {
+        if (!previewLifetime.adoptBlob(request, result.data)) return;
         try {
           await decodeImage(result.data);
-          if (!isCurrentPreview(file)) {
-            if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
-            return;
-          }
+          if (!previewLifetime.isCurrent(request)) return;
           previewImageUrl = result.data;
         } catch (error) {
-          if (result.data.startsWith("blob:")) URL.revokeObjectURL(result.data);
-          if (!isCurrentPreview(file)) return;
+          if (!previewLifetime.isCurrent(request)) return;
+          previewLifetime.releaseBlob(request, result.data);
           console.warn("[preview] video frame decode failed", { path: file.path, error });
           logFrontendDiagnostic("preview video frame decode failed", {
             path: file.path,
@@ -765,7 +740,7 @@
       }
     } else if (isTextFile(file)) {
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview
-      if (file.path !== lastPreviewPath) return; // Stale
+      if (!previewLifetime.isCurrent(request)) return; // Stale
       if (result.ok) {
         const csvPreview = /\.csv$/i.test(file.name) ? parseCsvPreview(result.data) : null;
         if (csvPreview) {
@@ -811,25 +786,38 @@
     }
 
     // A superseded request must not hide the current selection's spinner.
-    if (isCurrentPreview(file)) previewLoading = false;
+    if (previewLifetime.isCurrent(request)) previewLoading = false;
   }
+
+  onDestroy(() => {
+    previewLifetime.dispose();
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+  id={paneId}
   class="preview-pane"
-  class:resizing
+  class:resizing={resize.isResizing}
   class:fullscreen
   class:vertical={isVertical}
   class:dock-bottom={position === "bottom"}
   class:dock-top={position === "top"}
   style={isVertical
-    ? `height: ${paneHeight}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
-    : `width: ${paneWidth}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
-  ondblclick={toggleFullscreen}
+    ? `height: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
+    : `width: ${resize.value}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
+  ondblclick={handlePaneDoubleClick}
 >
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="resize-handle" onmousedown={handleResizeStart}></div>
+  {#if !fullscreen}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator is an interactive range. -->
+    <div class="resize-handle" role="separator" tabindex="0" aria-label="Resize preview"
+      aria-orientation={isVertical ? "horizontal" : "vertical"} aria-controls={paneId}
+      aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.value}
+      aria-valuetext={`${Math.round(resize.value)} pixels`}
+      onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
+      onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
+      onkeydown={resize.keydown}></div>
+  {/if}
   {#if fullscreen}
     <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen = false; }} title="Exit full screen (Esc)" aria-label="Exit full screen">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -867,7 +855,8 @@
         <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
       {/if}
     </div>
-    <div class="preview-content">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
+    <div class="preview-content" role="region" aria-label="Diff of {diffPath}" tabindex="0">
       {#if diffLoading}
         <div class="preview-loading"><div class="spinner"></div></div>
       {:else if diffError}
@@ -886,7 +875,7 @@
               {#if line.kind === "hunk"}
                 {@const hunk = diffParsed?.hunks.find((candidate) => candidate.lineIndex === line.index)}
                 <span class="diff-content hunk-content">
-                  <span>{line.text}</span>
+                  <span class="hunk-range">{line.text}</span>
                   {#if activeDiff && hunk}
                     <span class="hunk-actions">
                       {#if activeDiff.staged}
@@ -935,7 +924,8 @@
       </div>
     {/if}
 
-    <div class="preview-content">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
+    <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}" tabindex="0">
       {#if previewLoading}
         {#if showPreviewSpinner}
           <div class="preview-loading">
@@ -947,9 +937,8 @@
           <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
         </div>
       {:else if previewImageUrl}
-        <!-- Click brings the image front and center (fullscreen); clicking
-             again reverts (#219). stopPropagation so the pane's dblclick
-             toggle can't double-fire on the same gesture. -->
+        <!-- This surface owns click/pan/zoom; the pane's double-click policy
+             leaves it alone. Clicking at fit zoom toggles fullscreen (#219). -->
         <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
         <div
           class="preview-image-container"
@@ -957,7 +946,6 @@
           bind:this={imageContainerEl}
           onwheel={handleFullscreenWheel}
           onclick={handleImageClick}
-          ondblclick={(e) => e.stopPropagation()}
           onpointerdown={handleImagePointerDown}
           onpointermove={handleImagePointerMove}
           onpointerup={handleImagePointerUp}
@@ -1078,8 +1066,100 @@
   /* Vertical docks fill the column width; the divider moves to the docked edge. */
   .preview-pane.vertical {
     width: 100%;
-    flex-shrink: 0;
+    /* Honor the live inline height until the parent's available-space cap
+       requires shrinking. The preferred/draft value remains unchanged. */
+    min-height: 0;
+    flex-shrink: 1;
     border-left: none;
+  }
+
+  /* A vertical dock is wide and short: its name, type and metadata share one
+     row, as in a bottom details pane, so the content keeps the dock's height.
+     Stacked, that chrome alone exceeded the 120px minimum height and left no
+     room for content (#792).
+     The header column takes what the name and badge need, capped at 65% of
+     the pane or everything but 16rem, whichever is larger. The metadata
+     column takes the rest and ellipsizes. Neither can squeeze the other to
+     nothing, however long the name or a diff's path. */
+  .preview-pane.vertical:not(.fullscreen) {
+    display: grid;
+    grid-template-columns: fit-content(max(65%, 100% - 16rem)) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      "header info"
+      "actions actions"
+      "content content";
+  }
+
+  /* The name has priority over the type badge: the badge gives up width
+     first, down to its first few letters, before the name truncates. */
+  .preview-pane.vertical:not(.fullscreen) > .preview-header {
+    grid-area: header;
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(3.5rem, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 8px 12px;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-header .preview-type-badge {
+    display: block;
+    align-self: center;
+    justify-self: start;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .diff-actions {
+    grid-area: actions;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-content {
+    grid-area: content;
+  }
+
+  /* Each metadata field keeps its own row beside the header. A shared
+     ellipsis can hide the entire Modified field in a narrow window. */
+  .preview-pane.vertical:not(.fullscreen) > .preview-info {
+    grid-area: info;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
+    overflow: hidden;
+    padding: 8px 12px;
+    font-size: var(--font-size-caption);
+    white-space: nowrap;
+    border-top: none;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-row {
+    display: flex;
+    gap: 8px;
+    min-width: 0;
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-label {
+    flex-shrink: 0;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-info .info-value {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .preview-pane.vertical:not(.fullscreen) > .preview-empty {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
   }
 
   .preview-pane.dock-bottom {
@@ -1139,7 +1219,12 @@
     width: 4px;
     cursor: col-resize;
     z-index: 10;
-    transition: background var(--transition-normal);
+    touch-action: none;
+  }
+
+  .resize-handle:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
   }
 
   /* Bottom dock: handle spans the top edge (row-resize). */
@@ -1206,7 +1291,7 @@
     align-self: flex-start;
     font-size: 10px;
     line-height: 1;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     padding: 3px 8px;
     border-radius: var(--radius-pill);
@@ -1433,6 +1518,7 @@
     color: var(--text-secondary);
     flex: 1;
     overflow-wrap: break-word;
+    container: preview-markdown / inline-size;
   }
 
   .preview-markdown :global(h1),
@@ -1481,6 +1567,17 @@
     padding: 3px 0;
   }
 
+  /* In a narrow pane the key column would squeeze each value to a few
+     characters per line; stack the key above its value instead (#792).
+     Side by side needs the properties box's 22px of padding and border, the
+     76px key column, the 8px gap and a 96px value: 202px. */
+  @container preview-markdown (width < 202px) {
+    .preview-markdown :global(.md-property) {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+  }
+
   .preview-markdown :global(.md-property + .md-property) {
     border-top: 1px solid var(--divider);
   }
@@ -1515,7 +1612,7 @@
   }
 
   .preview-markdown :global(a) {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     text-decoration: none;
   }
 
@@ -1606,7 +1703,7 @@
      the .hljs-dark/.hljs-light scheme class lives on <html>. */
 
   .preview-error-text {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     font-size: var(--font-size-caption);
   }
 
@@ -1666,7 +1763,7 @@
   }
 
   .collapsed-root-icon {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     flex-shrink: 0;
   }
 
@@ -1722,7 +1819,7 @@
 
   .preview-type-badge.diff-unstaged {
     background: color-mix(in srgb, var(--accent) 15%, transparent);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
   }
 
   .diff-actions {
@@ -1751,7 +1848,7 @@
   }
 
   .diff-action-btn.danger:hover {
-    color: var(--system-critical, #dc2626);
+    color: var(--system-critical-text, var(--system-critical, #dc2626));
     border-color: var(--system-critical, #dc2626);
   }
 
@@ -1807,10 +1904,32 @@
     gap: 6px;
   }
 
-  .hunk-content { justify-content: space-between; }
+  /* In a narrow pane a hunk's actions wrap below its range, the range
+     ellipsizes, and each action's label wraps, so no action is ever clipped
+     out of reach (#792). */
+  .hunk-content {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .hunk-range {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .hunk-actions {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+  }
 
   .hunk-action {
-    padding: 1px 5px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 1px 3px;
     border: 1px solid var(--divider);
     border-radius: var(--radius-sm);
     background: var(--background-card);
@@ -1818,9 +1937,11 @@
     cursor: pointer;
     font: inherit;
     font-size: 10px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
-  .hunk-action.danger { color: var(--system-critical, #dc2626); }
+  .hunk-action.danger { color: var(--system-critical-text, var(--system-critical, #dc2626)); }
 
   /* Vibrancy: own island, no left border needed */
   :global([data-vibrancy]) .preview-pane {

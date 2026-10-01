@@ -1,15 +1,13 @@
-//! Directory listing with caching and streaming support.
+//! Directory listing with caching; each listing is one complete snapshot (#738).
 //! Issue: tauri-explorer-jag7, tauri-explorer-3b5s
 
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
-use tauri::{AppHandle, Emitter};
 
+use super::directory_cache::{DirectoryCache, Lookup, PreparedSnapshot};
 use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
 use crate::error::AppError;
 
@@ -17,25 +15,17 @@ use crate::error::AppError;
 // Directory Listing Cache
 // ===================
 
-struct CachedListing {
-    entries: Arc<Vec<FileEntry>>,
-    cached_at: Instant,
-}
+static DIR_CACHE: OnceLock<Mutex<DirectoryCache>> = OnceLock::new();
 
-const CACHE_TTL_SECS: u64 = 5;
-const MAX_CACHE_ENTRIES: usize = 50;
-
-static DIR_CACHE: OnceLock<Mutex<HashMap<String, CachedListing>>> = OnceLock::new();
-
-fn get_dir_cache() -> &'static Mutex<HashMap<String, CachedListing>> {
-    DIR_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn get_dir_cache() -> &'static Mutex<DirectoryCache> {
+    DIR_CACHE.get_or_init(|| Mutex::new(DirectoryCache::default()))
 }
 
 /// Invalidate cache for a specific directory (internal sync helper, callable
 /// from non-async contexts like the filesystem watcher callback).
 pub(crate) fn invalidate_dir_cache_sync(path: &str) {
     if let Ok(mut cache) = get_dir_cache().lock() {
-        cache.remove(path);
+        cache.invalidate(path);
     }
 }
 
@@ -75,40 +65,33 @@ pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bo
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
+    let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
+    list_directory_with(path, scan_directory_with_diagnostics).await
+}
+
+async fn list_directory_with<F>(path: String, scan: F) -> Result<DirectoryListing, AppError>
+where
+    F: FnOnce(&PathBuf) -> ScanResult + Send + 'static,
+{
     let t_start = std::time::Instant::now();
     log::debug!("directory list_directory requested: path={path:?}");
 
-    // Check cache first
-    {
-        let cache = get_dir_cache()
-            .lock()
-            .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
-        if let Some(cached) = cache.get(&path) {
-            if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
-                log::debug!(
-                    "directory list_directory cache hit: path={path:?}, entries={}",
-                    cached.entries.len(),
-                );
-                return Ok(DirectoryListing {
-                    path: path.clone(),
-                    entries: Arc::clone(&cached.entries),
-                    listing_id: None,
-                });
-            }
+    let lookup = get_dir_cache()
+        .lock()
+        .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?
+        .lookup(&path, Instant::now());
+    let permit = match lookup {
+        Lookup::Hit(entries) => {
+            log::debug!(
+                "directory list_directory cache hit: path={path:?}, entries={}",
+                entries.len()
+            );
+            return Ok(DirectoryListing { path, entries });
         }
-    }
+        Lookup::Miss(permit) => permit,
+    };
 
     let dir_path = PathBuf::from(&path);
-
-    if !dir_path.exists() {
-        log::warn!("directory list_directory failed: path={path:?}, error=not found");
-        return Err(AppError::NotFound(path.clone()));
-    }
-
-    if !dir_path.is_dir() {
-        log::warn!("directory list_directory failed: path={path:?}, error=not a directory");
-        return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
-    }
 
     // jwalk + per-entry stat calls are blocking work; keep them off the async
     // executor. `is_empty` is left unresolved (`None`) here: probing it costs one
@@ -116,9 +99,15 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     // directories) purely to dim empty-folder icons. The frontend resolves
     // emptiness lazily for visible directories via `is_directory_empty` (#129);
     // Miller columns already do their own on-demand probing.
-    let (entries, scan_diagnostics) =
-        super::run_blocking(move || Ok(scan_directory_with_diagnostics(&dir_path))).await?;
-    let entries = Arc::new(entries);
+    let (snapshot, scan_diagnostics) = super::run_blocking(move || {
+        let (entries, diagnostics) = scan(&dir_path)?;
+        Ok((PreparedSnapshot::new(Arc::new(entries)), diagnostics))
+    })
+    .await
+    .inspect_err(|error| {
+        log::warn!("directory list_directory failed: path={path:?}, error={error}");
+    })?;
+    let entries = snapshot.entries();
 
     let elapsed = t_start.elapsed();
     if scan_diagnostics.error_count > 0 {
@@ -142,41 +131,25 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         );
     }
 
-    // Update cache
     {
         let mut cache = get_dir_cache()
             .lock()
             .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
-        if cache.len() >= MAX_CACHE_ENTRIES {
-            cache.retain(|_, v| v.cached_at.elapsed().as_secs() < CACHE_TTL_SECS);
-            // Still full (every entry fresh): evict the oldest entries so the
-            // cache can't grow past MAX_CACHE_ENTRIES.
-            while cache.len() >= MAX_CACHE_ENTRIES {
-                let Some(oldest) = cache
-                    .iter()
-                    .min_by_key(|(_, v)| v.cached_at)
-                    .map(|(k, _)| k.clone())
-                else {
-                    break;
-                };
-                cache.remove(&oldest);
-            }
+        if scan_diagnostics.error_count == 0 {
+            cache.publish(permit, snapshot, Instant::now());
+        } else {
+            // Partial results remain useful to this caller, but must not mask
+            // a transient unreadable child for the next request's entire TTL.
+            cache.discard(permit);
         }
-        cache.insert(
-            path.clone(),
-            CachedListing {
-                entries: Arc::clone(&entries),
-                cached_at: Instant::now(),
-            },
-        );
     }
 
-    Ok(DirectoryListing {
-        path,
-        entries,
-        listing_id: None,
-    })
+    Ok(DirectoryListing { path, entries })
 }
+
+#[cfg(test)]
+#[path = "../../test_support/directory_listing.rs"]
+mod listing_contracts;
 
 /// Sort entries: directories first, then by name case-insensitively.
 // pub: exercised directly by the `sort_entries` criterion bench
@@ -191,31 +164,12 @@ pub fn sort_entries(entries: &mut [FileEntry]) {
     });
 }
 
-// ===================
-// Streaming Directory Listing
-// ===================
-
-/// Event payload for streaming directory entries.
-#[derive(Debug, Clone, Serialize)]
-pub struct DirectoryEntriesEvent {
-    #[serde(rename = "listingId")]
-    pub listing_id: u64,
-    pub path: String,
-    pub entries: Vec<FileEntry>,
-    pub done: bool,
-    #[serde(rename = "totalCount")]
-    pub total_count: usize,
-}
-
-/// Registry for active directory listings
-static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
-
 /// Scan a directory using jwalk for parallel metadata reading.
 /// Returns entries sorted (directories first, then by name).
 // pub: exercised directly by the `scan_directory_parallel` criterion bench
 // (src-tauri/benches/scan_directory_parallel.rs).
-pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
-    scan_directory_with_diagnostics(dir_path).0
+pub fn scan_directory_parallel(dir_path: &PathBuf) -> Result<Vec<FileEntry>, AppError> {
+    scan_directory_with_diagnostics(dir_path).map(|(entries, _)| entries)
 }
 
 const MAX_SCAN_ERROR_SAMPLES: usize = 3;
@@ -245,11 +199,19 @@ impl ScanDiagnostics {
 /// Scan a directory while retaining bounded details for entries that could not
 /// be read or statted. A partial listing remains usable, but callers can log
 /// why it may be incomplete instead of reporting a misleading clean success.
-fn scan_directory_with_diagnostics(dir_path: &PathBuf) -> (Vec<FileEntry>, ScanDiagnostics) {
-    if !dir_path.exists() {
-        let mut diagnostics = ScanDiagnostics::default();
-        diagnostics.record(format!("listing root not found: {}", dir_path.display()));
-        return (Vec::new(), diagnostics);
+type ScanResult = Result<(Vec<FileEntry>, ScanDiagnostics), AppError>;
+
+fn scan_directory_with_diagnostics(dir_path: &PathBuf) -> ScanResult {
+    // This entire boundary runs on the blocking pool, including root metadata.
+    // Read errors stay typed; a missing/unreadable root is not an empty folder.
+    let metadata = fs::metadata(dir_path).map_err(|error| {
+        std::io::Error::new(error.kind(), format!("{}: {error}", dir_path.display()))
+    })?;
+    if !metadata.is_dir() {
+        return Err(AppError::InvalidPath(format!(
+            "Not a directory: {}",
+            dir_path.display()
+        )));
     }
     scan_directory_parallel_for_listing(dir_path, dir_path)
 }
@@ -265,10 +227,7 @@ fn should_probe_git_repos(dir_path: &Path) -> bool {
 /// Scan a readable directory using the policy for its user-visible listing
 /// root. Keeping the root separate makes the UNC policy testable without a
 /// live network share while production passes the same path for both values.
-fn scan_directory_parallel_for_listing(
-    dir_path: &PathBuf,
-    listing_root: &Path,
-) -> (Vec<FileEntry>, ScanDiagnostics) {
+fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) -> ScanResult {
     let probe_git_repos = should_probe_git_repos(listing_root);
     use rayon::prelude::*;
     let mut diagnostics = ScanDiagnostics::default();
@@ -285,12 +244,22 @@ fn scan_directory_parallel_for_listing(
     {
         match result {
             Ok(dir_entry) if dir_entry.depth() != 0 => paths.push(dir_entry.path()),
-            Ok(_) => {}
+            Ok(root) => {
+                // jwalk attaches read_dir failures to the successful root
+                // entry; they are not yielded as iterator errors.
+                if let Some(error) = root.read_children.as_ref().and_then(|read| read.error()) {
+                    let kind = error
+                        .io_error()
+                        .map_or(std::io::ErrorKind::Other, std::io::Error::kind);
+                    return Err(std::io::Error::new(kind, error.to_string()).into());
+                }
+            }
+            Err(error) if error.depth() == 0 => return Err(std::io::Error::from(error).into()),
             Err(error) => diagnostics.record(format!("walk error: {error}")),
         }
     }
 
-    let (mut entries, diagnostics) = paths
+    let (mut entries, metadata_diagnostics) = paths
         .into_par_iter()
         .fold(
             || (Vec::new(), ScanDiagnostics::default()),
@@ -318,40 +287,37 @@ fn scan_directory_parallel_for_listing(
             },
         );
 
+    diagnostics.merge(metadata_diagnostics);
     sort_entries(&mut entries);
-    (entries, diagnostics)
+    Ok((entries, diagnostics))
 }
 
-/// Start streaming directory listing.
-/// Returns first batch immediately and emits remaining entries via events.
-/// Uses jwalk for parallel metadata reading to avoid blocking on large directories.
+/// Read a fresh, complete snapshot for navigation or watcher reconciliation.
+/// Scanning already materializes and sorts the entire directory. Returning that
+/// snapshot directly avoids paced transport batches and partial-success states.
 #[tauri::command]
-pub async fn start_streaming_directory(
-    app: AppHandle,
-    path: String,
-) -> Result<DirectoryListing, AppError> {
+pub async fn list_directory_fresh(path: String) -> Result<DirectoryListing, AppError> {
+    let path = super::run_blocking(move || Ok(super::directory_identity::resolve(&path))).await?;
+    list_directory_for_lease(path).await
+}
+
+// Scan the identity admitted by a watch without resolving filesystem spelling
+// again: a case-only rename between registration and scanning must not split
+// the returned listing path from its lease/event path.
+async fn list_directory_for_lease(path: String) -> Result<DirectoryListing, AppError> {
     let started_at = Instant::now();
-    log::info!("navigation start_streaming_directory requested: path={path:?}");
+    log::info!("navigation list_directory_fresh requested: path={path:?}");
     let dir_path = PathBuf::from(&path);
-    let batch_size = 100;
 
-    if !dir_path.exists() {
-        log::warn!("navigation start_streaming_directory failed: path={path:?}, error=not found");
-        return Err(AppError::NotFound(path));
-    }
-
-    if !dir_path.is_dir() {
-        log::warn!(
-            "navigation start_streaming_directory failed: path={path:?}, error=not a directory"
-        );
-        return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
-    }
-
-    let t_scan_start = std::time::Instant::now();
+    #[cfg(debug_assertions)]
+    let t_scan_start = Instant::now();
     // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
-    let (mut all_entries, scan_diagnostics) =
-        super::run_blocking(move || Ok(scan_directory_with_diagnostics(&dir_path))).await?;
-    let t_scan_end = std::time::Instant::now();
+    let (all_entries, scan_diagnostics) =
+        super::run_blocking(move || scan_directory_with_diagnostics(&dir_path))
+            .await
+            .inspect_err(|error| {
+                log::warn!("navigation list_directory_fresh failed: path={path:?}, error={error}");
+            })?;
 
     let total_count = all_entries.len();
     #[cfg(debug_assertions)]
@@ -359,98 +325,60 @@ pub async fn start_streaming_directory(
         "[Perf] dir scan '{}': {} entries, scan+sort={:?}",
         path,
         total_count,
-        t_scan_end - t_scan_start,
+        t_scan_start.elapsed(),
     );
 
     // The scan leaves is_empty unset (`None`): probing it costs one read_dir per
     // subdirectory, so a 10k-dir scan would pay 10k read_dirs. The frontend
     // resolves emptiness lazily for visible directories via `is_directory_empty`
-    // (#129), so neither the first batch nor the streamed chunks probe it here.
+    // (#129), so a fresh snapshot does not probe emptiness here.
     if scan_diagnostics.error_count > 0 {
         log::warn!(
-            "navigation start_streaming_directory completed with scan errors: path={path:?}, entries={total_count}, scan_errors={}, samples={:?}, elapsed={:?}",
+            "navigation list_directory_fresh completed with scan errors: path={path:?}, entries={total_count}, scan_errors={}, samples={:?}, elapsed={:?}",
             scan_diagnostics.error_count,
             scan_diagnostics.samples,
             started_at.elapsed()
         );
     }
 
-    if total_count <= batch_size {
-        log::info!(
-            "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, streaming=false, elapsed={:?}",
-            started_at.elapsed()
-        );
-        return Ok(DirectoryListing {
-            path,
-            entries: Arc::new(all_entries),
-            listing_id: None,
-        });
-    }
-
-    let first_batch: Vec<FileEntry> = all_entries.drain(..batch_size).collect();
-    let remaining = all_entries;
-
-    let (listing_id, cancelled) = LISTINGS.start();
-
-    let path_clone = path.clone();
-    std::thread::spawn(move || {
-        let mut offset = batch_size;
-        let mut was_cancelled = false;
-
-        for chunk in remaining.chunks(batch_size) {
-            if cancelled.load(Ordering::Relaxed) {
-                was_cancelled = true;
-                break;
-            }
-
-            if let Err(error) = app.emit(
-                "directory-entries",
-                DirectoryEntriesEvent {
-                    listing_id,
-                    path: path_clone.clone(),
-                    entries: chunk.to_vec(),
-                    done: offset + chunk.len() >= total_count,
-                    total_count,
-                },
-            ) {
-                log::warn!(
-                    "navigation directory-entries emit failed: path={path_clone:?}, listing_id={listing_id}, error={error}"
-                );
-            }
-
-            offset += chunk.len();
-            // Brief pacing so batched emits don't flood the IPC channel. The
-            // entries are already fully scanned, so every millisecond here is
-            // pure added latency — 1ms keeps a 10k-entry stream under ~100ms
-            // of pacing (was 5ms ≈ 500ms).
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-
-        log::info!(
-            "navigation directory listing stream ended: path={path_clone:?}, listing_id={listing_id}, emitted_entries={}, cancelled={was_cancelled}",
-            offset.saturating_sub(batch_size)
-        );
-        LISTINGS.cleanup(listing_id);
-    });
-
     log::info!(
-        "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, listing_id={listing_id}, streaming=true, elapsed={:?}",
+        "navigation list_directory_fresh completed: path={path:?}, entries={total_count}, elapsed={:?}",
         started_at.elapsed()
     );
-
     Ok(DirectoryListing {
         path,
-        entries: Arc::new(first_batch),
-        listing_id: Some(listing_id),
+        entries: Arc::new(all_entries),
     })
 }
 
-/// Cancel an active directory listing.
+#[derive(Serialize)]
+pub struct ObservedDirectoryListing {
+    #[serde(flatten)]
+    listing: DirectoryListing,
+    watch_lease: super::directory_watches::Lease,
+}
+
+/// Establish owned observation before scanning. The pending lease remains
+/// guarded across the scan, so failed or canceled reads cannot leak demand.
+/// The frontend retains its old directory lease until it accepts this result.
 #[tauri::command]
-pub async fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
-    log::info!("navigation cancel_directory_listing requested: listing_id={listing_id}");
-    LISTINGS.cancel(listing_id);
-    Ok(())
+pub async fn start_observed_directory(
+    window: tauri::Window,
+    path: String,
+    session_id: String,
+) -> Result<ObservedDirectoryListing, AppError> {
+    let owner = crate::renderer_owner::acquire_owner(&window, &session_id)?;
+    let pending = super::fs_watcher::observe_directory(owner.clone(), path).await?;
+    let listing = list_directory_for_lease(pending.path().to_owned()).await?;
+    if !owner.active() {
+        return Err(AppError::Other(
+            "Native resource renderer was replaced".into(),
+        ));
+    }
+    Ok(ObservedDirectoryListing {
+        listing,
+        watch_lease: pending.take(),
+    })
 }
 
 #[cfg(test)]
@@ -458,6 +386,62 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn observed_scan_preserves_the_admitted_path_identity() {
+        let root = tempdir().unwrap();
+        let directory = root.path().join("Folder");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("entry.txt"), "observed contents").unwrap();
+        let admitted = root
+            .path()
+            .join(".")
+            .join("Folder")
+            .to_string_lossy()
+            .into_owned();
+        let listing =
+            tauri::async_runtime::block_on(list_directory_for_lease(admitted.clone())).unwrap();
+        assert_eq!(listing.path, admitted);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "entry.txt");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn observed_scan_keeps_lease_spelling_after_case_only_rename() {
+        let root = tempdir().unwrap();
+        let directory = root.path().join("Folder");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("entry.txt"), "observed contents").unwrap();
+        let admitted = super::super::directory_identity::resolve(&directory.to_string_lossy());
+        fs::rename(&directory, root.path().join("FOLDER")).unwrap();
+        let listing =
+            tauri::async_runtime::block_on(list_directory_for_lease(admitted.clone())).unwrap();
+        assert_eq!(listing.path, admitted);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "entry.txt");
+    }
+
+    #[test]
+    fn observed_snapshot_keeps_its_lease_outside_the_transport_columns() {
+        let observed = ObservedDirectoryListing {
+            listing: DirectoryListing {
+                path: "/watched".into(),
+                entries: std::sync::Arc::new(Vec::new()),
+            },
+            watch_lease: super::super::directory_watches::Lease {
+                id: "owned-lease".into(),
+                path: "/watched".into(),
+            },
+        };
+        let value = serde_json::to_value(observed).unwrap();
+        assert_eq!(
+            value["watch_lease"],
+            serde_json::json!({ "id": "owned-lease", "path": "/watched" })
+        );
+        assert_eq!(value["format"], "columns-v1");
+        assert_eq!(value["columns"]["names"], serde_json::json!([]));
+    }
 
     #[test]
     fn test_list_directory() {
@@ -476,15 +460,12 @@ mod tests {
     }
 
     #[test]
-    fn scan_records_a_bounded_sample_when_the_listing_root_cannot_be_read() {
+    fn scan_reports_a_missing_root_as_a_typed_error() {
         let missing = tempdir().unwrap().path().join("missing");
-
-        let (entries, diagnostics) = scan_directory_with_diagnostics(&missing);
-
-        assert!(entries.is_empty());
-        assert!(diagnostics.error_count >= 1);
-        assert!(!diagnostics.samples.is_empty());
-        assert!(diagnostics.samples.len() <= MAX_SCAN_ERROR_SAMPLES);
+        assert!(matches!(
+            scan_directory_with_diagnostics(&missing),
+            Err(AppError::NotFound(_))
+        ));
     }
 
     /// The parallel scan never pays the per-subdirectory is_empty probe (its
@@ -498,7 +479,7 @@ mod tests {
         File::create(dir.path().join("full/child.txt")).unwrap();
         File::create(dir.path().join("plain.txt")).unwrap();
 
-        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        let entries = scan_directory_parallel(&dir.path().to_path_buf()).unwrap();
         assert!(
             entries.iter().all(|e| e.is_empty.is_none()),
             "scan must not pay the is_empty probe"
@@ -567,7 +548,7 @@ mod tests {
         // A file at the top level too, to confirm files are never flagged.
         File::create(dir.path().join("plain.txt")).unwrap();
 
-        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        let entries = scan_directory_parallel(&dir.path().to_path_buf()).unwrap();
         let by_name = |name: &str| entries.iter().find(|e| e.name == name).unwrap();
 
         assert!(
@@ -596,7 +577,7 @@ mod tests {
         fs::create_dir(&inbox).unwrap();
         fs::write(inbox.join(".git"), "not a gitdir file\n").unwrap();
 
-        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        let entries = scan_directory_parallel(&dir.path().to_path_buf()).unwrap();
         let inbox = entries.iter().find(|entry| entry.name == "Inbox").unwrap();
 
         assert!(
@@ -634,7 +615,7 @@ mod tests {
         fs::create_dir(listing_root.join("repo")).unwrap();
         fs::create_dir(listing_root.join("repo/.git")).unwrap();
 
-        let entries = scan_directory_parallel(&listing_root);
+        let entries = scan_directory_parallel(&listing_root).unwrap();
         fs::remove_dir_all(&listing_root).unwrap();
         assert!(
             !entries

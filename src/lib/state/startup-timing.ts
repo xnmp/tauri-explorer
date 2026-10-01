@@ -10,49 +10,117 @@
  * the backend and frontend halves of cold start can be read together.
  *
  * Marks are relative to t0 in milliseconds. The reported value is a one-shot:
- * `reportFirstPaint` is idempotent (only the first call wins) so repeated
+ * `reportStartupReady` is idempotent (only the first call wins) so repeated
  * navigations or HMR can't skew it.
  */
 
-import { logStartupTiming } from "$lib/api/files";
+import { logStartupProgress, logStartupTiming } from "$lib/api/environment";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type Mark = { name: string; t: number };
 
 const t0: number =
-  (typeof window !== "undefined" && (window as { __BOOT_T0__?: number }).__BOOT_T0__) ||
+  (typeof window !== "undefined" ? (window as { __BOOT_T0__?: number }).__BOOT_T0__ : undefined) ??
   (typeof performance !== "undefined" ? performance.now() : 0);
+const bootEpochMs: number =
+  (typeof window !== "undefined"
+    ? (window as { __BOOT_EPOCH_MS__?: number }).__BOOT_EPOCH_MS__
+    : undefined) ??
+  (typeof performance !== "undefined" ? performance.timeOrigin + t0 : Date.now());
 
 const marks: Mark[] = [];
 let reported = false;
+const windowLabel =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+    ? getCurrentWindow().label
+    : "browser";
+
+/**
+ * Progress stream (#936). The `Startup(webview)` summary is written only once
+ * `ui-ready` is reached, so a startup that stalls before then leaves no
+ * webview evidence at all. Each mark is therefore also mirrored to the native
+ * log as `Startup(webview-progress)` the moment it is recorded. This is a
+ * diagnostic side channel of `markStartup`, not a second set of marks: the
+ * single-owner rule for which module records which mark is unchanged, and the
+ * attributed qualification parser never reads progress lines. Only the
+ * initial `main` window streams, because only its startup is attributed and
+ * warm windows can stay hidden (and never reach `ui-ready`) indefinitely.
+ */
+const streamsProgress = windowLabel === "main";
+
+/**
+ * While main-window startup is pending, a heartbeat shows whether the page's
+ * JavaScript is still running: heartbeats that continue past the last mark
+ * mean the page is alive but waiting (e.g. on IPC); heartbeats that stop mean
+ * the renderer hung or died. Bounded beyond the 30 s qualification timeout.
+ *
+ * Retire-when: #936 closed
+ */
+export const STARTUP_HEARTBEAT_INTERVAL_MS = 1_000;
+export const STARTUP_HEARTBEAT_LIMIT = 60;
+let heartbeat: ReturnType<typeof setInterval> | undefined;
+let heartbeats = 0;
+
+function elapsedSinceBoot(): number {
+  return (typeof performance !== "undefined" ? performance.now() : 0) - t0;
+}
+
+function sendProgress(mark: string, t: number): void {
+  // Fire-and-forget, like the summary: telemetry must never affect startup.
+  void logStartupProgress(mark, Math.max(0, t)).catch(() => {});
+}
+
+function stopHeartbeat(): void {
+  clearInterval(heartbeat);
+  heartbeat = undefined;
+}
+
+function startHeartbeat(): void {
+  if (heartbeat !== undefined || reported || heartbeats >= STARTUP_HEARTBEAT_LIMIT) return;
+  heartbeat = setInterval(() => {
+    if (reported || heartbeats >= STARTUP_HEARTBEAT_LIMIT) {
+      stopHeartbeat();
+      return;
+    }
+    heartbeats += 1;
+    sendProgress("heartbeat", elapsedSinceBoot());
+  }, STARTUP_HEARTBEAT_INTERVAL_MS);
+}
 
 /** Record a named milestone, measured from boot t0 (ms). */
 export function markStartup(name: string): void {
   if (reported) return;
-  const t = (typeof performance !== "undefined" ? performance.now() : 0) - t0;
+  const t = elapsedSinceBoot();
   marks.push({ name, t });
+  if (streamsProgress) {
+    sendProgress(name, t);
+    startHeartbeat();
+  }
 }
 
 /**
- * Report cold start as complete (first directory listing visible). Idempotent.
+ * Report core Explorer readiness after settings, commands and the initial
+ * listing settle and the DOM has had a paint opportunity. Idempotent.
  * Sends a compact summary to the Rust log and the dev console.
  */
-export function reportFirstPaint(): void {
+export function reportStartupReady(): void {
   if (reported) return;
   // Record the final milestone BEFORE latching `reported` — markStartup()
   // early-returns once reported is true, so setting the guard first would drop
   // this mark.
-  markStartup("list-visible");
+  markStartup("ui-ready");
   reported = true;
+  stopHeartbeat();
 
   const total = marks.length ? marks[marks.length - 1].t : 0;
   const summary = marks.map((m) => `${m.name}=${m.t.toFixed(1)}ms`).join(" ");
-  const line = `Startup(webview): ${summary} total=${total.toFixed(1)}ms`;
+  const line = `Startup(webview): window=${windowLabel} boot-epoch-ms=${bootEpochMs.toFixed(3)} ${summary} total=${total.toFixed(1)}ms`;
 
   if (import.meta.env.DEV) {
     console.info(`[perf] ${line}`);
   }
 
-  // Fire-and-forget; never let timing telemetry affect the app. The command is
-  // absent in mock/browser mode (invoke rejects) — swallow that quietly.
+  // Fire-and-forget; never let timing telemetry affect the app. Browser mode
+  // supplies a no-op; native mode also records elapsed time on the Rust clock.
   void logStartupTiming(line).catch(() => {});
 }

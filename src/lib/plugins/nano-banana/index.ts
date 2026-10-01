@@ -11,18 +11,17 @@
  *   - a context-menu item (single image selected → open the edit dialog)
  *   - a command-palette entry ("Nano Banana: Edit Image…")
  *   - a modal dialog (prompt / model / output filename)
- *   - completion/error event listeners (→ jobs + toast + pane refresh)
+ * Job completion is owned by the window-lifetime plugin-jobs controller.
  *
  * The backend command (`start_nano_banana_job`) and its IPC wrapper
- * (`startNanoBananaJob` in api/files.ts) stay compiled-in per the plugin model;
+ * (`startNanoBananaJob` in api/plugin-jobs.ts) stay compiled-in per the plugin model;
  * this plugin only wires the frontend surface.
  */
 
 import type { Plugin, PluginContext } from "../api";
 import { isImageFile } from "$lib/domain/file-types";
-import { basename } from "$lib/domain/path";
 import { isVirtualPath } from "$lib/domain/virtual-path";
-import { readConfigFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
 import { writeConfigQueued } from "$lib/state/persisted";
 import type { FileEntry } from "$lib/domain/file";
 import NanoBananaDialog from "./NanoBananaDialog.svelte";
@@ -123,7 +122,7 @@ export const nanoBananaPlugin: Plugin = {
       when: (entries) => selectedImage(entries) !== null,
       handler: (entries) => {
         const image = selectedImage(entries);
-        if (image) void openEditor(image.path);
+        if (image) return openEditor(image.path);
       },
     });
 
@@ -137,21 +136,10 @@ export const nanoBananaPlugin: Plugin = {
       category: "plugins",
       handler: () => {
         const image = selectedImage(ctx.workspace.getSelection());
-        if (image) void openEditor(image.path);
+        if (image) return openEditor(image.path);
         else ctx.toast.show("Select an image first", "info");
       },
     });
 
-    // 6. Completion / error events → jobs, toast, pane refresh.
-    ctx.events.listen<{ jobId: number; outputPath: string }>("nano-banana-complete", ({ jobId, outputPath }) => {
-      ctx.jobs.complete(jobId, outputPath);
-      ctx.toast.show(`Nano Banana complete: ${basename(outputPath)}`, "success");
-      void ctx.workspace.refreshPanes();
-    });
-
-    ctx.events.listen<{ jobId: number; error: string }>("nano-banana-error", ({ jobId, error }) => {
-      ctx.jobs.fail(jobId, error);
-      ctx.toast.error(`Nano Banana failed: ${error.slice(0, 100)}`);
-    });
   },
 };

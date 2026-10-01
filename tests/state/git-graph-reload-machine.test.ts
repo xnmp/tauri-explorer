@@ -86,3 +86,56 @@ describe("git graph refresh helpers", () => {
     ).toBe(2);
   });
 });
+
+it("invalidates active publication as soon as a newer reload is requested", async () => {
+  const first = deferred<void>();
+  let calls = 0;
+  const published: string[] = [];
+  const reloader = createReloader(async ({ isCurrent }) => {
+    const current = ++calls;
+    if (current === 1) await first.promise;
+    if (isCurrent()) published.push(current === 1 ? "stale" : "fresh");
+  });
+  const initial = reloader.reload();
+  const following = reloader.reload();
+  first.resolve();
+  await Promise.all([initial, following]);
+  await settle();
+  expect(published).toEqual(["fresh"]);
+});
+
+it("disposing a graph rejects late publication and discards queued reloads", async () => {
+  const result = deferred<void>();
+  let calls = 0; let published = false;
+  const reloader = createReloader(async ({ isCurrent }) => {
+    calls++;
+    await result.promise;
+    if (isCurrent()) published = true;
+  });
+  const pending = reloader.reload();
+  void reloader.reload();
+  reloader.dispose();
+  result.resolve();
+  await pending;
+  await reloader.reload();
+  expect(published).toBe(false);
+  expect(calls).toBe(1);
+});
+
+it("a queued reload survives an obsolete failed request and is awaited", async () => {
+  const first = deferred<void>(); const next = deferred<void>();
+  let calls = 0; let done = false;
+  const reloader = createReloader(async () => {
+    if (++calls === 1) { await first.promise; throw new Error("obsolete"); }
+    await next.promise;
+  });
+  const pending = reloader.reload();
+  const queued = reloader.reload().then(() => { done = true; });
+  first.resolve();
+  await settle();
+  expect(calls).toBe(2);
+  expect(done).toBe(false);
+  next.resolve();
+  await Promise.all([pending, queued]);
+  expect(done).toBe(true);
+});

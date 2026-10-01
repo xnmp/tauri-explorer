@@ -18,7 +18,8 @@
  */
 
 import type { Plugin, PluginContext } from "../api";
-import { readTextFile, readConfigFile } from "$lib/api/files";
+import { readTextFile } from "$lib/api/files";
+import { readConfigFile } from "$lib/api/config";
 import { buildContentHint, canSendContentHint, CONTENT_HINT_MAX_CHARS } from "$lib/domain/ai-rename";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { parentDir, directoryKey } from "$lib/domain/path";
@@ -134,7 +135,6 @@ export const aiOrganizePlugin: Plugin = {
         candidates,
         count: SUGGESTION_COUNT,
         apiKey,
-        toast: ctx.toast,
         onOpenSettings: () => ctx.openSettings(),
         moveFile: (src: string, destDir: string) => ctx.workspace.moveFile(src, destDir),
       });
@@ -164,7 +164,7 @@ export const aiOrganizePlugin: Plugin = {
       when: (entries) => selectedFile(entries) !== null,
       handler: (entries) => {
         const file = selectedFile(entries);
-        if (file) void openPicker(file);
+        if (file) return openPicker(file);
       },
     });
 
@@ -178,7 +178,7 @@ export const aiOrganizePlugin: Plugin = {
       category: "file",
       handler: () => {
         const file = selectedFile(ctx.workspace.getSelection());
-        if (file) void openPicker(file);
+        if (file) return openPicker(file);
       },
       when: () => selectedFile(ctx.workspace.getSelection()) !== null,
     });

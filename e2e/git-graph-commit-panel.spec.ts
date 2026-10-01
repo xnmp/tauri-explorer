@@ -7,6 +7,7 @@
  */
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page) {
   await page.keyboard.press("Control+Shift+p");
@@ -57,8 +58,8 @@ test.describe("Git graph inline commit panel", () => {
     // section is now empty (those changes are committed).
     const committed = await page.evaluate(
       () =>
-        (window as unknown as { __mockGitCommits?: Array<{ message: string }> })
-          .__mockGitCommits?.map((c) => c.message) ?? [],
+        (window as unknown as { __mockControl?: MockControl })
+          .__mockControl?.gitCommits?.map((c) => c.message) ?? [],
     );
     expect(committed).toContain(message);
     await expect(view.locator('.stage-group[data-section="staged"]')).toHaveCount(0);

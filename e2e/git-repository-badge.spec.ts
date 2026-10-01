@@ -9,6 +9,10 @@ import { test, expect } from "./fixtures";
 import { ALL_VIEW_MODES, HOME_URL, waitForEntries, switchViewMode } from "./helpers";
 
 test.describe("Repository folder Git badge", () => {
+  // Capture small SVG details at high density without resizing the layout
+  // between view checks (temporary CSS zoom races pane/virtualizer updates).
+  test.use({ deviceScaleFactor: 3 });
+
   test("uses a compact outlined badge across directory views", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
@@ -40,14 +44,11 @@ test.describe("Repository folder Git badge", () => {
       );
 
       if (mode === "details") {
-        // A 3x browser zoom keeps this evidence faithful to the running SVG
-        // while making the 16px branch detail inspectable in PR review.
-        await page.evaluate(() => { document.documentElement.style.zoom = "3"; });
-        await repository.screenshot({ path: "evidence/ac-1-compact-git-badge.png", scale: "css" });
-        await page.evaluate(() => { document.documentElement.style.zoom = ""; });
+        // Native screenshot pixels retain the 16px SVG's detail at 3x density.
+        await repository.screenshot({ path: "evidence/ac-1-compact-git-badge.png", scale: "device" });
       }
       if (mode === "tiles") {
-        await page.screenshot({ path: "evidence/ac-2-detailed-git-badge.png" });
+        await page.screenshot({ path: "evidence/ac-2-detailed-git-badge.png", scale: "css" });
       }
     }
 

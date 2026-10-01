@@ -1,0 +1,228 @@
+{
+  "date": "2026-09-09",
+  "scope": "Separate completed-history diagnostics from failure and reconcile native mutation changes promptly through the existing refresh policy",
+  "contracts": [
+    "Warnings preserve completed effects and do not stop later batch actions; genuine errors retain ordered partial execution and stop later effects",
+    "Warning content is bounded to 32 messages and 16384 UTF-8 bytes including an omission marker, with first-occurrence ordering, deduplication and lazy formatting",
+    "Warning-only frontend replies preserve success and Redo; actual errors remain errors",
+    "Native pending-event coalescing preserves mutation priority and maximum backend observation time",
+    "First mutation anchors the frontend 150ms coalescing deadline; later traffic cannot postpone it; active listings complete before the trailing reconciliation",
+    "Navigation and subscriber-specific observation guards remain effective; subsequent ordinary watcher traffic retains adaptive throttling"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: files::batch:: --test-threads=1",
+      "passed": 464,
+      "failed": 0,
+      "ignored": 11,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/mutation-warning-rust-tests.log",
+        "sha256": "483056592095c661f1bd944f0591b5918f6d369ceacae9bf1a3911c74a5ae8f4"
+      }
+    },
+    "frontend": {
+      "passed": 79,
+      "failed": 0,
+      "files": 11,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/mutation-warning-frontend-qualified.log",
+        "sha256": "50fb8c82365fe991224f5f1b7397943016d3f9ba8dfbc44807e01aa082849b6b"
+      }
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": {
+        "path": "/tmp/mutation-warning-native-build-qualified.log",
+        "sha256": "fa60a9a0d76bf56ca63106d40ae8e3f269bee8b7e43e803451d4710539f8e7f8"
+      },
+      "binary_sha256": "ccdb3d1f05d659b7b45ecdde6a61a4016f83e010f70b8e8b4e91b1ffe5183354",
+      "identity_scope": "Controlled sequential runs with no source/build changes between runs; checksum recorded afterward, not independently attested inside each WebDriver log",
+      "recovery": {
+        "passed": 5,
+        "failed": 0,
+        "exit_code": 0,
+        "log": {
+          "path": "/tmp/mutation-warning-native-ui-qualified.log",
+          "sha256": "0491ebbf01dad75b2874b426994f3b05aa9caa4c38ed9210f6f6347cbd4d9c03"
+        },
+        "profile": "/tmp/explorer-file-recovery-native-BPncaC",
+        "measurement": {
+          "armedAt": 1788892993721,
+          "receivedAt": 1788892993851,
+          "visibleAt": 1788892994003,
+          "observedAt": 1788892993774,
+          "releaseStartedAt": 1788892993762,
+          "releaseToVisibleMs": 241,
+          "receiptToVisibleMs": 152
+        },
+        "files": {
+          "restored": {
+            "path": "/tmp/explorer-file-recovery-native-BPncaC/fixture/replacement/detached-target/detached.txt",
+            "bytes": 24,
+            "sha256": "46c8f90c4a8e1f06a141775ce5f5f1c61d57d3d984541ab2e956c8a8d572b722"
+          },
+          "retained_copy": {
+            "path": "/tmp/explorer-file-recovery-native-BPncaC/fixture/replacement/detached-target/.tauri-explorer-recovery-216cdf75ed8c6b0cb6e65750bef5cf29388a59eedc07110ee40d1f66dfd52cf2/publication",
+            "bytes": 22,
+            "sha256": "79ac90022baa404e6a18542131fbdf588b48385abe347254ef7d47b65a67cb0d"
+          }
+        }
+      },
+      "coalescing_and_backoff": {
+        "passed": 2,
+        "failed": 0,
+        "exit_code": 0,
+        "log": {
+          "path": "/tmp/mutation-watcher-native-ui-qualified.log",
+          "sha256": "d26e3152657705f0730dc26cf6cfded44277899334dea60750947ab6e8d9c556"
+        },
+        "profile": "/tmp/explorer-file-recovery-native-ssm9I1",
+        "contract": "Three acknowledged native mutations during one held listing produce one trailing listing and no extra echo scan; separate external host writes exercise notify-only adaptive backoff and recovery"
+      }
+    },
+    "checks": {
+      "typecheck": {
+        "errors": 0,
+        "warnings": 0,
+        "log": {
+          "path": "/tmp/mutation-warning-typecheck-qualified.log",
+          "sha256": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd"
+        }
+      },
+      "clippy": {
+        "exit_code": 0,
+        "existing_dead_code_warnings": 8,
+        "log": {
+          "path": "/tmp/mutation-warning-clippy.log",
+          "sha256": "3737c6014f0426b45b090b65718a76c8894178d6c69c79755c5fef6e02aa86fa"
+        }
+      },
+      "architecture": {
+        "path": "/tmp/mutation-warning-arch-qualified.log",
+        "sha256": "1e330b86131f7a41ccf1555229bd888748995d86d259cab06218b0c469ea22ae"
+      },
+      "map_coverage": {
+        "path": "/tmp/mutation-warning-maps-qualified.log",
+        "sha256": "8a4c11d27d54a2487ea642295b52d1a9b8dac88e6db41cd6cd42707dd3bb8d44"
+      },
+      "map_coverage_including_untracked": {
+        "covered": 470,
+        "total": 470,
+        "log": {
+          "path": "/tmp/mutation-warning-maps-untracked.log",
+          "sha256": "efe50fb8f9382174b56bf9719b2b3cf93fbdc8603ae6e40fd6614afadfa05891"
+        }
+      },
+      "format": {
+        "path": "/tmp/mutation-warning-format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "production_bundle": {
+        "exit_code": 0,
+        "startup_chunks": 45,
+        "startup_raw_bytes": 671699,
+        "startup_gzip_bytes": 219260,
+        "log": {
+          "path": "/tmp/mutation-warning-bundle.log",
+          "sha256": "9792261784ee909955a97113b2419512ede4dde43bd5fc0c39e049353b0dc64f"
+        }
+      }
+    }
+  },
+  "reproductions": [
+    {
+      "case": "Replacement inventory warning prevents following rename",
+      "log": {
+        "path": "/tmp/history-warning-repro.log",
+        "sha256": "028b5a98c6017b87bac7143572bb86f54cd8f4c64c978266950bcb096fc9838d"
+      }
+    },
+    {
+      "case": "Lone mutation waits behind normal watcher interval",
+      "log": {
+        "path": "/tmp/mutation-refresh-before.log",
+        "sha256": "3240878cae18267905c9b97355e0a5584e746b4911dfb81092f50e8b6caa27b4"
+      }
+    },
+    {
+      "case": "Later events postpone upgraded mutation and its in-flight trailing reconciliation; two failures before anchored deadline",
+      "log": {
+        "path": "/tmp/mutation-deadline-before.log",
+        "sha256": "a7bcff6a179a2df8005897070cbca0f442a19546306daab5de1a1632440b5cae"
+      }
+    },
+    {
+      "case": "Existing held-listing probe bypasses canonical native session admission",
+      "log": {
+        "path": "/tmp/mutation-watcher-native-ui.log",
+        "sha256": "852cad1a6ffe0316540496340c4c4f052d1775c48d665b2af34e84c70138cf56"
+      }
+    },
+    {
+      "case": "Rejected test predicate demands a watcher-only receipt even when notify has coalesced into mutation publication",
+      "log": {
+        "path": "/tmp/mutation-watcher-native-ui-final.log",
+        "sha256": "e23799e50643db475ab3708e139b431f8f9e9f2fe149584977a28e1f3fae0b98"
+      }
+    }
+  ],
+  "independent_review": {
+    "reviewers": [
+      "recovery_native_review_sol",
+      "recovery_ui_review_sol"
+    ],
+    "result": "Warning semantics and bounded output confirmed; postponement defect independently found and corrected; final source, two native logs, fixture bytes and screenshot reviewed with no remaining concrete defect in these scoped claims"
+  },
+  "limitations": [
+    "Full architectural review and release acceptance remain incomplete; grouped replacements, other mutation admission, artifact retirement/quotas and broader integration remain open",
+    "Linux/Wry recorded DOM observation is not OS presented-frame or startup latency, p50/p95, a general SLA, or Windows/macOS qualification",
+    "Native 100ms poll is not a bound: maintenance, scheduling and IPC can delay delivery",
+    "Content-byte limits do not specify allocator capacity or JSON-escaping expansion",
+    "Pending events coalesce at extraction; later watcher events may form a distinct batch",
+    "Pure external-watcher coalescing during a held scan is covered by deterministic state tests; native held-scan coverage here uses admitted application mutations",
+    "Native binary retains E2E build flags; ordinary production frontend assets were rebuilt afterward for bundle verification",
+    "No publication attempted; prior automatic approval rejection remains unresolved"
+  ],
+  "screenshots": [
+    {
+      "path": "screenshots/refactor/repo-health-cleanup/native-replacement-detached-undo.png",
+      "sha256": "c74e66bbe93c359acca3d92c31ba271f69dc13124b47533002bbd903bb27aef4",
+      "demonstrates": "Surviving named detached.txt row at restored 24 bytes; timing and lifetime require the accompanying native log"
+    }
+  ],
+  "source_sha256": {
+    "src-tauri/src/file_history/model.rs": "2dcbbaa0b0e37141806d5cbb5663aab927fee88d0bad498dce6ae6c0f9421d28",
+    "src-tauri/src/file_history/mod.rs": "9b5bffe6ea6ca6fa5471c91547e84c2349f89b3e0e917381db335dafe1685fd7",
+    "src-tauri/src/file_history/execution.rs": "7523aa30998bb27d8d8100a0b10b3d1ce1e7b1b586b4796260f1e78276ad8364",
+    "src-tauri/src/file_history/retention.rs": "eb03f67ac749e5f3de8efcf637226981fc04e291f36754b96f5230f6d96f047f",
+    "src-tauri/src/file_history/warnings.rs": "304183096174e55d64fae1dcc847de3d49bb8f9303edab977b4045f48f8931d4",
+    "src-tauri/src/files/batch/model.rs": "a383e0747c571c27920f4138614bcf832c60da288d84ad5b7a210068e102d502",
+    "src-tauri/src/files/fs_watcher.rs": "881fdb9076eee2338ffeb50dece80e157fbd9cfd286465e6ac58f7a9813ae58a",
+    "src-tauri/test_support/file_history_execution.rs": "3aae80fa9c37316ab959dd174084383169d1664bee7e681d9bffd965aa46116f",
+    "src-tauri/test_support/file_history_warnings.rs": "1e625a0d2be874eddaa653370664e0ed8b5c47a72947f1ad867200c171682c84",
+    "src-tauri/test_support/fs_watcher_changes.rs": "35da0b6b77cb3262644945d6c0878efdf1e4b099c78dddfd0543e9f24c13007d",
+    "src/lib/domain/file-history.ts": "cedb71053637fb540c37d291bb47e63187577c969403014904d55c50b7763f12",
+    "src/lib/state/undo.svelte.ts": "fe39e7c7b3074503065cbce658ef1609c02acc40fa73d06b9b54564321a91035",
+    "src/lib/state/explorer.svelte.ts": "bb4fadf125d6f7a370264bd5523e37bf9174aa916719af2cf65f54d7af1a45bf",
+    "src/lib/state/directory-events.ts": "018d15cd3b6503312bf70bbcb598b73b962de8ed5611a84ec1e538bb23317ab5",
+    "src/lib/state/refresh-manager.ts": "89bdce3e005b5d398d5addf4e5ef784ba7ea92979fa7f9f2182e7e8021e0c8d1",
+    "src/lib/state/pane-watch.ts": "8c63696311a4975687cfa61dbc97121a522d8c33c447eff5988f8981eef93283",
+    "src/lib/api/files.ts": "af06e18a4d022473eb9ffc63287308936efa545419df0b44873d3f4d95cf29d9",
+    "src/test-support/watcher-listing-probe.ts": "5da8e5a2022ff28d62fd4e9758145939095d87c67529e4566b5d4b7a25ac74b6",
+    "tests/state/refresh-manager.test.ts": "a4a9a3b9d4043cb270e7710769ba2714f49146f796f136b49e1fe64d3edffb0c",
+    "tests/state/pane-watch.test.ts": "12e9c8b601ea4dcd668ebe69e034586c53b03fe4cda41023cbef4bc2293bc1e9",
+    "tests/state/directory-events.test.ts": "4e2fd1e134c9e2361645a58ef3a237b1d6bad517ecdcd9e84cd762677ed54daf",
+    "tests/state/undo-lifetime.test.ts": "1320e3028d042ffb35e416f84b49269146d0d5f8b712fc55270a134904f4c1cc",
+    "tests/state/undo-cross-window.test.ts": "b705ca18e6215a0d1298e84c1683a08ddf78bc1645615882fb2cfa984d6a2614",
+    "tests/state/undo-helpers.test.ts": "51e067cbc4ca79f9b5e490e859b18daaadbea0f135d6b9df1dff2cf8d06b4752",
+    "tests/state/pane-mutation-dialogs.test.ts": "3e9b2e8444c03aceddacdb3784ab2bf6e3127840b746608dc4bfbd1e305978f0",
+    "tests/state/refresh-manager-adaptive.test.ts": "0280b502622b2f5272efde2aed5a89ee0b39883b3e8ddbff6cfebf56e1cc6c2e",
+    "tests/state/pane-mutation-cooldown.test.ts": "13f82aa31bbf7ac432066346695b0ad9d5b8a071b6a8fcb9d266e1387cc2debe",
+    "tests/composables/use-file-watchers-refresh.test.ts": "1ad06162776c050d488185d72ee61f043477b44aceb39c51235a367e2e44566e",
+    "tests/watcher-listing-probe.test.ts": "9c7aed276fb53bc3cf4993c4f88201bacffbf5bbbfaf1788d695640bcd061eab",
+    "e2e-tauri/specs/file-recovery.spec.ts": "e3a8692cbfa289a56ef94f42e978508512783a8136147b9b3fe3116763714ccb",
+    "e2e-tauri/specs/watcher-refresh-coalescing.spec.ts": "24a4cee32348140f8b1054e1f4ae410c9a1a5c24717642c5c4e2fd0827e8cca3"
+  }
+}

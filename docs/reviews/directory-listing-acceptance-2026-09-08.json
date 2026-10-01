@@ -1,0 +1,113 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "aeaecf34",
+  "scope": "Ordinary directory-cache publication, checked blocking scans and frontend listing lifetime",
+  "platform": "Linux / WebKitGTK native binary",
+  "native": {
+    "build": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle",
+    "final_sha256": "d66af727f004150dd034f38c705a21d775d681ce3636ba237acc68493275f688",
+    "fix_reverted_sha256": "f1b39fe367a021c4d4507167a8558013e6180fa798bdf43703e57d4da256ec25",
+    "reverted_change": "Only jwalk successful root read_children.error() propagation replaced with the previous Ok(_) => {} branch; other fixes retained. This isolated chmod proof preceded the subsequent root-metadata error-context correction.",
+    "before": {
+      "passed": 0,
+      "failed": 1,
+      "reason": "Acknowledged chmod 000 navigation produced no visible error state.",
+      "log": "/tmp/directory-listing-native-reverted.log"
+    },
+    "after": {
+      "passed": 10,
+      "failed": 0,
+      "specs": 5,
+      "elapsed_seconds": 47,
+      "log": "/tmp/directory-cache-native-final.log"
+    },
+    "cases": [
+      "Missing-target error identifies the requested path while the prior committed breadcrumb remains",
+      "Visible permission error, followed by successful real marker listing after permissions restored",
+      "Mounted pane reattaches to replaced root while rejecting displaced-tree ghost entries",
+      "Existing-file external write updates preview and entry metadata",
+      "Directory lease reclamation across window destruction and renderer replacement",
+      "External file creation/deletion refreshes the listing",
+      "Watcher refresh coalescing preserves causal trailing refresh behavior"
+    ],
+    "screenshot": "screenshots/refactor/repo-health-cleanup/native-directory-permission-error.png",
+    "screenshot_inspected": true,
+    "excluded_attempt": {
+      "log": "/tmp/directory-listing-native-before.log",
+      "reason": "Old known binary did not reach frontend page-session startup. No listing IPC or readiness marker; exact bootstrap cause unknown. Not counted as bug reproduction."
+    }
+  },
+  "regressions": {
+    "cache_before": "/tmp/directory-listing-before.log: two gated real-scan publication races failed",
+    "root_before": "/tmp/directory-root-errors-before.log: disappearing/unreadable roots incorrectly returned empty success",
+    "attached_error_before": "/tmp/directory-cache-focused.log: real chmod 000 contract failed until attached jwalk error was propagated",
+    "frontend_before": "Implementer-reported: two listener registration/lifetime and two late-IPC-result regressions failed before their respective fixes. Their original before-run logs were not retained; these four before claims are not independently reproducible from the committed artifact. All final behaviors are covered by the focused/full passing suites.",
+    "active_callback_before": "/tmp/directory-listing-active-cleanup-before.log: two cleanup admission/reentrancy tests failed, nine passed",
+    "frontend_final": "/tmp/directory-listing-final.log: 11 focused tests pass",
+    "additional_contracts": [
+      "Cancellation of a gated real scan prevents publication",
+      "Partial real-scan results remain usable but uncached",
+      "Disappearing and unreadable roots recover on a later valid read",
+      "Cache permit invalidation, supersession, eviction, stale discard, TTL, shared Arc identity, aggregate/oversize retained allocations"
+    ],
+    "root_context_before": "/tmp/directory-listing-path-context-before.log: disappearing-root assertion failed because the requested target was absent from the typed error.",
+    "root_context_after": "/tmp/directory-listing-path-context-final.log: all 16 directory-listing contracts pass; full Rust suite rerun also passes."
+  },
+  "checks": {
+    "rust_serial": {
+      "unit_passed": 502,
+      "integration_passed": 9,
+      "ignored": 7,
+      "log": "/tmp/directory-cache-rust.log",
+      "environment": "SHELL=/bin/bash; isolated XDG profile; local loopback sockets permitted"
+    },
+    "frontend": {
+      "passed": 2165,
+      "skipped": 3,
+      "performance_passed": 30,
+      "log": "/tmp/directory-cache-frontend.log"
+    },
+    "clippy_all_targets_deny_warnings": "pass",
+    "svelte_check": "0 errors, 0 warnings",
+    "native_spec_typescript": "pass",
+    "architecture_lint": "pass",
+    "code_map_coverage": "383/383",
+    "bundle": {
+      "status": "pass",
+      "main_gzip_bytes": 90004,
+      "startup_gzip_bytes": 212677,
+      "log": "/tmp/directory-cache-bundle.log"
+    }
+  },
+  "benchmark": {
+    "command": "cargo bench --bench scan_directory_parallel -- --noplot",
+    "log": "/tmp/directory-cache-bench.log",
+    "files": 10000,
+    "samples": 100,
+    "estimate_ms": 5.7837,
+    "interval_ms": [
+      5.5936,
+      6.0049
+    ],
+    "historical_estimate_ms": 5.7472,
+    "interpretation": "Same order of magnitude as historical result; no paired speedup or native startup claim. Subsequent debug-only timer gating does not change the benchmarked public scanner."
+  },
+  "independent_reviews": {
+    "models": "Sol for all three subagents; Astra coordinates shared interfaces and integration",
+    "rust": "ACCEPT after restoring root metadata error context. Independent reviewer confirmed the narrow mapper and failing-before/passing-after contract; required final full Rust and rebuilt native runs both pass.",
+    "frontend": "ACCEPT after independent review found active-event and reentrant cleanup races; both have failing-before/passing-after regressions."
+  },
+  "limitations": [
+    "Cache caps 50 paths and 32 MiB of retained snapshot Vec/String allocation estimates, excluding caller Arcs, concurrent scans, allocator overhead and RSS.",
+    "Cache eviction still deallocates snapshots under its mutex; no hard latency bound or long-load contention measurement.",
+    "Pending eager listener acquisition releases eventually after cleanup, with no fully-drained cleanup-promise guarantee.",
+    "Cancellation acceptance proves one IPC attempt rather than backend reclamation after cancellation failure.",
+    "Browser fallback and serialized supersession lack new direct tests; a transition from browser to native runtime after fallback is not covered.",
+    "No deterministic real child metadata-failure injection through the parallel scanner; partial admission behavior is tested and diagnostic merging source-reviewed.",
+    "Initial listing/watch handoff remains unobserved until separately redesigned and accepted.",
+    "macOS half-bounce, Windows equivalents, larger native trees and long-session release acceptance remain outstanding."
+  ],
+  "architectural_review_complete": false,
+  "checkpoint_accepted": true
+}

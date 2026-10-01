@@ -13,7 +13,7 @@ import type { PluginContext, SettingsSectionDescriptor } from "$lib/plugins/api"
 import type { ContextMenuItem } from "$lib/state/context-menu-items.svelte";
 import type { Command } from "$lib/state/commands.svelte";
 import type { DialogDescriptor } from "$lib/plugins/dialog-registry.svelte";
-import { writeConfigFile } from "$lib/api/files";
+import { writeConfigFile } from "$lib/api/config";
 import type { FileEntry } from "$lib/domain/file";
 
 function fileEntry(name: string, kind: "file" | "directory" = "file", dir = "/home/u"): FileEntry {
@@ -26,6 +26,7 @@ function makeFakeCtx(seedStorage: Record<string, unknown> = {}) {
   const contextMenu: ContextMenuItem[] = [];
   const settingsSections: SettingsSectionDescriptor[] = [];
   const dialogs: DialogDescriptor[] = [];
+  const jobs: PluginContext["jobs"] = { accept: (_registration, start) => start() };
 
   const ctx: PluginContext = {
     registerCommand: (c: Command) => void commands.push(c),
@@ -35,7 +36,7 @@ function makeFakeCtx(seedStorage: Record<string, unknown> = {}) {
     registerDialog: (d: DialogDescriptor) => void dialogs.push(d),
     openDialog: () => {},
     closeDialog: () => {},
-    jobs: { add: () => 1, complete: () => {}, fail: () => {} },
+    jobs,
     toast: { show: () => {}, error: () => {} },
     events: { listen: () => {} },
     storage: {

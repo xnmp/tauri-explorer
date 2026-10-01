@@ -58,5 +58,8 @@ fn main() {
 
     #[cfg(debug_assertions)]
     eprintln!("[Perf] main() pre-run: {:?}", t_main.elapsed());
-    tauri_explorer_lib::run(launch_dir)
+    // Hand the process-entry instant to run() so argument parsing and the Linux
+    // detach fork are attributed instead of silently preceding every clock the
+    // startup qualification report can see.
+    tauri_explorer_lib::run_with_process_entry(launch_dir, t_main)
 }

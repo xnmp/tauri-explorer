@@ -1,0 +1,83 @@
+{
+  "date": "2026-09-08",
+  "scope": "Durable reservation promotion infrastructure; production artifact execution remains unwired",
+  "production_contracts": [
+    "Common immutable authority and typed operation spec/state; replacement is the current variant",
+    "Operation IDs bind to native owner locks; artifact name tokens are allocated independently before admission",
+    "Exclusive admission and full generation/lock/resource equality before catalog writes",
+    "SQLite immediate-transaction capacity preflight, then catalog file+directory durability, then atomic Reservation-to-Operation kind/generation CAS",
+    "Exact catalog retry repeats durability barriers and validates named object identity without replacement",
+    "Exact initial-record retry after lost successful-commit reply does not allocate a revision",
+    "Promotion failure retains admission for retry; active worker contexts reject promotion",
+    "Durable owner has no ordinary finish capability; dropped awaiter/owner preserves discoverable evidence"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "log": "/tmp/recovery-promotion-full-final.log",
+      "exit_code": 0,
+      "passed": 890,
+      "ignored": 11,
+      "failed": 0,
+      "environment": "localhost access approved for local mock-relay tests; no external reports sent"
+    },
+    "owner_binding_reproduction": {
+      "before_log": "/tmp/recovery-promotion-binding-before.log",
+      "before": "malformed_intent_authority_fences_even_unrelated_mutation fails: malformed recovery authority accepted: owner-binding",
+      "after_log": "/tmp/recovery-promotion-binding-after.log",
+      "after": "31 coordinator tests pass, 1 ignored; also included in final full run"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-promotion-clippy-final.log",
+      "exit_code": 0,
+      "warnings": "19 library unused infrastructure warnings; 6 library-test warnings, 5 duplicates; large-error warnings corrected by boxing internal failure"
+    },
+    "windows": {
+      "command": "cargo check --offline --manifest-path /tmp/recovery-private-storage-check/Cargo.toml --target x86_64-pc-windows-gnu --tests",
+      "log": "/tmp/recovery-promotion-windows-final.log",
+      "exit_code": 0,
+      "scope": "Harness imports actual shared model/journal/catalog/identity/lock source and eligible tests with unrelated infrastructure shims; not the full app, Unix coordinator, or runtime acceptance"
+    },
+    "format": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check passes",
+    "diff": "git diff --check passes",
+    "maps": "python3 docs/code-map/validate.py --coverage passes: 415/415 tracked source files covered, zero unresolvable map references; new promotion source/test explicitly mapped",
+    "independent_review": {
+      "agent": "crash_recovery_acceptance_sol",
+      "model": "gpt-5.6-sol",
+      "verdict": "ACCEPT after owner-binding and repeated-durability fixes",
+      "method": "Independent source/contract falsification; root owns builds and test runs"
+    },
+    "native_ui": "Not run for this internal infrastructure change; prior checkpoint native outcomes are historical, not fresh acceptance of this source",
+    "binary": "No current normal/E2E app binary built in this checkpoint",
+    "native_process_death": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files::recovery::coordinator::promotion -- --test-threads=1",
+      "log": "/tmp/recovery-promotion-native-kill.log",
+      "exit_code": 0,
+      "passed": 11,
+      "ignored": 1,
+      "scope": "Added after the full890 run. One new test kills/reaps a native subprocess after catalog publication and after SQLite commit, then verifies bounded discovery, claim fencing and sibling admission without user-file effects. The ignored helper is explicitly launched at both boundaries by the passing parent test. This is not artifact-effect recovery or power-loss testing.",
+      "independent_review": "crash_recovery_acceptance_sol ACCEPT: actual child kill/reap after durability/commit hooks; no user-effect replay claim. Distinction between the two boundaries relies on static hook placement."
+    }
+  },
+  "limits": [
+    "No production replacement/trash durable execution, phase advancement, reconciliation/UI, artifact retirement or overwrite Undo integration yet",
+    "Deterministic publication interruptions and lost reply after known SQLite commit do not establish arbitrary SQLite commit-I/O ambiguity, power-loss or hardware durability",
+    "Windows directory durability remains unsupported and existing-file sync needs a write-capable native handle; cross compilation is not runtime acceptance",
+    "Record and aggregate storage limits are not total process-memory caps; snapshots, decoded records and serialization create transient heap amplification",
+    "No measured startup/deletion-latency gain; macOS half-bounce target remains unmeasured",
+    "Changes remain local; earlier publication rejection remains unresolved"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/model.rs": "32bddd44bd20f9df487f20a6c1ab7e52d4e9e545f7d92ae704dd8914fb86a95d",
+    "src-tauri/src/files/recovery/context.rs": "16a55c6b04d3cb24b79b57f7e00168c4ec8d3c0c23fb25f5d14960c2f3171a0e",
+    "src-tauri/src/files/recovery/coordinator.rs": "2f9f7825504731a2726eff3270372bc8f62a2f8997de8efa6f3bfc7b5b817283",
+    "src-tauri/src/files/recovery/coordinator/promotion.rs": "849e549e35e6189e8639fd02780136b036051c7e6976a9480b3ba31405be06d6",
+    "src-tauri/src/files/recovery/journal.rs": "02989b9a066b1508775253c430d47128188fd4b3b4527c10188cbf71cf1e2f6e",
+    "src-tauri/src/files/recovery/storage.rs": "ae5506d9eae0414a015ed1dde9568ef358d923dae670d4c2129584069b061689",
+    "src-tauri/test_support/recovery_coordinator.rs": "95f44d65489990c5987ff01bd862afdaf26055c460123a80a2f57c8b7db1b7f3",
+    "src-tauri/test_support/recovery_promotion.rs": "c9869db61b2af8ea0d3b5c2aa5088bb917a77af6b59223bcea76934a0ae6ffec",
+    "src-tauri/test_support/recovery_journal.rs": "bcf2bdc7e55246c78a1a1e5137da5b464b2f9b1e86123a7676a2a7e407934a47",
+    "src-tauri/test_support/recovery_storage.rs": "f468f2c5601c350cb94042473ef4e7bb5698858b0b63e00ed601f96e66b58cd8"
+  }
+}

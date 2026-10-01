@@ -1,0 +1,124 @@
+{
+  "date": "2026-09-08",
+  "base_commit": "7d2bc83e",
+  "issue": 680,
+  "status": "uncommitted; admission service and worker integration seams verified, production mutation admission incomplete",
+  "scope": [
+    "Unix coordinator exact-owner cross-process conflict admission and protected storage",
+    "bounded native resource capture with revision retries and aggregate budgets",
+    "lossless existing SQLite database pathname validation",
+    "shared pooled/dedicated worker ownership and terminal cleanup ordering",
+    "unattributed cleanup failure reporting, conservative inverse consumption and refresh projection"
+  ],
+  "verification": {
+    "admission_checkpoint": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: -- --test-threads=1",
+      "passed": 288,
+      "ignored": 5,
+      "failed": 0,
+      "log": "/tmp/recovery-admission-native-final.log"
+    },
+    "integrated_library": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib -- --test-threads=1",
+      "passed": 773,
+      "ignored": 9,
+      "failed": 0,
+      "log": "/tmp/recovery-worker-full-native-unrestricted.log",
+      "note": "Local socket and thumbnail cache access required. Initial sandbox run: 770 passed, three permission-related failures; unrestricted full rerun passed. Final extra test added afterward is covered below."
+    },
+    "final_worker_lifetimes": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery::context:: -- --test-threads=1",
+      "passed": 8,
+      "failed": 0,
+      "log": "/tmp/recovery-worker-lifetime-final.log"
+    },
+    "frontend": {
+      "command": "bunx vitest run tests/domain/file-batch-outcome.test.ts tests/api/file-mutations.test.ts tests/file-recovery-state.test.ts tests/api/file-recovery.test.ts",
+      "passed": 29,
+      "failed": 0,
+      "log": "/tmp/recovery-worker-ui-contracts.log"
+    },
+    "typecheck": {
+      "command": "bun run check",
+      "errors": 0,
+      "warnings": 0,
+      "log": "/tmp/recovery-worker-typecheck.log"
+    },
+    "architecture": {
+      "command": "bun run lint:arch",
+      "result": "clean",
+      "log": "/tmp/recovery-worker-arch.log"
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_coverage": "415/415",
+      "unresolvable": 0,
+      "log": "/tmp/recovery-worker-maps.log",
+      "note": "New untracked sources explicitly mapped; tracked coverage count excludes those sources."
+    },
+    "before_fix_regressions": [
+      "/tmp/recovery-stale-resource-before.log",
+      "/tmp/recovery-resource-budget-before.log",
+      "/tmp/recovery-native-path-before.log",
+      "/tmp/recovery-batch-cleanup-before.log",
+      "/tmp/recovery-cleanup-panic-before.log"
+    ],
+    "independent_review": "GPT-5.6 Sol ACCEPT scoped coordinator, Job/worker lifetime ordering, real-connection cancellation tests and workerError forward/inverse/frontend semantics; root owns implementation.",
+    "final_files": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: -- --test-threads=1",
+      "passed": 294,
+      "ignored": 5,
+      "failed": 0,
+      "log": "/tmp/recovery-worker-files-final.log",
+      "note": "After final extra lifetime regression and avoiding a redundant state scan on the ordinary no-worker-error path."
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/recovery-worker-clippy.log",
+      "note": "Not warning-clean: 112 library dead-code warnings from recovery infrastructure not yet used by production. This check preceded the final equivalent no-error fast path in batch settlement."
+    }
+  },
+  "limitations": [
+    "Coordinator/context/resource identity implementation is Unix only.",
+    "Production mutation roots do not acquire recovery reservations yet.",
+    "Named SQLite opens detect but cannot atomically prevent arbitrary same-user private namespace replacement.",
+    "Admission still decodes bounded catalog and journal payloads under an OS gate; slow I/O has no cancellation/deadline guarantee.",
+    "Catalog quarantines and partial lock evidence require reconciliation.",
+    "Native inode reuse and external alias replacement remain stronger artifact identity work.",
+    "Setup and captures must be inert before any item starts; returned values cannot carry independently effectful cleanup past worker return.",
+    "Dedicated worker mechanics were tested on Linux, not Windows COM runtime.",
+    "No new production replacement durability, recovery UI wiring or process-crash vertical is claimed.",
+    "No startup or half-bounce performance claim."
+  ],
+  "remaining": [
+    "all logical mutation roots and real workers admitted exactly once",
+    "lazy first-mutation barrier and post-core-ready discovery",
+    "Windows native recovery adapters",
+    "catalog fallback/reconciliation and complete record validation",
+    "durable replacement and native recovery commands/UI",
+    "overwrite Undo/quotas/retention and source parking",
+    "remaining whole-intent batches and cancellation",
+    "crash/disk-full/cross-filesystem/platform release acceptance",
+    "measured macOS half-bounce and final integration matrix"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/context.rs": "0aca2ab6594a3dc0b6607191d4711b4fb18af17d8fa51e77c31af32ee50acdb1",
+    "src-tauri/src/files/recovery/coordinator.rs": "6a0dd846a2e7ed95de2fa492b3d6706572d7c11e2f278ffeb1b6ff5ee19c04b3",
+    "src-tauri/src/files/recovery/journal.rs": "b72e0010f4a6afe6456c70056e6b1f0ca9de16230d92e1e15f9813ade80414d6",
+    "src-tauri/src/files/recovery/locks.rs": "7377c7d4ae13fbfa683766e27c74dece4ac1d2945c5bd231df302238648886d4",
+    "src-tauri/src/files/recovery/mod.rs": "a9cf1db198be14c5ed6601b0bd6fb267b97fa9c398099fca7bc73222a012d72e",
+    "src-tauri/src/files/recovery/model.rs": "733c9bb54f92360d4adf4e72a607bdaaaa4b0570370bd5f6b680e72da1f4d4b0",
+    "src-tauri/src/files/recovery/native_path.rs": "80d7c9486e91fd7a1895b5c6a244c25cc778eeacda9243d6ad9bafbdf75fc3c5",
+    "src-tauri/src/files/recovery/resources.rs": "2237d8b765fa16dabd2f2bea9ee2d24949a2c49502f8767d92e7887916c62f8e",
+    "src-tauri/src/files/recovery/schema.sql": "4b155d88126c0b2c217d8011cd4bafdae319b7250530484a61ffd089d64084b0",
+    "src-tauri/src/files/recovery/storage.rs": "adf60d6edd9366dc83793eb95d7943ea3af501802a8231154273d1c2af04a74b",
+    "src-tauri/src/files/worker.rs": "7f3756ce8e9826255a445f913692f18ec82126125451c85fa6b9d0c6b40db429",
+    "src-tauri/src/files/batch/mod.rs": "905a9fc25326ca78c813150bd052a338972be6206d0dc417e453225c88ea55c9",
+    "src-tauri/src/files/batch/model.rs": "b4e4c9815b4da854902134daa867c6f2e0475ce6817098cd2ce4b6be98ac2af9",
+    "src-tauri/src/file_history/execution.rs": "49fe6f654913372d0e19849e0dec39850b30a874d8fccd35c9f5c4664e9fc37b",
+    "src-tauri/src/file_mutation.rs": "932a817c8c8200eb0fe0ebd490c8b6c4badd2a52bb3c134f460ac442ba5d4fb7",
+    "src/lib/domain/file-batch-outcome.ts": "9fe6b4642067f1b078c515c21694a1095814484978f0067de8e4130045cf45f4"
+  },
+  "publication": "No commit, push or merge in this checkpoint."
+}

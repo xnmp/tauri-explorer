@@ -19,37 +19,39 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { listen } from "@tauri-apps/api/event";
+  import { onMount, untrack } from "svelte";
+  import { useControlledSize } from "$lib/composables/use-controlled-size.svelte";
+  import { NUMERIC_SETTINGS } from "$lib/domain/settings-numbers";
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { getAlwaysActiveTerminalCommandId, isShellReservedKey, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { getTerminalCommand, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
+  import { createTerminalSession, type TerminalSessionSpawnInfo } from "$lib/state/terminal-session";
+  import { encodeTerminalPaste, readTerminalPasteText, type TerminalPastePlatform } from "$lib/domain/terminal-paste";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { logFrontendError } from "$lib/api/crash";
+  import { osClipboardReadText } from "$lib/api/os-clipboard";
 
   let panelEl: HTMLDivElement | undefined = $state();
   let termEl: HTMLDivElement | undefined = $state();
   let term: Terminal | undefined;
   let fitAddon: FitAddon | undefined;
-  let terminalId: number | null = null;
   // Dialect of the shell the backend actually spawned (#409): a WSL pane gets
   // a POSIX shell even on Windows, and every PTY write/read translates
   // through this profile. Assumed platform default until spawn reports back.
   let shellProfile: ShellProfile = defaultShellProfile(isWindows);
   let spawning = false;
   let exited = $state(false);
-  let unlistenOutput: UnlistenFn | undefined;
-  let unlistenExit: UnlistenFn | undefined;
-  let unlistenCwd: UnlistenFn | undefined;
 
   // ── cwd sync (issue #149) ──────────────────────────────────────────────────
   // The shell's last-known cwd (from OSC 7). Tracked always so the loop guard
@@ -70,6 +72,32 @@
 
   const visible = $derived(terminalPanelStore.visible);
 
+  const pastePlatform: TerminalPastePlatform = isWindows ? "windows" : isMac ? "mac" : "linux";
+
+  /** The bytes of one Ctrl/Cmd+V, once the clipboard read settles. */
+  async function pasteInput(): Promise<string> {
+    const read = await readTerminalPasteText(pastePlatform, {
+      readBrowser: () => navigator.clipboard.readText(),
+      readNative: osClipboardReadText,
+    });
+    if (!read.ok) {
+      toastStore.error(`Could not paste from clipboard: ${read.error}`);
+      return "";
+    }
+    if (!read.text || !term) return "";
+    // What xterm's own paste() does besides emitting the bytes.
+    term.clearSelection();
+    term.scrollToBottom();
+    return encodeTerminalPaste(
+      read.text,
+      term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true,
+    );
+  }
+
+  function focusOnRequest(): void {
+    if (term && terminalPanelStore.consumeFocus()) term.focus();
+  }
+
   /** Resolve a CSS variable to a computed color, inside the theme cascade. */
   function resolveThemeColor(varName: string): string {
     if (!panelEl) return "";
@@ -85,52 +113,21 @@
     return raw ? color : "";
   }
 
-  async function spawnShell(): Promise<void> {
-    if (!term || spawning || terminalId !== null) return;
+  async function spawnShell(restart = false): Promise<void> {
+    if (!term || spawning || (!restart && terminalSession.id !== null)) return;
     spawning = true;
     exited = false;
     try {
       const cwd = windowTabsManager.getActiveExplorer()?.currentPath;
-      // Listeners BEFORE spawn: the shell's first output (the prompt) is
-      // emitted the instant the PTY starts, and events without a listener
-      // are dropped — the terminal would open blank (#201).
-      const id = await terminalReserveId();
-
-      unlistenOutput = await listen<string>(`terminal-output-${id}`, (event) => {
-        term?.write(event.payload);
-      });
-      unlistenExit = await listen<number | null>(`terminal-exit-${id}`, () => {
-        terminalId = null;
-        exited = true;
-        stopQueuePoll();
-      });
-      // Explorer follows terminal: the shell reports its cwd via OSC 7.
-      unlistenCwd = await listen<string>(`terminal-cwd-${id}`, (event) => {
-        // The shell reports its own dialect's path (a WSL shell reports
-        // /home/…); translate to an explorer path before it touches
-        // navigation or the loop guards (#418).
-        const path = fromShellCwd(event.payload, shellProfile);
-        // Always track it — this is the loop guard for the other direction.
-        lastShellCwd = path;
-        // A cd WE injected echoing back must never drive navigation: during
-        // fast tab switches the echo lands while a different tab is active
-        // and would overwrite that tab's cwd (#266). Only genuine user cds
-        // (typed in the shell) pull the explorer along.
-        if (injectedCds.consume(path)) return;
-        if (!settingsStore.explorerFollowsTerminal) return;
-        const explorer = windowTabsManager.getActiveExplorer();
-        if (explorer && explorer.currentPath !== path) {
-          explorer.navigateTo(path);
-        }
-      });
-
-      const info = await terminalSpawn(id, cwd, term.cols, term.rows);
-      shellProfile = { kind: info.shellKind, wslDistro: info.wslDistro };
-      terminalId = id;
-      // Path insertions requested while the shell was still spawning (#265).
-      for (const data of pendingInsertions.splice(0)) {
-        terminalWrite(id, data);
-      }
+      const starting = restart
+        ? terminalSession.restart(cwd, term.cols, term.rows)
+        : terminalSession.start(cwd, term.cols, term.rows);
+      // The old shell's output stops at restart's first step, so the cleared
+      // screen belongs to the replacement.
+      if (restart) term.clear();
+      const info = await starting;
+      if (info === null) return;
+      shellProfile = profileOf(info);
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
       exited = true;
@@ -140,32 +137,25 @@
   }
 
   async function restartShell(): Promise<void> {
-    unlistenOutput?.();
-    unlistenExit?.();
-    unlistenCwd?.();
+    // The user's restart action owns focus; PTY completion does not.
+    term?.focus();
     stopQueuePoll();
     pendingCd = null;
     lastShellCwd = null;
-    term?.clear();
-    await spawnShell();
-    term?.focus();
+    // Keys typed from here on are typeahead for the replacement shell.
+    await spawnShell(true);
   }
 
-  /**
-   * Inject a `cd` to `path`, clearing any half-typed prompt input first —
-   * the automatic sync must win regardless of what's on the prompt. The
-   * clear byte is shell-family-specific (see buildCdSyncSequence).
-   */
-  // Insertions typed before the PTY finished spawning; flushed by spawnShell.
-  const pendingInsertions: string[] = [];
+  const profileOf = (info: TerminalSessionSpawnInfo): ShellProfile =>
+    ({ kind: info.shellKind, wslDistro: info.wslDistro });
 
-  /** Type paths into the prompt (space-delimited, shell-quoted, no Enter)
-   *  and focus the terminal — drop-onto-terminal and Alt+T (#265). */
+  /** Type paths into the prompt (space-delimited, shell-quoted, no Enter).
+   * Opening focus belongs to the store, including queued cold insertions.
+   * The insertion holds its place in the input queue until the shell has
+   * started, so it is quoted in the dialect of the shell actually spawned;
+   * with the shell exited it waits for the restart (#265, #409). */
   function insertPaths(paths: string[]): void {
-    const data = buildPathsInsertion(paths, shellProfile);
-    if (terminalId !== null) terminalWrite(terminalId, data);
-    else pendingInsertions.push(data);
-    term?.focus();
+    terminalSession.insert((info) => buildPathsInsertion(paths, profileOf(info)));
   }
 
   // Targets of cds we injected whose OSC 7 echo hasn't arrived yet
@@ -173,18 +163,68 @@
   // fast-tab-switch race a plain Set reintroduced.
   const injectedCds = createInjectedCdTracker();
 
+  const terminalSession = createTerminalSession(
+    {
+      reserveId: terminalReserveId,
+      listenOutput: async (id, handler) => listen<string>(`terminal-output-${id}`, (event) => handler(event.payload)),
+      listenExit: async (id, handler) => listen<number | null>(`terminal-exit-${id}`, handler),
+      listenCwd: async (id, handler) => listen<string>(`terminal-cwd-${id}`, (event) => handler(event.payload)),
+      spawn: terminalSpawn,
+      kill: terminalKill,
+      write: terminalWrite,
+    },
+    {
+      output: (payload) => term?.write(payload),
+      exit: () => {
+        exited = true;
+        stopQueuePoll();
+      },
+      cwd: (payload) => {
+        const path = fromShellCwd(payload, shellProfile);
+        lastShellCwd = path;
+        if (injectedCds.consume(path)) return;
+        if (!settingsStore.explorerFollowsTerminal) return;
+        const explorer = windowTabsManager.getActiveExplorer();
+        if (explorer && explorer.currentPath !== path) explorer.navigateTo(path);
+      },
+      // Mirrored into the backend log: a release build has no console, and
+      // an I/O failure writing to the PTY must leave a trace.
+      writeError: (err) => {
+        console.error("[terminal] input write failed:", err);
+        void logFrontendError(`terminal input write failed: ${String(err)}`).catch(() => {});
+      },
+      // Typeahead is bounded while the shell starts (#882).
+      // Overflow discards ALL pre-start input, so the user must know their
+      // typing was lost rather than find a truncated command on the prompt.
+      inputDropped: (bytes, firstInStream) => {
+        const message = `terminal typeahead buffer full: discarded ${bytes} bytes typed before the shell started`;
+        console.warn(`[terminal] ${message}`);
+        if (!import.meta.env.DEV) void logFrontendError(message).catch(() => {});
+        if (firstInStream) {
+          toastStore.error("Input typed before the terminal started was too large and was discarded");
+        }
+      },
+    },
+  );
+
+  /**
+   * Inject a `cd` to `path`, clearing any half-typed prompt input first —
+   * the automatic sync must win regardless of what's on the prompt. The
+   * clear byte is shell-family-specific (see buildCdSyncSequence).
+   */
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
-    if (terminalId === null || path == null) return;
+    if (terminalSession.id === null || path == null) return;
     injectedCds.add(path);
-    terminalWrite(terminalId, buildCdSyncSequence(path, shellProfile));
+    terminalSession.write(buildCdSyncSequence(path, shellProfile));
   }
 
   /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
   async function syncTerminalToPath(path: string): Promise<void> {
-    if (terminalId === null) return;
-    const status = await terminalStatus(terminalId);
+    const id = terminalSession.id;
+    if (id === null) return;
+    const status = await terminalStatus(id);
     const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
     lastShellCwd = statusCwd ?? lastShellCwd;
     // Fast tab switches: the status round-trip may outlive this sync's tab —
@@ -220,11 +260,12 @@
       if (pollInFlight) return;
       pollInFlight = true;
       try {
-        if (terminalId === null || pendingCd === null) {
+        const id = terminalSession.id;
+        if (id === null || pendingCd === null) {
           stopQueuePoll();
           return;
         }
-        const status = await terminalStatus(terminalId);
+        const status = await terminalStatus(id);
         const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
         lastShellCwd = statusCwd ?? lastShellCwd;
         if (status.busy) return;
@@ -286,7 +327,7 @@
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
-      // — Cmd+C/V while the terminal is focused must copy/paste terminal
+  // — Cmd+C/V while the terminal is focused must copy/paste terminal
       // text, never fall through to the explorer's file clipboard.
       const primaryOnly = isMac
         ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
@@ -307,14 +348,8 @@
       // native paste into xterm's hidden textarea is unreliable in some
       // WebViews (#374), and the explorer's file-paste must never fire here.
       if (primaryOnly && event.key.toLowerCase() === "v") {
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            if (text) term?.paste(text);
-          })
-          .catch(() => {
-            /* clipboard unavailable — the native paste path may still work */
-          });
+        // Holds its place in the input queue while the clipboard is read.
+        terminalSession.write(pasteInput());
         event.preventDefault();
         return false;
       }
@@ -326,32 +361,16 @@
         effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac),
       );
       if (sequence !== null) {
-        if (terminalId !== null) terminalWrite(terminalId, sequence);
+        terminalSession.write(sequence);
         event.preventDefault();
         return false;
       }
       // Availability-aware: an unavailable core command does not claim the
       // key, so the terminal application still receives it.
-      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
-      const coreCommandAvailable =
-        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
-          if (id !== coreCommandId) return false;
-          const cmd = getCommand(id);
-          return !cmd?.when || cmd.when();
-        });
-      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
-        event,
-        "general.openTerminal",
-      );
-      const terminalToggleChordActive = keybindingsStore.isChordActiveForCommand(
-        event,
-        "general.openTerminal",
-      );
-      const shellReserved = isShellReservedKey(event, {
-        coreCommandAvailable,
-        terminalToggleChordPrefix,
-        terminalToggleChordActive,
-      });
+      const shellReserved = getTerminalCommand(event, keybindingsStore, (id) => {
+        const command = getCommand(id);
+        return command !== undefined && (!command.when || command.when());
+      }) === undefined;
       // xterm keeps terminal-owned keys from reaching the page handler, so
       // consume a pending Explorer chord here when its suffix did not match.
       if (shellReserved && keybindingsStore.isChordActive) keybindingsStore.cancelChord();
@@ -359,13 +378,17 @@
     });
 
     term.open(termEl!);
+    // Initial effects can precede onMount; the plain xterm reference does not
+    // retrigger them. Consume the same guarded request once its input exists.
+    focusOnRequest();
     fitAddon.fit();
 
     term.onData((data) => {
-      if (terminalId !== null) terminalWrite(terminalId, data);
+      terminalSession.write(data);
     });
     term.onResize(({ cols, rows }) => {
-      if (terminalId !== null) terminalResize(terminalId, cols, rows);
+      const id = terminalSession.id;
+      if (id !== null) terminalResize(id, cols, rows);
     });
 
     // Refit when the panel box changes (drag-resize, window resize),
@@ -380,7 +403,7 @@
     });
     resizeObserver.observe(termEl!);
 
-    spawnShell().then(() => term?.focus());
+    void spawnShell();
 
     const unregisterSink = terminalPanelStore.registerPathsSink(insertPaths);
 
@@ -388,11 +411,8 @@
       unregisterSink();
       resizeObserver.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
-      unlistenOutput?.();
-      unlistenExit?.();
-      unlistenCwd?.();
       stopQueuePoll();
-      if (terminalId !== null) terminalKill(terminalId);
+      void terminalSession.dispose();
       term?.dispose();
     };
   });
@@ -423,7 +443,7 @@
 
   // Terminal follows explorer: when the active pane navigates, cd the shell.
   // Runs even while the panel is hidden (the shell is alive), but only after
-  // the panel has been opened at least once (terminalId is live). The
+  // the panel has been opened at least once (the session id is live). The
   // decideCdSync skip guard makes the reverse-direction navigateTo a no-op,
   // so the two directions don't ping-pong.
   // The settings store replaces its whole state object on ANY update, so this
@@ -434,7 +454,7 @@
   $effect(() => {
     const path = windowTabsManager.getActiveExplorer()?.currentPath;
     if (!settingsStore.terminalFollowsExplorer) return;
-    if (!path || terminalId === null || !terminalPanelStore.everOpened) return;
+    if (!path || terminalSession.id === null || !terminalPanelStore.everOpened) return;
     if (path === lastSyncTarget) return;
     lastSyncTarget = path;
     void syncTerminalToPath(path).catch((err) => {
@@ -449,37 +469,35 @@
     const factor = zoomFactor;
     if (!term) return;
     term.options.fontSize = Math.round(BASE_FONT_SIZE * factor);
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       if (terminalPanelStore.visible) fitAddon?.fit();
     });
+    return () => cancelAnimationFrame(frame);
   });
 
-  // Refit + refocus when the panel is re-shown (it keeps running while hidden;
+  // Refit when the panel is re-shown (it keeps running while hidden;
   // display:none gives xterm a 0×0 box it must recover from).
   $effect(() => {
     if (visible && term) {
-      requestAnimationFrame(() => {
-        fitAddon?.fit();
-        term?.focus();
-      });
+      const frame = requestAnimationFrame(() => fitAddon?.fit());
+      return () => cancelAnimationFrame(frame);
     }
   });
 
-  // ── Drag-resize via the top edge ──────────────────────────────────────────
-  function startResize(event: PointerEvent): void {
-    event.preventDefault();
-    const startY = event.clientY;
-    const startHeight = settingsStore.terminalPanelHeight;
-    const onMove = (e: PointerEvent) => {
-      settingsStore.setTerminalPanelHeight(startHeight + (startY - e.clientY));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
+  $effect(() => {
+    terminalPanelStore.focusRevision;
+    focusOnRequest();
+  });
+
+  const resizeRegionId = $props.id();
+  const resize = useControlledSize(
+    () => settingsStore.terminalPanelHeight,
+    value => settingsStore.setTerminalPanelHeight(value),
+    () => ({ ...NUMERIC_SETTINGS.terminalPanelHeight, default: 240, axis: "y", invert: true, integer: true }),
+    { scale: () => zoomFactor },
+  );
+  $effect(() => { if (!visible) untrack(resize.cancel); });
+
 </script>
 
 <!-- Counter-zoom (#419): net zoom 1.0 inside the panel so xterm's pointer
@@ -489,15 +507,22 @@
   class="terminal-panel"
   class:hidden={!visible}
   style:zoom={1 / zoomFactor}
-  style:height="{settingsStore.terminalPanelHeight * zoomFactor}px"
+  style:height="{resize.value * zoomFactor}px"
+  id={resizeRegionId}
+  class:resizing={resize.isResizing}
   bind:this={panelEl}
 >
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -- WAI movable separator -->
   <div
     class="resize-handle"
     role="separator"
     aria-orientation="horizontal"
     aria-label="Resize terminal"
-    onpointerdown={startResize}
+    tabindex="0" aria-controls={resizeRegionId}
+    aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.value}
+    onpointerdown={resize.startResize} onpointermove={resize.move} onpointerup={resize.finish}
+    onpointercancel={resize.cancelPointer} onlostpointercapture={resize.cancelPointer}
+    onkeydown={resize.keydown}
   ></div>
   <div class="terminal-header">
     <span class="terminal-title" role="img" aria-label="Terminal" title="Terminal">
@@ -556,10 +581,13 @@
     right: 0;
     height: 6px;
     cursor: ns-resize;
+    touch-action: none;
     z-index: 2;
   }
 
-  .resize-handle:hover {
+  .resize-handle:focus-visible { outline: 2px solid var(--focus-stroke-outer); outline-offset: -2px; }
+
+  .resize-handle:hover, .resizing .resize-handle {
     background: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 

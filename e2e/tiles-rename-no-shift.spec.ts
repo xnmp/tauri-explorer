@@ -21,18 +21,28 @@ test.describe("Tiles rename does not shift other tiles", () => {
     const count = await tiles.count();
     expect(count).toBeGreaterThan(2);
 
-    // Record each tile's top, then find one in a row below the first.
-    const tops: number[] = [];
-    for (let i = 0; i < count; i++) {
-      const box = await tiles.nth(i).boundingBox();
-      tops.push(box ? box.y : NaN);
-    }
-    const firstRowTop = Math.min(...tops);
-    const lowerIndex = tops.findIndex((y) => y > firstRowTop + 5);
-    expect(
-      lowerIndex,
-      "test needs at least two rows of tiles — widen the listing or narrow the viewport",
-    ).toBeGreaterThan(-1);
+    // Record each tile's top, then find one in a row below the first. The
+    // viewport change above reflows the grid asynchronously, so poll for the
+    // two-row layout instead of measuring the pre-resize single row (#702).
+    const measureTops = async (): Promise<number[]> => {
+      const tops: number[] = [];
+      for (let i = 0; i < count; i++) {
+        const box = await tiles.nth(i).boundingBox();
+        tops.push(box ? box.y : NaN);
+      }
+      return tops;
+    };
+    const lowerRowIndex = (tops: number[]): number => {
+      const firstRowTop = Math.min(...tops);
+      return tops.findIndex((y) => y > firstRowTop + 5);
+    };
+    await expect
+      .poll(async () => lowerRowIndex(await measureTops()), {
+        message: "test needs at least two rows of tiles — widen the listing or narrow the viewport",
+      })
+      .toBeGreaterThan(-1);
+    const tops = await measureTops();
+    const lowerIndex = lowerRowIndex(tops);
 
     const lowerTopBefore = tops[lowerIndex];
 

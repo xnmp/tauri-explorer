@@ -1,0 +1,192 @@
+{
+  "checkpoint": "Native whole-selection deletion, Linux acceptance",
+  "baseCommit": "763483cd4424be9b116844bc60f81f9746d9eed4",
+  "sourceSha256": {
+    "src-tauri/src/files/batch/mod.rs": "474f51a5a6894b69002c33f5e348a1c1226f6263ec578b7184e17c7f76453997",
+    "src-tauri/src/files/batch/model.rs": "c13ffc1d7ad9a11f23f4e5f00141961a2efd685e671d63745134d7687a043a85",
+    "src-tauri/src/files/trash.rs": "54646aa1be21011270de19a6ff4b0da6f1275b7dd2ad729a42e13fa63f9ba668",
+    "src-tauri/src/file_mutation.rs": "47fae70bd27c7425468d6b659e75cfc299d84d2a5accf77a43cdb3b734ea264a",
+    "src-tauri/src/file_history/execution.rs": "2743db4e44c456608101d155c4d8916c57b4b576ce1c4319b6c25c33857bc142",
+    "src-tauri/src/file_history/forward.rs": "fd667933c37dd33da77172594a5634a6f8e80bd3a5a7a75d9d25c2f9e5b85811",
+    "src/lib/state/pane-mutations.ts": "0715810b16981a8d879144e65126a8a57a4570e4649638bfa92e1555d8b21e8b",
+    "src/lib/state/explorer.svelte.ts": "7be6532e918d3ab76d651e3d3f599e4974fc89e53477333cf7d93dac51a6ba26",
+    "src/lib/api/files.ts": "90254aba0fb65afa9618c7ecc3b2c9082961b3852bd415cfe1bb1a8945f1a500",
+    "e2e-tauri/specs/file-forward-history.spec.ts": "b668c7e5c925564a019772a3839b174976cd3d074aa20c590693492a066f4d5c"
+  },
+  "normalBuild": {
+    "sha256": "fc40cedc5f6ea862d1638221a1ead232099e3cd97c5d6e5cd4bf8662bcb7e08d",
+    "nativeProbePresent": {
+      "TAURI_E2E_HISTORY_GATE_DIR": false,
+      "Native forward admission gate failed": false,
+      "next-forward.accepted.json": false
+    },
+    "frontendProbePresent": {
+      "e2eHistoryReady": false,
+      "e2eFileMutationProbe": false,
+      "e2e-history-operation": false
+    }
+  },
+  "acceptanceBuildSha256": "e61dd0c64693a815d0d9ad92be2df56cb90fedcc875d8d674d02488ec685f6a3",
+  "nativeAcceptance": {
+    "runnerExitCode": 0,
+    "passed": 10,
+    "specFiles": 4,
+    "log": "/tmp/native-delete-acceptance.log",
+    "cases": [
+      {
+        "case": "native-forward-held-result",
+        "held": {
+          "status": "held",
+          "heldAt": 1788826789107,
+          "targetPath": "/home/chong/.tauri-explorer-forward-history-T7RNUK/held-0efc1e22.txt",
+          "resultPath": "/home/chong/.tauri-explorer-forward-history-T7RNUK/held-0efc1e22-renamed.txt",
+          "token": "rename-held-e687e2c6-50f6-4fb5-92c2-ed2164431451",
+          "command": "rename_entry"
+        },
+        "admitted": {
+          "revision": 3,
+          "undoId": 1,
+          "redoId": null,
+          "stackSize": 1,
+          "busy": false
+        },
+        "afterRenderer": {
+          "revision": 3,
+          "undoId": 1,
+          "redoId": null,
+          "stackSize": 1,
+          "busy": false
+        },
+        "afterUndo": {
+          "revision": 5,
+          "undoId": null,
+          "redoId": 2,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-same-name",
+        "seeded": {
+          "revision": 10,
+          "undoId": null,
+          "redoId": 4,
+          "stackSize": 0,
+          "busy": false
+        },
+        "afterNoOp": {
+          "revision": 12,
+          "undoId": null,
+          "redoId": 4,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-batch-renderer-destroy",
+        "accepted": {
+          "direction": "forward",
+          "entryId": 7,
+          "pid": 1588324,
+          "token": "95fca076-866a-40da-9d7b-1a345dbf37d6"
+        },
+        "deleted": [
+          "/home/chong/.tauri-explorer-forward-history-T7RNUK/child-batch-a-476a0ced.txt",
+          "/home/chong/.tauri-explorer-forward-history-T7RNUK/child-batch-b-476a0ced.txt"
+        ],
+        "survivorEntries": [
+          "held-0efc1e22.txt",
+          "same-7113b848-renamed.txt"
+        ],
+        "survivorHistory": {
+          "revision": 18,
+          "undoId": null,
+          "redoId": null,
+          "stackSize": 0,
+          "busy": false
+        }
+      },
+      {
+        "case": "native-forward-renderer-destroy",
+        "accepted": {
+          "direction": "forward",
+          "entryId": 8,
+          "pid": 1588324,
+          "token": "6d8ff0c5-a762-4e99-aecc-19645d7b6a76"
+        },
+        "original": "/home/chong/.tauri-explorer-forward-history-T7RNUK/child-4f620b43.txt",
+        "renamed": "/home/chong/.tauri-explorer-forward-history-T7RNUK/child-4f620b43-renamed.txt",
+        "survivorEntries": [
+          "child-4f620b43-renamed.txt",
+          "held-0efc1e22.txt",
+          "same-7113b848-renamed.txt"
+        ],
+        "survivorHistory": {
+          "revision": 22,
+          "undoId": null,
+          "redoId": null,
+          "stackSize": 0,
+          "busy": false
+        }
+      }
+    ]
+  },
+  "screenshots": [
+    "screenshots/refactor/repo-health-cleanup/native-delete-batch-before.png",
+    "screenshots/refactor/repo-health-cleanup/native-delete-batch-after.png"
+  ],
+  "checks": {
+    "rust": {
+      "libraryPassed": 617,
+      "integrationPassed": 9,
+      "ignored": 7,
+      "mode": "serial; default parallel run hit existing watcher fixture race, isolated rerun passed",
+      "log": "/tmp/native-delete-rust-serial.log"
+    },
+    "frontend": {
+      "passed": 2293,
+      "skipped": 3,
+      "performancePassed": 30,
+      "log": "/tmp/native-delete-frontend-final.log"
+    },
+    "browser": {
+      "initialAffectedCasesPassed": 74,
+      "finalFileOperationsCasesPassed": 67,
+      "finalDeleteDialogCasesPassed": 4,
+      "logs": [
+        "/tmp/native-delete-browser.log",
+        "/tmp/native-delete-browser-final.log",
+        "/tmp/native-delete-browser-dialog-final.log"
+      ],
+      "qualification": "Final combined run failed 3 delete-dialog cases: stale Windows wording in Linux fixture and detached dialogs during concurrent build. Corrected Linux-only fixture and isolated dialog rerun passed 4/4."
+    },
+    "svelte": "0 errors, 0 warnings",
+    "architecture": "pass",
+    "clippy": "all-targets with e2e-renderer-recovery, -D warnings, pass",
+    "maps": "405/405"
+  },
+  "startupBundle": {
+    "chunks": 44,
+    "rawBytes": 665192,
+    "gzipBytes": 217248,
+    "changeFromPriorRaw": -386,
+    "changeFromPriorGzip": -33,
+    "latencyImprovementClaim": false
+  },
+  "regressions": {
+    "linuxDoubleSlash": "/tmp/native-delete-double-slash-before.log: fails with prior unconditional UNC rule; /tmp/native-delete-trash-after.log: 9 pass with platform correction",
+    "noConfirmation": "/tmp/native-delete-no-confirm-before.md: independently observed 8 pass/1 intended failure, no raw before log retained; /tmp/native-delete-no-confirm-after.log: 9 pass"
+  },
+  "limits": [
+    "Native process durability and renderer-only replacement/crash are not established.",
+    "Child local history retires intentionally; it does not transfer to the survivor.",
+    "Windows restore shell cancellation and no-overwrite remain release blockers; Windows prefix cases are source-only on this Linux host.",
+    "Artifact identity, symlink parent spellings and ambiguous trash versions remain open.",
+    "Linux restore parent recreation effects need explicit reconciliation.",
+    "Long deletion batches still need native progress/cancellation.",
+    "The screenshot after deletion shows a stale selection count in the surviving window; cross-window selection reconciliation needs a regression and fix.",
+    "Native copy/move, paste/drop and grouped rename still require whole-intent migration.",
+    "Actual macOS startup half-bounce measurements remain outstanding."
+  ],
+  "independentReview": "GPT-5.6 Sol ACCEPT: static Linux contract and native log/spec/screenshot evidence independently reviewed; stated limits retained."
+}

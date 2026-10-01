@@ -3,14 +3,10 @@
  * Issue: test/e2e-coverage-tier1
  *
  * A trash delete pushes an undo action (Ctrl+Z runs it), whereas a permanent
- * delete pushes none (by design — see pane-mutations.ts confirmDelete +
- * undo-operations.ts), so Ctrl+Z is a no-op after a permanent delete.
+ * delete pushes none, so Ctrl+Z is a no-op after a permanent delete.
  *
- * MOCK LIMITATION: the browser mock's `restore_from_trash` handler is a no-op
- * (trash restore is OS-level), so undoing a trash delete cannot re-materialise
- * the row in E2E. We therefore assert the two things that ARE observable in the
- * mock: the trash delete is undoable (an "Undo" toast fires when Ctrl+Z runs
- * the recorded action) while a permanent delete records nothing to undo.
+ * Browser fixtures retain trashed entries so restore asserts the visible file
+ * outcome. Real native trash receipts are covered separately.
  */
 import { test, expect, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
@@ -39,11 +35,11 @@ test.describe("Delete / restore", () => {
     // Gone from the list.
     await expect(notes).toHaveCount(0);
 
-    // Ctrl+Z runs the recorded undo action — surfaced as an "Undo" toast.
-    // (The row can't re-appear here because the mock's restore_from_trash is a
-    // no-op; the recorded, executed undo is what's observable in E2E.)
+    // Undo restores the actual fixture entry, then redo removes it again.
     await page.keyboard.press("Control+z");
-    await expect(page.locator(".toast", { hasText: "Undo" })).toBeVisible();
+    await expect(notes).toBeVisible();
+    await page.keyboard.press("Control+Shift+z");
+    await expect(notes).toHaveCount(0);
   });
 
   test("permanent delete removes the entry and cannot be undone", async ({ page }) => {
@@ -68,4 +64,42 @@ test.describe("Delete / restore", () => {
     await page.keyboard.press("Control+z");
     await expect(notes).toHaveCount(0);
   });
+});
+
+test("partial delete keeps the successful local item undoable", async ({ page }) => {
+  await page.goto(DOCS_URL);
+  await waitForEntries(page);
+  await page.evaluate(async () => {
+    const modulePath = "/src/lib/state/window-tabs.svelte.ts";
+    const { windowTabsManager } = await import(/* @vite-ignore */ modulePath);
+    const explorer = windowTabsManager.getActiveExplorer();
+    const local = explorer.displayEntries.find((entry: { name: string }) => entry.name === "notes.md");
+    explorer.startDelete([local, { ...local, name: "network.txt", path: "//server/share/network.txt" }]);
+  });
+  // The browser fixture pins Linux: double-slash paths are local here.
+  await expect(page.getByRole("alertdialog")).toContainText("These 2 items will be moved to the Recycle Bin");
+  await confirmDeleteDialog(page);
+  const notes = page.locator('.entry-item[data-path="/home/user/Documents/notes.md"]');
+  await expect(notes).toHaveCount(0);
+  await page.keyboard.press("Control+z");
+  await expect(notes).toBeVisible();
+});
+
+
+test("Linux double-slash local path does not warn of permanent network deletion", async ({ page }) => {
+  await page.goto(DOCS_URL);
+  await waitForEntries(page);
+  await page.evaluate(async () => {
+    const modulePath = "/src/lib/state/window-tabs.svelte.ts";
+    const { windowTabsManager } = await import(/* @vite-ignore */ modulePath);
+    const explorer = windowTabsManager.getActiveExplorer();
+    const local = explorer.displayEntries.find((entry: { name: string }) => entry.name === "notes.md");
+    explorer.startDelete([{ ...local, path: "//local/directory/item.txt" }]);
+  });
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("moved to the Recycle Bin");
+  await expect(dialog).not.toContainText("permanently");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.locator('.entry-item[data-path="/home/user/Documents/notes.md"]')).toBeVisible();
 });

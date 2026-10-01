@@ -13,6 +13,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { isMac } from "$lib/domain/platform";
   import * as titlebar from "$lib/domain/titlebar";
+  import { observeWindowChrome } from "$lib/state/window-chrome";
   import WindowTabBar from "./WindowTabBar.svelte";
 
   const tabStripVisible = $derived(
@@ -45,14 +46,7 @@
 
   onMount(() => {
     if (!appWindow) return;
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      isMaximized = await appWindow.isMaximized();
-      unlisten = await appWindow.onResized(async () => {
-        isMaximized = await appWindow!.isMaximized();
-      });
-    })();
-    return () => unlisten?.();
+    return observeWindowChrome(appWindow, (value) => { isMaximized = value; });
   });
 
   async function handleDragStart(event: MouseEvent) {
@@ -76,14 +70,16 @@
   }
 
   async function handleClose() {
-    await appWindow?.close();
+    await windowTabsManager.requestWindowClose();
   }
 </script>
 
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
-    <WindowTabBar />
+    {#if windowTabsManager.activeTab}
+      <WindowTabBar />
+    {/if}
     <div class="spacer"></div>
 
     {#if settingsStore.showWindowControls}
@@ -185,7 +181,7 @@
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-normal);
+    transition: transform var(--transition-normal);
     border-radius: var(--radius-sm);
   }
 
@@ -199,7 +195,7 @@
   }
 
   .control-btn.close:hover {
-    background: #c42b1c;
+    background: var(--system-critical);
     color: white;
   }
 

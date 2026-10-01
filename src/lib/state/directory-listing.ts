@@ -1,196 +1,72 @@
-/**
- * Streaming directory listing management.
- * Handles Tauri event-based incremental directory loading.
- * Extracted from explorer.svelte.ts.
- */
-
-import {
-  startStreamingDirectory,
-  cancelDirectoryListing,
-  type DirectoryEntriesEvent,
-} from "$lib/api/files";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+/** Latest-request ownership for complete directory snapshots and watch leases. */
+import { loadDirectory, type DirectoryWatchLease } from "$lib/api/files";
+import { extractError } from "$lib/api/common";
 import type { FileEntry } from "$lib/domain/file";
 
 export type DirectoryListingResult = {
   ok: true;
   path: string;
   entries: FileEntry[];
-  streaming: boolean;
 } | {
   ok: false;
   error: string;
-}
+  /** Supersession/teardown is not a filesystem failure or a reason to navigate away. */
+  cancelled?: true;
+};
 
-export interface DirectoryListingCallbacks {
-  onEntries: (entries: FileEntry[]) => void;
-  onDone: () => void;
-  /** Invoked when the listing is cancelled before completing (superseded by
-   *  a newer load or torn down via cleanup). Lets awaiting callers bail out. */
-  onCancelled?: () => void;
+export interface DirectoryObservation {
+  ready: Promise<void>;
+  current?(): boolean;
+  accept(lease: DirectoryWatchLease | null): boolean;
+  discard(lease: DirectoryWatchLease): void;
 }
 
 export function createDirectoryListing() {
-  let activeListingId: number | null = null;
-  let activeCallbacks: DirectoryListingCallbacks | null = null;
-
-  // Single persistent `directory-entries` listener, registered once and reused
-  // across every load. Previously each load did `await listen(...)` before
-  // invoking — a second IPC round-trip paid on EVERY navigation before entries
-  // could arrive. Registering once removes that hop from all subsequent loads;
-  // kicking registration off at creation time (below) means even the first
-  // navigation usually finds it already attached.
-  let unlisten: UnlistenFn | null = null;
-  let listenerReady: Promise<void> | null = null;
-
-  // While a load has sent its invoke but not yet learned its listing id, events
-  // are buffered here (the backend emits as soon as the command runs, so a
-  // chunk can land before `startStreamingDirectory` resolves). Loads are
-  // serialized by `enqueue`, so at most one load owns this buffer at a time.
-  let awaitingListingId = false;
-  let earlyBuffer: DirectoryEntriesEvent[] = [];
-
-  // Serializes load/cleanup critical sections. A load's setup spans several
-  // awaits (cancel previous, ensure listener, invoke); a concurrent load
-  // (e.g. navigation during an in-flight refresh) interleaving with it would
-  // corrupt the shared early-buffer / active-listing state.
+  let destroyed = false;
+  let generation = 0;
+  // Keep one scan per owner in flight. A newer request invalidates older queued
+  // requests immediately, so they can be skipped without starting more disk IO.
   let queue: Promise<unknown> = Promise.resolve();
   function enqueue<T>(task: () => Promise<T>): Promise<T> {
     const run = queue.then(task);
-    queue = run.then(
-      () => undefined,
-      () => undefined,
-    );
+    queue = run.then(() => undefined, () => undefined);
     return run;
   }
+  const cancelled = (): DirectoryListingResult => ({
+    ok: false,
+    cancelled: true,
+    error: destroyed ? "Directory listing has been destroyed" : "Directory navigation was superseded",
+  });
 
-  const handleEvent = (payload: DirectoryEntriesEvent) => {
-    // A load is mid-flight and hasn't recorded its id yet — buffer and let
-    // doLoad flush the ones matching its id once the invoke resolves.
-    if (awaitingListingId) {
-      earlyBuffer.push(payload);
-      return;
+  async function read(path: string, request: number, observation?: DirectoryObservation): Promise<DirectoryListingResult> {
+    const current = () => !destroyed && request === generation && (observation?.current?.() ?? true);
+    if (!current()) return cancelled();
+    try {
+      await observation?.ready;
+    } catch (error) {
+      return current() ? { ok: false, error: extractError(error) } : cancelled();
     }
-    // Ignore events from superseded/cancelled listings.
-    if (payload.listingId !== activeListingId) return;
-    activeCallbacks?.onEntries(payload.entries);
-    if (payload.done) {
-      activeListingId = null;
-      const cb = activeCallbacks;
-      activeCallbacks = null;
-      cb?.onDone();
+    if (!current()) return cancelled();
+    const result = await loadDirectory(path, observation);
+    if (!current() || (result.ok && observation && !observation.accept(result.data.watch_lease ?? null))) {
+      if (result.ok && result.data.watch_lease) observation?.discard(result.data.watch_lease);
+      return cancelled();
     }
-  };
-
-  // Register the persistent listener once. Outside Tauri (browser/mock mode)
-  // the event system is unavailable and listen() rejects; the mock returns the
-  // complete listing in the invoke result (listing_id null), so we proceed
-  // without a listener. The rejection is cached as a resolved promise so we
-  // don't retry listen() on every load.
-  function ensureListener(): Promise<void> {
-    if (listenerReady) return listenerReady;
-    listenerReady = listen<DirectoryEntriesEvent>("directory-entries", (event) =>
-      handleEvent(event.payload),
-    )
-      .then((un) => {
-        unlisten = un;
-      })
-      .catch(() => {
-        unlisten = null;
-      });
-    return listenerReady;
+    return result.ok
+      ? { ok: true, path: result.data.path, entries: [...result.data.entries] }
+      : result;
   }
-
-  /** Cancel the in-flight listing and clear its callbacks, keeping the
-   *  persistent listener attached. Run at the start of each load. */
-  async function cancelActive() {
-    const cancelled = activeCallbacks;
-    activeCallbacks = null;
-    if (activeListingId !== null) {
-      await cancelDirectoryListing(activeListingId);
-      activeListingId = null;
-    }
-    cancelled?.onCancelled?.();
-  }
-
-  async function doLoad(
-    path: string,
-    callbacks: DirectoryListingCallbacks,
-  ): Promise<DirectoryListingResult> {
-    await cancelActive();
-    await ensureListener();
-
-    awaitingListingId = true;
-    earlyBuffer.length = 0;
-
-    const result = await startStreamingDirectory(path);
-
-    if (!result.ok) {
-      awaitingListingId = false;
-      return { ok: false, error: result.error };
-    }
-
-    const listingId = result.data.listing_id;
-
-    if (listingId === null) {
-      // Small directory (or mock mode): complete listing was in the invoke result.
-      awaitingListingId = false;
-      earlyBuffer.length = 0;
-      return {
-        ok: true,
-        path: result.data.path,
-        entries: [...result.data.entries],
-        streaming: false,
-      };
-    }
-
-    // Merge chunks that streamed in before the invoke resolved into the
-    // returned entries (callers assign the result wholesale, so emitting
-    // them through onEntries here would get overwritten by that assignment).
-    // Events arriving after this point are delivered via handleEvent.
-    const flushedEntries: FileEntry[] = [];
-    let doneSeen = false;
-    for (const payload of earlyBuffer) {
-      if (payload.listingId !== listingId) continue;
-      flushedEntries.push(...payload.entries);
-      if (payload.done) doneSeen = true;
-    }
-    earlyBuffer.length = 0;
-    awaitingListingId = false;
-
-    if (!doneSeen) {
-      activeListingId = listingId;
-      activeCallbacks = callbacks;
-    }
-
-    return {
-      ok: true,
-      path: result.data.path,
-      entries: [...result.data.entries, ...flushedEntries],
-      streaming: !doneSeen,
-    };
-  }
-
-  /** Full teardown for instance destroy: cancel in-flight listing and remove
-   *  the persistent listener. */
-  async function doDestroy() {
-    await cancelActive();
-    if (unlisten) {
-      unlisten();
-      unlisten = null;
-    }
-    listenerReady = null;
-  }
-
-  // Start registering the listener immediately (not awaited). Store/window
-  // init and the first navigateTo happen after this, so the listen() promise
-  // has usually resolved by the first load — making even the first navigation
-  // skip the round-trip.
-  void ensureListener();
 
   return {
-    load: (path: string, callbacks: DirectoryListingCallbacks) =>
-      enqueue(() => doLoad(path, callbacks)),
-    cleanup: () => enqueue(() => doDestroy()),
+    load: (path: string, observation?: DirectoryObservation) => {
+      const request = ++generation;
+      return enqueue(() => read(path, request, observation));
+    },
+    cleanup: () => {
+      destroyed = true;
+      generation++;
+      // Wait for any late response to release its observation lease.
+      return enqueue(async () => {});
+    },
   };
 }

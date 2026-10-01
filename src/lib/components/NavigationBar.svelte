@@ -13,6 +13,7 @@
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import { directoryKey, isDriveRoot } from "$lib/domain/path";
+  import { launchRequest } from "$lib/domain/window-launch-plan";
   import { drivesStore } from "$lib/state/drives.svelte";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
@@ -20,9 +21,10 @@
 
   interface Props {
     explorer: ExplorerInstance;
+    paneId: string;
   }
 
-  let { explorer }: Props = $props();
+  let { explorer, paneId }: Props = $props();
 
   // Home directory detection for breadcrumb collapsing. Read from the shared
   // app-wide cache so a freshly mounted bar (new tab / tab switch) collapses
@@ -69,7 +71,7 @@
     const crumbs = explorer.breadcrumbs;
     for (let i = 0; i < crumbs.length; i++) {
       const key = directoryKey(crumbs[i].path);
-      const drive = drivesStore.list.find((d) => directoryKey(d.path) === key);
+      const drive = drivesStore.list.find((d) => d.path !== null && directoryKey(d.path) === key);
       if (!drive) continue;
       if (drive.provider === "googledrive") {
         // Google Drive File Stream always nests personal files under a top-level
@@ -147,6 +149,7 @@
   }
 
   function requestAddressBarFocus() {
+    if (windowTabsManager.activePaneId !== paneId) return;
     addressBarFocusRequested = true;
   }
 
@@ -163,7 +166,7 @@
     // activation path asks the existing navigation bar to enter edit mode.
     window.addEventListener("explorer:focus-address-bar", requestAddressBarFocus);
     // Fresh child windows carry this one-shot startup request in their URL.
-    const startupFocus = new URLSearchParams(window.location.search).get("focusAddressBar") === "1"
+    const startupFocus = launchRequest(window.location.search, "focusAddressBar") === "1"
       ? setTimeout(requestAddressBarFocus)
       : undefined;
     return () => {
@@ -556,7 +559,6 @@
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
-    transition: background var(--transition-fast);
   }
 
   .nav-btn:hover:not(:disabled) {
@@ -635,7 +637,6 @@
     font-weight: var(--font-weight-medium);
     color: var(--breadcrumb-text, var(--text-primary));
     cursor: pointer;
-    transition: background var(--transition-fast);
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -701,7 +702,7 @@
 
   .crumb.current {
     font-weight: var(--font-weight-semibold);
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     background: var(--breadcrumb-active-bg, var(--breadcrumb-bg, transparent));
   }
 
@@ -719,7 +720,6 @@
     border: none;
     border-radius: 3px;
     cursor: pointer;
-    transition: background var(--transition-fast);
   }
 
   .caret-btn:hover {

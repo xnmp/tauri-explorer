@@ -4,7 +4,7 @@
  * Issue: refactor/finish-api-files-split-into-open-and-system-modules (#282)
  *
  * Split out of files.ts; re-exported there so existing importers of
- * `$lib/api/files` keep working unchanged.
+ * Feature consumers import this module directly.
  */
 
 import {

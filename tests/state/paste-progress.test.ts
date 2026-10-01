@@ -1,47 +1,22 @@
 /**
- * Large cut/paste progress flow (#165): pasteEntries drives the operations
- * store with byte-level progress, settles the operation on completion,
- * cancellation stops the batch mid-way, and error paths surface without
- * losing the successful items. Observable via operationsManager state and
- * the recorded undo — not implementation internals.
+ * Paste dispatch (#165, #388, #685). Both clipboard modes are now ordered
+ * native sessions, so `pasteEntries` owns exactly two decisions: which
+ * session to open, and whether the cut clipboard may be cleared afterwards.
+ * Progress, conflicts and cancellation belong to the session itself and are
+ * covered by move-operations/copy-operations.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const transfer = vi.hoisted(() => vi.fn());
-const undo = vi.hoisted(() => ({ push: vi.fn() }));
-const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
-const estimate = vi.hoisted(() => vi.fn());
-const cancelCopy = vi.hoisted(() => vi.fn());
-// Capture the `copy-progress` listener the paste loop registers, so tests can
-// drive backend byte-progress events synchronously.
-const copyProgress = vi.hoisted(() => ({
-  cb: null as null | ((e: { payload: unknown }) => void),
-  unlisten: vi.fn(),
-}));
+const copyFiles = vi.hoisted(() => vi.fn(async () => null));
+const moveFiles = vi.hoisted(() => vi.fn(async (): Promise<{ error: string | null; complete: boolean }> => ({ error: null, complete: true })));
+const undo = vi.hoisted(() => ({ push: vi.fn(), invalidateRedo: vi.fn() }));
 
-vi.mock("$lib/state/file-transfer", () => ({ performFileTransfer: transfer }));
+vi.mock("$lib/state/copy-operations", () => ({ copyFiles }));
+vi.mock("$lib/state/move-operations", () => ({ moveFiles }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
-vi.mock("$lib/state/toast.svelte", () => ({ toastStore: toast }));
-vi.mock("$lib/state/file-events", () => ({ broadcastFileChange: vi.fn() }));
-vi.mock("$lib/state/frecency.svelte", () => ({ frecencyStore: { pruneNonExistent: vi.fn() } }));
-vi.mock("$lib/state/conflict-resolver.svelte", () => ({
-  conflictResolver: { prompt: vi.fn() },
-}));
-vi.mock("$lib/api/files", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  estimateSize: estimate,
-  cancelCopy,
-}));
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
-    if (name === "copy-progress") copyProgress.cb = cb;
-    return copyProgress.unlisten;
-  }),
-}));
 
 import { pasteEntries, type PasteSource } from "$lib/state/paste-operations";
-import { operationsManager } from "$lib/state/operations.svelte";
 
 function sources(n: number): PasteSource[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -59,162 +34,54 @@ const context = () => ({
   onRefresh: vi.fn(async () => {}),
 });
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  copyProgress.cb = null;
-  // Settle any operations left over from a previous test.
-  for (const op of [...operationsManager.operations]) {
-    operationsManager.clearOperation(op.id);
-  }
-  estimate.mockResolvedValue({ ok: true, data: { totalBytes: 50 * 1024 } });
-  transfer.mockImplementation(async (path: string) => ({
-    ok: true,
-    entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
-  }));
-});
+beforeEach(() => vi.clearAllMocks());
 
-describe("large paste progress", () => {
-  it("tracks byte progress to completion and records one batch undo for 50 items", async () => {
-    const progressSeen: number[] = [];
-    transfer.mockImplementation(async (path: string) => {
-      const op = operationsManager.operations[0];
-      if (op) progressSeen.push(op.progress);
-      return {
-        ok: true,
-        entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
-      };
-    });
-
+describe("pasteEntries", () => {
+  it("sends a whole cut selection to one ordered move session", async () => {
     const ctx = context();
-    const error = await pasteEntries(sources(50), true, ctx);
+    const batch = sources(50);
+    const error = await pasteEntries(batch, true, ctx);
 
     expect(error).toBeNull();
-    const op = operationsManager.operations[0];
-    expect(op.status).toBe("completed");
-    expect(op.progress).toBe(100);
-    expect(op.totalBytes).toBe(50 * 1024);
-    // Progress increased monotonically while the batch ran.
-    expect(progressSeen.length).toBe(50);
-    expect([...progressSeen]).toEqual([...progressSeen].sort((a, b) => a - b));
-
-    // One batch undo covering all 50 moves; entries reported to the pane
-    // incrementally as each transfer lands (#388) plus one final batch call.
-    expect(undo.push).toHaveBeenCalledTimes(1);
-    expect(undo.push.mock.calls[0][0]).toMatchObject({ type: "batch" });
-    expect(undo.push.mock.calls[0][0].actions).toHaveLength(50);
-    expect(ctx.onEntriesAdded).toHaveBeenCalledTimes(51);
-    const lastAdd = ctx.onEntriesAdded.mock.calls.at(-1)![0];
-    expect(lastAdd).toHaveLength(50);
-    expect(toast.success).toHaveBeenCalledWith("Pasted successfully");
+    expect(moveFiles).toHaveBeenCalledOnce();
+    expect(moveFiles).toHaveBeenCalledWith(batch.map(({ path }) => path), "/dest", ctx);
+    expect(copyFiles).not.toHaveBeenCalled();
   });
 
-  it("cancellation mid-batch stops transferring and settles as cancelled", async () => {
-    let calls = 0;
-    transfer.mockImplementation(async (path: string) => {
-      calls++;
-      if (calls === 10) {
-        operationsManager.cancelOperation(operationsManager.operations[0].id);
-      }
-      return {
-        ok: true,
-        entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
-      };
-    });
-
-    await pasteEntries(sources(50), true, context());
-
-    // The loop noticed the cancel on the next iteration — nowhere near 50.
-    expect(calls).toBeLessThanOrEqual(11);
-    expect(toast.success).not.toHaveBeenCalled();
-  });
-
-  it("partial failures complete the batch, surface one error toast, and keep successful undos", async () => {
-    let i = 0;
-    transfer.mockImplementation(async (path: string) => {
-      i++;
-      if (i % 2 === 0) return { ok: false, error: "disk full" };
-      return {
-        ok: true,
-        entry: { path: `/dest/${path.split("/").pop()}`, name: path.split("/").pop() },
-      };
-    });
-
-    const error = await pasteEntries(sources(10), false, context());
-
-    expect(error).toContain("disk full");
-    expect(toast.error).toHaveBeenCalledTimes(1);
-    // The 5 successes are still undoable.
-    expect(undo.push.mock.calls[0][0].actions).toHaveLength(5);
-  });
-
-  it("total failure marks the operation failed", async () => {
-    transfer.mockResolvedValue({ ok: false, error: "permission denied" });
-
-    await pasteEntries(sources(5), false, context());
-
-    const op = operationsManager.operations[0];
-    expect(op.status).toBe("error");
-    expect(op.error).toContain("permission denied");
+  it("leaves the inverse to native history rather than recording its own", async () => {
+    await pasteEntries(sources(3), true, context());
     expect(undo.push).not.toHaveBeenCalled();
   });
 
-  it("refines progress from copy-progress byte events for a single large file", async () => {
-    estimate.mockResolvedValue({ ok: true, data: { totalBytes: 1024 } });
-    let seenMidFile = 0;
-    transfer.mockImplementation(
-      async (_p: string, _d: string, _c: boolean, opts: { jobId: number }) => {
-        // Backend reports the copy is half done for THIS file's job.
-        copyProgress.cb?.({
-          payload: { jobId: opts.jobId, bytesDone: 512, bytesTotal: 1024, currentFile: "/src/a" },
-        });
-        seenMidFile = operationsManager.operations[0].progress;
-        return { ok: true, entry: { path: "/dest/a", name: "a" } };
-      },
-    );
-
-    // Single source: intra-file 50% must surface as ~50% overall, not 0%.
-    const error = await pasteEntries(
-      [{ name: "a", path: "/src/a", size: 1024 }],
-      false,
-      context(),
-    );
-
-    expect(error).toBeNull();
-    expect(seenMidFile).toBeCloseTo(50, 0);
-    expect(copyProgress.unlisten).toHaveBeenCalled();
+  it("clears the cut clipboard only when every requested item arrived", async () => {
+    const completed = vi.fn();
+    await pasteEntries(sources(3), true, context(), completed);
+    expect(completed).toHaveBeenCalledOnce();
   });
 
-  it("relays a mid-file cancel to the backend via cancelCopy", async () => {
-    let capturedJobId = 0;
-    transfer.mockImplementation(
-      async (_p: string, _d: string, _c: boolean, opts: { jobId: number }) => {
-        capturedJobId = opts.jobId;
-        // User cancels the dialog while this file is copying.
-        operationsManager.cancelOperation(operationsManager.operations[0].id);
-        // A subsequent byte event should be relayed as a backend cancel.
-        copyProgress.cb?.({
-          payload: { jobId: opts.jobId, bytesDone: 1, bytesTotal: 1024, currentFile: "/src/a" },
-        });
-        return { ok: false, error: "Copy cancelled" };
-      },
-    );
-
-    await pasteEntries([{ name: "a", path: "/src/a", size: 1024 }], false, context());
-
-    expect(cancelCopy).toHaveBeenCalledWith(capturedJobId);
-    // A cancelled copy is not reported as a failure toast.
-    expect(toast.error).not.toHaveBeenCalled();
+  it("keeps the cut clipboard when the session did not complete the selection", async () => {
+    moveFiles.mockResolvedValue({ error: null, complete: false });
+    const completed = vi.fn();
+    const error = await pasteEntries(sources(3), true, context(), completed);
+    expect(completed).not.toHaveBeenCalled();
+    expect(error).toBeNull();
   });
 
-  it("estimate failure still runs the batch with file-level progress", async () => {
-    estimate.mockResolvedValue({ ok: false, error: "nope" });
+  it("reports a session failure and keeps the cut clipboard", async () => {
+    moveFiles.mockResolvedValue({ error: "Move incomplete: a.bin: denied", complete: false });
+    const completed = vi.fn();
+    const error = await pasteEntries(sources(1), true, context(), completed);
+    expect(error).toContain("denied");
+    expect(completed).not.toHaveBeenCalled();
+  });
 
-    const error = await pasteEntries(sources(4), true, context());
-
-    expect(error).toBeNull();
-    const op = operationsManager.operations[0];
-    expect(op.status).toBe("completed");
-    expect(op.progress).toBe(100);
-    expect(op.totalBytes).toBeUndefined();
+  it("delegates copy paste once and always releases the copy clipboard", async () => {
+    const ctx = context();
+    const batch = sources(3);
+    const completed = vi.fn();
+    await pasteEntries(batch, false, ctx, completed);
+    expect(copyFiles).toHaveBeenCalledWith(batch.map(({ path }) => path), "/dest", ctx);
+    expect(moveFiles).not.toHaveBeenCalled();
+    expect(completed).toHaveBeenCalledOnce();
   });
 });

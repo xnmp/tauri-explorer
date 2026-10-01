@@ -229,7 +229,6 @@
     padding: 10px 12px;
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: background var(--transition-fast);
   }
 
   .theme-item.selected {

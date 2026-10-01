@@ -289,7 +289,7 @@
 
   .error-msg {
     font-size: var(--font-size-caption);
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     background: rgba(255, 0, 0, 0.1);
     padding: 8px 12px;
     border-radius: var(--radius-sm);
@@ -352,7 +352,7 @@
   }
 
   .renamed-name.highlight {
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     font-weight: 500;
   }
 
@@ -381,7 +381,6 @@
     font-size: var(--font-size-caption);
     cursor: pointer;
     border: 1px solid var(--control-stroke);
-    transition: all var(--transition-fast);
   }
 
   .btn-primary {

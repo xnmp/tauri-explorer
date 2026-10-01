@@ -12,6 +12,13 @@ const created = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   WebviewWindow: vi.fn(function (label: string, options: Record<string, unknown>) {
     created.calls.push({ label, options });
+    return {
+      once: vi.fn(async (event: string, handler: () => void) => {
+        if (event === "tauri://created") queueMicrotask(handler);
+        return vi.fn();
+      }),
+      close: vi.fn(async () => {}),
+    };
   }),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
@@ -21,15 +28,18 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 vi.mock("../../../src/lib/state/window-tabs.svelte", () => ({
-  windowTabsManager: { getActiveExplorer: () => undefined },
+  windowTabsManager: { getActiveExplorer: () => undefined, windowLabel: "main" },
   tabSeedKey: (label: string) => label,
 }));
 vi.mock("../../../src/lib/state/settings.svelte", () => ({
   settingsStore: { warmWindow: false },
 }));
-vi.mock("../../../src/lib/state/persisted", () => ({ savePersisted: vi.fn() }));
+vi.mock("../../../src/lib/state/persisted", () => ({
+  savePersisted: vi.fn(),
+  removePersisted: vi.fn(),
+}));
 vi.mock("../../../src/lib/state/warm-window", () => ({
-  consumeWarmWindow: vi.fn(async () => false),
+  consumeWarmWindow: vi.fn(async () => null),
 }));
 vi.mock("../../../src/lib/state/window-appearance", () => ({
   explorerWindowAppearance: (title: string) => ({ title }),

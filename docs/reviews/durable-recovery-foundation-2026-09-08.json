@@ -1,0 +1,65 @@
+{
+  "date": "2026-09-08",
+  "base_commit": "7d2bc83e",
+  "issue": 680,
+  "status": "uncommitted foundation; production recovery integration incomplete",
+  "scope": [
+    "shared Unix descriptor-relative directory access used by Linux trash",
+    "bounded SQLite journal with exact schema and revision validation",
+    "independent checksummed Unix catalog and exact OS-held operation locks",
+    "revision-ordered recovery UI and API contracts; not yet app-wired"
+  ],
+  "verification": {
+    "native": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: -- --test-threads=1",
+      "passed": 262,
+      "failed": 0,
+      "ignored": 4,
+      "log": "/tmp/recovery-foundation-native-final.log"
+    },
+    "frontend": {
+      "command": "bunx vitest run tests/file-recovery-state.test.ts tests/api/file-recovery.test.ts",
+      "passed": 17,
+      "failed": 0,
+      "log": "/tmp/recovery-foundation-ui-final.log"
+    },
+    "types": {
+      "command": "bun run check",
+      "errors": 0,
+      "warnings": 0,
+      "log": "/tmp/recovery-foundation-types-final.log"
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_source_coverage": "415/415",
+      "note": "new untracked source paths explicitly added to both maps; coverage command counts tracked files"
+    },
+    "regression_before": [
+      "/tmp/recovery-native-name-before.log",
+      "/tmp/recovery-api-before.log",
+      "/tmp/recovery-journal-adversarial-before.log",
+      "/tmp/recovery-retirement-before.log"
+    ],
+    "independent_review": "GPT-5.6 Sol accepted fixed DAO/schema, snapshot inspection and quarantine retirement within scoped ownership assumptions; final minor stale inspection error also fixed with regression"
+  },
+  "not_proven": [
+    "production replacement journal integration",
+    "cross-process conflict admission and bounded lock retirement",
+    "complete model validation and strong restart artifact identity",
+    "quarantine restart reconciliation",
+    "recovery IPC/renderer owner/app wiring",
+    "browser keyboard/visual acceptance",
+    "whole-operation crash and disk-full acceptance",
+    "Windows/macOS runtime",
+    "startup or half-bounce latency",
+    "full architectural review completion"
+  ],
+  "limitations": [
+    "Unix dev/inode can be reused; not a strong restart artifact identity guarantee",
+    "Quarantine relies on secured private namespace/shared admission; arbitrary same-UID mutation inside it is outside the current guarantee",
+    "Extreme umask may create inaccessible orphan evidence",
+    "Catalog checksum detects changed bytes; it is not authentication against same-user rewriting",
+    "Unused recovery modules remain work in progress; no clean production lint/build acceptance is claimed"
+  ],
+  "publication": "No commit, push or merge in this checkpoint"
+}

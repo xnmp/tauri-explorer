@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const readConfigFileMock = vi.fn();
 const writeConfigFileMock = vi.fn();
 
-vi.mock("$lib/api/files", async (importOriginal) => ({
+vi.mock("$lib/api/config", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   readConfigFile: (...args: unknown[]) => readConfigFileMock(...args),
   writeConfigFile: (...args: unknown[]) => writeConfigFileMock(...args),

@@ -80,34 +80,39 @@ def source_files():
     )
 
 
-want_coverage = "--coverage" in sys.argv
-argv = [a for a in sys.argv[1:] if not a.startswith("--")]
-targets = argv or sorted(os.path.basename(p) for p in glob.glob(os.path.join(HERE, "map-*.md")))
+def main():
+    want_coverage = "--coverage" in sys.argv
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+    targets = argv or sorted(os.path.basename(p) for p in glob.glob(os.path.join(HERE, "map-*.md")))
 
-failures = 0
+    failures = 0
 
-# Guard 1: references resolve.
-for name in targets:
-    text = open(os.path.join(HERE, name)).read()
-    toks = sorted({t for t in TOKEN.findall(text) if not PLACEHOLDER.search(t) and not t.startswith(".")})
-    bad = [t for t in toks if not resolves(t)]
-    print(f"{name}: ~{len(text) // 4} tokens, {len(toks)} file refs, {len(bad)} unresolvable")
-    for b in bad:
-        print(f"   MISSING: {b}  (referenced but not in the tree — update the map)")
-    failures += len(bad)
+    # Guard 1: references resolve.
+    for name in targets:
+        text = open(os.path.join(HERE, name)).read()
+        toks = sorted({t for t in TOKEN.findall(text) if not PLACEHOLDER.search(t) and not t.startswith(".")})
+        bad = [t for t in toks if not resolves(t)]
+        print(f"{name}: ~{len(text) // 4} tokens, {len(toks)} file refs, {len(bad)} unresolvable")
+        for b in bad:
+            print(f"   MISSING: {b}  (referenced but not in the tree — update the map)")
+        failures += len(bad)
 
-# Guard 2: the folder map covers every source file.
-if want_coverage:
-    fm = os.path.join(HERE, FOLDER_MAP)
-    if not os.path.exists(fm):
-        print(f"COVERAGE: {FOLDER_MAP} missing — cannot verify coverage")
-        sys.exit(1)
-    srcs = source_files()
-    covered = mapped_paths(open(fm).read(), srcs)
-    missing = [p for p in srcs if p not in covered]
-    print(f"coverage: {len(srcs) - len(missing)}/{len(srcs)} source files in {FOLDER_MAP}")
-    for p in missing:
-        print(f"   UNMAPPED: {p}  (new file — add a line to {FOLDER_MAP}, and to map-feature.md if it belongs to a feature)")
-    failures += len(missing)
+    # Guard 2: the folder map covers every source file.
+    if want_coverage:
+        fm = os.path.join(HERE, FOLDER_MAP)
+        if not os.path.exists(fm):
+            print(f"COVERAGE: {FOLDER_MAP} missing — cannot verify coverage")
+            return 1
+        srcs = source_files()
+        covered = mapped_paths(open(fm).read(), srcs)
+        missing = [p for p in srcs if p not in covered]
+        print(f"coverage: {len(srcs) - len(missing)}/{len(srcs)} source files in {FOLDER_MAP}")
+        for p in missing:
+            print(f"   UNMAPPED: {p}  (new file — add a line to {FOLDER_MAP}, and to map-feature.md if it belongs to a feature)")
+        failures += len(missing)
 
-sys.exit(1 if failures else 0)
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

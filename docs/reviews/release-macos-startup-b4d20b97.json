@@ -1,0 +1,372 @@
+{
+  "run": "https://github.com/xnmp/tauri-explorer/actions/runs/34422867762",
+  "prHead": "b4d20b97d35d0da40f54cb5eeda64ca4b9897a75",
+  "checkoutCommit": "c57ae212ac8584dfd82878094409b5bd6fbbe29f",
+  "profile": "release-custom-protocol-production-hooks",
+  "binarySha256": "5c53fd5809aff486a7963de02da534ecad860c00a47b5caf4527f5a0a953c11f",
+  "binaryBytes": 21900224,
+  "platform": {
+    "os": "macos",
+    "release": "25.6.0",
+    "arch": "arm64"
+  },
+  "scenarios": {
+    "foreground": {
+      "scenario": {
+        "id": "macos-foreground-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": false,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-10T00:55:27.801Z",
+      "finishedAt": "2026-09-10T00:59:27.891Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 2638,
+        "p95Ms": 3900
+      },
+      "warmActivation": {
+        "sampleCount": 0,
+        "p50Ms": null,
+        "p95Ms": null
+      },
+      "passed": true
+    },
+    "warmProbe": {
+      "scenario": {
+        "id": "macos-cold-warm-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": true,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-10T00:59:28.119Z",
+      "finishedAt": "2026-09-10T01:03:52.236Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 3434.6,
+        "p95Ms": 4141.7
+      },
+      "warmActivation": {
+        "sampleCount": 30,
+        "p50Ms": 369,
+        "p95Ms": 1802
+      },
+      "passed": true
+    }
+  },
+  "limitations": [
+    "Native readiness only; no first-presented-frame or usable-input measurement.",
+    "Operating-system caches uncontrolled; shared hosted runner.",
+    "Not proof of the half-bounce target or a before/after performance comparison."
+  ],
+  "samples": {
+    "foreground": [
+      {
+        "coldTotalMs": 6184.9,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-01.log"
+      },
+      {
+        "coldTotalMs": 3685.4,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-02.log"
+      },
+      {
+        "coldTotalMs": 3609.4,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-03.log"
+      },
+      {
+        "coldTotalMs": 2786.3,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-04.log"
+      },
+      {
+        "coldTotalMs": 2773.7,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-05.log"
+      },
+      {
+        "coldTotalMs": 3082.8,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-06.log"
+      },
+      {
+        "coldTotalMs": 3900,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-07.log"
+      },
+      {
+        "coldTotalMs": 3454.1,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-08.log"
+      },
+      {
+        "coldTotalMs": 2791.3,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-09.log"
+      },
+      {
+        "coldTotalMs": 2651.4,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-10.log"
+      },
+      {
+        "coldTotalMs": 2824.9,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-11.log"
+      },
+      {
+        "coldTotalMs": 2562.9,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-12.log"
+      },
+      {
+        "coldTotalMs": 2621,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-13.log"
+      },
+      {
+        "coldTotalMs": 2396.9,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-14.log"
+      },
+      {
+        "coldTotalMs": 2524.3,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-15.log"
+      },
+      {
+        "coldTotalMs": 2535.9,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-16.log"
+      },
+      {
+        "coldTotalMs": 3309.3,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-17.log"
+      },
+      {
+        "coldTotalMs": 2576.7,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-18.log"
+      },
+      {
+        "coldTotalMs": 2638,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-19.log"
+      },
+      {
+        "coldTotalMs": 2992.4,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-20.log"
+      },
+      {
+        "coldTotalMs": 2144.9,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-21.log"
+      },
+      {
+        "coldTotalMs": 2385.2,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-22.log"
+      },
+      {
+        "coldTotalMs": 2992,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-23.log"
+      },
+      {
+        "coldTotalMs": 2286,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-24.log"
+      },
+      {
+        "coldTotalMs": 2415.3,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-25.log"
+      },
+      {
+        "coldTotalMs": 2329.3,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-26.log"
+      },
+      {
+        "coldTotalMs": 2936.4,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-27.log"
+      },
+      {
+        "coldTotalMs": 2604.6,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-28.log"
+      },
+      {
+        "coldTotalMs": 2333.2,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-29.log"
+      },
+      {
+        "coldTotalMs": 2419,
+        "warmShowMs": null,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/foreground/sample-30.log"
+      }
+    ],
+    "warmProbe": [
+      {
+        "coldTotalMs": 3288.8,
+        "warmShowMs": 355,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-01.log"
+      },
+      {
+        "coldTotalMs": 2937,
+        "warmShowMs": 350,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-02.log"
+      },
+      {
+        "coldTotalMs": 3841,
+        "warmShowMs": 308,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-03.log"
+      },
+      {
+        "coldTotalMs": 3811.9,
+        "warmShowMs": 363,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-04.log"
+      },
+      {
+        "coldTotalMs": 3096,
+        "warmShowMs": 320,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-05.log"
+      },
+      {
+        "coldTotalMs": 3434.6,
+        "warmShowMs": 264,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-06.log"
+      },
+      {
+        "coldTotalMs": 3812.4,
+        "warmShowMs": 530,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-07.log"
+      },
+      {
+        "coldTotalMs": 4386.1,
+        "warmShowMs": 562,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-08.log"
+      },
+      {
+        "coldTotalMs": 3592.9,
+        "warmShowMs": 663,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-09.log"
+      },
+      {
+        "coldTotalMs": 4141.7,
+        "warmShowMs": 496,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-10.log"
+      },
+      {
+        "coldTotalMs": 3351.7,
+        "warmShowMs": 198,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-11.log"
+      },
+      {
+        "coldTotalMs": 3467.8,
+        "warmShowMs": 307,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-12.log"
+      },
+      {
+        "coldTotalMs": 3999.8,
+        "warmShowMs": 408,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-13.log"
+      },
+      {
+        "coldTotalMs": 3372.7,
+        "warmShowMs": 333,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-14.log"
+      },
+      {
+        "coldTotalMs": 3091.3,
+        "warmShowMs": 278,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-15.log"
+      },
+      {
+        "coldTotalMs": 3768.3,
+        "warmShowMs": 416,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-16.log"
+      },
+      {
+        "coldTotalMs": 3372.6,
+        "warmShowMs": 350,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-17.log"
+      },
+      {
+        "coldTotalMs": 3318.1,
+        "warmShowMs": 113,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-18.log"
+      },
+      {
+        "coldTotalMs": 3197.6,
+        "warmShowMs": 137,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-19.log"
+      },
+      {
+        "coldTotalMs": 3541.7,
+        "warmShowMs": 1827,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-20.log"
+      },
+      {
+        "coldTotalMs": 3357.4,
+        "warmShowMs": 369,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-21.log"
+      },
+      {
+        "coldTotalMs": 3551.4,
+        "warmShowMs": 382,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-22.log"
+      },
+      {
+        "coldTotalMs": 3604.7,
+        "warmShowMs": 1802,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-23.log"
+      },
+      {
+        "coldTotalMs": 4129.4,
+        "warmShowMs": 513,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-24.log"
+      },
+      {
+        "coldTotalMs": 3647.1,
+        "warmShowMs": 1689,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-25.log"
+      },
+      {
+        "coldTotalMs": 3734.7,
+        "warmShowMs": 393,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-26.log"
+      },
+      {
+        "coldTotalMs": 3410,
+        "warmShowMs": 980,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-27.log"
+      },
+      {
+        "coldTotalMs": 3178.2,
+        "warmShowMs": 428,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-28.log"
+      },
+      {
+        "coldTotalMs": 3063.7,
+        "warmShowMs": 402,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-29.log"
+      },
+      {
+        "coldTotalMs": 3224.8,
+        "warmShowMs": 140,
+        "log": "/Users/runner/work/tauri-explorer/tauri-explorer/qualification-results/macos-startup/warm-probe/sample-30.log"
+      }
+    ]
+  }
+}

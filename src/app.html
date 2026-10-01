@@ -11,6 +11,7 @@
         // Anchor cold-start timing here so milestones measured in +page.svelte
         // reflect the full load, not just post-bundle work.
         window.__BOOT_T0__ = performance.now();
+        window.__BOOT_EPOCH_MS__ = performance.timeOrigin + window.__BOOT_T0__;
 
         // Apply the saved theme before the bundle parses, so EVERY window
         // (including child windows spawned via new WebviewWindow, which don't

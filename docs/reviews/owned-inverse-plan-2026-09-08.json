@@ -1,0 +1,70 @@
+{
+  "date": "2026-09-08",
+  "base_commit": "7d2bc83e",
+  "issue": 680,
+  "status": "uncommitted production inverse planning checkpoint; comprehensive review incomplete",
+  "scope": [
+    "Owned directional inverse requests consumed by the production file_history_execute path",
+    "Nested partial settlement without repeated cloning of unstarted action subtrees",
+    "Move execution and refresh share the recorded source/destination path authority"
+  ],
+  "verification": {
+    "before_fix": {
+      "log": "/tmp/file-history-plan-repro.log",
+      "passed": 72,
+      "failed": 1,
+      "regression": "move_history_uses_recorded_source_parent_despite_inconsistent_legacy_metadata",
+      "observed": "Real Undo reported success but the payload was absent from its recorded source parent."
+    },
+    "native_history": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib file_history:: -- --test-threads=1",
+      "passed": 75,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/file-history-plan-final.log"
+    },
+    "frontend": {
+      "command": "bunx vitest run tests/api/mock-file-history-execution.test.ts tests/state/undo-lifetime.test.ts tests/state/undo-cross-window.test.ts",
+      "passed": 28,
+      "failed": 0,
+      "files": 3,
+      "log": "/tmp/file-history-plan-frontend.log"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/file-history-plan-clippy-final.log",
+      "note": "121 lib and five lib-test unused infrastructure warnings (four duplicate); not warning-clean."
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_coverage": "415/415",
+      "unresolvable": 0,
+      "log": "/tmp/file-history-plan-maps.log",
+      "note": "New untracked plan.rs is explicitly mapped; the total counts tracked source files."
+    },
+    "formatting": "Changed Rust files pass rustfmt --check; git diff --check passes.",
+    "independent_review": "GPT-5.6 Sol ACCEPT for owned inverse plan, Move path authority and extracted supervisor with direct panic regression; no blocker. Reviewer read source and recorded logs independently; did not run builds/tests.",
+    "supervisor_panic": "Production supervise_inverse helper tested after real native rename for both Undo and Redo; exact bytes, planned refresh parents, consumed reservation, absent retry/opposite and stale-ID rejection verified."
+  },
+  "limitations": [
+    "Refresh parent projection is not the complete recovery admission resource set; restore-parent creation and private artifact roots need the platform adapter.",
+    "Recovery initialization and worker admission remain unwired in production.",
+    "Structural cloning removal is not a measured latency, allocation or startup improvement.",
+    "No new native application UI/screenshot, process-crash, cross-filesystem, Windows/macOS runtime or half-bounce acceptance.",
+    "The existing move landed-basename semantics are preserved; redundant original_dir remains serialized legacy metadata.",
+    "The 32 MiB retained-history limit is not a peak-execution memory limit; prepared requests transiently duplicate admitted paths while sharing artifact identities through Arc.",
+    "Inconsistent absolute original_dir metadata is ignored; it remains syntactically validated, so missing or relative metadata is not newly accepted.",
+    "Supervisor regression proves affected-directory output and history settlement after actual effects. Watcher publication remains statically wired; it does not observe a native watcher notification."
+  ],
+  "publication": "No commit, push or merge in this checkpoint.",
+  "source_sha256": {
+    "src-tauri/src/file_history/plan.rs": "d0af8761e11e271344b1ac26c889f83bd5db9b3a191952cedd6568b1e61ecbcb",
+    "src-tauri/src/file_history/execution.rs": "09d5f16d852834aaf8d7b81912c43c06a4d40d6e68697e95494d3968dfcbc1ab",
+    "src-tauri/src/file_history/mod.rs": "1a04dbcb9e007ef0b0e73a105b4918371f74228b6fbc93eae17a126a5c984f43",
+    "src-tauri/test_support/file_history_execution.rs": "3a3941315fa879e9761b350dc229415e6d7240af6beaf0ce3fc13f4f0c069ae3",
+    "src-tauri/test_support/file_history_uncertainty.rs": "3db94029cfe272a42506f0227147d56b55655bb41530d92cf284679ad85b09bc",
+    "src/lib/api/mock-file-history-execution.ts": "af5764bad96468290d6367488eca1d7d586c03b6a81f86303ecf077ab608c24e",
+    "tests/api/mock-file-history-execution.test.ts": "b28285b0a6578594f3b6d7027ee710bded08b0dafa89ff7154b1068e182ffdf2"
+  }
+}

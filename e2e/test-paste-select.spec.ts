@@ -3,12 +3,14 @@
  * Verifies that pasted files are selected after paste completes.
  */
 import { test, expect } from "./fixtures";
-import { waitForEntries, pressShortcut } from "./helpers";
+import { VIEW_MODES, switchViewMode, waitForEntries, pressShortcut } from "./helpers";
 
-test.describe("Paste selects pasted files", () => {
+for (const viewMode of VIEW_MODES) {
+test.describe(`Paste selects pasted files [${viewMode}]`, () => {
   test("cross-dir paste selects the pasted file", async ({ page }) => {
     await page.goto("/?path=/home/user");
     await waitForEntries(page);
+    if (viewMode !== "details") await switchViewMode(page, viewMode);
 
     // Navigate into Documents
     const docsDir = page.locator(".entry-item", { hasText: "Documents" }).first();
@@ -39,3 +41,5 @@ test.describe("Paste selects pasted files", () => {
       .toContain(fileName);
   });
 });
+
+}

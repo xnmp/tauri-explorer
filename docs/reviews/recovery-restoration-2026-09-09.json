@@ -1,0 +1,142 @@
+{
+  "date": "2026-09-09",
+  "scope": "Linux retained-original restoration with preserved copied payload, indexed restart continuation and permission-independent directory pinning",
+  "contracts": [
+    "Pure three-endpoint policy classifies parking, restoration, completion and conflict from exact versions; both staged and finalized copy modes are recognized",
+    "RestoreIntent precedes native effects and can be reasserted with exact owner/catalog/checkpoint validation; Restored follows exact native completion and barriers",
+    "No-replace parking preserves an unchanged public copy privately before moving original back to absent destination; no payload is deleted",
+    "Original restoration requires neither source availability nor a still-existing private copy, but unexpected or duplicate endpoints remain fenced",
+    "Each effect revalidates root/manifest and all three endpoints; both endpoints are reconciled after rename errors/success, with root/parent synchronization",
+    "Already-complete retries repeat both directory barriers and final Complete verification",
+    "Only independently copied directories have staged permissions restored before parking; original permissions are never relaxed to force a move",
+    "Linux O_PATH pins owner-unreadable directories for descriptor-relative fchmodat2, with ENOSYS-only fallback through validated procfs descriptor links",
+    "Permission fallback validates procfs and exact held/magic-link inode/device; readable synchronization handle opens dot relative to retained pin",
+    "Shared copy evidence validation is reused by forward transfer and restoration; native endpoint/phase decisions remain separate"
+  ],
+  "verification": {
+    "focused": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files:: -- --test-threads=1",
+      "log": "/tmp/recovery-restoration-pinned-focused.log",
+      "exit_code": 0,
+      "passed": 495,
+      "ignored": 9,
+      "scope": "Before final ENOSYS-only fallback and linux-raw-sys constant selection; full run covers those production changes"
+    },
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "log": "/tmp/recovery-restoration-full-final.log",
+      "exit_code": 101,
+      "passed": 989,
+      "failed": 2,
+      "ignored": 13,
+      "failures": "Only two existing user_report tests could not bind localhost under sandbox policy",
+      "retry_command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- user_report::tests::relay_daily_cap_stays_distinct_for_the_ui user_report::tests::unreachable_relay_has_a_network_error_kind --test-threads=1",
+      "retry_log": "/tmp/recovery-restoration-localhost-retry.log",
+      "retry_exit_code": 0,
+      "retry_passed": 2,
+      "accepted_across_runs": 991,
+      "final_source_note": "After full run, test fixture mode literal 0 changed to 0o0 for Clippy; identical value, production source unchanged"
+    },
+    "causal_regressions": [
+      {
+        "test": "substituting_target_after_permissions_is_rejected_before_parking",
+        "log": "/tmp/recovery-restoration-authority-before.log",
+        "before_failed": 1,
+        "method": "Temporarily replaced only full ParkPublication step check before rename with manifest-only authority check; substituted public occupant was moved and test failed; adapter restored byte-for-byte",
+        "after": "Passes in final full run"
+      },
+      {
+        "test": "owner_unreadable_publication_can_be_restored_after_reopening_its_root",
+        "log": "/tmp/recovery-restoration-unreadable-before.log",
+        "before_failed": 1,
+        "method": "New valid mode000 published-directory test failed with PermissionDenied when restoration used ordinary read open; pin API added afterward",
+        "after": "Passes in final full run with copied tree preserved privately"
+      }
+    ],
+    "native_process_death": {
+      "test": "native_process_death_retains_preparation_evidence_and_fences_its_paths",
+      "new_boundaries": [
+        "copy parked during RestoreIntent",
+        "original restored before completion checkpoint"
+      ],
+      "outcomes": "Competing owner is Busy before kill; after kill/reap fresh-generation claim and exact root reopen finish Restored; source/original/private-copy bytes and immutable manifest/catalog verified; overlapping paths stay fenced",
+      "limits": "Hooks pause after confirmed synchronized effects, not inside native syscalls; no power-loss campaign"
+    },
+    "native_permissions": {
+      "tests": [
+        "directory_permission_pin_survives_name_replacement_without_touching_new_occupant",
+        "directory_permission_access_rejects_symlinks_and_invalid_modes",
+        "procfs_fallback_changes_the_pinned_directory_after_its_name_was_replaced",
+        "descriptor_fallback_rejects_an_ordinary_directory_without_changing_permissions"
+      ],
+      "scope": "Real Linux pinned descriptors and direct procfs fallback; current host kernel supports fchmodat2, so automatic ENOSYS dispatch was not observed on an older kernel"
+    },
+    "clippy": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-restoration-clippy-final.log",
+      "exit_code": 0,
+      "warnings": "83 library unused-infrastructure warnings; 5 library-test warnings (4 duplicates)"
+    },
+    "arm64": {
+      "command": "cargo check --offline --manifest-path /tmp/recovery-permission-arm-check/Cargo.toml --target aarch64-unknown-linux-gnu --tests",
+      "log": "/tmp/recovery-restoration-arm-check.log",
+      "exit_code": 0,
+      "scope": "Actual native_directory/Unix/permission source and tests plus actual error/trash_mounts dependencies; no ARM runtime, restoration coordinator or full-app compile",
+      "manifest": "[package]\nname = \"recovery-permission-arm-check\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nlibc = \"0.2.183\"\nlinux-raw-sys = { version = \"0.12.1\", default-features = false, features = [\"general\", \"no_std\"] }\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\nthiserror = \"2\"\n[dev-dependencies]\ntempfile = \"3\"\n",
+      "lib": "#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/error.rs\"]\nmod error;\npub mod files {\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/trash_mounts.rs\"]\n    mod trash_mounts;\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/native_directory.rs\"]\n    pub mod native_directory;\n}\n"
+    },
+    "windows": {
+      "command": "cargo check --offline --manifest-path /tmp/recovery-private-storage-check/Cargo.toml --target x86_64-pc-windows-gnu --tests",
+      "log": "/tmp/recovery-restoration-windows-final.log",
+      "exit_code": 0,
+      "scope": "Actual unchanged shared-source harness; excludes Unix restoration/pinning/coordinator and full app/runtime"
+    },
+    "independent_review": {
+      "agent": "crash_recovery_acceptance_sol",
+      "model": "gpt-5.6-sol",
+      "verdict": "ACCEPT scoped Linux restoration; portability and metadata liveness findings addressed with explicit remaining macOS limitation"
+    },
+    "format": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check passes",
+    "maps": "python3 docs/code-map/validate.py --coverage passes 415/415 tracked files; six new native/domain/test files explicitly mapped",
+    "diff": "git diff --check passes",
+    "ui": "No new browser or app-binary build/run for internal recovery changes"
+  },
+  "research": [
+    "https://man7.org/linux/man-pages/man2/renameat2.2.html",
+    "https://man7.org/linux/man-pages/man2/fsync.2.html",
+    "https://man7.org/linux/man-pages/man2/open.2.html",
+    "https://man7.org/linux/man-pages/man2/fchmod.2.html",
+    "https://raw.githubusercontent.com/torvalds/linux/v6.5/fs/open.c",
+    "https://raw.githubusercontent.com/torvalds/linux/v6.6/fs/open.c",
+    "https://github.com/apple-oss-distributions/xnu/blob/main/bsd/vfs/vfs_subr.c",
+    "https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_resource.c"
+  ],
+  "limits": [
+    "Linux infrastructure only: production action selection/IPC/UI, discard/retirement, overwrite Undo/retention and remaining mutation families stay open",
+    "Unindexed/catalog-only/reservation-only/missing-database inspection and interrupted root/manifest/staging resolution remain open",
+    "macOS has no identified public permission-independent directory reopen; owner-unreadable published directories still fail closed, with no macOS runtime acceptance",
+    "Linux write-protected originals can fail native reparenting; their permissions and bytes remain unchanged rather than being overridden",
+    "Pre-6.6 Linux requires usable procfs for permission fallback; fallback body tested directly, not a real old-kernel ENOSYS campaign",
+    "EntryVersion is metadata observation, not recursive content snapshot/hash; restored timestamps, nested descendant mutations, extended metadata, object reuse and arbitrary same-UID final syscall races remain limits",
+    "Existing forward publication retry for a finalized owner-unreadable directory still needs follow-up; the new pin is currently used by restoration",
+    "No power-loss, full cross-filesystem/platform, app latency or Mac half-bounce acceptance; changes remain local"
+  ],
+  "source_sha256": {
+    "src-tauri/Cargo.toml": "0aa00245267a85e6232bd85972a9d1b0f0b514029ac50f3aaf9b7d71250e50a8",
+    "src-tauri/Cargo.lock": "323c15d917f21a25a7dd4daa3e9b5b9a5965fdb1fe48364472b71c0393479198",
+    "src-tauri/src/files/native_directory.rs": "df3cb23b8432d97d58994845ec385eeb76a0e4b9216643a8406a780d361f8b22",
+    "src-tauri/src/files/native_directory/permissions.rs": "f1da1e75d987f1067619a3037a46230f122186053f67e6ad02dc3193f03c29b9",
+    "src-tauri/src/files/recovery/mod.rs": "eec67fac72b9d631b77d3e999a28b497448b7e3945e40dc0a9b8df480c785fcc",
+    "src-tauri/src/files/recovery/replacement_artifact.rs": "608aa81aba3ed84e5c50786616d856c066019368357da91bc89fd8f85573edd1",
+    "src-tauri/src/files/recovery/replacement_transfer.rs": "06c44e6f461ed43d1895b68844682a8bad72316d4d746d1a2867de3869be92ad",
+    "src-tauri/src/files/recovery/replacement_restoration.rs": "a4587b47eaffd13a97fef16f9b5201170261fe2609c1779fab5f384ee7bf3bce",
+    "src-tauri/src/files/recovery/replacement_restore.rs": "b25599257934c009dc31705286cfda5b1d39d40a89397b1b68f87234e49a7177",
+    "src-tauri/src/files/recovery/replacement_transition.rs": "b4010d5944f59d5fe52519b7e125c1410888dbd75a91530a32116313d4cd1bc9",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "e8f4f7a46ccc3a303b5fd52cdf38b9526ddda67e31879c54642d0bdf3e23bb5a",
+    "src-tauri/test_support/native_directory_permissions.rs": "6e42495eaca710e22a49058bd7e75b8a7b2428d27a56e8c3b152d6946cf801c6",
+    "src-tauri/test_support/recovery_replacement_restoration.rs": "d5c81b6a23dd0500df3ac5df0e4eb823fb468dac15e5c39a526d35642b585625",
+    "src-tauri/test_support/recovery_replacement_restore.rs": "4ed4ec79f230bbe29b1f031d591f41dc80ecbb6a41438b522fd0a300b682f6f3",
+    "src-tauri/test_support/recovery_replacement_transition.rs": "19750c101e1537cfcf0601626f7f96aafc8a683e484fd3cde326468871c8feac",
+    "src-tauri/test_support/recovery_replacement_execution.rs": "b776156c7cb23ec17c5790dc2d86762d8705c25552df1e6bfe362a86ffe168b9"
+  }
+}

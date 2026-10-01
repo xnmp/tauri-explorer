@@ -1,0 +1,157 @@
+{
+  "date": "2026-09-09",
+  "scope": "Production copy retains returned whole-work outcomes through explicit worker context cleanup; grouped pre-return partial effects remain outside this scope",
+  "contracts": [
+    "Effectful resources live in an explicit context; a function pointer has no owned cleanup captures",
+    "Supervisor-owned storage receives the returned result before context destruction; completion awaits worker termination",
+    "Work and context cleanup have separate unwind boundaries; one panic in each phase does not double-unwind abort",
+    "Success retains its exact value plus bounded cleanup warning; ordinary error survives clean cleanup; failed work plus failed cleanup is uncertain with both diagnostics",
+    "Production copy preserves exact native replacement history action and ordinary-copy cleanup warnings",
+    "Aborting the async waiter does not shorten already-running blocking context lifetime; existing native run_forward owns production continuation"
+  ],
+  "verification": {
+    "repro": {
+      "log": {
+        "path": "/tmp/copy-worker-repro.log",
+        "sha256": "f777672a22309a4c42bf40d78baaafebc339f8a8e45283f21dc57fbd224634b0"
+      },
+      "exit_code": 101,
+      "failure": "Confirmed result erased by context destructor panic before publication; regression fails on loss-prone ordering and passes in final Rust run"
+    },
+    "rust": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- diagnostics:: files::worker:: files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: files::batch:: --test-threads=1",
+      "passed": 507,
+      "failed": 0,
+      "ignored": 13,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-worker-rust.log",
+        "sha256": "e1ee4db03f4fbeb158c5dad92115b858ac5369cb3de56e19c070929c4a13bf8f"
+      }
+    },
+    "native": {
+      "build_command": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle --features e2e-renderer-recovery",
+      "build_log": {
+        "path": "/tmp/copy-worker-native-build.log",
+        "sha256": "f929e98539708aa2af9a9046d454d04d900d495cd4e83a87d4eed0e538035984"
+      },
+      "command": "bash /tmp/run-file-recovery-native.sh",
+      "passed": 5,
+      "failed": 0,
+      "seconds": 8.9,
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-worker-native-ui.log",
+        "sha256": "1ab83545bca45901694eb34e09230262590ebb9b2a23a7a930600f477d1ee6ab"
+      },
+      "profile": "/tmp/explorer-file-recovery-native-enm2kr",
+      "binary_checksum_before": {
+        "path": "/tmp/copy-worker-native-binary-before.sha256",
+        "sha256": "f959d882a4da9d9fa3ae806734e6d24f3f81f78e297a0ef011b77dd049deb64b"
+      },
+      "binary_checksum_after": {
+        "path": "/tmp/copy-worker-native-binary-after.sha256",
+        "sha256": "f959d882a4da9d9fa3ae806734e6d24f3f81f78e297a0ef011b77dd049deb64b"
+      },
+      "binary_sha256_before": "79fe39a42f502faee696e626b1566782c5d14eaf7ab1a057635069cca62892da",
+      "binary_sha256_after": "79fe39a42f502faee696e626b1566782c5d14eaf7ab1a057635069cca62892da",
+      "scope": "Production singleton overwrite Undo/Redo, recovery, renderer reload and destruction, detached inverse settlement. Cleanup-fault retention is Rust test evidence, not native injected-fault evidence. Checksums bracket one run."
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "existing_dead_code_warnings": 8,
+      "log": {
+        "path": "/tmp/copy-worker-clippy.log",
+        "sha256": "9382002303981eb7a8b885aeae3838f3f8e2a625a4b670a439bc86146e4d1c7e"
+      }
+    },
+    "format": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-worker-format.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "maps": {
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-worker-maps.log",
+        "sha256": "f6e1b29023cf4fd0b77f496af4e6678dfd8baa6ec4add860f9902d2a70e57b14"
+      },
+      "including_untracked": {
+        "covered": 474,
+        "total": 474,
+        "log": {
+          "path": "/tmp/copy-worker-maps-untracked.log",
+          "sha256": "1dfaa1d07f6fbab88e08d49bbb75592c69a870894c2ec098c379cc24c9d526ca"
+        }
+      }
+    },
+    "diff": {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "log": {
+        "path": "/tmp/copy-worker-diff.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    "bundle": {
+      "command": "bun run check:bundle",
+      "exit_code": 0,
+      "main_gzip_bytes": 91680,
+      "startup_chunks": 45,
+      "startup_raw_bytes": 671703,
+      "startup_gzip_bytes": 219258,
+      "log": {
+        "path": "/tmp/copy-worker-bundle.log",
+        "sha256": "4edbd132f104dd495c8a5c3379b68ee90cebd423c9addaed07ae07502e927e35"
+      },
+      "scope": "Ordinary production frontend restored; no startup timing or throughput measurement"
+    }
+  },
+  "independent_review": {
+    "agent": "effective_claims_adversary_sol",
+    "model": "gpt-5.6-sol",
+    "verdict": "CONFIRMED for returned whole-work results",
+    "evidence": "Current source, Rust/Clippy/native logs and diff reviewed independently; no unresolved blocker in this scope"
+  },
+  "limitations": [
+    "A panic before returning the whole-work result still needs per-item receipts outside the complete worker",
+    "Multiple context destructors panicking during cleanup unwinding can still abort; production CopyWork has no such custom destructors",
+    "No mixed ordinary/replacement native transfer command, grouped forward-history settlement, paste/drop batch IPC, or one batch progress/cancellation owner yet",
+    "Ordinary-copy history remains path-based; exact published-object inverse identity is required before safe native grouping",
+    "Other mutation families, artifact retirement and quotas, cross-filesystem and Windows/macOS acceptance, long soaks and final integration remain open",
+    "No Mac half-bounce measurement, full-review completion, commit, push or merge is claimed"
+  ],
+  "source_files": [
+    {
+      "path": "src-tauri/src/files/worker.rs",
+      "sha256": "086c94504a889b9635526f88ec1b62e216f82561f6316c56b95a2acbed089cd7"
+    },
+    {
+      "path": "src-tauri/src/diagnostics.rs",
+      "sha256": "a7c130a65bc05ef5722aa3a5a5f791aac0df5dbcb2175e20585ecd751d07a24b"
+    },
+    {
+      "path": "src-tauri/src/files/mod.rs",
+      "sha256": "d0273b18b9927e2165751ea27605c9e0311c0a35fadaa63eb23f022bf9f10340"
+    },
+    {
+      "path": "src-tauri/src/files/recovery/forward_copy/batch.rs",
+      "sha256": "fd2189702a13c28e93aea363000d560bccf6782b871b123f4d0e58803f6fdcd8"
+    },
+    {
+      "path": "src-tauri/src/file_mutation.rs",
+      "sha256": "c1e4239cdaf2f1283b180cfc65187104e9540e5e5c4d73109e5793860c177976"
+    },
+    {
+      "path": "src-tauri/test_support/file_worker_completion.rs",
+      "sha256": "9f75d3a199f26714e1cf897bbfa902f08a5114b2ef95382c0cc9074afa060758"
+    },
+    {
+      "path": "src-tauri/test_support/file_mutation.rs",
+      "sha256": "03a56f05045fc4df0d3cd762e2d31c67d84315c4fece3f9a44945f37ca3771cd"
+    }
+  ]
+}

@@ -729,6 +729,8 @@ pub async fn git_log(
 ) -> Result<GitLogPage, AppError> {
     let opts = options.unwrap_or_default();
     run_blocking(move |cancelled| {
+        log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+            "git history requested: path={repo_path:?}");
         let mut repo = open_repo(Path::new(&repo_path))?;
         // stash_foreach needs &mut; collect first, weave during page build.
         let mut stashes: Vec<(usize, String, git2::Oid)> = Vec::new();
@@ -736,7 +738,12 @@ pub async fn git_log(
             stashes.push((idx, message.to_string(), *oid));
             true
         });
-        build_log(&repo, &opts, stashes, &cancelled)
+        let page = build_log(&repo, &opts, stashes, &cancelled);
+        log::debug!(target: "tauri_explorer_lib::native_watch_diagnostics",
+            "git history completed: path={repo_path:?}, result={:?}",
+            page.as_ref().map(|page| (page.commits.len(), page.commits.first().map(|commit| &commit.oid)))
+                .map_err(|error| error.to_string()));
+        page
     })
     .await
 }

@@ -642,9 +642,10 @@ fn with_decode_gate<T>(work: impl FnOnce() -> T) -> (T, std::time::Duration) {
         GatePermit { gate }
     };
     let waited = wait_started.elapsed();
-    let _priority = PriorityGuard::lower();
-    let result = work();
-    drop(_priority);
+    let result = {
+        let _priority = PriorityGuard::lower();
+        work()
+    };
     drop(permit);
     (result, waited)
 }

@@ -8,26 +8,27 @@ import type { SelectOptions } from "./types";
 
 /**
  * Calculate new selection based on click action.
- * Returns the new Set of selected paths and optional new anchor index.
+ * Returns the new Set of selected paths and path-based range anchor.
  */
 export function calculateSelection(
   displayEntries: FileEntry[],
   clickedEntry: FileEntry,
   currentSelection: Set<string>,
-  anchorIndex: number | null,
+  anchorPath: string | null,
   options: SelectOptions
-): { selectedPaths: Set<string>; anchorIndex: number | null } {
+): { selectedPaths: Set<string>; anchorPath: string | null } {
   const clickedIndex = displayEntries.findIndex((e) => e.path === clickedEntry.path);
   if (clickedIndex === -1) {
-    return { selectedPaths: currentSelection, anchorIndex };
+    return { selectedPaths: currentSelection, anchorPath };
   }
 
-  if (options.shiftKey && anchorIndex !== null) {
+  const anchorIndex = displayEntries.findIndex((entry) => entry.path === anchorPath);
+  if (options.shiftKey && anchorIndex >= 0) {
     // Shift+click: select range from anchor to clicked item
     const start = Math.min(anchorIndex, clickedIndex);
     const end = Math.max(anchorIndex, clickedIndex);
     const rangePaths = displayEntries.slice(start, end + 1).map((e) => e.path);
-    return { selectedPaths: new Set(rangePaths), anchorIndex };
+    return { selectedPaths: new Set(rangePaths), anchorPath };
   }
 
   if (options.ctrlKey) {
@@ -38,13 +39,13 @@ export function calculateSelection(
     } else {
       newSelection.add(clickedEntry.path);
     }
-    return { selectedPaths: newSelection, anchorIndex: clickedIndex };
+    return { selectedPaths: newSelection, anchorPath: clickedEntry.path };
   }
 
   // Normal click: single select
   return {
     selectedPaths: new Set([clickedEntry.path]),
-    anchorIndex: clickedIndex,
+    anchorPath: clickedEntry.path,
   };
 }
 

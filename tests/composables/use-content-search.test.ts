@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ContentSearchEvent } from "../../src/lib/api/files";
+import type { ContentSearchEvent } from "../../src/lib/api/search";
 
 // --- Mocks -----------------------------------------------------------------
 
@@ -23,7 +23,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 const startContentSearch = vi.fn();
 const cancelContentSearch = vi.fn(async (_id: number) => ({ ok: true, data: undefined }));
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/search", () => ({
   startContentSearch: (...args: unknown[]) => startContentSearch(...args),
   cancelContentSearch: (id: number) => cancelContentSearch(id),
 }));

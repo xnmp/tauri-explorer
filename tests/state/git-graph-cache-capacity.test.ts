@@ -1,10 +1,10 @@
+import { cacheSnapshot } from "../helpers/git-graph-cache";
 /**
  * Capacity coverage for #505. Kept separate from the cache's baseline
  * behavior suite because this models the high-load git-graph tab fan-out.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  cacheSnapshot,
   evictRepoSnapshots,
   getSnapshot,
   snapshotKey,
@@ -28,10 +28,10 @@ afterEach(() => {
 });
 
 describe("git-graph snapshot cache capacity (#505)", () => {
-  it("keeps snapshots for every graph in the supported 12-tab fan-out", () => {
+  it("keeps snapshots for every graph in the supported 12-tab fan-out", async () => {
     const keys = tabRepos.slice(0, 12).map((repo) => snapshotKey(repo, null, false));
 
-    for (const key of keys) cacheSnapshot(key, snapshot());
+    for (const key of keys) await cacheSnapshot(key, snapshot());
 
     // PaneContainer remounts a graph when its tab becomes active. Every graph
     // in the load-suite fan-out must therefore have a snapshot to paint from
@@ -39,10 +39,10 @@ describe("git-graph snapshot cache capacity (#505)", () => {
     for (const key of keys) expect(getSnapshot(key)).toBeDefined();
   });
 
-  it("bounds the snapshot cache and evicts the oldest graph after its capacity", () => {
+  it("bounds the snapshot cache and evicts the oldest graph after its capacity", async () => {
     const keys = tabRepos.map((repo) => snapshotKey(repo, null, false));
 
-    for (const key of keys) cacheSnapshot(key, snapshot());
+    for (const key of keys) await cacheSnapshot(key, snapshot());
 
     // The tab fan-out needs headroom, but snapshots remain bounded page-0
     // data. A seventeenth graph replaces the least recently inserted one.

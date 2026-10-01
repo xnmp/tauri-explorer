@@ -1,0 +1,91 @@
+{
+  "date": "2026-09-08",
+  "base_commit": "7d2bc83e",
+  "issue": 680,
+  "status": "uncommitted native discovery/static-validation checkpoint; recovery runtime integration incomplete",
+  "scope": [
+    "catalog-only bounded discovery independent of SQLite and user-volume availability",
+    "pure durable intent/record/manifest role and identity validation",
+    "closed schemas and bounded OS-specific native path codec"
+  ],
+  "verification": {
+    "focused": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery:: -- --test-threads=1",
+      "passed": 68,
+      "ignored": 2,
+      "failed": 0,
+      "log": "/tmp/recovery-discovery-final-focused.log"
+    },
+    "file_modules": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: -- --test-threads=1",
+      "passed": 305,
+      "ignored": 5,
+      "failed": 0,
+      "log": "/tmp/recovery-discovery-files-final.log"
+    },
+    "windows_codec": {
+      "command": "cargo check --offline --manifest-path /tmp/recovery-codec-windows/Cargo.toml --target x86_64-pc-windows-gnu --tests",
+      "exit_code": 0,
+      "log": "/tmp/recovery-codec-windows-final.log",
+      "scope": "Actual model.rs/native_path.rs and codec tests included by absolute path. Only serde/serde_json/base64 dependencies; not the application/coordinator or a Windows runtime test."
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --lib --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/recovery-discovery-clippy.log",
+      "note": "121 unused infrastructure warnings; no warning-clean production claim."
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_coverage": "415/415",
+      "unresolvable": 0,
+      "log": "/tmp/recovery-discovery-maps.log",
+      "note": "New untracked sources and codec test explicitly mapped; coverage total is tracked-source only."
+    },
+    "before_fix": [
+      "/tmp/recovery-intent-validation-before.log",
+      "/tmp/recovery-codec-windows-before.log"
+    ],
+    "independent_review": "GPT-5.6 Sol ACCEPT static validators and catalog-only fallback. Root added individual root/source/device and publication/root/parent/device cases after review, using the real Catalog/Journal admission path.",
+    "final_adversarial_cases": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery::coordinator:: -- --test-threads=1",
+      "passed": 21,
+      "ignored": 1,
+      "failed": 0,
+      "log": "/tmp/recovery-discovery-adversarial-final.log",
+      "note": "After expanding existing tests with all distinct root/publication/source/device role cases; production source unchanged since the 305-pass file suite."
+    }
+  },
+  "limitations": [
+    "No production mutation root acquires these recovery reservations yet.",
+    "Discovery returns intents only; native IPC, UI integration, inspection and resolution are absent.",
+    "One corrupt/unknown catalog entry blocks this strict discovery result; partial catalog salvage is not implemented.",
+    "Manifest ObjectId comparison does not establish descriptor-relative private-directory authority; that future reader still needs namespace/permission checks.",
+    "Static phase evidence validation is not a temporal transition state machine.",
+    "Unix coordinator only; Windows harness proves codec/model compilation, not native identity or runtime.",
+    "SQLite pathname substitution and inode reuse limits from ADR0020 still apply.",
+    "No whole-operation crash, disk-full, cross-filesystem, startup, or platform release acceptance this turn.",
+    "Catalog loss itself remains outside automatic discovery; absent storage does not trigger arbitrary filesystem search."
+  ],
+  "remaining": [
+    "first-mutation initialization and exact-once logical-root admission",
+    "Windows coordinator/identity adapter",
+    "journal/catalog/manifest reconciliation and quarantine retirement",
+    "durable replacement transitions and filesystem barriers",
+    "native recovery commands and usable UI",
+    "overwrite Undo/retention/source parking",
+    "whole-intent batches/progress/cancellation",
+    "full native/platform/startup release matrix"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/coordinator.rs": "ebc191cc3762989d7820d91f23fddb855a5e32bb310c5408f66c67740990c060",
+    "src-tauri/src/files/recovery/model.rs": "5ac5d83fbf0c0466ecd3029b7ac3de49f3614918879938754fc7a1b422abee18",
+    "src-tauri/src/files/recovery/native_path.rs": "a628af6838dd198c23fd6b2a169ad4344e3ca6b3c107511610f48549db07e68b",
+    "src-tauri/src/files/recovery/resources.rs": "14904163bdedacabb48706e8933ff7d117d447f863371d52c78212328ccb5f3a",
+    "src-tauri/src/files/recovery/locks.rs": "5e60f61e7be99d685ba966c3a40eb93aec8ccbb604941dac434f957785109d39",
+    "src-tauri/test_support/recovery_coordinator.rs": "8c57e0a935f2fc0e4a5d6796f4027488228e748dd83cb87191e44bacca637f6d",
+    "src-tauri/test_support/recovery_native_path.rs": "09caf29eec92999ef159e124a4366f03b25ce7b1e57bf7e7fad8ec0faa7609f1",
+    "src-tauri/test_support/recovery_resources.rs": "5cd1a33d45df386969a266690c5d48b8dcbdd88950bdc763c950ee50394f08d6"
+  },
+  "publication": "No commit, push or merge in this checkpoint."
+}

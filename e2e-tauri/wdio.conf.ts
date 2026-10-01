@@ -1,20 +1,28 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
+import {
+  nativeProcessGroup,
+  reapNativeProcessGroupOnExit,
+  stopNativeProcessGroup,
+  type NativeProcessGroup,
+} from "./native-process-group";
+import {
+  createNativeProcessCleanupHooks,
+  resolveNativeApplication,
+  stopNativeQualificationProcesses,
+} from "./native-qualification";
+import { installExternalJobFixture } from "./external-job-fixture";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
 const binaryName = isWindows ? "tauri-explorer.exe" : "tauri-explorer";
-const application = path.resolve(
-  here,
-  "..",
-  "src-tauri",
-  "target",
-  "debug",
-  binaryName,
+const application = resolveNativeApplication(
+  path.resolve(here, "..", "src-tauri", "target", "debug", binaryName),
+  process.env,
 );
 
 const tauriDriverBin = path.resolve(
@@ -37,11 +45,17 @@ const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
 
 const driverPort = 4444;
 const driverLogPath = path.join(here, "logs", "msedgedriver.log");
+// Each worker appends its own session; the file is uploaded with the WDIO logs.
+const webkitDriverLogPath = path.join(here, "logs", "tauri-driver.log");
 
 let driverProcess: ChildProcess | undefined;
 let applicationProcess: ChildProcess | undefined;
+let driverProcessGroup: NativeProcessGroup | undefined;
 
-const waitForPort = async (port: number, timeoutMs: number): Promise<boolean> => {
+const waitForPort = async (
+  port: number,
+  timeoutMs: number,
+): Promise<boolean> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const reachable = await new Promise<boolean>((resolve) => {
@@ -73,12 +87,58 @@ const reservePort = async (): Promise<number> =>
     });
   });
 
-const stopProcesses = (): void => {
-  driverProcess?.kill();
-  applicationProcess?.kill();
-  driverProcess = undefined;
-  applicationProcess = undefined;
+const stopProcesses = async (): Promise<void> => {
+  const ownedDriver = driverProcess;
+  const ownedApplication = applicationProcess;
+  const ownedGroup = driverProcessGroup;
+  try {
+    if (ownedGroup) {
+      // WebKitWebDriver launches the application below tauri-driver. The group
+      // can outlive its leader; a driver exit alone does not complete cleanup.
+      await stopNativeProcessGroup(ownedGroup, "native WebKit session");
+      if (driverProcessGroup === ownedGroup) driverProcessGroup = undefined;
+    } else {
+      await stopNativeQualificationProcesses([
+        { label: "WebDriver", child: ownedDriver },
+        { label: "native application", child: ownedApplication },
+      ]);
+    }
+  } finally {
+    if (
+      ownedDriver &&
+      (ownedDriver.exitCode !== null || ownedDriver.signalCode !== null)
+    ) {
+      driverProcess = undefined;
+    }
+    if (
+      ownedApplication &&
+      (ownedApplication.exitCode !== null ||
+        ownedApplication.signalCode !== null)
+    ) {
+      applicationProcess = undefined;
+    }
+  }
 };
+
+// The ordinary stop runs from afterSession, which WDIO skips when session
+// creation fails (for example when the application panics during setup).
+reapNativeProcessGroupOnExit(() => driverProcessGroup, "native WebKit session");
+
+const processCleanupHooks = createNativeProcessCleanupHooks({
+  environment: process.env,
+  stateEnvironmentKey: "TAURI_NATIVE_CLEANUP_STATE_DIRECTORY",
+  stop: stopProcesses,
+  // Several specs need their fixtures on the real home-directory filesystem
+  // (e.g. Linux trash requires the source and its Trash directory share a
+  // device; os.tmpdir() is frequently a separate tmpfs). Rooting the shared
+  // cleanup directory under the home directory lets createNativeFixtureDirectory
+  // serve those specs too, instead of forcing them to hand-roll their own
+  // mkdtemp + immediate rmSync (#761).
+  temporaryRoot: os.homedir(),
+  additionalFixtureRoots: process.platform === "linux" && existsSync("/dev/shm")
+    ? [{ stateEnvironmentKey: "TAURI_NATIVE_SHM_CLEANUP_STATE_DIRECTORY", temporaryRoot: "/dev/shm" }]
+    : [],
+});
 
 export const config: WebdriverIO.Config = {
   runner: "local",
@@ -114,21 +174,41 @@ export const config: WebdriverIO.Config = {
   framework: "mocha",
   reporters: ["spec"],
   mochaOpts: { ui: "bdd", timeout: 60_000 },
-  autoCompileOpts: {
-    autoCompile: true,
-    tsNodeOpts: { transpileOnly: true, project: "./e2e-tauri/tsconfig.json" },
+  onPrepare: () => {
+    processCleanupHooks.prepare();
+    installExternalJobFixture(process.env);
   },
 
   beforeSession: async (_config, capabilities) => {
+    // WDIO may skip afterSession if creation fails; the pending marker then
+    // keeps fixtures alive even when the exit reaper cannot confirm teardown.
+    processCleanupHooks.begin();
     if (!isWindows) {
+      // WebKitWebDriver inherits tauri-driver's stdio, so its own diagnostics
+      // (including "page crash or hang") land here. Retain them as a run
+      // artifact as well as on the console: a lost session leaves nothing else
+      // to distinguish a renderer death from a driver failure (#703).
       driverProcess = spawn(tauriDriverBin, tauriDriverArgs, {
-        stdio: [null, process.stdout, process.stderr],
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: process.platform === "linux",
       });
+      mkdirSync(path.dirname(webkitDriverLogPath), { recursive: true });
+      const driverLog = createWriteStream(webkitDriverLogPath, { flags: "a" });
+      driverProcess.stdout?.pipe(process.stdout, { end: false });
+      driverProcess.stdout?.pipe(driverLog, { end: false });
+      driverProcess.stderr?.pipe(process.stderr, { end: false });
+      driverProcess.stderr?.pipe(driverLog, { end: false });
+      driverProcess.once("exit", () => driverLog.end());
+      if (process.platform === "linux") {
+        driverProcessGroup = nativeProcessGroup(driverProcess);
+      }
       return;
     }
 
     if (!nativeDriver) {
-      throw new Error("TAURI_NATIVE_DRIVER must point to msedgedriver.exe on Windows");
+      throw new Error(
+        "TAURI_NATIVE_DRIVER must point to msedgedriver.exe on Windows",
+      );
     }
 
     const debugPort = await reservePort();
@@ -147,25 +227,24 @@ export const config: WebdriverIO.Config = {
       },
     });
     if (!(await waitForPort(debugPort, 30_000))) {
-      stopProcesses();
-      throw new Error(`WebView2 debug port ${debugPort} did not become reachable`);
+      await processCleanupHooks.cleanup();
+      throw new Error(
+        `WebView2 debug port ${debugPort} did not become reachable`,
+      );
     }
 
     mkdirSync(path.dirname(driverLogPath), { recursive: true });
     driverProcess = spawn(
       nativeDriver,
-      [
-        `--port=${driverPort}`,
-        "--verbose",
-        `--log-path=${driverLogPath}`,
-      ],
+      [`--port=${driverPort}`, "--verbose", `--log-path=${driverLogPath}`],
       { stdio: ["ignore", process.stdout, process.stderr] },
     );
     if (!(await waitForPort(driverPort, 10_000))) {
-      stopProcesses();
+      await processCleanupHooks.cleanup();
       throw new Error("msedgedriver did not start listening");
     }
   },
 
-  afterSession: stopProcesses,
+  afterSession: processCleanupHooks.cleanup,
+  onComplete: processCleanupHooks.complete,
 };

@@ -1,0 +1,227 @@
+/** Real WebKitGTK file-list focus, selection, and keyboard ownership. */
+import { browser, $, $$, expect } from "@wdio/globals";
+import fs from "node:fs";
+import path from "node:path";
+import { domText, entryNames, entryPathSelector, navigateTo } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
+
+let scratch = "";
+let root = "";
+const folderNames = ["alpha-folder", "middle-folder", "omega-folder"];
+const fileNames = ["alpha-file.txt", "middle-file.txt", "omega-file.txt"];
+const viewModes = ["details", "list", "tiles"] as const;
+
+function entrySelector(name: string): string {
+  return entryPathSelector(path.join(root, name), ".explorer-pane .file-list .entry-item");
+}
+
+async function assertSinglePane(): Promise<void> {
+  expect(await $$(".explorer-pane")).toHaveLength(1);
+}
+
+async function runPaletteCommand(label: string): Promise<void> {
+  await browser.keys(["Control", "Shift", "p"]);
+  const input = $(".command-palette-dialog .search-input");
+  await input.waitForDisplayed({ timeout: 5000 });
+  await input.setValue(label);
+  await browser.waitUntil(
+    async () => (await domText(".command-palette-dialog .command-item.selected")).includes(label),
+    { timeoutMsg: `command palette never matched ${label}` },
+  );
+  await browser.keys("Enter");
+  await $(".command-palette-dialog").waitForDisplayed({ reverse: true });
+}
+
+async function useView(viewMode: (typeof viewModes)[number]): Promise<void> {
+  await assertSinglePane();
+  const label = `${viewMode[0].toUpperCase()}${viewMode.slice(1)} View`;
+  await runPaletteCommand(label);
+  await $(`.${viewMode}-view`).waitForDisplayed({ timeout: 5000 });
+}
+
+async function activeEntryPath(): Promise<string | null> {
+  return await browser.execute(() => {
+    const active = document.activeElement as HTMLElement | null;
+    return active?.matches(".file-list .entry-item") ? active.dataset.path ?? null : null;
+  });
+}
+
+async function visibleTabStopCount(): Promise<number> {
+  return await browser.execute(() => {
+    const all = [...document.querySelectorAll<HTMLElement>("*")];
+    return all.filter((element) => {
+      if (element.tabIndex < 0 || element.closest("[inert]")) return false;
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden"
+        && element.getClientRects().length > 0
+        && !(element as HTMLButtonElement).disabled;
+    }).length;
+  });
+}
+
+async function activeFocusIdentity(): Promise<number> {
+  return await browser.execute(() => {
+    const active = document.activeElement;
+    return active ? [...document.querySelectorAll("*")].indexOf(active) : -1;
+  });
+}
+
+// Keyboard focus, selection, and rename-editor ownership are platform-independent:
+// they exercise DOM focus and Svelte state, not any OS-specific filesystem or
+// process capability. Runs on Linux (WebKitGTK) and Windows (WebView2).
+const nativeDescribe = process.platform === "linux" || process.platform === "win32"
+  ? describe
+  : describe.skip;
+
+nativeDescribe("native file-list composite focus", () => {
+  before(() => {
+    scratch = createNativeFixtureDirectory("explorer-file-list-focus-");
+    root = path.join(scratch, "root");
+    fs.mkdirSync(root, { recursive: true });
+    for (const name of folderNames) {
+      const directory = path.join(root, name);
+      fs.mkdirSync(directory);
+      fs.writeFileSync(path.join(directory, `marker-${name}.txt`), name);
+    }
+    for (const name of fileNames) fs.writeFileSync(path.join(root, name), name);
+  });
+
+  it("returns Tab focus to the same cursor and opens its real folder in every view", async () => {
+    const middlePath = path.join(root, folderNames[1]);
+    for (const viewMode of viewModes) {
+      await navigateTo(root);
+      await useView(viewMode);
+      const middle = await $(entrySelector(folderNames[1]));
+      await middle.waitForDisplayed();
+      const clickPoint = await browser.execute((element: HTMLElement) => {
+        const rect = element.getBoundingClientRect();
+        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+      }, middle);
+      await browser.performActions([{
+        type: "pointer", id: `file-list-${viewMode}`, parameters: { pointerType: "mouse" },
+        actions: [
+          { type: "pointerMove", duration: 0, origin: "viewport", ...clickPoint },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerUp", button: 0 },
+        ],
+      }]);
+      await browser.releaseActions();
+      await expect(middle).toHaveElementClass("selected");
+      await expect(middle).toHaveAttribute("tabindex", "0");
+      await browser.waitUntil(async () => (await activeEntryPath()) === middlePath, {
+        timeoutMsg: `${viewMode} pointer click did not focus the middle folder`,
+      });
+
+      const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);
+      await browser.keys("Tab");
+      expect(await activeEntryPath()).not.toBe(middlePath);
+      const firstOutside = await activeFocusIdentity();
+      for (let step = 1; step < cycleLimit && (await activeEntryPath()) !== middlePath; step += 1) {
+        await browser.keys("Tab");
+        if ((await activeFocusIdentity()) === firstOutside) break;
+      }
+      await browser.waitUntil(async () => (await activeEntryPath()) === middlePath, {
+        timeoutMsg: `${viewMode} did not restore the middle-folder cursor within one Tab cycle`,
+      });
+      await expect(middle).toHaveElementClass("selected");
+
+      await browser.keys("Enter");
+      await browser.waitUntil(
+        async () => (await $(".status-path").getAttribute("title")) === middlePath,
+        { timeoutMsg: `${viewMode} Enter did not open the focused real folder` },
+      );
+      const marker = `marker-${folderNames[1]}.txt`;
+      await browser.waitUntil(async () => (await entryNames()).includes(marker), {
+        timeoutMsg: `${viewMode} did not list the real child marker`,
+      });
+      expect(fs.existsSync(path.join(middlePath, marker))).toBe(true);
+    }
+  });
+
+  it("Tabs from the address bar into every file-list view, where arrows move the selection (#797)", async () => {
+    for (const viewMode of viewModes) {
+      await navigateTo(root);
+      await useView(viewMode);
+      await $(entrySelector(folderNames[0])).waitForDisplayed();
+      await browser.execute(() => {
+        document.querySelector<HTMLElement>(".explorer-pane .navigation-bar .crumb.current")?.focus();
+      });
+      await browser.waitUntil(async () => await browser.execute(() =>
+        document.activeElement?.closest(".navigation-bar") !== null,
+      ), { timeoutMsg: `${viewMode}: the address bar's current crumb did not take focus` });
+
+    // Between the address bar and the first entry, Tab may only pass the file
+    // list's own column controls.
+      const cycleLimit = Math.min((await visibleTabStopCount()) + 2, 256);
+      for (let step = 0; step < cycleLimit && !(await activeEntryPath()); step += 1) {
+        await browser.keys("Tab");
+        const region = await browser.execute(() => {
+          const active = document.activeElement;
+          return active?.closest(".navigation-bar") ? "address-bar" : active?.closest(".file-list") ? "file-list" : "elsewhere";
+        });
+        expect(region).not.toBe("elsewhere");
+      }
+      // The Tab stop is the pane's cursor entry, which navigation may restore.
+      const reached = await activeEntryPath();
+      expect(reached).toBeTruthy();
+      const navigationKey = viewMode === "details" ? "ArrowDown" : "ArrowRight";
+      await browser.keys(navigationKey);
+      await browser.waitUntil(async () => {
+        const current = await activeEntryPath();
+        return current !== null && current !== reached;
+      }, {
+        timeoutMsg: `${viewMode}: ${navigationKey} did not move focus from ${reached}`,
+      });
+      expect(await browser.execute(() => document.activeElement?.classList.contains("selected") ?? false)).toBe(true);
+    }
+  });
+
+  it("extends Shift+Arrow selection to three entries with focus on the endpoint", async () => {
+    for (const viewMode of viewModes) {
+      await navigateTo(root);
+      await useView(viewMode);
+      const first = $(entrySelector(folderNames[0]));
+      await first.waitForDisplayed();
+      await first.click();
+      const arrow = viewMode === "details" ? "ArrowDown" : "ArrowRight";
+
+      await browser.keys(["Shift", arrow]);
+      await browser.keys(["Shift", arrow]);
+
+      const endpoint = path.join(root, folderNames[2]);
+      await browser.waitUntil(async () =>
+        (await $$(".explorer-pane .file-list .entry-item.selected").length) === 3
+        && (await activeEntryPath()) === endpoint,
+      { timeoutMsg: `${viewMode} did not extend to three entries and focus the endpoint` });
+      for (const name of folderNames) {
+        await expect($(entrySelector(name))).toHaveElementClass("selected");
+      }
+    }
+  });
+
+  it("moves F2 focus into the selected row's rename editor in every view", async () => {
+    for (const viewMode of viewModes) {
+      await navigateTo(root);
+      await useView(viewMode);
+      const middleFile = $(entrySelector(fileNames[1]));
+      await middleFile.waitForDisplayed();
+      await middleFile.click();
+
+      await browser.keys("F2");
+      const input = $(`${entrySelector(fileNames[1])} .rename-input`);
+      await input.waitForDisplayed({ timeout: 5000 });
+      await browser.waitUntil(async () => await browser.execute(() =>
+        document.activeElement?.classList.contains("rename-input") === true,
+      ), { timeoutMsg: `${viewMode} rename editor did not receive focus` });
+      expect(await input.getValue()).toBe(fileNames[1]);
+
+      await browser.keys("Escape");
+      await input.waitForExist({ reverse: true });
+      const middlePath = path.join(root, fileNames[1]);
+      await browser.waitUntil(async () => (await activeEntryPath()) === middlePath, {
+        timeoutMsg: `${viewMode} Escape did not return focus to the renamed row`,
+      });
+      expect(fs.existsSync(path.join(root, fileNames[1]))).toBe(true);
+    }
+  });
+});

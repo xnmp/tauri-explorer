@@ -5,7 +5,7 @@
  * Plugin-scoped surface, so it lives beside ai-rename.ts rather than files.ts.
  */
 
-import { invoke, extractError, type ApiResult } from "./files";
+import { invoke, extractError, type ApiResult } from "./common";
 
 /**
  * Ask the configured model to pick the best destination folders for a file

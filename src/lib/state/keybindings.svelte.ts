@@ -346,6 +346,8 @@ function createKeybindingsStore() {
   return {
     trackModifierKey,
     resetTrackedModifiers,
+    /** Same Super overlay used by shortcut matching on WebKitGTK. */
+    get trackedMetaHeld() { return superKeyHeld; },
     registerDefault,
     registerDefaults,
     getShortcut,

@@ -193,7 +193,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   let cachedItemRects: DOMRect[] | null = null;
   // Global entry index for each cached rect. Under virtualization the DOM only
   // holds the visible items, so their NodeList position is NOT the entry index;
-  // we read it from data-index (set by ItemButton) instead. Falls back to the
+  // we read it from data-index (set by EntryCell) instead. Falls back to the
   // NodeList position when the attribute is absent (non-virtualized callers).
   let cachedItemIndices: number[] | null = null;
   let cachedScroll: { left: number; top: number } | null = null;

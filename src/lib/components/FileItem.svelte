@@ -21,13 +21,14 @@
 
   interface Props {
     entry: FileEntry;
+    index: number;
     onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
     explorer: ExplorerInstance;
   }
 
-  let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
+  let { entry, index, onclick, ondblclick, selected = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
 
@@ -85,9 +86,15 @@
   }
 </script>
 
-<button
+<!-- svelte-ignore a11y_click_events_have_key_events -- FileList owns cursor navigation; the window command router owns configurable Open/Preview and selection commands. -->
+<div
+  role="gridcell"
+  tabindex={!isRenaming && explorer.focusedEntry?.path === entry.path ? 0 : -1}
+  aria-selected={explorer.isSelected(entry)}
   class="file-item entry-item"
   data-path={entry.path}
+  data-index={index}
+  aria-colindex={1}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
   class:empty-folder={isEmptyFolder}
@@ -160,7 +167,7 @@
     {/if}
   </div>
   {/if}
-</button>
+</div>
 
 <style>
   .file-item {
@@ -208,25 +215,23 @@
   }
 
   /* Cut items appear faded */
-  .file-item.hidden-entry {
+  /* Ghosted entries (hidden, empty folder, cut) dim their icon and quiet
+     their label to --text-secondary. Dimming the whole row pulled the name
+     below WCAG AA contrast in every theme (#785); Windows Explorer ghosts
+     the icon for the same states. */
+  .file-item:is(.hidden-entry, .empty-folder, .cut) {
+    color: var(--text-secondary);
+  }
+
+  .file-item:is(.hidden-entry, .empty-folder) [data-drag-icon] {
     opacity: 0.55;
   }
 
-  .file-item.hidden-entry:hover,
-  .file-item.hidden-entry.selected {
+  .file-item:is(.hidden-entry, .empty-folder):is(:hover, .selected) [data-drag-icon] {
     opacity: 0.8;
   }
 
-  .file-item.empty-folder {
-    opacity: 0.55;
-  }
-
-  .file-item.empty-folder:hover,
-  .file-item.empty-folder.selected {
-    opacity: 0.8;
-  }
-
-  .file-item.cut {
+  .file-item.cut [data-drag-icon] {
     opacity: 0.5;
   }
 

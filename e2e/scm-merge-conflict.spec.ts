@@ -8,32 +8,18 @@
  * and Abort clears the operation entirely.
  */
 import { test, expect, type Page } from "./fixtures";
-
-interface MockGitCommit {
-  message: string;
-  amend: boolean;
-  files: string[];
-  commit_id: string;
-}
+import { applySettingsAndReload } from "./helpers";
+import type { MockControl } from "../src/lib/api/mock-control";
 
 declare global {
   interface Window {
-    __mockGitCommits?: MockGitCommit[];
-    __mockGitReset?: () => void;
-    __mockGitStartMergeConflict?: () => void;
+    __mockControl?: MockControl;
   }
 }
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => {
-    const raw = localStorage.getItem("explorer-settings");
-    const s = raw ? JSON.parse(raw) : {};
-    s.showGitStatus = true;
-    s.showScmPanel = true;
-    localStorage.setItem("explorer-settings", JSON.stringify(s));
-  });
-  await page.reload();
+  await applySettingsAndReload(page, { showGitStatus: true, showScmPanel: true });
   await page.waitForLoadState("domcontentloaded");
 
   await page.getByText("Documents", { exact: true }).first().dblclick();
@@ -52,7 +38,7 @@ test.describe("SCM merge-conflict handling", () => {
     await expect(banner(page)).toHaveCount(0);
 
     // Enter a merge-conflict state.
-    await page.evaluate(() => window.__mockGitStartMergeConflict?.());
+    await page.evaluate(() => window.__mockControl?.gitStartMergeConflict?.());
 
     // Banner announces the merge with the conflicted-file count.
     await expect(banner(page)).toBeVisible();
@@ -87,13 +73,13 @@ test.describe("SCM merge-conflict handling", () => {
     // Commit lands and clears the operation.
     await commitBtn(page).click();
     await expect(banner(page)).toHaveCount(0);
-    const messages = await page.evaluate(() => window.__mockGitCommits?.map((c) => c.message) ?? []);
+    const messages = await page.evaluate(() => window.__mockControl?.gitCommits?.map((c) => c.message) ?? []);
     expect(messages).toContain("resolve the merge");
   });
 
   test("Abort clears the in-progress operation and its conflicts", async ({ page }) => {
     await openScmOnRepo(page);
-    await page.evaluate(() => window.__mockGitStartMergeConflict?.());
+    await page.evaluate(() => window.__mockControl?.gitStartMergeConflict?.());
     await expect(banner(page)).toBeVisible();
 
     // Abort the merge.
@@ -102,7 +88,7 @@ test.describe("SCM merge-conflict handling", () => {
     // Banner and the merge section are gone; no commit was recorded.
     await expect(banner(page)).toHaveCount(0);
     await expect(page.locator('[data-section="merge"]')).toHaveCount(0);
-    const count = await page.evaluate(() => window.__mockGitCommits?.length ?? 0);
+    const count = await page.evaluate(() => window.__mockControl?.gitCommits?.length ?? 0);
     expect(count).toBe(0);
   });
 });

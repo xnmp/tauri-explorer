@@ -1,7 +1,7 @@
 /**
  * Per-pane SCM store disposal (#439).
  *
- * Pane ids are minted unique per pane creation and never reused, so the
+ * Pane IDs can be restored, and each restored pane needs a fresh store. The
  * `paneScmStores` map would grow one entry per pane ever opened unless the
  * store is disposed when its pane closes. These tests pin the disposal
  * contract: `disposeScmStore` frees a store, and the window-tabs close/collapse
@@ -20,27 +20,27 @@ beforeEach(() => {
 });
 
 describe("disposeScmStore", () => {
-  it("frees the store and drops the map entry", () => {
+  it("frees the store and drops the map entry", async () => {
     const before = scmStoreCount();
     getScmStore("pane-dispose-a");
     expect(scmStoreCount()).toBe(before + 1);
 
-    disposeScmStore("pane-dispose-a");
+    await disposeScmStore("pane-dispose-a");
     expect(scmStoreCount()).toBe(before);
   });
 
-  it("is a no-op for a pane that never had a store", () => {
+  it("is a no-op for a pane that never had a store", async () => {
     const before = scmStoreCount();
     expect(() => disposeScmStore("pane-never-created")).not.toThrow();
     expect(scmStoreCount()).toBe(before);
   });
 
-  it("re-creates a fresh store after disposal (ids never reused)", () => {
+  it("re-creates a fresh store after disposal of the same pane ID", async () => {
     const a = getScmStore("pane-dispose-b");
-    disposeScmStore("pane-dispose-b");
+    await disposeScmStore("pane-dispose-b");
     const b = getScmStore("pane-dispose-b");
     expect(b).not.toBe(a);
-    disposeScmStore("pane-dispose-b");
+    await disposeScmStore("pane-dispose-b");
   });
 });
 
@@ -51,7 +51,7 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     return manager;
   }
 
-  it("closePane disposes the closed pane's scm store", () => {
+  it("closePane disposes the closed pane's scm store", async () => {
     const manager = freshManager();
     manager.splitPane("right");
     const [p0, p1] = manager.activePaneIds;
@@ -64,11 +64,11 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     expect(scmStoreCount()).toBe(baseline - 1);
 
     // Clean up the survivor so the module map returns to its prior size.
-    for (const id of manager.activePaneIds) disposeScmStore(id);
-    manager.dispose();
+    for (const id of manager.activePaneIds) await disposeScmStore(id);
+    await manager.dispose();
   });
 
-  it("collapsing dual pane disposes the removed panes' stores", () => {
+  it("collapsing dual pane disposes the removed panes' stores", async () => {
     const manager = freshManager();
     manager.splitPane("right");
     manager.splitPane("down");
@@ -80,11 +80,11 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     // Two panes removed → two stores disposed.
     expect(scmStoreCount()).toBe(baseline - 2);
 
-    for (const id of manager.activePaneIds) disposeScmStore(id);
-    manager.dispose();
+    for (const id of manager.activePaneIds) await disposeScmStore(id);
+    await manager.dispose();
   });
 
-  it("keeps the store map bounded across repeated open/close churn", () => {
+  it("keeps the store map bounded across repeated open/close churn", async () => {
     const manager = freshManager();
     const baseline = scmStoreCount();
 
@@ -97,7 +97,7 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     // Only the single surviving pane's store may remain.
     expect(scmStoreCount()).toBeLessThanOrEqual(baseline + 1);
 
-    for (const id of manager.activePaneIds) disposeScmStore(id);
-    manager.dispose();
+    for (const id of manager.activePaneIds) await disposeScmStore(id);
+    await manager.dispose();
   });
 });

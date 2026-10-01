@@ -36,6 +36,7 @@ describe("isShellReservedKey (#249, #260)", () => {
     // (micro quit) and Ctrl+T (new tab) even when Explorer binds them too.
     expect(isShellReservedKey(key("q", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(true);
     expect(isShellReservedKey(key("t", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("l", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(true);
 
     // The explicit core-navigation allowlist remains available from the
     // terminal: Quick Open, Command Palette, and previous/next tab.

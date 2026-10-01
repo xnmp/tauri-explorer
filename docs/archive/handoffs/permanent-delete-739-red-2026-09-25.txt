@@ -1,0 +1,30 @@
+   Compiling drag v2.1.1 (/home/chong/Repos/tauri-explorer/.claude/worktrees/permanent-739/src-tauri/vendor/drag)
+   Compiling tauri-explorer v1.9.1 (/home/chong/Repos/tauri-explorer/.claude/worktrees/permanent-739/src-tauri)
+   Compiling tauri-plugin-drag v2.1.1
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 36.68s
+     Running unittests src/lib.rs (/home/chong/Repos/tauri-explorer/src-tauri/target/debug/deps/tauri_explorer_lib-666fb25eab77a30b)
+
+running 2 tests
+
+thread 'files::permanent_delete::tests::a_replaced_parent_does_not_redirect_deletion' (461) panicked at src/files/../../test_support/permanent_delete.rs:34:5:
+assertion `left == right` failed
+  left: None
+ right: Some([117, 110, 114, 101, 108, 97, 116, 101, 100, 32, 114, 101, 112, 108, 97, 99, 101, 109, 101, 110, 116])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'files::permanent_delete::tests::a_replaced_source_is_not_permanently_removed' (462) panicked at src/files/../../test_support/permanent_delete.rs:13:5:
+assertion `left == right` failed
+  left: None
+ right: Some([117, 110, 114, 101, 108, 97, 116, 101, 100, 32, 114, 101, 112, 108, 97, 99, 101, 109, 101, 110, 116])
+test files::permanent_delete::tests::a_replaced_source_is_not_permanently_removed ... FAILED
+test files::permanent_delete::tests::a_replaced_parent_does_not_redirect_deletion ... FAILED
+
+failures:
+
+failures:
+    files::permanent_delete::tests::a_replaced_parent_does_not_redirect_deletion
+    files::permanent_delete::tests::a_replaced_source_is_not_permanently_removed
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1314 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

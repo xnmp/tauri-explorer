@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  isUncPath,
   normalizePathInput,
   isDriveRoot,
   parentDir,
@@ -344,5 +345,25 @@ describe("splitFlattenedUriList (#253)", () => {
 
   it("returns empty input as-is", () => {
     expect(splitFlattenedUriList("")).toEqual([""]);
+  });
+});
+
+it("preserves the case-sensitive Linux suffix of WSL directory identities", () => {
+  expect(directoryKey("\\\\wsl.localhost\\Ubuntu\\home\\User")).not.toBe(directoryKey("\\\\wsl.localhost\\Ubuntu\\home\\user"));
+  expect(directoryKey("\\\\WSL.LOCALHOST\\Ubuntu\\home\\User\\")).toBe(directoryKey("//wsl.localhost/Ubuntu/home/User"));
+  expect(directoryKey("//wsl$/Ubuntu/home/User")).not.toBe(directoryKey("//wsl$/Ubuntu/home/user"));
+});
+
+
+describe("Windows UNC syntax", () => {
+  it("recognizes ordinary and extended network shares", () => {
+    for (const path of ["//server/share/file", String.raw`\\server\share\file`, String.raw`\\?\UNC\server\share\file`]) {
+      expect(isUncPath(path)).toBe(true);
+    }
+  });
+  it("excludes extended local disks, devices and incomplete share roots", () => {
+    for (const path of [String.raw`\\?\C:\file`, String.raw`\\.\C:\file`, "C:/file", "/home/file", "//server"]) {
+      expect(isUncPath(path)).toBe(false);
+    }
   });
 });

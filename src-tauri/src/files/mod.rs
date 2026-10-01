@@ -1,18 +1,100 @@
 //! File operations module for Tauri commands.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s, tauri-explorer-9djf.6
 
+// The Unix recovery, anchored-copy, file-identity and handle-relative directory
+// modules compile and run their unit tests on macOS, but only Linux production
+// paths call them until a macOS adapter is connected (#772). Their dead-code
+// allowance is scoped to these modules so macOS still reports dead code
+// everywhere else (#870).
+pub(crate) mod admission;
+#[cfg(unix)]
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+mod anchored_copy;
+pub(crate) mod archive_plan;
+pub mod batch;
+#[cfg(test)]
+#[path = "../../test_support/case_only_rename.rs"]
+mod case_only_rename_tests;
+pub(crate) mod copy_session;
 pub mod dir_listing;
+mod directory_cache;
+mod directory_identity;
+mod directory_watches;
+mod directory_wire;
 pub mod drives;
+pub(crate) mod entry_execution;
+pub(crate) mod entry_plan;
+mod entry_version;
 pub mod external_apps;
+#[cfg(any(unix, test))]
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+mod file_identity;
 pub mod file_ops;
+#[cfg(target_os = "linux")]
+mod freedesktop_trash;
 pub mod fs_watcher;
 pub mod git_status;
+#[cfg(target_os = "linux")]
+pub mod linux_gvfs_watch;
+#[cfg(target_os = "linux")]
+pub mod linux_mount_watch;
+#[cfg(target_os = "linux")]
+pub mod linux_volume_monitor;
+#[cfg(target_os = "linux")]
+pub mod linux_volumes;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/mount_namespace.rs"]
+pub(crate) mod mount_namespace;
+pub(crate) mod move_execution;
+pub(crate) mod move_plan;
+pub(crate) mod move_session;
+pub(crate) mod mutation;
+#[cfg(any(unix, test))]
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+mod native_directory;
+mod object_id;
+mod permanent_delete;
+// Selections are admitted on Linux; other Unix platforms prepare one native
+// permanent deletion through the same observation and budget.
+#[cfg(unix)]
+mod prepared_selection;
+mod publication;
+#[cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+pub(crate) mod recovery;
+mod replacement;
+#[cfg(any(target_os = "windows", test))]
+mod restore_outcome;
 pub mod shortcuts;
+pub mod trash;
+pub(crate) mod trash_artifact;
+#[cfg(target_os = "linux")]
+mod trash_mounts;
+#[cfg(any(target_os = "windows", test))]
+mod trash_outcome;
+#[cfg(unix)]
+mod tree_removal;
+mod watch_observation;
+#[cfg(all(windows, test))]
+mod windows_io;
+#[cfg(target_os = "windows")]
+mod windows_paths;
+#[cfg(target_os = "windows")]
+mod windows_restore;
+mod worker;
+pub(crate) use worker::{run_blocking_context, Completion as WorkerCompletion};
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+
+/// Native path prefixes distinguish remote shares from extended local paths.
+/// On Unix, even a double leading slash has no Windows prefix.
+pub(crate) fn is_network_share(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(path.components().next(), Some(Component::Prefix(prefix))
+        if matches!(prefix.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..)))
+}
 
 /// Run a blocking closure on the async runtime's blocking thread pool so
 /// heavy filesystem work doesn't stall the main async executor.
@@ -21,12 +103,7 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
 {
-    match tauri::async_runtime::spawn_blocking(f).await {
-        Ok(result) => result,
-        Err(e) => Err(crate::error::AppError::Other(format!(
-            "Background task failed: {e}"
-        ))),
-    }
+    worker::run_blocking_owned((), f).await
 }
 
 /// File system entry representation.
@@ -60,13 +137,12 @@ pub enum FileKind {
 /// Directory listing response.
 ///
 /// `entries` is an `Arc` so cache hits in `dir_listing` share the cached
-/// allocation instead of deep-cloning thousands of `FileEntry`s per call
-/// (serde's `rc` feature serializes through the Arc transparently).
-#[derive(Debug, Serialize)]
+/// allocation instead of deep-cloning thousands of `FileEntry`s per call.
+/// Its IPC form is the compact column format in `directory_wire.rs`.
+#[derive(Debug)]
 pub struct DirectoryListing {
     pub path: String,
     pub entries: std::sync::Arc<Vec<FileEntry>>,
-    pub listing_id: Option<u64>,
 }
 
 /// Convert metadata to FileEntry, detecting symlinks.

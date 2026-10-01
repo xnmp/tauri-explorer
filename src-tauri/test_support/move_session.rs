@@ -1,0 +1,558 @@
+//! Behaviour of one ordered native move session against real temp filesystems.
+//!
+//! A move session is judged on two things a copy session is not: the source
+//! must be gone exactly when the destination exists, and a cancelled session
+//! must leave the completed prefix committed and separately undoable.
+use super::*;
+use crate::{
+    file_history::{Action, ForwardEffect},
+    file_mutation::move_session_outcome,
+    files::{
+        copy_session::{run, Choice, Control, Decision, Event, ItemOutcome, Outcome, Request},
+        recovery::Runtime,
+    },
+    renderer_owner::Owner,
+};
+use std::{
+    fs,
+    future::Future,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+
+fn block<T>(future: impl Future<Output = T>) -> T {
+    tauri::async_runtime::block_on(future)
+}
+
+fn work(root: &Path) -> MoveWork {
+    MoveWork {
+        job_id: 4_242,
+        runtime: Runtime::new(root.join("recovery")),
+    }
+}
+
+fn request(sources: &[PathBuf], destination: &Path) -> Request {
+    Request::new(
+        sources
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
+        destination.to_string_lossy().into_owned(),
+    )
+    .unwrap()
+}
+
+fn spellings(sources: &[PathBuf]) -> Vec<String> {
+    sources
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Drive a session, replying to each conflict with the next decision. A
+/// `None` reply cancels the whole session from the renderer side instead.
+fn drive(
+    request: Request,
+    work: MoveWork,
+    decisions: Vec<Option<Decision>>,
+) -> (Outcome, Vec<Event>) {
+    let owner = Owner::default();
+    let control = Arc::new(Control::new(owner.clone()));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&events);
+    let replies = Arc::new(Mutex::new(decisions.into_iter()));
+    let session = Arc::clone(&control);
+    let outcome = block(run(request, Arc::clone(&control), work, move |event| {
+        recorded.lock().unwrap().push(event.clone());
+        if let Event::Conflict {
+            item, ref nonce, ..
+        } = event
+        {
+            match replies.lock().unwrap().next().flatten() {
+                Some(decision) => session.resolve(&owner, item, nonce, decision).unwrap(),
+                None => session.cancel(&owner).unwrap(),
+            }
+        }
+        true
+    }));
+    let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
+    (outcome, events)
+}
+
+fn overwrite() -> Option<Decision> {
+    Some(Decision {
+        choice: Choice::Overwrite,
+        apply_to_all: false,
+    })
+}
+
+fn skip() -> Option<Decision> {
+    Some(Decision {
+        choice: Choice::Skip,
+        apply_to_all: false,
+    })
+}
+
+fn cancel() -> Option<Decision> {
+    Some(Decision {
+        choice: Choice::Cancel,
+        apply_to_all: false,
+    })
+}
+
+struct Fixture {
+    root: tempfile::TempDir,
+    from: PathBuf,
+    to: PathBuf,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let from = root.path().join("from");
+        let to = root.path().join("to");
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&to).unwrap();
+        Self { root, from, to }
+    }
+
+    fn source(&self, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = self.from.join(name);
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn work(&self) -> MoveWork {
+        work(self.root.path())
+    }
+}
+
+fn statuses(outcome: &Outcome) -> Vec<&'static str> {
+    outcome
+        .items
+        .iter()
+        .map(|item| match item {
+            ItemOutcome::Succeeded { .. } => "succeeded",
+            ItemOutcome::Skipped => "skipped",
+            ItemOutcome::Failed { .. } => "failed",
+            ItemOutcome::Uncertain { .. } => "uncertain",
+            ItemOutcome::Unstarted => "unstarted",
+        })
+        .collect()
+}
+
+#[test]
+fn an_ordered_move_relocates_every_item_and_vacates_each_source() {
+    let fixture = Fixture::new();
+    let sources = vec![
+        fixture.source("one.txt", b"first"),
+        fixture.source("two.txt", b"second"),
+    ];
+    let (outcome, _) = drive(request(&sources, &fixture.to), fixture.work(), Vec::new());
+    assert_eq!(statuses(&outcome), vec!["succeeded", "succeeded"]);
+    assert!(!outcome.cancelled);
+    for (name, bytes) in [("one.txt", &b"first"[..]), ("two.txt", &b"second"[..])] {
+        assert_eq!(fs::read(fixture.to.join(name)).unwrap(), bytes);
+        assert!(
+            !fixture.from.join(name).exists(),
+            "{name} was copied instead of moved"
+        );
+    }
+}
+
+#[test]
+fn an_unanswered_conflict_never_overwrites_and_never_removes_the_source() {
+    let fixture = Fixture::new();
+    let sources = vec![fixture.source("clash.txt", b"incoming")];
+    fs::write(fixture.to.join("clash.txt"), b"existing").unwrap();
+    let (outcome, events) = drive(request(&sources, &fixture.to), fixture.work(), vec![skip()]);
+    assert_eq!(statuses(&outcome), vec!["skipped"]);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::Conflict { .. })));
+    assert_eq!(fs::read(fixture.to.join("clash.txt")).unwrap(), b"existing");
+    assert_eq!(fs::read(&sources[0]).unwrap(), b"incoming");
+}
+
+#[test]
+fn an_accepted_conflict_replaces_the_destination_and_vacates_the_source() {
+    let fixture = Fixture::new();
+    let sources = vec![fixture.source("clash.txt", b"incoming")];
+    fs::write(fixture.to.join("clash.txt"), b"existing").unwrap();
+    let (outcome, _) = drive(
+        request(&sources, &fixture.to),
+        fixture.work(),
+        vec![overwrite()],
+    );
+    assert_eq!(statuses(&outcome), vec!["succeeded"]);
+    assert_eq!(fs::read(fixture.to.join("clash.txt")).unwrap(), b"incoming");
+    assert!(!sources[0].exists());
+}
+
+#[test]
+fn cancelling_at_a_conflict_retains_the_completed_prefix_and_leaves_the_rest_in_place() {
+    let fixture = Fixture::new();
+    let sources = vec![
+        fixture.source("first.txt", b"first"),
+        fixture.source("clash.txt", b"incoming"),
+        fixture.source("last.txt", b"last"),
+    ];
+    fs::write(fixture.to.join("clash.txt"), b"existing").unwrap();
+    let (outcome, _) = drive(
+        request(&sources, &fixture.to),
+        fixture.work(),
+        vec![cancel()],
+    );
+    assert!(outcome.cancelled);
+    assert_eq!(
+        statuses(&outcome),
+        vec!["succeeded", "unstarted", "unstarted"]
+    );
+    // The completed prefix is committed; nothing after the cancellation moved.
+    assert_eq!(fs::read(fixture.to.join("first.txt")).unwrap(), b"first");
+    assert!(!fixture.from.join("first.txt").exists());
+    assert_eq!(fs::read(fixture.to.join("clash.txt")).unwrap(), b"existing");
+    assert_eq!(fs::read(&sources[1]).unwrap(), b"incoming");
+    assert_eq!(fs::read(&sources[2]).unwrap(), b"last");
+
+    // And that prefix is separately undoable: one committed item, one inverse.
+    let projected = move_session_outcome(
+        outcome,
+        &spellings(&sources),
+        fixture.to.to_string_lossy().into_owned(),
+    );
+    let ForwardEffect::Changed(Some(inverse)) = projected.effect else {
+        panic!("a cancelled session must still offer the prefix inverse");
+    };
+    assert!(matches!(
+        inverse,
+        Action::Move { .. } | Action::Replacement { .. }
+    ));
+}
+
+#[test]
+fn a_move_into_the_directory_it_already_occupies_succeeds_without_touching_the_entry() {
+    let fixture = Fixture::new();
+    let sources = vec![fixture.source("stays.txt", b"unchanged")];
+    let before = fs::symlink_metadata(&sources[0]).unwrap();
+    let (outcome, _) = drive(request(&sources, &fixture.from), fixture.work(), Vec::new());
+    assert_eq!(statuses(&outcome), vec!["succeeded"]);
+    assert_eq!(fs::read(&sources[0]).unwrap(), b"unchanged");
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(
+        fs::symlink_metadata(&sources[0]).unwrap().ino(),
+        before.ino(),
+        "a same-directory move must not recreate the entry"
+    );
+    // A no-op has no inverse, and no forward effect at all: recording one
+    // would discard the redo stack for an operation that changed nothing.
+    let projected = move_session_outcome(
+        outcome,
+        &spellings(&sources),
+        fixture.from.to_string_lossy().into_owned(),
+    );
+    assert!(matches!(projected.effect, ForwardEffect::Unchanged));
+    assert!(projected.affected.is_empty());
+}
+
+#[test]
+fn a_destination_alias_naming_the_source_directory_is_still_a_no_op() {
+    // The requested spelling and the destination spelling can name one
+    // directory. Comparing them as strings would mint an inverse that
+    // relocates an entry onto itself and fails forever.
+    let fixture = Fixture::new();
+    let sources = vec![fixture.source("stays.txt", b"unchanged")];
+    let alias = fixture.root.path().join("alias");
+    std::os::unix::fs::symlink(&fixture.from, &alias).unwrap();
+    let (outcome, _) = drive(request(&sources, &alias), fixture.work(), Vec::new());
+    assert_eq!(statuses(&outcome), vec!["succeeded"]);
+    let projected = move_session_outcome(
+        outcome,
+        &spellings(&sources),
+        alias.to_string_lossy().into_owned(),
+    );
+    assert!(matches!(projected.effect, ForwardEffect::Unchanged));
+    assert_eq!(fs::read(&sources[0]).unwrap(), b"unchanged");
+}
+
+/// A cross-filesystem move whose source cannot be unlinked after publication.
+/// The destination exists and the source may still exist: that is uncertain,
+/// not success, and it must not become an inverse.
+#[test]
+fn a_publication_whose_source_removal_failed_is_uncertain_and_offers_no_inverse() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = Path::new("/dev/shm");
+    if !root.is_dir() {
+        eprintln!("SKIPPED incomplete source removal: /dev/shm is unavailable");
+        return;
+    }
+    let other = tempfile::tempdir_in(root).unwrap();
+    let fixture = Fixture::new();
+    if fs::metadata(fixture.root.path()).unwrap().dev() == fs::metadata(other.path()).unwrap().dev()
+    {
+        eprintln!("SKIPPED incomplete source removal: one shared device");
+        return;
+    }
+    let tree = other.path().join("tree");
+    fs::create_dir_all(&tree).unwrap();
+    fs::write(tree.join("leaf.txt"), b"payload").unwrap();
+    // Readable and traversable, but its children cannot be unlinked.
+    fs::set_permissions(&tree, fs::Permissions::from_mode(0o555)).unwrap();
+    let restore = scopeguard(&tree);
+
+    let (outcome, _) = drive(
+        request(std::slice::from_ref(&tree), &fixture.to),
+        fixture.work(),
+        Vec::new(),
+    );
+    // Both policies must refuse to call this a success. Only the ordinary
+    // path can phrase it as an unfinished removal; the durable path retains
+    // the record and says so, but neither may mint an inverse.
+    assert_eq!(statuses(&outcome), vec!["uncertain"]);
+    let ItemOutcome::Uncertain { error } = &outcome.items[0] else {
+        unreachable!()
+    };
+    if cfg!(feature = "durable-recovery") {
+        assert!(error.contains("File Recovery"), "{error}");
+    } else {
+        assert!(error.contains("did not finish"), "{error}");
+        assert!(error.contains("Inspect both locations"), "{error}");
+        assert_eq!(
+            fs::read(fixture.to.join("tree/leaf.txt")).unwrap(),
+            b"payload"
+        );
+    }
+    // Whatever the policy, the source that could not be removed is intact.
+    assert_eq!(fs::read(tree.join("leaf.txt")).unwrap(), b"payload");
+    let projected = move_session_outcome(
+        outcome,
+        &[tree.to_string_lossy().into_owned()],
+        fixture.to.to_string_lossy().into_owned(),
+    );
+    assert!(matches!(projected.effect, ForwardEffect::Changed(None)));
+    drop(restore);
+}
+
+/// Restore write permission so the fixture directory can be removed.
+fn scopeguard(path: &Path) -> impl Drop + use<> {
+    struct Restore(PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+        }
+    }
+    Restore(path.to_owned())
+}
+
+#[test]
+fn a_directory_cannot_be_relocated_into_its_own_subtree() {
+    let fixture = Fixture::new();
+    let tree = fixture.from.join("tree");
+    let inside = tree.join("inside");
+    fs::create_dir_all(&inside).unwrap();
+    fs::write(tree.join("leaf.txt"), b"leaf").unwrap();
+    let (outcome, _) = drive(
+        request(std::slice::from_ref(&tree), &inside),
+        fixture.work(),
+        Vec::new(),
+    );
+    assert_eq!(statuses(&outcome), vec!["failed"]);
+    assert!(tree.is_dir() && inside.is_dir());
+    assert_eq!(fs::read(tree.join("leaf.txt")).unwrap(), b"leaf");
+}
+
+#[test]
+fn a_relocated_directory_arrives_with_its_whole_subtree() {
+    let fixture = Fixture::new();
+    let tree = fixture.from.join("tree");
+    fs::create_dir_all(tree.join("nested")).unwrap();
+    fs::write(tree.join("nested/deep.txt"), b"deep").unwrap();
+    let (outcome, _) = drive(
+        request(std::slice::from_ref(&tree), &fixture.to),
+        fixture.work(),
+        Vec::new(),
+    );
+    assert_eq!(statuses(&outcome), vec!["succeeded"]);
+    assert!(!tree.exists());
+    assert_eq!(
+        fs::read(fixture.to.join("tree/nested/deep.txt")).unwrap(),
+        b"deep"
+    );
+}
+
+#[test]
+fn every_committed_item_contributes_both_of_its_directories_to_the_refresh_set() {
+    let fixture = Fixture::new();
+    let sources = vec![fixture.source("one.txt", b"first")];
+    let (outcome, _) = drive(request(&sources, &fixture.to), fixture.work(), Vec::new());
+    let projected = move_session_outcome(
+        outcome,
+        &spellings(&sources),
+        fixture.to.to_string_lossy().into_owned(),
+    );
+    for directory in [&fixture.from, &fixture.to] {
+        assert!(
+            projected
+                .affected
+                .contains(&directory.to_string_lossy().into_owned()),
+            "{} was not refreshed",
+            directory.display()
+        );
+    }
+}
+
+/// The non-durable (default/release) move path must admit through the same
+/// recovery coordinator seam the single-item move command and the native
+/// history move adapter use, not bypass it by calling the filesystem effect
+/// directly (#881 follow-up; lesson 680, ADR 0024 level 3). A held reservation
+/// on either endpoint must refuse the session item with no effect, and the
+/// same request must succeed once that reservation is released.
+#[cfg(not(feature = "durable-recovery"))]
+#[test]
+fn a_session_item_refuses_while_its_endpoint_is_claimed_and_succeeds_once_released() {
+    use crate::files::recovery::{Access, ResourceRequest, Scope};
+
+    fn writing(path: &Path) -> Vec<ResourceRequest> {
+        vec![ResourceRequest {
+            path: path.to_owned(),
+            access: Access::Write,
+            scope: Scope::Subtree,
+        }]
+    }
+
+    for claim_source in [true, false] {
+        let fixture = Fixture::new();
+        let file = fixture.source("item.txt", b"payload");
+        let target = fixture.to.join("item.txt");
+        let runtime = Runtime::new(fixture.root.path().join("recovery"));
+        let claimed = if claim_source { &file } else { &target };
+        let owner = block(runtime.clone().admit(writing(claimed))).unwrap();
+
+        let (outcome, _events) = drive(
+            request(std::slice::from_ref(&file), &fixture.to),
+            MoveWork {
+                job_id: 1,
+                runtime: runtime.clone(),
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            statuses(&outcome),
+            vec!["failed"],
+            "a live recovery claim on either endpoint must refuse the relocation"
+        );
+        assert!(
+            file.exists(),
+            "a refused relocation must leave the source untouched"
+        );
+        assert!(
+            !target.exists(),
+            "a refused relocation must not have produced any effect at the target"
+        );
+
+        drop(owner);
+
+        let (outcome, _events) = drive(
+            request(std::slice::from_ref(&file), &fixture.to),
+            MoveWork { job_id: 2, runtime },
+            Vec::new(),
+        );
+        assert_eq!(
+            statuses(&outcome),
+            vec!["succeeded"],
+            "the same request must succeed once the claim is released"
+        );
+        assert!(!file.exists());
+        assert!(target.exists());
+    }
+}
+
+#[cfg(feature = "durable-recovery")]
+#[test]
+fn a_durable_receipt_is_its_own_inverse_and_never_gains_a_path_only_action() {
+    let fixture = Fixture::new();
+    let sources = vec![fixture.source("durable.txt", b"payload")];
+    let (outcome, _) = drive(request(&sources, &fixture.to), fixture.work(), Vec::new());
+    assert_eq!(statuses(&outcome), vec!["succeeded"]);
+    let ItemOutcome::Succeeded { receipt } = &outcome.items[0] else {
+        unreachable!()
+    };
+    assert!(
+        receipt.relocation.is_some(),
+        "the durable policy must produce a relocation record"
+    );
+    let projected = move_session_outcome(
+        outcome,
+        &spellings(&sources),
+        fixture.to.to_string_lossy().into_owned(),
+    );
+    let ForwardEffect::Changed(Some(Action::Replacement { .. })) = projected.effect else {
+        panic!("a durable move inverse must be the record, never a path");
+    };
+}
+
+/// Cancellation after dispatch must still fence the eventual filesystem worker.
+#[cfg(all(target_os = "linux", not(feature = "durable-recovery")))]
+#[test]
+fn cancelling_a_move_while_admission_is_blocked_preserves_the_source() {
+    use crate::files::recovery::{Access, ResourceRequest, Scope};
+    use std::{os::fd::AsRawFd, task::Poll};
+
+    let root = tempfile::tempdir().unwrap();
+    let source_dir = root.path().join("source");
+    let destination = root.path().join("destination");
+    fs::create_dir(&source_dir).unwrap();
+    fs::create_dir(&destination).unwrap();
+    let source = source_dir.join("item.txt");
+    let target = destination.join("item.txt");
+    fs::write(&source, b"payload").unwrap();
+    let native = work(root.path());
+    // Initialize the real coordinator, then hold its cross-process gate so
+    // apply must yield during admission after its initial cancellation check.
+    block(native.runtime.admit(vec![ResourceRequest {
+        path: source.clone(),
+        access: Access::Write,
+        scope: Scope::Subtree,
+    }]))
+    .unwrap()
+    .finish()
+    .unwrap();
+    let gate = fs::File::open(root.path().join("recovery/admission.lock")).unwrap();
+    assert_eq!(unsafe { libc::flock(gate.as_raw_fd(), libc::LOCK_EX) }, 0);
+    let owner = Owner::default();
+    let control = Arc::new(Control::new(owner.clone()));
+    let inspection = Inspection {
+        source: source.to_string_lossy().into_owned(),
+        destination: destination.to_string_lossy().into_owned(),
+        presentation: destination.to_string_lossy().into_owned(),
+        conflict: None,
+        bytes: 7,
+        observation: None,
+    };
+    let completion = block(async {
+        let mut pending =
+            Box::pin(native.apply(inspection, false, control.clone(), Arc::new(|_| {})));
+        let first = std::future::poll_fn(|cx| Poll::Ready(pending.as_mut().poll(cx))).await;
+        assert!(
+            matches!(first, Poll::Pending),
+            "admission must wait for the held gate"
+        );
+        control.cancel(&owner).unwrap();
+        assert_eq!(unsafe { libc::flock(gate.as_raw_fd(), libc::LOCK_UN) }, 0);
+        pending.await
+    });
+
+    assert!(completion.result.is_err(), "cancelled move must not commit");
+    assert_eq!(fs::read(&source).unwrap(), b"payload");
+    assert!(!target.exists(), "cancelled move published its destination");
+    // A refused worker must also retire its ordinary admission.
+    block(native.runtime.admit(vec![ResourceRequest {
+        path: source,
+        access: Access::Write,
+        scope: Scope::Subtree,
+    }]))
+    .unwrap()
+    .finish()
+    .unwrap();
+}

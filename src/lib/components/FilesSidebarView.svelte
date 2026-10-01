@@ -8,16 +8,19 @@
   import { homeDirectory } from "$lib/state/home.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { mountDrive } from "$lib/api/drives";
+  import { createDriveOpener } from "$lib/state/drive-opening";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { basename, directoryKey } from "$lib/domain/path";
+  import { buildQuickAccessFolders } from "$lib/domain/quick-access";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { openRecycleBin } from "$lib/api/open";
-  import { openRecycleBinWithFeedback } from "$lib/domain/recycle-bin";
+  import { openRecycleBinWithFeedback } from "$lib/state/recycle-bin";
   import { toastStore } from "$lib/state/toast.svelte";
   import { getBookmarkDropHint, getEffectiveDragKind } from "$lib/domain/bookmark-drop-feedback";
 
@@ -28,11 +31,20 @@
     windowTabsManager.getActiveExplorer()?.navigateTo(path);
   };
 
+  const openDrive = createDriveOpener({
+    mount: mountDrive, navigate: navigateTo, error: toastStore.error,
+    refresh: drivesStore.refresh,
+  });
+
   function handleOpenRecycleBin() {
     void openRecycleBinWithFeedback(openRecycleBin, toastStore.error);
   }
 
-  const homeDir = $derived(homeDirectory.value ?? "/home");
+  // Null until the one-time `get_home_directory` query resolves. Never
+  // substitute a placeholder root here: the Quick Access rows below are
+  // navigation targets, and a fabricated `/home/Documents` strands the pane on
+  // "Path not found" for anyone who clicks during that window (#702).
+  const homeDir = $derived(homeDirectory.value);
   let isDragOver = $state(false);
   let isBookmarkDropTarget = $state(false);
   const bookmarkDropHint = $derived(getBookmarkDropHint(
@@ -182,13 +194,7 @@
     stopDragPoll();
   }
 
-  const allSystemFolders = $derived([
-    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, color: "#0078d4" },
-    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, color: "#2b579a" },
-    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, color: "#008272" },
-    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, color: "#a855f7" },
-    { name: "Music", icon: "music", path: `${homeDir}/Music`, color: "#f472b6" },
-  ]);
+  const allSystemFolders = $derived(buildQuickAccessFolders(homeDir));
 
   let hiddenSystemFolders = $state<Set<string>>(
     new Set(loadPersisted<string[]>("explorer-hidden-system-folders", []))
@@ -267,7 +273,9 @@
     // regardless of trailing-slash or case differences (Windows) between how it
     // was bookmarked and how it was recorded in frecency.
     const bookmarkedPaths = new Set(bookmarksStore.list.map((b) => directoryKey(b.path)));
-    const systemPaths = new Set(quickAccessFolders.map((f) => directoryKey(f.path)));
+    const systemPaths = new Set(
+      quickAccessFolders.flatMap((f) => (f.path === null ? [] : [directoryKey(f.path)])),
+    );
     const scoreMap = frecencyStore.getScoreMap();
     const mounted = drivesStore.mountedRoots;
 
@@ -380,9 +388,10 @@
           <div
             class="nav-item folder-item bookmark-drop-target"
             data-path={folder.path}
-            onclick={() => navigateTo(folder.path)}
-            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(folder.path); }}}
+            onclick={() => { if (folder.path) navigateTo(folder.path); }}
+            onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && folder.path) { e.preventDefault(); navigateTo(folder.path); }}}
             role="button"
+            aria-disabled={folder.path === null}
             tabindex="0"
           >
             {#if folder.icon === "download"}
@@ -519,16 +528,16 @@
 
       {#if drivesExpanded}
         <div class="section-content">
-          {#each drivesStore.removable as drive (drive.path)}
-            <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+          {#each drivesStore.removable as drive (drive.deviceId ?? drive.path)}
+            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #10b981">
                 <rect x="2" y="4" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
                 <circle cx="11" cy="8" r="0.9" fill="currentColor"/>
                 <path d="M4 4V3M6 4V3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
               <span class="drive-name">{drive.name}</span>
-              {#if drive.detail}
-                <span class="drive-detail">{drive.detail}</span>
+              {#if drive.path === null || drive.detail}
+                <span class="drive-detail">{drive.path === null ? "Not mounted" : drive.detail}</span>
               {/if}
             </button>
           {/each}
@@ -554,8 +563,8 @@
 
       {#if cloudExpanded}
         <div class="section-content">
-          {#each drivesStore.cloud as drive (drive.path)}
-            <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+          {#each drivesStore.cloud as drive (drive.deviceId ?? drive.path)}
+            <button class="nav-item drive-item" onclick={() => openDrive(drive)} title={drive.path ?? `Mount ${drive.name}`}>
               {#if drive.provider === "googledrive"}
                 <!-- Google "G" multi-colour mark -->
                 <svg width="16" height="16" viewBox="0 0 48 48" class="nav-icon">
@@ -782,7 +791,7 @@
   }
 
   .quick-access.drag-over {
-    background: rgba(0, 120, 212, 0.1);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     border-radius: 6px;
     outline: 2px dashed var(--accent);
     outline-offset: -2px;
@@ -792,8 +801,8 @@
     margin-left: auto;
     font-size: 11px;
     font-weight: 500;
-    color: var(--accent);
-    background: rgba(0, 120, 212, 0.15);
+    color: var(--accent-text, var(--accent));
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     padding: 2px 6px;
     border-radius: 4px;
   }
@@ -819,7 +828,6 @@
     color: var(--text-tertiary);
     cursor: pointer;
     padding: 0;
-    transition: all var(--transition-fast);
   }
 
   .folder-item:hover .remove-bookmark,
@@ -830,7 +838,7 @@
   .folder-item .remove-bookmark:hover,
   .user-bookmark .remove-bookmark:hover {
     background: var(--subtle-fill-secondary);
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .user-bookmark.dragging {

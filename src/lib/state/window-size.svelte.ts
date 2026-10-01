@@ -3,7 +3,7 @@
  *
  * A single source of truth for "how big is this window right now" so
  * features that need to react to window geometry (currently: preview-pane
- * auto-dock) don't each grow their own resize listener. `+page.svelte` calls
+ * auto-dock) don't each grow their own resize listener. `window-session.ts` calls
  * `sync()` once on mount and again on every `resize` event; everything else
  * just reads `width`/`height` as plain reactive state.
  *

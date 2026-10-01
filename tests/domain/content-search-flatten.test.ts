@@ -11,7 +11,7 @@ import {
   escapeHtml,
   highlightMatch,
 } from "../../src/lib/domain/content-search-flatten";
-import type { ContentSearchResult, ContentMatch } from "../../src/lib/api/files";
+import type { ContentSearchResult, ContentMatch } from "../../src/lib/api/search";
 
 function match(line: number, content: string, start = 0, end = 1): ContentMatch {
   return { lineNumber: line, column: start + 1, lineContent: content, matchStart: start, matchEnd: end };

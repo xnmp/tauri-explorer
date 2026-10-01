@@ -1,0 +1,110 @@
+{
+  "recorded_at": "2026-09-08T23:22:10.317615+00:00",
+  "base_commit": "25756da51e181ac6a3f572907c1c824532725bd6",
+  "scope": "Confirmed Windows compilation and strict CI failures only; user scope freeze remains active.",
+  "reproduction": {
+    "source_log": "/tmp/release-windows-full-check.log",
+    "error": "E0283: cannot infer Tauri plugin Builder configuration C: DeserializeOwned",
+    "strict_lint_log": "/tmp/release-windows-clippy-before.log",
+    "strict_lint_error": "Unix executor and unused Windows qualification adapters compiled without production consumers; platform-only imports/helpers and style lints fail -D warnings."
+  },
+  "windows_command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --target x86_64-pc-windows-gnu --features e2e-webview2-attach --offline -- -D warnings",
+  "toolchain": "Official Arch MinGW GCC 16.1.0 packages verified against the installed Arch signing keyring, unpacked under /tmp/release-mingw; no system installation.",
+  "linux_commands": [
+    "cargo clippy --all-targets --features avif --offline -- -D warnings",
+    "cargo clippy --all-targets --features avif,durable-copy-recovery,e2e-renderer-recovery --offline -- -D warnings",
+    "cargo test --features avif --offline",
+    "cargo test --features avif,durable-copy-recovery --offline"
+  ],
+  "verification": {
+    "windows_clippy": {
+      "log": "/tmp/release-windows-clippy-final.log",
+      "sha256": "9599f1fc1808b80c9a388f811acca5d7643394daaa59c9d23924dc45be64ad55",
+      "exit_code": 0,
+      "results": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s"
+    },
+    "linux_clippy_default": {
+      "log": "/tmp/release-platform-clippy-default.log",
+      "sha256": "88e4924cd27b04b0678d1d7979cd55775fb1e4d8d4390c394d1f918d91206942",
+      "exit_code": 0,
+      "results": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.66s"
+    },
+    "linux_clippy_durable": {
+      "log": "/tmp/release-platform-clippy-durable.log",
+      "sha256": "d82ee33eb5e0eb4a451757aa78d42c8c31a28fdf5effc6429a7db18e5fc9a236",
+      "exit_code": 0,
+      "results": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.04s"
+    },
+    "linux_tests_default": {
+      "log": "/tmp/release-platform-rust-default-unsandboxed.log",
+      "sha256": "ca12916c952c3e7061ee6d63931c9fe5a0c701587f9e784b435ae031d3fd54b5",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1154 passed; 0 failed; 19 ignored; 0 measured; 0 filtered out; finished in 2.96s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "linux_tests_durable": {
+      "log": "/tmp/release-platform-rust-durable-unsandboxed.log",
+      "sha256": "803c32247e0420da9a8eb77ea1092c48a5421fea7445b3c4eca5b84d7ee9db72",
+      "exit_code": 0,
+      "results": [
+        "test result: ok. 1152 passed; 0 failed; 19 ignored; 0 measured; 0 filtered out; finished in 3.03s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    }
+  },
+  "initial_test_run": "Sandboxed default tests failed: two localhost binds denied and one thumbnail prewarm assertion. Full suites pass with environment permissions; no production workaround added.",
+  "independent_review": {
+    "agent": "windows_gate_review (GPT-5.6 Sol)",
+    "result": "No confirmed release blocker. Portable IPC/history and Linux executor preservation confirmed by static review; Windows adapter runtime remains unqualified. Plugin second generic is configuration type, correcting reviewer wording."
+  },
+  "extraction": "Durable authority and validation body byte-identical to base after moving NativePath and ObjectId/EntryVersion imports.",
+  "limits": [
+    "Cross-compilation does not execute Windows native contracts or qualify MSVC packaging.",
+    "macOS native smoke and release-build half-bounce startup measurement remain open.",
+    "No frontend runtime code changed; prior browser evidence retained, not rerun.",
+    "19 ignored Rust fixture tests in each policy.",
+    "No public push, merge, or release."
+  ],
+  "source_sha256": {
+    "docs/code-map/map-feature.md": "cd5b920f36bfc3ec75f6d3c8d2f8fd240de9d769b5271901b15427ed589fddfc",
+    "docs/code-map/map-folder.md": "b801e6369ead3a83d7e74f9ac13469f0ca167bff0ef57e4a71af34d17ac1abf3",
+    "docs/lessons/680-native-mutation-authority.md": "524e21fdf2322b0943452c47fd3e4ae66d8a3e4647a97e8cb26b7923e5c5fd2e",
+    "src-tauri/src/clipboard.rs": "3aa303c021777ff0b2d2218e2d557e73e35d34b515f6df6ccf1900e06187361b",
+    "src-tauri/src/config_watch.rs": "79e81f5e8654c6daa93df6e23e65c95a1360e8ccdc3e1cbef0ba5949aaf5e3cb",
+    "src-tauri/src/crash_report.rs": "4427536e9a9e889381f80ace4182df0b1d0fd66124555baab072c57102f1eeb4",
+    "src-tauri/src/files/batch/mod.rs": "8ffc9f3b64f72a20975afd420503ade64a612e89d6dfccf0d864ef8cd5316147",
+    "src-tauri/src/files/copy_session.rs": "1372d8670ea62a98f5ab3289c89ab0b6f4d8790e74fb11f3562739963aaae166",
+    "src-tauri/src/files/copy_session/worker.rs": "7a62deeff52be31b180124f49e7368edce905c1cc20da3e4cf9399b270ac46b0",
+    "src-tauri/src/files/drives.rs": "631106da810d9e41e5c75dd0fc9c2a4aedb6a9a8d70f3c4670280418b37f5757",
+    "src-tauri/src/files/entry_version.rs": "17e0ecbd980d8b84c6ffd8fbbb6101c9b9186f944d6b782bf4a6f6a3c424e530",
+    "src-tauri/src/files/external_apps.rs": "7f3ddabf0d9fdebdc9ce92db6bf805c38260b49b89c8751a7ba288e6edf71ca6",
+    "src-tauri/src/files/mod.rs": "d9ca02d992e903b4881b3ae18d67bb41c8a9e6b16aed41e695aaf8e7505718d4",
+    "src-tauri/src/files/mutation.rs": "b24ca19cdf3e9566036b4343204353a93714aaff13f508c94e43f3fe6ab8c858",
+    "src-tauri/src/files/object_id.rs": "039ba785d5b4cc42c7ec37c62418038166137175e1dbd4eda32a41338db4e81d",
+    "src-tauri/src/files/recovery/mod.rs": "5760d4b74c7f32ea61c6e2e97348d96eebc722c43694a87afda421091f374373",
+    "src-tauri/src/files/recovery/model.rs": "819df5d230e0f93591bedea35d5c2fe504dfde2f7ba6ee66c8f1a76f99f50f0d",
+    "src-tauri/src/files/recovery/private_storage.rs": "716703bb9be3118e1d05e87dcb9d301edfcb31c20fc2ddec7c39cb9741e9b20e",
+    "src-tauri/src/lib.rs": "ca533f0987d6315bd4009c22a91fbd88265558062472140e911a0cd9100e4922",
+    "src-tauri/src/system.rs": "28978df7936feef552c95211f8f86a0f8f0cb81911eb001c23d997a478ad9380",
+    "src-tauri/src/terminal.rs": "17b3e01f97930a1358bee61384bf3b1b3c0841d76f53f854be91108bafeb7243",
+    "src-tauri/src/thumbnails.rs": "0b0b69fed3e0b3133fbedf3211018960f8328be7e0f7279d2e8b80f21d991075",
+    "src-tauri/src/user_report.rs": "65e7da5392a53b76c83e28a9e6627864b34de8d8c0ecc4aada0af0ffdc16febd",
+    "src-tauri/src/wallpaper.rs": "b93cf28833ef4e5a42ce64835707ae71d399be4c5753116e6b990c77851af11d",
+    "src-tauri/test_support/file_mutation_receipt.rs": "c5b83fd303e2450532da84ba7e8eb8992748afe4cdde72ff603323686c369b57",
+    "src-tauri/test_support/native_directory_contract.rs": "077786ce01292b601b438cb19116c436d78bd948639c7d06ca05d52ae5f91f5a",
+    "src-tauri/tests/config_watch_symlinks.rs": "fe470b0fc46fd88f9421a7284c4b2b224f706eb7dad0526d06b32dde40804204",
+    "src-tauri/src/files/recovery/durable_model.rs": "5c0d44e4be99aea42d3f53bcb86c0f161bd70b8fa9d251a43326f705540530ab"
+  }
+}

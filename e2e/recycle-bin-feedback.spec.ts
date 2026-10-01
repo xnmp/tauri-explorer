@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { MOCK_LOCAL_KEYS } from "../src/lib/api/mock-control";
 
 test("Recycle Bin uses a distinct amber sidebar icon (#660)", async ({ page }) => {
   await page.goto("/");
@@ -9,9 +10,9 @@ test("Recycle Bin uses a distinct amber sidebar icon (#660)", async ({ page }) =
 });
 
 test("Recycle Bin surfaces a launcher failure (#660)", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("mock-open-recycle-bin-error", "No trash folder handler is available");
-  });
+  await page.addInitScript((key) => {
+    localStorage.setItem(key, "No trash folder handler is available");
+  }, MOCK_LOCAL_KEYS.openRecycleBinError);
   await page.goto("/");
 
   await page.getByRole("button", { name: "Open Recycle Bin" }).click();

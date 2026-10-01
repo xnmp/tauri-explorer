@@ -25,10 +25,25 @@ async function navigateToPath(
     position: { x: (box?.width ?? 200) - 8, y: (box?.height ?? 30) / 2 },
   });
   const input = page.locator(".path-input");
-  await input.fill(path);
   const suggestions = page.locator(".suggestions-dropdown");
-  if (await suggestions.isVisible()) await input.press("Escape");
-  await input.press("Enter");
+  await input.fill(path);
+
+  // The address bar's autocomplete runs a debounced (150 ms) directory fetch
+  // and pre-selects its first suggestion, so an Enter that lands after the list
+  // opens applies that suggestion instead of committing the typed path: the
+  // pane stays where it was and the address bar keeps focus, which then
+  // swallows the next shortcut. Sampling the dropdown's visibility once races
+  // that fetch, so commit against the outcome the pane actually reports (#702).
+  await expect
+    .poll(async () => {
+      if ((await input.count()) > 0) {
+        if (await suggestions.isVisible()) await input.press("Escape");
+        if ((await input.inputValue()) !== path) await input.fill(path);
+        await input.press("Enter");
+      }
+      return page.locator(".file-list .content").first().getAttribute("data-current-path");
+    }, { timeout: 15_000 })
+    .toBe(path);
   await waitForEntries(page);
 }
 

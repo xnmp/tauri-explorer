@@ -1,69 +1,62 @@
 /**
- * OS Clipboard API for file operations.
- * Issue: tauri-explorer-za55, tauri-explorer-rdra, #279
- *
- * Read/write use custom Tauri commands that parse Linux clipboard formats
- * (x-special/gnome-copied-files, text/uri-list) via wl-paste/xclip, and
- * CF_HDROP via PowerShell on Windows. Failures carry a reason (e.g.
- * "wl-copy is not installed") so callers can surface it instead of a
- * silent no-op copy (#279).
+ * OS clipboard API. File lists go through the native revisioned clipboard
+ * worker (`clipboard_publish` / `snapshot` / `compare_and_clear` / `rekey` /
+ * `claim_cut` / `release_cut`), which owns ordering across windows and Cut
+ * identity (#844, #865, #871). Failures
+ * carry a reason (e.g. "wl-copy is not installed") so callers can surface it
+ * instead of a silent no-op copy (#279).
  */
 
-import { invoke } from "./files";
+import { extractError, invoke } from "./common";
 
 export type OsClipboardResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-function errorMessage(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  // Tauri command failures arrive as the serialized AppError object
-  // ({ kind, message }) — String() would render "[object Object]" (#401).
-  if (error && typeof error === "object" && "message" in error) {
-    const message = (error as { message: unknown }).message;
-    if (typeof message === "string") return message;
-  }
+/** Read text for terminal paste when WebKit denies the browser Clipboard API. */
+export async function osClipboardReadText(): Promise<OsClipboardResult<string>> {
   try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
+    return { ok: true, data: await invoke<string>("clipboard_read_text") };
+  } catch (error) {
+    return { ok: false, error: extractError(error) };
   }
 }
 
-/**
- * Check if the OS clipboard contains files. A pure probe (menu enablement):
- * failures deliberately read as "no files".
- */
-export async function osClipboardHasFiles(): Promise<boolean> {
-  try {
-    return await invoke<boolean>("clipboard_has_files");
-  } catch (error) {
-    console.error("Failed to check OS clipboard:", error);
-    return false;
-  }
+export interface NativeClipboardSnapshot {
+  revision: number;
+  entries: import("$lib/domain/file").FileEntry[] | null;
+  paths: string[];
+  operation: "copy" | "cut" | null;
+  mirrorError: string | null;
 }
 
-/**
- * Read file paths from the OS clipboard. `ok: true` with an empty array
- * means the clipboard holds no files; `ok: false` means the clipboard
- * tooling itself failed (missing wl-clipboard/xclip, PowerShell error).
- */
-export async function osClipboardReadFiles(): Promise<OsClipboardResult<string[]>> {
-  try {
-    return { ok: true, data: await invoke<string[]>("clipboard_read_files") };
-  } catch (error) {
-    return { ok: false, error: errorMessage(error) };
-  }
+export function osClipboardPublish(
+  entries: import("$lib/domain/file").FileEntry[],
+  operation: "copy" | "cut",
+): Promise<NativeClipboardSnapshot> {
+  return invoke<NativeClipboardSnapshot>("clipboard_publish", { entries, operation });
 }
 
-/**
- * Write file paths to the OS clipboard so external file managers can paste
- * them. Failure carries the reason for the caller to surface.
- */
-export async function osClipboardWriteFiles(filePaths: string[]): Promise<OsClipboardResult<void>> {
-  try {
-    await invoke<void>("clipboard_write_files", { paths: filePaths });
-    return { ok: true, data: undefined };
-  } catch (error) {
-    return { ok: false, error: errorMessage(error) };
-  }
+export function osClipboardSnapshot(): Promise<NativeClipboardSnapshot> {
+  return invoke<NativeClipboardSnapshot>("clipboard_snapshot");
+}
+
+export function osClipboardCompareAndClear(revision: number): Promise<boolean> {
+  return invoke<boolean>("clipboard_compare_and_clear", { revision });
+}
+
+/** Claim the Cut at `revision` so only one paste moves it (#871). */
+export function osClipboardClaimCut(revision: number): Promise<boolean> {
+  return invoke<boolean>("clipboard_claim_cut", { revision });
+}
+
+/** Return a claimed Cut whose move did not complete, so it stays pasteable. */
+export function osClipboardReleaseCut(revision: number): Promise<boolean> {
+  return invoke<boolean>("clipboard_release_cut", { revision });
+}
+
+export function osClipboardRekey(
+  revision: number,
+  oldPath: string,
+  entry: import("$lib/domain/file").FileEntry,
+): Promise<NativeClipboardSnapshot | null> {
+  return invoke<NativeClipboardSnapshot | null>("clipboard_rekey", { revision, oldPath, entry });
 }

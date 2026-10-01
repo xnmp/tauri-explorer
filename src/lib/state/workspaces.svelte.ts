@@ -8,7 +8,9 @@
  */
 
 import type { PersistedTabState } from "./window-tabs.svelte";
+import { normalizePersistedState, persistedStateAllocation, MAX_TOTAL_LAYOUT_NODES } from "./window-tabs-persistence";
 import { loadPersisted, savePersisted } from "./persisted";
+import { isRecord, WINDOW_SEED_MAX_CHARS } from "$lib/domain/window-input";
 
 export interface Workspace {
   id: string;
@@ -20,13 +22,42 @@ export interface Workspace {
 
 const STORAGE_KEY = "explorer-workspaces";
 const MAX_WORKSPACES = 20;
+/** Validate persisted workspace metadata and delegate tab/layout validation to
+ * the canonical window-tabs normalizer. Input is bounded before normalization. */
+export function normalizeWorkspaces(value: unknown): Workspace[] {
+  if (!Array.isArray(value)) return [];
+  const ids = new Set<string>();
+  const workspaces: Workspace[] = [];
+  let remainingNodes = MAX_TOTAL_LAYOUT_NODES;
+  for (const candidate of value.slice(0, MAX_WORKSPACES)) {
+    if (!isRecord(candidate)) continue;
+    const { id, name, createdAt, updatedAt, state } = candidate;
+    if (
+      typeof id !== "string" || id.length === 0 || ids.has(id) ||
+      typeof name !== "string" || name.length === 0 ||
+      typeof createdAt !== "number" || !Number.isFinite(createdAt) ||
+      typeof updatedAt !== "number" || !Number.isFinite(updatedAt) ||
+      !isRecord(state)
+    ) continue;
+    const allocation = persistedStateAllocation(state, remainingNodes);
+    if (allocation === null) continue;
+    const normalizedState = normalizePersistedState(state);
+    // A malformed tab/layout is filtered by the canonical normalizer. Do not
+    // retain the containing workspace as an apparently valid empty snapshot.
+    if (!normalizedState || normalizedState.tabs.length === 0) continue;
+    ids.add(id);
+    remainingNodes -= allocation;
+    workspaces.push({ id, name, createdAt, updatedAt, state: normalizedState });
+  }
+  return workspaces;
+}
 
 function generateId(): string {
   return `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function loadWorkspaces(): Workspace[] {
-  return loadPersisted(STORAGE_KEY, []);
+  return normalizeWorkspaces(loadPersisted<unknown>(STORAGE_KEY, [], WINDOW_SEED_MAX_CHARS));
 }
 
 function saveWorkspaces(ws: Workspace[]): void {

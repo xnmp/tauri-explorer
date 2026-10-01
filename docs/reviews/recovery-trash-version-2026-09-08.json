@@ -1,0 +1,133 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "Shared entry versions and Linux hardlink trash/Undo fix implemented; full architectural review remains active",
+  "production_seams": [
+    "files::{object_id,entry_version,file_identity} separate pure native identity/version models from descriptor/metadata capture; recovery reuses these primitives",
+    "Linux Context::prepare and Prepared::execute_with compare full EntryVersion before effects and after both successful and error-returning renames",
+    "Freedesktop TrashArtifact retains EntryVersion; restore compares it before and after publication",
+    "Unix payload versions retain device/inode, size, mtime, kind, full mode, uid and gid; ctime and nlink intentionally excluded",
+    "Trash metadata retains strict ctime identity plus SHA256 digest; a changed moved payload retains metadata/payload and reports MutationUncertain without an Undo receipt",
+    "Required Unix version fields change unshipped durable records; absent fields do not default into authority"
+  ],
+  "verification": {
+    "receipt_regression_before": {
+      "log": "/tmp/recovery-trash-hardlinks-red.log",
+      "exit_code": 101,
+      "failed": 1,
+      "reason": "Second hardlink deletion invalidated first Undo receipt"
+    },
+    "prepared_regression_before": {
+      "log": "/tmp/recovery-trash-prepared-hardlinks-red.log",
+      "exit_code": 101,
+      "failed": 1,
+      "reason": "First prepared hardlink deletion invalidated sibling plan"
+    },
+    "full_rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --test-threads=1",
+      "log": "/tmp/recovery-trash-version-full.log",
+      "exit_code": 101,
+      "passed": 849,
+      "failed": 2,
+      "ignored": 11,
+      "failure_reason": "Sandbox denied localhost TcpListener bind in two user_report tests"
+    },
+    "localhost_rerun": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- --exact user_report::tests::relay_daily_cap_stays_distinct_for_the_ui user_report::tests::unreachable_relay_has_a_network_error_kind --test-threads=1",
+      "log": "/tmp/recovery-trash-version-localhost.log",
+      "exit_code": 0,
+      "passed": 2,
+      "environment": "Same clean shell/cache environment, approved localhost socket access"
+    },
+    "accepted_rust_across_runs": 851,
+    "contracts": [
+      "both hardlink execution and restore orders",
+      "sibling link/create/rename/unlink preserves preparation and receipts",
+      "same-size writes with deliberately distinct mtime reject before delete and restore",
+      "chmod through sibling rejects before delete and restore",
+      "direct directory-child changes reject",
+      "post-rename payload mutation with success and error preserves evidence without issuing Undo",
+      "existing broken-symlink/directory round trips and substituted-object regressions pass",
+      "descriptor-relative and supplied metadata version captures agree for files/directories/dangling symlinks",
+      "malformed durable version time/mode/kind is fenced"
+    ],
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-trash-version-clippy.log",
+      "exit_code": 0,
+      "warnings": "12 unused-infrastructure library warnings (including newly shared version_from_metadata pending production recovery integration); 5 test warnings, 4 duplicate"
+    },
+    "windows_cross_checks": [
+      {
+        "command": "cargo check --manifest-path /tmp/recovery-private-storage-check/Cargo.toml --offline --target x86_64-pc-windows-gnu --tests",
+        "log": "/tmp/recovery-trash-version-windows-core.log",
+        "exit_code": 0,
+        "scope": "actual shared identity/version/capture/trash artifact and recovery storage/lock/model source plus included tests"
+      },
+      {
+        "command": "cargo check --manifest-path /tmp/windows-restore-check/Cargo.toml --offline --target x86_64-pc-windows-gnu --tests",
+        "log": "/tmp/recovery-trash-version-windows-restore.log",
+        "exit_code": 0,
+        "scope": "actual batch/worker/trash/windows restore source and tests; unrelated Tauri runtime/file-operation shims; compilation only"
+      }
+    ],
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT, scoped",
+      "confirmed": [
+        "one full version contract at every operation boundary",
+        "clean model/capture dependency direction",
+        "Unix metadata and kind validation",
+        "behavioral regressions match intended contracts",
+        "larger artifact still covered by retained_bytes size_of accounting"
+      ],
+      "not_verified": "Windows/macOS runtime, content hashes, recursive snapshots, native syscall atomicity"
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "log": "/tmp/recovery-trash-version-maps.log",
+      "result": "415/415 tracked source files, zero unresolvable references; moved/new untracked modules explicitly mapped"
+    }
+  },
+  "normal_build": {
+    "command": "bun run tauri build --debug --no-bundle",
+    "log": "/tmp/recovery-trash-version-normal-build.log",
+    "exit_code": 0,
+    "sha256": "59437b1bb97bb6f656734d4a8a4b7d186da4b44339c28ea245d8133b35862672",
+    "runtime_acceptance": "not rerun this checkpoint; actual filesystem operations covered by Rust temp-directory tests"
+  },
+  "limits": [
+    "coarse or restored mtimes can hide same-size writes",
+    "extended attributes/ACLs/flags outside mode/uid/gid not captured",
+    "directory version is not a recursive content snapshot",
+    "inode/file ID reuse and check-to-rename races remain",
+    "no new deletion latency or startup claim",
+    "whole-selection preparation/admission, remaining mutation roots, durable artifact promotion/reconciliation, overwrite Undo, retention/cancellation and platform/product release matrix remain incomplete",
+    "latest work local, no publication"
+  ],
+  "research": [
+    "https://man7.org/linux/man-pages/man7/inode.7.html",
+    "https://man7.org/linux/man-pages/man2/stat.2.html"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/object_id.rs": "38cce4d2c6c4a4697650d3957fa61b27368c066b18a26a32a59edc10421fc038",
+    "src-tauri/src/files/entry_version.rs": "40b16501cd7338b6a033f1b4bfd54acf334b0c03b1c21f312147056278d8992e",
+    "src-tauri/src/files/file_identity.rs": "ea74616075a855416a7764a1b33b352d1010d279675a9620ed56b2612caec314",
+    "src-tauri/src/files/file_identity/windows.rs": "856164ec684342c6910e682c0319e27883b5b61b1f5c88b1e0e678377099bc53",
+    "src-tauri/src/files/trash_artifact.rs": "b4676e853f47ab803fc851f3ca601be0eef7081eaa68cba3debe27fcac79e407",
+    "src-tauri/src/files/freedesktop_trash.rs": "2c61b47c207cde8b5c35931fa77f9f3b20f446c177b7d3ca35d335ca76f62a31",
+    "src-tauri/src/files/freedesktop_trash/plan.rs": "a634501a7caadf562f6a9715daeeb7700e2f2b9c78fb4b9ed9f892e3fa015b83",
+    "src-tauri/src/files/recovery/model.rs": "39a13743c8fbd0afdf8db562f9f0a0b42a3f14c5b9a2ef237cccfc57443a8157",
+    "src-tauri/src/files/recovery/coordinator.rs": "5e422a9234d35c7a7295e6d7a559b6aa2133c1d69eb42cbd2e24595e18544e43",
+    "src-tauri/src/files/recovery/locks.rs": "d48aeb35c7bb7f3868fac867c242a218ec0b432111c312c8bafe8fae9b04b7e1",
+    "src-tauri/src/files/recovery/resources.rs": "dcb5a5dad7ef503985d3f7494f911901613ad0810baf00f95b666224f6d87a80",
+    "src-tauri/src/files/recovery/storage.rs": "5dc7ec193386d875693cb9293bd881f6c3083016f473bd7d2004cce29fc8f11b",
+    "src-tauri/src/files/mod.rs": "421ff7a7adcf8a4da5cfe9913f74ea5192281a258a909ec3d26c2f06958d7972",
+    "src-tauri/src/files/recovery/mod.rs": "c78ef11241b20a1891fb0fc510ed07d9c3072e4dc328aff56ce5d89004060c6f",
+    "src-tauri/test_support/freedesktop_trash.rs": "26dbdda05126c9b7e74c649f93d59a216ec954b6c7dd605f175977830d9d261f",
+    "src-tauri/test_support/recovery_coordinator.rs": "73ec09850b60117dff04ef696856ebb691b62f8d6bf4e0d538710fd5c4128672",
+    "src-tauri/test_support/recovery_file_identity.rs": "2e32671db99b7fb004dc6e562045cb2bdbe4b0fab9da2780b9695a3b3862cc4d",
+    "src-tauri/test_support/windows_restore.rs": "56581570b3b6a3ca4acf8a3a9634250cc8bd762a4b42bb3ab03ae6231dd3a7c1"
+  }
+}

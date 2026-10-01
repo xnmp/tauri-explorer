@@ -56,4 +56,35 @@ describe("conflictResolver queueing", () => {
     expect(() => conflictResolver.resolve("cancel")).not.toThrow();
     expect(conflictResolver.isActive).toBe(false);
   });
+
+  it("returns cancel immediately for a pre-aborted prompt without entering the queue", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(conflictResolver.prompt(info("never-visible.txt"), controller.signal))
+      .resolves.toEqual({ choice: "cancel", applyToAll: false });
+    expect(conflictResolver.isActive).toBe(false);
+  });
+
+  it("aborts the active prompt and advances to the queued prompt", async () => {
+    const controller = new AbortController();
+    const active = conflictResolver.prompt(info("active.txt"), controller.signal);
+    const queued = conflictResolver.prompt(info("queued.txt"));
+    controller.abort();
+    await expect(active).resolves.toEqual({ choice: "cancel", applyToAll: false });
+    expect(conflictResolver.activeConflict?.fileName).toBe("queued.txt");
+    conflictResolver.resolve("skip");
+    await expect(queued).resolves.toEqual({ choice: "skip", applyToAll: false });
+  });
+
+  it("removes an aborted queued prompt without disturbing the active prompt", async () => {
+    const active = conflictResolver.prompt(info("active.txt"));
+    const controller = new AbortController();
+    const queued = conflictResolver.prompt(info("queued.txt"), controller.signal);
+    controller.abort();
+    await expect(queued).resolves.toEqual({ choice: "cancel", applyToAll: false });
+    expect(conflictResolver.activeConflict?.fileName).toBe("active.txt");
+    conflictResolver.resolve("overwrite");
+    await expect(active).resolves.toEqual({ choice: "overwrite", applyToAll: false });
+    expect(conflictResolver.isActive).toBe(false);
+  });
 });

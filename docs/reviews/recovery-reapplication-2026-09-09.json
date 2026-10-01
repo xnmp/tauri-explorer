@@ -1,0 +1,84 @@
+{
+  "date": "2026-09-09",
+  "scope": "Retained-copy reapplication executor and semantic native-history admission; production Undo/Redo integration still pending",
+  "contracts": [
+    "Reapplication uses retained independent publication payload, including after deletion of original source",
+    "ReapplyIntent is durable before parking original; exact endpoint reconciliation allows retry or restoration after interruption",
+    "Missing or changed private copy cannot displace original; a foreign target inserted after displacement is preserved",
+    "Files, copied directories and dangling symlinks survive repeated restore/reapply cycles",
+    "Persisted effect revision advances only after confirmed public-content transitions, separately from ownership generation",
+    "Inspect ownership churn does not invalidate semantic history tokens; prior cycles and pending intent phases are rejected",
+    "Semantic history claims and current native owner acquisition share one admission critical section",
+    "Revision exhaustion is checked before permitting native content effects"
+  ],
+  "verification": {
+    "rust": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib -- files::recovery:: renderer_owner:: file_mutation:: file_history:: git_watch:: files::fs_watcher:: task_registry:: files::file_ops:: --test-threads=1",
+      "passed": 430,
+      "failed": 0,
+      "ignored": 11,
+      "exit_code": 0,
+      "log": "/tmp/recovery-reapplication-tests-final.log"
+    },
+    "native_process_death": {
+      "test": "files::recovery::replacement_execution::reapplication_tests::native_process_death_during_reapplication_retains_both_versions",
+      "boundaries": [
+        "park-rename before verification/fsync",
+        "publication rename before permission finalization/fsync",
+        "durable publication before completion checkpoint"
+      ],
+      "assertions": [
+        "competing coordinator cannot claim live owner",
+        "fresh claim after process kill reopens and completes reapplication",
+        "copied child bytes and final 0500 directory mode preserved",
+        "original and independent copy preserved after subsequent restore"
+      ]
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "library_dead_code_warnings": 15,
+      "new_warnings_reason": "Reapplication and semantic history admission are not connected to production command history yet",
+      "log": "/tmp/recovery-reapplication-clippy.log"
+    },
+    "format": "cargo fmt --manifest-path src-tauri/Cargo.toml --check: passed",
+    "architecture": "bun run lint:arch: clean",
+    "maps": "python3 docs/code-map/validate.py --coverage: 415/415 indexed source files, no unresolvable references",
+    "diff": "git diff --check: passed"
+  },
+  "independent_review": [
+    {
+      "agent": "recovery_native_review_sol",
+      "verdict": "CONFIRMED",
+      "scope": "endpoint safety, existing forward behavior, source independence, real subprocess boundary proof; power-loss persistence unproven"
+    },
+    {
+      "agent": "recovery_ui_review_sol",
+      "verdict": "CONFIRMED",
+      "scope": "atomic semantic revision claim, Inspect compatibility, stale-cycle rejection and pre-effect overflow fence"
+    }
+  ],
+  "limits": [
+    "Production overwrite Undo/Redo history action, receipt minting and command/frontend integration remain pending; existing Undo-unavailable warning remains",
+    "SIGKILL coverage does not prove power-loss guarantees",
+    "Native entry version observation is not recursive content integrity; ADR 0020 documents nested writes and metadata-preserving changes outside its guarantees",
+    "Legacy checkpoints missing effect_revision decode as zero; no retroactive history tokens minted",
+    "No new browser or Tauri UI build/acceptance; previous native binary is stale relative to these source changes",
+    "No Windows/macOS runtime qualification, startup latency measurement or publication in this step"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/model.rs": "2a32936bf2baeaa6f669fefff8096d21352e877349b3c9bd0b9e8e083b1a4010",
+    "src-tauri/src/files/recovery/mod.rs": "c57bb547557c408620acba4220e66b5966963997908b24bab597c214cca1e321",
+    "src-tauri/src/files/recovery/coordinator.rs": "0b58acc6732c9108ac2c9ffaa6a864c3f31570dc1aa742f9107dacad3fff3f1b",
+    "src-tauri/src/files/recovery/coordinator/claim.rs": "6c74285634a2d214cfc2ea307f30d9885b9267a3d169017cdf2b02bd2766bd24",
+    "src-tauri/src/files/recovery/replacement_artifact.rs": "9e2e6f2f630942175c75038576a4b0dee0b73ca6b6e3cb38fad7470c7f8f44c2",
+    "src-tauri/src/files/recovery/replacement_transition.rs": "fcf027814d38f58f1218c46b16801c27bcb2f099d8a95ed7c9de38a5d7c74850",
+    "src-tauri/src/files/recovery/replacement_transfer.rs": "8118ccd9b51944cb76740efb0668dd2ec94b9ccd37f43396cafdd0b19a666e5b",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "bd5097bde67856224eac4541c92d4c0f96ee7314e5907fb523960befac44bcc1",
+    "src-tauri/src/files/recovery/replacement_reapplication.rs": "f0c24ed963b4861de9f670d13e1a7e9a47d565a5061187ee48ab228cb24e386b",
+    "src-tauri/test_support/recovery_replacement_execution.rs": "512d50a97472acb23bc9927278987d768773534cdc24dd7f58a7a77eac641315",
+    "src-tauri/test_support/recovery_replacement_transition.rs": "05b10ccfdf782980cd4a229ad604808065cb37238bf8660f8596afb441076784",
+    "src-tauri/test_support/recovery_replacement_reapplication.rs": "e75b4909712dee5f11b36dc141a815e4ea6bf6f233b91899b1046b78aa8c9d2a",
+    "src-tauri/test_support/recovery_reapplication_execution.rs": "28d0d189175480f5fb16f14edfc554e2358e9c6e6e9c0fa4dab744214bb15a46"
+  }
+}

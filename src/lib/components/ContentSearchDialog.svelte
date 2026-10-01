@@ -456,7 +456,6 @@
     font-family: monospace;
     font-size: 12px;
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .option-btn:hover {
@@ -478,7 +477,7 @@
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: filter var(--transition-fast);
   }
 
   .search-btn:hover:not(:disabled) {
@@ -621,7 +620,7 @@
   .file-name {
     font-size: 13px;
     font-weight: 500;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -664,7 +663,7 @@
 
   .show-more-text {
     font-size: 12px;
-    color: var(--accent);
+    color: var(--accent-text, var(--accent));
     cursor: pointer;
     font-style: italic;
   }

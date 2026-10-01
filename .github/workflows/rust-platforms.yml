@@ -1,0 +1,118 @@
+# Rust suites on the platforms that ci.yml's ubuntu `rust` job cannot prove
+# (#772). Every `cfg(unix)` recovery, move-retention/retirement and
+# native_directory module compiles on macOS, and the Windows adapters compile
+# on Windows; neither was tested here before. e2e-tauri.yml keeps its filtered
+# Windows contract loop because it gates that job's native smoke.
+name: Rust platforms
+
+# Only Rust inputs can change these results. The nightly run catches drift that
+# path filters hide: `dtolnay/rust-toolchain@stable` advances independently of
+# this repository (#872).
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-platforms.yml"
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/rust-platforms.yml"
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Scheduled runs start from the default branch (main); qualify dev.
+          ref: ${{ github.event_name == 'schedule' && 'dev' || '' }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # tauri::generate_context! requires the frontendDist dir to exist.
+      - name: Create empty frontend dist
+        shell: bash
+        run: mkdir -p build
+
+      # Handle walks (`Directory::open`) require a canonical path, and
+      # production callers canonicalize first. Watchers also report canonical
+      # paths. The default temp directories are not canonical: macOS's lives
+      # under the /var -> /private/var symlink, and the Windows runner's uses
+      # the 8.3 short name RUNNER~1. Give tests a canonical root instead.
+      - name: Use a canonical temporary directory
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            printf 'TMP=%s\nTEMP=%s\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          else
+            printf 'TMPDIR=%s\n' "$(cd "$RUNNER_TEMP" && pwd -P)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      # Cut ownership against the real clipboard (#877): Windows' sequence
+      # number and macOS' change count. Ignored by default because it replaces
+      # the clipboard; the runner's is disposable. Require exactly one test so
+      # a renamed test cannot pass by matching nothing.
+      - name: Native clipboard Cut ownership
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib native_clipboard_ownership -- --ignored --nocapture 2>&1 | tee clipboard-ownership.log
+          grep -q 'test result: ok\. 1 passed; 0 failed;' clipboard-ownership.log
+
+      # GitHub-hosted Windows jobs own a fresh administrator VM. Temporarily
+      # enable 8.3 creation only for this dedicated test; restore the runner's
+      # original setting even when the assertion or Cargo fails (#799).
+      - name: NTFS 8.3 physical identity
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tempProbe = [System.IO.Path]::GetTempFileName()
+          try {
+            $tempVolume = Get-Volume -FilePath $tempProbe -ErrorAction Stop
+            if ($tempVolume.FileSystem -ne 'NTFS') {
+              throw "8.3 identity acceptance requires NTFS; TEMP uses $($tempVolume.FileSystem)"
+            }
+            Write-Host "Fixture TEMP volume: $($tempVolume.FileSystem) ($tempProbe)"
+          } finally {
+            Remove-Item -LiteralPath $tempProbe -Force
+          }
+          $policy = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem').NtfsDisable8dot3NameCreation
+          try {
+            & fsutil.exe 8dot3name set 0
+            if ($LASTEXITCODE -ne 0) { throw "Could not enable NTFS 8.3 creation" }
+            $result = & cargo.exe test --manifest-path src-tauri/Cargo.toml --lib ntfs_short_name_alias_keeps_physical_identity -- --ignored --nocapture 2>&1
+            $testExit = $LASTEXITCODE
+            $result | Out-Host
+            if ($testExit -ne 0) { throw "NTFS 8.3 physical identity test failed" }
+            if (($result | Out-String) -notmatch 'test result: ok\. 1 passed; 0 failed;') {
+              throw "NTFS 8.3 physical identity test did not execute exactly once"
+            }
+          } finally {
+            & fsutil.exe 8dot3name set $policy
+            if ($LASTEXITCODE -ne 0) { throw "Could not restore original NTFS 8.3 policy $policy" }
+          }

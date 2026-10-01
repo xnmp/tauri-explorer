@@ -1,0 +1,186 @@
+{
+  "recorded_at": "2026-09-08T22:59:09.538749+00:00",
+  "scope": "User freeze: finish started move schema; file expansion; release-critical fixes only",
+  "issues": [
+    {
+      "key": "move",
+      "title": "feat: durable-move-recovery and ordered native move sessions",
+      "exit": 0,
+      "url": "https://github.com/xnmp/tauri-explorer/issues/685",
+      "error": ""
+    },
+    {
+      "key": "adoption",
+      "title": "refactor: extend-recovery-admission to remaining mutation families",
+      "exit": 0,
+      "url": "https://github.com/xnmp/tauri-explorer/issues/686",
+      "error": ""
+    },
+    {
+      "key": "retention",
+      "title": "feat: recovery-artifact-retention policy and durable retirement",
+      "exit": 0,
+      "url": "https://github.com/xnmp/tauri-explorer/issues/687",
+      "error": ""
+    },
+    {
+      "key": "qualification",
+      "title": "test: extended-native-soak and product qualification matrix",
+      "exit": 0,
+      "url": "https://github.com/xnmp/tauri-explorer/issues/688",
+      "error": ""
+    }
+  ],
+  "move_contract": {
+    "state": "implemented, no executable move phases",
+    "pre_gate_rust": {
+      "log": "/tmp/move-contract-rust.log",
+      "sha256": "3aefd33b24a6eaaac7e2e2b45b90b67553c490ceac7f1ea0924bd4ab3ea83b3d",
+      "passed": 1151,
+      "ignored": 19
+    }
+  },
+  "release_fix": {
+    "problem": "1,024 permanent overwrite records exhaust shared recovery admission without retirement",
+    "before": {
+      "log": "/tmp/release-copy-capacity-before.log",
+      "sha256": "e7f9fe4718d1a93833781b0c92d0fd0bf563ebc4371e2afd451f24af39faefce",
+      "result": "failed on overwrite index 1024 (1,025th request): Recovery operation limit reached",
+      "method": "Temporarily restored unconditional durable production dispatch, ran the actual session regression, then restored the gated source in a finally block."
+    },
+    "after": "1,025 native overwrite sessions pass with one inverse each, empty recovery inventory and exact final bytes; full native history tests cycle default and opt-in policies three times",
+    "policy": "durable-copy-recovery default off; retained-record discovery and restoration remain enabled",
+    "warnings": "Confirmed receipts survive cleanup failure with the existing success-warning channel"
+  },
+  "verification": [
+    {
+      "name": "rust-default",
+      "command": [
+        "cargo",
+        "test",
+        "--features",
+        "avif"
+      ],
+      "exit": 0,
+      "log": "/tmp/release-final-rust-default.log",
+      "sha256": "99ca4d70aae4b52060f75dbb62313a4960fc7415f8f57aa1aeeb51d383a17ead",
+      "summaries": [
+        "test result: ok. 1154 passed; 0 failed; 19 ignored; 0 measured; 0 filtered out; finished in 4.42s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "name": "rust-durable",
+      "command": [
+        "cargo",
+        "test",
+        "--features",
+        "avif,durable-copy-recovery"
+      ],
+      "exit": 0,
+      "log": "/tmp/release-final-rust-durable.log",
+      "sha256": "ca94364e7a1fa2653f90ef9d05d5b392fcceac195e3a56268e3489a1878e1710",
+      "summaries": [
+        "test result: ok. 1152 passed; 0 failed; 19 ignored; 0 measured; 0 filtered out; finished in 2.70s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    {
+      "name": "clippy-default",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-targets",
+        "--features",
+        "avif",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0,
+      "log": "/tmp/release-final-clippy-default.log",
+      "sha256": "484dc060b99de61fd19d0875f14a6112e2e9abef97d2a4b7c61e16a6fa0603b3",
+      "summaries": []
+    },
+    {
+      "name": "clippy-durable",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-targets",
+        "--features",
+        "avif,durable-copy-recovery,e2e-renderer-recovery",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit": 0,
+      "log": "/tmp/release-final-clippy-durable.log",
+      "sha256": "6b0456a9e9951f7c8c683b7268fc8dc05636af56fdeff06c211ba7fe6feb8133",
+      "summaries": []
+    }
+  ],
+  "checks": {
+    "format": {
+      "log": "/tmp/release-final-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "typecheck": {
+      "log": "/tmp/release-freeze-check.log",
+      "sha256": "7eb563d789db668bfa124151e359c0791c4229b56c2c3663a8b2922a68654acd"
+    },
+    "architecture": {
+      "log": "/tmp/release-freeze-arch.log",
+      "sha256": "1e330b86131f7a41ccf1555229bd888748995d86d259cab06218b0c469ea22ae"
+    },
+    "maps": {
+      "log": "/tmp/release-freeze-full-maps.log",
+      "sha256": "ba3546228f001f3f24f577a4b0b390a0bbae1b5b48e6516c2771f42cb582f786"
+    }
+  },
+  "independent_review": {
+    "agent": "release_risk_review (GPT-5.6 Sol)",
+    "result": "Confirmed production dispatch, shared claims, publication receipts, preserved recovery access, cleanup-warning semantics and before-fix capacity failure. Identified feature-specific history fixture mismatch; fixed and both configurations now pass."
+  },
+  "qualification_limits": [
+    "No new native GUI run for final default dispatch; real filesystem/history Rust tests qualify the backend change. Earlier Linux GUI recovery evidence applies to the opt-in feature.",
+    "No Windows/macOS runtime acceptance or Mac half-bounce measurement.",
+    "The gate does not retire existing records or repair already-full experimental profiles.",
+    "Watcher full-suite failure passed isolation and diagnostic run. Private/precreated fixture roots remove shared-parent timing coupling; exact original notify event cause was not established. Production watcher code is unchanged.",
+    "Final source includes a formatting-only change to test_support/file_mutation.rs after the passing matrix. No behavior changed.",
+    "Latest architecture edits remain local; no merge/release acceptance implied."
+  ],
+  "sources": {
+    "src-tauri/Cargo.toml": "3d5f3995ed22fec5b23067137975ae0dc70d156a1fb64c3cf38f0c26dcf5eb37",
+    ".github/workflows/ci.yml": "7f815b16c874e6bcf186c8a2b4b2b2f5a2a761b4677ec4d2254c345a58a6d991",
+    "src-tauri/src/files/recovery/move_model.rs": "052d350a3e258ef45042600c9fb8d7809c8d4c2b5acac6c28794b388002f6aeb",
+    "src-tauri/src/files/recovery/model.rs": "4308d69c712f42bbd8bbe8113a8e83c641d7cfbe847f12750aab9b198bde8f8e",
+    "src-tauri/src/files/recovery/runtime.rs": "abd45390a193e111a1917cf266f74d152d91f43bec03cf923e321dba89beba06",
+    "src-tauri/src/files/recovery/coordinator.rs": "5b1a194cc9b86fe4951b0a301c2163ecc55317530fde42f950321c8966c1759d",
+    "src-tauri/src/files/recovery/coordinator/claim.rs": "02ea337254e689b3884d8a5977871b5e52e3162c95a16dae985c69bc7c536a9f",
+    "src-tauri/src/files/recovery/coordinator/claims.rs": "408da55002d55c1312b31711f7c153f423a69d17519eac69b36ceadddc037426",
+    "src-tauri/src/files/recovery/forward_copy.rs": "77a70db0935c41069b8aed3feb21fecf3ef95a2b7d8fa76b7c23154b809672a9",
+    "src-tauri/src/files/recovery/service.rs": "c80da55713608eaeda365695b2337aa1a110015d6dff8754ec3c69a3f8e52266",
+    "src-tauri/src/files/file_ops.rs": "436984ee925a3bd5f85eba3186ea31038a6db0e4ae817c702fff39ce6ecc2346",
+    "src-tauri/src/file_mutation.rs": "b79813594bf0ceed82989172bcb671adb00b3b915688d59328de5b5d6e7fabbb",
+    "src-tauri/src/files/mutation.rs": "72d114c494f338332a544f3a0b89c442f01a02e2cce3b090a6cb371fb0792bcb",
+    "src-tauri/src/files/copy_session.rs": "dd6092ec0bbf6ad464efa37e1ba7eeefc0ce235584613229d63b3b5f4d60f983",
+    "src-tauri/src/files/copy_session/worker.rs": "c558948a5caecdb6b92186e2a11bcd619fab7bbb0366cd9b7e20582c4c7b5e5f",
+    "src-tauri/test_support/recovery_move_model.rs": "a32ad5edc908ccc968315d8bd5f8a92e5f89002dfa85f1c4c430ba42867aeb4f",
+    "src-tauri/test_support/recovery_move_intent.rs": "bbe45fad83bb626b626cf2f40ddfa55bf8fa1b343b3e701fa2cfbb98cbfeffbb",
+    "src-tauri/test_support/copy_session.rs": "271d03299716afc2b5b48c53273360a1bc767e0775608f521d7888944f96d4a2",
+    "src-tauri/test_support/file_history_publication.rs": "b3d90e393a5231023990596b132e70bda8ac5ac74cbd3b9a583269bfa7dcd35e",
+    "src-tauri/test_support/file_worker_completion.rs": "71b2b98aca8c7cd3cfc60ca5ac3935cdec1088149435c4fe23eb37d590a751c9",
+    "src-tauri/test_support/issue_651_streaming_integration.rs": "7803afd2534ab2a633cb2a99cfbb21a3e4b63e6f1214f1353a9073e8a6eda91b"
+  }
+}

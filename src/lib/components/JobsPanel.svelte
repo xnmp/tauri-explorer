@@ -157,7 +157,6 @@
     font-size: 12px;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .clear-btn:hover {
@@ -177,7 +176,6 @@
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-fast);
   }
 
   .close-btn:hover {
@@ -248,11 +246,11 @@
   }
 
   .status-icon.success {
-    color: var(--system-success, #4caf50);
+    color: var(--system-success-text, var(--system-success, #4caf50));
   }
 
   .status-icon.error {
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
   }
 
   .job-details {
@@ -280,14 +278,14 @@
 
   .job-error {
     font-size: 11px;
-    color: var(--system-critical);
+    color: var(--system-critical-text, var(--system-critical));
     margin-top: 4px;
     word-break: break-word;
   }
 
   .job-output {
     font-size: 11px;
-    color: var(--system-success, #4caf50);
+    color: var(--system-success-text, var(--system-success, #4caf50));
     margin-top: 4px;
   }
 

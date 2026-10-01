@@ -19,7 +19,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const readConfigFileMock = vi.fn();
 const writeConfigFileMock = vi.fn();
 
-vi.mock("$lib/api/files", async (importOriginal) => {
+vi.mock("$lib/api/config", async (importOriginal) => {
   const original = await importOriginal<Record<string, unknown>>();
   return {
     ...original,

@@ -46,7 +46,7 @@ function makeFakeCtx() {
     registerDialog: (d) => void dialogs.push(d),
     openDialog: () => {},
     closeDialog: () => {},
-    jobs: { add: () => {}, complete: () => {}, fail: () => {} },
+    jobs: { accept: (_registration, start) => start() },
     toast: { show: () => {}, error: () => {} },
     events: { listen: () => {} },
     storage: { get: async () => ({ ...store }), set: async (v) => void (store = { ...v }) },

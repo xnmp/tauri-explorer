@@ -12,21 +12,27 @@
  * - warming never starts the repo watcher (single-watcher invariant preserved).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { GitStatusSummary } from "$lib/api/files";
+import type { GitStatusSummary } from "$lib/api/git";
 
 const gitRepoRootMock = vi.fn();
 const gitSummaryMock = vi.fn();
-const gitWatchRepoMock = vi.fn(async (_root: string) => {});
+const gitWatchRepoMock = vi.fn(async (root: string) => ({ ok: true, data: { id: root, repoRoot: root } }));
 
-vi.mock("$lib/api/files", () => ({
+vi.mock("$lib/api/git", () => ({
   gitRepoRoot: (path: string) => gitRepoRootMock(path),
+  gitDirectoryScope: async (path: string) => {
+    const result = await gitRepoRootMock(path);
+    return result.ok && result.data ? { ...result, data: {
+      repo_root: result.data, relative_directory: path.slice(result.data.length).replace(/^[/\\]+/, ""),
+    } } : result;
+  },
   gitSummary: (root: string) => gitSummaryMock(root),
   gitStage: vi.fn(async () => ({ ok: true })),
   gitUnstage: vi.fn(async () => ({ ok: true })),
   gitDiscard: vi.fn(async () => ({ ok: true })),
   gitCommit: vi.fn(async () => ({ ok: true })),
   gitWatchRepo: (root: string) => gitWatchRepoMock(root),
-  gitUnwatchRepo: vi.fn(async () => {}),
+  gitUnwatchRepo: vi.fn(async () => ({ ok: true, data: undefined })),
 }));
 
 vi.mock("$lib/state/git-refresh", () => ({

@@ -19,7 +19,7 @@ const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 /// Payload of byte-progress events (`zip-progress`, `unzip-progress`,
 /// `copy-progress`). Shape is stable across all three so the frontend can
 /// share one `ZipProgressEvent` type.
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ByteProgress {
     pub job_id: u64,
@@ -43,6 +43,7 @@ pub struct ProgressTracker<'a> {
     bytes_total: u64,
     cancelled: Option<&'a AtomicBool>,
     last_emit: Instant,
+    reporter: Option<&'a (dyn Fn(ByteProgress) + Send + Sync)>,
 }
 
 impl<'a> ProgressTracker<'a> {
@@ -64,7 +65,15 @@ impl<'a> ProgressTracker<'a> {
             cancelled,
             // Backdated so the very first chunk emits immediately.
             last_emit: Instant::now() - PROGRESS_EMIT_INTERVAL,
+            reporter: None,
         }
+    }
+
+    /// A request-owned channel can carry progress without global job IDs.
+    pub(crate) fn report_to(mut self, reporter: &'a (dyn Fn(ByteProgress) + Send + Sync)) -> Self {
+        self.app = None;
+        self.reporter = Some(reporter);
+        self
     }
 
     /// Return an error if the job has been cancelled. Cheap enough to call
@@ -83,18 +92,20 @@ impl<'a> ProgressTracker<'a> {
     pub fn advance(&mut self, n: u64, current_file: &Path) -> Result<(), AppError> {
         self.bytes_done += n;
         self.check_cancelled()?;
-        if let Some(app) = self.app {
-            if self.last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL {
-                self.last_emit = Instant::now();
-                let _ = app.emit(
-                    self.event,
-                    ByteProgress {
-                        job_id: self.job_id,
-                        bytes_done: self.bytes_done,
-                        bytes_total: self.bytes_total,
-                        current_file: current_file.to_string_lossy().to_string(),
-                    },
-                );
+        if (self.app.is_some() || self.reporter.is_some())
+            && self.last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL
+        {
+            self.last_emit = Instant::now();
+            let progress = ByteProgress {
+                job_id: self.job_id,
+                bytes_done: self.bytes_done,
+                bytes_total: self.bytes_total,
+                current_file: current_file.to_string_lossy().to_string(),
+            };
+            if let Some(reporter) = self.reporter {
+                reporter(progress);
+            } else if let Some(app) = self.app {
+                let _ = app.emit(self.event, progress);
             }
         }
         Ok(())

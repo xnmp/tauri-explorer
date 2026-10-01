@@ -1,11 +1,21 @@
-//! System-level commands: trash, launch context, window theme, log paths.
+//! System-level commands: native launch context, window theme, log paths.
 //! Extracted from lib.rs so the entry point is pure wiring.
 
 use std::ffi::OsString;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::PathBuf;
 
 use crate::error::AppError;
 use crate::files;
+
+/// Monotonic clock starting at app run(), before builder and window creation.
+/// Excludes OS process loading and main() argument parsing. `epoch_ms` pins the
+/// same instant on the wall clock so the native readiness endpoint can be
+/// correlated with webview time origins without assuming a shared clock.
+pub struct StartupClock {
+    pub started: std::time::Instant,
+    pub epoch_ms: f64,
+}
 
 /// Stores the working directory from which the app was launched.
 pub struct LaunchCwd(pub String);
@@ -34,6 +44,7 @@ fn reap_in_background(child: std::process::Child) {
 /// Immutable, platform-specific command specification for the native recycle
 /// bin surface. Keeping this separate from spawning makes the platform
 /// contract testable without launching the host desktop during tests.
+#[cfg(not(target_os = "linux"))]
 #[derive(Debug, PartialEq, Eq)]
 pub struct RecycleBinLauncher {
     pub program: &'static str,
@@ -88,126 +99,137 @@ fn linux_trash_files_directory() -> Result<PathBuf, AppError> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_recycle_bin_launcher() -> Result<RecycleBinLauncher, AppError> {
-    Ok(RecycleBinLauncher {
-        program: "xdg-open",
-        arguments: vec![linux_trash_files_directory()?.into_os_string()],
-    })
-}
-
-/// Open the Freedesktop deleted-files directory directly. A successful URI
-/// dispatcher exit cannot prove that its asynchronous desktop handler accepted
-/// `trash:///`, so Linux never sends that URI to the handler.
-#[cfg(target_os = "linux")]
-fn open_linux_recycle_bin_with<F>(mut launch: F) -> Result<(), AppError>
-where
-    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
-{
-    open_linux_recycle_bin_with_launcher(&mut launch, linux_recycle_bin_launcher)
+#[derive(Debug)]
+enum FileManager1Failure {
+    Unavailable(String),
+    Uncertain(String),
 }
 
 #[cfg(target_os = "linux")]
-pub fn open_linux_recycle_bin_with_launcher<F, R>(
-    mut launch: F,
-    launcher: R,
-) -> Result<(), AppError>
-where
-    F: FnMut(&RecycleBinLauncher) -> std::io::Result<std::process::ExitStatus>,
-    R: FnOnce() -> Result<RecycleBinLauncher, AppError>,
-{
-    let launcher = launcher()?;
-    log::info!(
-        "Recycle Bin: launching deleted-files directory via {} {:?}",
-        launcher.program,
-        launcher.arguments
-    );
-
-    match launch(&launcher) {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(AppError::Other(format!(
-            "Failed to open Recycle Bin: {} {:?} exited with {status}",
-            launcher.program, launcher.arguments
-        ))),
-        Err(error) => {
-            log::error!(
-                "Recycle Bin: failed to launch {} {:?}: {error}",
-                launcher.program,
-                launcher.arguments
+fn file_manager1_service_unavailable(error: &zbus::Error) -> bool {
+    let name = match error {
+        zbus::Error::MethodError(name, _, _) => name.as_str(),
+        zbus::Error::FDO(error) => {
+            return matches!(
+                error.as_ref(),
+                zbus::fdo::Error::ServiceUnknown(_)
+                    | zbus::fdo::Error::UnknownMethod(_)
+                    | zbus::fdo::Error::UnknownObject(_)
+                    | zbus::fdo::Error::UnknownInterface(_)
             );
-            Err(AppError::Io(error))
         }
+        _ => return false,
+    };
+    matches!(
+        name,
+        "org.freedesktop.DBus.Error.ServiceUnknown"
+            | "org.freedesktop.DBus.Error.UnknownMethod"
+            | "org.freedesktop.DBus.Error.UnknownObject"
+            | "org.freedesktop.DBus.Error.UnknownInterface"
+    )
+}
+
+/// FileManager1 addresses a file manager directly and can open its native
+/// Trash view. Generic URI or directory MIME dispatch can select a terminal.
+#[cfg(target_os = "linux")]
+async fn show_linux_trash_with_file_manager1() -> Result<(), FileManager1Failure> {
+    use std::time::Duration;
+
+    let connection = tokio::time::timeout(Duration::from_secs(2), zbus::Connection::session())
+        .await
+        .map_err(|_| FileManager1Failure::Unavailable("Session bus connection timed out".into()))?
+        .map_err(|error| FileManager1Failure::Unavailable(error.to_string()))?;
+
+    let folders = vec!["trash:///"];
+    let body = (folders, "");
+    let call = connection.call_method(
+        Some("org.freedesktop.FileManager1"),
+        "/org/freedesktop/FileManager1",
+        Some("org.freedesktop.FileManager1"),
+        "ShowFolders",
+        &body,
+    );
+    match tokio::time::timeout(Duration::from_secs(5), call).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) if file_manager1_service_unavailable(&error) => {
+            Err(FileManager1Failure::Unavailable(error.to_string()))
+        }
+        Ok(Err(error)) => Err(FileManager1Failure::Uncertain(error.to_string())),
+        Err(_) => Err(FileManager1Failure::Uncertain(
+            "File manager activation timed out; the window may still open".into(),
+        )),
     }
 }
 
-/// True for UNC paths (`\\server\share`, `\\wsl.localhost\Distro\...`). Windows
-/// has no Recycle Bin for network/WSL locations: the `trash` crate's shell APIs
-/// fail on them, so these must be removed directly instead of trashed.
-fn is_unc_path(path: &str) -> bool {
-    path.starts_with("\\\\") || path.starts_with("//")
+#[cfg(target_os = "linux")]
+fn is_graphical_file_manager(categories: Option<&str>, terminal: bool) -> bool {
+    !terminal
+        && categories.is_some_and(|categories| {
+            categories
+                .split(';')
+                .any(|category| category == "FileManager")
+        })
 }
 
-/// Trash a single path, falling back to a permanent delete on UNC locations
-/// where the Recycle Bin is unavailable.
-pub(crate) fn trash_or_remove(pathbuf: &std::path::Path) -> Result<(), AppError> {
-    if is_unc_path(&pathbuf.to_string_lossy()) {
-        return files::file_ops::remove_entry_at(pathbuf);
-    }
-    trash::delete(pathbuf).map_err(|e| {
-        log::error!("Failed to move to trash: {}", e);
-        AppError::Other(format!("Failed to move to trash: {}", e))
-    })
-}
+/// Launch only a desktop entry explicitly categorized as a graphical file
+/// manager. Never fall back to generic xdg-open: it can select Kitty or Yazi.
+#[cfg(target_os = "linux")]
+fn launch_linux_trash_with_graphical_handler(directory: &std::path::Path) -> Result<(), AppError> {
+    use gio::prelude::*;
+    use std::collections::HashSet;
 
-/// Move a file or directory to the system trash/recycle bin.
-/// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
-/// UNC/WSL paths have no Recycle Bin, so they are removed permanently instead.
-#[tauri::command]
-pub async fn move_to_trash(path: String) -> Result<(), AppError> {
-    files::run_blocking(move || {
-        let pathbuf = PathBuf::from(&path);
-
-        // lstat-based check so broken symlinks can still be trashed.
-        if std::fs::symlink_metadata(&pathbuf).is_err() {
-            return Err(AppError::NotFound(path));
+    let uri = url::Url::from_file_path(directory)
+        .map_err(|_| AppError::Other("Trash path is not an absolute file URL".into()))?;
+    let applications = gio::AppInfo::default_for_type("inode/directory", false)
+        .into_iter()
+        .chain(gio::AppInfo::recommended_for_type("inode/directory"))
+        .chain(gio::AppInfo::all_for_type("inode/directory"));
+    let mut seen = HashSet::new();
+    let mut failures = Vec::new();
+    for application in applications {
+        let Some(id) = application.id() else {
+            continue;
+        };
+        if !seen.insert(id.to_string())
+            || !(application.supports_uris() || application.supports_files())
+        {
+            continue;
         }
-
-        trash_or_remove(&pathbuf)
-    })
-    .await
-}
-
-/// Move multiple files/directories to trash. Trashes each item individually
-/// and reports which paths failed instead of failing all-or-nothing.
-#[tauri::command]
-pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
-    files::run_blocking(move || {
-        log::info!("Moving {} items to trash", paths.len());
-
-        let mut failures: Vec<String> = Vec::new();
-        for path in &paths {
-            let pathbuf = PathBuf::from(path);
-            if std::fs::symlink_metadata(&pathbuf).is_err() {
-                failures.push(format!("{} (not found)", path));
-                continue;
-            }
-            if let Err(e) = trash_or_remove(&pathbuf) {
-                log::error!("Failed to move {} to trash: {}", path, e);
-                failures.push(format!("{} ({})", path, e));
-            }
+        let Ok(desktop) = application.clone().downcast::<gio::DesktopAppInfo>() else {
+            continue;
+        };
+        if desktop.is_hidden()
+            || !is_graphical_file_manager(
+                desktop.categories().as_deref(),
+                desktop.boolean("Terminal"),
+            )
+        {
+            continue;
         }
-
-        if failures.is_empty() {
-            Ok(())
+        let result = if application.supports_uris() {
+            application.launch_uris(&[uri.as_str()], None::<&gio::AppLaunchContext>)
         } else {
-            Err(AppError::Other(format!(
-                "Failed to move {} of {} items to trash: {}",
-                failures.len(),
-                paths.len(),
-                failures.join(", ")
-            )))
+            application.launch(
+                &[gio::File::for_path(directory)],
+                None::<&gio::AppLaunchContext>,
+            )
+        };
+        match result {
+            Ok(()) => {
+                log::info!("Recycle Bin: opened with graphical file manager {id}");
+                return Ok(());
+            }
+            Err(error) => failures.push(format!("{id}: {error}")),
         }
-    })
-    .await
+    }
+    Err(AppError::Other(format!(
+        "No graphical file manager could open Recycle Bin{}",
+        if failures.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", failures.join("; "))
+        }
+    )))
 }
 
 /// Open the operating system's recycle-bin UI rather than treating the bin as
@@ -215,23 +237,27 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
 /// Linux and macOS provide a desktop-visible trash location.
 #[tauri::command]
 pub async fn open_recycle_bin() -> Result<(), AppError> {
-    files::run_blocking(|| {
-        #[cfg(target_os = "linux")]
-        {
-            open_linux_recycle_bin_with(|launcher| {
-                log::info!(
-                    "Recycle Bin: launching native surface via {} {:?}",
-                    launcher.program,
-                    launcher.arguments
+    #[cfg(target_os = "linux")]
+    {
+        let directory = linux_trash_files_directory()?;
+        match show_linux_trash_with_file_manager1().await {
+            Ok(()) => Ok(()),
+            Err(FileManager1Failure::Unavailable(reason)) => {
+                log::warn!(
+                    "Recycle Bin: FileManager1 unavailable ({reason}); trying graphical handler"
                 );
-                std::process::Command::new(launcher.program)
-                    .args(&launcher.arguments)
-                    .status()
-            })
+                files::run_blocking(move || launch_linux_trash_with_graphical_handler(&directory))
+                    .await
+            }
+            Err(FileManager1Failure::Uncertain(reason)) => Err(AppError::Other(format!(
+                "Could not confirm whether Recycle Bin opened: {reason}"
+            ))),
         }
+    }
 
-        #[cfg(not(target_os = "linux"))]
-        {
+    #[cfg(not(target_os = "linux"))]
+    {
+        files::run_blocking(|| {
             let launcher = recycle_bin_launcher();
             log::info!(
                 "Recycle Bin: launching native surface via {} {:?}",
@@ -256,9 +282,9 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
                     Err(AppError::Io(error))
                 }
             }
-        }
-    })
-    .await
+        })
+        .await
+    }
 }
 
 /// Get the directory the app was launched from.
@@ -288,8 +314,94 @@ pub fn is_launcher_artifact_cwd(cwd: &std::path::Path, exe_dir: Option<&std::pat
 /// (boot→first directory visible) halves of cold start can be read together
 /// from the log file — durable in release builds without devtools.
 #[tauri::command]
-pub async fn log_startup_timing(summary: String) {
+pub async fn log_startup_timing(
+    window: tauri::Window,
+    clock: tauri::State<'_, StartupClock>,
+    summary: String,
+) -> Result<(), AppError> {
     log::info!("{}", summary);
+    // Child/warm windows share this process clock; only the initial main
+    // window can interpret it as startup latency. IPC receipt adds a small
+    // scheduling delay, so the receipt epoch is logged alongside it and the
+    // gap stays attributable instead of being folded into app work.
+    if window.label() == "main" {
+        let receipt_epoch_ms = epoch_ms_now();
+        log::info!(
+            "Startup(native-ready): window=main app-run-to-ready={:.1}ms receipt-epoch-ms={:.3}",
+            clock.started.elapsed().as_secs_f64() * 1000.0,
+            receipt_epoch_ms,
+        );
+    }
+    Ok(())
+}
+
+/// Wall-clock milliseconds since the Unix epoch, the unit every correlated
+/// startup marker uses. NaN (never a panic) if the clock predates the epoch.
+pub(crate) fn epoch_ms_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64() * 1000.0)
+        .unwrap_or(f64::NAN)
+}
+
+/// Longest accepted progress mark name; marks are short fixed identifiers.
+const STARTUP_PROGRESS_MARK_MAX: usize = 32;
+/// A webview offset beyond a day is not a startup measurement.
+const STARTUP_PROGRESS_WEBVIEW_MS_MAX: f64 = 86_400_000.0;
+
+/// Format one `Startup(webview-progress)` diagnostic line (#936).
+///
+/// The webview mirrors each startup milestone here as it is recorded, so a
+/// startup that never reaches `ui-ready` still shows the last milestone it
+/// reached and, via heartbeats, whether its JavaScript kept running. The
+/// native receipt time is on the same monotonic clock as `native-ready`.
+/// These lines are diagnostics only: the attributed startup parser must never
+/// read them, which the distinct `webview-progress` tag guarantees. The mark
+/// is validated because it becomes part of a parsed log line.
+pub(crate) fn startup_progress_line(
+    window: &str,
+    mark: &str,
+    webview_ms: f64,
+    app_run_ms: f64,
+) -> Result<String, AppError> {
+    let valid_mark = !mark.is_empty()
+        && mark.len() <= STARTUP_PROGRESS_MARK_MAX
+        && mark.starts_with(|c: char| c.is_ascii_lowercase())
+        && mark
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !valid_mark {
+        return Err(AppError::Other(format!(
+            "invalid startup progress mark: {mark:?}"
+        )));
+    }
+    if !webview_ms.is_finite() || !(0.0..=STARTUP_PROGRESS_WEBVIEW_MS_MAX).contains(&webview_ms) {
+        return Err(AppError::Other(format!(
+            "invalid startup progress offset: {webview_ms}"
+        )));
+    }
+    Ok(format!(
+        "Startup(webview-progress): window={window} mark={mark} webview-ms={webview_ms:.1} app-run-ms={app_run_ms:.1}"
+    ))
+}
+
+/// Record one webview startup milestone as it happens (see
+/// [`startup_progress_line`]). Fire-and-forget from the page's point of view.
+#[tauri::command]
+pub async fn log_startup_progress(
+    window: tauri::Window,
+    clock: tauri::State<'_, StartupClock>,
+    mark: String,
+    webview_ms: f64,
+) -> Result<(), AppError> {
+    let line = startup_progress_line(
+        window.label(),
+        &mark,
+        webview_ms,
+        clock.started.elapsed().as_secs_f64() * 1000.0,
+    )?;
+    log::info!("{line}");
+    Ok(())
 }
 
 /// Set the window theme (light/dark) to sync NSAppearance with the app theme.
@@ -331,68 +443,51 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
     Ok(log_dir.to_string_lossy().to_string())
 }
 
-/// Restore files from the system trash by their original paths.
-/// Finds the most recently deleted item matching each path and restores it.
-/// Note: trash::os_limited is only available on Linux/Windows (not macOS).
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-pub async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
-    files::run_blocking(move || {
-        let trash_items = trash::os_limited::list()
-            .map_err(|e| AppError::Other(format!("Failed to list trash: {}", e)))?;
-
-        let mut to_restore = Vec::new();
-        let mut unmatched: Vec<String> = Vec::new();
-
-        for path_str in &paths {
-            let target = PathBuf::from(path_str);
-            // Find the most recently deleted item matching this original path
-            let mut matching: Vec<_> = trash_items
-                .iter()
-                .filter(|item| item.original_path() == target)
-                .collect();
-            matching.sort_by_key(|item| std::cmp::Reverse(item.time_deleted));
-
-            if let Some(item) = matching.into_iter().next() {
-                to_restore.push(item.clone());
-            } else {
-                unmatched.push(path_str.clone());
-            }
-        }
-
-        // Report paths that have no matching trash item instead of silently
-        // skipping them and claiming success.
-        if !unmatched.is_empty() {
-            return Err(AppError::NotFound(format!(
-                "No matching trash items found for: {}",
-                unmatched.join(", ")
-            )));
-        }
-
-        trash::os_limited::restore_all(to_restore)
-            .map_err(|e| AppError::Other(format!("Failed to restore from trash: {}", e)))
-    })
-    .await
-}
-
-#[cfg(target_os = "macos")]
-#[tauri::command]
-pub async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
-    Err(AppError::Other(
-        "Cannot undo delete on macOS — use Finder to restore from Trash".to_string(),
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::is_launcher_artifact_cwd;
     #[cfg(target_os = "linux")]
-    use super::linux_recycle_bin_launcher;
+    use super::linux_trash_files_directory;
     #[cfg(not(target_os = "linux"))]
     use super::recycle_bin_launcher;
+    use super::startup_progress_line;
     #[cfg(target_os = "windows")]
     use std::ffi::OsString;
     use std::path::Path;
+
+    #[test]
+    fn startup_progress_lines_carry_mark_and_both_clocks() {
+        assert_eq!(
+            startup_progress_line("main", "settings-ready", 1500.04, 3102.46).unwrap(),
+            "Startup(webview-progress): window=main mark=settings-ready webview-ms=1500.0 app-run-ms=3102.5"
+        );
+        // The distinct tag keeps the attributed `Startup(webview):` parser blind to it.
+        assert!(!startup_progress_line("main", "list-ready", 1.0, 2.0)
+            .unwrap()
+            .contains("Startup(webview):"));
+    }
+
+    #[test]
+    fn startup_progress_rejects_marks_that_could_forge_log_fields() {
+        for mark in [
+            "",
+            "List-ready",
+            "1st",
+            "list ready",
+            "list-ready=1ms",
+            "ready\nStartup(native-ready): window=main",
+            &"a".repeat(33),
+        ] {
+            assert!(
+                startup_progress_line("main", mark, 1.0, 1.0).is_err(),
+                "{mark:?}"
+            );
+        }
+        assert!(startup_progress_line("main", &"a".repeat(32), 1.0, 1.0).is_ok());
+        for offset in [f64::NAN, f64::INFINITY, -1.0, 86_400_001.0] {
+            assert!(startup_progress_line("main", "heartbeat", offset, 1.0).is_err());
+        }
+    }
 
     #[test]
     fn launcher_artifact_cwds_are_rejected() {
@@ -417,11 +512,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn recycle_bin_launcher_uses_the_freedesktop_deleted_files_directory() {
-        let launcher = linux_recycle_bin_launcher().unwrap();
-
-        assert_eq!(launcher.program, "xdg-open");
-        assert!(Path::new(&launcher.arguments[0]).is_absolute());
-        assert!(Path::new(&launcher.arguments[0]).ends_with("Trash/files"));
+        let directory = linux_trash_files_directory().unwrap();
+        assert!(Path::new(&directory).is_absolute());
+        assert!(Path::new(&directory).ends_with("Trash/files"));
     }
 
     #[cfg(target_os = "windows")]

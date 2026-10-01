@@ -1,0 +1,101 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "9fd13b11",
+  "scope": "Observed initial directory navigation, pending-change replay and per-pane refresh admission",
+  "architectural_review_complete": false,
+  "checkpoint_accepted": true,
+  "native": {
+    "platform": "Linux / WebKitGTK",
+    "build": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle",
+    "sha256": "75bd85d08fd5019b59e39b4a9b063b7c2eca543e9ab830c0b969eb6f36f61dda",
+    "before": {
+      "log": "/tmp/directory-handoff-before.log",
+      "passed": 1,
+      "failed": 1,
+      "reason": "Initial real scan completed; a post-scan write received no causal watcher acknowledgment within 15 seconds. Quiet independent load passed.",
+      "qualification": "The spec subsequently gained on-disk marker diagnostics and a longer settled assertion window; those were not present in the original before run."
+    },
+    "integration": {
+      "log": "/tmp/directory-handoff-native-final.log",
+      "passed": 12,
+      "failed": 0,
+      "specs": 6,
+      "elapsed_seconds": 52
+    },
+    "strengthened_handoff": {
+      "log": "/tmp/directory-handoff-native-settled.log",
+      "passed": 2,
+      "failed": 0,
+      "elapsed_seconds": 8,
+      "settling_window_ms": 2500,
+      "observed_load_calls": 2,
+      "quiet_load_calls": 1,
+      "causally_acknowledged_writes": 3,
+      "all_markers_visible": true
+    },
+    "screenshot": "screenshots/refactor/repo-health-cleanup/native-directory-listing-handoff.png",
+    "screenshot_inspected": true,
+    "cases": [
+      "Post-scan/pre-publication writes survive first navigation",
+      "Quiet observed foreground load uses one listing",
+      "Missing-target path context and chmod error/retry",
+      "Root replacement and same-file preview update",
+      "Window destruction and renderer-reload lease lifetime",
+      "External create/delete convergence",
+      "Slow watcher refresh coalescing and recovery cadence"
+    ],
+    "background_scan": "Global native stderr includes an additional first-observed scan outside the instrumented visible realm. Independent diagnosis attributes it to the configured hidden warm-window boot: its 1.5-second post-readiness priming and captured launch path match the scan. The foreground counts do not measure total application scanning."
+  },
+  "regressions": {
+    "distinct_subscriber_before": "/tmp/directory-handoff-subscriber-before.log: distinct pane replay dropped while another pane scanned the same directory",
+    "declined_subscriber_before": "/tmp/directory-handoff-declined-subscriber-before.log: real pane-navigation interleaving plus direct admission contract failed 2/22",
+    "declined_subscriber_after": "/tmp/directory-handoff-declined-subscriber-final.log: 22/22 pass after explicit false admission",
+    "contracts": [
+      "Shared event listener readiness/retry/retirement",
+      "Observed transport readiness, exact late-lease release, stale pre-invoke rejection and stream cancellation",
+      "Navigation commit/rollback and pending-event replay",
+      "Degraded native demand, waiting lease promotion, foreign release isolation and retired-owner filtering"
+    ]
+  },
+  "checks": {
+    "rust": {
+      "unit_passed": 510,
+      "integration_passed": 9,
+      "ignored": 7,
+      "log": "/tmp/directory-handoff-rust.log",
+      "qualification": "Final trait-only tightening removed an unused default observe implementation; both existing implementations already override it. All targets subsequently passed strict Clippy."
+    },
+    "frontend": {
+      "passed": 2183,
+      "skipped": 3,
+      "performance_passed": 30,
+      "log": "/tmp/directory-handoff-frontend.log"
+    },
+    "svelte": "0 errors, 0 warnings",
+    "native_spec_typescript": "pass",
+    "clippy_all_targets_deny_warnings": "pass",
+    "architecture_lint": "pass",
+    "code_map_coverage": "384/384",
+    "bundle": {
+      "main_gzip_bytes": 89355,
+      "startup_gzip_bytes": 214125,
+      "startup_chunks": 44,
+      "change_in_startup_gzip_bytes": 1448,
+      "log": "/tmp/directory-handoff-bundle.log",
+      "status": "pass"
+    }
+  },
+  "independent_review": {
+    "model": "GPT-5.6 Sol",
+    "verdict": "No remaining source blocker after the declined-subscriber correction",
+    "native_final_artifact_review": "accepted: counts, logs, binary SHA and screenshot independently verified; foreground listing wording corrected"
+  },
+  "limits": [
+    "No macOS half-bounce or paired startup-latency claim; startup payload grew by 1,448 gzip bytes.",
+    "The 2.5-second settled assertion bounds foreground handoff cadence, not total background application work.",
+    "Exact native losing/winning descriptor ownership under rapid A-to-B-to-A, old descriptor retention under failed navigation, and forced observation factory failure remain stronger future acceptance cases. State-machine tests cover their ownership decisions; existing native suites cover ordinary lifetime and recovery.",
+    "Cross-process event ordering uses wall-clock observation timestamps and remains sensitive to system-clock rollback.",
+    "Windows/macOS equivalence, native soak, Tab focus/selection consistency and the wider release acceptance matrix remain open."
+  ]
+}

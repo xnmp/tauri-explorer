@@ -1,0 +1,138 @@
+import { browser, $, expect } from "@wdio/globals";
+import fs from "node:fs";
+import path from "node:path";
+import { createNativeFixtureDirectory } from "../native-qualification";
+import { domText, entryPathSelector, navigateTo } from "./helpers";
+
+const scratch = createNativeFixtureDirectory("terminal-resize");
+const fixtureEntry = path.join(scratch, "terminal-resize-proof.txt");
+
+// The default shell on Windows CI is cmd.exe (`%COMSPEC%`); `seq` does not
+// exist there. `for /l` is cmd's built-in counting loop and, run directly at
+// an interactive prompt (not from a batch file), takes a single `%i`.
+const countTo80 = process.platform === "win32"
+  ? "for /l %i in (1,1,80) do @echo %i"
+  : "seq 1 80";
+
+/** Real WebKitGTK/WebView2, PTY output/scrollback, and pointer capture under root zoom. */
+(process.platform === "linux" || process.platform === "win32" ? describe : describe.skip)("native terminal resizing", () => {
+  before(() => fs.writeFileSync(fixtureEntry, "terminal resize fixture"));
+
+  it("keeps a zoomed drag continuous with scrollback and the shell usable after keyboard resize", async () => {
+    await browser.setWindowSize(1280, 900);
+    await navigateTo(scratch);
+    // Native specs share persisted settings across driver sessions. Establish
+    // this fixture's own baseline through user commands before measuring zoom.
+    await browser.keys(["Control", "0"]);
+    await browser.waitUntil(async () => await browser.execute(() =>
+      parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1,
+    { timeoutMsg: "Reset Zoom did not restore 100%" });
+    if (await $(".preview-pane").isDisplayed()) {
+      await browser.keys(["Control", "Shift", "p"]);
+      const commandInput = $(".command-palette-dialog .search-input");
+      await commandInput.waitForDisplayed();
+      await commandInput.setValue("Toggle Preview Pane");
+      await browser.waitUntil(async () => (await domText(".command-palette-dialog")).includes("Toggle Preview Pane"),
+        { timeoutMsg: "command palette never matched Toggle Preview Pane" });
+      await browser.keys("Enter");
+    }
+    await $(".preview-pane").waitForDisplayed({ reverse: true });
+    const entry = await $(entryPathSelector(fixtureEntry));
+    await entry.waitForDisplayed();
+    try {
+      await entry.click();
+    } catch (error) {
+      try {
+        console.error("[terminal-resize entry geometry]", JSON.stringify(await browser.execute((target: string) => {
+          const entry = document.querySelector(`.entry-item[data-path="${CSS.escape(target)}"]`) as HTMLElement | null;
+          const rect = entry?.getBoundingClientRect();
+          const center = rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+          const hit = center ? document.elementFromPoint(center.x, center.y) : null;
+          return {
+            connected: entry?.isConnected, selected: entry?.getAttribute("aria-selected"),
+            rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height } : null,
+            style: entry ? { display: getComputedStyle(entry).display, visibility: getComputedStyle(entry).visibility, pointerEvents: getComputedStyle(entry).pointerEvents } : null,
+            hit: hit ? { tag: hit.tagName, className: hit.getAttribute("class"), path: hit.closest(".entry-item")?.getAttribute("data-path") } : null,
+            viewport: { width: innerWidth, height: innerHeight },
+          };
+        }, fixtureEntry)));
+      } catch (diagnosticError) {
+        console.error("[terminal-resize entry geometry] diagnostic collection failed", diagnosticError);
+      }
+      throw error;
+    }
+    for (let i = 0; i < 5; i++) await browser.keys(["Control", "="]);
+    await browser.waitUntil(async () => await browser.execute(() => parseFloat(document.documentElement.style.getPropertyValue("--app-zoom"))) === 1.5,
+      { timeoutMsg: "root zoom did not reach 150%" });
+    await browser.keys(["Control", "`"]);
+    await $(".terminal-panel .xterm").waitForDisplayed();
+    await browser.waitUntil(async () => (await domText(".terminal-panel .xterm-rows")).trim().length > 0,
+      { timeout: 45000, timeoutMsg: "shell never produced a prompt" });
+    const input = await $(".terminal-panel textarea.xterm-helper-textarea");
+    async function command(value: string) {
+      await browser.execute((el: HTMLElement) => el.focus(), input);
+      for (const character of value) await browser.keys(character);
+      await browser.keys("Enter");
+    }
+    await command(countTo80);
+    await browser.waitUntil(async () => await browser.execute(() =>
+      [...document.querySelectorAll(".terminal-panel .xterm-rows > div")].some(row => row.textContent?.trim() === "79")),
+      { timeoutMsg: "real PTY scrollback did not arrive" });
+    const visibleRows = () => browser.execute(() =>
+      [...document.querySelectorAll(".terminal-panel .xterm-rows > div")]
+        .map(row => row.textContent?.trim() ?? "").filter(Boolean));
+    await browser.execute((el: HTMLElement) => el.focus(), input);
+    await browser.keys(["Shift", "PageUp"]);
+    await browser.waitUntil(async () => {
+      const rows = await visibleRows();
+      return !rows.includes("79") && rows.some(row => /^\d+$/.test(row));
+    }, { timeoutMsg: "terminal did not expose earlier PTY output through user scrollback" });
+    const handle = await $('[aria-label="Resize terminal"]');
+    const before = Number(await handle.getAttribute("aria-valuenow"));
+    const height = () => browser.execute(() => document.querySelector(".terminal-panel")!.getBoundingClientRect().height);
+    const beforeHeight = await height();
+    const rect = await browser.execute(() => {
+      const r = document.querySelector('[aria-label="Resize terminal"]')!.getBoundingClientRect();
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    });
+    type PointerAction = { type: "pointerMove"; duration: number; origin: "viewport"; x: number; y: number }
+      | { type: "pointerDown" | "pointerUp"; button: number }
+      | { type: "pause"; duration: number };
+    const pointer = (actions: PointerAction[]) => browser.performActions([{ type: "pointer", id: "resize-mouse",
+      parameters: { pointerType: "mouse" }, actions }]);
+    await browser.execute((element: HTMLElement) => {
+      element.dataset.e2eResizeValues = "[]";
+      element.addEventListener("pointermove", () => requestAnimationFrame(() => {
+        const values = JSON.parse(element.dataset.e2eResizeValues ?? "[]") as number[];
+        values.push(Number(element.getAttribute("aria-valuenow")));
+        element.dataset.e2eResizeValues = JSON.stringify(values);
+      }));
+    }, handle);
+    await pointer([{ type: "pointerMove", duration: 0, origin: "viewport", ...rect }, { type: "pointerDown", button: 0 },
+      { type: "pointerMove", duration: 150, origin: "viewport", x: rect.x, y: rect.y - 30 },
+      // One W3C action sequence models one physical drag. The dwell lets the
+      // terminal process its first resize/reflow before the second move.
+      { type: "pause", duration: 150 },
+      { type: "pointerMove", duration: 150, origin: "viewport", x: rect.x, y: rect.y - 60 },
+      { type: "pointerUp", button: 0 }]);
+    await browser.releaseActions();
+    const resizeValues = JSON.parse(await handle.getAttribute("data-e2e-resize-values") ?? "[]") as number[];
+    expect(resizeValues).toContain(before + 20);
+    await browser.waitUntil(async () => Number(await handle.getAttribute("aria-valuenow")) === before + 40,
+      { timeoutMsg: "native drag stopped after the terminal reflowed its scrollback" });
+    await browser.waitUntil(async () => Math.abs(await height() - beforeHeight - 60) < 1,
+      { timeoutMsg: "model resize did not produce 60 visual pixels of native panel growth" });
+    await browser.execute((el: HTMLElement) => el.focus(), handle);
+    await browser.keys("ArrowUp");
+    await browser.waitUntil(async () => Number(await handle.getAttribute("aria-valuenow")) === before + 50,
+      { timeoutMsg: "native separator keyboard input did not resize" });
+    await browser.waitUntil(async () => Math.abs(await height() - beforeHeight - 75) < 1,
+      { timeoutMsg: "keyboard resize did not update native panel geometry" });
+    const marker = `resizeproof${Date.now()}`;
+    await command(`echo ${marker}`);
+    await browser.waitUntil(async () => (await domText(".terminal-panel .xterm-rows")).split(marker).length >= 3,
+      { timeoutMsg: "shell input did not execute after resizing" });
+    await expect($(".file-list")).toBeDisplayed();
+    await browser.saveScreenshot("screenshots/refactor/repo-health-cleanup/native-terminal-resize.png");
+  });
+});

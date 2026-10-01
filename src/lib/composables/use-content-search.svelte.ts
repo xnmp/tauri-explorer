@@ -13,12 +13,7 @@
  */
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import {
-  startContentSearch,
-  cancelContentSearch,
-  type ContentSearchEvent,
-  type ContentSearchResult,
-} from "$lib/api/files";
+import { startContentSearch, cancelContentSearch, type ContentSearchEvent, type ContentSearchResult } from "$lib/api/search";
 import {
   flattenBatch,
   rebuildAllFlattened,

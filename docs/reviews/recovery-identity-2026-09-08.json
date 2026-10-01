@@ -1,0 +1,102 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "uncommitted native identity integration checkpoint; entire architectural review incomplete",
+  "scope": [
+    "Pure native-platform-tagged ObjectId preserving complete Unix and Windows IDs",
+    "Supplied-handle native capture; no Windows path reopen or truncated fallback",
+    "Separate volume equality and native wire-size resource accounting",
+    "Shared Windows error conversion reused by lock and identity boundaries"
+  ],
+  "verification": {
+    "recovery_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery:: -- --test-threads=1",
+      "passed": 82,
+      "failed": 0,
+      "ignored": 3,
+      "log": "/tmp/recovery-identity-first.log"
+    },
+    "file_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: -- --test-threads=1",
+      "passed": 319,
+      "failed": 0,
+      "ignored": 6,
+      "log": "/tmp/recovery-identity-files.log"
+    },
+    "final_codec": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery::object_id:: -- --test-threads=1",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/recovery-identity-codec-final.log",
+      "note": "After final test naming, conservative bound assertion and extreme numeric/array rejection cases; production logic unchanged since file suite."
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/recovery-identity-clippy.log",
+      "warnings": "128 library unused-infrastructure warnings; five lib-test warnings (four duplicates). Not warning-clean production integration."
+    },
+    "windows_actual_source": {
+      "command": "cargo clippy --manifest-path /tmp/recovery-identity-check/Cargo.toml --target x86_64-pc-windows-gnu --tests --offline",
+      "exit_code": 0,
+      "log": "/tmp/recovery-identity-windows-final.log",
+      "warnings": "14 unused model declarations in the minimal harness.",
+      "manifest": "[package]\nname = \"recovery-identity-check\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[dependencies]\nlog = \"0.4\"\ntempfile = \"3\"\nwindows = { version = \"=0.61.3\", features = [\"Win32_Foundation\", \"Win32_Security\", \"Win32_Storage_FileSystem\", \"Win32_System_IO\", \"Win32_System_Threading\"] }\nwindows-core = \"=0.61.2\"\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\nbase64 = \"0.23\"\n[workspace]\n",
+      "lib_rs": "#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/object_id.rs\"]\nmod object_id;\n#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_identity.rs\"]\nmod file_identity;\n#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/windows_io.rs\"]\nmod windows_io;\n#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_lock.rs\"]\nmod file_lock;\n#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/model.rs\"]\nmod model;\n#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/native_path.rs\"]\nmod native_path;\n",
+      "limits": "Actual source for identity, lock, error conversion, model and path codec plus tests. No Windows execution or full application build."
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_coverage": "415/415",
+      "unresolvable": 0,
+      "log": "/tmp/recovery-identity-maps.log",
+      "note": "New untracked source files explicitly mapped; tracked-only denominator."
+    },
+    "formatting": "Changed Rust formatting and git diff --check pass.",
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT, including final encoded-size accounting delta",
+      "mode": "Read-only source/log review, no reviewer builds/tests.",
+      "confirmed": [
+        "Native platform rejection and strict full-width identity serialization",
+        "Supplied-handle FileIdInfo query, complete64+128-bit capture and native error propagation",
+        "Separate same-volume semantics; complete fields included by derived equality/hash",
+        "Unix integration and shared Windows error extraction preserve existing scope",
+        "79-byte Unix/133-byte Windows maximal native JSON identity plus per-ancestor separator closes Windows accounting caveat"
+      ],
+      "limits": [
+        "Windows runtime remains unverified",
+        "HashSet cases establish distinct objects; hash collisions are legal and no claim of unique hash outputs is made",
+        "Identity does not establish content version, immunity to ID reuse, or recovery authority after restart"
+      ]
+    }
+  },
+  "format_change": "The previously untagged native identity encoding is replaced in an unshipped recovery format. Production mutations have not used these records. No legacy recovery-data migration is implemented or claimed.",
+  "documentation": "Moved 550 older checkpoint lines into the history archive, rebasing relative links; active ledger now74lines. The entire requirement table was preserved byte-for-byte. Also repaired 10 pre-existing relative links in the older archive; checked local ledger/archive/ADR links resolve.",
+  "limitations": [
+    "Coordinator, operation-lock randomness, resource capture and secure descriptor-relative storage remain Unix-only. Native Windows identity is not the complete adapter.",
+    "Unsupported Windows FileIdInfo errors are propagated; no filesystem fallback or fabricated ID is supplied. Driver/filesystem qualification on NTFS/ReFS/SMB remains open.",
+    "Common file-handle/hardlink/rename tests ran on Linux only. Windows NUL-device behavior and all Windows file identity tests were compiled, not executed.",
+    "Production recovery reservations remain unacquired; whole-intent admission, durable replacement, claimed inspection/reconciliation, recovery actions/UI and retention remain required.",
+    "No new native application UI acceptance, Windows/macOS runtime, startup measurement or measured speedup. Full product/platform/integration gates remain open."
+  ],
+  "publication": "No commit, push or merge this checkpoint.",
+  "source_sha256": {
+    "src-tauri/src/files/recovery/object_id.rs": "42593c3fc5e942d43a1b1078335e20bbf1357889c7b21f743ba525ee494cf845",
+    "src-tauri/src/files/recovery/file_identity.rs": "3fee67a8948c0737f4b9a24bcb7f4c522443814a607307df86f26b2045cf5961",
+    "src-tauri/src/files/recovery/file_identity/windows.rs": "eb324ce7eb7751f2f1632c311941bd56c64019fe59bded4522a9129dc66ca358",
+    "src-tauri/src/files/recovery/windows_io.rs": "7366959dbbf8f4ea0d3505c0c2a1f090aafb68ee5705bc2870735789d36566c1",
+    "src-tauri/src/files/recovery/model.rs": "529d653898144a7600401d09178484650d7b0f8aa590fc2b2ce0dc6a40645ee0",
+    "src-tauri/src/files/recovery/mod.rs": "fd0591068baedade3a8c285cc3d5385cecaea8abbf6f04d7683784a7651bf949",
+    "src-tauri/src/files/recovery/storage.rs": "d039d4f24bd50314d6150315ab4d8c82301dca488b9bc895f69783b08b9463f7",
+    "src-tauri/src/files/recovery/coordinator.rs": "a9b739efc4d3c1528f14207505f942a8c7f3775099e58a992c9e226c91b9daad",
+    "src-tauri/src/files/recovery/locks.rs": "b9866ebf6639da09120a50c14ce833f568b2fabe6812effbdcf0402b0ed003e6",
+    "src-tauri/src/files/recovery/resources.rs": "b0b88249b1a6d8ed7934b7d7942b1419ec90d168c3f97f84f41c2b5045a04e0f",
+    "src-tauri/src/files/recovery/file_lock/windows.rs": "e0de9a51f23502d256e016fe50a26a403d999f83cde8c5757ce3d952babb980e",
+    "src-tauri/test_support/recovery_object_id.rs": "884c6f3f415a3335e50e8db4ffbd89dc224bf24a57c6d0a240a25cbce015aafc",
+    "src-tauri/test_support/recovery_file_identity.rs": "bda062260e312dba3aac3d180d5b1c713cc5d996a11d136500f7f854e77c2404",
+    "src-tauri/test_support/recovery_coordinator.rs": "74931a4831e699faa28e6b06a674e6d71fecbbff24a66a631b075f061abd922d"
+  }
+}

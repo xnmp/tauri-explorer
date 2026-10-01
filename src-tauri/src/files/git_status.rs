@@ -439,7 +439,7 @@ pub async fn get_git_status(
     task_id: Option<u64>,
 ) -> Result<GitStatusResponse, AppError> {
     let (id, cancelled) = match task_id {
-        Some(id) => (id, BADGE_STATUS_TASKS.start_with_id(id)),
+        Some(id) => (id, BADGE_STATUS_TASKS.start_with_id(id)?),
         None => BADGE_STATUS_TASKS.start(),
     };
     let result = tokio::task::spawn_blocking(move || get_git_status_sync(&path, &cancelled)).await;
@@ -612,22 +612,94 @@ mod tests {
         assert!(error.to_string().contains("cancelled"));
     }
 
+    /// Write an executable fake `git`, then wait until it can be exec'd.
+    /// Another test thread's `fork` inherits the write descriptor until that
+    /// child execs, and exec of a file still open for writing fails with
+    /// ETXTBSY. A spawn failure before cancellation is classified as "not a
+    /// repository", which made the cancellation test flake (#764).
+    #[cfg(unix)]
+    fn write_fake_git(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(
+            path,
+            format!("#!/bin/sh\n[ \"$1\" = __exec_probe ] && exit 0\n{body}"),
+        )
+        .unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        // Once one exec succeeds no process holds a write descriptor, and our
+        // own is closed, so no later fork can inherit one.
+        for _ in 0..1000 {
+            match std::process::Command::new(path)
+                .arg("__exec_probe")
+                .status()
+            {
+                Ok(status) => {
+                    assert!(status.success(), "fake git probe failed: {status}");
+                    return;
+                }
+                Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Err(error) => panic!("fake git cannot run: {error}"),
+            }
+        }
+        panic!("fake git stayed busy after 1000 exec attempts");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fake_git_runs_while_other_threads_fork() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        /// Stops the forkers when the test panics, too.
+        struct StopOnDrop(Arc<AtomicBool>);
+        impl Drop for StopOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_forkers = StopOnDrop(Arc::clone(&stop));
+        let forkers: Vec<_> = (0..8)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = std::process::Command::new("true").status();
+                    }
+                })
+            })
+            .collect();
+        let dir = TempDir::new().unwrap();
+        let results: Vec<_> = (0..100)
+            .map(|index| {
+                let script = dir.path().join(format!("fake-git-{index}"));
+                write_fake_git(&script, "exit 0\n");
+                std::process::Command::new(&script)
+                    .arg("rev-parse")
+                    .status()
+                    .map_err(|error| error.raw_os_error())
+            })
+            .collect();
+        drop(stop_forkers);
+        for forker in forkers {
+            forker.join().unwrap();
+        }
+        let failures: Vec<_> = results.iter().filter(|result| result.is_err()).collect();
+        assert!(failures.is_empty(), "exec failed: {failures:?}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn badge_status_disables_optional_locks() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = init_repo();
         let capture = dir.path().join("git-args");
         let fake_git = dir.path().join("fake-git");
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\ncase \" $* \" in\n  *' rev-parse '*) printf 'true\\n\\n' ;;\n  *' status '*) ;;\nesac\n",
+            "printf '%s\\n' \"$@\" >> '{}'\ncase \" $* \" in\n  *' rev-parse '*) printf 'true\\n\\n' ;;\n  *' status '*) ;;\nesac\n",
             capture.display()
         );
-        fs::write(&fake_git, script).unwrap();
-        let mut permissions = fs::metadata(&fake_git).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&fake_git, permissions).unwrap();
+        write_fake_git(&fake_git, &script);
 
         let response = get_git_status_sync_with_program(
             dir.path().to_str().unwrap(),
@@ -649,34 +721,47 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn cancelling_an_active_rev_parse_is_not_reported_as_not_a_repo() {
-        use std::os::unix::fs::PermissionsExt;
         use std::sync::Arc;
         use std::time::{Duration, Instant};
 
         let dir = TempDir::new().unwrap();
         let fake_git = dir.path().join("blocking-git");
-        fs::write(&fake_git, "#!/bin/sh\nsleep 30\n").unwrap();
-        let mut permissions = fs::metadata(&fake_git).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&fake_git, permissions).unwrap();
+        let started = dir.path().join("blocking-git.started");
+        let completion = dir.path().join("blocking-git.done");
+        write_fake_git(
+            &fake_git,
+            "printf started > \"$0.started\"\nsleep 30\nprintf completed > \"$0.done\"\n",
+        );
 
         let cancelled = Arc::new(AtomicBool::new(false));
-        let trigger = cancelled.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
-            trigger.store(true, Ordering::Relaxed);
+        let worker_cancelled = Arc::clone(&cancelled);
+        let path = dir.path().to_string_lossy().into_owned();
+        let pending = std::thread::spawn(move || {
+            get_git_status_sync_with_program(&path, &worker_cancelled, fake_git.as_os_str())
         });
-
-        let start = Instant::now();
-        let error = get_git_status_sync_with_program(
-            dir.path().to_str().unwrap(),
-            &cancelled,
-            fake_git.as_os_str(),
-        )
-        .expect_err("active cancellation must not publish a repository classification");
+        // Cancel only after rev-parse is running; a fixed sleep races startup
+        // under the parallel macOS suite.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !started.exists() {
+            assert!(Instant::now() < deadline, "fake Git did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let canceled_at = Instant::now();
+        cancelled.store(true, Ordering::Relaxed);
+        let error = pending
+            .join()
+            .unwrap()
+            .expect_err("active cancellation must not publish a repository classification");
 
         assert!(error.to_string().contains("cancelled"));
-        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(
+            canceled_at.elapsed() < Duration::from_secs(20),
+            "cancellation waited for the fake Git child to finish"
+        );
+        assert!(
+            !completion.exists(),
+            "the fake Git child completed instead of being cancelled"
+        );
     }
 
     /// Manual diagnostic for #424: run the badge-status path directly against

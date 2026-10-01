@@ -1,0 +1,103 @@
+{
+  "date": "2026-09-09",
+  "scope": "Linux copy publication retries after final directory permissions deny ordinary read-open",
+  "contracts": [
+    "Ordinary readable publication retries retain the fast open path without changing permissions",
+    "Only PermissionDenied for an exact finalized already-published directory enters the existing permission-pin adapter",
+    "Manifest, source, original and both publication endpoints are checked before restoring the recorded staged mode through the pinned inode",
+    "Reopening uses the pinned inode; the held and named versions are checked before finalization and after directory barriers",
+    "Interruption after permission preparation leaves a recognized staged version and retained original",
+    "Full endpoint position is revalidated before publication rename/finalization"
+  ],
+  "verification": {
+    "regression_before": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib finalized_directory_publication_can_complete_after_reopening_its_root -- --test-threads=1",
+      "log": "/tmp/recovery-publication-retry-before.log",
+      "exit_code": 101,
+      "passed": 0,
+      "failed": 1,
+      "failure": "Native root-reopen retry failed with PermissionDenied (os error 13) for final mode 000 before production changes",
+      "baseline_transfer_sha256": "06c44e6f461ed43d1895b68844682a8bad72316d4d746d1a2867de3869be92ad"
+    },
+    "recovery_suite": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo test --manifest-path src-tauri/Cargo.toml --offline --lib files::recovery:: -- --test-threads=1",
+      "log": "/tmp/recovery-publication-retry-recovery-final.log",
+      "exit_code": 0,
+      "passed": 201,
+      "failed": 0,
+      "ignored": 6,
+      "new_tests": [
+        "finalized_directory_publication_can_complete_after_reopening_its_root: modes 000/100/200/400/500/700; exact root versions and representative original/copy bytes",
+        "interrupted_directory_reopening_preserves_a_recognizable_publication: abort after staged permission preparation, drop/reopen root, finalize exact version",
+        "changed_authority_during_directory_reopening_stops_finalization: source/original/root/target/private-publication changes preserve occupants and stop final mode mutation",
+        "reclaimed_publication_intent_finalizes_an_owner_unreadable_directory: modes 000/300; persist PublishIntent, lose reply, drop coordinator/executor, reclaim new generation, reopen, reach Published and clear error"
+      ],
+      "fixture_note": "Executor fixture records a valid staged payload with the requested restrictive final mode before displacement. Source directory is mode 0500 so staged mode 0700 satisfies final_mode | 0700. An initial fixture using the default directory mode was rejected by validation and corrected; production validation was not relaxed."
+    },
+    "clippy": {
+      "command": "ZDOTDIR=/tmp/recovery-entry-clean-zdotdir XDG_CACHE_HOME=/tmp/recovery-entry-final-cache cargo clippy --manifest-path src-tauri/Cargo.toml --offline --all-targets --features e2e-renderer-recovery",
+      "log": "/tmp/recovery-publication-retry-clippy.log",
+      "exit_code": 0,
+      "library_warnings": 83,
+      "test_warnings": 5,
+      "test_warning_duplicates": 4
+    },
+    "format": {
+      "command": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+      "exit_code": 0
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "exit_code": 0,
+      "tracked_source_coverage": "415/415",
+      "unresolvable_references": 0
+    },
+    "diff": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "independent_review": {
+      "agent": "publication_retry_review_sol",
+      "model": "gpt-5.6-sol",
+      "method": "Read-only adversarial inspection of production code, tests and actual failing-before/final recovery logs",
+      "confirmed": [
+        "Linux persisted reclaim/reopen publication retry",
+        "Recognizable interrupted permission preparation",
+        "Changed authority and endpoint rejection before finalization",
+        "Retained no-follow native handles and no-replace rename boundaries"
+      ],
+      "bounded": [
+        "EntryVersion is not a recursive/content-hash snapshot",
+        "macOS owner-unreadable directory reacquisition remains unsupported"
+      ],
+      "refuted": [],
+      "blocking_findings": []
+    }
+  },
+  "limits": [
+    "No production command wiring or app-visible recovery delivery is claimed",
+    "New permission cases use root/coordinator teardown and reopen; the existing subprocess-kill suite still uses file payloads at transfer boundaries",
+    "No power-loss, syscall-gap atomicity or recursive content-integrity guarantee",
+    "No Windows/macOS runtime or whole-application cross-build performed this slice",
+    "Full Rust suite was not repeated for this localized follow-up; earlier 991 accepted tests across runs are historical; current evidence is the 201-test recovery suite",
+    "No startup, input latency or half-bounce measurement or improvement claimed",
+    "Changes remain local; prior publication rejection is not retried"
+  ],
+  "references": [
+    "https://man7.org/linux/man-pages/man2/open.2.html",
+    "https://man7.org/linux/man-pages/man2/fchmod.2.html"
+  ],
+  "source_sha256": {
+    "src-tauri/src/files/recovery/replacement_transfer.rs": "59a6e14f89fe1ea340e6b1c6f769af8a35afe184d935e86559e5b900392a81d2",
+    "src-tauri/src/files/recovery/replacement_execution.rs": "e8f4f7a46ccc3a303b5fd52cdf38b9526ddda67e31879c54642d0bdf3e23bb5a",
+    "src-tauri/src/files/native_directory/permissions.rs": "f1da1e75d987f1067619a3037a46230f122186053f67e6ad02dc3193f03c29b9",
+    "src-tauri/src/files/recovery/model.rs": "b33b4a39b1f339cad4cd556d7d45c4ed971a19890d1d00738b08285864543897",
+    "src-tauri/test_support/recovery_replacement_transfer.rs": "24c4d5c4dc5719e7f481b1daecfb66f519e627c40cc459f13eece46da154cc3e",
+    "src-tauri/test_support/recovery_replacement_execution.rs": "d4082e06b0d2a20c72b65697b033bab3202cfd320bc53022a8c6717941f7bb93"
+  },
+  "log_sha256": {
+    "/tmp/recovery-publication-retry-before.log": "1fbd81de430022bd8b790f655a19065b821e169eaff6bc3100a47e38e79f065a",
+    "/tmp/recovery-publication-retry-recovery-final.log": "0906ee5022cf2bcf1e432177b253fdc4f571bdb349b36ceadb1ff12cfe940233",
+    "/tmp/recovery-publication-retry-clippy.log": "292210b593dc6e40f485adc6e4f32ca2dae5c5559aec88bac757e8d90c0c410a"
+  }
+}

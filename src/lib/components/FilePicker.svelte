@@ -8,12 +8,15 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fetchDirectory, getHomeDirectory, pickerRespond } from "$lib/api/files";
+  import { fetchDirectory } from "$lib/api/files";
+import { getHomeDirectory } from "$lib/api/environment";
+import { pickerRespond } from "$lib/api/system";
   import type { FileEntry } from "$lib/domain/file";
   import FileIcon from "./FileIcon.svelte";
   import PickerQuickOpen from "./PickerQuickOpen.svelte";
-  import { joinPath, parentDir } from "$lib/domain/path";
-  import type { SearchResult } from "$lib/api/files";
+  import { basename, joinPath, parentDir } from "$lib/domain/path";
+  import { parseBreadcrumbs } from "$lib/state/navigation";
+  import type { SearchResult } from "$lib/api/search";
 
   export interface PickerInfo {
     mode: "open" | "save";
@@ -60,14 +63,12 @@
   );
 
   function ancestors(path: string): string[] {
-    const parts = path.split("/").filter(Boolean);
-    const result = ["/"];
-    let acc = "";
-    for (const part of parts) {
-      acc += "/" + part;
-      result.push(acc);
-    }
-    return result;
+    const paths = parseBreadcrumbs(path).map((breadcrumb) => breadcrumb.path);
+    const first = paths[0] ?? "";
+    const windowsAbsolute = /^[a-zA-Z]:\\$/.test(first) || first.startsWith("\\\\");
+    if (windowsAbsolute) return paths;
+    if (path.startsWith("/")) return ["/", ...paths];
+    return [];
   }
 
   async function loadDir(path: string): Promise<void> {
@@ -133,8 +134,9 @@
 
   function navigateAddress(): void {
     const trimmed = addressInput.trim();
-    if (!trimmed.startsWith("/")) return;
-    void setChain(ancestors(trimmed.replace(/\/+$/, "") || "/"));
+    const dirs = ancestors(trimmed);
+    if (dirs.length === 0) return;
+    void setChain(dirs);
   }
 
   async function respond(paths: string[]): Promise<void> {
@@ -279,7 +281,7 @@
     {:else}
       <span class="selection-hint">
         {selectedFiles.size > 0
-          ? [...selectedFiles].map((p) => p.split("/").pop()).join(", ")
+          ? [...selectedFiles].map(basename).join(", ")
           : "No file selected"}
       </span>
     {/if}

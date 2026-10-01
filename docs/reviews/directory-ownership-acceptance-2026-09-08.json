@@ -1,0 +1,149 @@
+{
+  "date": "2026-09-08",
+  "platform": "Linux / Wry 0.55.1 / WebKitGTK",
+  "scope": "Directory and Git lease lifetime: native destruction, same-window reload, actual externally terminated renderer. Not macOS startup or cross-platform acceptance.",
+  "binary_sha256": "c7576b9422ee142552a1aecdec6149d5c1b507d18a5aaa2c163d79edac289b61",
+  "tests": {
+    "native": {
+      "specs_passed": 3,
+      "tests_passed": 5,
+      "elapsed_seconds": 14
+    },
+    "rust": {
+      "passed": 470,
+      "ignored": 7,
+      "shell": "/bin/bash",
+      "profile": "isolated XDG roots"
+    },
+    "frontend": {
+      "passed": 2159,
+      "skipped": 3,
+      "performance_passed": 30
+    },
+    "typecheck": "0 errors, 0 warnings",
+    "clippy": "all targets, warnings denied, passed"
+  },
+  "before": {
+    "directory_native_destroy": "First child retained exact fd15/wd3 for 10 seconds after native destruction while its directory remained present.",
+    "git_reply_cancellation": "Post-send canceled acquisition kept observer; deterministic observer-drop wait failed.",
+    "directory_final_release": "Failed final unwatch remained registered after maintenance with releasing owner alive and no caller retry."
+  },
+  "native_records": [
+    {
+      "case": "directory-watch-native-destroy",
+      "cycle": 1,
+      "application": {
+        "pid": 215663,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "518941"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-o5P9CS/child-1",
+      "acquired": [
+        {
+          "fd": 15,
+          "watchDescriptor": "3",
+          "device": "10306",
+          "inode": "788f09"
+        }
+      ],
+      "retained": 0
+    },
+    {
+      "case": "directory-watch-native-destroy",
+      "cycle": 2,
+      "application": {
+        "pid": 215663,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "518941"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-o5P9CS/child-2",
+      "acquired": [
+        {
+          "fd": 15,
+          "watchDescriptor": "4",
+          "device": "10306",
+          "inode": "788f0b"
+        }
+      ],
+      "retained": 0
+    },
+    {
+      "case": "directory-watch-native-destroy",
+      "cycle": 3,
+      "application": {
+        "pid": 215663,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "518941"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-o5P9CS/child-3",
+      "acquired": [
+        {
+          "fd": 15,
+          "watchDescriptor": "5",
+          "device": "10306",
+          "inode": "788f0d"
+        }
+      ],
+      "retained": 0
+    },
+    {
+      "case": "directory-watch-renderer-reload",
+      "application": {
+        "pid": 215663,
+        "executable": "/home/chong/Repos/tauri-explorer/src-tauri/target/debug/tauri-explorer",
+        "startTime": "518941"
+      },
+      "directory": "/home/chong/.tauri-explorer-e2e-directory-owner-o5P9CS/reload-raw-watch",
+      "oldLease": {
+        "path": "/home/chong/.tauri-explorer-e2e-directory-owner-o5P9CS/reload-raw-watch",
+        "id": "11"
+      },
+      "oldWatches": [
+        {
+          "fd": 15,
+          "watchDescriptor": "6"
+        }
+      ],
+      "newLease": {
+        "path": "/home/chong/.tauri-explorer-e2e-directory-owner-o5P9CS/reload-raw-watch",
+        "id": "15"
+      },
+      "newWatches": [
+        {
+          "fd": 15,
+          "watchDescriptor": "8"
+        }
+      ]
+    },
+    {
+      "case": "directory-watch-renderer-crash",
+      "path": "/tmp/explorer-renderer-crash-DzrrXM/raw-directory",
+      "lease": {
+        "path": "/tmp/explorer-renderer-crash-DzrrXM/raw-directory",
+        "id": "3"
+      },
+      "descriptorBefore": [
+        {
+          "fd": 14,
+          "watchDescriptor": "3"
+        }
+      ],
+      "retained": 0
+    }
+  ],
+  "limitations": [
+    "Windows/macOS native equivalents not run.",
+    "No macOS half-bounce timing measured.",
+    "Three child cycles are not long-duration retention soak.",
+    "Directory native callback errors still log rather than restore lost observation; recursive watcher initialization failure remains a cache-disable condition."
+  ],
+  "startup_payload": {
+    "chunks": 44,
+    "raw_bytes": 652792,
+    "gzip_bytes": 212545,
+    "main_raw_bytes": 302858,
+    "main_gzip_bytes": 90004,
+    "budget_passed": true,
+    "startup_time_measured": false
+  }
+}

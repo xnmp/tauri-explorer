@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
+import {
+  requestRefresh,
+  cancelPendingRefreshes,
+  refreshManagerRetention,
+} from "$lib/state/refresh-manager";
 
 describe("refresh-manager", () => {
   beforeEach(() => {
@@ -115,6 +119,55 @@ describe("refresh-manager", () => {
     expect(loudPane).toHaveBeenCalledWith({ silent: false });
   });
 
+  it("does not let another pane's in-flight refresh consume a newly subscribed pane's event", async () => {
+    let finishPaneA!: () => void;
+    const paneA = vi.fn(() => new Promise<void>((resolve) => {
+      finishPaneA = resolve;
+    }));
+    const paneB = vi.fn();
+    const epoch = Date.now();
+
+    requestRefresh(paneA, "/home/user/docs", true, "pane-a", epoch);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(paneA).toHaveBeenCalledOnce();
+
+    // Pane B commits its own snapshot while pane A is refreshing the same
+    // path. Pane A cannot cover B's deferred navigation event.
+    requestRefresh(paneB, "/home/user/docs", true, "pane-b", epoch + 100);
+    finishPaneA();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(paneB).toHaveBeenCalledOnce();
+  });
+
+  it("does not attribute an in-flight scan to a subscriber that declined its callback", async () => {
+    let finishPaneA!: () => void;
+    const paneA = vi.fn(() => new Promise<void>((resolve) => {
+      finishPaneA = resolve;
+    }));
+    const declinedPaneB = vi.fn(() => false as const);
+    const replayedPaneB = vi.fn();
+    const beforeFlush = Date.now();
+
+    requestRefresh(paneA, "/home/user/docs", true, "pane-a", beforeFlush);
+    requestRefresh(declinedPaneB, "/home/user/docs", true, "pane-b", beforeFlush);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(paneA).toHaveBeenCalledOnce();
+    expect(declinedPaneB).toHaveBeenCalledOnce();
+
+    requestRefresh(
+      replayedPaneB,
+      "/home/user/docs",
+      true,
+      "pane-b",
+      beforeFlush + 100,
+    );
+    finishPaneA();
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(replayedPaneB).toHaveBeenCalledOnce();
+  });
+
   it("rate-limits consecutive refreshes to the same directory", () => {
     const refresh = vi.fn();
 
@@ -144,5 +197,109 @@ describe("refresh-manager", () => {
     requestRefresh(refreshB, "/home/user/pictures");
     vi.advanceTimersByTime(150);
     expect(refreshB).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds settled directory metadata over a long session and fully clears on teardown", () => {
+    const refresh = vi.fn();
+    // Churn 5,000 distinct directories in bursts larger than the retention cap.
+    // Draining 5,000 same-deadline fake timers at once spends seconds in the
+    // timer harness and times out under CI contention; this is a retention
+    // contract, not a benchmark of the fake clock's timer lookup algorithm.
+    const burst = 1250;
+    for (let start = 0; start < 5000; start += burst) {
+      for (let index = start; index < start + burst; index++) {
+        requestRefresh(refresh, `/long-session/${index}`);
+      }
+      expect(refreshManagerRetention().pending).toBe(burst);
+      expect(vi.getTimerCount()).toBe(burst);
+      vi.advanceTimersByTime(150);
+      expect(refresh).toHaveBeenCalledTimes(start + burst);
+      expect(refreshManagerRetention().lastRefresh).toBe(1024);
+    }
+
+    expect(refresh).toHaveBeenCalledTimes(5000);
+    expect(refreshManagerRetention()).toEqual({
+      pending: 0,
+      lastRefresh: 1024,
+      inFlight: 0,
+      baselines: 0,
+      intervals: 0,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    cancelPendingRefreshes();
+    expect(refreshManagerRetention()).toEqual({
+      pending: 0,
+      lastRefresh: 0,
+      inFlight: 0,
+      baselines: 0,
+      intervals: 0,
+    });
+  });
+  it("refreshes a completed mutation promptly after a recent scan without waiting for the watcher interval", () => {
+    const refresh = vi.fn();
+    requestRefresh(refresh, "/mutation");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    requestRefresh(refresh, "/mutation", true, refresh, Date.now(), "mutation");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    requestRefresh(refresh, "/mutation");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1850);
+    expect(refresh).toHaveBeenCalledTimes(3);
+  });
+
+  it("upgrades pending watcher work and cannot postpone a mutation with later events", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    requestRefresh(first, "/busy");
+    vi.advanceTimersByTime(150);
+    requestRefresh(first, "/busy");
+    vi.advanceTimersByTime(50);
+    requestRefresh(first, "/busy", true, first, Date.now(), "mutation");
+    vi.advanceTimersByTime(50);
+    requestRefresh(second, "/busy", false, second, Date.now(), "mutation");
+    vi.advanceTimersByTime(50);
+    requestRefresh(first, "/busy");
+    vi.advanceTimersByTime(50);
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(second).toHaveBeenCalledExactlyOnceWith({ silent: false });
+  });
+
+  it("waits for the current listing then runs one prompt mutation reconciliation", async () => {
+    let finish!: () => void;
+    const refresh = vi.fn().mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    requestRefresh(refresh, "/busy");
+    await vi.advanceTimersByTimeAsync(150);
+    requestRefresh(refresh, "/busy", true, refresh, Date.now(), "mutation");
+    await vi.advanceTimersByTimeAsync(200);
+    requestRefresh(refresh, "/busy");
+    expect(refresh).toHaveBeenCalledOnce();
+    finish();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    requestRefresh(refresh, "/busy");
+    await vi.advanceTimersByTimeAsync(150);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1850);
+    expect(refresh).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops a covered mutation only for subscribers participating in the current listing", async () => {
+    let finish!: () => void;
+    const first = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const second = vi.fn();
+    const observedAt = Date.now();
+    requestRefresh(first, "/busy");
+    await vi.advanceTimersByTimeAsync(150);
+    requestRefresh(first, "/busy", true, first, observedAt, "mutation");
+    requestRefresh(second, "/busy", true, second, observedAt, "mutation");
+    await vi.advanceTimersByTimeAsync(150);
+    finish();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
   });
 });

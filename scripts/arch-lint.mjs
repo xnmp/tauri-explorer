@@ -16,7 +16,7 @@
  *   component-raw-localstorage  components must not touch localStorage directly
  *   state-imports-component     src/lib/state must not import .svelte components
  *   plugin-core-orchestration   plugins must not import windowTabsManager / dialogStore /
- *                               performFileTransfer modules (route through PluginContext)
+ *                               moveFiles modules (route through PluginContext)
  *   plugin-state-import         plugin feature dirs must not import $lib/state/* unless
  *                               allowlisted below with a documented justification
  *   api-files-export-star       src/lib/api/files.ts must not use `export *`
@@ -51,26 +51,18 @@ const PLUGIN_STATE_ALLOW = new Map([
   ["src/lib/plugins/nano-banana/index.ts", ["src/lib/state/persisted"]],
 ]);
 
-// state-imports-component allowlist: file → .svelte modules it may import.
-// - git-warm.ts (#287, allowlisted in #304): infrastructure wiring that imports
-//   only the `warmGraphSnapshot` module-context export (a cache warmer), never
-//   the component instance. Proper fix is moving the graph snapshot cache out
-//   of GitGraphView.svelte into state/ — out of scope for the linter issue.
-const STATE_COMPONENT_ALLOW = new Map([
-  ["src/lib/state/git-warm.ts", ["src/lib/components/GitGraphView.svelte"]],
-]);
-
 // rust-command-error-type bool allowlist (#304): warm_pool_begin_spawn returns
 // a CAS "slot reserved?" flag — success/failure is data, not an error, so
 // Result<_, AppError> would be the wrong shape.
-const RUST_BOOL_ALLOW = new Set(["warm_pool_begin_spawn"]);
+// Warm readiness/activation return whether the caller still owns its lease.
+const RUST_BOOL_ALLOW = new Set(["warm_pool_begin_spawn", "warm_pool_register", "warm_pool_activate"]);
 
 // Modules that export the core-orchestration symbols windowTabsManager,
-// dialogStore and performFileTransfer (rule plugin-core-orchestration).
+// dialogStore and moveFiles (rule plugin-core-orchestration).
 const CORE_ORCHESTRATION_MODULES = [
   "src/lib/state/window-tabs.svelte",
   "src/lib/state/dialogs.svelte",
-  "src/lib/state/file-transfer",
+  "src/lib/state/move-operations",
 ];
 
 // ── Small helpers (pure) ─────────────────────────────────────────────────────
@@ -187,10 +179,9 @@ function lintFrontendFile(fileRel, source) {
   }
 
   if (inDir(fileRel, "src/lib/state")) {
-    const allowed = STATE_COMPONENT_ALLOW.get(fileRel) ?? [];
     for (const imp of imports) {
       const r = resolveSpec(fileRel, imp.spec);
-      if (!r || allowed.some((m) => sameModule(r, m))) continue;
+      if (!r) continue;
       if (inDir(r, "src/lib/components")) {
         warn(imp.line, "state-imports-component",
           `state/ must not import components — imports ${imp.spec}; invert via a callback or event`);
@@ -216,7 +207,7 @@ function lintFrontendFile(fileRel, source) {
       if (!r) continue;
       if (CORE_ORCHESTRATION_MODULES.some((m) => sameModule(r, m))) {
         warn(imp.line, "plugin-core-orchestration",
-          `plugins must not import ${imp.spec} (windowTabsManager/dialogStore/performFileTransfer) — route through PluginContext`);
+          `plugins must not import ${imp.spec} (windowTabsManager/dialogStore/moveFiles) — route through PluginContext`);
         continue;
       }
       if (inFeatureDir && inDir(r, "src/lib/state") && !allowed.some((m) => sameModule(r, m))) {

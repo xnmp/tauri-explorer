@@ -1,0 +1,98 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "uncommitted native directory/privacy checkpoint; full architectural review incomplete",
+  "scope": [
+    "Shared Directory handle facade; existing Unix trash/recovery implementation extracted without path fallback",
+    "Windows anchored no-follow traversal, exclusive private creation, no-replace rename, typed exact-handle removal and bounded independent enumeration",
+    "Protected current-user/SYSTEM creation descriptors and separate explicit/inherited child validation",
+    "Shared Win32/NT error conversion; coordinator no-follow existence boundary"
+  ],
+  "verification": {
+    "linux_file_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: -- --test-threads=1",
+      "passed": 324,
+      "failed": 0,
+      "ignored": 6,
+      "log": "/tmp/recovery-directory-linux-first.log"
+    },
+    "final_directory_contracts": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::native_directory:: -- --test-threads=1",
+      "passed": 9,
+      "failed": 0,
+      "ignored": 0,
+      "log": "/tmp/recovery-directory-contract-final.log",
+      "note": "After adding 128-KiB name refusal and compiled Windows stream/separator cases; Linux implementation unchanged since full file suite."
+    },
+    "linux_clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/recovery-directory-linux-clippy.log",
+      "warnings": "128 unused-infrastructure library warnings; five lib-test warnings, four duplicate."
+    },
+    "windows_actual_source": {
+      "command": "cargo clippy --manifest-path /tmp/recovery-directory-check/Cargo.toml --target x86_64-pc-windows-gnu --tests --offline",
+      "exit_code": 0,
+      "log": "/tmp/recovery-directory-windows-final.log",
+      "warnings": "One dead-code warning for metadata/sync/name_max in the minimal harness.",
+      "manifest": "[package]\nname = \"recovery-directory-check\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[dependencies]\nlog = \"0.4\"\ntempfile = \"3\"\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\nwindows-core = \"=0.61.2\"\nwindows = { version = \"=0.61.3\", features = [\"Wdk_Foundation\", \"Wdk_Storage_FileSystem\", \"Win32_Security_Authorization\", \"Win32_Foundation\", \"Win32_Globalization\", \"Win32_Security\", \"Win32_Storage_FileSystem\", \"Win32_System_Com\", \"Win32_System_IO\", \"Win32_System_Threading\", \"Win32_UI_Shell\", \"Win32_UI_Shell_PropertiesSystem\"] }\n[workspace]\n",
+      "lib_rs": "mod files {\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/windows_io.rs\"]\n    mod windows_io;\n    #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/native_directory.rs\"]\n    mod native_directory;\n    mod recovery {\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/object_id.rs\"]\n        mod object_id;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_identity.rs\"]\n        mod file_identity;\n        #[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_lock.rs\"]\n        mod file_lock;\n    }\n}\n",
+      "limits": "Compiles actual directory/security, identity, lock and error-conversion sources plus contracts. No Windows execution or full application build."
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_source_coverage": "415/415",
+      "unresolvable": 0,
+      "note": "New untracked source files explicitly mapped too; denominator is tracked files."
+    },
+    "formatting": "rustfmt --check on shared facade and child modules, shared errors and common contracts; git diff --check pass.",
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT with platform qualifications",
+      "mode": "Read-only source and build-log review; no Windows runtime.",
+      "confirmed": [
+        "Bounded and owned native buffers, mutable SID output provenance, synchronous lifetimes",
+        "Atomic protected descriptor creation, unique owner/SYSTEM principal set, explicit/inherited ACL policy separation",
+        "Anchored relative operations, no-follow policy, exclusive/no-replace operations and coherent access masks",
+        "Bounded UTF-16 name allocation and lossless enumeration parsing"
+      ],
+      "plausible": [
+        "ReOpenFile independent cursor behavior for NtCreateFile-origin nested directory handles; Microsoft documents CreateFile-origin input",
+        "Actual OS ACL inheritance and normalization on supported Windows filesystems"
+      ],
+      "refuted_as_current_capability": [
+        "Windows namespace durability; sync explicitly returns Unsupported"
+      ]
+    }
+  },
+  "review_fixes": [
+    "Ordinary traversal no longer requires a private ACL; created directory handles are validated",
+    "Enumeration parser reads checked byte slices instead of potentially unaligned u16 references",
+    "Rename buffer allocation and supplied size include the complete ABI struct",
+    "LocalSystem duplicate principal eliminated; automatic inheritance control flags distinguished from actual inherited ACEs",
+    "Writable SID destinations require mutable-derived pointers",
+    "UTF-16 name collection is bounded before validation"
+  ],
+  "limitations": [
+    "Windows namespace persistence remains unqualified; NtFlushBuffersFileEx normal mode is a documented candidate requiring native access/filesystem/fault qualification, not a proven implemented barrier",
+    "ReOpenFile documentation names CreateFile-origin input; the compiled concurrent nested-directory contract must execute on Windows",
+    "Private inherited-file validation requires separately validated retained parent authority; SQLite integration is pending",
+    "Windows hardlink evidence policy, randomness, resource capture and recovery callers remain integration work",
+    "Production reservations, durable replacement/reconciliation/UI, retention and cross-filesystem/crash acceptance remain outstanding",
+    "No new native application UI acceptance, Windows/macOS runtime evidence, startup measurement or measured speedup"
+  ],
+  "publication": "No commit, push or merge this checkpoint.",
+  "source_sha256": {
+    "src-tauri/src/files/native_directory.rs": "5e0d056205629be115fec0aa01cdb7f6e5d7bf431642e2a058b07955c7491cb2",
+    "src-tauri/src/files/native_directory/unix.rs": "ccd01e2be1fd0840642b3ff450c1c895d7a67b101eb4df2638f273f65cf823e8",
+    "src-tauri/src/files/native_directory/windows.rs": "3055a5a23465620a5a48be3fbc466c063121eedfab81d6abe4a6d3411a133842",
+    "src-tauri/src/files/native_directory/windows_security.rs": "733b03b98a147b1ef6d701174c303dea612a2f097537461a812c9f7d7e47af3a",
+    "src-tauri/src/files/windows_io.rs": "48fd0721d7d9d38f8546a15741c6255ba91bf7d0061b233eae8ffd07bf5b8b92",
+    "src-tauri/src/files/recovery/coordinator.rs": "2cfd144a9698bb10ebf04ee7e3d6265c3bbcc4479dce6390e681490b0135dbf7",
+    "src-tauri/src/files/recovery/file_identity/windows.rs": "856164ec684342c6910e682c0319e27883b5b61b1f5c88b1e0e678377099bc53",
+    "src-tauri/src/files/recovery/file_lock/windows.rs": "ee48f66b682240173498926040e29cd82701623ee45793d240cad84ff7de46a4",
+    "src-tauri/test_support/native_directory_contract.rs": "ad5988650546bbcae72b3e255b42239b05b8307b0bf61d0ee741829d7537246a",
+    "src-tauri/Cargo.toml": "dd4a38a1d57ce8b68ab0366cf6cfe254d495a34f170d44fdcbf31261efaf832c"
+  }
+}

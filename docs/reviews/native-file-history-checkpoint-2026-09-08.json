@@ -1,0 +1,93 @@
+{
+  "date": "2026-09-08",
+  "status": "in-progress architectural review; verified metadata-receipt checkpoint",
+  "base_commit": "cfef0dc0",
+  "scope": {
+    "implemented": [
+      "Native file history authority with per-renderer and explicitly shared entries",
+      "Renderer summary channel and expected-entry admission",
+      "Committed-path receipts with nullable presentation metadata for seven file commands",
+      "Receipt-based frontend bookkeeping and current-pane reconciliation",
+      "Browser-only history simulation; retired production TypeScript executor"
+    ],
+    "not_accepted": [
+      "Cross-device move cleanup and composite partial mutation recovery",
+      "Overwrite rollback and displaced artifact restoration",
+      "Artifact identity checks against external same-path replacement",
+      "Atomic forward mutation/history admission and ordering",
+      "Native multiwindow inverse admission and renderer-loss acceptance",
+      "Windows/macOS and final product/soak/startup release acceptance"
+    ]
+  },
+  "verification": {
+    "metadata_regression": {
+      "before": "1 intended failure, 4 pass: inspection error incorrectly revoked a committed write",
+      "after": "129 filesystem tests pass, 3 ignored; all 5 receipt tests pass",
+      "scope": "Injected descriptor failure after actual filesystem write; not native IPC fault injection",
+      "logs": [
+        "/tmp/file-mutation-receipt-before.log",
+        "/tmp/file-mutation-receipt-after.log"
+      ]
+    },
+    "frontend": {
+      "files": 251,
+      "passed": 2275,
+      "skipped": 3,
+      "performance_passed": 30,
+      "log": "/tmp/file-mutation-receipt-frontend-final.log"
+    },
+    "rust": {
+      "library_passed": 553,
+      "integration_passed": 9,
+      "ignored": 7,
+      "log": "/tmp/file-mutation-receipt-rust-full.log"
+    },
+    "chromium": {
+      "outcomes": 75,
+      "all_file_views": true,
+      "log": "/tmp/file-mutation-receipt-browser.log"
+    },
+    "native_linux": {
+      "specs": 3,
+      "outcomes": 5,
+      "binary_sha256": "4acf5600bc5f7c2c71bcbabeb77f8e7679483d6974c1812e10866d1d74095be6",
+      "build": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle",
+      "log": "/tmp/file-mutation-receipt-native.log",
+      "cases": [
+        "file-ops: create folder, rename folder, trash folder",
+        "local-mutation-lifetime: delayed create A to B navigation and timestamped external B watcher update",
+        "file-batch-outcome: partial A/B delete then Undo/Redo/Undo exact A contents, B remains absent"
+      ],
+      "limits": [
+        "No native metadata-failure injection",
+        "No native rename/move/copy history inverse or shared-window history acceptance",
+        "No native panic recovery acceptance"
+      ]
+    },
+    "static": {
+      "svelte": "0 errors, 0 warnings",
+      "clippy": "all targets with warnings denied, default and e2e-renderer-recovery feature",
+      "architecture": "clean",
+      "maps": "397/397 sources"
+    },
+    "normal_release": {
+      "startup_chunks": 44,
+      "startup_raw_bytes": 664540,
+      "startup_gzip_bytes": 216853,
+      "main_gzip_bytes": 90589,
+      "startup_gzip_change_from_base": 139,
+      "budgets": "pass",
+      "native_test_probe_hits": 0,
+      "measurement_order": "Normal release measured and probe-scanned before explicit E2E build replaced build/",
+      "startup_latency_claim": false,
+      "log": "/tmp/file-mutation-receipt-bundle.log"
+    }
+  },
+  "publication": "Local checkpoint only; no push or merge; full review remains active",
+  "independent_review": {
+    "model": "GPT-5.6 Sol",
+    "verdict": "ACCEPT narrow metadata-receipt and native compatibility checkpoint; full history not accepted",
+    "reviewer": "crash_recovery_acceptance_sol",
+    "scope": "Read-only source, causal regression logs, native terminal log and binary hash; reviewer did not implement this receipt migration"
+  }
+}

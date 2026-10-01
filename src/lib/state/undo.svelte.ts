@@ -1,116 +1,89 @@
-/**
- * Global undo state management using Svelte 5 runes.
- * Issue: tauri-explorer-1k9k
- *
- * Extracted from explorer.svelte.ts to reduce god-object complexity.
- * Manages the undo stack for file operations (rename, move).
- * The stack is global to provide a unified undo experience.
- *
- * Cross-window: actions can be broadcast via BroadcastChannel so that
- * e.g. a drag-drop move is undoable from both source and destination windows.
- */
+/** Window-owned projection of native file history. The native process alone
+ * admits and executes inverses, including actions shared by multiple windows. */
+import { fileHistoryPort } from "$lib/api/file-history";
+import { emptyHistorySummary, type HistoryAction, type HistoryDirection, type HistoryPort, type HistoryReply, type HistorySummary, type UndoAction } from "$lib/domain/file-history";
+import { toastStore } from "./toast.svelte";
 
-import { renameEntry, moveEntry, restoreFromTrash, deleteMultipleEntries, deleteEntry } from "$lib/api/files";
-import { executeUndo, executeRedo, type UndoApiDeps } from "$lib/domain/undo-operations";
-import type { UndoAction } from "./types";
+export interface UndoCompletion {
+  action?: HistoryAction;
+  error?: string;
+  warnings?: readonly string[];
+}
 
-/** Concrete API bindings for undo/redo execution. */
-const undoApi: UndoApiDeps = {
-  renameEntry,
-  moveEntry,
-  deleteEntry,
-  deleteMultipleEntries,
-  restoreFromTrash,
-};
+export function createUndoStore(port: HistoryPort, report: (error: string) => void = (error) => { toastStore.error(error); }) {
+  const initial = emptyHistorySummary();
+  let summary = $state.raw(initial);
+  let running = $state(false);
+  let pendingWrites = 0;
+  let writes: Promise<HistoryReply> = Promise.resolve({ summary: initial });
+  let disposed = false;
+  const receive = (next: HistorySummary) => {
+    if (!disposed && next.revision > summary.revision) summary = next;
+  };
+  const unsubscribe = port.subscribe(receive);
 
-const UNDO_CHANNEL = "explorer-undo-actions";
-let channel: BroadcastChannel | null = null;
+  function write(operation: () => ReturnType<HistoryPort["clear"]>): Promise<void> {
+    pendingWrites += 1;
+    const pending = writes.then(async () => {
+      const result = await operation();
+      receive(result.summary);
+      if (result.error) report(`Could not update Undo history: ${result.error}`);
+      return result;
+    }).catch((error): HistoryReply => {
+      report(`Could not update Undo history: ${String(error)}`);
+      return { summary, error: String(error) };
+    });
+    writes = pending.finally(() => { pendingWrites -= 1; });
+    return writes.then(() => {});
+  }
 
-function createUndoStore() {
-  let stack = $state<UndoAction[]>([]);
-  let redoStack = $state<UndoAction[]>([]);
+  async function perform(direction: HistoryDirection): Promise<UndoCompletion> {
+    if (disposed) return { error: "File history is closed" };
+    if (running) return { error: "An undo or redo operation is already in progress" };
+    // Capture intent before awaiting IPC. Only writes already queued by this
+    // window may determine a newer target; an unrelated later push must not.
+    const admittedWrites = pendingWrites ? writes : null;
+    const entryId = (state: HistorySummary) => direction === "undo" ? state.undoId : state.redoId;
+    const expected = entryId(summary);
+    running = true;
+    try {
+      const admitted = await admittedWrites;
+      if (admitted?.error) return { error: admitted.error };
+      // Use the receipt of the last write owned at admission, even if the
+      // channel already describes a newer push from another window.
+      const target = admitted ? entryId(admitted.summary) : expected;
+      if (target === null) return { error: direction === "undo" ? "Nothing to undo" : "Nothing to redo" };
+      const result = await port.execute(direction, target);
+      receive(result.summary);
+      return {
+        ...(result.action ? { action: result.action } : {}),
+        ...(result.error ? { error: result.error } : {}),
+        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+      };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    } finally { running = false; }
+  }
 
-  // Listen for undo actions broadcast from other windows
-  if (typeof BroadcastChannel !== "undefined") {
-    channel = new BroadcastChannel(UNDO_CHANNEL);
-    channel.onmessage = (event: MessageEvent<UndoAction>) => {
-      stack = [...stack, event.data];
-      redoStack = [];
-    };
+  function push(action: UndoAction, shared: boolean): Promise<void> {
+    // Capture before queued work runs; callers may mutate their input afterward.
+    const owned = structuredClone($state.snapshot(action));
+    return write(() => port.push(owned, shared));
   }
 
   return {
-    // Accessors
-    get canUndo() {
-      return stack.length > 0;
-    },
-    get canRedo() {
-      return redoStack.length > 0;
-    },
-    get stackSize() {
-      return stack.length;
-    },
-
-    // Actions
-    push(action: UndoAction): void {
-      stack = [...stack, action];
-      redoStack = []; // New action clears redo history
-    },
-
-    /** Push an action and broadcast it to other windows. */
-    pushAndBroadcast(action: UndoAction): void {
-      stack = [...stack, action];
-      redoStack = [];
-      channel?.postMessage(action);
-    },
-
-    /**
-     * Execute the most recent undo action and remove it from the stack.
-     * Returns { error } on failure, { action } on success (for broadcasting affected dirs).
-     */
-    async undo(): Promise<{ error: string } | { action: UndoAction }> {
-      if (stack.length === 0) return { error: "Nothing to undo" };
-
-      const action = stack[stack.length - 1];
-      const result = await executeUndo(action, undoApi);
-
-      if (!result.ok) {
-        // Keep the failed action on the stack — a failed/partial undo must
-        // not silently discard history. The caller surfaces the error via
-        // toast and the user can retry once the cause is fixed.
-        return { error: result.error };
-      }
-
-      stack = stack.slice(0, -1);
-      redoStack = [...redoStack, action];
-      return { action };
-    },
-
-    /**
-     * Re-execute the most recently undone action.
-     * Returns { error } on failure, { action } on success (for broadcasting affected dirs).
-     */
-    async redo(): Promise<{ error: string } | { action: UndoAction }> {
-      if (redoStack.length === 0) return { error: "Nothing to redo" };
-
-      const action = redoStack[redoStack.length - 1];
-      const result = await executeRedo(action, undoApi);
-
-      if (!result.ok) return { error: result.error };
-
-      redoStack = redoStack.slice(0, -1);
-      stack = [...stack, action];
-      return { action };
-    },
-
-    /**
-     * Clear all undo/redo history.
-     */
-    clear(): void {
-      stack = [];
-      redoStack = [];
-    },
+    get canUndo() { return !disposed && !running && !summary.busy && summary.undoId !== null; },
+    get canRedo() { return !disposed && !running && !summary.busy && summary.redoId !== null; },
+    get stackSize() { return summary.stackSize; },
+    push: (action: UndoAction) => push(action, false),
+    pushAndBroadcast: (action: UndoAction) => push(action, true),
+    /** A committed effect without a safe inverse still supersedes redo. */
+    invalidateRedo: (shared = false) => write(() => port.push(null, shared)),
+    clear: () => write(() => port.clear()),
+    undo: () => perform("undo"),
+    redo: () => perform("redo"),
+    dispose() { disposed = true; unsubscribe(); },
   };
 }
 
-export const undoStore = createUndoStore();
+export const undoStore = createUndoStore(fileHistoryPort);

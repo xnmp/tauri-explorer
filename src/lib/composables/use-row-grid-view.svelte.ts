@@ -62,6 +62,7 @@ export function useRowGridView(deps: RowGridViewDeps) {
 
   // VirtualList assigns its own row scroller into this via bind:. The outward
   // scrollToIndex maps a displayEntries index to its row and forwards.
+  let rowContainsIndex = $state<((row: number) => boolean) | undefined>();
   let rowScrollToIndex = $state<((row: number) => void) | undefined>();
 
   function scrollToIndex(index: number): void {
@@ -81,6 +82,9 @@ export function useRowGridView(deps: RowGridViewDeps) {
       return rows;
     },
     scrollToIndex,
+    containsIndex: (index: number) => rowContainsIndex?.(Math.floor((index + sentinelOffset) / getColumns())) ?? false,
+    get rowContainsIndex() { return rowContainsIndex; },
+    set rowContainsIndex(fn: ((row: number) => boolean) | undefined) { rowContainsIndex = fn; },
     // Bindable target for VirtualList's own scrollToIndex ($bindable).
     get rowScrollToIndex(): ((row: number) => void) | undefined {
       return rowScrollToIndex;

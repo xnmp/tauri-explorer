@@ -9,19 +9,15 @@
  */
 import { browser } from "@wdio/globals";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { navigateTo, entryNames } from "./helpers";
+import { createNativeFixtureDirectory } from "../native-qualification";
 
-const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-watch-"));
+const scratchDir = createNativeFixtureDirectory("tauri-explorer-e2e-watch-");
 
 describe("filesystem watcher refresh", () => {
   before(() => {
     fs.writeFileSync(path.join(scratchDir, "existing.txt"), "hello\n");
-  });
-
-  after(() => {
-    fs.rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("a file created outside the app appears without any UI action", async () => {

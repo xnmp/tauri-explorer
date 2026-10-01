@@ -206,10 +206,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       if (sourceDir !== undefined && !samePath(sourceDir, destPath)) {
         const paths = [...dragPaths];
         cleanup(true);
-        // No existingNames: performFileTransfer must fetch the target dir
-        // for its conflict check (an empty Set would be treated as
-        // authoritative and bypass the conflict dialog entirely). Background
-        // drops are move-only; a multi-item drop is one undoable batch (#163).
+        // Background drops are move-only, and a multi-item drop is one
+        // ordered native session with one undoable history entry (#163, #685).
         const movable = paths.filter((sourcePath) => !samePath(parentDir(sourcePath), destPath));
         await handleFileDropMany(movable, destPath, false, { onRefresh: refreshPanes });
         return;

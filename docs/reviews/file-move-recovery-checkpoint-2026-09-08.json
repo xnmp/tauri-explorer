@@ -1,0 +1,97 @@
+{
+  "date": "2026-09-08",
+  "base": "ca573d8f",
+  "scope": "Truthful partial cross-device move outcomes, retained overwrite rollback artifacts, safe history partitioning, and read-only staged-directory publication",
+  "frontend": {
+    "passed": 2281,
+    "skipped": 3,
+    "performance_passed": 30,
+    "log": "/tmp/file-move-recovery-frontend-full.log"
+  },
+  "rust": {
+    "library_passed": 577,
+    "integration_passed": 9,
+    "ignored": 7,
+    "log": "/tmp/file-move-recovery-rust-final.log",
+    "final_permission_mask_regressions_passed": 9,
+    "final_permission_mask_log": "/tmp/file-move-recovery-publication-final.log"
+  },
+  "failing_before": {
+    "partial_outcome_failed": 2,
+    "partial_outcome_log": "/tmp/file-move-recovery-outcome-before.log",
+    "read_only_publication_failed": 1,
+    "read_only_publication_log": "/tmp/read-only-publication-before.log"
+  },
+  "checks": {
+    "svelte_errors": 0,
+    "svelte_warnings": 0,
+    "architecture_passed": true,
+    "all_targets_recovery_feature_clippy_passed": true,
+    "clippy_log": "/tmp/file-move-recovery-clippy-final.log",
+    "source_map_coverage": {
+      "covered": 399,
+      "total": 399
+    }
+  },
+  "browser": {
+    "engine": "Chromium",
+    "view_modes": 3,
+    "passed": 74,
+    "log": "/tmp/file-move-recovery-browser.log"
+  },
+  "native_linux": {
+    "build": "VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle",
+    "sha256": "af7d6b9a0e844c8080a192a3012368a016d5ad0ee91606cd9946d4ab3aa1646c",
+    "passed": 6,
+    "spec_files_passed": 4,
+    "exit_code": 0,
+    "specs": [
+      "file-move-recovery.spec.ts",
+      "file-ops.spec.ts",
+      "local-mutation-lifetime.spec.ts",
+      "file-batch-outcome.spec.ts"
+    ],
+    "log": "/tmp/file-move-recovery-native-final.log",
+    "screenshot": "screenshots/refactor/repo-health-cleanup/partial-move-recovery.png",
+    "verified": "Real distinct filesystems, non-root source cleanup refusal, exact bytes at source and committed destination, listing, incomplete-paste error, no unsafe inverse; ordinary create/rename/trash, delayed create and partial Delete/Undo/Redo compatibility",
+    "limits": "Partial child deletion is injected in Rust, not native UI; this native fixture retains the entire read-only source. No multiwindow, process-crash, Windows or macOS acceptance."
+  },
+  "startup": {
+    "chunks": 44,
+    "raw_bytes": 665401,
+    "gzip_bytes": 217236,
+    "gzip_delta": 383,
+    "exact_test_probe_string_hits": 0,
+    "log": "/tmp/file-move-recovery-bundle.log",
+    "latency_claim": null
+  },
+  "outstanding": [
+    "Durable recovery journal/index/startup reconciliation",
+    "Native source/artifact identity and namespace replacement",
+    "Read-only nested staging cleanup and artifact retention bounds",
+    "Indeterminate network-filesystem publication",
+    "Complete overwrite Undo and atomic forward/history admission",
+    "Native multiwindow and supported-platform acceptance",
+    "Full review release matrix and macOS half-bounce measurements"
+  ],
+  "independent_review": {
+    "model": "GPT-5.6 Sol",
+    "verdict": "ACCEPT scoped partial-move, retained replacement and read-only publication guarantees",
+    "confirmed": [
+      "Known destination effect retained after failed source cleanup; unsafe inverse suppressed",
+      "No-replace rollback retains displaced original on collision",
+      "Final permission restoration uses captured descriptor",
+      "4 native specs / 6 outcomes and 9 final publication tests support scoped claims"
+    ],
+    "static_only": [
+      "Target pathname swap between publication and permission restoration",
+      "chmod/open failure and readonly payload collision branches"
+    ],
+    "limits": [
+      "Permission restoration failure logs a warning and may leave copied root more owner-writable",
+      "Descriptor anchors only post-publication chmod, not source/staging identity",
+      "Native source cleanup fixture fails before child deletion; partial subtree deletion is injected in Rust",
+      "No process-crash recovery, full overwrite undo or final history acceptance"
+    ]
+  }
+}

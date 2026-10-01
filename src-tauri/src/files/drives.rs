@@ -1,6 +1,6 @@
 //! Enumerate drives and volumes across platforms.
 //!
-//! Linux: reads the mount table for block-device volumes, plus GVFS and rclone
+//! Linux: discovers UDisks volumes and mount-table block devices, plus GVFS and rclone
 //! cloud mounts.
 //! macOS: scans `/Volumes/`, skipping the root-mapped system volume.
 //! Windows: iterates drive letters that exist; volume label + provider + type
@@ -18,13 +18,13 @@ use crate::error::AppError;
 /// and the device source to determine whether the backing media is removable.
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LinuxMount {
-    path: String,
+pub(super) struct LinuxMount {
+    pub(super) path: String,
     filesystem: String,
-    source: String,
+    pub(super) source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DriveKind {
     Fixed,
@@ -45,12 +45,18 @@ pub enum CloudProvider {
     Wsl,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Drive {
     /// Display name. For removable drives this is the volume label when one is
     /// available, falling back to the drive letter / mount name.
     pub name: String,
-    pub path: String,
+    /// The mount root, and the only navigable route. `None` only for a
+    /// discovered, unmounted Linux volume, which must be mounted first.
+    pub path: Option<String>,
+    /// UDisks object identity, stable across mount-state changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
     pub kind: DriveKind,
     /// Secondary/dimmed label — e.g. the drive letter ("E:") when `name` is the
     /// volume label. `None` when there's nothing useful to show.
@@ -62,42 +68,46 @@ pub struct Drive {
 }
 
 impl Drive {
+    #[cfg(not(target_os = "windows"))]
     fn simple(name: String, path: String, kind: DriveKind) -> Self {
         Drive {
             name,
-            path,
+            path: Some(path),
             kind,
             detail: None,
             provider: None,
+            device_id: None,
         }
     }
 }
 
 #[tauri::command]
 pub async fn list_drives() -> Result<Vec<Drive>, AppError> {
-    Ok(enumerate_drives())
+    let drives = tauri::async_runtime::spawn_blocking(enumerate_drives)
+        .await
+        .map_err(|e| AppError::WorkerFailed(e.to_string()))?;
+    #[cfg(target_os = "linux")]
+    {
+        return Ok(super::linux_volumes::supplement(drives.0, &drives.1).await);
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(drives)
 }
 
 #[cfg(target_os = "linux")]
-fn enumerate_drives() -> Vec<Drive> {
+fn enumerate_drives() -> (Vec<Drive>, String) {
     let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
 
-    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            // SAFETY: geteuid has no preconditions and does not mutate memory.
-            let uid = unsafe { libc::geteuid() };
-            std::path::PathBuf::from(format!("/run/user/{uid}"))
-        });
-    let cloud_drives = linux_gvfs_google_drives(&runtime_dir.join("gvfs"))
+    let cloud_drives = linux_gvfs_google_drives(&linux_gvfs_dir())
         .into_iter()
         .chain(linux_rclone_drives());
 
-    enumerate_linux_drives(
+    let drives = enumerate_linux_drives(
         mountinfo.as_deref(),
         std::path::Path::new("/sys/block"),
         cloud_drives,
-    )
+    );
+    (drives, mountinfo.unwrap_or_default())
 }
 
 /// The shared production enumeration path. The native command supplies the
@@ -130,26 +140,29 @@ fn enumerate_linux_drives(
 /// mounts when the app has no `USER` environment variable.
 #[cfg(target_os = "linux")]
 fn parse_linux_block_mounts(mountinfo: &str, sys_block: &std::path::Path) -> Vec<Drive> {
+    parse_linux_block_mounts_with_labels(
+        mountinfo,
+        sys_block,
+        std::path::Path::new("/dev/disk/by-label"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn parse_linux_block_mounts_with_labels(
+    mountinfo: &str,
+    sys_block: &std::path::Path,
+    labels: &std::path::Path,
+) -> Vec<Drive> {
     parse_linux_mounts(mountinfo)
         .into_iter()
         .filter(|mount| !is_linux_pseudo_filesystem(&mount.filesystem))
         .filter(|mount| !is_linux_system_mount(&mount.path))
-        .filter_map(|mount| linux_drive_from_mount(&mount, sys_block))
+        .filter_map(|mount| linux_drive_from_mount(&mount, sys_block, labels))
         .collect()
 }
 
-/// Controlled input seam for the real Linux drive enumeration path.
-///
-/// This exists for integration tests that need deterministic mount-table and
-/// sysfs fixtures without mounting or unmounting hardware on the test host.
 #[cfg(target_os = "linux")]
-#[doc(hidden)]
-pub fn enumerate_linux_drives_for_test(mountinfo: &str, sys_block: &std::path::Path) -> Vec<Drive> {
-    enumerate_linux_drives(Some(mountinfo), sys_block, std::iter::empty())
-}
-
-#[cfg(target_os = "linux")]
-fn parse_linux_mounts(mountinfo: &str) -> Vec<LinuxMount> {
+pub(super) fn parse_linux_mounts(mountinfo: &str) -> Vec<LinuxMount> {
     mountinfo.lines().filter_map(parse_linux_mount).collect()
 }
 
@@ -201,7 +214,7 @@ fn is_linux_pseudo_filesystem(filesystem: &str) -> bool {
 /// block-device backing (for example, a separately mounted `/boot`, its EFI
 /// submount, or `/home`) and must never be offered as sidebar drives.
 #[cfg(target_os = "linux")]
-fn is_linux_system_mount(path: &str) -> bool {
+pub(super) fn is_linux_system_mount(path: &str) -> bool {
     path == "/boot"
         || path.starts_with("/boot/")
         || matches!(
@@ -211,7 +224,11 @@ fn is_linux_system_mount(path: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_drive_from_mount(mount: &LinuxMount, sys_block: &std::path::Path) -> Option<Drive> {
+fn linux_drive_from_mount(
+    mount: &LinuxMount,
+    sys_block: &std::path::Path,
+    labels: &std::path::Path,
+) -> Option<Drive> {
     let kind = if is_removable_block_device(&mount.source, sys_block) {
         DriveKind::Removable
     } else if backing_block_device(&mount.source, sys_block).is_some() {
@@ -221,7 +238,7 @@ fn linux_drive_from_mount(mount: &LinuxMount, sys_block: &std::path::Path) -> Op
     };
     let mount_name = std::path::Path::new(&mount.path).file_name()?.to_str()?;
     Some(Drive::simple(
-        linux_volume_label(&mount.source).unwrap_or_else(|| mount_name.to_owned()),
+        linux_volume_label(&mount.source, labels).unwrap_or_else(|| mount_name.to_owned()),
         mount.path.clone(),
         kind,
     ))
@@ -260,22 +277,69 @@ fn is_removable_block_device(source: &str, sys_block: &std::path::Path) -> bool 
 
 /// Use udev's label aliases when available, otherwise keep the mount name.
 #[cfg(target_os = "linux")]
-fn linux_volume_label(source: &str) -> Option<String> {
-    let source = std::path::Path::new(source).canonicalize().ok()?;
-    std::fs::read_dir("/dev/disk/by-label")
-        .ok()?
-        .flatten()
-        .find_map(|entry| {
-            (entry.path().canonicalize().ok().as_ref() == Some(&source))
-                .then(|| entry.file_name().to_string_lossy().into_owned())
-        })
+fn linux_volume_label(source: &str, labels: &std::path::Path) -> Option<String> {
+    let source = std::path::Path::new(source);
+    let canonical_source = source.canonicalize().unwrap_or_else(|_| source.to_owned());
+    std::fs::read_dir(labels).ok()?.flatten().find_map(|entry| {
+        let target = std::fs::read_link(entry.path()).ok()?;
+        let target = if target.is_absolute() {
+            target
+        } else {
+            labels.join(target)
+        };
+        let canonical_target = target.canonicalize().unwrap_or(target);
+        (canonical_target == canonical_source)
+            .then(|| decode_udev_label(&entry.file_name().to_string_lossy()))
+    })
+}
+
+/// udev aliases encode UTF-8 bytes as hex. Decode once, never on paths or
+/// already-decoded UDisks labels (a literal backslash-x20 is a valid label).
+#[cfg(target_os = "linux")]
+fn decode_udev_label(label: &str) -> String {
+    let bytes = label.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes.get(i..i + 2) == Some(br"\x") {
+            if let Some(pair) = bytes.get(i + 2..i + 4) {
+                if let (Some(a), Some(b)) = (
+                    (pair[0] as char).to_digit(16),
+                    (pair[1] as char).to_digit(16),
+                ) {
+                    decoded.push((a * 16 + b) as u8);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 /// GVFS exposes each connected account as a child of its FUSE mount rather
 /// than as a separate entry in `/proc/self/mountinfo`. A Google account looks
 /// like `google-drive:host=user@example.com` below `$XDG_RUNTIME_DIR/gvfs`.
+/// GVfs's FUSE directory, where each user-visible GVfs mount is an entry.
 #[cfg(target_os = "linux")]
-fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
+pub(super) fn linux_gvfs_dir() -> std::path::PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: geteuid has no preconditions and does not mutate memory.
+            let uid = unsafe { libc::geteuid() };
+            std::path::PathBuf::from(format!("/run/user/{uid}"))
+        })
+        .join("gvfs")
+}
+
+/// Google Drive accounts GVfs exposes as `google-drive:host=…` entries.
+/// Visible to `linux_gvfs_watch`, which re-derives drives from the same
+/// directory on every push.
+#[cfg(target_os = "linux")]
+pub(super) fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
     let Ok(entries) = std::fs::read_dir(base) else {
         return Vec::new();
     };
@@ -296,10 +360,11 @@ fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
 
             Some(Drive {
                 name: "Google Drive".into(),
-                path: entry.path().to_string_lossy().to_string(),
+                path: Some(entry.path().to_string_lossy().to_string()),
                 kind: DriveKind::Cloud,
                 detail: account,
                 provider: Some(CloudProvider::GoogleDrive),
+                device_id: None,
             })
         })
         .collect()
@@ -312,6 +377,21 @@ fn linux_rclone_drives() -> Vec<Drive> {
     std::fs::read_to_string("/proc/self/mountinfo")
         .map(|mountinfo| parse_linux_rclone_mounts(&mountinfo))
         .unwrap_or_default()
+}
+
+/// Every drive the process mount table alone yields: block-device mounts and
+/// rclone/FUSE cloud mounts. UDisks and GVFS directory entries are separate
+/// sources. The mount-table watch compares this projection between wakes.
+/// Visible to `linux_mount_watch`, which derives it from every mountinfo wake.
+#[cfg(target_os = "linux")]
+pub(super) fn linux_mount_table_drives(
+    mountinfo: &str,
+    sys_block: &std::path::Path,
+    labels: &std::path::Path,
+) -> Vec<Drive> {
+    let mut drives = parse_linux_block_mounts_with_labels(mountinfo, sys_block, labels);
+    drives.extend(parse_linux_rclone_mounts(mountinfo));
+    drives
 }
 
 #[cfg(target_os = "linux")]
@@ -351,10 +431,11 @@ fn parse_linux_rclone_mount(line: &str) -> Option<Drive> {
         } else {
             mount_name.to_string()
         },
-        path,
+        path: Some(path),
         kind: DriveKind::Cloud,
         detail: (!remote_name.is_empty()).then(|| remote_name.to_string()),
         provider: is_google.then_some(CloudProvider::GoogleDrive),
+        device_id: None,
     })
 }
 
@@ -447,10 +528,11 @@ fn enumerate_drives() -> Vec<Drive> {
                 name: volume_label
                     .clone()
                     .unwrap_or_else(|| "Google Drive".into()),
-                path,
+                path: Some(path),
                 kind: DriveKind::Cloud,
                 detail: Some(letter_label),
                 provider: Some(CloudProvider::GoogleDrive),
+                device_id: None,
             });
             continue;
         }
@@ -465,10 +547,11 @@ fn enumerate_drives() -> Vec<Drive> {
 
         drives.push(Drive {
             name,
-            path,
+            path: Some(path),
             kind,
             detail,
             provider: None,
+            device_id: None,
         });
     }
 
@@ -615,8 +698,11 @@ fn windows_wsl_drives() -> Vec<Drive> {
     let bytes = output.stdout;
     let text: String = if bytes.len() >= 2 && bytes.len() % 2 == 0 {
         let utf16: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .collect();
         String::from_utf16_lossy(&utf16)
     } else {
@@ -634,10 +720,11 @@ fn windows_wsl_drives() -> Vec<Drive> {
         let path = format!("\\\\wsl$\\{}\\home", distro);
         drives.push(Drive {
             name: distro.to_string(),
-            path,
+            path: Some(path),
             kind: DriveKind::Cloud,
             detail: Some("WSL".into()),
             provider: Some(CloudProvider::Wsl),
+            device_id: None,
         });
     }
 
@@ -721,7 +808,7 @@ mod linux_tests {
 
         assert_eq!(drives.len(), 1);
         assert_eq!(drives[0].name, "USB BACKUP");
-        assert_eq!(drives[0].path, "/mnt/USB BACKUP");
+        assert_eq!(drives[0].path.as_deref(), Some("/mnt/USB BACKUP"));
         assert!(matches!(drives[0].kind, DriveKind::Removable));
     }
 
@@ -775,6 +862,28 @@ mod linux_tests {
     }
 
     #[test]
+    fn gvfs_derivation_ignores_other_backends_and_plain_files() {
+        let gvfs = tempfile::tempdir().unwrap();
+        std::fs::create_dir(
+            gvfs.path()
+                .join("archive:host=file%253A%252F%252F%252Fa.zip"),
+        )
+        .unwrap();
+        std::fs::create_dir(gvfs.path().join("sftp:host=example.com")).unwrap();
+        std::fs::write(gvfs.path().join("google-drive:host=file@example.com"), "").unwrap();
+        assert!(linux_gvfs_google_drives(gvfs.path()).is_empty());
+        assert!(linux_gvfs_google_drives(&gvfs.path().join("missing")).is_empty());
+        std::fs::create_dir(
+            gvfs.path()
+                .join("google-drive:host=user@example.com,user=user"),
+        )
+        .unwrap();
+        let drives = linux_gvfs_google_drives(gvfs.path());
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].detail.as_deref(), Some("user@example.com"));
+    }
+
+    #[test]
     fn discovers_gvfs_google_account_with_account_detail() {
         let gvfs = tempfile::tempdir().expect("temporary GVFS directory");
         let mount = gvfs.path().join("google-drive:host=user@example.com");
@@ -784,7 +893,7 @@ mod linux_tests {
 
         assert_eq!(drives.len(), 1);
         assert_eq!(drives[0].name, "Google Drive");
-        assert_eq!(drives[0].path, mount.to_string_lossy());
+        assert_eq!(drives[0].path.as_deref(), Some(&*mount.to_string_lossy()));
         assert_eq!(drives[0].detail.as_deref(), Some("user@example.com"));
         assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
     }
@@ -797,7 +906,7 @@ mod linux_tests {
 
         assert_eq!(drives.len(), 1);
         assert_eq!(drives[0].name, "Google Drive");
-        assert_eq!(drives[0].path, "/home/chong/GDrive");
+        assert_eq!(drives[0].path.as_deref(), Some("/home/chong/GDrive"));
         assert_eq!(drives[0].detail.as_deref(), Some("gdrive"));
         assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
         assert!(matches!(drives[0].kind, DriveKind::Cloud));
@@ -826,7 +935,7 @@ mod linux_tests {
         let drives = parse_linux_rclone_mounts(mountinfo);
 
         assert_eq!(drives.len(), 1);
-        assert_eq!(drives[0].path, "/home/user/Google Drive");
+        assert_eq!(drives[0].path.as_deref(), Some("/home/user/Google Drive"));
         assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
     }
 
@@ -838,5 +947,41 @@ mod linux_tests {
     #[test]
     fn leaves_unknown_mountinfo_escape_literal_instead_of_panicking() {
         assert_eq!(decode_mountinfo_field(r"/mnt/a\777b"), r"/mnt/a\777b");
+    }
+}
+
+/// Moved from Cargo's auto-discovered `tests/linux_drives_mounts.rs` (#926) so
+/// it can exercise `enumerate_linux_drives` directly instead of through a
+/// `#[doc(hidden)] pub` seam.
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../test_support/linux_drives_mounts.rs"]
+mod linux_drives_mounts_tests;
+
+/// Whether drive changes are pushed as `drives-changed` events right now. The
+/// frontend polls `list_drives` only as a slow backstop while this is true.
+/// Only Linux has a push source (the UDisks2 subscription); elsewhere, and on
+/// Linux without a system bus or UDisks, discovery relies on polling.
+#[tauri::command]
+pub async fn drive_updates_live() -> Result<bool, AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(super::linux_volumes::updates_live())
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(false)
+}
+
+#[tauri::command]
+pub async fn mount_drive(device_id: String) -> Result<String, AppError> {
+    #[cfg(target_os = "linux")]
+    {
+        return super::linux_volumes::mount(&device_id).await;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = device_id;
+        Err(AppError::Other(
+            "Volume mounting is only available on Linux".into(),
+        ))
     }
 }

@@ -1,0 +1,95 @@
+{
+  "date": "2026-09-08",
+  "issue": 680,
+  "base_commit": "7d2bc83e",
+  "status": "uncommitted shared recovery lock checkpoint; comprehensive review incomplete",
+  "scope": [
+    "Owned OS lock guard used by Unix coordinator and operation locks",
+    "Windows byte-range backend with dedicated per-request completion event",
+    "Permanent coordinator fencing after admission-gate open or identity failure"
+  ],
+  "verification": {
+    "reproduction": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery::coordinator::tests::missing_or_replaced_gate_fences_the_connection_even_after_the_original_returns -- --exact --test-threads=1",
+      "exit_code": 101,
+      "log": "/tmp/recovery-gate-reopen-repro.log",
+      "failure": "restoring gate spelling must not clear detected authority loss"
+    },
+    "recovery_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files::recovery:: -- --test-threads=1",
+      "passed": 73,
+      "failed": 0,
+      "ignored": 3,
+      "log": "/tmp/recovery-file-lock-final.log"
+    },
+    "file_suite": {
+      "command": "cargo test --manifest-path src-tauri/Cargo.toml --lib files:: -- --test-threads=1",
+      "passed": 310,
+      "failed": 0,
+      "ignored": 6,
+      "log": "/tmp/recovery-file-lock-files.log"
+    },
+    "clippy": {
+      "command": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --features e2e-renderer-recovery",
+      "exit_code": 0,
+      "log": "/tmp/recovery-file-lock-clippy.log",
+      "limitations": "124 library unused recovery infrastructure warnings; five lib-test warnings (four duplicates). Recovery command integration is not warning-clean or complete."
+    },
+    "windows_actual_source": {
+      "command": "cargo clippy --manifest-path /tmp/recovery-file-lock-check/Cargo.toml --target x86_64-pc-windows-gnu --tests --offline",
+      "exit_code": 0,
+      "log": "/tmp/recovery-file-lock-windows-final.log",
+      "manifest": "[package]\nname = \"recovery-file-lock-check\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[dependencies]\nlog = \"0.4\"\ntempfile = \"3\"\nwindows = { version = \"=0.61.3\", features = [\"Win32_Foundation\", \"Win32_Security\", \"Win32_Storage_FileSystem\", \"Win32_System_IO\", \"Win32_System_Threading\"] }\nwindows-core = \"=0.61.2\"\n[workspace]\n",
+      "lib_rs": "#[path = \"/home/chong/Repos/tauri-explorer/src-tauri/src/files/recovery/file_lock.rs\"]\nmod file_lock;\n",
+      "limitations": "Compiles the actual lock facade, Windows backend, common subprocess tests and Windows async tests. No Windows tests were executed; not a full application build or runtime acceptance."
+    },
+    "maps": {
+      "command": "python3 docs/code-map/validate.py --coverage",
+      "tracked_coverage": "415/415",
+      "unresolvable": 0,
+      "log": "/tmp/recovery-file-lock-maps.log",
+      "limitations": "Tracked-source denominator; new untracked lock files are explicitly mapped."
+    },
+    "formatting": "Changed Rust files pass rustfmt --check; git diff --check passes.",
+    "independent_review": {
+      "model": "GPT-5.6 Sol",
+      "verdict": "ACCEPT for scoped lock foundation",
+      "confirmed": [
+        "Fresh independent gate/owner opens, pre/post namespace verification and permanent gate-error fencing",
+        "Evidence-preserving RAII release and explicit validated retirement under ownership",
+        "Nonce-before-lock creation under shared admission",
+        "Windows dedicated request events and pending cancellation/completion lifetime by static source review and actual-source compilation"
+      ],
+      "plausible_or_unverified": [
+        "Exact ERROR_IO_PENDING branch execution is not deterministically established by timed waiter tests",
+        "Windows runtime contention, termination, cancellation, unlock failures and aliases remain unexecuted"
+      ],
+      "review_mode": "Read-only source/log review; reviewer did not run builds/tests."
+    }
+  },
+  "design_findings": [
+    "Windows exclusive locking must avoid the bounded nonce-read region; locks reserve [4096,4097), without extending the file.",
+    "A dedicated manual-reset event avoids unrelated overlapped requests signalling a shared file handle. All pending paths drain before request storage is released.",
+    "Removed an in-development callback test seam that could unwind while a stack OVERLAPPED remained pending. Final production lock dispatch has no such callbacks.",
+    "Nonce creation and synchronization precede ownership acquisition under shared admission; no actionable record can refer to that owner before acquisition returns. Interrupted initialization preserves a bounded orphan."
+  ],
+  "limitations": [
+    "Coordinator, descriptor-relative storage, private validation and operation-lock randomness remain Unix-only. The Windows file-lock backend alone is not a Windows recovery adapter.",
+    "No production mutation acquires recovery admission yet. Whole-intent worker propagation, durable replacement, live inspection/reconciliation and recovery UI integration remain required.",
+    "Blocking waiter tests check non-completion while held and completion after release; scheduling can delay a thread before its syscall, so they do not deterministically prove a particular pending OS interleaving.",
+    "Process termination tests run on Linux and verify OS lock release plus unchanged readable evidence; they do not establish sudden-power-loss durability.",
+    "No Windows/macOS runtime, native UI screenshot, startup measurement, measured speedup or full release acceptance this checkpoint.",
+    "Unlock failure is logged during guard Drop; closing the owned File provides the final OS release. Pending Windows completion has no timeout and can wait on a stalled filesystem. Recovery work must stay on blocking owners."
+  ],
+  "publication": "No commit, push or merge.",
+  "source_sha256": {
+    "src-tauri/src/files/recovery/file_lock.rs": "aa5676a600713b6df835379b9165546f84f6c5de9a504666ec98e4a6e46cf74c",
+    "src-tauri/src/files/recovery/file_lock/windows.rs": "4c575c6025f49f1c2eb750d0483fee32b799bbe7444fde979cbe2d3a37041cba",
+    "src-tauri/src/files/recovery/coordinator.rs": "cb7638dfb121173f658d207b6c92a1938df2804b87ad9e742c3b1591db3f3e8f",
+    "src-tauri/src/files/recovery/locks.rs": "28c3724b96adeb8dcbcb47a4824c08643c39a75b88e50d0f77ef5ea5d5aa28a7",
+    "src-tauri/src/files/recovery/mod.rs": "b071c491b21ba04e8131ea2360dcec1b7147b60887781739d77b47b0a39a67ae",
+    "src-tauri/test_support/recovery_file_lock.rs": "906adc662ab84207cb5c200cca10b1a13d90c3219f53cd7eec4a8ec3ade4722f",
+    "src-tauri/test_support/recovery_coordinator.rs": "c81552a301185ef3e9b326d9fb1fe98987ee50d2633e10036ac00f294581f60a",
+    "src-tauri/Cargo.toml": "7f956b716e2ca9eaff4fe765d537ae5d50ddb72253bd63616943eaa8997c01d4"
+  }
+}

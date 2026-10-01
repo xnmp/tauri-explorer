@@ -1,54 +1,214 @@
-/**
- * Per-pane filesystem watch + local-mutation cooldown.
- * Extracted from explorer.svelte.ts; no Svelte or UI dependencies.
- */
-
-import { watchDirectory, unwatchDirectory } from "$lib/api/files";
+/** Per-pane observation ownership and the WHETHER layer of refresh policy. */
+import { unwatchDirectory, type DirectoryWatchLease } from "$lib/api/files";
+import { isTauri } from "$lib/api/common";
+import { getNativeResourceSession } from "$lib/api/native-resource-session";
 import { isVirtualPath } from "$lib/domain/virtual-path";
+import { directoryEvents, type DirectoryChange, type DirectorySubscription } from "./directory-events";
+import { requestRefresh } from "./refresh-manager";
 
-/** How long after a local mutation watcher-triggered refreshes are ignored. */
-export const MUTATION_COOLDOWN_MS = 1000;
+type Refresh = (options: { silent: boolean }) => void | Promise<void>;
+interface PaneWatchDependencies {
+  refresh: Refresh;
+  subscribe?: (callback: (change: DirectoryChange) => void) => DirectorySubscription;
+  release?: (lease: DirectoryWatchLease) => Promise<void>;
+  prepare?: (path: string, subscription: DirectorySubscription) => Promise<void>;
+  schedule?: typeof requestRefresh;
+}
+interface Navigation {
+  path: string;
+  startedAt: number;
+  staged: DirectoryWatchLease | null | undefined;
+  unmatched: Map<string, DirectoryChange>;
+  unmatchedOverflow: boolean;
+  closed: boolean;
+  done: Promise<void>;
+  finish(): void;
+}
 
-export function createPaneWatch() {
-  let watchedPath: string | null = null;
+const MAX_PENDING_UNMATCHED_CHANGES = 256;
 
-  // Suppress redundant watcher refreshes after local mutations
-  // (delete/rename/create). Local mutations already update entries; the
-  // watcher event that follows would trigger an identical refresh causing
-  // all thumbnails to flash.
-  let lastMutationTime = 0;
+function mergeChange(previous: DirectoryChange | undefined, change: DirectoryChange): DirectoryChange {
+  return previous ? {
+    path: change.path,
+    origin: previous.origin === "mutation" || change.origin === "mutation" ? "mutation" : "watcher",
+    observedAt: previous.observedAt == null || change.observedAt == null
+      ? undefined : Math.max(previous.observedAt, change.observedAt),
+  } : change;
+}
 
-  return {
-    markLocalMutation(): void {
-      lastMutationTime = Date.now();
-    },
+export function createPaneWatch(deps: PaneWatchDependencies) {
+  const releaseCommand = deps.release ?? unwatchDirectory;
+  const schedule = deps.schedule ?? requestRefresh;
+  const key = {};
+  let committed: { path: string; lease: DirectoryWatchLease | null } | null = null;
+  let pending: Navigation | null = null;
+  const navigations = new Set<Navigation>();
+  const dirty = new Map<string, DirectoryChange>();
+  const retired = new Map<string, DirectoryWatchLease>();
+  const releases = new Set<Promise<void>>();
+  let destroyed = false;
+  let disposal: Promise<void> | undefined;
 
-    inMutationCooldown(): boolean {
-      return Date.now() - lastMutationTime < MUTATION_COOLDOWN_MS;
-    },
-
-    /** Watch `newPath`, releasing the previous watch (no-op if unchanged).
-     *  Virtual (`scheme://…`) paths aren't real directories — release any
-     *  existing watch and skip watching them. */
-    update(newPath: string): void {
-      if (isVirtualPath(newPath)) {
-        if (watchedPath) {
-          unwatchDirectory(watchedPath);
-          watchedPath = null;
+  function release(lease: DirectoryWatchLease): void {
+    if (retired.has(lease.id)) return;
+    retired.set(lease.id, lease);
+    attemptRelease(lease);
+  }
+  function attemptRelease(lease: DirectoryWatchLease): void {
+    const task = Promise.resolve().then(() => releaseCommand(lease)).then(
+      () => { retired.delete(lease.id); },
+      (error) => { console.error("Directory observation release failed:", error); },
+    ).finally(() => { releases.delete(task); });
+    releases.add(task);
+  }
+  function remember(change: DirectoryChange): void {
+    dirty.set(change.path, mergeChange(dirty.get(change.path), change));
+  }
+  function request(change: DirectoryChange): void {
+    schedule((options) => {
+      if (destroyed || committed?.path !== change.path) return false;
+      if (pending) {
+        remember(change);
+        return false;
+      }
+      return deps.refresh(options);
+    }, change.path, true, key, change.observedAt, change.origin);
+  }
+  function flush(path: string | undefined): void {
+    const change = path ? dirty.get(path) : undefined;
+    dirty.clear();
+    if (change && !destroyed) request(change);
+  }
+  function changed(change: DirectoryChange): void {
+    if (destroyed) return;
+    if (pending) {
+      // Observation starts before the listing returns its resolved lease path.
+      // Retain unmatched events during that handoff; accept() rekeys the one
+      // belonging to the resolved navigation and commit() drops the rest.
+      if (committed?.path !== change.path && pending.path !== change.path) {
+        if (pending.unmatched.has(change.path) || pending.unmatched.size < MAX_PENDING_UNMATCHED_CHANGES) {
+          pending.unmatched.set(change.path, mergeChange(pending.unmatched.get(change.path), change));
+        } else {
+          pending.unmatchedOverflow = true;
         }
         return;
       }
-      if (watchedPath === newPath) return;
-      if (watchedPath) unwatchDirectory(watchedPath);
-      watchDirectory(newPath);
-      watchedPath = newPath;
-    },
+      // The forthcoming scan covers changes observed before navigation began.
+      if (pending.path === change.path && change.observedAt != null && change.observedAt < pending.startedAt) return;
+      remember(change);
+    } else if (committed?.path === change.path) {
+      request(change);
+    }
+  }
+  const subscription = (deps.subscribe ?? directoryEvents.subscribe)(changed);
+  const prepare = deps.prepare ?? ((path: string, events: DirectorySubscription) => {
+    if (!isTauri() || isVirtualPath(path)) return Promise.resolve();
+    return Promise.all([events.ready(), getNativeResourceSession()]).then(() => {});
+  });
 
-    destroy(): void {
-      if (watchedPath) {
-        unwatchDirectory(watchedPath);
-        watchedPath = null;
+  function begin(path: string) {
+    if (pending?.staged) release(pending.staged);
+    if (pending) pending.staged = undefined;
+    for (const oldPath of dirty.keys()) {
+      if (oldPath !== committed?.path) dirty.delete(oldPath);
+    }
+    let finish!: () => void;
+    const navigation: Navigation = {
+      path, startedAt: Date.now(), staged: undefined,
+      unmatched: new Map(), unmatchedOverflow: false, closed: false,
+      done: new Promise<void>((resolve) => { finish = resolve; }),
+      finish: () => finish(),
+    };
+    navigations.add(navigation);
+    pending = navigation;
+    const ready = destroyed ? Promise.reject(new Error("Pane observation is destroyed"))
+      : Promise.resolve().then(() => prepare(path, subscription));
+    void ready.catch(() => {});
+    const current = () => !destroyed && !navigation.closed && pending === navigation;
+    const close = () => {
+      if (navigation.closed) return;
+      navigation.closed = true;
+      if (navigation.staged) release(navigation.staged);
+      navigation.staged = undefined;
+      if (pending === navigation) {
+        pending = null;
+        flush(committed?.path);
       }
+      navigations.delete(navigation);
+      navigation.finish();
+    };
+    return {
+      ready,
+      current,
+      // The listing owner transfers observation before publishing a snapshot.
+      // The old committed lease survives until the caller commits its UI state.
+      accept(lease: DirectoryWatchLease | null): boolean {
+        if (!current() || navigation.staged !== undefined) return false;
+        if (lease && navigation.path !== lease.path) {
+          const changes = [dirty.get(navigation.path), navigation.unmatched.get(lease.path)];
+          dirty.delete(navigation.path);
+          navigation.path = lease.path;
+          for (const change of changes) {
+            if (change && (change.observedAt == null || change.observedAt >= navigation.startedAt)) {
+              remember({ ...change, path: lease.path });
+            }
+          }
+          if (navigation.unmatchedOverflow) remember({ path: lease.path });
+        }
+        navigation.unmatched.clear();
+        navigation.staged = lease;
+        return true;
+      },
+      discard: release,
+      commit(): boolean {
+        if (!current() || navigation.staged === undefined) return false;
+        const previous = committed;
+        const lease = navigation.staged;
+        const committedPath = navigation.path;
+        committed = { path: committedPath, lease };
+        navigation.staged = undefined;
+        pending = null;
+        if (previous?.lease) release(previous.lease);
+        flush(committedPath);
+        close();
+        return true;
+      },
+      close,
+    };
+  }
+
+  return {
+    begin,
+    changed,
+    allowRefresh(path: string): boolean {
+      if (destroyed) return false;
+      if (!pending) return true;
+      if (committed?.path === path) remember({ path });
+      return false;
+    },
+    destroy(): Promise<void> {
+      if (disposal) return disposal;
+      destroyed = true;
+      subscription.stop();
+      dirty.clear();
+      if (committed?.lease) release(committed.lease);
+      committed = null;
+      for (const navigation of navigations) {
+        if (navigation.staged) release(navigation.staged);
+        navigation.staged = undefined;
+      }
+      const attempt = (async () => {
+        // An in-flight observed reply still owns a possible lease. Its caller
+        // always closes the ticket, including rejected/stale results.
+        await Promise.all([...navigations].map((navigation) => navigation.done));
+        while (releases.size) await Promise.all([...releases]);
+        for (const lease of retired.values()) attemptRelease(lease);
+        while (releases.size) await Promise.all([...releases]);
+        if (retired.size) throw new Error("Directory observation release did not complete");
+      })();
+      disposal = attempt;
+      void attempt.catch(() => { if (disposal === attempt) disposal = undefined; });
+      return attempt;
     },
   };
 }

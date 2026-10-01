@@ -1,0 +1,312 @@
+{
+  "run": "https://github.com/xnmp/tauri-explorer/actions/runs/34413290886",
+  "prHead": "943f3e8b7e574ca626241d43d5011433191a25d3",
+  "checkoutCommit": "132d9a0f30de86788ce0233b94e2f2f028bdd0d4",
+  "profile": "release-custom-protocol-production-hooks",
+  "binarySha256": "2eb16d63b9ae1ad4123dd7bc91027ef995b32cd0fdf1f529f7030a2ac53b3bb2",
+  "binaryBytes": 21883648,
+  "platform": {
+    "os": "macos",
+    "release": "25.6.0",
+    "arch": "arm64"
+  },
+  "scenarios": {
+    "foreground": {
+      "scenario": {
+        "id": "macos-foreground-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": false,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-09T22:51:56.572Z",
+      "finishedAt": "2026-09-09T22:56:12.510Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 3195.6,
+        "p95Ms": 3953.4
+      },
+      "warmActivation": {
+        "sampleCount": 0,
+        "p50Ms": null,
+        "p95Ms": null
+      },
+      "passed": true,
+      "errors": [],
+      "samples": [
+        {
+          "coldTotalMs": 8089.1,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3170.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3530.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3156.5,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2725.2,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2651,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3202.1,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3236.4,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3409.3,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3346.1,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3877.5,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3242.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3103.5,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3117.1,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2942.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3020.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3011.8,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2983.2,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3057.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3953.4,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3084.7,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3486.1,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3127.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3502.8,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3336.4,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3772.6,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3251.8,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3278.8,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 2789.9,
+          "warmShowMs": null
+        },
+        {
+          "coldTotalMs": 3195.6,
+          "warmShowMs": null
+        }
+      ]
+    },
+    "warmProbe": {
+      "scenario": {
+        "id": "macos-cold-warm-startup",
+        "requestedSamples": 30,
+        "timeoutMs": 30000,
+        "warmMeasure": true,
+        "cachePolicy": "fresh process per sample; operating-system caches uncontrolled",
+        "coldMilestone": "native-ready: app-run-to-ready"
+      },
+      "startedAt": "2026-09-09T22:56:12.797Z",
+      "finishedAt": "2026-09-09T23:00:44.727Z",
+      "coldStartup": {
+        "sampleCount": 30,
+        "p50Ms": 3548.2,
+        "p95Ms": 5012.5
+      },
+      "warmActivation": {
+        "sampleCount": 30,
+        "p50Ms": 414,
+        "p95Ms": 2128
+      },
+      "passed": true,
+      "errors": [],
+      "samples": [
+        {
+          "coldTotalMs": 4150.6,
+          "warmShowMs": 491
+        },
+        {
+          "coldTotalMs": 4006.2,
+          "warmShowMs": 463
+        },
+        {
+          "coldTotalMs": 3638.6,
+          "warmShowMs": 397
+        },
+        {
+          "coldTotalMs": 3465.7,
+          "warmShowMs": 414
+        },
+        {
+          "coldTotalMs": 3548.2,
+          "warmShowMs": 275
+        },
+        {
+          "coldTotalMs": 3308.2,
+          "warmShowMs": 331
+        },
+        {
+          "coldTotalMs": 3317.4,
+          "warmShowMs": 289
+        },
+        {
+          "coldTotalMs": 4281.4,
+          "warmShowMs": 552
+        },
+        {
+          "coldTotalMs": 5051,
+          "warmShowMs": 599
+        },
+        {
+          "coldTotalMs": 5012.5,
+          "warmShowMs": 2144
+        },
+        {
+          "coldTotalMs": 3948.2,
+          "warmShowMs": 621
+        },
+        {
+          "coldTotalMs": 3644.6,
+          "warmShowMs": 1739
+        },
+        {
+          "coldTotalMs": 4158.1,
+          "warmShowMs": 455
+        },
+        {
+          "coldTotalMs": 4378.7,
+          "warmShowMs": 549
+        },
+        {
+          "coldTotalMs": 3508.8,
+          "warmShowMs": 470
+        },
+        {
+          "coldTotalMs": 3153.6,
+          "warmShowMs": 207
+        },
+        {
+          "coldTotalMs": 3483.9,
+          "warmShowMs": 310
+        },
+        {
+          "coldTotalMs": 3518.1,
+          "warmShowMs": 388
+        },
+        {
+          "coldTotalMs": 3557.4,
+          "warmShowMs": 490
+        },
+        {
+          "coldTotalMs": 3749.8,
+          "warmShowMs": 429
+        },
+        {
+          "coldTotalMs": 3489,
+          "warmShowMs": 285
+        },
+        {
+          "coldTotalMs": 3947.3,
+          "warmShowMs": 433
+        },
+        {
+          "coldTotalMs": 3744.3,
+          "warmShowMs": 2128
+        },
+        {
+          "coldTotalMs": 3338.1,
+          "warmShowMs": 385
+        },
+        {
+          "coldTotalMs": 3320.8,
+          "warmShowMs": 289
+        },
+        {
+          "coldTotalMs": 3424.9,
+          "warmShowMs": 308
+        },
+        {
+          "coldTotalMs": 3735.6,
+          "warmShowMs": 357
+        },
+        {
+          "coldTotalMs": 3052,
+          "warmShowMs": 477
+        },
+        {
+          "coldTotalMs": 3017.1,
+          "warmShowMs": 380
+        },
+        {
+          "coldTotalMs": 3211.8,
+          "warmShowMs": 412
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Native readiness and warm activation only; no first-presented-frame or successful-input measurement.",
+    "Fresh processes share uncontrolled operating-system caches on a hosted runner.",
+    "This run does not establish the half-bounce target or attribute changes from previous runs to production code."
+  ]
+}

@@ -121,8 +121,7 @@ export interface ContentSearchEvent {
  * Result of starting a content search. With the real backend, results stream
  * via 'content-search-results' events and `searchId` identifies the stream.
  * Outside Tauri (browser/mock mode) the event system is unavailable, so the
- * mock returns the complete result set inline (`searchId` null) — same
- * fallback shape as the streaming directory listing.
+ * mock returns the complete result set inline (`searchId` null).
  */
 export interface ContentSearchStart {
   searchId: number | null;

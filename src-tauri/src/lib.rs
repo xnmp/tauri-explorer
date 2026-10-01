@@ -9,8 +9,11 @@ mod config;
 pub mod config_watch;
 mod content_search;
 mod crash_report;
+mod diagnostics;
 pub mod error;
 mod fal;
+mod file_history;
+mod file_mutation;
 // pub: criterion benches (src-tauri/benches/) call into
 // files::dir_listing::{scan_directory_parallel, sort_entries} directly.
 pub mod files;
@@ -19,14 +22,23 @@ pub mod git;
 pub mod git_actions;
 mod git_common;
 pub mod git_log;
+#[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+#[path = "../test_support/git_observation_probe.rs"]
+mod git_observation_probe;
+mod git_watch;
 mod github;
 mod nano_banana;
 mod palette;
+mod platform;
 mod plugin_job;
 #[cfg(target_os = "linux")]
 mod portal;
 mod process_ext;
 mod progress;
+mod renderer_owner;
+#[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+#[path = "../test_support/renderer_recovery.rs"]
+mod renderer_recovery;
 mod update_check;
 mod upscale;
 mod user_report;
@@ -68,8 +80,8 @@ fn e2e_webview2_browser_args() -> String {
 mod wsl;
 
 use system::{
-    get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
-    open_recycle_bin, restore_from_trash, set_window_theme, LaunchCwd,
+    get_launch_cwd, get_log_dir, log_startup_progress, log_startup_timing, open_recycle_bin,
+    set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -116,7 +128,18 @@ pub(crate) fn init_test_logger() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
+    run_with_process_entry(launch_dir, std::time::Instant::now());
+}
+
+/// `run`, told when the process entered `main`. Startup qualification needs the
+/// pre-`run` interval (argument parsing, the Linux detach fork) as its own phase
+/// rather than as time no recorded clock covers.
+pub fn run_with_process_entry(launch_dir: Option<String>, t_process_entry: std::time::Instant) {
     let t_start = std::time::Instant::now();
+    let t_start_epoch_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64() * 1000.0)
+        .unwrap_or(f64::NAN);
 
     // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
     #[cfg(target_os = "linux")]
@@ -156,14 +179,42 @@ pub fn run(launch_dir: Option<String>) {
         .and_then(|s| s.parse().ok())
         .unwrap_or(log::LevelFilter::Info);
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_web_content_process_terminate(|webview| {
+        renderer_owner::on_web_content_terminated(webview);
+    });
+    #[cfg(target_os = "linux")]
+    let builder = builder.plugin(renderer_owner::termination_log());
+    // Every WebView sharing Windows' data directory must use the exact same
+    // environment options. Inject the main window's attach-build arguments
+    // into every spawning page so fresh and warm descendants preserve them.
+    #[cfg(all(target_os = "windows", feature = "e2e-webview2-attach"))]
+    let builder = builder.plugin(
+        tauri::plugin::Builder::<_, ()>::new("e2e-webview-environment")
+            .js_init_script(format!(
+                "Object.defineProperty(window, '__E2E_WEBVIEW_BROWSER_ARGS__', {{ value: {} }});",
+                serde_json::to_string(&e2e_webview2_browser_args()).unwrap()
+            ))
+            .build(),
+    );
+
+    builder
         .manage(LaunchCwd(launch_cwd_for_state))
+        .manage(system::StartupClock {
+            started: t_start,
+            epoch_ms: t_start_epoch_ms,
+        })
         .plugin({
             let mut targets = vec![
                 Target::new(TargetKind::LogDir { file_name: None }),
                 Target::new(TargetKind::Webview),
             ];
-            if cfg!(debug_assertions) {
+            // Opt-in stream capture lets the qualification runner measure the
+            // shipping release profile using the same native readiness logs.
+            if cfg!(debug_assertions)
+                || std::env::var("TAURI_EXPLORER_LOG_STDOUT").as_deref() == Ok("1")
+            {
                 targets.push(Target::new(TargetKind::Stdout));
             }
             tauri_plugin_log::Builder::new()
@@ -179,7 +230,18 @@ pub fn run(launch_dir: Option<String>) {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
-        .plugin(tauri_plugin_clipboard_x::init())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                renderer_owner::on_window_destroyed(window);
+            }
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                renderer_owner::on_page_started(&webview.window());
+                #[cfg(target_os = "macos")]
+                renderer_owner::on_document_committed(&webview.window(), payload.url());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             // Launch info
             get_launch_cwd,
@@ -194,30 +256,35 @@ pub fn run(launch_dir: Option<String>) {
             config::write_theme_file,
             update_check::check_for_update,
             log_startup_timing,
+            log_startup_progress,
             // Trash operations
-            move_to_trash,
-            move_multiple_to_trash,
+            file_mutation::delete_entries,
+            files::recovery::commands::file_recovery_list,
+            files::recovery::commands::file_recovery_retire_eligible,
+            files::recovery::commands::file_recovery_subscribe,
+            files::recovery::commands::file_recovery_unsubscribe,
+            files::recovery::commands::file_recovery_inspect,
+            files::recovery::commands::file_recovery_resolve,
             open_recycle_bin,
-            restore_from_trash,
             // File operations — directory listing
             files::dir_listing::list_directory,
             files::dir_listing::invalidate_dir_cache,
             files::dir_listing::is_directory_empty,
-            files::dir_listing::start_streaming_directory,
-            files::dir_listing::cancel_directory_listing,
+            files::dir_listing::list_directory_fresh,
+            files::dir_listing::start_observed_directory,
             // File operations — CRUD
             files::file_ops::get_home_directory,
-            files::file_ops::create_directory,
-            files::file_ops::create_empty_file,
-            files::file_ops::rename_entry,
-            files::file_ops::copy_entry,
-            files::file_ops::cancel_copy,
-            files::file_ops::move_entry,
+            file_mutation::create_directory,
+            file_mutation::create_empty_file,
+            file_mutation::rename_entry,
+            file_mutation::copy_entries,
+            file_mutation::move_entries,
+            file_mutation::resolve_copy_conflict,
+            file_mutation::cancel_copy_session,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
-            files::file_ops::write_text_file,
-            files::file_ops::delete_entry_permanent,
-            files::file_ops::create_symlink,
+            file_mutation::write_text_file,
+            file_mutation::create_symlink,
             files::file_ops::estimate_size,
             files::file_ops::check_paths_exist,
             // Filesystem watcher
@@ -239,9 +306,13 @@ pub fn run(launch_dir: Option<String>) {
             content_search::start_content_search,
             content_search::cancel_content_search,
             // Clipboard (Linux native)
-            clipboard::clipboard_has_files,
-            clipboard::clipboard_read_files,
-            clipboard::clipboard_write_files,
+            clipboard::clipboard_read_text,
+            clipboard::clipboard_publish,
+            clipboard::clipboard_snapshot,
+            clipboard::clipboard_compare_and_clear,
+            clipboard::clipboard_rekey,
+            clipboard::clipboard_claim_cut,
+            clipboard::clipboard_release_cut,
             clipboard::clipboard_has_image,
             clipboard::clipboard_read_report_image,
             clipboard::clipboard_paste_image,
@@ -271,6 +342,7 @@ pub fn run(launch_dir: Option<String>) {
             // Git source-control backend (#53, #54)
             git::git_init,
             git::git_repo_root,
+            git::git_directory_scope,
             git::git_add_to_gitignore,
             git::git_archive_untracked,
             git::git_trash_untracked,
@@ -282,8 +354,12 @@ pub fn run(launch_dir: Option<String>) {
             git::git_discard,
             git::git_diff,
             git::git_commit,
-            git::git_watch_repo,
-            git::git_unwatch_repo,
+            renderer_owner::native_resource_session,
+            file_history::file_history_push,
+            file_history::file_history_clear,
+            file_history::file_history_execute,
+            git_watch::git_watch_repo,
+            git_watch::git_unwatch_repo,
             git_log::git_log,
             git_log::git_refs,
             git_log::git_commit_files,
@@ -322,6 +398,8 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_sync_local_branches,
             // Drives / volumes
             files::drives::list_drives,
+            files::drives::mount_drive,
+            files::drives::drive_updates_live,
             // Wallpaper
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
@@ -339,6 +417,7 @@ pub fn run(launch_dir: Option<String>) {
             warm_pool::warm_pool_cancel_spawn,
             warm_pool::warm_pool_register,
             warm_pool::warm_pool_claim,
+            warm_pool::warm_pool_activate,
             warm_pool::warm_pool_discard,
             warm_pool::warm_pool_shutdown,
             // Embedded terminal
@@ -351,6 +430,17 @@ pub fn run(launch_dir: Option<String>) {
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+            // Before any window exists, so every mutation command can admit.
+            // Without a data directory, mutations fail rather than run unadmitted.
+            #[cfg(target_os = "linux")]
+            match tauri::Manager::path(app).app_local_data_dir() {
+                Ok(data) => {
+                    tauri::Manager::manage(app, files::recovery::Runtime::new(data.join("file-recovery")));
+                }
+                Err(error) => log::error!("File recovery storage is unavailable: {error}"),
+            }
+            #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+            files::recovery::native_probe::seed(app.handle())?;
 
             // Persist panics locally so the next launch can offer a
             // pre-filled GitHub issue (#184). Local files only — no telemetry.
@@ -360,6 +450,11 @@ pub fn run(launch_dir: Option<String>) {
 
             // Initialize filesystem watcher for auto-refresh
             files::fs_watcher::init_watcher(app.handle());
+
+            // Removable-volume discovery: one UDisks2 subscription per process,
+            // connected lazily on the first `list_drives` (#888).
+            #[cfg(target_os = "linux")]
+            files::linux_volumes::init_monitor(app.handle());
 
             // Portal-backend mode: no main window — serve the FileChooser
             // D-Bus interface and open picker windows on demand.
@@ -473,6 +568,9 @@ pub fn run(launch_dir: Option<String>) {
             }
 
             builder.build()?;
+            let t_window_built = std::time::Instant::now();
+            #[cfg(all(target_os = "linux", feature = "e2e-renderer-recovery"))]
+            renderer_recovery::start(app.handle())?;
 
             // WARM_MEASURE=1: also spawn a hidden measure-mode warm window
             // (see runWarmWindow in warm-window.ts). It boots, self-fires one
@@ -480,7 +578,7 @@ pub fn run(launch_dir: Option<String>) {
             // keypress-free latency probe for platforms with no WebDriver
             // (macOS CI): launch with the env var, wait, grep the app log.
             if std::env::var("WARM_MEASURE").is_ok() {
-                tauri::WebviewWindowBuilder::new(
+                let measure = tauri::WebviewWindowBuilder::new(
                     app,
                     "explorer-warm-measure",
                     tauri::WebviewUrl::App("index.html".into()),
@@ -488,15 +586,24 @@ pub fn run(launch_dir: Option<String>) {
                 .initialization_script("window.__WARM_MEASURE__ = true;")
                 .visible(false)
                 .skip_taskbar(true)
-                .inner_size(1200.0, 800.0)
-                .build()?;
+                .inner_size(1200.0, 800.0);
+                #[cfg(all(target_os = "windows", feature = "e2e-webview2-attach"))]
+                let measure = measure.additional_browser_args(&e2e_webview2_browser_args());
+                measure.build()?;
             }
 
             log::info!(
-                "Startup: pre-builder={:?} builder→setup={:?} total={:?}",
+                "Startup: pre-builder={:?} builder→setup={:?} setup→window-built={:?} total={:?}",
                 t_plugins - t_start,
                 t_setup - t_plugins,
-                t_setup - t_start,
+                t_window_built - t_setup,
+                t_window_built - t_start,
+            );
+            log::info!(
+                "Startup(native-window): window=main app-run-epoch-ms={:.3} process-entry-to-run={:.1}ms window-built={:.1}ms",
+                t_start_epoch_ms,
+                (t_start - t_process_entry).as_secs_f64() * 1000.0,
+                (t_window_built - t_start).as_secs_f64() * 1000.0,
             );
             Ok(())
         })
@@ -538,6 +645,7 @@ pub fn run(launch_dir: Option<String>) {
                 }
             }
         });
+    git_watch::shutdown();
 }
 
 #[cfg(test)]

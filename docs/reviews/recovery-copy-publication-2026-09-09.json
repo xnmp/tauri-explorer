@@ -1,0 +1,101 @@
+{
+  "checkpoint": "Native ordinary-copy publication identities",
+  "date": "2026-09-09",
+  "status": "Prerequisite accepted; frontend batch migration pending",
+  "validation": {
+    "rust": {
+      "passed": 1119,
+      "failed": 0,
+      "ignored": 18,
+      "seconds": 26.74,
+      "environment": "Isolated XDG cache/data/config/state; local loopback permitted. Initial default environment run failed two sandbox-denied relay tests and one shared thumbnail-cache test."
+    },
+    "reproductions": [
+      "Unchecked legacy trash route fails substituted-publication assertion",
+      "Retaining old publication after Redo fails Undo after parent recreation assertion"
+    ],
+    "native": {
+      "passed": 5,
+      "seconds": 8.5,
+      "binary_sha256": "1c9319f26ade093d76c2a91b81b27ee61d16b830915c0d25484f1ce7159551c5",
+      "scope": "Existing Linux replacement/recovery/renderer-lifetime regression scenarios; ordinary publication protection verified by real Rust filesystem/history tests."
+    },
+    "clippy": "Passed all targets with e2e-renderer-recovery; 8 existing warnings",
+    "bundle": {
+      "startup_chunks": 45,
+      "startup_raw_bytes": 671703,
+      "startup_gzip_bytes": 219260,
+      "main_gzip_bytes": 91680
+    },
+    "map_sources": 474
+  },
+  "limits": [
+    "Ordinary frontend paste/drop history remains path-based until native batch migration.",
+    "Observed ordinary copy publication and checked trash are Linux-only.",
+    "EntryVersion is bounded top-level metadata, not a recursive content hash or protection from inode reuse with restored metadata.",
+    "Generic path-based StagedEntry publication has no new alias-retarget guarantee.",
+    "Post-publication permission/cleanup failures may still only be logged; diagnostic propagation remains open.",
+    "No startup timing or half-bounce claim."
+  ],
+  "logs": {
+    "/tmp/copy-publication-rust-isolated.log": {
+      "sha256": "6d7253e9eff471af967e838d8adc09fa6a34743f5535da1a4a8fc786bf93402b"
+    },
+    "/tmp/copy-publication-repro.log": {
+      "sha256": "42f1e577b9e6222249425b8530e5560418c3679ab82f8b9da464d3a5e547f9cb"
+    },
+    "/tmp/copy-publication-redo-repro.log": {
+      "sha256": "147dd09fb4a30eaa195a0d6f8b659228269b29ad2832de893100b11d0353d536"
+    },
+    "/tmp/copy-publication-native-ui.log": {
+      "sha256": "c5b81287e9180d9b5ac8bcfc31c278225a38f8ccb5f7e5fbcc1875db82b97b9b"
+    },
+    "/tmp/copy-publication-native-build.log": {
+      "sha256": "c32fdd73cd4a5e7c1ae6d319fe70013ef5ef0e6abb453dc151a180a8bbd6eca7"
+    },
+    "/tmp/copy-publication-clippy.log": {
+      "sha256": "05e301828c525125cd47f57c4e6c40ddf52aa719c654e5a1d7dbdab2e7bba5b5"
+    },
+    "/tmp/copy-publication-bundle.log": {
+      "sha256": "99c7fc2a4e3b0ae21dddbcac98f4dcdce1680d361c563a7d5413be1c625f2bde"
+    },
+    "/tmp/copy-publication-maps.log": {
+      "sha256": "99033fe64dce9d11b14c2323aa7d75844842a4b40c0dd1fabe23555b95f7d9f5"
+    },
+    "/tmp/copy-publication-map-all.log": {
+      "sha256": "1dfaa1d07f6fbab88e08d49bbb75592c69a870894c2ec098c379cc24c9d526ca"
+    },
+    "/tmp/copy-publication-diff.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "/tmp/copy-publication-native-binary-before.sha256": {
+      "sha256": "79cf1e741e3e881c2344b1f3c8c9d1e8c162e84a34dc8957aa0fe8eff7902a9f"
+    },
+    "/tmp/copy-publication-native-binary-after.sha256": {
+      "sha256": "79cf1e741e3e881c2344b1f3c8c9d1e8c162e84a34dc8957aa0fe8eff7902a9f"
+    }
+  },
+  "sources": {
+    "src-tauri/src/file_mutation.rs": "3b6cafe336f9aea6fdf55eb9fc7191bc4e8ef88cd9f8294ca30e67bf62ef9f7b",
+    "src-tauri/src/file_history/action.rs": "2250d909c2d7b042369e1a66abd4a35d60e97e339d8335a449a8fcefcd7e1095",
+    "src-tauri/src/file_history/model.rs": "92212836ba46e92f109bba2e649487c3383a4a23b9bea394a0e4fe6dbdc0a6d0",
+    "src-tauri/src/file_history/plan.rs": "4869ab66e3404329457a73379a970b34234dc6743ffb95a7eeb21d54d0053276",
+    "src-tauri/src/file_history/execution.rs": "32ba16fab44bb98d9de7ec1c46a89beecd7089566f2e9d5df26a276681d12887",
+    "src-tauri/src/file_history/mod.rs": "1b06e018efae4fe2f73283efda7e297110002aa093a152a87657c329a4ce8a7e",
+    "src-tauri/src/files/mutation.rs": "04a7fac26de08bb991351476d7a8c46c7f783ad10bc31a2fc7f1f06900c92402",
+    "src-tauri/src/files/publication.rs": "f32400ef6383611ef682c36344ef3c5911261df18eb4adaaff69d3e00743951f",
+    "src-tauri/src/files/file_ops.rs": "f891293031408cd846565a10f09293a89ff00cc37b7aa076d56ac6ef874d3811",
+    "src-tauri/src/files/trash.rs": "bfd774f0c7debca16c0c288e992dfcd12b4f84014db57fc2a98ef51d0a0c24e3",
+    "src-tauri/src/files/trash_artifact.rs": "d9b696ba0a945b88ad36a1dad49aa6ebde239a52c69cb0b01d7b771e2e4c288a",
+    "src-tauri/src/files/batch/model.rs": "75759d6ee065c3165196a811aa9917be024503296186b5701c395489c24dfc6c",
+    "src-tauri/src/files/batch/mod.rs": "de8300c8f2d9b52338261fd20c9d95fd511fc57ee0a36eeae04989659de11b9a",
+    "src-tauri/src/files/freedesktop_trash.rs": "732295bae14591bda4cfa94e98ab212b7550b11989398e2bbd2c1645d53c9110",
+    "src-tauri/src/files/freedesktop_trash/selection.rs": "33bbd40292ad4de31bc432f07001041542d92a5b4d7ee51472544631d0ee697f",
+    "src-tauri/src/files/freedesktop_trash/plan.rs": "85d15f6eaf62749b1427dcb8322ae34a8247ac6d510841295913e94f34cc2254"
+  },
+  "independent_review": {
+    "agent": "effective_claims_adversary_sol",
+    "verdict": "CONFIRMED",
+    "scope": "Source and final logs; fresh Redo observation, shared receipt budget, native-only/Linux scope; no blocker found."
+  }
+}

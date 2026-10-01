@@ -1,0 +1,98 @@
+{
+  "checkpoint": "Linux restore-parent effects and native history reconciliation",
+  "baseCommit": "4994a74fdfb095fac453399d49a88155f9c5ab29",
+  "sourceSha256": {
+    "src-tauri/src/files/restore_parents.rs": "f0b9a06db49b6e9284a902c8aa0d1096d3ea8005266d16b54084cca9892266b4",
+    "src-tauri/src/files/batch/mod.rs": "87895174d6e1912211b4091a7e7eff876dec9b00825db4271a850b53d75c5658",
+    "src-tauri/src/files/batch/model.rs": "43baec303cab9236154bc0520b0da62293378ff18ff5e6a6129e77373c98564b",
+    "src-tauri/src/files/trash.rs": "7c5626f0033529d71ee28b0af68dc959a713b5db73e08850309e70b6993152c6",
+    "src-tauri/src/file_history/model.rs": "97163f4395d20e56a4d42d73c59be9fc31780f0602dd9e91ccc7cefd8f22f70e",
+    "src-tauri/src/file_history/execution.rs": "c10aa260eb3df3ec30c4c78f6851f4bc241ce455bf0f2c7bf3e60006ad40e90c",
+    "src-tauri/src/file_history/mod.rs": "a21c866ed582821f6d3cd5444123b57e0c99f25c83c77240d3cbd9d328c0a5cd",
+    "src-tauri/test_support/restore_parents.rs": "2a324631e5b2d676332b72dcea9073634d08bd3989dd66fda5e6ddf61918ad6f",
+    "src-tauri/test_support/file_batch_worker.rs": "2a5f852662d7e12d2f850b17fa286daee6ea9567903b56baf249bf8346f7b7be",
+    "src-tauri/test_support/file_batch_outcomes.rs": "ef1fbe8ed71b262ff17a0eaa24a7ea535d880384028f1e55e8decffb6a5b7a5c",
+    "src-tauri/test_support/file_history_execution.rs": "3a7e03cccc232b80921896e2270ac8db401fcfe12900c7ca28175711f793a564",
+    "src-tauri/test_support/file_history_uncertainty.rs": "a5c960f3688d81fbc5c9ad23dfc0d522db466fdb3bff1bb111d795899f6726db",
+    "e2e-tauri/specs/file-batch-outcome.spec.ts": "f1e2a5c477395d85398767fda0720cfdea52e2c2311f9fcc87a4ec40bddb5be4"
+  },
+  "regressions": {
+    "failingBefore": 6,
+    "reason": "Restored parents exist on disk but auxiliary invalidations are absent; Copy, Delete, nested execution and native publication drop refresh-only effects. Fields/defaults were extracted before changing behavior.",
+    "faultCoverage": [
+      "partial mkdir failure",
+      "worker panic after mkdir",
+      "leaf publication failure retains exact trash payload and retry",
+      "publication panic retains effects and inspected recovery payload",
+      "concurrent directory creator",
+      "file and broken symlink obstruction",
+      "directory symlink",
+      "extremely long path",
+      "sibling deduplication",
+      "count and byte effect budgets"
+    ]
+  },
+  "rust": {
+    "libraryPassed": 650,
+    "integrationPassed": 9,
+    "ignored": 7,
+    "serial": true,
+    "isolatedXdg": true,
+    "shell": "/bin/bash",
+    "exitCode": 0,
+    "initialSandboxRun": {
+      "passed": 647,
+      "failed": 3,
+      "reason": "Two relay tests could not bind local sockets; thumbnail cache prewarm also failed in the sandbox run. The isolated-XDG run with local networking passes all three."
+    }
+  },
+  "clippy": {
+    "linux": "all-targets, e2e-renderer-recovery, -D warnings: PASS",
+    "windows": "actual-source isolated harness, x86_64-pc-windows-gnu, --tests -D warnings: PASS",
+    "windowsLimit": "Existing harness shims unrelated Tauri/file helpers; this is compilation evidence, not Windows execution."
+  },
+  "linuxNative": {
+    "binarySha256": "b589367b37c68472cd9df98afa8e2d83307850310b50348dd284ab866132b40f",
+    "build": "cargo build --features tauri/custom-protocol,e2e-renderer-recovery; unchanged previously accepted opt-in frontend assets",
+    "runnerSession": 13885,
+    "terminalExitCode": 0,
+    "passed": 11,
+    "specFiles": 4,
+    "durationSeconds": 17,
+    "newCase": "Restored two missing parents; surviving visible ancestor appears; exact bytes restored; Redo removes only leaf and preserves parent; final Undo restores exact bytes.",
+    "screenshotsSha256": {
+      "screenshots/refactor/repo-health-cleanup/native-restore-parents-before.png": "378bac9eab79beb55a7935c3f9c15c6ebbdba1add2a8bcc2f32b42e99e5daaee",
+      "screenshots/refactor/repo-health-cleanup/native-restore-parents-after.png": "301cb9783053c8646c57b031e160f6e8dcfd9b549cc127fc0fbc9dbc5d72dbcb"
+    }
+  },
+  "maps": {
+    "covered": 409,
+    "total": 409
+  },
+  "independentReview": {
+    "model": "GPT-5.6 Sol",
+    "source": "CONFIRMED",
+    "nativeEvidence": "ACCEPT",
+    "reviewer": "crash_recovery_acceptance_sol"
+  },
+  "limitations": [
+    "Native UI test does not distinguish explicit publication from normal OS watcher delivery; real-filesystem fault tests and native publication projection cover that contract.",
+    "No claim of created-parent ownership or rollback cleanup.",
+    "Namespace replacement and symlink alias identity remain open.",
+    "Publication waits for batch settlement.",
+    "Native history retains accepted work; a raw unowned batch waiter is not a durable transaction.",
+    "No Windows/macOS runtime or process-crash durability claim.",
+    "No startup latency or half-bounce measurement; no frontend production code changed."
+  ],
+  "logSha256": {
+    "/tmp/restore-parent-before.log": "c82d5878e6aad65087e3f8e64a418e719a55c46247637b56fd2da44d8a29d5af",
+    "/tmp/restore-history-before.log": "d0c15ecc5d4c2eb04da29b134fe098b212cb6913789fec84f3068af2fccac794",
+    "/tmp/restore-publication-before.log": "74651a034cf0efc5aeb03948e6a38e399c6a25db9cbe6355d1ce07e7cedf70a6",
+    "/tmp/restore-parent-rust-lib.log": "024c34d85e2d8e67d08b268e9cdc84428649a24d98189ce645aba0e9d597fdad",
+    "/tmp/restore-parent-rust-full.log": "29bbdb7ada277a7bfb18685148c3b8b67b2085454fbc0304c9457bdb55707753",
+    "/tmp/restore-parent-clippy.log": "c02a836f1544c411e4d6fdcb07779588f4105c4a823654550d00df12b9ec178c",
+    "/tmp/restore-parent-windows-check.log": "f7012bef3aa761aa0a6566aa3010cd584fb77ec8509b47c09ff12ad40e1e31f5",
+    "/tmp/restore-parent-native-build.log": "3dc1ebe2c412420d44c2352bfd9566690f45f9f41340979e645a7b64b1fe0ba7",
+    "/tmp/restore-parent-native.log": "43ca1f0075efbed73af1c26c1dcff8727986330458e032496e6af61eadd13b1f"
+  }
+}

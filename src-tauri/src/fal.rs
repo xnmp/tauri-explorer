@@ -10,6 +10,20 @@
 use crate::error::AppError;
 use serde_json::Value;
 use std::path::Path;
+use std::time::Duration;
+
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn http_agent() -> ureq::Agent {
+    http_agent_with_timeout(HTTP_TIMEOUT)
+}
+
+fn http_agent_with_timeout(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .build()
+        .into()
+}
 
 /// Resolve the fal.ai API key: the key configured in plugin settings wins,
 /// otherwise fall back to the `FAL_KEY` environment variable so users never
@@ -49,21 +63,27 @@ pub fn content_type_for(path: &Path) -> &'static str {
 }
 
 /// Upload a local file to fal's CDN; returns the public file URL.
-pub fn upload_file(local_path: &Path, api_key: &str) -> Result<String, AppError> {
+pub fn upload_file(
+    local_path: &Path,
+    api_key: &str,
+    control: &crate::plugin_job::JobControl,
+) -> Result<String, AppError> {
+    control.check()?;
     let file_name = local_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("upload.bin");
     let bytes = std::fs::read(local_path).map_err(|e| http_err("Failed to read input file", e))?;
 
-    let mut init =
-        ureq::post("https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3")
-            .header("Authorization", &format!("Key {}", api_key))
-            .send_json(serde_json::json!({
-                "file_name": file_name,
-                "content_type": content_type_for(local_path),
-            }))
-            .map_err(|e| http_err("fal storage initiate failed", e))?;
+    let agent = http_agent();
+    let mut init = agent
+        .post("https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3")
+        .header("Authorization", &format!("Key {}", api_key))
+        .send_json(serde_json::json!({
+            "file_name": file_name,
+            "content_type": content_type_for(local_path),
+        }))
+        .map_err(|e| http_err("fal storage initiate failed", e))?;
     let init: Value = init
         .body_mut()
         .read_json()
@@ -76,7 +96,9 @@ pub fn upload_file(local_path: &Path, api_key: &str) -> Result<String, AppError>
         .as_str()
         .ok_or_else(|| AppError::Other("fal storage initiate returned no file_url".into()))?;
 
-    ureq::put(upload_url)
+    control.check()?;
+    agent
+        .put(upload_url)
         .header("Content-Type", content_type_for(local_path))
         .send(&bytes[..])
         .map_err(|e| http_err("fal storage upload failed", e))?;
@@ -92,10 +114,14 @@ pub fn run_queue_job(
     input: Value,
     api_key: &str,
     poll_secs: u64,
+    control: &crate::plugin_job::JobControl,
 ) -> Result<Value, AppError> {
+    control.check()?;
     let auth = format!("Key {}", api_key);
+    let agent = http_agent();
 
-    let mut submit = ureq::post(&format!("https://queue.fal.run/{}", model))
+    let mut submit = agent
+        .post(&format!("https://queue.fal.run/{}", model))
         .header("Authorization", &auth)
         .send_json(input)
         .map_err(|e| http_err("fal submit failed", e))?;
@@ -112,7 +138,9 @@ pub fn run_queue_job(
         .ok_or_else(|| AppError::Other("fal submit returned no response_url".into()))?;
 
     loop {
-        let mut status = ureq::get(status_url)
+        control.check()?;
+        let mut status = agent
+            .get(status_url)
             .header("Authorization", &auth)
             .call()
             .map_err(|e| http_err("fal status poll failed", e))?;
@@ -123,10 +151,15 @@ pub fn run_queue_job(
         if status["status"].as_str() == Some("COMPLETED") {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_secs(poll_secs));
+        for _ in 0..poll_secs.saturating_mul(10) {
+            control.check()?;
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
-    let mut result = ureq::get(response_url)
+    control.check()?;
+    let mut result = agent
+        .get(response_url)
         .header("Authorization", &auth)
         .call()
         .map_err(|e| http_err("fal result fetch failed", e))?;
@@ -147,21 +180,73 @@ pub fn run_queue_job(
 }
 
 /// Download a result URL to `dest`.
-pub fn download_to(url: &str, dest: &Path) -> Result<(), AppError> {
-    let mut resp = ureq::get(url)
+pub fn download_to(
+    url: &str,
+    file: &mut std::fs::File,
+    control: &crate::plugin_job::JobControl,
+) -> Result<(), AppError> {
+    control.check()?;
+    let mut resp = http_agent()
+        .get(url)
         .call()
         .map_err(|e| http_err("fal result download failed", e))?;
     let mut reader = resp.body_mut().as_reader();
-    let mut file =
-        std::fs::File::create(dest).map_err(|e| http_err("Failed to create output file", e))?;
-    std::io::copy(&mut reader, &mut file)
-        .map_err(|e| http_err("Failed to write output file", e))?;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        control.check()?;
+        let read = std::io::Read::read(&mut reader, &mut buffer)
+            .map_err(|e| http_err("Failed to read output file", e))?;
+        if read == 0 {
+            break;
+        }
+        std::io::Write::write_all(file, &buffer[..read])
+            .map_err(|e| http_err("Failed to write output file", e))?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_fal_request_has_a_global_time_bound() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        assert_eq!(HTTP_TIMEOUT, Duration::from_secs(30));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request);
+            accepted_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        });
+        let (result_tx, result_rx) = mpsc::channel();
+        let client = std::thread::spawn(move || {
+            result_tx
+                .send(
+                    http_agent_with_timeout(Duration::from_millis(20))
+                        .get(&format!("http://{address}/held"))
+                        .call(),
+                )
+                .unwrap();
+        });
+        accepted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the configured request bound did not fire");
+        assert!(matches!(result, Err(ureq::Error::Timeout(_))), "{result:?}");
+        release_tx.send(()).unwrap();
+        client.join().unwrap();
+        server.join().unwrap();
+    }
 
     #[test]
     fn provided_key_wins() {

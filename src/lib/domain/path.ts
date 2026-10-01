@@ -27,7 +27,10 @@ export function toForwardSlashes(path: string): string {
  * locations, so deletes there are permanent rather than recoverable.
  */
 export function isUncPath(path: string): boolean {
-  return path.startsWith("\\\\") || path.startsWith("//");
+  const normalized = toForwardSlashes(path);
+  if (normalized.startsWith("//?/")) return /^\/\/\?\/UNC\/[^/]+\/[^/]+/.test(normalized);
+  if (normalized.startsWith("//./")) return false;
+  return /^\/\/[^/]+\/[^/]+/.test(normalized);
 }
 
 /** Normalize all forward-slash separators to backslashes. */
@@ -133,6 +136,10 @@ export function parentDir(path: string): string {
  */
 export function directoryKey(path: string): string {
   const norm = stripTrailingSlash(toForwardSlashes(path));
+  // The WSL host name is Windows syntax; its filesystem suffix is Linux and
+  // may contain distinct paths differing only by case. Never fold that suffix.
+  const wsl = norm.match(/^(\/\/(?:wsl\$|wsl\.localhost))(?=\/|$)/i);
+  if (wsl) return wsl[1].toLowerCase() + norm.slice(wsl[1].length);
   const isWindowsPath = /^[A-Za-z]:/.test(norm) || norm.startsWith("//");
   return isWindowsPath ? norm.toLowerCase() : norm;
 }

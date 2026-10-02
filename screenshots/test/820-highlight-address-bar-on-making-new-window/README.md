@@ -3,8 +3,8 @@
 All 21 images are unedited captures of the real Linux/WebKitGTK Tauri app,
 100% app zoom, on private Xvfb/Openbox with isolated D-Bus/XDG. Neither the host
 desktop nor its clipboard was used. `provenance.json` records the exact application
-source, binary, test bytes and image hashes. The capture binary predates test-only
-fixture corrections; application sources remained unchanged during capture.
+source, binary, test bytes and image hashes. The refreshed capture binary includes
+the strengthened pre-switch focus and held-window visibility assertions.
 
 Each `*-complete-path-selected.png` shows the address ready for replacement.
 Each paired `*-typed-directory-navigated.png` shows the real replacement directory
@@ -24,6 +24,10 @@ publication; it does not synthesize backend data or delay by an arbitrary timeou
 
 The tear-off/restoration windows are 900 × 600 and long fixture paths clip visually.
 Exact full selection and caret offsets are proved by native assertions, rather
-than by inferring them from screenshots. Ten native cases pass in 20.3 seconds;
-23 unit contracts cover the gate lifecycle, initial bootstrap and focus behavior.
-Production build and hook-leak guard pass, and frontend/native types are clean.
+than by inferring them from screenshots. Ten native cases pass in 19 seconds.
+The native trace records all ten launched paths, active native windows, selection
+ranges and replacement directories. The fresh CLI hooks/custom-protocol build
+and native TypeScript pass. A fresh production build and hook-leak guard also
+pass against the current dev dependencies, as recorded in the review;
+the startup timing difference between the hooks
+binary and a release binary remains an explicit limit.

@@ -6,6 +6,7 @@
   import "@fontsource-variable/inter/index.css";
   import { onMount } from "svelte";
   import { startWindowSession } from "$lib/state/window-session";
+  import { loadE2EHooks } from "$lib/api/e2e-hooks";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -218,13 +219,24 @@
     if (dialogStore.isFileRecoveryOpen) void session?.recovery?.start();
   });
   onMount(() => {
-    session = startWindowSession({
-      picker: pickerInfo !== null,
-      homePath: launchHomePath,
-      settingsReady: () => { settingsReady = true; },
-      commandsReady: () => { commandsReady = true; },
-    });
-    return () => { session?.dispose(); session = undefined; };
+    const lifetime = new AbortController();
+    const start = (beforeInitialListing?: (signal: AbortSignal) => void) => {
+      if (lifetime.signal.aborted) return;
+      session = startWindowSession({
+        picker: pickerInfo !== null,
+        homePath: launchHomePath,
+        settingsReady: () => { settingsReady = true; },
+        commandsReady: () => { commandsReady = true; },
+        beforeInitialListing,
+      });
+    };
+    // Release builds start synchronously. Hook builds install the real-listing
+    // observer before initialization, including newly created webviews.
+    const hooks = pickerInfo ? null : loadE2EHooks();
+    if (hooks) void hooks.then(({ prepareWindowSessionProbe }) => start(prepareWindowSessionProbe))
+      .catch((error) => console.error("Window probe initialization failed:", error));
+    else start();
+    return () => { lifetime.abort(); session?.dispose(); session = undefined; };
   });
 </script>
 

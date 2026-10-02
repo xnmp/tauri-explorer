@@ -1,0 +1,55 @@
+name: Image crop native codecs
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - "src-tauri/**"
+      - ".github/workflows/image-crop.yml"
+  push:
+    branches: [feat/ability-to-crop-image-from-preview-pane]
+  workflow_dispatch:
+
+concurrency:
+  group: image-crop-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  codecs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev nasm
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: image-crop
+      - name: Prepare frontend dist for native context
+        shell: bash
+        run: mkdir -p build
+      - name: Verify native codecs and actual filesystem saves
+        shell: bash
+        run: |
+          mkdir -p qualification-results/image-crop
+          rustc -Vv > qualification-results/image-crop/rustc.txt
+          cargo test --manifest-path src-tauri/Cargo.toml image_crop -- --nocapture 2>&1 | tee qualification-results/image-crop/tests.log
+      - name: Verify opt-in durable replacement and retained history
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features durable-recovery files::image_crop -- --nocapture 2>&1 | tee qualification-results/image-crop/durable-tests.log
+      - name: Upload codec qualification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-crop-codecs-${{ runner.os }}-${{ runner.arch }}
+          path: qualification-results/image-crop/

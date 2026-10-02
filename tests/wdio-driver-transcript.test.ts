@@ -62,6 +62,7 @@ afterEach(() => {
   finishTranscript?.();
   harness.transcript.destroy();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 async function runningSession() {
@@ -140,4 +141,48 @@ describe.skipIf(process.platform === "win32")("WDIO driver transcript lifecycle"
     harness.stop = async () => { throw failure; };
     await expect(cleanup()).rejects.toBe(failure);
   });
+  it("fails cleanup within its bound when exited-driver stdio never closes", async () => {
+    const cleanup = await runningSession();
+    harness.stop = async () => {
+      harness.child.exitCode = 0;
+      harness.child.emit("exit", 0, null);
+    };
+    vi.useFakeTimers();
+    const completed = cleanup();
+    const assertion = expect(completed).rejects.toThrow("transcript did not finish within 5000ms");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
+    expect(harness.transcript.destroyed).toBe(true);
+    expect(harness.child.stdout.destroyed).toBe(true);
+    expect(harness.child.stderr.destroyed).toBe(true);
+    expect(harness.child.listenerCount("close")).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fails cleanup within its bound when the final write never completes", async () => {
+    harness.transcript = new Writable({
+      write(_chunk, _encoding, callback) { callback(); },
+      final(callback) { finishTranscript = callback; },
+    });
+    const cleanup = await runningSession();
+    harness.child.exitCode = 0;
+    harness.child.emit("exit", 0, null);
+    await closeOutput();
+    vi.useFakeTimers();
+    const assertion = expect(cleanup()).rejects.toThrow("transcript did not finish within 5000ms");
+    await vi.advanceTimersByTimeAsync(5_000);
+    await assertion;
+    expect(harness.transcript.destroyed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reports a transcript write failure after successful process cleanup", async () => {
+    const cleanup = await runningSession();
+    const failure = new Error("transcript disk full");
+    harness.child.exitCode = 0;
+    harness.child.emit("exit", 0, null);
+    harness.transcript.destroy(failure);
+    await expect(cleanup()).rejects.toBe(failure);
+  });
+
 });

@@ -29,7 +29,7 @@
   const edges: readonly CropEdge[] = ["left", "top", "right", "bottom"];
 </script>
 
-<Modal open={true} onClose={close} label="Crop image" closeOnBackdrop={false} closeOnEscape={editorState.phase !== "saving"}>
+<Modal open={true} onClose={close} label="Crop image" overlayClass="image-crop-overlay" closeOnBackdrop={false} closeOnEscape={editorState.phase !== "saving"}>
   <div class="modal-card crop-editor" aria-busy={busy}>
     <div class="dialog-header">
       <h2>Crop image</h2>
@@ -82,7 +82,10 @@
 </Modal>
 
 <style>
-  .crop-editor { width: min(920px, calc(100vw - 32px)); max-width: none; max-height: calc(100vh - 32px); overflow: auto; display: flex; flex-direction: column; gap: var(--spacing-md); }
+  /* Fixed surfaces cancel root zoom to use the physical viewport. Restore
+     the user's zoom on the card, and bound its CSS size before that scale. */
+  :global(.image-crop-overlay) { zoom: calc(1 / var(--app-zoom, 1)); }
+  .crop-editor { zoom: var(--app-zoom, 1); width: min(920px, calc(100vw / var(--app-zoom, 1) - 32px)); min-width: 0; max-width: none; max-height: calc(100vh / var(--app-zoom, 1) - 32px); overflow: auto; display: flex; flex-direction: column; gap: var(--spacing-md); }
   .crop-editor .dialog-header { margin-bottom: 0; }
   .dialog-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .crop-dimensions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--spacing-md); }

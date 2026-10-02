@@ -939,7 +939,7 @@ import { openFile } from "$lib/api/open";
     {/if}
 
     {#if /\.(jpe?g|png|gif|webp|bmp|svg|avif|icns)$/i.test(selectedFile.name)}
-      <div class="preview-crop-action"><button class="btn" onclick={openCrop}>Crop image…</button></div>
+      <div class="preview-crop-action"><button onclick={openCrop}>Crop image…</button></div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-focusable (WCAG 2.1.1, #797). -->
     <div class="preview-content" role="region" aria-label="Preview of {selectedFile.name}{isVideoMediaFile(selectedFile) ? ' (video)' : ''}" tabindex="0">
@@ -1074,6 +1074,17 @@ import { openFile } from "$lib/api/open";
 
 <style>
   .preview-crop-action { padding: var(--spacing-sm) var(--spacing-md); display: flex; justify-content: flex-end; }
+  .preview-crop-action button {
+    padding: var(--spacing-xs) var(--spacing-sm); background: var(--control-fill);
+    border: 1px solid var(--control-stroke); border-radius: var(--radius-sm);
+    color: var(--text-primary); font: inherit; cursor: pointer;
+  }
+  .preview-crop-action button:hover { background: var(--control-fill-secondary); }
+  .preview-crop-action button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .preview-pane.fullscreen > .preview-crop-action {
+    position: absolute; top: 12px; right: 48px; z-index: 1001; padding: 0;
+  }
+  .preview-pane.vertical:not(.fullscreen) > .preview-crop-action { grid-area: actions; }
   .preview-pane {
     display: flex;
     flex-direction: column;

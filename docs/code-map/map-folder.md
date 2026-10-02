@@ -701,6 +701,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `src-tauri/src/image_crop.rs` — bounded full-resolution crop encoding and EXIF orientation normalization (#681; save/UI integration pending).
 - `src-tauri/src/files/image_crop.rs` — bounded immutable crop source capture, identity/content validation, admitted staged copy and confirmed replacement execution.
 - `src/lib/api/image-crop.ts` — typed crop capture/save IPC and native history settlement.
+- `src/lib/api/mock-image-crop.ts` — synthetic PNG/JPEG browser fixtures that save actual cropped pixels into the mock listing; native formats and file safety are verified separately.
 - `src/lib/state/image-crop-session.ts` — editor opening, crop coordinates, blob ownership and accepted-save lifetime.
 - `src/lib/state/image-crop-effects.ts` — crop receipt publication through shared pane refresh and thumbnail invalidation.
 - `src/lib/components/ImageCropEditor.svelte` — original image crop dialog with pixel controls and explicit copy/replacement choices.
